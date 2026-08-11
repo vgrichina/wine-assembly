@@ -1,5 +1,30 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-08-11): 9/9 focused tool/menu regression
+
+`test/test-mspaint-tools.js` now passes all 9 checks. It exercises the Win98
+Paint toolbar end-to-end by selecting line, rectangle, ellipse, red foreground
+color, and pencil tools, then verifies the expected canvas-region pixel deltas.
+It also opens the File menu and confirms the 17-item MENUEX menu exposes the
+expected New/Open/Save/Print/Wallpaper/Exit entries.
+
+Key fixes:
+
+- Stock `NULL_PEN` and `NULL_BRUSH` now round-trip through `SelectObject`
+  without being confused with the default bitmap sentinel, preserving the
+  selected document bitmap in Paint memory DCs.
+- Shape drawing honors null stock pens/brushes by skipping stroke/fill on
+  Rectangle, RoundRect, and Ellipse.
+- `LoadMenu` now parses version-1 MENUEX resources, including nested popup
+  help IDs and DWORD item alignment, so Paint's File menu is populated.
+
+Validation:
+
+```sh
+node test/test-gdi-stock-select.js   # passes stock pen/brush selection checks
+node test/test-mspaint-tools.js      # passes 9/9, screenshots in scratch/mspaint-tools/
+```
+
 ## Status (2026-06-14): promoted all-EXE smoke + 9/9 focused drawing regression
 
 `test/test-mspaint-draw.js` now passes all 9 checks. The Win98 ANSI build is a

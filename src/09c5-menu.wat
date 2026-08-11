@@ -1404,6 +1404,69 @@
       (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
       (br $items))))
 
+  ;; MENUEX resources (wVersion=1) use DWORD type/state/id fields, a WORD
+  ;; bResInfo (bit0 popup, bit7 end), DWORD alignment after each label, and a
+  ;; popup help-id DWORD before the nested items.
+  (func $mlex_align_pos
+    (global.set $ml_pos
+      (i32.and (i32.add (global.get $ml_pos) (i32.const 3)) (i32.const -4))))
+
+  (func $mlex_skip_level
+    (local $resInfo i32)
+    (block $done (loop $items
+      (br_if $done (i32.gt_u (i32.add (global.get $ml_pos) (i32.const 14)) (global.get $ml_end)))
+      (local.set $resInfo (i32.load16_u (i32.add (global.get $ml_pos) (i32.const 12))))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 14)))
+      (drop (call $ml_load_label))
+      (call $mlex_align_pos)
+      (if (i32.and (local.get $resInfo) (i32.const 1))
+        (then
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 4)))
+          (call $mlex_skip_level)))
+      (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
+      (br $items))))
+
+  (func $mlex_pass1_children
+    (local $cc i32) (local $resInfo i32)
+    (block $done (loop $items
+      (br_if $done (i32.gt_u (i32.add (global.get $ml_pos) (i32.const 14)) (global.get $ml_end)))
+      (local.set $resInfo (i32.load16_u (i32.add (global.get $ml_pos) (i32.const 12))))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 14)))
+      (drop (call $ml_load_label))
+      (local.set $cc (i32.add (local.get $cc) (i32.const 1)))
+      (global.set $ml_string_size
+        (i32.add (global.get $ml_string_size) (global.get $ml_label_chars)))
+      (call $mlex_align_pos)
+      (if (i32.and (local.get $resInfo) (i32.const 1))
+        (then
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 4)))
+          (call $mlex_pass1_children)))
+      (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
+      (br $items)))
+    (if (local.get $cc)
+      (then (global.set $ml_struct_size
+              (i32.add (global.get $ml_struct_size)
+                       (i32.add (i32.const 4) (i32.mul (local.get $cc) (i32.const 28))))))))
+
+  (func $mlex_pass1
+    (local $resInfo i32)
+    (block $done (loop $items
+      (br_if $done (i32.gt_u (i32.add (global.get $ml_pos) (i32.const 14)) (global.get $ml_end)))
+      (local.set $resInfo (i32.load16_u (i32.add (global.get $ml_pos) (i32.const 12))))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 14)))
+      (drop (call $ml_load_label))
+      (global.set $ml_bar_count (i32.add (global.get $ml_bar_count) (i32.const 1)))
+      (global.set $ml_struct_size (i32.add (global.get $ml_struct_size) (i32.const 16)))
+      (global.set $ml_string_size
+        (i32.add (global.get $ml_string_size) (global.get $ml_label_chars)))
+      (call $mlex_align_pos)
+      (if (i32.and (local.get $resInfo) (i32.const 1))
+        (then
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 4)))
+          (call $mlex_pass1_children)))
+      (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
+      (br $items))))
+
   ;; Find the first '\t' (UTF-16 0x09) in a label, or -1.
   (func $ml_find_tab (param $wa i32) (param $chars i32) (result i32)
     (local $i i32)
@@ -1587,6 +1650,103 @@
       (br_if $done (i32.and (local.get $flags) (i32.const 0x80)))
       (br $items))))
 
+  (func $mlex_count_direct_children (result i32)
+    (local $cc i32) (local $resInfo i32)
+    (block $done (loop $items
+      (br_if $done (i32.gt_u (i32.add (global.get $ml_pos) (i32.const 14)) (global.get $ml_end)))
+      (local.set $resInfo (i32.load16_u (i32.add (global.get $ml_pos) (i32.const 12))))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 14)))
+      (drop (call $ml_load_label))
+      (local.set $cc (i32.add (local.get $cc) (i32.const 1)))
+      (call $mlex_align_pos)
+      (if (i32.and (local.get $resInfo) (i32.const 1))
+        (then
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 4)))
+          (call $mlex_skip_level)))
+      (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
+      (br $items)))
+    (local.get $cc))
+
+  (func $mlex_pass2_children (result i32)
+    (local $cc i32) (local $type i32) (local $state i32) (local $id i32)
+    (local $resInfo i32) (local $flags i32) (local $str_w i32) (local $chars i32)
+    (local $start_pos i32) (local $count_off i32) (local $rec_off i32)
+    (local $child_off i32) (local $sub_count i32)
+    (local.set $start_pos (global.get $ml_pos))
+    (local.set $cc (call $mlex_count_direct_children))
+    (global.set $ml_pos (local.get $start_pos))
+    (if (i32.eqz (local.get $cc)) (then (return (i32.const 0))))
+    (local.set $count_off (global.get $ml_struct_cur))
+    (global.set $ml_struct_cur
+      (i32.add (global.get $ml_struct_cur)
+               (i32.add (i32.const 4) (i32.mul (local.get $cc) (i32.const 28)))))
+    (i32.store (i32.add (global.get $ml_blob_w) (local.get $count_off)) (local.get $cc))
+    (local.set $rec_off (i32.add (local.get $count_off) (i32.const 4)))
+    (block $done (loop $items
+      (br_if $done (i32.gt_u (i32.add (global.get $ml_pos) (i32.const 14)) (global.get $ml_end)))
+      (local.set $type (i32.load (global.get $ml_pos)))
+      (local.set $state (i32.load offset=4 (global.get $ml_pos)))
+      (local.set $id (i32.load offset=8 (global.get $ml_pos)))
+      (local.set $resInfo (i32.load16_u (i32.add (global.get $ml_pos) (i32.const 12))))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 14)))
+      (local.set $str_w (call $ml_load_label))
+      (local.set $chars (global.get $ml_label_chars))
+      (call $mlex_align_pos)
+      (local.set $flags (i32.and (local.get $type) (i32.const 0x800)))
+      (if (i32.and (local.get $state) (i32.const 3))
+        (then (local.set $flags (i32.or (local.get $flags) (i32.const 1)))))
+      (local.set $child_off (i32.const 0))
+      (if (i32.and (local.get $resInfo) (i32.const 1))
+        (then
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 4)))
+          (local.set $child_off (global.get $ml_struct_cur))
+          (local.set $sub_count (call $mlex_pass2_children))
+          (if (i32.eqz (local.get $sub_count))
+            (then (local.set $child_off (i32.const 0))))))
+      (call $ml_write_child_record
+        (local.get $rec_off) (local.get $flags) (local.get $id)
+        (local.get $str_w) (local.get $chars) (local.get $child_off))
+      (local.set $rec_off (i32.add (local.get $rec_off) (i32.const 28)))
+      (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
+      (br $items)))
+    (local.get $cc))
+
+  (func $mlex_pass2
+    (local $bar_idx i32) (local $id i32) (local $resInfo i32)
+    (local $str_w i32) (local $chars i32) (local $bar_addr i32)
+    (local $label_off i32) (local $child_off i32) (local $cc i32)
+    (block $done (loop $items
+      (br_if $done (i32.gt_u (i32.add (global.get $ml_pos) (i32.const 14)) (global.get $ml_end)))
+      (br_if $done (i32.ge_u (local.get $bar_idx) (global.get $ml_bar_count)))
+      (local.set $id (i32.load offset=8 (global.get $ml_pos)))
+      (local.set $resInfo (i32.load16_u (i32.add (global.get $ml_pos) (i32.const 12))))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 14)))
+      (local.set $str_w (call $ml_load_label))
+      (local.set $chars (global.get $ml_label_chars))
+      (call $mlex_align_pos)
+      (local.set $bar_addr
+        (i32.add (global.get $ml_blob_w)
+                 (i32.add (i32.const 4) (i32.mul (local.get $bar_idx) (i32.const 16)))))
+      (local.set $label_off (global.get $ml_string_cur))
+      (call $ml_copy_ascii (local.get $str_w)
+            (i32.add (global.get $ml_blob_w) (global.get $ml_string_cur))
+            (local.get $chars))
+      (global.set $ml_string_cur (i32.add (global.get $ml_string_cur) (local.get $chars)))
+      (i32.store          (local.get $bar_addr) (local.get $label_off))
+      (i32.store offset=4 (local.get $bar_addr) (local.get $chars))
+      (i32.store offset=8 (local.get $bar_addr) (i32.const 0))
+      (i32.store offset=12 (local.get $bar_addr) (local.get $id))
+      (if (i32.and (local.get $resInfo) (i32.const 1))
+        (then
+          (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 4)))
+          (local.set $child_off (global.get $ml_struct_cur))
+          (local.set $cc (call $mlex_pass2_children))
+          (if (local.get $cc)
+            (then (i32.store offset=8 (local.get $bar_addr) (local.get $child_off))))))
+      (local.set $bar_idx (i32.add (local.get $bar_idx) (i32.const 1)))
+      (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
+      (br $items))))
+
   ;; Public entry: load the menu identified by $menu_id (RT_MENU=4) for
   ;; $hwnd. Pass menu_id=0 to clear. Skips the load entirely if this
   ;; slot already has a blob — callers may invoke this multiple times
@@ -1597,6 +1757,7 @@
     (local $slot i32) (local $tbl i32) (local $old i32)
     (local $entry i32) (local $bytes_g i32) (local $bytes_w i32)
     (local $size i32) (local $total i32) (local $newg i32)
+    (local $version i32) (local $headerOffset i32) (local $items_w i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
@@ -1623,13 +1784,20 @@
                                                     (i32.add (local.get $entry) (i32.const 4))))))
     (if (i32.lt_u (local.get $size) (i32.const 8)) (then (return)))
     (local.set $bytes_w (call $g2w (local.get $bytes_g)))
+    (local.set $version (i32.load16_u (local.get $bytes_w)))
+    (local.set $headerOffset (i32.load16_u (i32.add (local.get $bytes_w) (i32.const 2))))
+    (if (i32.gt_u (local.get $version) (i32.const 1)) (then (return)))
+    (local.set $items_w
+      (i32.add (local.get $bytes_w) (i32.add (i32.const 4) (local.get $headerOffset))))
     ;; --- Pass 1: count ---
-    (global.set $ml_pos (i32.add (local.get $bytes_w) (i32.const 4))) ;; skip MENUHEADER
+    (global.set $ml_pos (local.get $items_w))
     (global.set $ml_end (i32.add (local.get $bytes_w) (local.get $size)))
     (global.set $ml_bar_count   (i32.const 0))
     (global.set $ml_struct_size (i32.const 4)) ;; bar_count header
     (global.set $ml_string_size (i32.const 0))
-    (call $ml_pass1)
+    (if (local.get $version)
+      (then (call $mlex_pass1))
+      (else (call $ml_pass1)))
     (if (i32.eqz (global.get $ml_bar_count)) (then (return)))
     ;; --- Allocate blob and run pass 2 ---
     (local.set $total (i32.add (global.get $ml_struct_size) (global.get $ml_string_size)))
@@ -1644,8 +1812,10 @@
     (global.set $ml_string_cur (global.get $ml_struct_size))
     (global.set $ml_struct_cur
       (i32.add (i32.const 4) (i32.mul (global.get $ml_bar_count) (i32.const 16))))
-    (global.set $ml_pos (i32.add (local.get $bytes_w) (i32.const 4)))
-    (call $ml_pass2))
+    (global.set $ml_pos (local.get $items_w))
+    (if (local.get $version)
+      (then (call $mlex_pass2))
+      (else (call $ml_pass2))))
 
   ;; ============================================================
   ;; Menu tracking — JS shells out raw mouse / keyboard events to

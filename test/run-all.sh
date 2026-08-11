@@ -76,7 +76,9 @@ E2E=(
   test/test-empipe-start.js
   test/test-empipe-stage-transition.js
   test/test-cwordzap-render.js
+  test/test-gdi-stock-select.js
   test/test-mspaint-draw.js
+  test/test-mspaint-tools.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-cruel-maximized-launch-layout.js
