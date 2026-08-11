@@ -9706,7 +9706,8 @@
   ;; 670: ScrollWindowEx(hWnd, dx, dy, prcScroll, prcClip, hrgnUpdate,
   ;;                     prcUpdate, flags) → region complexity.
   ;; Scroll the host backing store when possible, report the invalidated area,
-  ;; and mark the window for repaint. Region/clip details are approximated.
+  ;; and mark the window for repaint. Region details are approximated to a
+  ;; single rectangle, but prcScroll/prcClip are intersected in client coords.
   (func $handle_ScrollWindowEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $l i32) (local $t i32) (local $r i32) (local $b i32)
     (local $wa i32) (local $cs i32) (local $prcUpdate i32)
@@ -9732,8 +9733,31 @@
         (local.set $t (i32.const 0))
         (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
+    (if (local.get $arg4)
+      (then
+        (local.set $wa (call $g2w (local.get $arg4)))
+        (if (i32.gt_s (i32.load (local.get $wa)) (local.get $l))
+          (then (local.set $l (i32.load (local.get $wa)))))
+        (if (i32.gt_s (i32.load offset=4 (local.get $wa)) (local.get $t))
+          (then (local.set $t (i32.load offset=4 (local.get $wa)))))
+        (if (i32.lt_s (i32.load offset=8 (local.get $wa)) (local.get $r))
+          (then (local.set $r (i32.load offset=8 (local.get $wa)))))
+        (if (i32.lt_s (i32.load offset=12 (local.get $wa)) (local.get $b))
+          (then (local.set $b (i32.load offset=12 (local.get $wa)))))))
     ;; prcUpdate is the 7th argument at [esp+28].
     (local.set $prcUpdate (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.or
+          (i32.le_s (local.get $r) (local.get $l))
+          (i32.le_s (local.get $b) (local.get $t)))
+      (then
+        (if (local.get $prcUpdate)
+          (then
+            (local.set $wa (call $g2w (local.get $prcUpdate)))
+            (i64.store (local.get $wa) (i64.const 0))
+            (i64.store offset=8 (local.get $wa) (i64.const 0))))
+        (global.set $eax (i32.const 1)) ;; NULLREGION
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
     (if (local.get $prcUpdate)
       (then
         (local.set $wa (call $g2w (local.get $prcUpdate)))

@@ -372,10 +372,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   paints stay constrained to the native paint rectangle.
 - `ScrollWindow` / `ScrollWindowEx` now scroll only the target window's client
   rectangle in the backing store, and explicit scroll/clip `RECT` arguments are
-  intersected in client coordinates. This fixes the WordPad multiline edit path
-  where RichEdit's line-scroll operation had copied top-level title/menu pixels
-  into the toolbar/ruler band, while keeping the scroll primitive reusable for
-  other child controls.
+  intersected in client coordinates for both host copy/fill and WAT update
+  invalidation. This fixes the WordPad multiline edit path where RichEdit's
+  line-scroll operation had copied top-level title/menu pixels into the
+  toolbar/ruler band, while keeping the scroll primitive reusable for other
+  child controls.
 - Direct GDI regression test:
   `node test/test-gdi-exttextout-clipping.js` verifies clipped glyph drawing
   and null-text opaque erases on a surface DC.

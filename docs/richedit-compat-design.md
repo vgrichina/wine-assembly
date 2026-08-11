@@ -172,6 +172,8 @@ native-editing path is alive.
   `RECT` pointers, with a direct host regression
   `test/test-gdi-scroll-window-rect.js`. This keeps the behavior reusable for
   controls that provide narrower invalidation/scroll regions.
+- Matched WAT `ScrollWindowEx` update invalidation to the same scroll/clip
+  intersection and returns `NULLREGION` for empty intersections.
 - Expanded `test/test-wordpad-richedit.js` to 23/23 with a screenshot guard
   that counts duplicated title-bar-blue pixels in the toolbar/ruler band; the
   regenerated `hello-world-edited.png` has zero such pixels.
