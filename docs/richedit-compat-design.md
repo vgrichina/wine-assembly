@@ -131,7 +131,7 @@ That means these pieces are already good enough for basic insertion:
   placeholder-only buttons;
 - WordPad's formatting toolbar child surface/client width is bounded to the
   containing MFC control bar, and toolbar-hosted font/size combo fields paint
-  white interiors;
+  white interiors with populated `Times New Roman` / `10` text;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
   New document-type dialog;
 - formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
@@ -408,9 +408,11 @@ native-editing path is alive.
   earlier combo siblings. `test/test-wordpad-toolbar.js` now asserts the
   WordPad formatting toolbar's font and size comboboxes are visible,
   non-negative, separated, have bounded client widths, and paint white field
-  interiors. The fields still do not show populated font/size text because the
-  observed WordPad startup path sends combo selection/text messages to hwnd=0;
-  that handle/control-attach issue is separate from toolbar layout.
+  interiors with populated `Times New Roman` / `10` text. The fix lets
+  WAT-native `COMBOBOX` children run MFC's existing WH_CBT/HCBT_CREATEWND
+  attach path, so CComboBox wrappers hold real HWNDs before startup `CB_*`
+  setup messages. Minimal `CB_SETITEMHEIGHT` / `CB_GETITEMHEIGHT` support keeps
+  the now-live setup path from failing.
 - Added minimal `GetDCEx` support on top of the existing host DC allocator and
   client/whole-window clip helpers. Added
   `test/test-wordpad-toolbar-format-buttons.js`, which passes 10/10 and
@@ -758,7 +760,7 @@ Acceptance:
 [x] WordPad toolbar app bitmap strips render visible colored icon pixels
 [x] WordPad toolbar fallback buttons remain visibly composited through nested
     MFC control-bar containers when no strip is available
-[x] WordPad formatting toolbar font/size comboboxes are visible and separated
+[x] WordPad formatting toolbar font/size comboboxes are visible, separated, and populated
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
 [x] WordPad toolbar/menu color command route applies Blue through app UI
@@ -813,6 +815,7 @@ Acceptance:
 [x] WordPad nested toolbar child surfaces visibly composite and clip to WordPad
 [x] WordPad toolbar bitmap icon pixels are explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
+[x] WordPad formatting toolbar font/size combo text is populated and asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage

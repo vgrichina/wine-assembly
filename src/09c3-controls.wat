@@ -6801,10 +6801,23 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0151))
       (then (return (call $wnd_send_message (local.get $lb) (i32.const 0x019A) (local.get $wParam) (local.get $lParam)))))
 
+    ;; ---------- CB_SETITEMHEIGHT / CB_GETITEMHEIGHT ----------
+    ;; WordPad's MFC toolbar combo setup adjusts the editable field/item
+    ;; height once the CComboBox wrapper is attached. We keep a fixed Win98-ish
+    ;; field height for now, but report success/height so setup can continue.
+    (if (i32.eq (local.get $msg) (i32.const 0x0153))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0154))
+      (then
+        (return
+          (select
+            (local.get $field_h)
+            (i32.const 16)
+            (i32.eq (local.get $wParam) (i32.const -1))))))
+
     ;; ---------- CB_DIR / ownerdraw paths ----------
     ;; Fail-fast (memory: feedback_fail_fast_stubs).
-    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0145))   ;; CB_DIR
-                (i32.eq (local.get $msg) (i32.const 0x0153)))  ;; CB_GETDROPPEDWIDTH (rare)
+    (if (i32.eq (local.get $msg) (i32.const 0x0145))   ;; CB_DIR
       (then (call $crash_unimplemented (i32.const 0x100))))
 
     ;; ---------- WM_LBUTTONDOWN (0x0201) — toggle dropdown ----------

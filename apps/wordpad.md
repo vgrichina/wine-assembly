@@ -101,12 +101,13 @@ visuals:   nested toolbar child surfaces now composite through the MFC
            The formatting toolbar surface/client width is bounded to the
            containing control bar instead of dumping/allocation as a 1512px
            child in a 394px frame. Toolbar-hosted font/size combobox fields
-           now paint white interiors.
+           now paint white interiors and show `Times New Roman` / `10`.
 result:    PASS for ToolbarWindow32 layout, bounded formatting toolbar width,
-           visible bitmap icons, combobox field paint, command-ID-backed
-           button hit testing, and the MFC toolbar command path for File New.
+           visible bitmap icons, populated combobox field paint,
+           command-ID-backed button hit testing, and the MFC toolbar command
+           path for File New.
            Common-control built-in strips, masked transparency/color remapping,
-           and populated toolbar font/size text remain follow-up fidelity.
+           and advanced toolbar UI state remain follow-up fidelity.
 ```
 
 Focused mouse/scroll probe:
@@ -279,7 +280,7 @@ result:      PASS for WordPad's toolbar color picker opening, hit-testing, and
              applying the selected color to native RichEdit text.
 ```
 
-Current evidence from the 2026-08-02 follow-up probe:
+Current evidence from the 2026-08-11 follow-up probe:
 
 - Mouse click now focuses the RichEdit child, so keyboard routing is no longer
   the blocker.
@@ -308,10 +309,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   and update paths reached by these clicks.
 - Toolbar-hosted dropdown comboboxes now paint their field backgrounds from
   the combobox proc, so the WordPad font/size fields no longer show gray blank
-  interiors. The fields are still visually empty because WordPad's startup font
-  combo initialization is currently observed sending selection/text messages to
-  hwnd=0; populated toolbar font/size text remains a follow-up control-attach
-  task.
+  interiors. WAT-native `COMBOBOX` children now also run MFC's existing
+  WH_CBT/HCBT_CREATEWND attach path, so the CComboBox wrappers get real HWNDs
+  before startup `CB_*` setup messages. WordPad's font/size fields now populate
+  as `Times New Roman` and `10`. Minimal `CB_SETITEMHEIGHT` /
+  `CB_GETITEMHEIGHT` handling keeps that setup path from failing once messages
+  reach the real controls.
 - Renderer keyboard routing now preserves focus on native child controls such
   as WordPad's `RichEdit20A` before falling back to the first WAT `EDIT`. This
   prevents the formatting toolbar's combobox edit child from stealing typing
@@ -504,13 +507,14 @@ Current evidence from the 2026-08-02 follow-up probe:
   `test/output/wordpad-richedit/caret.png`; it verifies native RichEdit USER
   caret API calls are tracked and composited as a visible vertical caret
   stroke in the document band.
-- Regression test: `node test/test-wordpad-toolbar.js` passes 16/16 and writes
+- Regression test: `node test/test-wordpad-toolbar.js` passes 19/19 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
   `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation,
   layout, visible bitmap-strip icon painting of the standard/formatting
-  toolbar rows, and the first Standard toolbar button opening WordPad's `New`
-  dialog. The pixel assertions measure only the toolbar button rows, including
-  colored icon pixels so placeholder-only buttons regress.
+  toolbar rows, populated font/size toolbar combo text, and the first Standard
+  toolbar button opening WordPad's `New` dialog. The pixel assertions measure
+  only the toolbar button rows, including colored icon pixels so
+  placeholder-only buttons regress.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor after wheel and thumb-drag

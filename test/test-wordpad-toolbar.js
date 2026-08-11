@@ -262,6 +262,11 @@ check(`toolbar bitmap icons render colored strip pixels (${toolbarIconColorPixel
 check(`toolbar combo fields paint white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
   fontComboWhitePixels >= 1200 &&
   sizeComboWhitePixels >= 150);
+check('toolbar font and size combo text is populated',
+  fontCombo &&
+  sizeCombo &&
+  fontCombo.title === 'Times New Roman' &&
+  sizeCombo.title === '10');
 check('first standard toolbar button opens New dialog', openedNewDialog);
 check('toolbar-command screenshot written', clickPngExists);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
