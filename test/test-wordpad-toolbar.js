@@ -130,6 +130,8 @@ function countToolbarButtonPixels(pngPath) {
 
 const standard = parseWindowByCtrlId(59392);
 const formatting = parseWindowByCtrlId(59396);
+const fontCombo = parseWindowByCtrlId(165);
+const sizeCombo = parseWindowByCtrlId(166);
 const richEdit = parseWindowByCtrlId(59648);
 const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT).size > 0;
@@ -155,6 +157,26 @@ check('formatting toolbar exists as WAT-native ToolbarWindow32',
   formatting.visible);
 check('formatting toolbar has a real surface and height',
   formatting && formatting.hasBack && formatting.w >= 300 && formatting.h >= 24);
+check('font combo is visible on the formatting toolbar',
+  fontCombo &&
+  fontCombo.className === 'COMBOBOX' &&
+  fontCombo.ctrlClass === 5 &&
+  formatting &&
+  fontCombo.parent === `0x${formatting.hwnd.toString(16)}` &&
+  fontCombo.visible &&
+  fontCombo.hasBack &&
+  fontCombo.x >= 0 &&
+  fontCombo.y >= 0);
+check('size combo is visible and separated from the font combo',
+  fontCombo &&
+  sizeCombo &&
+  sizeCombo.className === 'COMBOBOX' &&
+  sizeCombo.ctrlClass === 5 &&
+  sizeCombo.parent === fontCombo.parent &&
+  sizeCombo.visible &&
+  sizeCombo.hasBack &&
+  sizeCombo.x >= fontCombo.x + fontCombo.w &&
+  sizeCombo.y === fontCombo.y);
 check('toolbars occupy separate rows',
   standard && formatting && formatting.y >= standard.y + 20);
 check('RichEdit child is laid out below the toolbars',

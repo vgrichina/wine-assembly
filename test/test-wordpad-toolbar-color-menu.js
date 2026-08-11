@@ -43,15 +43,15 @@ const seq = [
   `88:png:${PLAIN_PNG}`,
   ...ctrlA(92),
 
-  // Formatting toolbar color button center.
-  '104:click:171:80',
+  // Formatting toolbar color button center, after font/size combo fields.
+  '104:click:390:80',
   '110:menu-dump:color',
   `112:png:${POPUP_PNG}`,
 
-  // Popup anchor is x=164,y=93. Row #12 is #801a / Blue.
-  '120:mousemove:184:345',
+  // Popup anchor is x=378,y=93. Row #12 is #801a / Blue.
+  '120:mousemove:390:345',
   '122:menu-dump:hover-blue',
-  '124:click:184:345',
+  '124:click:390:345',
 
   // Refocus/reselect the document text for a stable CHARFORMAT assertion.
   '142:click:40:150',
@@ -62,7 +62,7 @@ const seq = [
   // Collapse selection before the visual assertion so text ink color is visible.
   '166:keydown:39',
   '167:keyup:39',
-  `180:png:${BLUE_PNG}`,
+  `180:png-pixels:${BLUE_PNG}`,
   '186:stop',
 ];
 
@@ -74,7 +74,6 @@ const args = [
   '--batch-size=50000',
   '--quiet-api',
   '--trace-api=SetTextColor',
-  '--no-close',
 ];
 
 console.log('$ node ' + args.map(a => JSON.stringify(a)).join(' '));
@@ -161,6 +160,9 @@ const colorMenu = line('color', 'menu-dump');
 const hoverBlue = line('hover-blue', 'menu-dump');
 const afterBlue = line('after-blue', 'dump-focus-charformat');
 const afterBlueState = line('after-blue', 'dump-focus-state');
+const plainPngWritten = out.includes(`[input] png ${PLAIN_PNG} `);
+const popupPngWritten = out.includes(`[input] png ${POPUP_PNG} `);
+const bluePngWritten = out.includes(`[input] png-pixels ${BLUE_PNG} `);
 const visual = analyzeTextBand(PLAIN_PNG, BLUE_PNG);
 if (visual) {
   console.log(`visual text-band color: changed=${visual.changedPixels} diffSum=${visual.diffSum} blueDominantBefore=${visual.blueDominantBefore} blueDominantAfter=${visual.blueDominantAfter}`);
@@ -177,14 +179,17 @@ check('color toolbar popup exposes 17 dynamic commands',
   /#12 id=32794 flags=0x0 "#801a"/.test(colorMenu) &&
   /#16 id=32798/.test(colorMenu));
 check('mouse hover hit-tests Blue row', /hover=12/.test(hoverBlue));
-check('toolbar color popup screenshot written', fs.existsSync(POPUP_PNG) && fs.statSync(POPUP_PNG).size > 0);
+check('toolbar color popup screenshot written',
+  popupPngWritten && fs.existsSync(POPUP_PNG) && fs.statSync(POPUP_PNG).size > 0);
 check('Blue menu row applies Win32 blue COLORREF',
   /effects=0x0/.test(afterBlue) &&
   /color=0xff0000/.test(afterBlue));
 check('text color command did not corrupt editor text', /text="color"/.test(afterBlueState));
 check('GDI text renderer used the blue COLORREF', /SetTextColor\(.*0xff0000/.test(out));
-check('plain screenshot written', fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
-check('blue screenshot written', fs.existsSync(BLUE_PNG) && fs.statSync(BLUE_PNG).size > 0);
+check('plain screenshot written',
+  plainPngWritten && fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
+check('blue screenshot written',
+  bluePngWritten && fs.existsSync(BLUE_PNG) && fs.statSync(BLUE_PNG).size > 0);
 check('blue color changes visible text pixels',
   visual &&
   !visual.mismatch &&

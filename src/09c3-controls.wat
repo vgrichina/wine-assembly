@@ -4150,12 +4150,33 @@
         (i32.store offset=24 (local.get $sw) (i32.const 20)) ;; sizeof(TBBUTTON)
         (i32.store offset=40 (local.get $sw) (i32.const -1))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (i32.store offset=44 (local.get $sw) (local.get $hwnd))
     (local.get $state))
 
   (func $toolbar_button_ptr (param $sw i32) (param $idx i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=32 (local.get $sw)))
       (i32.mul (local.get $idx) (i32.const 20))))
+
+  (func $toolbar_child_combo_width_by_cmd (param $sw i32) (param $cmd i32) (result i32)
+    (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $wh i32)
+    (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
+    (if (i32.eqz (local.get $toolbar_hwnd)) (then (return (i32.const 0))))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $toolbar_hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (i32.and
+            (i32.eq (call $ctrl_table_get_class (local.get $ch)) (i32.const 5))
+            (i32.eq (call $ctrl_table_get_id (local.get $ch)) (local.get $cmd)))
+        (then
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
+          (return (i32.and (local.get $wh) (i32.const 0xFFFF)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
 
   (func $toolbar_ensure_capacity (param $sw i32) (param $want i32) (result i32)
     (local $cap i32) (local $new_cap i32) (local $new_items i32)
@@ -4213,6 +4234,49 @@
       (br $scan)))
     (i32.const -1))
 
+  (func $toolbar_button_width (param $sw i32) (param $idx i32) (result i32)
+    (local $count i32) (local $rec i32) (local $width i32) (local $combo_width i32)
+    (local.set $width (i32.load offset=4 (local.get $sw)))
+    (if (i32.le_s (local.get $width) (i32.const 0))
+      (then (local.set $width (i32.const 23))))
+    (local.set $count (i32.load (local.get $sw)))
+    (if (i32.or
+          (i32.eqz (i32.load offset=32 (local.get $sw)))
+          (i32.ge_u (local.get $idx) (local.get $count)))
+      (then (return (local.get $width))))
+    (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
+    ;; TBSTYLE_SEP uses TBBUTTON.iBitmap as the separator/control-slot width.
+    ;; WordPad embeds font and size comboboxes in these slots, so fixed button
+    ;; widths make MFC place both controls over the first button.
+    (if (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01))
+      (then
+        (local.set $combo_width
+          (call $toolbar_child_combo_width_by_cmd
+            (local.get $sw)
+            (i32.load offset=4 (local.get $rec))))
+        (if (i32.gt_s (local.get $combo_width) (i32.const 0))
+          (then (return (local.get $combo_width))))
+        (local.set $width (i32.load (local.get $rec)))
+        (if (i32.or
+              (i32.lt_s (local.get $width) (i32.const 4))
+              (i32.gt_s (local.get $width) (i32.const 512)))
+          (then (local.set $width (i32.const 8))))))
+    (local.get $width))
+
+  (func $toolbar_button_left (param $sw i32) (param $idx i32) (result i32)
+    (local $i i32) (local $left i32)
+    (local.set $left (i32.const 2))
+    (local.set $i (i32.const 0))
+    (block $done (loop $sum
+      (br_if $done (i32.ge_u (local.get $i) (local.get $idx)))
+      (local.set $left
+        (i32.add
+          (local.get $left)
+          (call $toolbar_button_width (local.get $sw) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $sum)))
+    (local.get $left))
+
   (func $toolbar_update_state_bit
     (param $sw i32) (param $cmd i32) (param $mask i32) (param $on i32) (result i32)
     (local $idx i32) (local $rec i32) (local $state i32)
@@ -4231,31 +4295,36 @@
     (i32.const 1))
 
   (func $toolbar_hit_test (param $sw i32) (param $x i32) (param $y i32) (result i32)
-    (local $idx i32) (local $bw i32) (local $bh i32) (local $rec i32)
+    (local $idx i32) (local $left i32) (local $bw i32) (local $bh i32) (local $rec i32)
     (if (i32.or (i32.lt_s (local.get $x) (i32.const 2))
                 (i32.lt_s (local.get $y) (i32.const 2)))
       (then (return (i32.const -1))))
-    (local.set $bw (i32.load offset=4 (local.get $sw)))
     (local.set $bh (i32.load offset=8 (local.get $sw)))
-    (if (i32.or (i32.le_s (local.get $bw) (i32.const 0))
-                (i32.le_s (local.get $bh) (i32.const 0)))
+    (if (i32.le_s (local.get $bh) (i32.const 0))
       (then (return (i32.const -1))))
     (if (i32.ge_s (local.get $y) (i32.add (i32.const 2) (local.get $bh)))
       (then (return (i32.const -1))))
-    (local.set $idx (i32.div_u (i32.sub (local.get $x) (i32.const 2)) (local.get $bw)))
-    (if (i32.ge_u (local.get $idx) (i32.load (local.get $sw)))
-      (then (return (i32.const -1))))
-    (if (i32.ge_s
-          (local.get $x)
-          (i32.add (i32.const 2)
-            (i32.mul (i32.add (local.get $idx) (i32.const 1)) (local.get $bw))))
-      (then (return (i32.const -1))))
-    (if (i32.load offset=32 (local.get $sw))
-      (then
-        (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
-        (if (i32.and (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x08))
-          (then (return (i32.const -1))))))
-    (local.get $idx))
+    (local.set $left (i32.const 2))
+    (local.set $idx (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $idx) (i32.load (local.get $sw))))
+      (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $idx)))
+      (if (i32.and
+            (i32.ge_s (local.get $x) (local.get $left))
+            (i32.lt_s (local.get $x) (i32.add (local.get $left) (local.get $bw))))
+        (then
+          (if (i32.load offset=32 (local.get $sw))
+            (then
+              (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
+              (if (i32.or
+                    (i32.and (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x08))
+                    (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01)))
+                (then (return (i32.const -1))))))
+          (return (local.get $idx))))
+      (local.set $left (i32.add (local.get $left) (local.get $bw)))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
 
   (func $toolbar_repaint_now (param $hwnd i32)
     ;; ToolbarWindow32 owns a composited child surface. MFC control-bar parents
@@ -4476,9 +4545,9 @@
               (i32.ge_u (local.get $wParam) (i32.load (local.get $sw))))
           (then (return (i32.const 0))))
         (local.set $rect (call $g2w (local.get $lParam)))
-        (local.set $bw (i32.load offset=4 (local.get $sw)))
         (local.set $bh (i32.load offset=8 (local.get $sw)))
-        (local.set $left (i32.add (i32.const 2) (i32.mul (local.get $wParam) (local.get $bw))))
+        (local.set $left (call $toolbar_button_left (local.get $sw) (local.get $wParam)))
+        (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $wParam)))
         (local.set $top (i32.const 2))
         (i32.store        (local.get $rect) (local.get $left))
         (i32.store offset=4  (local.get $rect) (local.get $top))
@@ -4676,14 +4745,14 @@
                     (local.get $w) (local.get $h)
                     (i32.const 0x04) (i32.const 0x08))) ;; BDR_RAISEDINNER | BF_BOTTOM
             (local.set $count (i32.load (local.get $sw)))
-            (local.set $bw (i32.load offset=4 (local.get $sw)))
             (local.set $bh (i32.load offset=8 (local.get $sw)))
             (if (i32.lt_s (local.get $count) (i32.const 1))
               (then (local.set $count (i32.const 1))))
+            (local.set $left (i32.const 2))
             (local.set $i (i32.const 0))
             (block $done (loop $buttons
               (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-              (local.set $left (i32.add (i32.const 2) (i32.mul (local.get $i) (local.get $bw))))
+              (local.set $bw (call $toolbar_button_width (local.get $sw) (local.get $i)))
               (local.set $top (i32.const 2))
               (br_if $done (i32.ge_s (local.get $left) (i32.sub (local.get $w) (i32.const 2))))
               (local.set $state_byte (i32.const 4))
@@ -4693,6 +4762,24 @@
                   (local.set $state_byte (i32.load8_u offset=8 (local.get $rec)))))
               (if (i32.and (local.get $state_byte) (i32.const 0x08))
                 (then
+                  (local.set $left (i32.add (local.get $left) (local.get $bw)))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $buttons)))
+              (if (i32.and
+                    (i32.and (i32.load offset=32 (local.get $sw))
+                      (i32.ne (local.get $rec) (i32.const 0)))
+                    (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01)))
+                (then
+                  (if (i32.gt_s (local.get $bw) (i32.const 8))
+                    (then
+                      (drop (call $host_gdi_draw_edge (local.get $hdc)
+                        (i32.add (local.get $left) (i32.const 3))
+                        (i32.add (local.get $top) (i32.const 3))
+                        (i32.add (local.get $left) (i32.const 5))
+                        (i32.sub (i32.add (local.get $top) (local.get $bh)) (i32.const 3))
+                        (i32.const 0x0A)
+                        (i32.const 0x04)))))
+                  (local.set $left (i32.add (local.get $left) (local.get $bw)))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
               (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -4710,6 +4797,7 @@
                       (i32.add (local.get $left) (i32.const 15))
                       (i32.add (local.get $top) (i32.const 14))
                       (i32.const 0x30012)))
+              (local.set $left (i32.add (local.get $left) (local.get $bw)))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $buttons)))))
         (return (i32.const 0))))
@@ -6227,6 +6315,8 @@
     (local $style i32) (local $cy i32) (local $cmd i32) (local $notif i32)
     (local $parent i32) (local $ctrl_id i32) (local $field_h i32)
     (local $px i32) (local $py i32)
+    (local $scan_slot i32) (local $sibling_hwnd i32)
+    (local $combo_max_x i32) (local $sibling_right i32)
 
     (local.set $field_h (i32.const 21))
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
@@ -6305,6 +6395,57 @@
           (then
             (i32.store offset=24 (local.get $state_w)
               (call $combo_create_popup (local.get $hwnd) (local.get $w) (local.get $h)))))
+        ;; MFC toolbar-hosted combo boxes are often created at (0,0) and then
+        ;; left for common-control layout to position. Keep additional direct
+        ;; COMBOBOX children of the same ToolbarWindow32 from covering the
+        ;; first combo field when no explicit move has arrived yet.
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (if (i32.and
+              (i32.and
+                (i32.eq (call $ctrl_table_get_class (local.get $parent)) (i32.const 21))
+                (i32.eq (call $ctrl_get_x_s (local.get $hwnd)) (i32.const 0)))
+              (i32.eq (call $ctrl_get_y_s (local.get $hwnd)) (i32.const 0)))
+          (then
+            (local.set $scan_slot (i32.const 0))
+            (local.set $combo_max_x (i32.const 0))
+            (block $combo_scan_done (loop $combo_scan
+              (local.set $scan_slot
+                (call $wnd_next_child_slot (local.get $parent) (local.get $scan_slot)))
+              (br_if $combo_scan_done (i32.lt_s (local.get $scan_slot) (i32.const 0)))
+              (local.set $sibling_hwnd (call $wnd_slot_hwnd (local.get $scan_slot)))
+              (if (i32.and
+                    (i32.ne (local.get $sibling_hwnd) (local.get $hwnd))
+                    (i32.eq (call $ctrl_table_get_class (local.get $sibling_hwnd)) (i32.const 5)))
+                (then
+                  (local.set $sibling_right
+                    (i32.add
+                      (i32.add
+                        (call $ctrl_get_x_s (local.get $sibling_hwnd))
+                        (i32.and
+                          (call $ctrl_get_wh_packed (local.get $sibling_hwnd))
+                          (i32.const 0xFFFF)))
+                      (i32.const 4)))
+                  (if (i32.gt_s (local.get $sibling_right) (local.get $combo_max_x))
+                    (then (local.set $combo_max_x (local.get $sibling_right))))))
+              (local.set $scan_slot (i32.add (local.get $scan_slot) (i32.const 1)))
+              (br $combo_scan)))
+            (if (i32.gt_s (local.get $combo_max_x) (i32.const 0))
+              (then
+                (call $host_move_window
+                  (local.get $hwnd)
+                  (local.get $combo_max_x)
+                  (i32.const 0)
+                  (local.get $w)
+                  (local.get $cy)
+                  (i32.const 0))
+                (call $ctrl_geom_sync
+                  (local.get $hwnd)
+                  (local.get $combo_max_x)
+                  (i32.const 0)
+                  (local.get $w)
+                  (local.get $field_h)
+                  (i32.const 0))
+                (call $defwndproc_do_nccalcsize (local.get $hwnd))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_DESTROY ----------

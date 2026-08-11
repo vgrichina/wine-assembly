@@ -39,24 +39,24 @@ const seq = [
   `88:png:${PLAIN_PNG}`,
   ...ctrlA(92),
 
-  // Formatting toolbar y=80; button centers found from the visible
-  // ToolbarWindow32 row after MFC creates the formatting bar.
-  '104:click:102:80', // Bold
+  // Formatting toolbar y=80. The font/size combobox fields are real child
+  // surfaces now, so the B/I/U buttons sit to their right.
+  '104:click:320:80', // Bold
   '118:click:40:150',
   ...ctrlA(122),
   '136:dump-focus-charformat:bold',
 
-  '146:click:125:80', // Italic
+  '146:click:342:80', // Italic
   '160:click:40:150',
   ...ctrlA(164),
   '178:dump-focus-charformat:bold-italic',
 
-  '188:click:148:80', // Underline
+  '188:click:376:80', // Underline
   '202:click:40:150',
   ...ctrlA(206),
   '220:dump-focus-charformat:bold-italic-underline',
   '224:dump-focus-state:final',
-  `228:png:${FORMATTED_PNG}`,
+  `228:png-pixels:${FORMATTED_PNG}`,
   '234:stop',
 ];
 
@@ -67,7 +67,6 @@ const args = [
   '--max-batches=280',
   '--batch-size=50000',
   '--quiet-api',
-  '--no-close',
 ];
 
 console.log('$ node ' + args.map(a => JSON.stringify(a)).join(' '));
@@ -104,6 +103,8 @@ const bold = line('bold');
 const boldItalic = line('bold-italic');
 const all = line('bold-italic-underline');
 const finalState = out.split('\n').find(l => l.includes('dump-focus-state final:')) || '';
+const plainPngWritten = out.includes(`[input] png ${PLAIN_PNG} `);
+const formattedPngWritten = out.includes(`[input] png-pixels ${FORMATTED_PNG} `);
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }
@@ -119,9 +120,9 @@ check('toolbar Underline click preserved bold/italic and added underline',
 check('toolbar formatting clicks did not corrupt editor text',
   /text="style"/.test(finalState));
 check('plain toolbar-format screenshot written',
-  fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
+  plainPngWritten && fs.existsSync(PLAIN_PNG) && fs.statSync(PLAIN_PNG).size > 0);
 check('formatted toolbar-format screenshot written',
-  fs.existsSync(FORMATTED_PNG) && fs.statSync(FORMATTED_PNG).size > 0);
+  formattedPngWritten && fs.existsSync(FORMATTED_PNG) && fs.statSync(FORMATTED_PNG).size > 0);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));
 

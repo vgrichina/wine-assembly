@@ -380,21 +380,31 @@ native-editing path is alive.
   RichEdit below them. A later fix made the renderer recurse through
   non-own-surface MFC containers such as `AfxControlBar42`, clip oversized
   child surfaces to the top-level window, and expose visible toolbar button
-  placeholders instead of a blank gray band. Real bitmap icons and toolbar
-  combobox placement remain follow-up fidelity.
+  placeholders instead of a blank gray band. Real bitmap icons remain follow-up
+  fidelity.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
   successful no-op `LockWindowUpdate` handler for MFC's toolbar UI update
-  cycle. `test/test-wordpad-toolbar.js` now passes 13/13 and also captures
+  cycle. `test/test-wordpad-toolbar.js` captures
   `test/output/wordpad-richedit/toolbar-command-new.png`, proving the first
   Standard toolbar button opens WordPad's `New` dialog.
+- Fixed toolbar-hosted combobox visibility and placement. `GetWindowRect` now
+  reports screen coordinates for child HWNDs by using the WAT parent/client
+  tree, `COMBOBOX` controls get own child surfaces for composition above
+  toolbar surfaces, `ToolbarWindow32` item rectangles honor separator widths,
+  and toolbar-hosted combo creation flows later same-origin combo fields after
+  earlier combo siblings. `test/test-wordpad-toolbar.js` now asserts the
+  WordPad formatting toolbar's font and size comboboxes are visible,
+  non-negative, and separated.
 - Added minimal `GetDCEx` support on top of the existing host DC allocator and
   client/whole-window clip helpers. Added
   `test/test-wordpad-toolbar-format-buttons.js`, which passes 10/10 and
   captures `test/output/wordpad-richedit/toolbar-format-buttons.png`, proving
   formatting-toolbar Bold / Italic / Underline mouse clicks route through
-  WordPad UI and update native RichEdit charformat state.
+  WordPad UI and update native RichEdit charformat state. The final screenshot
+  uses the harness pixel-capture path and the test requires the capture log, so
+  a stale PNG cannot satisfy the visual assertion.
 - Added WAT-backed dynamic popup menu state for `CreatePopupMenu` plus
   `AppendMenuA/W` owner-draw items and `TrackPopupMenu` painting/hit-testing.
   WordPad's formatting-toolbar color button now opens the 17-row temporary
@@ -404,7 +414,9 @@ native-editing path is alive.
   applies the selected Win32 `COLORREF` directly to the WordPad RichEdit child.
   `test/test-wordpad-toolbar-color-menu.js` passes 13/13 and captures
   `toolbar-color-menu-popup.png` plus `toolbar-color-menu-blue.png`, proving
-  the toolbar color UI route applies Blue (`COLORREF 0x00ff0000`).
+  the toolbar color UI route applies Blue (`COLORREF 0x00ff0000`). The final
+  blue screenshot is also log-required and pixel-captured to avoid accepting
+  stale output from a prior emulator run.
 - Added ANSI `EnumFontFamiliesExA` / `EnumFontFamiliesA` callback support with
   the same one-face `Arial` enumeration as the Unicode path. This unblocks the
   formatting toolbar's ANSI font-list setup after the MFC toolbar subclass is
@@ -731,6 +743,7 @@ Acceptance:
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
 [x] WordPad toolbar button placeholders are visibly composited through nested
     MFC control-bar containers
+[x] WordPad formatting toolbar font/size comboboxes are visible and separated
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
 [x] WordPad toolbar/menu color command route applies Blue through app UI
@@ -783,6 +796,7 @@ Acceptance:
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
 [x] WordPad standard/format toolbar row layout is asserted
 [x] WordPad nested toolbar child surfaces visibly composite and clip to WordPad
+[x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage
