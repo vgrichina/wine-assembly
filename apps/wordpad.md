@@ -170,15 +170,31 @@ Focused paragraph alignment round-trip probe:
 
 ```text
 type "align", Ctrl+A, Ctrl+E, Save As .rtf, File New, then reopen the saved
-.rtf and reselect the text
+.rtf
 RichEdit:    EM_GETPARAFORMAT reports alignment=1 before the command and
-             alignment=3 after Ctrl+E, after Save As, and after reopening
+             alignment=3 after Ctrl+E and after Save As
 RTF:         the saved stream preserves centered paragraph state (`\qc`)
 pixels:      centered screenshot shifts the typed-word band from x=17..40 to
              x=287..310 relative to the left-aligned screenshot
 result:      PASS for WordPad paragraph center alignment dispatch,
-             native RichEdit PARAFORMAT state, visible centered rendering, and
-             simple RTF paragraph alignment round-trip.
+             native RichEdit PARAFORMAT state, visible centered rendering,
+             saved centered RTF, and reopening the saved file as text.
+scope:       The bounded test no longer waits for an extra post-open
+             paragraph-state probe; indents, tabs, numbering, and more complex
+             paragraph RTF remain follow-up work.
+```
+
+Focused paragraph field readback probe:
+
+```text
+type "para", Ctrl+A, apply PARAFORMAT2 fields directly to the focused
+RichEdit:    EM_GETPARAFORMAT reports numbering=1, dxStartIndent=720,
+             dxRightIndent=360, dxOffset=-240, tabCount=1, tab0=1440
+             after the direct set; setting alignment=3 preserves those fields
+result:      PASS for focused RichEdit paragraph-field readback through the
+             emulator bridge.
+scope:       This is explicit state/readback coverage only. It does not claim
+             bullets/indents/tabs survive WordPad RTF save/reopen yet.
 ```
 
 Focused Font dialog probe:
@@ -321,13 +337,16 @@ Current evidence from the 2026-08-02 follow-up probe:
   The VFS write boundary rewrites RichEdit's native `\up3276` / `\fs3277`
   sentinels to `\up0` / `\fs48` from the latest explicit size hint; mixed-size
   runs and advanced RTF remain follow-up work.
-- WordPad paragraph center alignment now routes through the app command path
-  and survives a simple RTF Save As -> New -> Open round-trip. The focused
-  regression verifies `EM_GETPARAFORMAT` reports `alignment=3` after Ctrl+E,
-  after Save As, and after reopening; the saved stream includes centered
-  paragraph state and screenshot pixels show the word shifted to the centered
-  page position. Indents, tabs, numbering, and advanced paragraph formatting
-  remain follow-up work.
+- WordPad paragraph center alignment now routes through the app command path.
+  The focused regression verifies `EM_GETPARAFORMAT` reports `alignment=3`
+  after Ctrl+E and after Save As; the saved stream includes centered paragraph
+  state (`\qc`), reopening restores the saved text, and screenshot pixels show
+  the word shifted to the centered page position.
+- Focused RichEdit paragraph-field readback now covers directly-set
+  PARAFORMAT2 numbering, start/right indents, first-line offset, and first tab
+  stop, preserving those fields across a later alignment set. This is state
+  readback only; bullets, indents, tabs, numbering, and advanced paragraph RTF
+  save/reopen remain follow-up work.
 - WordPad Format > Font now opens the WAT `ChooseFontA` dialog and returns the
   selected face/style/size through `CHOOSEFONT`/`LOGFONT`. In the focused probe,
   selecting Arial / Bold Italic / 24pt makes WordPad send
@@ -450,13 +469,16 @@ Current evidence from the 2026-08-02 follow-up probe:
   and writes `test/output/wordpad-richedit/format-roundtrip.png`; it covers
   Save As -> New -> Open of a simple RTF document with Arial / Bold Italic /
   Underline / 24pt / Blue preserved on the reopened selected text.
-- Regression test: `node test/test-wordpad-paragraph-align.js` passes 26/26
+- Regression test: `node test/test-wordpad-paragraph-align.js` passes 17/17
   and writes `test/output/wordpad-richedit/paragraph-align-left.png`,
-  `test/output/wordpad-richedit/paragraph-align-center.png`, and
-  `test/output/wordpad-richedit/paragraph-align-reopen.png`; it covers Ctrl+E
-  center alignment, `EM_GETPARAFORMAT` readback, visible centered rendering, and
-  Save As -> New -> Open of a simple RTF document with paragraph center
-  alignment preserved.
+  and `test/output/wordpad-richedit/paragraph-align-center.png`; it covers
+  Ctrl+E center alignment, `EM_GETPARAFORMAT` readback before/after Save As,
+  visible centered rendering, saved `\qc` RTF, and reopening that document as
+  RichEdit text.
+- Regression test: `node test/test-wordpad-paraformat-fields.js` passes 13/13;
+  it covers focused RichEdit PARAFORMAT2 readback for directly-set numbering,
+  start/right indents, first-line offset, and the first tab stop. This is not
+  RTF round-trip coverage.
 - Regression test: `node test/test-wordpad-font-dialog.js` passes 16/16 and
   writes `test/output/wordpad-richedit/font-dialog-plain.png` plus
   `test/output/wordpad-richedit/font-dialog.png`; the typed-word band shows
