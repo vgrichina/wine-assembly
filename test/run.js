@@ -386,6 +386,7 @@ async function main() {
   //   B:dump-listview[:LABEL] — log WAT ListView columns and cell text
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
+  //   B:wave-in-feed:FRAMES[:RATE:AMPLITUDE] — feed synthetic sine PCM to waveIn
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
@@ -599,6 +600,14 @@ async function main() {
           args: [0, 1, 2, 3].map(i => parseInt(parts[3 + i]) || 0) });
       } else if (kind === 'read-dword') {
         scheduledInput.push({ batch, action: 'read-dword', addr: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'wave-in-feed') {
+        scheduledInput.push({
+          batch,
+          action: 'wave-in-feed',
+          frames: Math.max(1, parseInt(parts[2]) || 24000),
+          rate: Math.max(1, parseInt(parts[3]) || 48000),
+          amplitude: Math.max(0, Math.min(1, parseFloat(parts[4]) || 0.6)),
+        });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
@@ -3657,6 +3666,13 @@ async function main() {
       } else if (ev.action === 'sleep-ms') {
         if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));
         logs.push(`[input] sleep-ms ${ev.ms} at batch ${batch}`);
+      } else if (ev.action === 'wave-in-feed') {
+        const samples = new Float32Array(ev.frames);
+        for (let i = 0; i < samples.length; i++) {
+          samples[i] = Math.sin((i * Math.PI * 2 * 440) / ev.rate) * ev.amplitude;
+        }
+        const written = h.wave_in_feed_pcm ? h.wave_in_feed_pcm(0, [samples], ev.rate) : 0;
+        logs.push(`[input] wave-in-feed frames=${ev.frames} rate=${ev.rate} written=${written} at batch ${batch}`);
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();

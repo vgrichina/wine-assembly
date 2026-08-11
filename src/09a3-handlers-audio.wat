@@ -854,48 +854,87 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 853: waveInOpen — return MMSYSERR_NOERROR (0), fill handle
+  ;; 853: waveInOpen(lphWaveIn, device, format, callback, instance, flags)
   (func $handle_waveInOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; waveInOpen(lphWaveIn, uDeviceID, lpFormatex, dwCallback, dwInstance, fdwOpen)
-    ;; If lphWaveIn != NULL, write a fake handle
+    (local $fmt_wa i32) (local $rate i32) (local $ch i32) (local $bits i32)
+    (local $flags i32) (local $cbType i32) (local $handle i32)
+    (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; WAVE_FORMAT_QUERY validates only and must not acquire microphone access.
+    (if (i32.and (local.get $flags) (i32.const 1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    (local.set $fmt_wa (call $g2w (local.get $arg2)))
+    (local.set $rate (i32.load offset=4 (local.get $fmt_wa)))
+    (local.set $ch (i32.load16_u offset=2 (local.get $fmt_wa)))
+    (local.set $bits (i32.load16_u offset=14 (local.get $fmt_wa)))
+    (local.set $cbType (i32.and (i32.shr_u (local.get $flags) (i32.const 16)) (i32.const 7)))
+    (local.set $handle (call $host_wave_in_open
+      (local.get $rate) (local.get $ch) (local.get $bits)
+      (local.get $arg3) (local.get $arg4) (local.get $cbType)))
     (if (local.get $arg0)
-      (then (call $gs32 (local.get $arg0) (i32.const 0x000A0001))))  ;; fake waveIn handle
-    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+      (then (call $gs32 (local.get $arg0) (local.get $handle))))
+    (if (i32.eq (local.get $cbType) (i32.const 1))
+      (then
+        (drop (call $post_queue_push
+          (local.get $arg3) (i32.const 0x03BE) (local.get $handle) (i32.const 0)))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
-  ;; 854: waveInClose — return MMSYSERR_NOERROR
+  ;; 854: waveInClose
   (func $handle_waveInClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_wave_in_close (local.get $arg0)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 855: waveInStart — return MMSYSERR_NOERROR
+  ;; 855: waveInStart
   (func $handle_waveInStart (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_wave_in_start (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 856: waveInStop — return MMSYSERR_NOERROR
+  ;; 856: waveInStop
   (func $handle_waveInStop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_wave_in_stop (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 857: waveInReset — return MMSYSERR_NOERROR
+  ;; 857: waveInReset
   (func $handle_waveInReset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_wave_in_reset (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 858: waveInPrepareHeader — return MMSYSERR_NOERROR
+  ;; 858: waveInPrepareHeader — set WHDR_PREPARED
   (func $handle_waveInPrepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store offset=16 (local.get $wa)
+      (i32.or (i32.load offset=16 (local.get $wa)) (i32.const 2)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 859: waveInUnprepareHeader — return MMSYSERR_NOERROR
+  ;; 859: waveInUnprepareHeader — clear PREPARED/INQUEUE, retain DONE
   (func $handle_waveInUnprepareHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store offset=16 (local.get $wa)
+      (i32.and (i32.load offset=16 (local.get $wa)) (i32.const 0xFFFFFFED)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 860: waveInAddBuffer — return MMSYSERR_NOERROR
+  ;; 860: waveInAddBuffer — queue the guest WAVEHDR for capture
   (func $handle_waveInAddBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $wa i32) (local $data_ga i32) (local $length i32)
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (local.set $data_ga (i32.load (local.get $wa)))
+    (local.set $length (i32.load offset=4 (local.get $wa)))
+    (i32.store offset=8 (local.get $wa) (i32.const 0))
+    (i32.store offset=16 (local.get $wa)
+      (i32.or
+        (i32.and (i32.load offset=16 (local.get $wa)) (i32.const 0xFFFFFFFE))
+        (i32.const 0x12))) ;; PREPARED | INQUEUE
+    (global.set $eax (call $host_wave_in_add_buffer
+      (local.get $arg0) (local.get $wa) (local.get $arg1)
+      (call $g2w (local.get $data_ga)) (local.get $length)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 861: waveInGetNumDevs — return 1 (one input device)

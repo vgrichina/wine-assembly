@@ -30,6 +30,7 @@ UNIT=(
   test/test-midi-mci.js
   test/test-thread-manager.js
   test/test-waveout-audio.js
+  test/test-wavein-audio.js
   test/test-core-no-app-fast-paths.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js
@@ -49,6 +50,7 @@ UNIT=(
 
 E2E=(
   test/test-taskman-tasks.js
+  test/test-sound-recorder-audio.js
   test/test-notepad.js
   test/test-notepad-find.js
   test/test-notepad-menu.js

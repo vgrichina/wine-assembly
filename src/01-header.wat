@@ -434,6 +434,14 @@
   ;; wave_out_reset(handle) → cancels queued playback and flushes WHDR_DONE callbacks
   (import "host" "wave_out_close" (func $host_wave_out_close (param i32) (result i32)))
   ;; wave_out_close(handle) → 0=ok
+  (import "host" "wave_in_open" (func $host_wave_in_open (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; wave_in_open(rate, channels, bits, callback, instance, callbackType) → handle
+  (import "host" "wave_in_close" (func $host_wave_in_close (param i32) (result i32)))
+  (import "host" "wave_in_start" (func $host_wave_in_start (param i32) (result i32)))
+  (import "host" "wave_in_stop" (func $host_wave_in_stop (param i32) (result i32)))
+  (import "host" "wave_in_reset" (func $host_wave_in_reset (param i32) (result i32)))
+  (import "host" "wave_in_add_buffer" (func $host_wave_in_add_buffer (param i32 i32 i32 i32 i32) (result i32)))
+  ;; wave_in_add_buffer(handle, waveHdrWA, waveHdrGA, dataWA, byteLength) → 0=ok
   (import "host" "wave_out_get_pos" (func $host_wave_out_get_pos (param i32) (result i32)))
   ;; wave_out_get_pos(handle) → bytes played
   (import "host" "wave_out_set_volume" (func $host_wave_out_set_volume (param i32 i32)))
