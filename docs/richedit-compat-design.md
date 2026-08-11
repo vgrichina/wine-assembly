@@ -86,10 +86,9 @@ wheel/arrow/thumb/canvas scrolling, captures the license/options/folder/
 installing screenshots, reaches Installing Files, extracts the expected VFS
 files, and exits cleanly after the final Finish command.
 
-Related common-control scroll status: WAT-native `SysTreeView32` now reuses the
-same shared vertical scrollbar hit/drag math as the RichEdit/Edit/ListBox
-paths. `SysListView32` is still a blank/minimal pane, so ListView item/header
-storage should come before attempting scroll reuse there.
+Related common-control scroll status: WAT-native `SysTreeView32` and the
+bounded report-style `SysListView32` subset now reuse the same shared vertical
+scrollbar hit/drag math as the RichEdit/Edit/ListBox paths.
 
 That means these pieces are already good enough for basic insertion:
 
@@ -148,10 +147,20 @@ native-editing path is alive.
 - Added `test/test-treeview-scroll.js`, a standalone WAT regression that creates
   a TreeView, inserts 12 rows, verifies wheel/arrow/page/thumb scroll behavior,
   hit-testing through the scroll offset, selection, and slot cleanup.
-- Postponed `SysListView32` scroll reuse because the current implementation is
-  still a minimal blank pane. The next useful ListView slice is item/header
-  state plus a focused regression before wiring scrollbar behavior.
-- Updated `apps/regedit.md` to separate focused TreeView scroll coverage from
+- Added bounded report-style `SysListView32` state: columns, fixed 8-subitem
+  row text, item count, single-row selection, top index, `LVM_GETITEMTEXTA`,
+  `LVM_SETITEMTEXTA`, `LVM_HITTEST`, `LVM_ENSUREVISIBLE`, `LVM_SCROLL`, and
+  `LVM_*ITEMSTATE` coverage.
+- Reused the shared vertical scrollbar helpers for ListView wheel,
+  `WM_VSCROLL`, arrow/page clicks, and thumb drag.
+- Added `test/test-listview.js`, a standalone WAT regression that creates a
+  ListView, inserts report columns plus 12 rows, verifies text/subitem
+  round-trips, hit-testing through the scroll offset, selection, scrollbar
+  behavior, and cleanup.
+- Kept advanced ListView behavior postponed: icon/small-icon/list layouts,
+  image lists, sorting, custom draw, label edit, full notifications, and
+  high-fidelity header interaction.
+- Updated `apps/regedit.md` to separate focused TreeView/ListView coverage from
   current app-level RegEdit screenshot status.
 
 ### 2026-08-03 implementation progress
@@ -667,7 +676,8 @@ Acceptance:
 [x] WordPad toolbar/menu color route has explicit coverage
 [x] Installer/license RichEdit panes render and scroll
 [x] WAT TreeView reuses shared vertical scrollbar hit/drag math
-[ ] SysListView32 has item/header state and reusable scrollbar behavior
+[x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
+[ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes
 ```
 

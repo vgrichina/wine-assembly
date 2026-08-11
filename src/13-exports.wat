@@ -1309,6 +1309,79 @@
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (call $tv_max_scroll_for_h (i32.shr_u (local.get $sz) (i32.const 16))))
 
+  ;; Test helper: create a parent + SysListView32 child, return listview hwnd.
+  ;; This exercises the WAT-native ListView wndproc without booting a guest EXE.
+  (func (export "test_create_listview")
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $style i32) (param $ex_style i32) (result i32)
+    (local $parent i32) (local $lv i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $lv (call $ctrl_create_child (local.get $parent) (i32.const 18) (i32.const 100)
+                     (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+                     (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
+    (call $ctrl_set_ex_style (local.get $lv) (local.get $ex_style))
+    (local.get $lv))
+
+  (func (export "listview_get_count") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load (call $g2w (local.get $s))))
+
+  (func (export "listview_get_column_count") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=16 (call $g2w (local.get $s))))
+
+  (func (export "listview_get_top_index") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (i32.load offset=36 (call $g2w (local.get $s))))
+
+  (func (export "listview_get_selected_index") (param $hwnd i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
+    (i32.load offset=32 (call $g2w (local.get $s))))
+
+  (func (export "listview_get_visible_rows") (param $hwnd i32) (result i32)
+    (local $s i32) (local $sw i32) (local $sz i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (call $lv_visible_rows_for_h (local.get $sw) (i32.shr_u (local.get $sz) (i32.const 16))))
+
+  (func (export "listview_get_max_scroll") (param $hwnd i32) (result i32)
+    (local $s i32) (local $sw i32) (local $sz i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (call $lv_max_scroll_for_h (local.get $sw) (i32.shr_u (local.get $sz) (i32.const 16))))
+
+  (func (export "listview_get_column_width") (param $hwnd i32) (param $idx i32) (result i32)
+    (local $s i32) (local $sw i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (call $g2w (i32.load offset=24 (local.get $sw))) (i32.mul (local.get $idx) (i32.const 4)))))
+
+  (func (export "listview_get_item_text")
+    (param $hwnd i32) (param $idx i32) (param $sub i32) (param $dest_guest i32) (param $max i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (call $lv_copy_cell_text (call $g2w (local.get $s))
+      (local.get $idx) (local.get $sub) (local.get $dest_guest) (local.get $max)))
+
   ;; Test helper: create a parent dlg + listbox child, return listbox hwnd.
   ;; The parent is registered as WNDPROC_CTRL_NATIVE with no class tag (so
   ;; control_wndproc_dispatch returns 0 = DefWindowProc) and exists only so
