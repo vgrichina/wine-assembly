@@ -115,8 +115,9 @@ result:    PASS for ToolbarWindow32 layout, bounded formatting toolbar width,
            visible bitmap icons, populated combobox field paint, fully visible
            formatting buttons, disabled Standard toolbar icon dimming,
            command-ID-backed button hit testing, and the MFC toolbar command
-           path for File New. Common-control built-in strips, true
-           disabled/highlight image-list remapping, and advanced toolbar UI
+           path for File New. Minimal `HINST_COMMCTRL` built-in toolbar strips
+           are synthesized for other common-control toolbar callers; true
+           disabled/highlight image-list remapping and advanced toolbar UI
            state remain follow-up fidelity.
 ```
 
@@ -305,9 +306,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   control bar, avoiding the previous 1512px-wide child allocation in a 394px
   frame. Toolbar `TB_ADDBITMAP` app strips now render through a
   `TransparentBlt`-style `RGB(192,192,192)` color-key path from
-  `TBBUTTON.iBitmap`; common-control built-in strips, disabled/highlight
-  image-list remapping, and advanced toolbar UI state remain follow-up
-  fidelity.
+  `TBBUTTON.iBitmap`; minimal synthetic `HINST_COMMCTRL` standard/view/history
+  strips are also available for common-control toolbar callers. True
+  disabled/highlight image-list remapping and advanced toolbar UI state remain
+  follow-up fidelity.
 - The formatting toolbar now caps oversized toolbar-hosted combo item rects
   against the containing 394px control bar. WordPad still owns its requested
   240px font combo HWND, but the toolbar pack uses a tighter item rect so the
@@ -535,10 +537,12 @@ Current evidence from the 2026-08-11 follow-up probe:
   including colored icon pixels, reduced disabled-button color pixels, and the
   fully visible formatting color button so placeholder-only, enabled-looking
   disabled icons, or clipped buttons regress.
-- Direct WAT regression test: `node test/test-toolbar-insert.js` passes 12/12;
+- Direct WAT regression test: `node test/test-toolbar-insert.js` passes 15/15;
   it creates a standalone `ToolbarWindow32`, adds three known `TBBUTTON`
   records, inserts one in the middle, and verifies `TB_GETBUTTON` preserves
-  command/image order plus monotonic `TB_GETITEMRECT` geometry.
+  command/image order plus monotonic `TB_GETITEMRECT` geometry. It also covers
+  `TB_ADDBITMAP` loading `HINST_COMMCTRL` standard small-color strips through
+  the host and asserts real colored bitmap pixels.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor after wheel and thumb-drag

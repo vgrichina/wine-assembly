@@ -405,9 +405,10 @@ native-editing path is alive.
   instead of placeholder-only squares. The harness can dump
   `ToolbarWindow32` button records/rects, and WordPad's disabled Standard
   toolbar commands are now both state-asserted and visually dimmed with a
-  BTNFACE crosshatch. Common-control built-in strips, true disabled/highlight
-  image-list remapping, and advanced toolbar UI state remain follow-up
-  fidelity.
+  BTNFACE crosshatch. Minimal synthetic `HINST_COMMCTRL` standard/view/history
+  toolbar strips are available for common-control toolbar callers; true
+  disabled/highlight image-list remapping and advanced toolbar UI state remain
+  follow-up fidelity.
 - Added width-aware packing for large toolbar-hosted combo item rects. This
   mirrors the bounded native-common-control behavior WordPad relies on: the
   240px font combo HWND remains intact, but the toolbar item rect is capped
@@ -422,7 +423,8 @@ native-editing path is alive.
   cycle. `TB_INSERTBUTTONA` now shifts stored `TBBUTTON` records with
   overlap-safe backward copying, preventing MFC toolbar insertion from
   duplicating later records when source and destination ranges overlap.
-  `test/test-toolbar-insert.js` covers this directly, and
+  `test/test-toolbar-insert.js` covers overlap-safe insertion plus
+  `TB_ADDBITMAP` loading a colored `HINST_COMMCTRL` standard small-color strip.
   `test/test-wordpad-toolbar.js` captures
   `test/output/wordpad-richedit/toolbar-command-new.png`, proving the first
   Standard toolbar button opens WordPad's `New` dialog.
@@ -784,6 +786,7 @@ Acceptance:
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
 [x] WordPad toolbar app bitmap strips render visible color-keyed icon pixels
+[x] ToolbarWindow32 can load minimal `HINST_COMMCTRL` built-in color strips
 [x] WordPad disabled Standard-toolbar commands are state-dumped and visibly dimmed
 [x] WordPad toolbar fallback buttons remain visibly composited through nested
     MFC control-bar containers when no strip is available
@@ -841,6 +844,7 @@ Acceptance:
 [x] WordPad standard/format toolbar row layout is asserted
 [x] WordPad nested toolbar child surfaces visibly composite and clip to WordPad
 [x] WordPad toolbar bitmap icon pixels are explicitly asserted
+[x] ToolbarWindow32 `TB_ADDBITMAP` covers `HINST_COMMCTRL` built-in strips
 [x] WordPad disabled toolbar icon dimming is explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted

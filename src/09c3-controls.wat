@@ -4481,16 +4481,15 @@
                 (local.set $bmp (i32.load offset=4 (local.get $src))))
               (else
                 ;; hInst == HINST_COMMCTRL (-1) names a built-in common-control
-                ;; strip. We do not synthesize those yet; app resource strips
-                ;; are real RT_BITMAP resources and can be loaded here.
-                (if (i32.ne (i32.load (local.get $src)) (i32.const -1))
+                ;; strip; other non-NULL hInst values name app/DLL resources.
+                (local.set $cmd (i32.load offset=4 (local.get $src)))
+                (if (i32.le_u (local.get $cmd) (i32.const 0xFFFF))
                   (then
-                    (local.set $bmp
-                      (call $host_gdi_load_bitmap
-                        (i32.load (local.get $src))
-                        (if (result i32) (i32.gt_u (i32.load offset=4 (local.get $src)) (i32.const 0xFFFF))
-                          (then (i32.load offset=4 (local.get $src)))
-                          (else (i32.and (i32.load offset=4 (local.get $src)) (i32.const 0xFFFF))))))))))))
+                    (local.set $cmd (i32.and (local.get $cmd) (i32.const 0xFFFF)))))
+                (local.set $bmp
+                  (call $host_gdi_load_bitmap
+                    (i32.load (local.get $src))
+                    (local.get $cmd)))))))
         (if (local.get $bmp)
           (then
             (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
