@@ -17,9 +17,12 @@ const LVM_GETITEMCOUNT = 0x1004;
 const LVM_INSERTITEMA = 0x1007;
 const LVM_DELETEALLITEMS = 0x1009;
 const LVM_GETNEXTITEM = 0x100C;
+const LVM_GETITEMRECT = 0x100E;
 const LVM_HITTEST = 0x1012;
 const LVM_ENSUREVISIBLE = 0x1013;
 const LVM_SCROLL = 0x1014;
+const LVM_GETCOLUMNA = 0x1019;
+const LVM_SETCOLUMNA = 0x101A;
 const LVM_INSERTCOLUMNA = 0x101B;
 const LVM_GETCOLUMNWIDTH = 0x101D;
 const LVM_GETTOPINDEX = 0x1027;
@@ -29,6 +32,7 @@ const LVM_GETITEMSTATE = 0x102C;
 const LVM_GETITEMTEXTA = 0x102D;
 const LVM_SETITEMTEXTA = 0x102E;
 const LVM_GETSELECTEDCOUNT = 0x1032;
+const LVM_GETSUBITEMRECT = 0x1038;
 const WM_PAINT = 0x000F;
 const WM_VSCROLL = 0x0115;
 const WM_LBUTTONDOWN = 0x0201;
@@ -39,8 +43,11 @@ const LVIF_TEXT = 0x0001;
 const LVIF_STATE = 0x0008;
 const LVIS_SELECTED = 0x0002;
 const LVNI_SELECTED = 0x0002;
+const LVIR_BOUNDS = 0x0000;
+const LVIR_LABEL = 0x0002;
 const LVCF_WIDTH = 0x0002;
 const LVCF_TEXT = 0x0004;
+const LVCF_SUBITEM = 0x0008;
 const SB_THUMBTRACK = 5;
 
 async function main() {
@@ -100,6 +107,31 @@ async function main() {
     dv.setUint32(p + 12, writeStr(text), true);
     return e.send_message(lv, LVM_INSERTCOLUMNA, idx, g);
   }
+  function getColumn(idx) {
+    const g = e.guest_alloc(32);
+    const textG = e.guest_alloc(64);
+    const p = wa(g);
+    u8.fill(0, p, p + 32);
+    dv.setUint32(p + 0, LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM, true);
+    dv.setUint32(p + 12, textG, true);
+    dv.setInt32(p + 16, 64, true);
+    const ok = e.send_message(lv, LVM_GETCOLUMNA, idx, g);
+    return {
+      ok,
+      width: dv.getInt32(p + 8, true),
+      text: readStr(textG, 64),
+      subItem: dv.getInt32(p + 20, true),
+    };
+  }
+  function setColumn(idx, text, width) {
+    const g = e.guest_alloc(32);
+    const p = wa(g);
+    u8.fill(0, p, p + 32);
+    dv.setUint32(p + 0, LVCF_TEXT | LVCF_WIDTH, true);
+    dv.setInt32(p + 8, width, true);
+    dv.setUint32(p + 12, writeStr(text), true);
+    return e.send_message(lv, LVM_SETCOLUMNA, idx, g);
+  }
   function insertItem(idx, text) {
     const g = e.guest_alloc(40);
     const p = wa(g);
@@ -129,6 +161,21 @@ async function main() {
     const len = e.send_message(lv, LVM_GETITEMTEXTA, item, itemG);
     return { len, text: readStr(textG, 64) };
   }
+  function getRect(msg, item, leftInput, topInput = 0) {
+    const g = e.guest_alloc(16);
+    const p = wa(g);
+    u8.fill(0, p, p + 16);
+    dv.setInt32(p + 0, leftInput, true);
+    dv.setInt32(p + 4, topInput, true);
+    const ok = e.send_message(lv, msg, item, g);
+    return {
+      ok,
+      left: dv.getInt32(p + 0, true),
+      top: dv.getInt32(p + 4, true),
+      right: dv.getInt32(p + 8, true),
+      bottom: dv.getInt32(p + 12, true),
+    };
+  }
 
   const baselineSlots = e.wnd_count_used();
   check('SysListView32 is protected from registered-class fallback', e.test_is_builtin_control_class(writeStr('SysListView32')) === 1);
@@ -141,6 +188,12 @@ async function main() {
   check('column count is 2', e.listview_get_column_count(lv) === 2);
   check('column width round-trips through message', e.send_message(lv, LVM_GETCOLUMNWIDTH, 0, 0) === 120);
   check('column width export agrees', e.listview_get_column_width(lv, 1) === 80);
+  const col0 = getColumn(0);
+  check('LVM_GETCOLUMNA returns stored first header', col0.ok === 1 && col0.width === 120 && col0.text === 'Name' && col0.subItem === 0, JSON.stringify(col0));
+  check('LVM_SETCOLUMNA updates second header', setColumn(1, 'Kind', 90) === 1);
+  const col1 = getColumn(1);
+  check('LVM_GETCOLUMNA returns updated second header', col1.ok === 1 && col1.width === 90 && col1.text === 'Kind' && col1.subItem === 1, JSON.stringify(col1));
+  check('LVM_GETCOLUMNWIDTH follows LVM_SETCOLUMNA', e.send_message(lv, LVM_GETCOLUMNWIDTH, 1, 0) === 90);
 
   for (let i = 0; i < 12; i++) {
     check(`LVM_INSERTITEMA row ${i}`, insertItem(i, `Value ${i}`) === i);
@@ -178,6 +231,16 @@ async function main() {
   dv.setInt32(htp + 4, 20, true);
   check('LVM_HITTEST maps top row through scroll offset', e.send_message(lv, LVM_HITTEST, 0, ht) === 3);
   check('LVM_HITTEST writes scrolled iItem', dv.getInt32(htp + 12, true) === 3);
+  dv.setInt32(htp + 0, 130, true);
+  dv.setInt32(htp + 4, 20, true);
+  check('LVM_HITTEST writes report subitem index', e.send_message(lv, LVM_HITTEST, 0, ht) === 3 && dv.getInt32(htp + 16, true) === 1);
+
+  const itemRect = getRect(LVM_GETITEMRECT, 5, LVIR_BOUNDS);
+  check('LVM_GETITEMRECT returns scrolled row bounds', itemRect.ok === 1 && itemRect.left === 0 && itemRect.top === 50 && itemRect.right === 204 && itemRect.bottom === 66, JSON.stringify(itemRect));
+  const subRect = getRect(LVM_GETSUBITEMRECT, 5, LVIR_BOUNDS, 1);
+  check('LVM_GETSUBITEMRECT returns second-column bounds', subRect.ok === 1 && subRect.left === 120 && subRect.top === 50 && subRect.right === 210 && subRect.bottom === 66, JSON.stringify(subRect));
+  const subLabelRect = getRect(LVM_GETSUBITEMRECT, 5, LVIR_LABEL, 1);
+  check('LVM_GETSUBITEMRECT honors label inset', subLabelRect.ok === 1 && subLabelRect.left === 124 && subLabelRect.top === 50 && subLabelRect.right === 210 && subLabelRect.bottom === 66, JSON.stringify(subLabelRect));
 
   e.send_message(lv, WM_LBUTTONDOWN, 1, makeLParam(20, 38));
   check('click on visible row 1 selects underlying row 4', e.listview_get_selected_index(lv) === 4);

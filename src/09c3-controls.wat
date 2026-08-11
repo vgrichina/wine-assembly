@@ -3285,6 +3285,46 @@
       (then (local.set $max (i32.const 0))))
     (local.get $max))
 
+  (func $lv_content_right_for_size (param $sw i32) (param $w i32) (param $h i32) (result i32)
+    (if (i32.and
+          (i32.gt_s (call $lv_max_scroll_for_h (local.get $sw) (local.get $h)) (i32.const 0))
+          (i32.gt_s (local.get $w) (i32.const 16)))
+      (then (return (i32.sub (local.get $w) (i32.const 16)))))
+    (local.get $w))
+
+  (func $lv_report_col_width (param $sw i32) (param $idx i32) (result i32)
+    (local $col_count i32) (local $width i32)
+    (local.set $col_count (i32.load offset=16 (local.get $sw)))
+    (if (i32.eqz (local.get $col_count))
+      (then
+        (if (i32.eq (local.get $idx) (i32.const 0))
+          (then (return (i32.const 120))))
+        (return (i32.const 0))))
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (local.get $col_count)))
+      (then (return (i32.const 0))))
+    (local.set $width
+      (i32.load
+        (i32.add (call $g2w (i32.load offset=24 (local.get $sw)))
+                 (i32.mul (local.get $idx) (i32.const 4)))))
+    (if (i32.le_s (local.get $width) (i32.const 0))
+      (then (local.set $width (i32.const 80))))
+    (local.get $width))
+
+  (func $lv_report_col_left (param $sw i32) (param $idx i32) (result i32)
+    (local $i i32) (local $x i32) (local $width i32)
+    (local.set $i (i32.const 0))
+    (local.set $x (i32.const 0))
+    (block $done (loop $cols
+      (br_if $done (i32.ge_s (local.get $i) (local.get $idx)))
+      (local.set $width (call $lv_report_col_width (local.get $sw) (local.get $i)))
+      (if (i32.le_s (local.get $width) (i32.const 0))
+        (then (return (local.get $x))))
+      (local.set $x (i32.add (local.get $x) (local.get $width)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cols)))
+    (local.get $x))
+
   (func $lv_cell_addr (param $sw i32) (param $item i32) (param $sub i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
@@ -3372,6 +3412,29 @@
                   (i32.ge_s (local.get $sub) (i32.const 8))))
       (then (return)))
     (local.set $cell (call $lv_cell_addr (local.get $sw) (local.get $item) (local.get $sub)))
+    (local.set $old (i32.load (local.get $cell)))
+    (if (local.get $old)
+      (then (call $heap_free (local.get $old))))
+    (i32.store (local.get $cell) (i32.const 0))
+    (if (i32.or (i32.eqz (local.get $src_g)) (i32.eq (local.get $src_g) (i32.const -1)))
+      (then (return)))
+    (local.set $src_w (call $g2w (local.get $src_g)))
+    (local.set $len (call $strlen (local.get $src_w)))
+    (local.set $copy_g (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (call $memcpy (call $g2w (local.get $copy_g)) (local.get $src_w) (local.get $len))
+    (i32.store8 (i32.add (call $g2w (local.get $copy_g)) (local.get $len)) (i32.const 0))
+    (i32.store (local.get $cell) (local.get $copy_g)))
+
+  (func $lv_set_col_text (param $sw i32) (param $idx i32) (param $src_g i32)
+    (local $cell i32) (local $old i32) (local $src_w i32) (local $len i32) (local $copy_g i32)
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+      (then (return)))
+    (if (i32.eqz (i32.load offset=28 (local.get $sw)))
+      (then (return)))
+    (local.set $cell
+      (i32.add (call $g2w (i32.load offset=28 (local.get $sw)))
+               (i32.mul (local.get $idx) (i32.const 4))))
     (local.set $old (i32.load (local.get $cell)))
     (if (local.get $old)
       (then (call $heap_free (local.get $old))))
@@ -3619,6 +3682,71 @@
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (local.get $idx))))
 
+    ;; LVM_GETCOLUMNA / LVM_SETCOLUMNA
+    (if (i32.eq (local.get $msg) (i32.const 0x1019))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $col_w (call $g2w (local.get $lParam)))
+        (local.set $mask (i32.load (local.get $col_w)))
+        (if (i32.and (local.get $mask) (i32.const 0x0001))
+          (then (i32.store offset=4 (local.get $col_w) (i32.const 0))))
+        (if (i32.and (local.get $mask) (i32.const 0x0002))
+          (then (i32.store offset=8 (local.get $col_w)
+            (call $lv_report_col_width (local.get $sw) (local.get $idx)))))
+        (if (i32.and (local.get $mask) (i32.const 0x0004))
+          (then
+            (local.set $dst (i32.load offset=12 (local.get $col_w)))
+            (local.set $max (i32.load offset=16 (local.get $col_w)))
+            (if (i32.and (i32.ne (local.get $dst) (i32.const 0))
+                         (i32.gt_s (local.get $max) (i32.const 0)))
+              (then
+                (local.set $dst (call $g2w (local.get $dst)))
+                (local.set $ptr
+                  (i32.load
+                    (i32.add (call $g2w (i32.load offset=28 (local.get $sw)))
+                             (i32.mul (local.get $idx) (i32.const 4)))))
+                (if (local.get $ptr)
+                  (then
+                    (local.set $src (call $g2w (local.get $ptr)))
+                    (local.set $text_len (call $strlen (local.get $src)))
+                    (if (i32.ge_u (local.get $text_len) (local.get $max))
+                      (then (local.set $text_len (i32.sub (local.get $max) (i32.const 1)))))
+                    (if (local.get $text_len)
+                      (then (call $memcpy (local.get $dst) (local.get $src) (local.get $text_len))))
+                    (i32.store8 (i32.add (local.get $dst) (local.get $text_len)) (i32.const 0)))
+                  (else
+                    (i32.store8 (local.get $dst) (i32.const 0))))))))
+        (if (i32.and (local.get $mask) (i32.const 0x0008))
+          (then (i32.store offset=20 (local.get $col_w) (local.get $idx))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x101A))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $col_w (call $g2w (local.get $lParam)))
+        (local.set $mask (i32.load (local.get $col_w)))
+        (if (i32.and (local.get $mask) (i32.const 0x0002))
+          (then
+            (local.set $width (i32.load offset=8 (local.get $col_w)))
+            (if (i32.le_s (local.get $width) (i32.const 0))
+              (then (local.set $width (i32.const 80))))
+            (i32.store
+              (i32.add (call $g2w (i32.load offset=24 (local.get $sw)))
+                       (i32.mul (local.get $idx) (i32.const 4)))
+              (local.get $width))))
+        (if (i32.and (local.get $mask) (i32.const 0x0004))
+          (then
+            (call $lv_set_col_text (local.get $sw) (local.get $idx) (i32.load offset=12 (local.get $col_w)))))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
+
     ;; LVM_GETCOLUMNWIDTH / LVM_SETCOLUMNWIDTH
     (if (i32.eq (local.get $msg) (i32.const 0x101D))
       (then
@@ -3767,6 +3895,77 @@
           (then (return (local.get $idx))))
         (return (i32.const -1))))
 
+    ;; LVM_GETITEMRECT
+    (if (i32.eq (local.get $msg) (i32.const 0x100E))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $code (i32.load (local.get $ptr)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $header_h (call $lv_header_h (local.get $sw)))
+        (local.set $content_right (call $lv_content_right_for_size (local.get $sw) (local.get $w) (local.get $h)))
+        (local.set $y
+          (i32.add (local.get $header_h)
+            (i32.mul
+              (i32.sub (local.get $idx) (i32.load offset=36 (local.get $sw)))
+              (i32.const 16))))
+        (local.set $col_w (call $lv_report_col_width (local.get $sw) (i32.const 0)))
+        (if (i32.le_s (local.get $col_w) (i32.const 0))
+          (then (local.set $col_w (local.get $content_right))))
+        (if (i32.or (i32.eq (local.get $code) (i32.const 1))
+                    (i32.eq (local.get $code) (i32.const 2)))
+          (then
+            (i32.store (local.get $ptr)
+              (select (i32.const 4) (i32.const 0)
+                      (i32.gt_s (local.get $content_right) (i32.const 4))))
+            (i32.store offset=8 (local.get $ptr)
+              (select (local.get $col_w) (local.get $content_right)
+                      (i32.lt_s (local.get $col_w) (local.get $content_right)))))
+          (else
+            (i32.store (local.get $ptr) (i32.const 0))
+            (i32.store offset=8 (local.get $ptr) (local.get $content_right))))
+        (i32.store offset=4 (local.get $ptr) (local.get $y))
+        (i32.store offset=12 (local.get $ptr) (i32.add (local.get $y) (i32.const 16)))
+        (return (i32.const 1))))
+
+    ;; LVM_GETSUBITEMRECT
+    (if (i32.eq (local.get $msg) (i32.const 0x1038))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $code (i32.load (local.get $ptr)))
+        (local.set $sub (i32.load offset=4 (local.get $ptr)))
+        (local.set $col_w (call $lv_report_col_width (local.get $sw) (local.get $sub)))
+        (if (i32.le_s (local.get $col_w) (i32.const 0))
+          (then (return (i32.const 0))))
+        (local.set $col_x (call $lv_report_col_left (local.get $sw) (local.get $sub)))
+        (local.set $header_h (call $lv_header_h (local.get $sw)))
+        (local.set $y
+          (i32.add (local.get $header_h)
+            (i32.mul
+              (i32.sub (local.get $idx) (i32.load offset=36 (local.get $sw)))
+              (i32.const 16))))
+        (if (i32.or (i32.eq (local.get $code) (i32.const 1))
+                    (i32.eq (local.get $code) (i32.const 2)))
+          (then
+            (i32.store (local.get $ptr) (i32.add (local.get $col_x) (i32.const 4))))
+          (else
+            (i32.store (local.get $ptr) (local.get $col_x))))
+        (i32.store offset=4 (local.get $ptr) (local.get $y))
+        (i32.store offset=8 (local.get $ptr) (i32.add (local.get $col_x) (local.get $col_w)))
+        (i32.store offset=12 (local.get $ptr) (i32.add (local.get $y) (i32.const 16)))
+        (return (i32.const 1))))
+
     ;; LVM_GETTOPINDEX / LVM_GETCOUNTPERPAGE / LVM_ENSUREVISIBLE / LVM_SCROLL
     (if (i32.eq (local.get $msg) (i32.const 0x1027))
       (then (return (i32.load offset=36 (local.get $sw)))))
@@ -3821,9 +4020,29 @@
             (i32.store offset=12 (local.get $ptr) (i32.const -1))
             (i32.store offset=16 (local.get $ptr) (i32.const 0))
             (return (i32.const -1))))
+        (local.set $sub (i32.const 0))
+        (local.set $col_count (i32.load offset=16 (local.get $sw)))
+        (if (i32.eqz (local.get $col_count))
+          (then (local.set $col_count (i32.const 1))))
+        (local.set $col_x (i32.const 0))
+        (local.set $col_idx (i32.const 0))
+        (block $hit_col_done (loop $hit_cols
+          (br_if $hit_col_done (i32.ge_u (local.get $col_idx) (local.get $col_count)))
+          (local.set $width (call $lv_report_col_width (local.get $sw) (local.get $col_idx)))
+          (if (i32.le_s (local.get $width) (i32.const 0))
+            (then (local.set $width (i32.const 120))))
+          (if (i32.and
+                (i32.ge_s (local.get $x) (local.get $col_x))
+                (i32.lt_s (local.get $x) (i32.add (local.get $col_x) (local.get $width))))
+            (then
+              (local.set $sub (local.get $col_idx))
+              (br $hit_col_done)))
+          (local.set $col_x (i32.add (local.get $col_x) (local.get $width)))
+          (local.set $col_idx (i32.add (local.get $col_idx) (i32.const 1)))
+          (br $hit_cols)))
         (i32.store offset=8 (local.get $ptr) (i32.const 0x0004))
         (i32.store offset=12 (local.get $ptr) (local.get $row))
-        (i32.store offset=16 (local.get $ptr) (i32.const 0))
+        (i32.store offset=16 (local.get $ptr) (local.get $sub))
         (return (local.get $row))))
 
     ;; WM_MOUSEWHEEL
@@ -5422,6 +5641,7 @@
     (local $old i32) (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $style i32) (local $vert i32) (local $range i32) (local $track_len i32)
     (local $thumb_len i32) (local $thumb_pos i32) (local $cx i32) (local $cy i32)
+    (local $coord i32) (local $long_dim i32) (local $parent i32) (local $scroll_msg i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
@@ -5513,6 +5733,69 @@
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x041C))
       (then (return (i32.load offset=20 (local.get $sw)))))
+
+    ;; Mouse tracking. Native trackbars capture the thumb and synchronously
+    ;; notify their parent with WM_HSCROLL/WM_VSCROLL while it moves.
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0201))
+          (i32.and (i32.eq (local.get $msg) (i32.const 0x0200))
+                   (i32.eq (global.get $capture_hwnd) (local.get $hwnd))))
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xffff)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $style (call $wnd_get_style (local.get $hwnd)))
+        (local.set $vert (i32.and (local.get $style) (i32.const 0x0002)))
+        (local.set $long_dim (select (local.get $h) (local.get $w) (local.get $vert)))
+        (local.set $coord
+          (select
+            (i32.shr_s (local.get $lParam) (i32.const 16))
+            (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16))
+            (local.get $vert)))
+        (local.set $thumb_len (i32.load offset=20 (local.get $sw)))
+        (if (i32.lt_s (local.get $thumb_len) (i32.const 8))
+          (then (local.set $thumb_len (i32.const 8))))
+        (local.set $track_len (i32.sub (local.get $long_dim) (local.get $thumb_len)))
+        (if (i32.lt_s (local.get $track_len) (i32.const 1))
+          (then (local.set $track_len (i32.const 1))))
+        (local.set $coord (i32.sub (local.get $coord) (i32.div_s (local.get $thumb_len) (i32.const 2))))
+        (if (i32.lt_s (local.get $coord) (i32.const 0)) (then (local.set $coord (i32.const 0))))
+        (if (i32.gt_s (local.get $coord) (local.get $track_len)) (then (local.set $coord (local.get $track_len))))
+        (local.set $min (i32.load (local.get $sw)))
+        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $range (i32.sub (local.get $max) (local.get $min)))
+        (if (i32.le_s (local.get $range) (i32.const 0)) (then (local.set $range (i32.const 1))))
+        (local.set $pos
+          (i32.add (local.get $min)
+            (i32.div_s (i32.mul (local.get $coord) (local.get $range)) (local.get $track_len))))
+        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (if (i32.eq (local.get $msg) (i32.const 0x0201))
+          (then (global.set $capture_hwnd (local.get $hwnd))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+        (local.set $scroll_msg (select (i32.const 0x0115) (i32.const 0x0114) (local.get $vert)))
+        (drop (call $wnd_send_message
+          (local.get $parent) (local.get $scroll_msg)
+          (i32.or (i32.const 5) (i32.shl (i32.and (local.get $pos) (i32.const 0xffff)) (i32.const 16)))
+          (local.get $hwnd)))
+        (return (i32.const 0))))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0202))
+      (then
+        (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+          (then
+            (global.set $capture_hwnd (i32.const 0))
+            (local.set $pos (i32.load offset=8 (local.get $sw)))
+            (local.set $vert (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0002)))
+            (local.set $scroll_msg (select (i32.const 0x0115) (i32.const 0x0114) (local.get $vert)))
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (drop (call $wnd_send_message
+              (local.get $parent) (local.get $scroll_msg)
+              (i32.or (i32.const 4) (i32.shl (i32.and (local.get $pos) (i32.const 0xffff)) (i32.const 16)))
+              (local.get $hwnd)))
+            (drop (call $wnd_send_message
+              (local.get $parent) (local.get $scroll_msg) (i32.const 8) (local.get $hwnd)))))
+        (return (i32.const 0))))
 
     ;; WM_PAINT
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
@@ -9329,7 +9612,8 @@
                 (i32.or (i32.eq (local.get $cls) (i32.const 6))
                         (i32.eq (local.get $cls) (i32.const 7)))
                 (i32.or (i32.eq (local.get $cls) (i32.const 8))
-                        (i32.eq (local.get $cls) (i32.const 9))))))
+                        (i32.or (i32.eq (local.get $cls) (i32.const 9))
+                                (i32.eq (local.get $cls) (i32.const 19)))))))
           (if (local.get $dispatchable)
             (then
               (if (i32.and

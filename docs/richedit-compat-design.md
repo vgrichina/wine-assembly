@@ -97,7 +97,9 @@ files, and exits cleanly after the final Finish command.
 
 Related common-control scroll status: WAT-native `SysTreeView32` and the
 bounded report-style `SysListView32` subset now reuse the same shared vertical
-scrollbar hit/drag math as the RichEdit/Edit/ListBox paths.
+scrollbar hit/drag math as the RichEdit/Edit/ListBox paths. The ListView
+subset also has bounded report-column get/set, item/subitem rectangle queries,
+and subitem hit-test output for RegEdit/installer-style report panes.
 
 That means these pieces are already good enough for basic insertion:
 
@@ -874,6 +876,7 @@ Acceptance:
 [x] WAT TreeView expand/collapse notifications and `TVIF_CHILDREN` are asserted
 [x] Registry root/subkey/value enumeration and metadata are covered for RegEdit-style probes
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
+[x] SysListView32 report column get/set, item/subitem rects, and subitem hit-test are asserted
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes
 ```

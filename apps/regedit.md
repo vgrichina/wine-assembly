@@ -34,6 +34,10 @@ Key fixes:
 - `SysListView32` now stores report columns, fixed subitem text, item count,
   single-row selection, top index, hit-testing, `LVM_*` item/text/state queries,
   and vertical scrollbar line/page/thumb behavior through the same helpers.
+- The bounded report-mode `SysListView32` path now also supports
+  `LVM_GETCOLUMNA` / `LVM_SETCOLUMNA`, `LVM_GETITEMRECT`,
+  `LVM_GETSUBITEMRECT`, and report-column subitem hit-test output for apps
+  that query geometry before drawing, selecting, or dispatching context actions.
 - `SysListView32` is now protected from registered-class fallback, so
   `CreateWindowExA("SysListView32", ...)` routes to the WAT-native ListView
   instead of RegEdit's/COMCTL32's guest window proc.
@@ -46,8 +50,8 @@ Key fixes:
 Current gaps:
 
 - Advanced ListView behavior remains later work: icon/small-icon/list view
-  layout, image lists, sorting, custom draw, full notifications, labels edits,
-  and high-fidelity header interaction.
+  layout, image lists, sorting, custom draw, full notifications, label edits,
+  and high-fidelity real Header-control interaction.
 - The app-level regression now expands
   `HKEY_CURRENT_USER\Control Panel\Desktop`, verifies its four value rows, and
   captures both the populated pane and Registry menu. Value editing, context
@@ -58,7 +62,7 @@ Validation:
 ```sh
 node test/test-treeview-scroll.js   # passes 27/27
 node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
-node test/test-listview.js
+node test/test-listview.js           # passes 74/74
 node test/test-listbox.js
 node test/test-regedit-deep.js
 node test/test-wat-memory-map.js
