@@ -101,6 +101,8 @@ async function inspectScreenshot(file) {
       return rows.size;
     })(),
     readoutInk: countIn(51, 48, 305, 89, (r, g, b) => r < 100 && g < 100 && b < 100),
+    transportBottomInk: countIn(50, 145, 304, 153, (r, g, b) => r < 100 && g < 100 && b < 100),
+    lowerChromeInk: countIn(40, 154, 318, 165, (r, g, b) => r < 100 && g < 100 && b < 100),
   };
 }
 
@@ -133,6 +135,8 @@ async function inspectScreenshot(file) {
     ['captured waveform and numeric readouts are visible', visual &&
       visual.displayBlack >= 2500 && visual.displayGreen >= 500 &&
       visual.waveformRows >= 15 && visual.readoutInk >= 150],
+    ['transport buttons and lower window chrome are not clipped', visual &&
+      visual.transportBottomInk >= 200 && visual.lowerChromeInk >= 200],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output)],
   ];
 

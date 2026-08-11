@@ -47,4 +47,9 @@ assert.strictEqual(host.gdi_get_current_object(dc, 2), 0x30010,
 assert.strictEqual(host.gdi_get_current_object(dc, 7), bitmap,
   'OBJ_BITMAP should still report the document bitmap');
 
-console.log('PASS  stock pen/brush selection preserves the memory-DC bitmap');
+assert.strictEqual(host.gdi_select_object(dc, 0x30007), bitmap,
+  'restoring the default bitmap should return the document bitmap');
+assert.strictEqual(dcState.selectedBitmap, 0x30007,
+  'restoring the default bitmap should detach the document bitmap');
+
+console.log('PASS  stock objects round-trip without losing the memory-DC bitmap');

@@ -2114,13 +2114,13 @@
         (i32.store offset=16 (local.get $p) (i32.const 0x80000001))      ;; SOURCE|ACTIVE
         (i32.store offset=24 (local.get $p) (local.get $component))
         (i32.store offset=28 (local.get $p) (i32.const 2))               ;; cChannels
-        (i32.store offset=36 (local.get $p) (i32.const 2)))              ;; cControls
+        (i32.store offset=36 (local.get $p) (i32.const 3)))              ;; cControls
       (else
         (i32.store offset=16 (local.get $p) (i32.const 1))               ;; ACTIVE
         (i32.store offset=24 (local.get $p) (i32.const 4))               ;; DST_SPEAKERS
         (i32.store offset=28 (local.get $p) (i32.const 2))               ;; cChannels
         (i32.store offset=32 (local.get $p) (i32.const 2))               ;; cConnections
-        (i32.store offset=36 (local.get $p) (i32.const 2))))             ;; cControls
+        (i32.store offset=36 (local.get $p) (i32.const 3))))             ;; cControls
     (if (local.get $wide)
       (then (call $fill_mixer_name (i32.add (local.get $p) (i32.const 40)) (i32.add (local.get $p) (i32.const 72)) (i32.const 1) (local.get $line_id)))
       (else (call $fill_mixer_name (i32.add (local.get $p) (i32.const 40)) (i32.add (local.get $p) (i32.const 56)) (i32.const 0) (local.get $line_id))))
@@ -2130,7 +2130,8 @@
     (i32.store16 offset=10 (local.get $target) (i32.const 1))            ;; wPid
     (i32.store offset=12 (local.get $target) (i32.const 0x0400)))        ;; vDriverVersion
 
-  (func $fill_mixer_control (param $p i32) (param $wide i32) (param $line_id i32) (param $mute i32)
+  ;; kind: 0=volume, 1=mute, 2=peak meter.
+  (func $fill_mixer_control (param $p i32) (param $wide i32) (param $line_id i32) (param $kind i32)
     (local $size i32) (local $bounds i32) (local $metrics i32)
     (if (i32.eqz (local.get $p)) (then (return)))
     (local.set $size (i32.const 148))
@@ -2143,20 +2144,31 @@
         (local.set $metrics (i32.add (local.get $p) (i32.const 204)))))
     (call $zero_memory (local.get $p) (local.get $size))
     (i32.store offset=0 (local.get $p) (local.get $size))
-    (if (local.get $mute)
+    (if (i32.eq (local.get $kind) (i32.const 1))
       (then
         (i32.store offset=4 (local.get $p) (i32.add (i32.const 0x2000) (local.get $line_id)))
         (i32.store offset=8 (local.get $p) (i32.const 0x20010002))       ;; BOOLEAN MUTE
         (i32.store offset=12 (local.get $p) (i32.const 1)))              ;; UNIFORM
       (else
-        (i32.store offset=4 (local.get $p) (i32.add (i32.const 0x1000) (local.get $line_id)))
-        (i32.store offset=8 (local.get $p) (i32.const 0x50030001))))     ;; UNSIGNED VOLUME
+        (if (i32.eq (local.get $kind) (i32.const 2))
+          (then
+            (i32.store offset=4 (local.get $p) (i32.add (i32.const 0x3000) (local.get $line_id)))
+            (i32.store offset=8 (local.get $p) (i32.const 0x10020001))   ;; SIGNED PEAKMETER
+            (i32.store offset=12 (local.get $p) (i32.const 1)))          ;; UNIFORM
+          (else
+            (i32.store offset=4 (local.get $p) (i32.add (i32.const 0x1000) (local.get $line_id)))
+            (i32.store offset=8 (local.get $p) (i32.const 0x50030001)))))) ;; UNSIGNED VOLUME
     (if (local.get $wide)
       (then (call $fill_mixer_name (i32.add (local.get $p) (i32.const 20)) (i32.add (local.get $p) (i32.const 52)) (i32.const 1) (local.get $line_id)))
       (else (call $fill_mixer_name (i32.add (local.get $p) (i32.const 20)) (i32.add (local.get $p) (i32.const 36)) (i32.const 0) (local.get $line_id))))
-    (i32.store offset=0 (local.get $bounds) (i32.const 0))               ;; min
-    (i32.store offset=4 (local.get $bounds) (select (i32.const 1) (i32.const 0xffff) (local.get $mute)))
-    (i32.store offset=0 (local.get $metrics) (select (i32.const 1) (i32.const 0xffff) (local.get $mute))))
+    (i32.store offset=0 (local.get $bounds)
+      (select (i32.const -32768) (i32.const 0) (i32.eq (local.get $kind) (i32.const 2)))) ;; min
+    (i32.store offset=4 (local.get $bounds)
+      (select (i32.const 1)
+        (select (i32.const 32767) (i32.const 0xffff) (i32.eq (local.get $kind) (i32.const 2)))
+        (i32.eq (local.get $kind) (i32.const 1))))
+    (i32.store offset=0 (local.get $metrics)
+      (select (i32.const 1) (i32.const 0xffff) (i32.eq (local.get $kind) (i32.const 1)))))
 
   (func $handle_mixerGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $fill_mixer_caps (call $g2w (local.get $arg1)) (i32.const 0) (local.get $arg2))
@@ -2210,15 +2222,39 @@
     (local.set $line_id (i32.load offset=4 (local.get $p)))
     (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 1))
       (then
-        (local.set $kind (i32.ge_u (local.get $line_id) (i32.const 0x2000)))
-        (local.set $line_id (i32.sub (local.get $line_id) (select (i32.const 0x2000) (i32.const 0x1000) (local.get $kind))))))
+        (local.set $line_id (i32.load offset=8 (local.get $p)))          ;; dwControlID
+        (if (i32.ge_u (local.get $line_id) (i32.const 0x3000))
+          (then
+            (local.set $kind (i32.const 2))
+            (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x3000))))
+          (else
+            (if (i32.ge_u (local.get $line_id) (i32.const 0x2000))
+              (then
+                (local.set $kind (i32.const 1))
+                (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x2000))))
+              (else
+                (local.set $kind (i32.const 0))
+                (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x1000)))))))))
     (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 2))
-      (then (local.set $kind (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x20010002)))))
+      (then
+        (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x50030001))
+          (then (local.set $kind (i32.const 0)))
+          (else
+            (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x20010002))
+              (then (local.set $kind (i32.const 1)))
+              (else
+                (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x10020001))
+                  (then (local.set $kind (i32.const 2)))
+                  (else
+                    (global.set $eax (i32.const 1025))                 ;; MIXERR_INVALCONTROL
+                    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+                    (return)))))))))
     (if (i32.eqz (i32.and (local.get $arg2) (i32.const 0xf)))
       (then
-        (i32.store offset=12 (local.get $p) (i32.const 2))
+        (i32.store offset=12 (local.get $p) (i32.const 3))
         (call $fill_mixer_control (local.get $ctrl) (i32.const 0) (local.get $line_id) (i32.const 0))
-        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (i32.const 0) (local.get $line_id) (i32.const 1)))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (i32.const 0) (local.get $line_id) (i32.const 1))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (i32.mul (local.get $cb) (i32.const 2))) (i32.const 0) (local.get $line_id) (i32.const 2)))
       (else
         (i32.store offset=12 (local.get $p) (i32.const 1))
         (call $fill_mixer_control (local.get $ctrl) (i32.const 0) (local.get $line_id) (local.get $kind))))
@@ -2234,15 +2270,39 @@
     (local.set $line_id (i32.load offset=4 (local.get $p)))
     (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 1))
       (then
-        (local.set $kind (i32.ge_u (local.get $line_id) (i32.const 0x2000)))
-        (local.set $line_id (i32.sub (local.get $line_id) (select (i32.const 0x2000) (i32.const 0x1000) (local.get $kind))))))
+        (local.set $line_id (i32.load offset=8 (local.get $p)))          ;; dwControlID
+        (if (i32.ge_u (local.get $line_id) (i32.const 0x3000))
+          (then
+            (local.set $kind (i32.const 2))
+            (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x3000))))
+          (else
+            (if (i32.ge_u (local.get $line_id) (i32.const 0x2000))
+              (then
+                (local.set $kind (i32.const 1))
+                (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x2000))))
+              (else
+                (local.set $kind (i32.const 0))
+                (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x1000)))))))))
     (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 2))
-      (then (local.set $kind (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x20010002)))))
+      (then
+        (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x50030001))
+          (then (local.set $kind (i32.const 0)))
+          (else
+            (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x20010002))
+              (then (local.set $kind (i32.const 1)))
+              (else
+                (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x10020001))
+                  (then (local.set $kind (i32.const 2)))
+                  (else
+                    (global.set $eax (i32.const 1025))                 ;; MIXERR_INVALCONTROL
+                    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+                    (return)))))))))
     (if (i32.eqz (i32.and (local.get $arg2) (i32.const 0xf)))
       (then
-        (i32.store offset=12 (local.get $p) (i32.const 2))
+        (i32.store offset=12 (local.get $p) (i32.const 3))
         (call $fill_mixer_control (local.get $ctrl) (i32.const 1) (local.get $line_id) (i32.const 0))
-        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (i32.const 1) (local.get $line_id) (i32.const 1)))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (i32.const 1) (local.get $line_id) (i32.const 1))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (i32.mul (local.get $cb) (i32.const 2))) (i32.const 1) (local.get $line_id) (i32.const 2)))
       (else
         (i32.store offset=12 (local.get $p) (i32.const 1))
         (call $fill_mixer_control (local.get $ctrl) (i32.const 1) (local.get $line_id) (local.get $kind))))
@@ -2255,14 +2315,19 @@
     (local.set $channels (i32.load offset=8 (local.get $p)))
     (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
     (local.set $control (i32.load offset=4 (local.get $p)))
-    (if (i32.ge_u (local.get $control) (i32.const 0x2000))
-      (then (local.set $volume (call $host_audio_mixer_get_mute (i32.sub (local.get $control) (i32.const 0x2000)))))
-      (else (local.set $volume (call $host_audio_mixer_get_volume (i32.sub (local.get $control) (i32.const 0x1000))))))
+    (if (i32.ge_u (local.get $control) (i32.const 0x3000))
+      (then (local.set $volume (call $host_audio_mixer_get_peak (i32.sub (local.get $control) (i32.const 0x3000)))))
+      (else
+        (if (i32.ge_u (local.get $control) (i32.const 0x2000))
+          (then (local.set $volume (call $host_audio_mixer_get_mute (i32.sub (local.get $control) (i32.const 0x2000)))))
+          (else (local.set $volume (call $host_audio_mixer_get_volume (i32.sub (local.get $control) (i32.const 0x1000))))))))
     (if (local.get $details)
       (then
         (i32.store offset=0 (local.get $details) (i32.and (local.get $volume) (i32.const 0xffff)))
         (if (i32.gt_u (local.get $channels) (i32.const 1))
-          (then (i32.store offset=4 (local.get $details) (i32.shr_u (local.get $volume) (i32.const 16)))))))
+          (then (i32.store offset=4 (local.get $details)
+            (select (local.get $volume) (i32.shr_u (local.get $volume) (i32.const 16))
+              (i32.ge_u (local.get $control) (i32.const 0x3000))))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -2272,14 +2337,19 @@
     (local.set $channels (i32.load offset=8 (local.get $p)))
     (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
     (local.set $control (i32.load offset=4 (local.get $p)))
-    (if (i32.ge_u (local.get $control) (i32.const 0x2000))
-      (then (local.set $volume (call $host_audio_mixer_get_mute (i32.sub (local.get $control) (i32.const 0x2000)))))
-      (else (local.set $volume (call $host_audio_mixer_get_volume (i32.sub (local.get $control) (i32.const 0x1000))))))
+    (if (i32.ge_u (local.get $control) (i32.const 0x3000))
+      (then (local.set $volume (call $host_audio_mixer_get_peak (i32.sub (local.get $control) (i32.const 0x3000)))))
+      (else
+        (if (i32.ge_u (local.get $control) (i32.const 0x2000))
+          (then (local.set $volume (call $host_audio_mixer_get_mute (i32.sub (local.get $control) (i32.const 0x2000)))))
+          (else (local.set $volume (call $host_audio_mixer_get_volume (i32.sub (local.get $control) (i32.const 0x1000))))))))
     (if (local.get $details)
       (then
         (i32.store offset=0 (local.get $details) (i32.and (local.get $volume) (i32.const 0xffff)))
         (if (i32.gt_u (local.get $channels) (i32.const 1))
-          (then (i32.store offset=4 (local.get $details) (i32.shr_u (local.get $volume) (i32.const 16)))))))
+          (then (i32.store offset=4 (local.get $details)
+            (select (local.get $volume) (i32.shr_u (local.get $volume) (i32.const 16))
+              (i32.ge_u (local.get $control) (i32.const 0x3000))))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -2288,13 +2358,18 @@
     (local.set $p (call $g2w (local.get $arg1)))
     (local.set $channels (i32.load offset=8 (local.get $p)))
     (local.set $details (call $g2w (i32.load offset=20 (local.get $p))))
+    (local.set $control (i32.load offset=4 (local.get $p)))
+    (if (i32.ge_u (local.get $control) (i32.const 0x3000))
+      (then
+        (global.set $eax (i32.const 8))                                ;; MMSYSERR_NOTSUPPORTED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (if (local.get $details)
       (then
         (local.set $left (i32.and (i32.load (local.get $details)) (i32.const 0xffff)))
         (local.set $right (local.get $left))
         (if (i32.gt_u (local.get $channels) (i32.const 1))
           (then (local.set $right (i32.and (i32.load offset=4 (local.get $details)) (i32.const 0xffff)))))
-        (local.set $control (i32.load offset=4 (local.get $p)))
         (if (i32.ge_u (local.get $control) (i32.const 0x2000))
           (then (call $host_audio_mixer_set_mute
             (i32.sub (local.get $control) (i32.const 0x2000)) (local.get $left)))

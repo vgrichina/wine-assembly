@@ -387,6 +387,7 @@ async function main() {
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wave-in-feed:FRAMES[:RATE:AMPLITUDE] — feed synthetic sine PCM to waveIn
+  //   B:mixer-peak:BUS:VALUE[:HOLD_MS] — inject a 0..32767 mixer peak for visual tests
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
@@ -607,6 +608,14 @@ async function main() {
           frames: Math.max(1, parseInt(parts[2]) || 24000),
           rate: Math.max(1, parseInt(parts[3]) || 48000),
           amplitude: Math.max(0, Math.min(1, parseFloat(parts[4]) || 0.6)),
+        });
+      } else if (kind === 'mixer-peak') {
+        scheduledInput.push({
+          batch,
+          action: 'mixer-peak',
+          bus: Math.max(0, Math.min(2, parseInt(parts[2]) || 0)),
+          value: Math.max(0, Math.min(32767, parseInt(parts[3]) || 0)),
+          holdMs: Math.max(50, parseInt(parts[4]) || 500),
         });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
@@ -3683,6 +3692,9 @@ async function main() {
         }
         const written = h.wave_in_feed_pcm ? h.wave_in_feed_pcm(0, [samples], ev.rate) : 0;
         logs.push(`[input] wave-in-feed frames=${ev.frames} rate=${ev.rate} written=${written} at batch ${batch}`);
+      } else if (ev.action === 'mixer-peak') {
+        if (h.audio_mixer_mark_peak) h.audio_mixer_mark_peak(ev.bus, ev.value, ev.holdMs);
+        logs.push(`[input] mixer-peak bus=${ev.bus} value=${ev.value} hold=${ev.holdMs} at batch ${batch}`);
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();
