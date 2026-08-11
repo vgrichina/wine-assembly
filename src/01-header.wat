@@ -337,6 +337,11 @@
   ;; midi_out_get_volume(handle, out_volume_wa) → MMRESULT
   (import "host" "midi_out_set_volume" (func $host_midi_out_set_volume (param i32 i32) (result i32)))
   ;; midi_out_set_volume(handle, volume) → MMRESULT
+  (import "host" "audio_mixer_get_volume" (func $host_audio_mixer_get_volume (param i32) (result i32)))
+  (import "host" "audio_mixer_set_volume" (func $host_audio_mixer_set_volume (param i32 i32)))
+  (import "host" "audio_mixer_get_mute" (func $host_audio_mixer_get_mute (param i32) (result i32)))
+  (import "host" "audio_mixer_set_mute" (func $host_audio_mixer_set_mute (param i32 i32)))
+  ;; audio_mixer_* controls the shared master(0), wave(1), and MIDI(2) buses.
 
   ;; INI file host imports — backed by localStorage
   (import "host" "ini_get_string" (func $host_ini_get_string (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
