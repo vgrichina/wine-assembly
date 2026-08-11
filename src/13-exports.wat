@@ -1387,6 +1387,11 @@
     (global.set $tv_first_visible_row (i32.const 0))
     (global.set $tv_drag_anchor_y (i32.const 0))
     (global.set $tv_drag_anchor_row (i32.const 0))
+    (global.set $tv_debug_expand_notify_count (i32.const 0))
+    (global.set $tv_debug_expand_notify_code (i32.const 0))
+    (global.set $tv_debug_expand_notify_action (i32.const 0))
+    (global.set $tv_debug_expand_notify_item (i32.const 0))
+    (global.set $tv_debug_expand_notify_children (i32.const 0))
     (local.set $parent (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
@@ -1414,6 +1419,16 @@
     (global.get $tv_debug_paint_last_y))
   (func (export "treeview_get_debug_paint_rows") (result i32)
     (global.get $tv_debug_paint_rows))
+  (func (export "treeview_get_debug_expand_notify_count") (result i32)
+    (global.get $tv_debug_expand_notify_count))
+  (func (export "treeview_get_debug_expand_notify_code") (result i32)
+    (global.get $tv_debug_expand_notify_code))
+  (func (export "treeview_get_debug_expand_notify_action") (result i32)
+    (global.get $tv_debug_expand_notify_action))
+  (func (export "treeview_get_debug_expand_notify_item") (result i32)
+    (global.get $tv_debug_expand_notify_item))
+  (func (export "treeview_get_debug_expand_notify_children") (result i32)
+    (global.get $tv_debug_expand_notify_children))
 
   ;; Test helper: create a parent + SysListView32 child, return listview hwnd.
   ;; This exercises the WAT-native ListView wndproc without booting a guest EXE.

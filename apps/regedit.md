@@ -8,9 +8,10 @@ screenshot probe with a populated WAT-native TreeView and a stateful bounded
 shared Win98-style vertical scrollbar behavior, and the app-level smoke writes
 a screenshot with the `Name` / `Data` ListView headers visible. The standalone
 TreeView regression also covers parent/child handles, `TVGN_CHILD`,
-`TVGN_PARENT`, and `TVM_EXPAND` expand/collapse visibility. Registry root,
-subkey, and value enumeration now have direct host/WAT coverage for RegEdit and
-other registry-driven apps.
+`TVGN_PARENT`, `TVIF_CHILDREN`, `TVM_EXPAND` expand/collapse visibility, and
+`TVN_ITEMEXPANDING` / `TVN_ITEMEXPANDED` notifications. Registry root, subkey,
+and value enumeration now have direct host/WAT coverage for RegEdit and other
+registry-driven apps.
 
 Previous app-smoke status (2026-06-14): promoted out of `knownBadRender` in the
 all-EXE smoke matrix. RegEdit opened with the real `Registry Editor` title, a
@@ -25,9 +26,9 @@ Key fixes:
 - `SysTreeView32` overflow rows now reuse the shared vertical scrollbar helpers
   for line/page clicks, thumb drag, `WM_MOUSEWHEEL`, `WM_VSCROLL`, hit-testing,
   selection, and `TVGN_FIRSTVISIBLE`. The WAT TreeView path also preserves
-  parent/child links enough for `TVGN_CHILD`, `TVGN_PARENT`, and
-  `TVM_EXPAND` visibility toggles, with `dump-tree`/paint counters available
-  in the harness for future app probes.
+  parent/child links enough for `TVGN_CHILD`, `TVGN_PARENT`, `TVIF_CHILDREN`,
+  `TVM_EXPAND` visibility toggles, and expand/collapse notifications, with
+  `dump-tree`/paint counters available in the harness for future app probes.
 - `SysListView32` now stores report columns, fixed subitem text, item count,
   single-row selection, top index, hit-testing, `LVM_*` item/text/state queries,
   and vertical scrollbar line/page/thumb behavior through the same helpers.
@@ -51,7 +52,7 @@ Current gaps:
 Validation:
 
 ```sh
-node test/test-treeview-scroll.js   # passes 22/22
+node test/test-treeview-scroll.js   # passes 25/25
 node test/test-storage-registry.js  # passes registry root/subkey/value coverage
 node test/test-listview.js
 node test/test-listbox.js

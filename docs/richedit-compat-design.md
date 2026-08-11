@@ -192,8 +192,9 @@ native-editing path is alive.
 - Added `test/test-treeview-scroll.js`, a standalone WAT regression that creates
   a TreeView, inserts 12 rows, verifies wheel/arrow/page/thumb scroll behavior,
   hit-testing through the scroll offset, selection, hierarchy expand/collapse,
-  and slot cleanup. `test/run.js` can dump TreeView item state plus paint
-  counters for future app-level probes.
+  `TVIF_CHILDREN`, expand/collapse notifications, and slot cleanup.
+  `test/run.js` can dump TreeView item state plus paint counters for future
+  app-level probes.
 - Added bounded report-style `SysListView32` state: columns, fixed 8-subitem
   row text, item count, single-row selection, top index, `LVM_GETITEMTEXTA`,
   `LVM_SETITEMTEXTA`, `LVM_HITTEST`, `LVM_ENSUREVISIBLE`, `LVM_SCROLL`, and
@@ -860,6 +861,7 @@ Acceptance:
 [x] Installer/license RichEdit panes render and scroll
 [x] WAT TreeView reuses shared vertical scrollbar hit/drag math
 [x] WAT TreeView parent/child links and expand/collapse visibility are asserted
+[x] WAT TreeView expand/collapse notifications and `TVIF_CHILDREN` are asserted
 [x] Registry root/subkey/value enumeration is covered for RegEdit-style probes
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
