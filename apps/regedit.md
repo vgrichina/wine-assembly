@@ -48,9 +48,10 @@ Current gaps:
 - Advanced ListView behavior remains later work: icon/small-icon/list view
   layout, image lists, sorting, custom draw, full notifications, labels edits,
   and high-fidelity header interaction.
-- The current screenshot shows the root registry view with headers; deeper
-  registry value editing, context menus, and advanced ListView fidelity remain
-  separate follow-up work.
+- The app-level regression now expands
+  `HKEY_CURRENT_USER\Control Panel\Desktop`, verifies its four value rows, and
+  captures both the populated pane and Registry menu. Value editing, context
+  menus, and advanced ListView fidelity remain separate follow-up work.
 
 Validation:
 
@@ -59,6 +60,7 @@ node test/test-treeview-scroll.js   # passes 27/27
 node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
 node test/test-listview.js
 node test/test-listbox.js
+node test/test-regedit-deep.js
 node test/test-wat-memory-map.js
 bash tools/build.sh
 /opt/homebrew/bin/timeout 180 node test/run.js --exe=test/binaries/win98-apps/regedit.exe --max-batches=180 --quiet-api --input=20:wait-title:Registry_Editor:1200,40:dump-windows:regedit,60:png-pixels:/private/tmp/regedit-listview-smoke.png,70:stop

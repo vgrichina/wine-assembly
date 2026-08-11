@@ -327,6 +327,7 @@ async function main() {
   let lastApiName = null;  // track last API name for return value correlation
   let lastApiEntry = null; // typed metadata for last API (for return formatting)
   let lastApiArgs = null;  // raw dword args captured at entry, used for out-param dump on return
+  let lastTreeItemTrace = null;
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let dedupLast = null;    // {line, count} for --trace-api-dedup
@@ -380,6 +381,7 @@ async function main() {
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   //   B:dump-children:HWND[:LABEL] — log WAT child table entries for HWND
   //   B:dump-tree[:LABEL] — log WAT TreeView item handles, hierarchy, state, and text
+  //   B:dump-listview[:LABEL] — log WAT ListView columns and cell text
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
@@ -475,6 +477,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
       } else if (kind === 'dump-tree') {
         scheduledInput.push({ batch, action: 'dump-tree', label: parts[2] || '' });
+      } else if (kind === 'dump-listview') {
+        scheduledInput.push({ batch, action: 'dump-listview', label: parts[2] || '' });
       } else if (kind === 'dump-toolbar') {
         scheduledInput.push({ batch, action: 'dump-toolbar', label: parts[2] || '' });
       } else if (kind === 'menu-dump') {
@@ -1003,6 +1007,21 @@ async function main() {
         }
         header = `${t}(${argStr})`;
       }
+      if (t === 'SendMessageA') {
+        try {
+          const msg = dv.getUint32(g2w(esp + 8), true);
+          const itemGuest = dv.getUint32(g2w(esp + 16), true);
+          if (msg === 0x110C && itemGuest) {
+            const item = g2w(itemGuest);
+            const mask = dv.getUint32(item, true);
+            const hItem = dv.getUint32(item + 4, true);
+            const textGuest = dv.getUint32(item + 16, true);
+            const textMax = dv.getUint32(item + 20, true);
+            strInfo += ` TVITEMA{mask=${hex(mask)},hItem=${hex(hItem)},pszText=${hex(textGuest)},cch=${textMax}}`;
+            lastTreeItemTrace = { textGuest, textMax };
+          }
+        } catch (_) {}
+      }
 
       let dxInfo = '';
       if (TRACE_DX) {
@@ -1198,6 +1217,15 @@ async function main() {
         if (typedRet || outInfo) flushDedup();
         if (typedRet) logs.push(`  ${typedRet.trim()}`);
         if (outInfo) logs.push(outInfo);
+      }
+      if (TRACE_API && lastApiName === 'SendMessageA' && lastTreeItemTrace) {
+        try {
+          const imageBase = instance.exports.get_image_base();
+          const textValue = readStr(lastTreeItemTrace.textGuest - imageBase + 0x12000,
+            Math.min(lastTreeItemTrace.textMax, 1024));
+          logs.push(`  TVITEMA.text=${JSON.stringify(textValue)}`);
+        } catch (_) {}
+        lastTreeItemTrace = null;
       }
       lastApiName = null;
       lastApiEntry = null;
@@ -3220,6 +3248,33 @@ async function main() {
         const paintLastY = we.treeview_get_debug_paint_last_y ? (we.treeview_get_debug_paint_last_y() | 0) : -1;
         const paintRows = we.treeview_get_debug_paint_rows ? (we.treeview_get_debug_paint_rows() | 0) : -1;
         logs.push(`[input] dump-tree${label}: visible=${visible} firstRow=${firstRow} paintIterations=${paintIterations} paintVisible=${paintVisible} paintText=${paintText} paintRows=${paintRows} paintLastY=${paintLastY} ${items.join(' | ') || '(empty)'} at batch ${batch}`);
+      } else if (ev.action === 'dump-listview' && renderer) {
+        const label = ev.label ? ':' + ev.label : '';
+        const we = instance.exports;
+        const entries = Object.entries(renderer.windows || {})
+          .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
+        let found = 0;
+        for (const [hwndStr, win] of entries) {
+          if (!win) continue;
+          const hwnd = parseInt(hwndStr, 10) || 0;
+          const ctrlClass = we.ctrl_get_class ? (we.ctrl_get_class(hwnd) | 0) : -1;
+          if (ctrlClass !== 18 || !we.listview_get_count || !we.listview_get_item_text || !we.guest_alloc) continue;
+          found++;
+          const count = Math.max(0, Math.min(we.listview_get_count(hwnd) | 0, 64));
+          const columns = Math.max(1, Math.min(we.listview_get_column_count ? (we.listview_get_column_count(hwnd) | 0) : 1, 8));
+          const buffer = we.guest_alloc(512);
+          const cells = [];
+          for (let row = 0; row < count; row++) {
+            const values = [];
+            for (let column = 0; column < columns; column++) {
+              const length = Math.max(0, Math.min(we.listview_get_item_text(hwnd, row, column, buffer, 512) | 0, 511));
+              values.push(readStr(g2w(buffer), length));
+            }
+            cells.push(`#${row} ${values.map(value => JSON.stringify(value)).join(' | ')}`);
+          }
+          logs.push(`[input] dump-listview${label}: hwnd=${hwndStr} count=${count} columns=${columns} ${cells.join(' ; ') || '(empty)'} at batch ${batch}`);
+        }
+        if (!found) logs.push(`[input] dump-listview${label}: (none) at batch ${batch}`);
       } else if (ev.action === 'dump-toolbar' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
         const we = instance.exports;

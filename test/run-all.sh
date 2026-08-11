@@ -79,6 +79,7 @@ E2E=(
   test/test-gdi-stock-select.js
   test/test-mspaint-draw.js
   test/test-mspaint-tools.js
+  test/test-regedit-deep.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js
   test/test-cruel-maximized-launch-layout.js
