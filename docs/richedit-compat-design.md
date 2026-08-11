@@ -46,6 +46,7 @@ Implement now                                 Postpone later
 | basic toolbar command fidelity |            | advanced toolbar UI state    |
 | clipped ExtTextOut rendering   |            | full resize/wrap edge cases  |
 | native scrollbar thumb routing |            |                               |
+| bounded resize/wrap clamp      |            |                               |
 +--------------------------------+            +-------------------------------+
 ```
 
@@ -133,6 +134,9 @@ That means these pieces are already good enough for basic insertion:
   glyph clipping, including the long-line WordPad RichEdit paint path;
 - the observed RichEdit `32767 twips` font-height sentinel no longer moves
   text far offscreen.
+- wrapped multiline Edit/RichEdit controls recompute visual line count from the
+  current control geometry on `WM_SIZE` and clamp `EM_GETFIRSTVISIBLELINE` to
+  the resized scroll range in the bounded WAT path.
 
 This does not mean RichEdit is feature complete. It only proves the first
 native-editing path is alive.
@@ -174,6 +178,12 @@ native-editing path is alive.
   controls that provide narrower invalidation/scroll regions.
 - Matched WAT `ScrollWindowEx` update invalidation to the same scroll/clip
   intersection and returns `NULLREGION` for empty intersections.
+- Added `WM_SIZE` handling for WAT multiline `EDIT` / RichEdit-compatible
+  controls so wrapped layouts recalculate from current width/height and clamp a
+  stale first-visible line after resize.
+- Added `test/test-edit-wrap-resize.js`, a standalone WAT regression that
+  creates a narrow wrapped multiline edit, scrolls to the bottom, widens/tallens
+  it, and verifies `WM_SIZE` clamps `EM_GETFIRSTVISIBLELINE` to the new maximum.
 - Expanded `test/test-wordpad-richedit.js` to 23/23 with a screenshot guard
   that counts duplicated title-bar-blue pixels in the toolbar/ruler band; the
   regenerated `hello-world-edited.png` has zero such pixels.
@@ -587,7 +597,8 @@ Acceptance:
 [x] long WordPad RichEdit text paints through clipped ExtTextOut rectangles
 [x] glyph drawing stays inside the tested RichEdit/outer-window paint band
 [x] scrollbar thumb drag changes first visible line
-[ ] full wrapping + clip invalidation stays coherent across resize/scroll edges
+[x] bounded wrapping + clip invalidation stays coherent across resize/scroll
+    edges for the WAT edit/RichEdit-compatible path
 ```
 
 ### 4. Text I/O
@@ -678,7 +689,8 @@ Acceptance:
 [x] Native RichEdit wheel changes first visible line
 [x] Long WordPad RichEdit text paints through clipped ExtTextOut rectangles
 [x] Native RichEdit scrollbar thumb drag changes first visible line
-[ ] Full wrapping/clip invalidation stays coherent across resize/scroll edges
+[x] Bounded wrapping/clip invalidation stays coherent across resize/scroll
+    edges for the WAT edit/RichEdit-compatible path
 [x] WordPad saved RTF reopens with simple plain text content
 [x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
@@ -715,7 +727,7 @@ Acceptance:
 8. Add plain text stream in/out.
 9. Add basic RTF stream in/out.
 10. Add basic character and paragraph formatting.
-11. Fix remaining full wrapping/clip invalidation edge cases.
+11. Fix bounded wrapping/clip invalidation resize edges.
 12. Re-run WordPad, Notepad, and installer RichEdit probes.
 13. Update app status docs with screenshots and pass/fail state.
 ```

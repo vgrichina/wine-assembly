@@ -7463,6 +7463,51 @@
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
+    ;; ---------- WM_SIZE (0x0005) ----------
+    ;; Wrapped multiline edits derive max_scroll from current control geometry.
+    ;; Clamp immediately on resize so EM_GETFIRSTVISIBLELINE cannot expose a
+    ;; stale top line after a window/control grows wider or taller.
+    (if (i32.eq (local.get $msg) (i32.const 0x0005))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000004)))
+          (then (return (i32.const 0))))
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+          (then
+            (if (i32.gt_u (local.get $w) (i32.const 16))
+              (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+        (local.set $visible_lines (i32.div_u
+          (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+                  (i32.gt_u (local.get $h) (i32.const 8)))
+          (i32.const 16)))
+        (if (i32.eqz (local.get $visible_lines))
+          (then (local.set $visible_lines (i32.const 1))))
+        (if (i32.and
+              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
+              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+          (then
+            (local.set $total_lines (call $edit_layout_build
+              (local.get $state_w) (local.get $hdc) (local.get $w))))
+          (else
+            (local.set $total_lines
+              (i32.add
+                (call $edit_line_from_char
+                  (local.get $state_w)
+                  (i32.load offset=4 (local.get $state_w)))
+                (i32.const 1)))))
+        (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
+        (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
+          (then (local.set $max_scroll (i32.const 0))))
+        (if (i32.gt_s (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll))
+          (then (i32.store offset=20 (local.get $state_w) (local.get $max_scroll))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+
     ;; ---------- WM_TIMER (0x0113) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0113))
       (then

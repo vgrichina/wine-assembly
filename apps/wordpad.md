@@ -377,6 +377,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   line-scroll operation had copied top-level title/menu pixels into the
   toolbar/ruler band, while keeping the scroll primitive reusable for other
   child controls.
+- The shared WAT multiline `EDIT` / RichEdit-compatible path now recalculates
+  wrapped visual lines on `WM_SIZE` and clamps stale first-visible-line state to
+  the resized scroll range. This covers the bounded resize/wrap edge used by
+  the current native-edit path; broader RichEdit layout/version quirks remain
+  follow-up work.
 - Direct GDI regression test:
   `node test/test-gdi-exttextout-clipping.js` verifies clipped glyph drawing
   and null-text opaque erases on a surface DC.
@@ -384,6 +389,10 @@ Current evidence from the 2026-08-02 follow-up probe:
   `node test/test-gdi-scroll-window-rect.js` verifies that default scrolling
   does not move non-client chrome and that `ScrollWindowEx`-style scroll/clip
   rectangles bound both the copied pixels and exposed white strip.
+- Direct WAT regression test:
+  `node test/test-edit-wrap-resize.js` verifies narrow wrapped multiline edit
+  layout, scroll range, wheel-to-bottom behavior, resize to a smaller maximum,
+  and `WM_SIZE` clamping of `EM_GETFIRSTVISIBLELINE`.
 - Regression test: `node test/test-wordpad-richedit.js` passes 23/23 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor and asserts there is no duplicated
@@ -490,7 +499,7 @@ blocker.
 2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   caret blink/XOR cadence, full wrapping/clip invalidation edge cases,
+   caret blink/XOR cadence, broader RichEdit wrapping/layout edge cases,
    advanced toolbar UI
    state, mixed-run size reporting, and paragraph
    indents/tabs/numbering still need focused probes. Font dialog

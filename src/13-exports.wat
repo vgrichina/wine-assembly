@@ -956,6 +956,63 @@
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
     (i32.load offset=4 (call $g2w (local.get $s))))
 
+  ;; Test helper: create a parent + EDIT child, return EDIT hwnd. The caller
+  ;; passes the full EDIT/WS_* style and optional initial text guest pointer.
+  (func (export "test_create_edit")
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (param $style i32) (param $text_g i32) (result i32)
+    (local $parent i32) (local $edit i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (local.set $edit (call $ctrl_create_child
+      (local.get $parent) (i32.const 2) (i32.const 100)
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+      (local.get $style) (local.get $text_g)))
+    (local.get $edit))
+
+  (func $test_edit_visual_line_count (export "test_edit_visual_line_count")
+    (param $hwnd i32) (result i32)
+    (local $s i32) (local $sw i32) (local $sz i32) (local $w i32) (local $style i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (if (i32.and (local.get $style) (i32.const 0x00200000))
+      (then
+        (if (i32.gt_u (local.get $w) (i32.const 16))
+          (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+    (if (i32.and
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080))))
+      (then
+        (return (call $edit_layout_build
+          (local.get $sw) (i32.add (local.get $hwnd) (i32.const 0x40000))
+          (local.get $w)))))
+    (i32.add
+      (call $edit_line_from_char (local.get $sw) (i32.load offset=4 (local.get $sw)))
+      (i32.const 1)))
+
+  (func (export "test_edit_max_scroll")
+    (param $hwnd i32) (result i32)
+    (local $lines i32) (local $visible i32) (local $sz i32) (local $h i32) (local $max i32)
+    (local.set $lines (call $test_edit_visual_line_count (local.get $hwnd)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (local.set $visible (i32.div_u
+      (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+              (i32.gt_u (local.get $h) (i32.const 8)))
+      (i32.const 16)))
+    (if (i32.eqz (local.get $visible))
+      (then (local.set $visible (i32.const 1))))
+    (local.set $max (i32.sub (local.get $lines) (local.get $visible)))
+    (if (i32.lt_s (local.get $max) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.get $max))
+
   ;; USER caret state, used by the renderer to composite native-control carets
   ;; after normal window back-canvas painting.
   (func (export "get_caret_hwnd") (result i32)
