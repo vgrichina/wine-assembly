@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Regression coverage for WordPad's ToolbarWindow32 layout path:
 //   - both standard and formatting toolbars are WAT-native class 21 controls
-//   - the MFC control bar lays out the RichEdit child below the visible bars
-//   - a screenshot is captured with the toolbar surfaces composited
+//   - the MFC control bar lays out the RichEdit child below the toolbar rows
+//   - a screenshot proves nested toolbar surfaces are composited and clipped
 //   - the first standard-toolbar button maps through TBBUTTON.idCommand and
 //     opens WordPad's New dialog instead of crashing in MFC toolbar UI updates
 
@@ -100,21 +100,32 @@ function parseWindowByCtrlId(id) {
   };
 }
 
-function countToolbarInk(pngPath) {
+function countToolbarButtonPixels(pngPath) {
   if (!fs.existsSync(pngPath)) return 0;
   const png = PNG.sync.read(fs.readFileSync(pngPath));
-  let dark = 0;
-  for (let y = 38; y < Math.min(110, png.height); y++) {
-    for (let x = 0; x < Math.min(390, png.width); x++) {
-      const i = (y * png.width + x) * 4;
-      const r = png.data[i];
-      const g = png.data[i + 1];
-      const b = png.data[i + 2];
-      const a = png.data[i + 3];
-      if (a && r < 120 && g < 120 && b < 120) dark++;
+  let detail = 0;
+  const bands = [
+    [43, 62], // Standard toolbar button interior/edges.
+    [73, 92], // Formatting toolbar button interior/edges.
+  ];
+  for (const [y0, y1] of bands) {
+    for (let y = y0; y < Math.min(y1, png.height); y++) {
+      for (let x = 4; x < Math.min(390, png.width); x++) {
+        const i = (y * png.width + x) * 4;
+        const r = png.data[i];
+        const g = png.data[i + 1];
+        const b = png.data[i + 2];
+        const a = png.data[i + 3];
+        if (!a) continue;
+        const isBtnFace =
+          r >= 185 && r <= 195 &&
+          g >= 185 && g <= 195 &&
+          b >= 185 && b <= 195;
+        if (!isBtnFace) detail++;
+      }
     }
   }
-  return dark;
+  return detail;
 }
 
 const standard = parseWindowByCtrlId(59392);
@@ -122,7 +133,7 @@ const formatting = parseWindowByCtrlId(59396);
 const richEdit = parseWindowByCtrlId(59648);
 const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT).size > 0;
-const toolbarInk = countToolbarInk(PNG_OUT);
+const toolbarButtonPixels = countToolbarButtonPixels(PNG_OUT);
 const openedNewDialog =
   /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);
 
@@ -154,7 +165,8 @@ check('RichEdit child is laid out below the toolbars',
   richEdit.h >= 100 &&
   richEdit.visible);
 check('toolbar-layout screenshot written', pngExists);
-check(`toolbar buttons visibly painted (${toolbarInk} dark pixels)`, toolbarInk >= 80);
+check(`toolbar button details visibly painted (${toolbarButtonPixels} non-face pixels)`,
+  toolbarButtonPixels >= 120);
 check('first standard toolbar button opens New dialog', openedNewDialog);
 check('toolbar-command screenshot written', clickPngExists);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));

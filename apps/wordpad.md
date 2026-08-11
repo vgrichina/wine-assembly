@@ -95,10 +95,13 @@ toolbars:  Standard and Formatting `ToolbarWindow32` children exist with WAT
 layout:    MFC control-bar sizing now places RichEdit at y=89, below the two
            toolbar rows and the ruler/status bands
 command:   first Standard toolbar button opens WordPad's "New" dialog
-visuals:   actual toolbar button/icon/combobox painting is still incomplete,
-           so the two rows currently look like a gray band in screenshots
-result:    PASS for ToolbarWindow32 layout, command-ID-backed button
-           hit testing, and the MFC toolbar command path for File New.
+visuals:   nested toolbar child surfaces now composite through the MFC
+           `AfxControlBar42` container, so button placeholders are visible
+           instead of a blank gray band; real bitmap icons and toolbar
+           combobox placement remain follow-up fidelity
+result:    PASS for ToolbarWindow32 layout, visible button placeholders,
+           command-ID-backed button hit testing, and the MFC toolbar command
+           path for File New.
 ```
 
 Focused mouse/scroll probe:
@@ -278,9 +281,11 @@ Current evidence from the 2026-08-02 follow-up probe:
 - The standard and formatting toolbars now create as WAT-native
   `ToolbarWindow32` controls and report enough `TB_*` layout state for
   WordPad/MFC to size the toolbar rows. The native RichEdit child is laid out
-  below them instead of overlapping the top of the document area. Toolbar
-  button/icon/combobox painting remains visibly incomplete, which is why the
-  band between the menu and ruler is mostly gray in current screenshots.
+  below them instead of overlapping the top of the document area. The renderer
+  now recurses through non-own-surface MFC containers such as `AfxControlBar42`
+  and clips oversized child canvases to the top-level window, so nested toolbar
+  child surfaces are visible and do not spill outside WordPad. Toolbar bitmap
+  icons and combobox placement remain visibly incomplete fidelity work.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
   and hit-tests mouse clicks. Clicking the first Standard toolbar button now
@@ -486,10 +491,11 @@ Current evidence from the 2026-08-02 follow-up probe:
   stroke in the document band.
 - Regression test: `node test/test-wordpad-toolbar.js` passes 13/13 and writes
   `test/output/wordpad-richedit/toolbar-layout.png` plus
-  `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation
-  and layout of the standard/formatting toolbar rows plus the first Standard
-  toolbar button opening WordPad's `New` dialog. High-fidelity toolbar visuals
-  remain follow-up work.
+  `test/output/wordpad-richedit/toolbar-command-new.png`, covering allocation,
+  layout, and visible placeholder painting of the standard/formatting toolbar
+  rows plus the first Standard toolbar button opening WordPad's `New` dialog.
+  The pixel assertion now measures only the toolbar button rows, not menu/ruler
+  pixels. High-fidelity toolbar icons/combobox visuals remain follow-up work.
 - Regression test: `node test/test-wordpad-richedit-scroll.js` passes 11/11
   and writes `test/output/wordpad-richedit/mouse-scroll.png`, which shows
   visible scrolled multiline text in the editor after wheel and thumb-drag

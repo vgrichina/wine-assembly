@@ -377,8 +377,11 @@ native-editing path is alive.
   placeholder painting hooks. The renderer composites toolbar child surfaces.
   Added `test/test-wordpad-toolbar.js`, which proves WordPad's Standard and
   Formatting toolbar rows are allocated with real child surfaces and place
-  RichEdit below them. Button/icon/combobox visuals are still incomplete, so
-  current screenshots show the toolbar area mostly as a gray band.
+  RichEdit below them. A later fix made the renderer recurse through
+  non-own-surface MFC containers such as `AfxControlBar42`, clip oversized
+  child surfaces to the top-level window, and expose visible toolbar button
+  placeholders instead of a blank gray band. Real bitmap icons and toolbar
+  combobox placement remain follow-up fidelity.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -726,6 +729,8 @@ Acceptance:
 [x] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
+[x] WordPad toolbar button placeholders are visibly composited through nested
+    MFC control-bar containers
 [x] WordPad first Standard toolbar button opens the New dialog through app UI
 [x] WordPad formatting toolbar B/I/U buttons route through app UI
 [x] WordPad toolbar/menu color command route applies Blue through app UI
@@ -777,6 +782,7 @@ Acceptance:
 [x] RichEdit selected-size reporting returns concrete `yHeight`
 [x] Direct RichEdit text color rendering is visibly asserted in WordPad
 [x] WordPad standard/format toolbar row layout is asserted
+[x] WordPad nested toolbar child surfaces visibly composite and clip to WordPad
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage

@@ -3194,6 +3194,11 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        ;; Native toolbar paints should start from an unclipped BeginPaint-style
+        ;; DC. The synthetic hwnd+0x40000 DC can retain stale/empty clip state
+        ;; from prior MFC/control-bar drawing, which erases the row but clips
+        ;; out the button edges and glyph placeholders.
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
@@ -4252,6 +4257,19 @@
           (then (return (i32.const -1))))))
     (local.get $idx))
 
+  (func $toolbar_repaint_now (param $hwnd i32)
+    ;; ToolbarWindow32 owns a composited child surface. MFC control-bar parents
+    ;; can leave ancestor erase state pending while still expecting the toolbar
+    ;; common-control proc to have drawn its buttons. Paint this surface
+    ;; directly when toolbar layout/state changes so it cannot stay as a blank
+    ;; COLOR_BTNFACE band waiting behind a parent erase that never touches the
+    ;; child surface.
+    (call $update_invalidate_full (local.get $hwnd))
+    (drop (call $toolbar_wndproc
+      (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
+    (call $update_clear_hwnd (local.get $hwnd))
+    (call $paint_flag_clear_hwnd (local.get $hwnd)))
+
   (func $toolbar_autosize (param $hwnd i32)
     (local $idx i32) (local $state i32) (local $sw i32) (local $parent i32)
     (local $xy i32) (local $wh i32) (local $x i32) (local $y i32)
@@ -4277,7 +4295,8 @@
     (call $host_move_window (local.get $hwnd) (local.get $x) (local.get $y) (local.get $w) (local.get $h) (i32.const 0))
     (call $ctrl_geom_set (local.get $idx) (local.get $x) (local.get $y) (local.get $w) (local.get $h))
     (call $defwndproc_do_nccalcsize (local.get $hwnd))
-    (call $paint_flag_set_inv (local.get $hwnd)))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (call $toolbar_repaint_now (local.get $hwnd)))
 
   (func $toolbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $sw i32) (local $hdc i32)
@@ -4558,6 +4577,7 @@
           (local.get $state_byte)
           (local.get $lParam)))
         (call $paint_flag_set_inv (local.get $hwnd))
+        (call $toolbar_repaint_now (local.get $hwnd))
         (return (i32.const 1))))
 
     ;; TB_SETSTATE (WM_USER+17): replace fsState for command ID.
@@ -4569,6 +4589,7 @@
         (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
         (i32.store8 offset=8 (local.get $rec) (local.get $lParam))
         (call $paint_flag_set_inv (local.get $hwnd))
+        (call $toolbar_repaint_now (local.get $hwnd))
         (return (i32.const 1))))
 
     ;; TB_HITTEST (WM_USER+69): lParam points to a POINT in toolbar coords.
@@ -4599,7 +4620,8 @@
             (i32.store8 offset=8 (local.get $rec)
               (i32.or (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x02)))
             (global.set $capture_hwnd (local.get $hwnd))
-            (call $paint_flag_set_inv (local.get $hwnd))))
+            (call $paint_flag_set_inv (local.get $hwnd))
+            (call $toolbar_repaint_now (local.get $hwnd))))
         (return (i32.const 0))))
 
     ;; WM_LBUTTONUP: clear pressed state and send WM_COMMAND(idCommand, hwnd).
@@ -4618,6 +4640,7 @@
             (i32.store8 offset=8 (local.get $rec)
               (i32.and (i32.load8_u offset=8 (local.get $rec)) (i32.const 0xFD)))
             (call $paint_flag_set_inv (local.get $hwnd))
+            (call $toolbar_repaint_now (local.get $hwnd))
             (if (i32.and
                   (i32.eq (local.get $idx) (local.get $hit))
                   (i32.and
