@@ -170,15 +170,24 @@ function countChromeBluePixelsInToolbarBand(pngPath) {
   let blue = 0;
   // The toolbar/ruler band starts below the top-level title/menu and above the
   // RichEdit document. A copied Win98 title bar shows up here as a dark-blue
-  // strip; normal toolbar/ruler paint should not.
+  // strip. Real toolbar bitmap icons also contain dark-blue glyph pixels, so
+  // only count long same-row blue runs that indicate copied chrome rather than
+  // small icon clusters.
   const x0 = 0, x1 = Math.min(390, png.width);
   const y0 = 38, y1 = Math.min(130, png.height);
   for (let y = y0; y < y1; y++) {
+    let run = 0;
     for (let x = x0; x < x1; x++) {
       const i = (y * png.width + x) * 4;
       const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2], a = png.data[i + 3];
-      if (a && r < 32 && g < 48 && b >= 96 && b <= 192) blue++;
+      if (a && r < 32 && g < 48 && b >= 96 && b <= 192) {
+        run++;
+      } else {
+        if (run >= 24) blue += run;
+        run = 0;
+      }
     }
+    if (run >= 24) blue += run;
   }
   return blue;
 }

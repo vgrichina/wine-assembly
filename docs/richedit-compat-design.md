@@ -129,6 +129,9 @@ That means these pieces are already good enough for basic insertion:
   the native RichEdit child is laid out below them;
 - WordPad toolbar app bitmap strips render colored icons instead of
   placeholder-only buttons;
+- WordPad's formatting toolbar child surface/client width is bounded to the
+  containing MFC control bar, and toolbar-hosted font/size combo fields paint
+  white interiors;
 - the first Standard toolbar button routes through WordPad/MFC and opens the
   New document-type dialog;
 - formatting toolbar Bold / Italic / Underline buttons route through WordPad UI
@@ -383,11 +386,13 @@ native-editing path is alive.
   RichEdit below them. A later fix made the renderer recurse through
   non-own-surface MFC containers such as `AfxControlBar42`, clip oversized
   child surfaces to the top-level window, and expose visible toolbar buttons
-  instead of a blank gray band. The toolbar now remembers `TB_ADDBITMAP`
-  app bitmap strips, blits `TBBUTTON.iBitmap` icons during `WM_PAINT`, and the
-  regression asserts colored icon pixels instead of placeholder-only squares.
-  Common-control built-in strips and masked transparency/color remapping remain
-  follow-up fidelity.
+  instead of a blank gray band. The formatting toolbar child surface/client
+  width is now bounded to its containing `AfxControlBar42`, preventing a
+  1512px-wide child dump/allocation inside WordPad's 394px frame. The toolbar
+  now remembers `TB_ADDBITMAP` app bitmap strips, blits `TBBUTTON.iBitmap`
+  icons during `WM_PAINT`, and the regression asserts colored icon pixels
+  instead of placeholder-only squares. Common-control built-in strips and
+  masked transparency/color remapping remain follow-up fidelity.
 - Extended that `ToolbarWindow32` subset with a 20-byte `TBBUTTON` backing
   store, `TB_GETBUTTON` command IDs, command-ID state lookup/update, mouse
   hit-testing, and synchronous `WM_COMMAND` delivery to the parent. Added a
@@ -402,7 +407,10 @@ native-editing path is alive.
   and toolbar-hosted combo creation flows later same-origin combo fields after
   earlier combo siblings. `test/test-wordpad-toolbar.js` now asserts the
   WordPad formatting toolbar's font and size comboboxes are visible,
-  non-negative, and separated.
+  non-negative, separated, have bounded client widths, and paint white field
+  interiors. The fields still do not show populated font/size text because the
+  observed WordPad startup path sends combo selection/text messages to hwnd=0;
+  that handle/control-attach issue is separate from toolbar layout.
 - Added minimal `GetDCEx` support on top of the existing host DC allocator and
   client/whole-window clip helpers. Added
   `test/test-wordpad-toolbar-format-buttons.js`, which passes 10/10 and

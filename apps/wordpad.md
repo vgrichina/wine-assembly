@@ -1,7 +1,7 @@
 # WordPad (Win98) — PARTIAL
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-10):** PARTIAL.
+**Status (2026-08-11):** PARTIAL.
 
 WordPad opens and renders in the focused smoke:
 
@@ -98,10 +98,15 @@ command:   first Standard toolbar button opens WordPad's "New" dialog
 visuals:   nested toolbar child surfaces now composite through the MFC
            `AfxControlBar42` container, and `TB_ADDBITMAP` app strips now
            blit real colored button icons instead of placeholder-only squares
-result:    PASS for ToolbarWindow32 layout, visible bitmap icons,
-           command-ID-backed button hit testing, and the MFC toolbar command
-           path for File New. Common-control built-in strips and masked
-           transparency/color remapping remain follow-up fidelity.
+           The formatting toolbar surface/client width is bounded to the
+           containing control bar instead of dumping/allocation as a 1512px
+           child in a 394px frame. Toolbar-hosted font/size combobox fields
+           now paint white interiors.
+result:    PASS for ToolbarWindow32 layout, bounded formatting toolbar width,
+           visible bitmap icons, combobox field paint, command-ID-backed
+           button hit testing, and the MFC toolbar command path for File New.
+           Common-control built-in strips, masked transparency/color remapping,
+           and populated toolbar font/size text remain follow-up fidelity.
 ```
 
 Focused mouse/scroll probe:
@@ -284,10 +289,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   below them instead of overlapping the top of the document area. The renderer
   now recurses through non-own-surface MFC containers such as `AfxControlBar42`
   and clips oversized child canvases to the top-level window, so nested toolbar
-  child surfaces are visible and do not spill outside WordPad. Toolbar
-  `TB_ADDBITMAP` app strips now render through centered SRCCOPY blits from
-  `TBBUTTON.iBitmap`; common-control built-in strips and masked transparency/
-  color remapping remain follow-up fidelity.
+  child surfaces are visible and do not spill outside WordPad. Formatting
+  toolbar child surfaces/client rects are also bounded to the containing
+  control bar, avoiding the previous 1512px-wide child allocation in a 394px
+  frame. Toolbar `TB_ADDBITMAP` app strips now render through centered SRCCOPY
+  blits from `TBBUTTON.iBitmap`; common-control built-in strips and masked
+  transparency/color remapping remain follow-up fidelity.
 - `ToolbarWindow32` now stores the caller's `TBBUTTON` records, returns real
   `idCommand` values from `TB_GETBUTTON`, maps command IDs for state probes,
   and hit-tests mouse clicks. Clicking the first Standard toolbar button now
@@ -299,6 +306,12 @@ Current evidence from the 2026-08-02 follow-up probe:
   `GetDCEx` compatibility handler now allocates a client or whole-window DC
   with the existing DC allocator/clip helpers, which unblocks MFC toolbar paint
   and update paths reached by these clicks.
+- Toolbar-hosted dropdown comboboxes now paint their field backgrounds from
+  the combobox proc, so the WordPad font/size fields no longer show gray blank
+  interiors. The fields are still visually empty because WordPad's startup font
+  combo initialization is currently observed sending selection/text messages to
+  hwnd=0; populated toolbar font/size text remains a follow-up control-attach
+  task.
 - Renderer keyboard routing now preserves focus on native child controls such
   as WordPad's `RichEdit20A` before falling back to the first WAT `EDIT`. This
   prevents the formatting toolbar's combobox edit child from stealing typing

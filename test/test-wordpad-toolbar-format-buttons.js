@@ -56,7 +56,7 @@ const seq = [
   ...ctrlA(206),
   '220:dump-focus-charformat:bold-italic-underline',
   '224:dump-focus-state:final',
-  `228:png-pixels:${FORMATTED_PNG}`,
+  `228:png:${FORMATTED_PNG}`,
   '234:stop',
 ];
 
@@ -104,7 +104,7 @@ const boldItalic = line('bold-italic');
 const all = line('bold-italic-underline');
 const finalState = out.split('\n').find(l => l.includes('dump-focus-state final:')) || '';
 const plainPngWritten = out.includes(`[input] png ${PLAIN_PNG} `);
-const formattedPngWritten = out.includes(`[input] png-pixels ${FORMATTED_PNG} `);
+const formattedPngWritten = out.includes(`[input] png ${FORMATTED_PNG} `);
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }

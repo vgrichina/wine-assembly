@@ -4342,7 +4342,7 @@
   (func $toolbar_autosize (param $hwnd i32)
     (local $idx i32) (local $state i32) (local $sw i32) (local $parent i32)
     (local $xy i32) (local $wh i32) (local $x i32) (local $y i32)
-    (local $w i32) (local $h i32)
+    (local $w i32) (local $h i32) (local $parent_w i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
@@ -4359,6 +4359,19 @@
         (if (local.get $parent)
           (then (local.set $w (call $wnd_client_w_for_clip (local.get $parent)))))))
     (if (i32.le_s (local.get $w) (i32.const 0)) (then (local.set $w (i32.const 160))))
+    ;; MFC control bars can cache the toolbar's ideal button span, then move
+    ;; the child with SWP_NOSIZE. Keep the real child surface bounded by the
+    ;; containing bar so oversized formatting toolbars do not allocate/dump as
+    ;; multi-screen-wide children while still letting button positions extend
+    ;; within the clipped parent.
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (local.get $parent)
+      (then
+        (local.set $parent_w (call $wnd_client_w_for_clip (local.get $parent)))
+        (if (i32.and
+              (i32.gt_s (local.get $parent_w) (i32.const 0))
+              (i32.gt_s (local.get $w) (i32.add (local.get $parent_w) (i32.const 8))))
+          (then (local.set $w (local.get $parent_w))))))
     (local.set $h (i32.add (i32.load offset=8 (local.get $sw)) (i32.const 6)))
     (if (i32.lt_s (local.get $h) (i32.const 24)) (then (local.set $h (i32.const 24))))
     (call $host_move_window (local.get $hwnd) (local.get $x) (local.get $y) (local.get $w) (local.get $h) (i32.const 0))
@@ -6976,14 +6989,13 @@
         ;; Skip field paint for CBS_SIMPLE — entire window is the listbox.
         (if (i32.ne (local.get $variant) (i32.const 1))
           (then
-            ;; CBS_DROPDOWN (variant=2): the inner edit child paints the field.
-            ;; CBS_DROPDOWNLIST (variant=3): combobox paints the white field.
-            (if (i32.ne (local.get $variant) (i32.const 2))
-              (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
-                        (i32.const 0) (i32.const 0)
-                        (local.get $w) (local.get $h)
-                        (i32.const 0x30010)))))  ;; WHITE_BRUSH
+            ;; Toolbar-hosted CBS_DROPDOWN inner EDIT children are not
+            ;; independently composited, so paint the field here for both
+            ;; editable and read-only dropdown variants.
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 0) (i32.const 0)
+                    (local.get $w) (local.get $h)
+                    (i32.const 0x30010)))  ;; WHITE_BRUSH
             (drop (call $host_gdi_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)

@@ -79,7 +79,8 @@ function parseWindowByCtrlId(id) {
   const re = new RegExp(
     `window:final hwnd=(\\d+) class=("[^"]*") ctrlClass=(-?\\d+) ctrlId=${id} ` +
     `parent=(0x[0-9a-f]+) pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
-    `client=\\{[^}]*\\} visible=(true|false)(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
+    `client=\\{"x":(-?\\d+),"y":(-?\\d+),"w":(-?\\d+),"h":(-?\\d+)\\} ` +
+    `visible=(true|false)(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
     'i');
   const line = out.split('\n').find(l => re.test(l)) || '';
   const m = line.match(re);
@@ -95,10 +96,14 @@ function parseWindowByCtrlId(id) {
     y: parseInt(m[6], 10),
     w: parseInt(m[7], 10),
     h: parseInt(m[8], 10),
-    visible: m[9] === 'true',
-    dialog: m[10] === 'true',
-    hasBack: m[11] === 'true',
-    title: JSON.parse(m[12]),
+    clientX: parseInt(m[9], 10),
+    clientY: parseInt(m[10], 10),
+    clientW: parseInt(m[11], 10),
+    clientH: parseInt(m[12], 10),
+    visible: m[13] === 'true',
+    dialog: m[14] === 'true',
+    hasBack: m[15] === 'true',
+    title: JSON.parse(m[16]),
   };
 }
 
@@ -157,8 +162,26 @@ function countToolbarIconColorPixels(pngPath) {
   return colorful;
 }
 
+function countWhitePixels(pngPath, x0, y0, x1, y1) {
+  if (!fs.existsSync(pngPath)) return 0;
+  const png = PNG.sync.read(fs.readFileSync(pngPath));
+  let white = 0;
+  for (let y = Math.max(0, y0 | 0); y < Math.min(y1 | 0, png.height); y++) {
+    for (let x = Math.max(0, x0 | 0); x < Math.min(x1 | 0, png.width); x++) {
+      const i = (y * png.width + x) * 4;
+      const r = png.data[i];
+      const g = png.data[i + 1];
+      const b = png.data[i + 2];
+      const a = png.data[i + 3];
+      if (a && r >= 245 && g >= 245 && b >= 245) white++;
+    }
+  }
+  return white;
+}
+
 const standard = parseWindowByCtrlId(59392);
 const formatting = parseWindowByCtrlId(59396);
+const topControlBar = parseWindowByCtrlId(59419);
 const fontCombo = parseWindowByCtrlId(165);
 const sizeCombo = parseWindowByCtrlId(166);
 const richEdit = parseWindowByCtrlId(59648);
@@ -166,6 +189,14 @@ const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT).size > 0;
 const toolbarButtonPixels = countToolbarButtonPixels(PNG_OUT);
 const toolbarIconColorPixels = countToolbarIconColorPixels(PNG_OUT);
+const fontComboWhitePixels = fontCombo
+  ? countWhitePixels(PNG_OUT, fontCombo.clientX + 4, fontCombo.clientY + 4,
+      fontCombo.clientX + fontCombo.clientW - 22, fontCombo.clientY + 18)
+  : 0;
+const sizeComboWhitePixels = sizeCombo
+  ? countWhitePixels(PNG_OUT, sizeCombo.clientX + 4, sizeCombo.clientY + 4,
+      sizeCombo.clientX + sizeCombo.clientW - 22, sizeCombo.clientY + 18)
+  : 0;
 const openedNewDialog =
   /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);
 
@@ -187,6 +218,13 @@ check('formatting toolbar exists as WAT-native ToolbarWindow32',
   formatting.visible);
 check('formatting toolbar has a real surface and height',
   formatting && formatting.hasBack && formatting.w >= 300 && formatting.h >= 24);
+check('formatting toolbar renderer width is bounded by its control bar',
+  formatting &&
+  topControlBar &&
+  topControlBar.className === 'AfxControlBar42' &&
+  formatting.parent === `0x${topControlBar.hwnd.toString(16)}` &&
+  formatting.w <= topControlBar.w + 8 &&
+  formatting.clientW <= topControlBar.w + 8);
 check('font combo is visible on the formatting toolbar',
   fontCombo &&
   fontCombo.className === 'COMBOBOX' &&
@@ -221,6 +259,9 @@ check(`toolbar button details visibly painted (${toolbarButtonPixels} non-face p
   toolbarButtonPixels >= 120);
 check(`toolbar bitmap icons render colored strip pixels (${toolbarIconColorPixels} color pixels)`,
   toolbarIconColorPixels >= 80);
+check(`toolbar combo fields paint white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
+  fontComboWhitePixels >= 1200 &&
+  sizeComboWhitePixels >= 150);
 check('first standard toolbar button opens New dialog', openedNewDialog);
 check('toolbar-command screenshot written', clickPngExists);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
