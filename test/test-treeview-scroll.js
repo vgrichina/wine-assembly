@@ -15,11 +15,14 @@ const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
 
 const TVM_INSERTITEMA = 0x1100;
+const TVM_EXPAND = 0x1102;
 const TVM_GETCOUNT = 0x1105;
 const TVM_GETNEXTITEM = 0x110A;
 const TVM_HITTEST = 0x1111;
 const TVGN_FIRSTVISIBLE = 5;
 const TVGN_CARET = 9;
+const TVE_COLLAPSE = 1;
+const TVE_EXPAND = 2;
 const WM_VSCROLL = 0x0115;
 const WM_LBUTTONDOWN = 0x0201;
 const WM_LBUTTONUP = 0x0202;
@@ -66,11 +69,16 @@ async function main() {
     u8[p + s.length] = 0;
     return g;
   }
-  function insertRoot(text) {
+  function insertItem(text, parent = 0, state = null) {
     const g = e.guest_alloc(56);
     const p = wa(g);
     u8.fill(0, p, p + 56);
-    dv.setUint32(p + 8, 0x0001, true); // TVIF_TEXT
+    dv.setUint32(p + 0, parent, true);
+    dv.setUint32(p + 8, state === null ? 0x0001 : 0x0009, true); // TVIF_TEXT | TVIF_STATE
+    if (state !== null) {
+      dv.setUint32(p + 16, state, true);
+      dv.setUint32(p + 20, 0x20, true); // TVIS_EXPANDED
+    }
     dv.setUint32(p + 24, writeStr(text), true);
     return e.send_message(tv, TVM_INSERTITEMA, 0, g) >>> 0;
   }
@@ -87,7 +95,7 @@ async function main() {
   check('create added 2 slots (parent + treeview)', e.wnd_count_used() === baselineSlots + 2);
 
   const handles = [];
-  for (let i = 0; i < 12; i++) handles.push(insertRoot(`Node ${i}`));
+  for (let i = 0; i < 12; i++) handles.push(insertItem(`Node ${i}`));
   check('TVM_INSERTITEMA returned handles', handles.every(Boolean));
   check('TVM_GETCOUNT is 12', e.send_message(tv, TVM_GETCOUNT, 0, 0) === 12);
   check('visible count is 12', e.treeview_get_visible_count() === 12);
@@ -126,6 +134,21 @@ async function main() {
   e.send_message(tv, WM_MOUSEMOVE, 1, makeLParam(152, 61));
   e.send_message(tv, WM_LBUTTONUP, 0, makeLParam(152, 61));
   check('scrollbar thumb drag changes first visible row', e.treeview_get_first_visible_row() > 6);
+
+  const parent = insertItem('Collapsed parent', 0, 0);
+  const childA = insertItem('Child A', parent);
+  const childB = insertItem('Child B', parent);
+  check('collapsed parent hides both children', e.treeview_get_visible_count() === 13);
+  check('TVGN_CHILD returns first hierarchical child',
+    (e.send_message(tv, TVM_GETNEXTITEM, 4, parent) >>> 0) === childA);
+  check('TVGN_PARENT returns hierarchical parent',
+    (e.send_message(tv, TVM_GETNEXTITEM, 3, childB) >>> 0) === parent);
+  check('TVM_EXPAND reveals both children',
+    e.send_message(tv, TVM_EXPAND, TVE_EXPAND, parent) === 1 &&
+      e.treeview_get_visible_count() === 15);
+  check('TVM_EXPAND collapse hides both children again',
+    e.send_message(tv, TVM_EXPAND, TVE_COLLAPSE, parent) === 1 &&
+      e.treeview_get_visible_count() === 13);
 
   if (e.wnd_destroy_tree) e.wnd_destroy_tree(tv - 1);
   check('slot count returns to baseline after destroy', e.wnd_count_used() === baselineSlots);

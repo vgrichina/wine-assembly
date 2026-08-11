@@ -18,6 +18,11 @@
   (global $tv_first_visible_row (mut i32) (i32.const 0))
   (global $tv_drag_anchor_y (mut i32) (i32.const 0))
   (global $tv_drag_anchor_row (mut i32) (i32.const 0))
+  (global $tv_debug_paint_visible (mut i32) (i32.const 0))
+  (global $tv_debug_paint_text (mut i32) (i32.const 0))
+  (global $tv_debug_paint_iterations (mut i32) (i32.const 0))
+  (global $tv_debug_paint_last_y (mut i32) (i32.const 0))
+  (global $tv_debug_paint_rows (mut i32) (i32.const 0))
 
   ;; Find slot index for a handle, return -1 if not found
   (func $tv_find_slot (param $handle i32) (result i32)
@@ -905,18 +910,29 @@
 
     (local.set $i (i32.const 0))
     (local.set $row (i32.const 0))
+    (global.set $tv_debug_paint_visible (i32.const 0))
+    (global.set $tv_debug_paint_text (i32.const 0))
+    (global.set $tv_debug_paint_iterations (i32.const 0))
     (block $done (loop $items
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (global.set $tv_debug_paint_iterations
+        (i32.add (global.get $tv_debug_paint_iterations) (i32.const 1)))
       (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-      (if (i32.and
+      (block $skip_item
+        (br_if $skip_item (i32.eqz
+          (i32.and
             (i32.ne (i32.load (local.get $base)) (i32.const 0))
-            (call $tv_item_visible (local.get $base)))
-        (then
+            (call $tv_item_visible (local.get $base)))))
+          (global.set $tv_debug_paint_visible
+            (i32.add (global.get $tv_debug_paint_visible) (i32.const 1)))
           (local.set $state (i32.load offset=20 (local.get $base)))
-          (if (i32.ge_s (local.get $row) (local.get $first_row))
+          (local.set $draw_row (local.get $row))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (if (i32.ge_s (local.get $draw_row) (local.get $first_row))
             (then
-              (local.set $draw_row (i32.sub (local.get $row) (local.get $first_row)))
+              (local.set $draw_row (i32.sub (local.get $draw_row) (local.get $first_row)))
               (local.set $y (i32.add (i32.const 3) (i32.mul (local.get $draw_row) (i32.const 16))))
+              (global.set $tv_debug_paint_last_y (local.get $y))
               (if (i32.lt_u (local.get $y) (i32.sub (local.get $h) (i32.const 4)))
                 (then
                   (local.set $depth (call $tv_item_depth (local.get $base)))
@@ -1008,12 +1024,15 @@
 	                      (drop (call $host_gdi_text_out (local.get $hdc)
 	                        (local.get $x) (i32.add (local.get $y) (i32.const 1))
 	                        (local.get $text_w) (local.get $text_len) (i32.const 0)))
+	                      (global.set $tv_debug_paint_text
+	                        (i32.add (global.get $tv_debug_paint_text) (i32.const 1)))
 	                      (if (local.get $selected)
 	                        (then
 	                          (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
 	                          (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00FFFFFF)))
 		                          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000))))))))))))
-          (local.set $row (i32.add (local.get $row) (i32.const 1)))))
+        (nop)))
+      (global.set $tv_debug_paint_rows (local.get $row))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $items)))
     (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
@@ -1023,7 +1042,7 @@
           (i32.const 16) (local.get $h)
           (local.get $first_row) (local.get $max_scroll)
           (select (global.get $sb_pressed_part) (i32.const 0)
-                  (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))))))
+                  (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
   )
 
   ;; TreeView control wndproc — handles WM_PAINT and TreeView messages

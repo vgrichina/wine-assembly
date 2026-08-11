@@ -379,6 +379,7 @@ async function main() {
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   //   B:dump-children:HWND[:LABEL] — log WAT child table entries for HWND
+  //   B:dump-tree[:LABEL] — log WAT TreeView item handles, hierarchy, state, and text
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
@@ -472,6 +473,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-children', hwnd: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-windows') {
         scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
+      } else if (kind === 'dump-tree') {
+        scheduledInput.push({ batch, action: 'dump-tree', label: parts[2] || '' });
       } else if (kind === 'dump-toolbar') {
         scheduledInput.push({ batch, action: 'dump-toolbar', label: parts[2] || '' });
       } else if (kind === 'menu-dump') {
@@ -3183,6 +3186,39 @@ async function main() {
           const enabled = (style & 0x08000000) === 0;
           logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-tree') {
+        const label = ev.label ? ':' + ev.label : '';
+        const we = instance.exports;
+        const dv = new DataView(memory.buffer);
+        const u8 = new Uint8Array(memory.buffer);
+        const items = [];
+        const table = 0x07F00000;
+        for (let i = 0; i < 32; i++) {
+          const p = table + i * 32;
+          const handle = dv.getUint32(p, true);
+          if (!handle) continue;
+          const parent = dv.getUint32(p + 4, true);
+          const child = dv.getUint32(p + 8, true);
+          const next = dv.getUint32(p + 12, true);
+          const state = dv.getUint32(p + 20, true);
+          const textG = dv.getUint32(p + 28, true);
+          let itemText = '';
+          if (textG) {
+            let q = g2w(textG);
+            const bytes = [];
+            while (q < u8.length && bytes.length < 255 && u8[q]) bytes.push(u8[q++]);
+            itemText = Buffer.from(bytes).toString('latin1');
+          }
+          items.push(`#${i} h=0x${handle.toString(16)} parent=0x${parent.toString(16)} child=0x${child.toString(16)} next=0x${next.toString(16)} state=0x${state.toString(16)} text=${JSON.stringify(itemText)}`);
+        }
+        const visible = we.treeview_get_visible_count ? (we.treeview_get_visible_count() | 0) : -1;
+        const firstRow = we.treeview_get_first_visible_row ? (we.treeview_get_first_visible_row() | 0) : -1;
+        const paintVisible = we.treeview_get_debug_paint_visible ? (we.treeview_get_debug_paint_visible() | 0) : -1;
+        const paintText = we.treeview_get_debug_paint_text ? (we.treeview_get_debug_paint_text() | 0) : -1;
+        const paintIterations = we.treeview_get_debug_paint_iterations ? (we.treeview_get_debug_paint_iterations() | 0) : -1;
+        const paintLastY = we.treeview_get_debug_paint_last_y ? (we.treeview_get_debug_paint_last_y() | 0) : -1;
+        const paintRows = we.treeview_get_debug_paint_rows ? (we.treeview_get_debug_paint_rows() | 0) : -1;
+        logs.push(`[input] dump-tree${label}: visible=${visible} firstRow=${firstRow} paintIterations=${paintIterations} paintVisible=${paintVisible} paintText=${paintText} paintRows=${paintRows} paintLastY=${paintLastY} ${items.join(' | ') || '(empty)'} at batch ${batch}`);
       } else if (ev.action === 'dump-toolbar' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
         const we = instance.exports;

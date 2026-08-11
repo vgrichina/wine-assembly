@@ -1404,6 +1404,16 @@
     (local $sz i32)
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (call $tv_max_scroll_for_h (i32.shr_u (local.get $sz) (i32.const 16))))
+  (func (export "treeview_get_debug_paint_visible") (result i32)
+    (global.get $tv_debug_paint_visible))
+  (func (export "treeview_get_debug_paint_text") (result i32)
+    (global.get $tv_debug_paint_text))
+  (func (export "treeview_get_debug_paint_iterations") (result i32)
+    (global.get $tv_debug_paint_iterations))
+  (func (export "treeview_get_debug_paint_last_y") (result i32)
+    (global.get $tv_debug_paint_last_y))
+  (func (export "treeview_get_debug_paint_rows") (result i32)
+    (global.get $tv_debug_paint_rows))
 
   ;; Test helper: create a parent + SysListView32 child, return listview hwnd.
   ;; This exercises the WAT-native ListView wndproc without booting a guest EXE.

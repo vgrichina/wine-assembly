@@ -186,10 +186,14 @@ native-editing path is alive.
   `SysTreeView32` overflow rows.
 - TreeView line/page clicks, thumb drag, `WM_MOUSEWHEEL`, `WM_VSCROLL`,
   `TVGN_FIRSTVISIBLE`, `TVM_HITTEST`, and mouse selection now share the same
-  first-visible row offset.
+  first-visible row offset. The same standalone coverage now also asserts
+  parent/child links through `TVGN_CHILD` / `TVGN_PARENT` and collapsed versus
+  expanded visibility through `TVM_EXPAND`.
 - Added `test/test-treeview-scroll.js`, a standalone WAT regression that creates
   a TreeView, inserts 12 rows, verifies wheel/arrow/page/thumb scroll behavior,
-  hit-testing through the scroll offset, selection, and slot cleanup.
+  hit-testing through the scroll offset, selection, hierarchy expand/collapse,
+  and slot cleanup. `test/run.js` can dump TreeView item state plus paint
+  counters for future app-level probes.
 - Added bounded report-style `SysListView32` state: columns, fixed 8-subitem
   row text, item count, single-row selection, top index, `LVM_GETITEMTEXTA`,
   `LVM_SETITEMTEXTA`, `LVM_HITTEST`, `LVM_ENSUREVISIBLE`, `LVM_SCROLL`, and
@@ -847,6 +851,7 @@ Acceptance:
 [x] WordPad toolbar/menu color route has explicit coverage
 [x] Installer/license RichEdit panes render and scroll
 [x] WAT TreeView reuses shared vertical scrollbar hit/drag math
+[x] WAT TreeView parent/child links and expand/collapse visibility are asserted
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes
