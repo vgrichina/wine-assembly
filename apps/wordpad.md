@@ -1,7 +1,7 @@
 # WordPad (Win98) — PARTIAL
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-03):** PARTIAL.
+**Status (2026-08-10):** PARTIAL.
 
 WordPad opens and renders in the focused smoke:
 
@@ -37,7 +37,9 @@ cut/paste:  selected "menu" cuts to an empty buffer, then menu Paste restores
 OLE path:   CreateILockBytesOnHGlobal / StgCreateDocfileOnILockBytes are not
             reached in this plain-text menu bridge path
 result:     PASS for Edit-menu Select All / Copy / Cut / Paste plain-text
-            behavior on WordPad's focused native RichEdit child.
+            behavior on WordPad's focused native RichEdit child. The current
+            screenshot guard also confirms multiline editing no longer copies
+            title/menu chrome into the toolbar/ruler band.
 ```
 
 Focused selection-highlight probe:
@@ -368,12 +370,17 @@ Current evidence from the 2026-08-02 follow-up probe:
 - `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills and `ETO_CLIPPED` glyph
   clipping, so RichEdit's erase bands clear to the DC background and long-line
   paints stay constrained to the native paint rectangle.
+- `ScrollWindow` / `ScrollWindowEx` now scroll only the target window's client
+  rectangle in the backing store. This fixes the WordPad multiline edit path
+  where RichEdit's line-scroll operation had copied top-level title/menu pixels
+  into the toolbar/ruler band.
 - Direct GDI regression test:
   `node test/test-gdi-exttextout-clipping.js` verifies clipped glyph drawing
   and null-text opaque erases on a surface DC.
-- Regression test: `node test/test-wordpad-richedit.js` passes 22/22 and
+- Regression test: `node test/test-wordpad-richedit.js` passes 23/23 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
-  visible edited text in the editor.
+  visible edited text in the editor and asserts there is no duplicated
+  title/menu chrome in the toolbar/ruler band.
 - Regression test: `node test/test-wordpad-richedit-clipping.js` passes 11/11
   and writes `test/output/wordpad-richedit/long-line-clipped.png`; it types
   100 chars, observes native RichEdit line metrics, confirms

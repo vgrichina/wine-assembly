@@ -165,12 +165,30 @@ function countDarkTextPixels(pngPath) {
   }
   return dark;
 }
+function countChromeBluePixelsInToolbarBand(pngPath) {
+  const png = PNG.sync.read(fs.readFileSync(pngPath));
+  let blue = 0;
+  // The toolbar/ruler band starts below the top-level title/menu and above the
+  // RichEdit document. A copied Win98 title bar shows up here as a dark-blue
+  // strip; normal toolbar/ruler paint should not.
+  const x0 = 0, x1 = Math.min(390, png.width);
+  const y0 = 38, y1 = Math.min(130, png.height);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * png.width + x) * 4;
+      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2], a = png.data[i + 3];
+      if (a && r < 32 && g < 48 && b >= 96 && b <= 192) blue++;
+    }
+  }
+  return blue;
+}
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }
 
 const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const darkPixels = pngExists ? countDarkTextPixels(PNG_OUT) : 0;
+const toolbarBluePixels = pngExists ? countChromeBluePixelsInToolbarBand(PNG_OUT) : 0;
 const keyboardFocusHits = (out.match(/\[check_input_hwnd\] keyboard → focus 0x10002/g) || []).length;
 const typedTextOk = /dump-focus-text typed: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=11 text="hello world"/.test(out);
 const editedTextOk = /dump-focus-text edited: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=\d+ text="hello worl\\r?\\nagain"/.test(out);
@@ -209,6 +227,7 @@ check('Ctrl+X cuts selected native RichEdit text', cutTextOk);
 check('Ctrl+V restores cut native RichEdit text', restoredTextOk);
 check('edited-text screenshot written', pngExists);
 check(`edited text visibly painted (${darkPixels} dark pixels)`, darkPixels >= 50);
+check(`no duplicated title/menu chrome in toolbar band (${toolbarBluePixels} blue pixels)`, toolbarBluePixels < 20);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code/.test(out));
 

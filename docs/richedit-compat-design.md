@@ -164,6 +164,13 @@ native-editing path is alive.
   scheduled input steps, classifies the ListView as `ctrlClass=18`, and writes
   `/private/tmp/regedit-listview-smoke.png` with the `Name` / `Data` headers
   visible.
+- Fixed the host `ScrollWindow` / `ScrollWindowEx` backing-store approximation
+  so it scrolls only the target window's client rectangle instead of the whole
+  top-level back-canvas. This removes the WordPad multiline-edit artifact where
+  RichEdit copied title/menu chrome into the toolbar/ruler band.
+- Expanded `test/test-wordpad-richedit.js` to 23/23 with a screenshot guard
+  that counts duplicated title-bar-blue pixels in the toolbar/ruler band; the
+  regenerated `hello-world-edited.png` has zero such pixels.
 - Kept advanced ListView behavior postponed: icon/small-icon/list layouts,
   image lists, sorting, custom draw, label edit, full notifications, and
   high-fidelity header interaction.
