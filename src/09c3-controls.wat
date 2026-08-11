@@ -3851,6 +3851,107 @@
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
 
+    ;; LVM_GETHEADER plus a bounded pseudo-Header message surface. Returning
+    ;; the ListView hwnd lets apps that only query/send HDM_* messages proceed
+    ;; without a real child SysHeader32 window yet.
+    (if (i32.eq (local.get $msg) (i32.const 0x101F))
+      (then
+        (if (i32.gt_s (i32.load offset=16 (local.get $sw)) (i32.const 0))
+          (then (return (local.get $hwnd))))
+        (return (i32.const 0))))
+    ;; HDM_GETITEMCOUNT
+    (if (i32.eq (local.get $msg) (i32.const 0x1200))
+      (then (return (i32.load offset=16 (local.get $sw)))))
+    ;; HDM_GETITEMA
+    (if (i32.eq (local.get $msg) (i32.const 0x1203))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $mask (i32.load (local.get $ptr)))
+        (if (i32.and (local.get $mask) (i32.const 0x0001))
+          (then (i32.store offset=4 (local.get $ptr)
+            (call $lv_report_col_width (local.get $sw) (local.get $idx)))))
+        (if (i32.and (local.get $mask) (i32.const 0x0002))
+          (then
+            (local.set $dst (i32.load offset=8 (local.get $ptr)))
+            (local.set $max (i32.load offset=16 (local.get $ptr)))
+            (if (i32.and (i32.ne (local.get $dst) (i32.const 0))
+                         (i32.gt_s (local.get $max) (i32.const 0)))
+              (then
+                (local.set $dst (call $g2w (local.get $dst)))
+                (local.set $src
+                  (i32.load
+                    (i32.add (call $g2w (i32.load offset=28 (local.get $sw)))
+                             (i32.mul (local.get $idx) (i32.const 4)))))
+                (if (local.get $src)
+                  (then
+                    (local.set $src (call $g2w (local.get $src)))
+                    (local.set $text_len (call $strlen (local.get $src)))
+                    (if (i32.ge_u (local.get $text_len) (local.get $max))
+                      (then (local.set $text_len (i32.sub (local.get $max) (i32.const 1)))))
+                    (if (local.get $text_len)
+                      (then (call $memcpy (local.get $dst) (local.get $src) (local.get $text_len))))
+                    (i32.store8 (i32.add (local.get $dst) (local.get $text_len)) (i32.const 0)))
+                  (else
+                    (i32.store8 (local.get $dst) (i32.const 0))))))))
+        (if (i32.and (local.get $mask) (i32.const 0x0004))
+          (then (i32.store offset=20 (local.get $ptr) (i32.const 0))))
+        (if (i32.and (local.get $mask) (i32.const 0x0080))
+          (then (i32.store offset=32 (local.get $ptr) (local.get $idx))))
+        (return (i32.const 1))))
+    ;; HDM_HITTEST
+    (if (i32.eq (local.get $msg) (i32.const 0x1206))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $x (i32.load (local.get $ptr)))
+        (local.set $y (i32.load offset=4 (local.get $ptr)))
+        (local.set $header_h (call $lv_header_h (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $y) (i32.const 0))
+                    (i32.ge_s (local.get $y) (local.get $header_h)))
+          (then
+            (i32.store offset=8 (local.get $ptr) (i32.const 0x0001))
+            (i32.store offset=12 (local.get $ptr) (i32.const -1))
+            (return (i32.const -1))))
+        (local.set $col_idx (i32.const 0))
+        (local.set $col_x (i32.const 0))
+        (block $hd_hit_done (loop $hd_hit_cols
+          (br_if $hd_hit_done (i32.ge_s (local.get $col_idx) (i32.load offset=16 (local.get $sw))))
+          (local.set $width (call $lv_report_col_width (local.get $sw) (local.get $col_idx)))
+          (if (i32.and
+                (i32.ge_s (local.get $x) (local.get $col_x))
+                (i32.lt_s (local.get $x) (i32.add (local.get $col_x) (local.get $width))))
+            (then
+              (i32.store offset=8 (local.get $ptr) (i32.const 0x0002))
+              (i32.store offset=12 (local.get $ptr) (local.get $col_idx))
+              (return (local.get $col_idx))))
+          (local.set $col_x (i32.add (local.get $col_x) (local.get $width)))
+          (local.set $col_idx (i32.add (local.get $col_idx) (i32.const 1)))
+          (br $hd_hit_cols)))
+        (i32.store offset=8 (local.get $ptr) (i32.const 0x0001))
+        (i32.store offset=12 (local.get $ptr) (i32.const -1))
+        (return (i32.const -1))))
+    ;; HDM_GETITEMRECT
+    (if (i32.eq (local.get $msg) (i32.const 0x1207))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $col_x (call $lv_report_col_left (local.get $sw) (local.get $idx)))
+        (local.set $width (call $lv_report_col_width (local.get $sw) (local.get $idx)))
+        (i32.store (local.get $ptr) (local.get $col_x))
+        (i32.store offset=4 (local.get $ptr) (i32.const 0))
+        (i32.store offset=8 (local.get $ptr) (i32.add (local.get $col_x) (local.get $width)))
+        (i32.store offset=12 (local.get $ptr) (call $lv_header_h (local.get $sw)))
+        (return (i32.const 1))))
+
     ;; LVM_INSERTITEMA
     (if (i32.eq (local.get $msg) (i32.const 0x1007))
       (then

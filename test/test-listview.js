@@ -25,6 +25,7 @@ const LVM_GETCOLUMNA = 0x1019;
 const LVM_SETCOLUMNA = 0x101A;
 const LVM_INSERTCOLUMNA = 0x101B;
 const LVM_GETCOLUMNWIDTH = 0x101D;
+const LVM_GETHEADER = 0x101F;
 const LVM_GETTOPINDEX = 0x1027;
 const LVM_GETCOUNTPERPAGE = 0x1028;
 const LVM_SETITEMSTATE = 0x102B;
@@ -51,6 +52,15 @@ const LVCF_SUBITEM = 0x0008;
 const SB_THUMBTRACK = 5;
 const NM_CLICK = -2;
 const LVN_ITEMCHANGED = -101;
+const HDM_GETITEMCOUNT = 0x1200;
+const HDM_GETITEMA = 0x1203;
+const HDM_HITTEST = 0x1206;
+const HDM_GETITEMRECT = 0x1207;
+const HDI_WIDTH = 0x0001;
+const HDI_TEXT = 0x0002;
+const HDI_FORMAT = 0x0004;
+const HDI_ORDER = 0x0080;
+const HHT_ONHEADER = 0x0002;
 
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
@@ -134,6 +144,36 @@ async function main() {
     dv.setUint32(p + 12, writeStr(text), true);
     return e.send_message(lv, LVM_SETCOLUMNA, idx, g);
   }
+  function getHeaderItem(header, idx) {
+    const g = e.guest_alloc(48);
+    const textG = e.guest_alloc(64);
+    const p = wa(g);
+    u8.fill(0, p, p + 48);
+    dv.setUint32(p + 0, HDI_TEXT | HDI_WIDTH | HDI_FORMAT | HDI_ORDER, true);
+    dv.setUint32(p + 8, textG, true);
+    dv.setInt32(p + 16, 64, true);
+    const ok = e.send_message(header, HDM_GETITEMA, idx, g);
+    return {
+      ok,
+      width: dv.getInt32(p + 4, true),
+      text: readStr(textG, 64),
+      fmt: dv.getInt32(p + 20, true),
+      order: dv.getInt32(p + 32, true),
+    };
+  }
+  function headerHit(header, x, y) {
+    const g = e.guest_alloc(16);
+    const p = wa(g);
+    u8.fill(0, p, p + 16);
+    dv.setInt32(p + 0, x, true);
+    dv.setInt32(p + 4, y, true);
+    const item = e.send_message(header, HDM_HITTEST, 0, g);
+    return {
+      item,
+      flags: dv.getInt32(p + 8, true),
+      storedItem: dv.getInt32(p + 12, true),
+    };
+  }
   function insertItem(idx, text) {
     const g = e.guest_alloc(40);
     const p = wa(g);
@@ -196,6 +236,15 @@ async function main() {
   const col1 = getColumn(1);
   check('LVM_GETCOLUMNA returns updated second header', col1.ok === 1 && col1.width === 90 && col1.text === 'Kind' && col1.subItem === 1, JSON.stringify(col1));
   check('LVM_GETCOLUMNWIDTH follows LVM_SETCOLUMNA', e.send_message(lv, LVM_GETCOLUMNWIDTH, 1, 0) === 90);
+  const header = e.send_message(lv, LVM_GETHEADER, 0, 0);
+  check('LVM_GETHEADER returns pseudo-header handle', header === lv, 'header=0x' + header.toString(16));
+  check('HDM_GETITEMCOUNT follows report columns', e.send_message(header, HDM_GETITEMCOUNT, 0, 0) === 2);
+  const hd1 = getHeaderItem(header, 1);
+  check('HDM_GETITEMA returns updated header item', hd1.ok === 1 && hd1.width === 90 && hd1.text === 'Kind' && hd1.fmt === 0 && hd1.order === 1, JSON.stringify(hd1));
+  const hdRect = getRect(HDM_GETITEMRECT, 1, 0);
+  check('HDM_GETITEMRECT returns report header cell bounds', hdRect.ok === 1 && hdRect.left === 120 && hdRect.top === 0 && hdRect.right === 210 && hdRect.bottom === 18, JSON.stringify(hdRect));
+  const hdHit = headerHit(header, 130, 5);
+  check('HDM_HITTEST maps x coordinate to header item', hdHit.item === 1 && hdHit.flags === HHT_ONHEADER && hdHit.storedItem === 1, JSON.stringify(hdHit));
 
   for (let i = 0; i < 12; i++) {
     check(`LVM_INSERTITEMA row ${i}`, insertItem(i, `Value ${i}`) === i);

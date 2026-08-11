@@ -99,8 +99,8 @@ Related common-control scroll status: WAT-native `SysTreeView32` and the
 bounded report-style `SysListView32` subset now reuse the same shared vertical
 scrollbar hit/drag math as the RichEdit/Edit/ListBox paths. The ListView
 subset also has bounded report-column get/set, item/subitem rectangle queries,
-subitem hit-test output, and selection/click notifications for
-RegEdit/installer-style report panes.
+subitem hit-test output, selection/click notifications, and a pseudo-header
+query surface for RegEdit/installer-style report panes.
 
 That means these pieces are already good enough for basic insertion:
 
@@ -879,6 +879,7 @@ Acceptance:
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
 [x] SysListView32 report column get/set, item/subitem rects, and subitem hit-test are asserted
 [x] SysListView32 selection/click notifications are asserted
+[x] SysListView32 pseudo-header query messages are asserted
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes
 ```
