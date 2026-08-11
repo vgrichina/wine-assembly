@@ -10,8 +10,8 @@ a screenshot with the `Name` / `Data` ListView headers visible. The standalone
 TreeView regression also covers parent/child handles, `TVGN_CHILD`,
 `TVGN_PARENT`, `TVIF_CHILDREN`, `TVM_EXPAND` expand/collapse visibility, and
 `TVN_ITEMEXPANDING` / `TVN_ITEMEXPANDED` notifications. Registry root, subkey,
-and value enumeration now have direct host/WAT coverage for RegEdit and other
-registry-driven apps.
+value enumeration, and `RegQueryInfoKey` metadata now have direct host/WAT
+coverage for RegEdit and other registry-driven apps.
 
 Previous app-smoke status (2026-06-14): promoted out of `knownBadRender` in the
 all-EXE smoke matrix. RegEdit opened with the real `Registry Editor` title, a
@@ -37,8 +37,9 @@ Key fixes:
   instead of RegEdit's/COMCTL32's guest window proc.
 - Registry storage now materializes parent keys, opens roots/subkeys
   case-insensitively, supports `RegEnumKeyA/W` and `RegEnumValueA/W` buffer
-  semantics, and exposes root-handle `RegQueryValueEx` reads. A synchronous
-  `DrawAnimatedRects` cosmetic stub lets selection/update paths continue.
+  semantics, reports `RegQueryInfoKeyA/W` counts/max lengths, and exposes
+  root-handle `RegQueryValueEx` reads. A synchronous `DrawAnimatedRects`
+  cosmetic stub lets selection/update paths continue.
 
 Current gaps:
 
@@ -53,7 +54,7 @@ Validation:
 
 ```sh
 node test/test-treeview-scroll.js   # passes 25/25
-node test/test-storage-registry.js  # passes registry root/subkey/value coverage
+node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
 node test/test-listview.js
 node test/test-listbox.js
 node test/test-wat-memory-map.js

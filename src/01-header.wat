@@ -294,6 +294,8 @@
   ;; reg_enum_key(hKey, dwIndex, lpNameWA, cchName, isWide) → error code
   (import "host" "reg_enum_value" (func $host_reg_enum_value (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; reg_enum_value(hKey, index, nameGA, nameLenGA, typeGA, dataGA, dataLenGA, isWide) → error code
+  (import "host" "reg_query_info" (func $host_reg_query_info (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; reg_query_info(hKey, subCountGA, maxSubKeyGA, valueCountGA, maxValueNameGA, maxValueDataGA, isWide)
   (import "host" "reg_delete_key" (func $host_reg_delete_key (param i32 i32 i32) (result i32)))
   ;; reg_delete_key(hKey, subKeyWA, isWide) → error code (removes key + subkeys)
   (import "host" "reg_delete_value" (func $host_reg_delete_value (param i32 i32 i32) (result i32)))

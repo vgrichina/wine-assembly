@@ -214,8 +214,9 @@ native-editing path is alive.
   visible.
 - Registry storage now has direct coverage for materialized parent keys,
   case-insensitive root/subkey open, root-handle queries, `RegEnumKeyA/W`, and
-  `RegEnumValueA/W` buffer semantics. `DrawAnimatedRects` is handled as a
-  synchronous cosmetic success so controls can continue their update paths.
+  `RegEnumValueA/W` buffer semantics, plus `RegQueryInfoKeyA/W` counts and max
+  lengths. `DrawAnimatedRects` is handled as a synchronous cosmetic success so
+  controls can continue their update paths.
 - Fixed the host `ScrollWindow` / `ScrollWindowEx` backing-store approximation
   so it scrolls only the target window's client rectangle instead of the whole
   top-level back-canvas. This removes the WordPad multiline-edit artifact where
@@ -862,7 +863,7 @@ Acceptance:
 [x] WAT TreeView reuses shared vertical scrollbar hit/drag math
 [x] WAT TreeView parent/child links and expand/collapse visibility are asserted
 [x] WAT TreeView expand/collapse notifications and `TVIF_CHILDREN` are asserted
-[x] Registry root/subkey/value enumeration is covered for RegEdit-style probes
+[x] Registry root/subkey/value enumeration and metadata are covered for RegEdit-style probes
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes

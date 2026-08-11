@@ -15938,5 +15938,19 @@
     "nargs": 8,
     "convention": "stdcall",
     "hash": 2501735138
+  },
+  {
+    "id": 2074,
+    "name": "RegQueryInfoKeyA",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 2513137613
+  },
+  {
+    "id": 2075,
+    "name": "RegQueryInfoKeyW",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 2144029995
   }
 ]

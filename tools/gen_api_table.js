@@ -661,6 +661,8 @@ const extra = [
   { name: 'DrawAnimatedRects', nargs: 4 },
   { name: 'RegEnumValueA', nargs: 8 },
   { name: 'RegEnumValueW', nargs: 8 },
+  { name: 'RegQueryInfoKeyA', nargs: 12 },
+  { name: 'RegQueryInfoKeyW', nargs: 12 },
   // USER32 — keyboard layout lookup (Tetravex asks before GetKeyState dispatch)
   { name: 'GetKeyboardLayout', nargs: 1 },
   // USER32 — ANSI/Unicode window probe. Win9x/VCL ANSI windows expect FALSE.

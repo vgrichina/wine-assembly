@@ -40,6 +40,11 @@ const enumNameLenGA = IMAGE_BASE + 0x1A00;
 const enumTypeGA = IMAGE_BASE + 0x1B00;
 const enumDataGA = IMAGE_BASE + 0x1C00;
 const enumDataLenGA = IMAGE_BASE + 0x1D00;
+const infoSubCountGA = IMAGE_BASE + 0x1E00;
+const infoMaxSubKeyGA = IMAGE_BASE + 0x1E10;
+const infoValueCountGA = IMAGE_BASE + 0x1E20;
+const infoMaxValueNameGA = IMAGE_BASE + 0x1E30;
+const infoMaxValueDataGA = IMAGE_BASE + 0x1E40;
 
 writeGuestString(subKeyGA, 'Software\\WineAssemblyTest');
 writeGuestString(valueNameGA, 'PlayerName');
@@ -66,6 +71,20 @@ assert.strictEqual(readGuestU32(enumNameLenGA), 'PlayerName'.length);
 assert.strictEqual(readGuestU32(enumTypeGA), 1);
 assert.strictEqual(readStrA(memory, g2w(enumDataGA, IMAGE_BASE)), 'Ada');
 assert.strictEqual(readGuestU32(enumDataLenGA), 4);
+assert.strictEqual(storage.reg_query_info(
+  hKey,
+  infoSubCountGA,
+  infoMaxSubKeyGA,
+  infoValueCountGA,
+  infoMaxValueNameGA,
+  infoMaxValueDataGA,
+  0
+), 0);
+assert.strictEqual(readGuestU32(infoSubCountGA), 0);
+assert.strictEqual(readGuestU32(infoMaxSubKeyGA), 0);
+assert.strictEqual(readGuestU32(infoValueCountGA), 1);
+assert.strictEqual(readGuestU32(infoMaxValueNameGA), 'PlayerName'.length);
+assert.strictEqual(readGuestU32(infoMaxValueDataGA), 4);
 
 writeGuestU32(enumNameLenGA, 64);
 assert.strictEqual(storage.reg_enum_key(0x80000002, 0, enumNameGA, 64, 0), 0);
@@ -108,4 +127,5 @@ assert.strictEqual(
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
 console.log('PASS  setRegValue materializes parent registry keys');
 console.log('PASS  registry roots, subkeys, and values enumerate with Win32 buffer semantics');
+console.log('PASS  RegQueryInfoKey-style registry metadata reports counts and max lengths');
 console.log('PASS  app startup INI values are visible to profile APIs');
