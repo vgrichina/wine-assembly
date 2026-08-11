@@ -8,7 +8,9 @@ screenshot probe with a populated WAT-native TreeView and a stateful bounded
 shared Win98-style vertical scrollbar behavior, and the app-level smoke writes
 a screenshot with the `Name` / `Data` ListView headers visible. The standalone
 TreeView regression also covers parent/child handles, `TVGN_CHILD`,
-`TVGN_PARENT`, and `TVM_EXPAND` expand/collapse visibility.
+`TVGN_PARENT`, and `TVM_EXPAND` expand/collapse visibility. Registry root,
+subkey, and value enumeration now have direct host/WAT coverage for RegEdit and
+other registry-driven apps.
 
 Previous app-smoke status (2026-06-14): promoted out of `knownBadRender` in the
 all-EXE smoke matrix. RegEdit opened with the real `Registry Editor` title, a
@@ -32,6 +34,10 @@ Key fixes:
 - `SysListView32` is now protected from registered-class fallback, so
   `CreateWindowExA("SysListView32", ...)` routes to the WAT-native ListView
   instead of RegEdit's/COMCTL32's guest window proc.
+- Registry storage now materializes parent keys, opens roots/subkeys
+  case-insensitively, supports `RegEnumKeyA/W` and `RegEnumValueA/W` buffer
+  semantics, and exposes root-handle `RegQueryValueEx` reads. A synchronous
+  `DrawAnimatedRects` cosmetic stub lets selection/update paths continue.
 
 Current gaps:
 
@@ -39,13 +45,14 @@ Current gaps:
   layout, image lists, sorting, custom draw, full notifications, labels edits,
   and high-fidelity header interaction.
 - The current screenshot shows the root registry view with headers; deeper
-  registry value enumeration/editing, context menus, and advanced ListView
-  fidelity remain separate follow-up work.
+  registry value editing, context menus, and advanced ListView fidelity remain
+  separate follow-up work.
 
 Validation:
 
 ```sh
 node test/test-treeview-scroll.js   # passes 22/22
+node test/test-storage-registry.js  # passes registry root/subkey/value coverage
 node test/test-listview.js
 node test/test-listbox.js
 node test/test-wat-memory-map.js

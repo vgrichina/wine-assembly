@@ -35,6 +35,11 @@ const valueGA = IMAGE_BASE + 0x1200;
 const outGA = IMAGE_BASE + 0x1300;
 const cbGA = IMAGE_BASE + 0x1400;
 const phkGA = IMAGE_BASE + 0x1500;
+const enumNameGA = IMAGE_BASE + 0x1900;
+const enumNameLenGA = IMAGE_BASE + 0x1A00;
+const enumTypeGA = IMAGE_BASE + 0x1B00;
+const enumDataGA = IMAGE_BASE + 0x1C00;
+const enumDataLenGA = IMAGE_BASE + 0x1D00;
 
 writeGuestString(subKeyGA, 'Software\\WineAssemblyTest');
 writeGuestString(valueNameGA, 'PlayerName');
@@ -48,6 +53,23 @@ assert.strictEqual(storage.reg_set_value(hKey, g2w(valueNameGA, IMAGE_BASE), 1, 
 writeGuestU32(cbGA, 0);
 assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0, 0, cbGA, 0), 0);
 assert.strictEqual(readGuestU32(cbGA), 4);
+
+const rootHKey = storage.reg_open_key(0x80000001, 0, 0);
+assert(rootHKey, 'predefined registry roots should open without a materialized root record');
+writeGuestU32(enumNameLenGA, 64);
+writeGuestU32(enumDataLenGA, 64);
+assert.strictEqual(storage.reg_enum_value(
+  hKey, 0, enumNameGA, enumNameLenGA, enumTypeGA, enumDataGA, enumDataLenGA, 0
+), 0);
+assert.strictEqual(readStrA(memory, g2w(enumNameGA, IMAGE_BASE)), 'PlayerName');
+assert.strictEqual(readGuestU32(enumNameLenGA), 'PlayerName'.length);
+assert.strictEqual(readGuestU32(enumTypeGA), 1);
+assert.strictEqual(readStrA(memory, g2w(enumDataGA, IMAGE_BASE)), 'Ada');
+assert.strictEqual(readGuestU32(enumDataLenGA), 4);
+
+writeGuestU32(enumNameLenGA, 64);
+assert.strictEqual(storage.reg_enum_key(0x80000002, 0, enumNameGA, 64, 0), 0);
+assert.strictEqual(readStrA(memory, g2w(enumNameGA, IMAGE_BASE)).toLowerCase(), 'software');
 writeGuestU32(cbGA, 32);
 assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0, outGA, cbGA, 0), 0);
 assert.strictEqual(readStrA(memory, g2w(outGA, IMAGE_BASE)), 'Ada');
@@ -85,4 +107,5 @@ assert.strictEqual(
 
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
 console.log('PASS  setRegValue materializes parent registry keys');
+console.log('PASS  registry roots, subkeys, and values enumerate with Win32 buffer semantics');
 console.log('PASS  app startup INI values are visible to profile APIs');

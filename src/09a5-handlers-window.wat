@@ -2107,3 +2107,10 @@
       (else (call $paint_flag_set (local.get $arg0))))
     (global.set $eax (local.get $prev))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; BOOL DrawAnimatedRects(HWND, int, const RECT*, const RECT*). The animation
+  ;; is cosmetic; completing it synchronously preserves the Win32 contract and
+  ;; lets controls continue their selection/update path.
+  (func $handle_DrawAnimatedRects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))

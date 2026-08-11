@@ -657,6 +657,10 @@ const extra = [
   { name: 'UnregisterDeviceNotification', nargs: 1 },
   // USER32 — rect subtraction used by Task Manager update-region math
   { name: 'SubtractRect', nargs: 3 },
+  // USER32 — cosmetic selection animation used by Win98 RegEdit.
+  { name: 'DrawAnimatedRects', nargs: 4 },
+  { name: 'RegEnumValueA', nargs: 8 },
+  { name: 'RegEnumValueW', nargs: 8 },
   // USER32 — keyboard layout lookup (Tetravex asks before GetKeyState dispatch)
   { name: 'GetKeyboardLayout', nargs: 1 },
   // USER32 — ANSI/Unicode window probe. Win9x/VCL ANSI windows expect FALSE.

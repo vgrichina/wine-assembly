@@ -211,6 +211,10 @@ native-editing path is alive.
   scheduled input steps, classifies the ListView as `ctrlClass=18`, and writes
   `/private/tmp/regedit-listview-smoke.png` with the `Name` / `Data` headers
   visible.
+- Registry storage now has direct coverage for materialized parent keys,
+  case-insensitive root/subkey open, root-handle queries, `RegEnumKeyA/W`, and
+  `RegEnumValueA/W` buffer semantics. `DrawAnimatedRects` is handled as a
+  synchronous cosmetic success so controls can continue their update paths.
 - Fixed the host `ScrollWindow` / `ScrollWindowEx` backing-store approximation
   so it scrolls only the target window's client rectangle instead of the whole
   top-level back-canvas. This removes the WordPad multiline-edit artifact where
@@ -856,6 +860,7 @@ Acceptance:
 [x] Installer/license RichEdit panes render and scroll
 [x] WAT TreeView reuses shared vertical scrollbar hit/drag math
 [x] WAT TreeView parent/child links and expand/collapse visibility are asserted
+[x] Registry root/subkey/value enumeration is covered for RegEdit-style probes
 [x] SysListView32 has bounded report item/header state and reusable scrollbar behavior
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes

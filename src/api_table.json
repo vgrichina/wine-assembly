@@ -15917,5 +15917,26 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2198602244
+  },
+  {
+    "id": 2071,
+    "name": "DrawAnimatedRects",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3451635421
+  },
+  {
+    "id": 2072,
+    "name": "RegEnumValueA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 2132627520
+  },
+  {
+    "id": 2073,
+    "name": "RegEnumValueW",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 2501735138
   }
 ]
