@@ -1202,6 +1202,13 @@
   (global $clipboard_ptr (mut i32) (i32.const 0))
   (global $clipboard_cap (mut i32) (i32.const 0))
   (global $clipboard_len (mut i32) (i32.const 0))
+  ;; Basic RichEdit formatting captured by WordPad's WAT menu clipboard bridge.
+  ;; Text remains in the CF_TEXT-style globals above; these fixed-size snapshots
+  ;; preserve selected CHARFORMAT/PARAFORMAT fields for same-session paste.
+  (global $clipboard_richedit_cf_ptr (mut i32) (i32.const 0))
+  (global $clipboard_richedit_pf_ptr (mut i32) (i32.const 0))
+  (global $clipboard_richedit_cf_valid (mut i32) (i32.const 0))
+  (global $clipboard_richedit_pf_valid (mut i32) (i32.const 0))
   ;; Thread yield state (for multi-instance threading)
   ;; Pending input event cache for PM_NOREMOVE support.
   ;; When PeekMessageA is called with PM_NOREMOVE, we fetch from JS but cache here.

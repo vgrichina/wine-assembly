@@ -2344,6 +2344,74 @@
       (br $scan)))
     (local.get $i))
 
+  (func $richedit_clipboard_clear_format
+    (global.set $clipboard_richedit_cf_valid (i32.const 0))
+    (global.set $clipboard_richedit_pf_valid (i32.const 0)))
+
+  (func $richedit_clipboard_capture_format (param $hwnd i32)
+    (local $cf_g i32) (local $cf_w i32)
+    (local $pf_g i32) (local $pf_w i32)
+    (call $richedit_clipboard_clear_format)
+    ;; CHARFORMATA/CHARFORMAT2A prefix snapshot. Keep only app-useful basic
+    ;; fields; do not replay offset/protected/link sentinels from EM_GETCHARFORMAT.
+    (if (i32.eqz (global.get $clipboard_richedit_cf_ptr))
+      (then
+        (global.set $clipboard_richedit_cf_ptr
+          (call $heap_alloc (i32.const 128)))))
+    (local.set $cf_g (global.get $clipboard_richedit_cf_ptr))
+    (if (local.get $cf_g)
+      (then
+        (local.set $cf_w (call $g2w (local.get $cf_g)))
+        (call $zero_memory (local.get $cf_w) (i32.const 128))
+        (i32.store (local.get $cf_w) (i32.const 60)) ;; CHARFORMATA cbSize
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x043A) (i32.const 1) (local.get $cf_g))) ;; EM_GETCHARFORMAT, SCF_SELECTION
+        (call $richedit_patch_get_charformat_message
+          (local.get $hwnd) (i32.const 0x043A) (local.get $cf_g))
+        (i32.store offset=4 (local.get $cf_w)
+          (i32.and (i32.load offset=4 (local.get $cf_w)) (i32.const 0xE0000007))) ;; CFM_SIZE|COLOR|FACE|B/I/U/S
+        (if (i32.load offset=4 (local.get $cf_w))
+          (then (global.set $clipboard_richedit_cf_valid (i32.const 1))))))
+    ;; PARAFORMAT2A snapshot. Replay only the fields this bridge explicitly
+    ;; supports so copied default/version-specific mask bits do not leak.
+    (if (i32.eqz (global.get $clipboard_richedit_pf_ptr))
+      (then
+        (global.set $clipboard_richedit_pf_ptr
+          (call $heap_alloc (i32.const 256)))))
+    (local.set $pf_g (global.get $clipboard_richedit_pf_ptr))
+    (if (local.get $pf_g)
+      (then
+        (local.set $pf_w (call $g2w (local.get $pf_g)))
+        (call $zero_memory (local.get $pf_w) (i32.const 256))
+        (i32.store (local.get $pf_w) (i32.const 188)) ;; PARAFORMAT2A cbSize
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x043D) (i32.const 0) (local.get $pf_g))) ;; EM_GETPARAFORMAT
+        (call $richedit_patch_get_paraformat_message
+          (local.get $hwnd) (i32.const 0x043D) (local.get $pf_g))
+        (i32.store offset=4 (local.get $pf_w)
+          (i32.and (i32.load offset=4 (local.get $pf_w)) (i32.const 0x0000003F))) ;; PFM_* basic fields
+        (if (i32.load offset=4 (local.get $pf_w))
+          (then (global.set $clipboard_richedit_pf_valid (i32.const 1))))))
+  )
+
+  (func $richedit_clipboard_apply_format_to_selection (param $hwnd i32)
+    (if (global.get $clipboard_richedit_cf_valid)
+      (then
+        (call $richedit_note_charformat_message
+          (local.get $hwnd) (i32.const 0x0444)
+          (global.get $clipboard_richedit_cf_ptr)) ;; EM_SETCHARFORMAT
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0444) (i32.const 1)
+          (global.get $clipboard_richedit_cf_ptr))))) ;; SCF_SELECTION
+    (if (global.get $clipboard_richedit_pf_valid)
+      (then
+        (call $richedit_note_paraformat_message
+          (local.get $hwnd) (i32.const 0x0447)
+          (global.get $clipboard_richedit_pf_ptr)) ;; EM_SETPARAFORMAT
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0447) (i32.const 0)
+          (global.get $clipboard_richedit_pf_ptr))))))
+
   (func $native_text_copy_selection_to_clipboard (param $hwnd i32) (result i32)
     (local $text_len i32) (local $cap i32) (local $text_g i32)
     (local $scratch_g i32) (local $lo i32) (local $hi i32) (local $tmp i32)
@@ -2411,7 +2479,8 @@
               (i32.add (call $g2w (local.get $text_g)) (local.get $a))
               (local.get $len))
             (call $gs8 (i32.add (global.get $clipboard_ptr) (local.get $len)) (i32.const 0))
-            (global.set $clipboard_len (local.get $len))))))
+            (global.set $clipboard_len (local.get $len))
+            (call $richedit_clipboard_capture_format (local.get $hwnd))))))
     (call $heap_free (local.get $text_g))
     (call $heap_free (local.get $scratch_g))
     (i32.const 1))
@@ -2423,12 +2492,29 @@
     (i32.const 1))
 
   (func $wordpad_richedit_paste_clipboard (param $hwnd i32) (result i32)
-    (local $paste_g i32) (local $need i32)
+    (local $paste_g i32) (local $need i32) (local $scratch_g i32)
+    (local $insert_lo i32) (local $insert_hi i32) (local $tmp i32)
+    (local $post_start i32) (local $post_end i32)
     (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_len)))
       (then (return (i32.const 1))))
     (local.set $need (i32.add (global.get $clipboard_len) (i32.const 1)))
     (local.set $paste_g (call $heap_alloc (local.get $need)))
     (if (i32.eqz (local.get $paste_g)) (then (return (i32.const 0))))
+    (local.set $scratch_g (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $scratch_g))
+      (then
+        (call $heap_free (local.get $paste_g))
+        (return (i32.const 0))))
+    (call $gs32 (local.get $scratch_g) (i32.const 0))
+    (call $gs32 (i32.add (local.get $scratch_g) (i32.const 4)) (i32.const 0))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x00B0)
+      (local.get $scratch_g)
+      (i32.add (local.get $scratch_g) (i32.const 4)))) ;; EM_GETSEL before paste
+    (local.set $insert_lo (call $gl32 (local.get $scratch_g)))
+    (local.set $tmp (call $gl32 (i32.add (local.get $scratch_g) (i32.const 4))))
+    (if (i32.lt_u (local.get $tmp) (local.get $insert_lo))
+      (then (local.set $insert_lo (local.get $tmp))))
     (call $memcpy
       (call $g2w (local.get $paste_g))
       (call $g2w (global.get $clipboard_ptr))
@@ -2436,7 +2522,35 @@
     (call $gs8 (i32.add (local.get $paste_g) (global.get $clipboard_len)) (i32.const 0))
     (drop (call $wnd_send_message
       (local.get $hwnd) (i32.const 0x00C2) (i32.const 1) (local.get $paste_g))) ;; EM_REPLACESEL
+    ;; Do not derive the inserted selection end from bytes. RichEdit owns the
+    ;; logical position semantics for CRLF and ANSI high-byte text; query it
+    ;; after EM_REPLACESEL and format exactly that inserted range.
+    (call $gs32 (local.get $scratch_g) (i32.const 0))
+    (call $gs32 (i32.add (local.get $scratch_g) (i32.const 4)) (i32.const 0))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x00B0)
+      (local.get $scratch_g)
+      (i32.add (local.get $scratch_g) (i32.const 4)))) ;; EM_GETSEL after paste
+    (local.set $post_start (call $gl32 (local.get $scratch_g)))
+    (local.set $post_end (call $gl32 (i32.add (local.get $scratch_g) (i32.const 4))))
+    (local.set $insert_hi (local.get $post_start))
+    (if (i32.gt_u (local.get $post_end) (local.get $insert_hi))
+      (then (local.set $insert_hi (local.get $post_end))))
+    (if (i32.and
+          (i32.gt_u (local.get $insert_hi) (local.get $insert_lo))
+          (i32.or
+            (global.get $clipboard_richedit_cf_valid)
+            (global.get $clipboard_richedit_pf_valid)))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x00B1)
+          (local.get $insert_lo) (local.get $insert_hi))) ;; EM_SETSEL inserted range
+        (call $richedit_clipboard_apply_format_to_selection (local.get $hwnd))
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x00B1)
+          (local.get $post_start) (local.get $post_end))))) ;; restore caret/selection
     (call $heap_free (local.get $paste_g))
+    (call $heap_free (local.get $scratch_g))
     (call $paint_flag_set_inv (local.get $hwnd))
     (i32.const 1))
 

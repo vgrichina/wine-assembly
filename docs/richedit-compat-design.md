@@ -253,6 +253,17 @@ native-editing path is alive.
   menu Copy/Paste duplicates `menu` to `menumenu`, menu Cut clears selected
   text and menu Paste restores it, and the covered plain-text path does not
   call `CreateILockBytesOnHGlobal` or `StgCreateDocfileOnILockBytes`.
+- Added a bounded basic-format layer on top of that WordPad menu bridge:
+  Copy/Cut snapshots selected `CHARFORMAT` and supported `PARAFORMAT` fields,
+  Paste inserts text first, queries `EM_GETSEL` after `EM_REPLACESEL`, applies
+  the copied formatting to the inserted RichEdit range, then restores the
+  caret/selection. This deliberately avoids deriving positions from byte
+  length, so CRLF and ANSI high-byte text stay aligned with RichEdit's logical
+  selection semantics. Added `test/test-wordpad-rich-clipboard-format.js`;
+  it covers `café\r\ntwo`, verifies pasted caret position `8..8`, resets
+  insertion formatting before paste, and proves pasted character color plus
+  paragraph numbering/indent/tab fields are restored. Full USER `Rich Text
+  Format` clipboard handles and OLE/object transfer remain deferred.
 - Added `test/test-wordpad-selection-highlight.js` to make the existing
   RichEdit selection painter an explicit acceptance point. The focused probe
   types `select me`, captures a plain screenshot, sends Ctrl+A, verifies
@@ -653,6 +664,8 @@ Acceptance:
 [x] Ctrl+V inserts the captured plain text through `EM_REPLACESEL`
 [x] Ctrl+X cuts selected native RichEdit text
 [x] menu Edit Select All/Copy/Cut/Paste routes work without the keyboard bridge
+[x] menu Copy/Paste preserves basic selected RichEdit char/paragraph formatting
+    with CRLF and ANSI high-byte text
 [ ] rich clipboard formats preserve RTF/objects
 ```
 
@@ -714,6 +727,8 @@ Acceptance:
 [x] Basic RTF save emits selected paragraph alignment state and reopens text
 [x] Focused RichEdit PARAFORMAT2 fields read back for numbering/indents/tabs
 [x] Basic paragraph numbering/indents/tabs round-trip through WordPad RTF
+[x] WordPad menu Copy/Paste preserves basic selected RichEdit formatting
+    without byte-counting CRLF positions
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad
