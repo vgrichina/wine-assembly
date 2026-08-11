@@ -8879,11 +8879,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 630: ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect)
-  ;; For now the host scrolls the window back-canvas by the requested delta and
-  ;; fills exposed strips. lpRect/lpClipRect are ignored, which is enough for
-  ;; simple game board animation and avoids crashing on common repaint paths.
+  ;; Host scrolls the target client backing-store rectangle by the requested
+  ;; delta and fills exposed strips. lpRect/lpClipRect are client-relative and
+  ;; are clipped/intersected host-side.
   (func $handle_ScrollWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_scroll_window (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax
+      (call $host_gdi_scroll_window
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 634: AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle) — 4 args stdcall
@@ -9712,7 +9715,10 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
         (return)))
-    (drop (call $host_gdi_scroll_window (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (drop
+      (call $host_gdi_scroll_window
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (local.get $arg3) (local.get $arg4)))
     (if (local.get $arg3)
       (then
         (local.set $wa (call $g2w (local.get $arg3)))

@@ -371,12 +371,18 @@ Current evidence from the 2026-08-02 follow-up probe:
   clipping, so RichEdit's erase bands clear to the DC background and long-line
   paints stay constrained to the native paint rectangle.
 - `ScrollWindow` / `ScrollWindowEx` now scroll only the target window's client
-  rectangle in the backing store. This fixes the WordPad multiline edit path
+  rectangle in the backing store, and explicit scroll/clip `RECT` arguments are
+  intersected in client coordinates. This fixes the WordPad multiline edit path
   where RichEdit's line-scroll operation had copied top-level title/menu pixels
-  into the toolbar/ruler band.
+  into the toolbar/ruler band, while keeping the scroll primitive reusable for
+  other child controls.
 - Direct GDI regression test:
   `node test/test-gdi-exttextout-clipping.js` verifies clipped glyph drawing
   and null-text opaque erases on a surface DC.
+- Direct GDI regression test:
+  `node test/test-gdi-scroll-window-rect.js` verifies that default scrolling
+  does not move non-client chrome and that `ScrollWindowEx`-style scroll/clip
+  rectangles bound both the copied pixels and exposed white strip.
 - Regression test: `node test/test-wordpad-richedit.js` passes 23/23 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor and asserts there is no duplicated

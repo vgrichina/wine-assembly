@@ -168,6 +168,10 @@ native-editing path is alive.
   so it scrolls only the target window's client rectangle instead of the whole
   top-level back-canvas. This removes the WordPad multiline-edit artifact where
   RichEdit copied title/menu chrome into the toolbar/ruler band.
+- Extended the same scroll primitive to honor client-relative scroll and clip
+  `RECT` pointers, with a direct host regression
+  `test/test-gdi-scroll-window-rect.js`. This keeps the behavior reusable for
+  controls that provide narrower invalidation/scroll regions.
 - Expanded `test/test-wordpad-richedit.js` to 23/23 with a screenshot guard
   that counts duplicated title-bar-blue pixels in the toolbar/ruler band; the
   regenerated `hello-world-edited.png` has zero such pixels.
