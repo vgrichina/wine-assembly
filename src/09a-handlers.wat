@@ -1679,6 +1679,7 @@
 
   ;; 92: GetWindowTextA(hwnd, lpString, nMaxCount) → int
   (func $handle_GetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $len i32) (local $copy_len i32)
     ;; Child controls own their text in their WAT-side wndproc state. Route
     ;; GetWindowTextA for controls through WM_GETTEXT so edit/button/static
     ;; text stays consistent with GetDlgItemTextA and SetWindowTextA.
@@ -1688,6 +1689,26 @@
           (call $control_wndproc_dispatch
             (local.get $arg0) (i32.const 0x000D)
             (local.get $arg2) (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Registered custom controls created from dialog resources live in the
+    ;; WAT window table but may have no renderer-side child mirror. Their
+    ;; wndprocs still expect USER's normal window-text storage to work.
+    (local.set $src (call $title_table_get_ptr (local.get $arg0)))
+    (if (local.get $src)
+      (then
+        (if (i32.le_s (local.get $arg2) (i32.const 0))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+        (local.set $len (call $title_table_get_len (local.get $arg0)))
+        (local.set $copy_len (local.get $len))
+        (if (i32.ge_u (local.get $copy_len) (local.get $arg2))
+          (then (local.set $copy_len (i32.sub (local.get $arg2) (i32.const 1)))))
+        (call $memcpy (call $g2w (local.get $arg1)) (local.get $src) (local.get $copy_len))
+        (i32.store8 (i32.add (call $g2w (local.get $arg1)) (local.get $copy_len)) (i32.const 0))
+        (global.set $eax (local.get $copy_len))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     (global.set $eax (call $host_get_window_text
@@ -1879,6 +1900,7 @@
           (call $wnd_table_get (local.get $arg0)))
       (then
         (call $richedit_format_reset_hwnd (local.get $arg0))
+        (call $title_table_set (local.get $arg0) (local.get $wa) (local.get $len))
         (global.set $eax (call $wnd_send_message
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $arg1)))
         (call $host_set_window_text (local.get $arg0) (local.get $wa))
@@ -1896,13 +1918,22 @@
   ;; 103: SetDlgItemTextA — delegate to the control's wndproc via
   ;; WM_SETTEXT so EditState / ButtonState / StaticState own the string.
   (func $handle_SetDlgItemTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ctrl i32)
+    (local $ctrl i32) (local $wa i32) (local $len i32)
     (local.set $ctrl (call $ctrl_find_by_id (local.get $arg0) (local.get $arg1)))
     (if (local.get $ctrl)
-      (then (drop (call $wnd_send_message (local.get $ctrl)
-              (i32.const 0x000C)                    ;; WM_SETTEXT
-              (i32.const 0)
-              (local.get $arg2)))))                 ;; lpString (guest ptr)
+      (then
+        ;; USER's window text is independent of the class wndproc. Registered
+        ;; dialog controls such as Sound Recorder's noflicker readout query it
+        ;; through GetWindowTextA while painting.
+        (if (local.get $arg2)
+          (then
+            (local.set $wa (call $g2w (local.get $arg2)))
+            (local.set $len (call $strlen (local.get $wa)))))
+        (call $title_table_set (local.get $ctrl) (local.get $wa) (local.get $len))
+        (drop (call $wnd_send_message (local.get $ctrl)
+                (i32.const 0x000C)                    ;; WM_SETTEXT
+                (i32.const 0)
+                (local.get $arg2)))))                 ;; lpString (guest ptr)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )

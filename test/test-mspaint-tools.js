@@ -102,6 +102,17 @@ function countRed(image, box) {
   return count;
 }
 
+function countWhere(image, box, predicate) {
+  let count = 0;
+  for (let y = box.y0; y < Math.min(box.y1, image.height); y++) {
+    for (let x = box.x0; x < Math.min(box.x1, image.width); x++) {
+      const i = (y * image.width + x) * 4;
+      if (predicate(image.data[i], image.data[i + 1], image.data[i + 2])) count++;
+    }
+  }
+  return count;
+}
+
 (async () => {
   if (runFailed) {
     const diagnostic = output.split('\n').filter(line =>
@@ -114,6 +125,9 @@ function countRed(image, box) {
   let rectangleDiff = -1;
   let ellipseDiff = -1;
   let redPixels = -1;
+  let whiteCanvas = -1;
+  let toolInk = -1;
+  let paletteColor = -1;
   if (filesExist) {
     const [before, line, rectangle, ellipse, color] = await Promise.all([
       pixels(shots.before), pixels(shots.line), pixels(shots.rectangle),
@@ -123,6 +137,12 @@ function countRed(image, box) {
     rectangleDiff = countDiff(line, rectangle, { x0: 105, y0: 195, x1: 225, y1: 285 });
     ellipseDiff = countDiff(rectangle, ellipse, { x0: 140, y0: 90, x1: 250, y1: 155 });
     redPixels = countRed(color, { x0: 100, y0: 250, x1: 210, y1: 310 });
+    whiteCanvas = countWhere(before, { x0: 82, y0: 62, x1: 292, y1: 304 },
+      (r, g, b) => r > 245 && g > 245 && b > 245);
+    toolInk = countWhere(before, { x0: 25, y0: 62, x1: 76, y1: 260 },
+      (r, g, b) => r < 80 && g < 80 && b < 80);
+    paletteColor = countWhere(before, { x0: 25, y0: 352, x1: 278, y1: 384 },
+      (r, g, b) => Math.max(r, g, b) - Math.min(r, g, b) > 80);
   }
 
   const checks = [
@@ -132,6 +152,8 @@ function countRed(image, box) {
     [`rectangle tool changed expected region (${rectangleDiff} px)`, rectangleDiff >= 100],
     [`ellipse tool changed expected region (${ellipseDiff} px)`, ellipseDiff >= 50],
     [`red pencil produced red pixels (${redPixels} px)`, redPixels >= 25],
+    [`classic canvas, tool grid, and color palette are populated`,
+      whiteCanvas >= 35000 && toolInk >= 500 && paletteColor >= 1000],
     ['File menu contains 17 direct items', /menu-dump:file:[^\n]*count=17/.test(output)],
     ['File menu exposes New, Save As, Print, Wallpaper, and Exit',
       ['&New', 'Save &As', '&Print', '&Wallpaper', 'E&xit'].every(label => output.includes(label))],

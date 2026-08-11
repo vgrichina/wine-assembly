@@ -57,25 +57,33 @@ try {
   output = `${error.stdout || ''}${error.stderr || ''}`;
 }
 
-async function countRightPaneInk(file) {
+async function inspectScreenshot(file) {
   const image = await loadImage(file);
   const canvas = createCanvas(image.width, image.height);
   const ctx = canvas.getContext('2d');
   ctx.drawImage(image, 0, 0);
   const data = ctx.getImageData(0, 0, image.width, image.height).data;
   let ink = 0;
+  let folderPixels = 0;
   for (let y = 80; y < Math.min(165, image.height); y++) {
     for (let x = 245; x < Math.min(415, image.width); x++) {
       const i = (y * image.width + x) * 4;
       if (data[i] < 128 && data[i + 1] < 128 && data[i + 2] < 128) ink++;
     }
   }
-  return ink;
+  for (let y = 62; y < Math.min(245, image.height); y++) {
+    for (let x = 35; x < Math.min(95, image.width); x++) {
+      const i = (y * image.width + x) * 4;
+      if (data[i] > 180 && data[i + 1] > 180 && data[i + 2] < 80) folderPixels++;
+    }
+  }
+  return { paneInk: ink, folderPixels };
 }
 
 (async () => {
   const screenshots = [deepPng, menuPng].every(file => fs.existsSync(file) && fs.statSync(file).size > 0);
-  const paneInk = screenshots ? await countRightPaneInk(deepPng) : -1;
+  const visual = screenshots ? await inspectScreenshot(deepPng) : null;
+  const paneInk = visual ? visual.paneInk : -1;
   const listDump = (output.match(/dump-listview:desktop:[^\n]*/) || [''])[0];
   const checks = [
     ['emulator run completed', !runFailed],
@@ -92,6 +100,8 @@ async function countRightPaneInk(file) {
       ['Import', 'Export', 'Connect', 'Disconnect', 'Print', 'xit'].every(value => output.includes(value))],
     ['both screenshots were written', screenshots],
     [`value pane contains rendered text (${paneInk} dark px)`, paneInk >= 100],
+    [`tree displays classic folder glyphs (${visual ? visual.folderPixels : -1} yellow px)`,
+      !!visual && visual.folderPixels >= 250],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|CRASH/.test(output)],
   ];
 

@@ -2857,7 +2857,7 @@
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $name_ptr i32) (local $text_len i32) (local $style i32)
     (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
-    (local $tx_r i32) (local $tx_b i32) (local $brush i32)
+    (local $tx_r i32) (local $tx_b i32) (local $brush i32) (local $ctrl_id i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2964,6 +2964,7 @@
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
         (local.set $ex (call $ctrl_get_ex_style (local.get $hwnd)))
+        (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
         ;; Default text rect = full client.
         (local.set $tx_l (i32.const 0))
         (local.set $tx_t (i32.const 0))
@@ -3049,6 +3050,38 @@
         ;; through instead of painting an opaque white box behind every word.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        ;; Win9x's mixer uses tiny ordinal SS_ICON resources for the speakers
+        ;; flanking each balance slider. Dialog loading cannot yet materialize
+        ;; ordinal icon resources, so keep these otherwise-empty placeholders
+        ;; recognizable without changing larger application icon controls.
+        (if (i32.and
+              (i32.eq (local.get $style) (i32.const 3))
+              (i32.and
+                (i32.and (i32.ge_u (local.get $w) (i32.const 10))
+                         (i32.le_u (local.get $w) (i32.const 16)))
+                (i32.and
+                  (i32.and (i32.ge_u (local.get $h) (i32.const 10))
+                           (i32.le_u (local.get $h) (i32.const 16)))
+                  (i32.or (i32.eq (local.get $ctrl_id) (i32.const 999))
+                          (i32.eq (local.get $ctrl_id) (i32.const 65535))))))
+          (then
+            ;; Compact monochrome Win9x-style speaker and sound waves.
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 1) (i32.const 5) (i32.const 4) (i32.const 10)
+                    (i32.const 0x30014)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 4) (i32.const 3) (i32.const 6) (i32.const 12)
+                    (i32.const 0x30014)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 6) (i32.const 2) (i32.const 7) (i32.const 13)
+                    (i32.const 0x30014)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 8) (i32.const 5) (i32.const 9) (i32.const 10)
+                    (i32.const 0x30014)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.const 10) (i32.const 3) (i32.const 11) (i32.const 12)
+                    (i32.const 0x30014)))
+            (return (i32.const 0))))
         ;; SS_ICON(3), SS_BITMAP(0x0E): skip text — these display images, not labels
         (if (i32.and
               (i32.ne (local.get $style) (i32.const 3))
@@ -3728,7 +3761,7 @@
     (local $top i32) (local $visible i32) (local $max i32) (local $hit i32)
     (local $x i32) (local $y i32) (local $row i32) (local $new_top i32)
     (local $header_h i32) (local $content_right i32) (local $draw_row i32)
-    (local $cell_g i32) (local $cell_w i32) (local $text_len i32)
+    (local $cell_g i32) (local $cell_w i32) (local $text_len i32) (local $icon_brush i32)
     (local $col_count i32) (local $col_x i32) (local $col_idx i32)
     (local $widths_w i32) (local $texts_w i32) (local $pressed_part i32)
     (local $delta i32) (local $code i32)
@@ -3739,9 +3772,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 56)))
+        (local.set $state (call $heap_alloc (i32.const 60)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 56))
+        (call $zero_memory (local.get $sw) (i32.const 60))
         (i32.store offset=32 (local.get $sw) (i32.const -1))
         (i32.store offset=40 (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
@@ -3764,6 +3797,16 @@
 
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
+
+    ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep the assigned small-image
+    ;; list handle so report rows reserve authentic icon space.
+    (if (i32.eq (local.get $msg) (i32.const 0x1002))
+      (then (return (i32.load offset=56 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1003))
+      (then
+        (local.set $old (i32.load offset=56 (local.get $sw)))
+        (i32.store offset=56 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
 
     ;; LVM_GETITEMCOUNT
     (if (i32.eq (local.get $msg) (i32.const 0x1004))
@@ -4578,6 +4621,10 @@
               (br $header_cols)))))
 
         ;; Rows.
+        (if (i32.load offset=56 (local.get $sw))
+          (then
+            (local.set $icon_brush
+              (call $host_gdi_create_solid_brush (i32.const 0x00800000)))))
         (local.set $draw_row (i32.const 0))
         (local.set $visible (call $lv_visible_rows_for_h (local.get $sw) (local.get $h)))
         (block $rows_done (loop $rows
@@ -4620,8 +4667,30 @@
                   (then
                     (local.set $cell_w (call $g2w (local.get $cell_g)))
                     (local.set $text_len (call $strlen (local.get $cell_w)))
+                    (if (i32.and
+                          (i32.eqz (local.get $col_idx))
+                          (i32.load offset=56 (local.get $sw)))
+                      (then
+                        ;; Small registry/document glyph: outlined page with
+                        ;; the blue Win98 registry mark inside.
+                        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                          (i32.add (local.get $col_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
+                          (i32.add (local.get $col_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
+                          (i32.const 0x30014)))
+                        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                          (i32.add (local.get $col_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
+                          (i32.add (local.get $col_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
+                          (i32.const 0x30010)))
+                        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                          (i32.add (local.get $col_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
+                          (i32.add (local.get $col_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
+                          (local.get $icon_brush)))))
                     (drop (call $host_gdi_text_out (local.get $hdc)
-                      (i32.add (local.get $col_x) (i32.const 4))
+                      (i32.add (local.get $col_x)
+                        (select (i32.const 21) (i32.const 4)
+                          (i32.and
+                            (i32.eqz (local.get $col_idx))
+                            (i32.ne (i32.load offset=56 (local.get $sw)) (i32.const 0)))))
                       (i32.add (local.get $y) (i32.const 2))
                       (local.get $cell_w) (local.get $text_len) (i32.const 0)))))
                 (local.set $col_x (i32.add (local.get $col_x) (local.get $width)))
@@ -4631,6 +4700,8 @@
               (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))))
           (local.set $draw_row (i32.add (local.get $draw_row) (i32.const 1)))
           (br $rows)))
+        (if (local.get $icon_brush)
+          (then (drop (call $host_gdi_delete_object (local.get $icon_brush)))))
 
         (if (i32.gt_s (local.get $max) (i32.const 0))
           (then
@@ -6141,6 +6212,34 @@
                     (i32.sub (local.get $cx) (i32.const 2)) (i32.const 4)
                     (i32.add (local.get $cx) (i32.const 2)) (i32.sub (local.get $h) (i32.const 4))
                     (i32.const 0x0A) (i32.const 0x0F)))
+            ;; Vertical Win9x mixer faders show evenly spaced tick marks on
+            ;; both sides of the groove unless TBS_NOTICKS is requested.
+            (if (i32.eqz (i32.and (local.get $style) (i32.const 0x0010)))
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 2) (i32.const 4) (i32.const 5) (i32.const 5)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.sub (local.get $w) (i32.const 5)) (i32.const 4)
+                        (i32.sub (local.get $w) (i32.const 2)) (i32.const 5)
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 2) (i32.div_u (local.get $h) (i32.const 2))
+                        (i32.const 5) (i32.add (i32.div_u (local.get $h) (i32.const 2)) (i32.const 1))
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.sub (local.get $w) (i32.const 5)) (i32.div_u (local.get $h) (i32.const 2))
+                        (i32.sub (local.get $w) (i32.const 2))
+                        (i32.add (i32.div_u (local.get $h) (i32.const 2)) (i32.const 1))
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 2) (i32.sub (local.get $h) (i32.const 5))
+                        (i32.const 5) (i32.sub (local.get $h) (i32.const 4))
+                        (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.sub (local.get $w) (i32.const 5)) (i32.sub (local.get $h) (i32.const 5))
+                        (i32.sub (local.get $w) (i32.const 2)) (i32.sub (local.get $h) (i32.const 4))
+                        (i32.const 0x30014)))))
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.sub (local.get $cx) (i32.const 8)) (local.get $thumb_pos)
                     (i32.add (local.get $cx) (i32.const 8)) (i32.add (local.get $thumb_pos) (local.get $thumb_len))

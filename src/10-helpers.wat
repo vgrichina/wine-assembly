@@ -3464,7 +3464,8 @@
     (local $i i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32) (local $ctrl_rec i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
     (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_ex i32) (local $ctrl_id i32)
-    (local $class_val i32) (local $class_enum i32)
+    (local $class_val i32) (local $class_enum i32) (local $class_ptr i32)
+    (local $custom_wndproc i32)
     (local $text_ptr i32) (local $cs i32)
     ;; Find the dialog slot — caller must have inserted it already
     (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
@@ -3588,15 +3589,19 @@
       ;; installer license pages; EM_STREAMIN is handled by $edit_wndproc.
       ;; 0x80=Button,0x81=Edit,0x82=Static,0x83=ListBox,0x84=ScrollBar,0x85=ComboBox
       (local.set $class_enum (i32.const 0))
+      (local.set $class_ptr (i32.const 0))
+      (local.set $custom_wndproc (i32.const 0))
       (if (i32.eq (i32.load16_u (local.get $p)) (i32.const 0xFFFF))
         (then
           (local.set $class_val (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
+          (local.set $class_ptr (local.get $class_val))
           (if (i32.eq (local.get $class_val) (i32.const 0x80)) (then (local.set $class_enum (i32.const 1))))
           (if (i32.eq (local.get $class_val) (i32.const 0x81)) (then (local.set $class_enum (i32.const 2))))
           (if (i32.eq (local.get $class_val) (i32.const 0x82)) (then (local.set $class_enum (i32.const 3))))
           (if (i32.eq (local.get $class_val) (i32.const 0x83)) (then (local.set $class_enum (i32.const 4))))
           (if (i32.eq (local.get $class_val) (i32.const 0x85)) (then (local.set $class_enum (i32.const 5))))
-          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 7)))))
+          (if (i32.eq (local.get $class_val) (i32.const 0x84)) (then (local.set $class_enum (i32.const 7))))
+          (local.set $p (call $dlg_skip_ord_or_sz (local.get $p))))
         (else
           ;; UTF-16 string classes. Templates may name both builtin classes
           ;; ("ListBox") and common controls ("msctls_progress32").
@@ -3631,8 +3636,21 @@
                   (i32.and
                     (i32.eq (i32.or (i32.load16_u (i32.add (local.get $p) (i32.const 4))) (i32.const 0x20)) (i32.const 0x63))
                     (i32.eq (i32.or (i32.load16_u (i32.add (local.get $p) (i32.const 6))) (i32.const 0x20)) (i32.const 0x68)))))
-            (then (local.set $class_enum (i32.const 2))))))
-      (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
+            (then (local.set $class_enum (i32.const 2))))
+          ;; Preserve named application control classes. Resource dialogs can
+          ;; use custom registered classes (Sound Recorder's shadowframe,
+          ;; noflicker, and wave display controls); routing those through the
+          ;; native-control sentinel suppresses their real WM_CREATE/WM_PAINT.
+          (call $dlg_read_text (local.get $p))
+          (local.set $class_ptr (global.get $dlg_text_ptr))
+          (local.set $p (global.get $dlg_text_wa))
+          (if (i32.and
+                (i32.eqz (local.get $class_enum))
+                (i32.ne (local.get $class_ptr) (i32.const 0)))
+            (then
+              (local.set $custom_wndproc
+                (call $class_table_lookup
+                  (call $class_name_key (local.get $class_ptr))))))))
       ;; Text (UTF-16 → ASCII in heap; 0 for null/ordinal)
       (call $dlg_read_text (local.get $p))
       (local.set $text_ptr (global.get $dlg_text_ptr))
@@ -3643,7 +3661,9 @@
       ;; Allocate control HWND
       (local.set $ctrl_hwnd (global.get $next_hwnd))
       (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-      (call $wnd_table_set (local.get $ctrl_hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+      (call $wnd_table_set (local.get $ctrl_hwnd)
+        (select (local.get $custom_wndproc) (global.get $WNDPROC_CTRL_NATIVE)
+          (local.get $custom_wndproc)))
       (drop (call $wnd_set_style (local.get $ctrl_hwnd) (local.get $ctrl_style)))
       (call $wnd_set_parent (local.get $ctrl_hwnd) (local.get $dlg_hwnd))
       (local.set $ctrl_slot (call $wnd_table_find (local.get $ctrl_hwnd)))
@@ -3691,12 +3711,22 @@
       (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2)))
       (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
       (i32.store offset=36 (call $g2w (local.get $cs)) (local.get $text_ptr))
-      (i32.store offset=40 (call $g2w (local.get $cs)) (i32.const 0))
+      (i32.store offset=40 (call $g2w (local.get $cs)) (local.get $class_ptr))
       (i32.store offset=44 (call $g2w (local.get $cs)) (i32.const 0))
+      ;; USER owns the initial window text independently of any class-specific
+      ;; state. Registered custom controls commonly query it during WM_PAINT;
+      ;; native controls continue to keep their own state copy as well.
+      (if (local.get $text_ptr)
+        (then
+          (call $title_table_set (local.get $ctrl_hwnd)
+            (call $g2w (local.get $text_ptr))
+            (call $strlen (call $g2w (local.get $text_ptr))))))
       (drop (call $wnd_send_message (local.get $ctrl_hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
       ;; Control wndproc has copied text into its own state struct;
       ;; free the template-side copy to avoid leaking per dialog open.
       (if (local.get $text_ptr) (then (call $heap_free (local.get $text_ptr))))
+      (if (i32.ge_u (local.get $class_ptr) (i32.const 0x10000))
+        (then (call $heap_free (local.get $class_ptr))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $ctrl_loop)))
     (call $heap_free (local.get $cs))

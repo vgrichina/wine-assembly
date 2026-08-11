@@ -86,6 +86,14 @@ async function inspect(file) {
     waveHeading: darkIn(98, 49, 174, 68),
     midiHeading: darkIn(188, 49, 264, 68),
     bodyInk: darkIn(8, 90, 266, 276),
+    speakerInk:
+      darkIn(10, 96, 27, 114) + darkIn(66, 96, 83, 114) +
+      darkIn(100, 96, 117, 114) + darkIn(156, 96, 173, 114) +
+      darkIn(190, 96, 207, 114) + darkIn(246, 96, 263, 114),
+    scaleInk:
+      darkIn(10, 143, 21, 252) + darkIn(49, 143, 59, 252) +
+      darkIn(100, 143, 111, 252) + darkIn(139, 143, 149, 252) +
+      darkIn(190, 143, 201, 252) + darkIn(229, 143, 239, 252),
   };
 }
 
@@ -115,6 +123,8 @@ async function inspect(file) {
       visual.width >= 275 && visual.height >= 300 &&
       visual.masterHeading >= 20 && visual.waveHeading >= 12 && visual.midiHeading >= 10 &&
       visual.bodyInk >= 400],
+    ['speaker glyphs and vertical fader scales are visible', !!visual &&
+      visual.speakerInk >= 80 && visual.scaleInk >= 30],
     ['adjusted screenshot retains complete mixer layout', !!adjusted &&
       adjusted.width === visual.width && adjusted.height === visual.height && adjusted.bodyInk >= 400],
     ['no unimplemented API or runtime crash',

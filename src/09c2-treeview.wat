@@ -16,6 +16,7 @@
   (global $tv_count (mut i32) (i32.const 0))
   (global $tv_selected_handle (mut i32) (i32.const 0))
   (global $tv_first_visible_row (mut i32) (i32.const 0))
+  (global $tv_image_list (mut i32) (i32.const 0))
   (global $tv_drag_anchor_y (mut i32) (i32.const 0))
   (global $tv_drag_anchor_row (mut i32) (i32.const 0))
   (global $tv_debug_paint_visible (mut i32) (i32.const 0))
@@ -915,9 +916,14 @@
     ;; TVM_GETCOUNT (0x1105)
     (if (i32.eq (local.get $msg) (i32.const 0x1105))
       (then (return (global.get $tv_count))))
-    ;; TVM_SETIMAGELIST (0x1109) — no-op
+    ;; TVM_GETIMAGELIST / TVM_SETIMAGELIST
+    (if (i32.eq (local.get $msg) (i32.const 0x1108))
+      (then (return (global.get $tv_image_list))))
     (if (i32.eq (local.get $msg) (i32.const 0x1109))
-      (then (return (i32.const 0))))
+      (then
+        (local.set $ret (global.get $tv_image_list))
+        (global.set $tv_image_list (local.get $lParam))
+        (return (local.get $ret))))
     ;; TVM_GETNEXTITEM (0x110a)
     (if (i32.eq (local.get $msg) (i32.const 0x110a))
       (then (return (call $tv_get_next (local.get $wParam) (local.get $lParam)))))
@@ -960,7 +966,7 @@
     (local $i i32) (local $base i32) (local $row i32) (local $draw_row i32) (local $y i32)
     (local $hItem i32) (local $slot i32)
     (local $depth i32) (local $x i32) (local $state i32) (local $check i32)
-    (local $style i32) (local $brush i32) (local $selected i32) (local $sel_right i32)
+    (local $style i32) (local $brush i32) (local $folder_brush i32) (local $selected i32) (local $sel_right i32)
     (local $text_g i32) (local $text_w i32) (local $text_len i32)
     (local $first_row i32) (local $max_scroll i32) (local $content_right i32)
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
@@ -995,6 +1001,10 @@
     (drop (call $host_gdi_draw_edge (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
       (i32.const 0x0A) (i32.const 0x0F)))
+    (if (global.get $tv_image_list)
+      (then
+        (local.set $folder_brush
+          (call $host_gdi_create_solid_brush (i32.const 0x0000FFFF)))))
 
     (local.set $i (i32.const 0))
     (local.set $row (i32.const 0))
@@ -1090,6 +1100,25 @@
                         (i32.const 0x30014)))))
                   (local.set $x (i32.add (local.get $x) (i32.const 16)))))
 
+              ;; RegEdit and shell trees attach a small image list. Until the
+              ;; image-list bitmap compositor is stateful, paint the canonical
+              ;; 14px closed-folder silhouette and preserve native label spacing.
+              (if (global.get $tv_image_list)
+                (then
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (local.get $x) (i32.add (local.get $y) (i32.const 4))
+                    (i32.add (local.get $x) (i32.const 14)) (i32.add (local.get $y) (i32.const 14))
+                    (i32.const 0x30014)))
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.add (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 5))
+                    (i32.add (local.get $x) (i32.const 13)) (i32.add (local.get $y) (i32.const 13))
+                    (local.get $folder_brush)))
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (i32.const 2))
+                    (i32.add (local.get $x) (i32.const 8)) (i32.add (local.get $y) (i32.const 6))
+                    (local.get $folder_brush)))
+                  (local.set $x (i32.add (local.get $x) (i32.const 17)))))
+
               (local.set $text_g (i32.load offset=28 (local.get $base)))
               (if (local.get $text_g)
                 (then
@@ -1135,6 +1164,8 @@
           (local.get $first_row) (local.get $max_scroll)
           (select (global.get $sb_pressed_part) (i32.const 0)
                   (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+    (if (local.get $folder_brush)
+      (then (drop (call $host_gdi_delete_object (local.get $folder_brush)))))
   )
 
   ;; TreeView control wndproc — handles WM_PAINT and TreeView messages

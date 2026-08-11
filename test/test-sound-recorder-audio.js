@@ -53,32 +53,41 @@ try {
     '--quiet-api',
     '--quiet-blocks',
     '--trace-wave',
+    '--trace-api=SetDlgItemTextA',
   ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
 }
 
-async function darkTitlePixels(file) {
+async function inspectScreenshot(file) {
   const image = await loadImage(file);
   const canvas = createCanvas(image.width, image.height);
   const context = canvas.getContext('2d');
   context.drawImage(image, 0, 0);
   const pixels = context.getImageData(0, 0, image.width, image.height).data;
-  let count = 0;
-  for (let y = 0; y < 40; y++) {
-    for (let x = 40; x < 320; x++) {
-      const i = (y * image.width + x) * 4;
-      if (pixels[i] < 80 && pixels[i + 1] < 100 && pixels[i + 2] < 160) count++;
+  const countIn = (x0, y0, x1, y1, predicate) => {
+    let count = 0;
+    for (let y = y0; y < Math.min(y1, image.height); y++) {
+      for (let x = x0; x < Math.min(x1, image.width); x++) {
+        const i = (y * image.width + x) * 4;
+        if (predicate(pixels[i], pixels[i + 1], pixels[i + 2])) count++;
+      }
     }
-  }
-  return count;
+    return count;
+  };
+  return {
+    titleInk: countIn(40, 0, 320, 40, (r, g, b) => r < 80 && g < 100 && b < 160),
+    displayBlack: countIn(120, 48, 235, 89, (r, g, b) => r < 25 && g < 25 && b < 25),
+    displayGreen: countIn(120, 48, 235, 89, (r, g, b) => r < 40 && g > 90 && b < 40),
+    readoutInk: countIn(51, 48, 305, 89, (r, g, b) => r < 100 && g < 100 && b < 100),
+  };
 }
 
 (async () => {
   const screenshots = [beforePng, stoppedPng].every(file =>
     fs.existsSync(file) && fs.statSync(file).size > 5500);
-  const titlePixels = screenshots ? await darkTitlePixels(stoppedPng) : 0;
+  const visual = screenshots ? await inspectScreenshot(stoppedPng) : null;
   const pcm = fs.existsSync(playbackPcm) ? fs.readFileSync(playbackPcm) : Buffer.alloc(0);
   let nonzero = 0;
   let min = 32767;
@@ -98,7 +107,11 @@ async function darkTitlePixels(file) {
     [`captured playback is non-silent (${nonzero} samples)`, nonzero >= 10000],
     [`captured waveform preserves amplitude (${min}..${max})`, min < -20000 && max > 20000],
     ['Sound Recorder submitted captured data to waveOut', /\[wave\] totals: open=1 write=3 \(22050 B\)/.test(output)],
-    ['before and stopped screenshots are complete', screenshots && titlePixels >= 100],
+    ['position and length readouts reach the captured duration',
+      /SetDlgItemTextA\([^\n]*text="0\.50 sec\."/.test(output)],
+    ['before and stopped screenshots are complete', screenshots && visual && visual.titleInk >= 100],
+    ['classic waveform display and numeric readouts are visible', visual &&
+      visual.displayBlack >= 3000 && visual.displayGreen >= 75 && visual.readoutInk >= 150],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output)],
   ];
 
