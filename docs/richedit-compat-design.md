@@ -398,9 +398,12 @@ native-editing path is alive.
   now remembers `TB_ADDBITMAP` app bitmap strips, draws `TBBUTTON.iBitmap`
   icons during `WM_PAINT` through a `TransparentBlt`-style
   `RGB(192,192,192)` color key, and the regression asserts colored icon pixels
-  instead of placeholder-only squares. Common-control built-in strips,
-  disabled/highlight image-list remapping, and advanced toolbar UI state
-  remain follow-up fidelity.
+  instead of placeholder-only squares. The harness can dump
+  `ToolbarWindow32` button records/rects, and WordPad's disabled Standard
+  toolbar commands are now both state-asserted and visually dimmed with a
+  BTNFACE crosshatch. Common-control built-in strips, true disabled/highlight
+  image-list remapping, and advanced toolbar UI state remain follow-up
+  fidelity.
 - Added width-aware packing for large toolbar-hosted combo item rects. This
   mirrors the bounded native-common-control behavior WordPad relies on: the
   240px font combo HWND remains intact, but the toolbar item rect is capped
@@ -777,6 +780,7 @@ Acceptance:
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
 [x] WordPad toolbar app bitmap strips render visible color-keyed icon pixels
+[x] WordPad disabled Standard-toolbar commands are state-dumped and visibly dimmed
 [x] WordPad toolbar fallback buttons remain visibly composited through nested
     MFC control-bar containers when no strip is available
 [x] WordPad formatting toolbar font/size comboboxes are visible, separated, and populated
@@ -833,6 +837,7 @@ Acceptance:
 [x] WordPad standard/format toolbar row layout is asserted
 [x] WordPad nested toolbar child surfaces visibly composite and clip to WordPad
 [x] WordPad toolbar bitmap icon pixels are explicitly asserted
+[x] WordPad disabled toolbar icon dimming is explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
 [x] WordPad formatting toolbar color button is fully visible in the narrow row

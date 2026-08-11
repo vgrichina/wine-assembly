@@ -5,6 +5,8 @@
 //   - a screenshot proves nested toolbar surfaces are composited and clipped
 //   - toolbar bitmap strips render real colored icon pixels, not only fallback
 //     placeholder squares
+//   - disabled standard-toolbar commands are exposed in the button state dump
+//     and are visually dimmed instead of looking enabled
 //   - the first standard-toolbar button maps through TBBUTTON.idCommand and
 //     opens WordPad's New dialog instead of crashing in MFC toolbar UI updates
 
@@ -30,6 +32,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 const seq = [
   '40:dump-windows:initial',
   '90:dump-windows:final',
+  '92:dump-toolbar:final',
   `94:png:${PNG_OUT}`,
   '110:click:10:48',
   '150:dump-windows:after-click',
@@ -66,6 +69,7 @@ try {
 const interesting = out.split('\n').filter(l =>
   l.includes('ShowWindow') ||
   l.includes('dump-windows') ||
+  l.includes('toolbar:') ||
   l.includes('window:final') ||
   l.includes('window:initial') ||
   l.includes('window:after-click') ||
@@ -179,6 +183,29 @@ function countWhitePixels(pngPath, x0, y0, x1, y1) {
   return white;
 }
 
+function countColorPixelsInRegions(pngPath, regions) {
+  if (!fs.existsSync(pngPath)) return 0;
+  const png = PNG.sync.read(fs.readFileSync(pngPath));
+  let colorful = 0;
+  for (const [x0, y0, x1, y1] of regions) {
+    for (let y = Math.max(0, y0 | 0); y < Math.min(y1 | 0, png.height); y++) {
+      for (let x = Math.max(0, x0 | 0); x < Math.min(x1 | 0, png.width); x++) {
+        const i = (y * png.width + x) * 4;
+        const r = png.data[i];
+        const g = png.data[i + 1];
+        const b = png.data[i + 2];
+        const a = png.data[i + 3];
+        if (!a) continue;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const isDarkEdge = r < 50 && g < 50 && b < 50;
+        if (!isDarkEdge && max - min >= 35) colorful++;
+      }
+    }
+  }
+  return colorful;
+}
+
 const standard = parseWindowByCtrlId(59392);
 const formatting = parseWindowByCtrlId(59396);
 const topControlBar = parseWindowByCtrlId(59419);
@@ -189,6 +216,15 @@ const pngExists = fs.existsSync(PNG_OUT) && fs.statSync(PNG_OUT).size > 0;
 const clickPngExists = fs.existsSync(PNG_CLICK_OUT) && fs.statSync(PNG_CLICK_OUT).size > 0;
 const toolbarButtonPixels = countToolbarButtonPixels(PNG_OUT);
 const toolbarIconColorPixels = countToolbarIconColorPixels(PNG_OUT);
+const standardToolbarDump = out.split('\n').find(l => l.includes('toolbar:final:') && l.includes('ctrlId=59392')) || '';
+const disabledStandardButtonCount = (standardToolbarDump.match(/state=0x0 style=0x0/g) || []).length;
+const disabledStandardIconColorPixels = countColorPixelsInRegions(PNG_OUT, [
+  [137, 44, 153, 60],
+  [168, 44, 184, 60],
+  [191, 44, 207, 60],
+  [214, 44, 230, 60],
+  [237, 44, 253, 60],
+]);
 const fontComboWhitePixels = fontCombo
   ? countWhitePixels(PNG_OUT, fontCombo.clientX + 4, fontCombo.clientY + 4,
       fontCombo.clientX + fontCombo.clientW - 22, fontCombo.clientY + 18)
@@ -259,6 +295,10 @@ check(`toolbar button details visibly painted (${toolbarButtonPixels} non-face p
   toolbarButtonPixels >= 120);
 check(`toolbar bitmap icons render colored strip pixels (${toolbarIconColorPixels} color pixels)`,
   toolbarIconColorPixels >= 80);
+check(`standard toolbar state dump exposes disabled command buttons (${disabledStandardButtonCount})`,
+  disabledStandardButtonCount >= 5);
+check(`disabled standard toolbar icons are visually dimmed (${disabledStandardIconColorPixels} color pixels)`,
+  disabledStandardIconColorPixels <= 140);
 check(`toolbar combo fields paint white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
   fontComboWhitePixels >= 1200 &&
   sizeComboWhitePixels >= 150);

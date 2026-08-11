@@ -379,6 +379,7 @@ async function main() {
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
   //   B:dlg-dump[:LABEL] — log controls in the topmost visible dialog
   //   B:dump-children:HWND[:LABEL] — log WAT child table entries for HWND
+  //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
@@ -471,6 +472,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-children', hwnd: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-windows') {
         scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
+      } else if (kind === 'dump-toolbar') {
+        scheduledInput.push({ batch, action: 'dump-toolbar', label: parts[2] || '' });
       } else if (kind === 'menu-dump') {
         scheduledInput.push({ batch, action: 'menu-dump', label: parts[2] || '' });
       } else if (kind === 'dlg-paint') {
@@ -3179,6 +3182,53 @@ async function main() {
           const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
           const enabled = (style & 0x08000000) === 0;
           logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-toolbar' && renderer) {
+        const label = ev.label ? ':' + ev.label : '';
+        const we = instance.exports;
+        const entries = Object.entries(renderer.windows || {})
+          .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
+        const dv = new DataView(memory.buffer);
+        const u8 = new Uint8Array(memory.buffer);
+        let found = 0;
+        for (const [hwndStr, win] of entries) {
+          if (!win) continue;
+          const hwnd = parseInt(hwndStr, 10) || 0;
+          let ctrlClass = -1;
+          let ctrlId = -1;
+          try {
+            if (we && we.ctrl_get_class) ctrlClass = we.ctrl_get_class(hwnd) | 0;
+            if (we && we.ctrl_get_id) ctrlId = we.ctrl_get_id(hwnd) | 0;
+          } catch (_) {}
+          if (ctrlClass !== 21 || !we || !we.send_message || !we.guest_alloc) continue;
+          found++;
+          const count = we.send_message(hwnd, 0x0418, 0, 0) | 0; // TB_BUTTONCOUNT
+          const recG = we.guest_alloc(20);
+          const rectG = we.guest_alloc(16);
+          const recP = g2w(recG);
+          const rectP = g2w(rectG);
+          const max = Math.max(0, Math.min(count, 64));
+          const items = [];
+          for (let i = 0; i < max; i++) {
+            u8.fill(0, recP, recP + 20);
+            u8.fill(0, rectP, rectP + 16);
+            const okBtn = we.send_message(hwnd, 0x0417, i, recG) | 0; // TB_GETBUTTON
+            const okRect = we.send_message(hwnd, 0x041D, i, rectG) | 0; // TB_GETITEMRECT
+            const img = dv.getInt32(recP + 0, true);
+            const cmd = dv.getInt32(recP + 4, true);
+            const state = u8[recP + 8] | 0;
+            const style = u8[recP + 9] | 0;
+            const left = dv.getInt32(rectP + 0, true);
+            const top = dv.getInt32(rectP + 4, true);
+            const right = dv.getInt32(rectP + 8, true);
+            const bottom = dv.getInt32(rectP + 12, true);
+            items.push(`#${i} ok=${okBtn}/${okRect} img=${img} cmd=${cmd} state=0x${state.toString(16)} style=0x${style.toString(16)} rect=${left},${top},${right},${bottom}`);
+          }
+          const extra = count > max ? ` ... +${count - max} more` : '';
+          logs.push(`[input] toolbar${label}: hwnd=0x${hwnd.toString(16)} ctrlId=${ctrlId} title=${JSON.stringify(win.title || '')} count=${count} ${items.join(' | ')}${extra} at batch ${batch}`);
+        }
+        if (!found) {
+          logs.push(`[input] toolbar${label}: (none) at batch ${batch}`);
         }
       } else if (ev.action === 'hwnd-png-pixels' && renderer && PNG) {
         try {
