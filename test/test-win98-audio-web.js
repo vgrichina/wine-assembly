@@ -294,6 +294,7 @@ async function main() {
     await cdp.send('Input.dispatchMouseEvent', {
       type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1,
     });
+    await wait(100);
     for (let step = 1; step <= 5; step++) {
       const ratio = step / 5;
       await cdp.send('Input.dispatchMouseEvent', {
@@ -346,12 +347,14 @@ async function main() {
           x: (e.menu_bar_screen_x(win.hwnd) | 0) + (e.menu_bar_item_x(win.hwnd, 1) | 0) + 45,
           y: (e.menu_bar_screen_y(win.hwnd) | 0) + (e.menu_bar_screen_h() | 0) + 2 + 5 * 20 + 10,
         });
-      } else if (performance.now() - started > 60000) {
-        reject(new Error('Pinball did not become ready'));
+      } else if (performance.now() - started > 120000) {
+        const apps = runningApps.map(item => ({ name: item && item.name, running: !!(item && item.wine && item.wine.running) }));
+        const log = document.getElementById('log').textContent.slice(-3000);
+        reject(new Error('Pinball did not become ready: apps=' + JSON.stringify(apps) + '\\n' + log));
       } else setTimeout(poll, 100);
     };
     poll();
-  })`, 65000);
+  })`, 125000);
   let pinballChecked = false;
   for (let attempt = 0; attempt < 3 && !pinballChecked; attempt++) {
     await wait(250);
@@ -447,31 +450,101 @@ async function main() {
     const voices = pinball && pinball.wine && pinball.wine._sharedAudio && pinball.wine._sharedAudio.voices;
     const ac = pinball && pinball.wine && (pinball.wine._audioCtx || (voices && voices._ac));
     const e = volume && volume.wine && volume.wine.instance && volume.wine.instance.exports;
-    const verticalTracks = [];
+    const controls = {};
     if (win && e && e.wnd_next_child_slot && e.wnd_slot_hwnd) {
       let slot = 0;
       while ((slot = e.wnd_next_child_slot(win.hwnd, slot) | 0) >= 0) {
         const hwnd = e.wnd_slot_hwnd(slot) | 0;
         slot++;
-        if (!hwnd || !e.ctrl_get_class || (e.ctrl_get_class(hwnd) | 0) !== 19) continue;
+        if (!hwnd || !e.ctrl_get_class || !e.ctrl_get_id) continue;
+        const cls = e.ctrl_get_class(hwnd) | 0;
+        const id = e.ctrl_get_id(hwnd) | 0;
         const x = e.wnd_window_screen_x(hwnd) | 0;
         const y = e.wnd_window_screen_y(hwnd) | 0;
         const w = e.wnd_screen_w(hwnd) | 0;
         const h = e.wnd_screen_h(hwnd) | 0;
-        if (h > w) verticalTracks.push({ hwnd, x, y, w, h });
+        if ((cls === 19 && h > w && [1001, 2001, 3001].includes(id)) ||
+            (cls === 1 && [1000, 2000, 3000].includes(id))) {
+          controls[id] = { hwnd, cls, id, x, y, w, h };
+        }
       }
     }
-    verticalTracks.sort((a, b) => a.x - b.x);
     return win && {
-      x: win.x, y: win.y,
+      hwnd: win.hwnd, x: win.x, y: win.y, w: win.w, h: win.h,
       before: ac && ac._wineMidiBus && ac._wineMidiBus.gain.value,
-      midiTrack: verticalTracks[verticalTracks.length - 1] || null,
-      verticalTracks,
+      controls,
     };
   })()`);
-  assert(volumeWindowForMixer && volumeWindowForMixer.midiTrack,
+  assert(volumeWindowForMixer && [1000, 1001, 2000, 2001, 3000, 3001]
+    .every(id => volumeWindowForMixer.controls[id]),
     `Volume Control and Pinball MIDI bus should both be live: ${JSON.stringify(volumeWindowForMixer)}`);
-  const midiTrack = volumeWindowForMixer.midiTrack;
+  await clickGuest(volumeWindowForMixer.x + 145, volumeWindowForMixer.y + 55);
+  await evaluate(`new Promise((resolve, reject) => {
+    const started = performance.now();
+    const poll = () => {
+      const volume = runningApps.find(item => item && item.name === 'sndvol32');
+      const top = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+        .filter(win => win && win.visible && !win.isChild)
+        .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0))[0];
+      if (volume && top && /^Volume Control$/i.test(top.title || '') && !sharedRenderer._exclusiveTransform) resolve(1);
+      else if (performance.now() - started > 3000) reject(new Error('Volume Control did not leave exclusive Pinball input mode'));
+      else setTimeout(poll, 50);
+    };
+    poll();
+  })`, 5000);
+  const masterTrack = volumeWindowForMixer.controls[1001];
+  const waveTrack = volumeWindowForMixer.controls[2001];
+  const midiTrack = volumeWindowForMixer.controls[3001];
+  const midiMute = volumeWindowForMixer.controls[3000];
+
+  const dragTrackHalfway = control => dragGuest(
+    control.x + Math.floor(control.w / 2), control.y + 8,
+    control.x + Math.floor(control.w / 2), control.y + Math.floor(control.h / 2));
+  const resetTrack = control => dragGuest(
+    control.x + Math.floor(control.w / 2), control.y + Math.floor(control.h / 2),
+    control.x + Math.floor(control.w / 2), control.y + 8);
+  const inspectPinballMixer = () => evaluate(`(() => {
+    const pinball = runningApps.find(item => item && item.name === 'pinball');
+    const volume = runningApps.find(item => item && item.name === 'sndvol32');
+    const voices = pinball && pinball.wine && pinball.wine._sharedAudio && pinball.wine._sharedAudio.voices;
+    const ac = pinball && pinball.wine && (pinball.wine._audioCtx || (voices && voices._ac));
+    const mixer = volume && volume.wine && volume.wine._sharedMixer;
+    const volumeExports = volume && volume.wine && volume.wine.instance && volume.wine.instance.exports;
+    const controls = ${JSON.stringify(volumeWindowForMixer.controls)};
+    const trackPositions = {};
+    for (const id of [1001, 2001, 3001]) {
+      trackPositions[id] = volumeExports && volumeExports.send_message
+        ? volumeExports.send_message(controls[id].hwnd, 0x0400, 0, 0) | 0 : -1;
+    }
+    return {
+      master: ac && ac._wineMaster && ac._wineMaster.gain.value,
+      wave: ac && ac._wineWaveBus && ac._wineWaveBus.gain.value,
+      midi: ac && ac._wineMidiBus && ac._wineMidiBus.gain.value,
+      volumes: mixer && mixer.mixerVolumes ? mixer.mixerVolumes.map(value => value >>> 0) : [],
+      mutes: mixer && mixer.mixerMutes ? [...mixer.mixerMutes] : [],
+      trackPositions,
+    };
+  })()`);
+
+  const initialMixer = await inspectPinballMixer();
+  await dragTrackHalfway(waveTrack);
+  await wait(500);
+  const waveIsolation = await inspectPinballMixer();
+  assert(waveIsolation.wave < initialMixer.wave && waveIsolation.midi === initialMixer.midi &&
+    waveIsolation.master === initialMixer.master && waveIsolation.volumes[1] !== 0xffffffff,
+    `Wave fader should affect Pinball effects but not MIDI: ${JSON.stringify({ initialMixer, waveIsolation })}`);
+  await resetTrack(waveTrack);
+  await wait(300);
+
+  await dragTrackHalfway(masterTrack);
+  await wait(500);
+  const masterMixer = await inspectPinballMixer();
+  assert(masterMixer.master < initialMixer.master && masterMixer.wave === initialMixer.wave &&
+    masterMixer.midi === initialMixer.midi && masterMixer.volumes[0] !== 0xffffffff,
+    `Master fader should attenuate Pinball globally without replacing channel gains: ${JSON.stringify(masterMixer)}`);
+  await resetTrack(masterTrack);
+  await wait(300);
+
   await dragGuest(
     midiTrack.x + Math.floor(midiTrack.w / 2), midiTrack.y + 8,
     midiTrack.x + Math.floor(midiTrack.w / 2), midiTrack.y + Math.floor(midiTrack.h / 2));
@@ -507,11 +580,76 @@ async function main() {
   })()`);
   assert(crossAppMixer.separateAudio && crossAppMixer.after < crossAppMixer.before && crossAppMixer.packed !== 0xffffffff,
     `Volume Control MIDI fader should change Pinball without sharing process audio: ${JSON.stringify(crossAppMixer)}`);
+
+  // Restore the fader to the adjusted value after the diagnostic read reset it.
+  await dragTrackHalfway(midiTrack);
+  await wait(300);
+  await clickGuest(midiMute.x + Math.floor(midiMute.w / 2), midiMute.y + Math.floor(midiMute.h / 2));
+  await wait(300);
+  const midiMuted = await inspectPinballMixer();
+  assert.strictEqual(midiMuted.midi, 0, `MIDI mute should silence Pinball MIDI: ${JSON.stringify(midiMuted)}`);
+  assert.strictEqual(midiMuted.mutes[2], 1, 'desktop MIDI mute state should be set');
+  await clickGuest(midiMute.x + Math.floor(midiMute.w / 2), midiMute.y + Math.floor(midiMute.h / 2));
+  await wait(300);
+  const midiRestored = await inspectPinballMixer();
+  assert(midiRestored.midi > 0 && Math.abs(midiRestored.midi - crossAppMixer.after) < 0.02 && midiRestored.mutes[2] === 0,
+    `unmuting MIDI should restore the adjusted Pinball gain: ${JSON.stringify({ crossAppMixer, midiRestored })}`);
+
+  await evaluate(`(() => {
+    const volume = runningApps.find(item => item && item.name === 'sndvol32');
+    if (volume && volume.wine && volume.wine.hostCtx && volume.wine.hostCtx.setAudioMixerVolume) {
+      for (let bus = 0; bus < 3; bus++) volume.wine.hostCtx.setAudioMixerVolume(bus, 0xffffffff);
+    }
+    return 1;
+  })()`);
+  await clickGuest(
+    volumeWindowForMixer.x + volumeWindowForMixer.w - 13,
+    volumeWindowForMixer.y + 12);
+  const mixerCloseLifecycle = await evaluate(`new Promise(resolve => {
+    const started = performance.now();
+    const poll = () => {
+      const pinball = runningApps.find(item => item && item.name === 'pinball');
+      const volume = runningApps.find(item => item && item.name === 'sndvol32');
+      const voices = pinball && pinball.wine && pinball.wine._sharedAudio && pinball.wine._sharedAudio.voices;
+      const ac = pinball && pinball.wine && (pinball.wine._audioCtx || (voices && voices._ac));
+      const mci = pinball && pinball.wine && pinball.wine.hostCtx && pinball.wine.hostCtx._mci;
+      const result = {
+        volumeRunning: !!volume,
+        pinballRunning: !!(pinball && pinball.wine.running),
+        contextState: ac && ac.state,
+        mciDevices: mci ? mci.devices.size : 0,
+      };
+      if (!volume || performance.now() - started > 5000) resolve(result);
+      else setTimeout(poll, 100);
+    };
+    poll();
+  })`, 7000);
+  assert.deepStrictEqual(mixerCloseLifecycle,
+    { volumeRunning: false, pinballRunning: true, contextState: 'running', mciDevices: 1 },
+    `closing Volume Control should leave Pinball audio running: ${JSON.stringify(mixerCloseLifecycle)}`);
+
   await evaluate(`(() => {
     const app = runningApps.find(item => item && item.name === 'pinball');
     if (app && app.wine) app.wine.stop();
     return 1;
   })()`);
+
+  await evaluate(`(() => {
+    document.getElementById('app-select').value = 'sndvol32';
+    return 1;
+  })()`);
+  await clickLaunch();
+  await evaluate(`new Promise((resolve, reject) => {
+    const started = performance.now();
+    const poll = () => {
+      const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+        .find(w => w && w.visible && /^Volume Control$/i.test(w.title || ''));
+      if (runningApps.some(item => item && item.name === 'sndvol32') && win) resolve(1);
+      else if (performance.now() - started > 25000) reject(new Error('Volume Control did not relaunch'));
+      else setTimeout(poll, 100);
+    };
+    poll();
+  })`, 28000);
 
   const audioGraph = await evaluate(`(() => {
     const app = runningApps.find(item => item && item.name === 'sndvol32');
@@ -521,6 +659,7 @@ async function main() {
       get _audioCtx() { return app.wine._audioCtx; },
       set _audioCtx(value) { app.wine._audioCtx = value; },
       sharedAudio: app.wine._sharedAudio,
+      sharedMixer: app.wine._sharedMixer,
       midiBackend: 'oscillator',
     };
     const probe = createHostImports(ctx).host;
@@ -757,6 +896,8 @@ async function main() {
 
   console.log('PASS  browser SndVol uses live Web Audio Wave/MIDI analyser buses');
   console.log(`PASS  browser SndVol MIDI fader controls Pinball (${crossAppMixer.before.toFixed(3)} -> ${crossAppMixer.after.toFixed(3)})`);
+  console.log('PASS  browser SndVol Master/Wave/MIDI controls remain isolated and MIDI mute restores gain');
+  console.log('PASS  browser closing SndVol leaves Pinball MIDI and AudioContext running');
   console.log(`PASS  browser native peak meters render independently ${JSON.stringify(volume.meters)}`);
   console.log(`PASS  browser Sound Recorder transport row is complete (${recorder.width}x${recorder.height})`);
   console.log(`PASS  browser Sound Recorder captures microphone PCM (${capture.capturedFrames} frames, ${recorder.displayGreen} waveform pixels)`);

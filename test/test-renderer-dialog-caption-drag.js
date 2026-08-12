@@ -227,6 +227,18 @@ function makeRenderer(wasm) {
         calls.push({ hwnd, msg });
         return 1;
       },
+      get_capture_hwnd() {
+        return 401;
+      },
+      wnd_top_level() {
+        return 400;
+      },
+      wnd_mouse_msg_origin_x() {
+        return 100;
+      },
+      wnd_mouse_msg_origin_y() {
+        return 130;
+      },
     },
   };
   const r = makeRenderer(mainWasm);
@@ -247,13 +259,90 @@ function makeRenderer(wasm) {
   };
 
   r.handleMouseDown(120, 150, 0);
+  r.wasm = mainWasm; // Repaint may select another app while the pointer is held.
+  r.handleMouseMove(140, 180);
   r.handleMouseUp(120, 150, 0);
 
   assert.deepStrictEqual(calls, [
     { hwnd: 400, msg: 0x0201 },
     { hwnd: 400, msg: 0x0202 },
   ]);
-  assert.strictEqual(r.wasm, dialogWasm, 'clicking a dialog should activate its owning app context');
+  const dialogMove = r.inputQueue.find(event => event && event.msg === 0x0200);
+  assert(dialogMove, 'captured dialog control should receive moves after another app repaints');
+  assert.strictEqual(dialogMove.hwnd, 401);
+  assert.strictEqual(dialogMove.lParam, (50 << 16) | 40);
 }
 
-console.log('PASS  renderer dialogs close, drag, preserve mouse-up, and route to their owning app');
+{
+  const wrongCalls = [];
+  const firstWasm = {
+    exports: {
+      wnd_child_from_point_deep() {
+        wrongCalls.push('wrong-app-hit-test');
+        return 0;
+      },
+      get_capture_hwnd() {
+        wrongCalls.push('wrong-app-capture');
+        return 0;
+      },
+    },
+  };
+  const secondWasm = {
+    exports: {
+      wnd_child_from_point_deep(hwnd) {
+        assert.strictEqual(hwnd, 500);
+        return 501;
+      },
+      wnd_window_screen_x(hwnd) {
+        return hwnd === 501 ? 40 : 20;
+      },
+      wnd_window_screen_y(hwnd) {
+        return hwnd === 501 ? 60 : 20;
+      },
+      wnd_mouse_msg_origin_x(hwnd) {
+        return hwnd === 501 ? 40 : 20;
+      },
+      wnd_mouse_msg_origin_y(hwnd) {
+        return hwnd === 501 ? 60 : 20;
+      },
+      wnd_top_level(hwnd) {
+        return hwnd === 501 ? 500 : hwnd;
+      },
+      get_capture_hwnd() {
+        return 501;
+      },
+      get_focus_hwnd() {
+        return 0;
+      },
+      set_focus() {},
+    },
+  };
+  const r = makeRenderer(firstWasm);
+  r.windows[500] = {
+    hwnd: 500,
+    visible: true,
+    isChild: false,
+    x: 20,
+    y: 20,
+    w: 280,
+    h: 220,
+    clientRect: { x: 20, y: 20, w: 280, h: 220 },
+    style: 0,
+    zOrder: 2,
+    wasm: secondWasm,
+  };
+
+  r.handleMouseDown(50, 70, 0);
+  assert.strictEqual(r.wasm, secondWasm, 'native child interaction should activate its owning app context');
+  r.wasm = firstWasm; // A repaint may leave another app as the drawing context.
+  r.handleMouseMove(80, 100);
+
+  assert.deepStrictEqual(wrongCalls, [], 'native child routing must not query the previously active app');
+  const events = r.inputQueue.filter(event => event && event.type === 'mouse');
+  assert.deepStrictEqual(events.map(event => [event.hwnd, event.msg, event.lParam]), [
+    [501, 0x0201, (10 << 16) | 10],
+    [501, 0x0200, (40 << 16) | 40],
+  ]);
+}
+
+console.log('PASS  renderer dialogs and native child input route to their owning app');
