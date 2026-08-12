@@ -3,15 +3,103 @@
 
 // Focused upper-bound benchmark for executing the existing x86 threaded words
 // in one br_table function. It covers the unmodified four-block AoE fixture.
-// The two functions differ only in whether architectural state lives in Wasm
-// globals or persistent locals across all requested blocks.
+// Generated stages separately measure dispatch collapse, local thread IP,
+// direct register access, specialized ALU semantics, and persistent locals.
 
 const fs = require('fs');
 const path = require('path');
 const OUT = path.join(__dirname, '..', 'src', '05a-aoe-localregs-bench.generated.wat');
 const HANDLERS = [7, 11, 12, 18, 20, 21, 28, 43, 48, 53, 64, 65, 128, 312, 319, 355];
 
-function body(id, local) {
+function rawRead(target, globalIp) {
+  return globalIp
+    ? [`(local.set $${target} (call $read_thread_word))`]
+    : [`(local.set $${target} (i32.load (local.get $ip_v)))`,
+       '(local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))'];
+}
+
+function bodyGeneric(id, globalIp) {
+  const read = target => rawRead(target, globalIp);
+  switch (id) {
+    case 7: return [
+      ...read('b'), '(local.set $a (call $get_reg (local.get $op)))',
+      '(local.set $r (i32.and (local.get $a) (local.get $b)))',
+      '(call $set_reg (local.get $op) (local.get $r))', '(call $set_flags_logic (local.get $r))',
+    ];
+    case 11: return [
+      '(call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (call $get_reg (i32.and (local.get $op) (i32.const 15))))',
+    ];
+    case 12: return [
+      '(local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))',
+      '(local.set $a (call $get_reg (local.get $addr)))',
+      '(local.set $b (call $get_reg (i32.and (local.get $op) (i32.const 15))))',
+      '(local.set $r (i32.add (local.get $a) (local.get $b)))',
+      '(call $set_reg (local.get $addr) (local.get $r))',
+      '(call $set_flags_add (local.get $a) (local.get $b) (local.get $r))',
+    ];
+    case 18: return [
+      '(local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))',
+      '(local.set $r (i32.xor (call $get_reg (local.get $addr)) (call $get_reg (i32.and (local.get $op) (i32.const 15)))))',
+      '(call $set_reg (local.get $addr) (local.get $r))', '(call $set_flags_logic (local.get $r))',
+    ];
+    case 20: return [
+      ...read('addr'), '(call $set_reg (local.get $op) (call $gl32 (local.get $addr)))',
+    ];
+    case 21: return [
+      ...read('addr'), '(call $gs32 (local.get $addr) (call $get_reg (local.get $op)))',
+    ];
+    case 28: return [
+      ...read('addr'),
+      '(call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (call $gl8 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))',
+    ];
+    case 43: return [...read('a'), '(global.set $eip (local.get $a))', '(br $block_done)'];
+    case 48: return [
+      ...read('addr'), '(local.set $a (call $get_reg (i32.and (local.get $op) (i32.const 15))))',
+      '(local.set $b (call $gl32 (local.get $addr)))',
+      '(local.set $r (call $do_alu32 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $a) (local.get $b)))',
+      '(if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)) (then (call $set_reg (i32.and (local.get $op) (i32.const 15)) (local.get $r))))',
+    ];
+    case 53: return [
+      '(local.set $addr (i32.and (local.get $op) (i32.const 255)))',
+      '(local.set $a (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 255)))',
+      '(if (i32.eq (local.get $a) (i32.const 255)) (then (local.set $a (i32.and (global.get $ecx) (i32.const 31)))))',
+      '(call $set_reg (local.get $addr) (call $do_shift32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 255)) (call $get_reg (local.get $addr)) (local.get $a)))',
+    ];
+    case 64: return [
+      '(local.set $a (call $get_reg (local.get $op)))', '(local.set $r (i32.add (local.get $a) (i32.const 1)))',
+      '(call $set_reg (local.get $op) (local.get $r))', '(call $set_flags_inc (local.get $a) (local.get $r))',
+    ];
+    case 65: return [
+      '(local.set $a (call $get_reg (local.get $op)))', '(local.set $r (i32.sub (local.get $a) (i32.const 1)))',
+      '(call $set_reg (local.get $op) (local.get $r))', '(call $set_flags_dec (local.get $a) (local.get $r))',
+    ];
+    case 128: return [
+      ...read('addr'),
+      '(local.set $a (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15))))',
+      '(local.set $b (call $gl32 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))',
+      '(local.set $r (call $do_alu32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (local.get $a) (local.get $b)))',
+      '(if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (i32.const 7)) (then (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15)) (local.get $r))))',
+    ];
+    case 312: return [
+      ...read('a'), ...read('b'),
+      '(global.set $eip (if (result i32) (call $eval_cc (i32.const 5)) (then (local.get $b)) (else (local.get $a))))',
+      '(br $block_done)',
+    ];
+    case 319: return [
+      ...read('a'), ...read('b'),
+      '(global.set $eip (if (result i32) (call $eval_cc (i32.const 12)) (then (local.get $b)) (else (local.get $a))))',
+      '(br $block_done)',
+    ];
+    case 355: return [
+      ...read('addr'),
+      '(global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))',
+      '(br $block_done)',
+    ];
+    default: throw new Error(String(id));
+  }
+}
+
+function body(id, local, genericAlu) {
   const g = name => local ? `(local.get $${name}_v)` : `(global.get $${name})`;
   const set = (name, value) => local ? `(local.set $${name}_v ${value})` : `(global.set $${name} ${value})`;
   const flag = (kind, a, b, r) => {
@@ -35,8 +123,12 @@ function body(id, local) {
   const read = '(local.set $a (i32.load (local.get $ip_v)))', advance = '(local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))';
   switch (id) {
     case 7: return [
-      read, advance, '(local.set $r (i32.and (local.get $a) ' + g('eax') + '))',
-      set('eax', '(local.get $r)'), ...flag('logic', '', '', '(local.get $r)'),
+      read, advance,
+      genericAlu
+        ? `(local.set $r (call $do_alu32 (i32.const 4) ${g('eax')} (local.get $a)))`
+        : '(local.set $r (i32.and (local.get $a) ' + g('eax') + '))',
+      set('eax', '(local.get $r)'),
+      ...(genericAlu ? [] : flag('logic', '', '', '(local.get $r)')),
     ];
     case 11: return [
       `(if (i32.eq (local.get $op) (i32.const 0x10)) (then ${set('ecx', g('eax'))}) (else ${set('edx', g('edi'))}))`,
@@ -44,11 +136,15 @@ function body(id, local) {
     case 12: return [
       `(local.set $a (if (result i32) (i32.eq (local.get $op) (i32.const 0x21)) (then ${g('edx')}) (else ${g('edi')})))`,
       `(local.set $b ${g('ecx')})`,
-      '(local.set $r (i32.add (local.get $a) (local.get $b)))',
+      genericAlu
+        ? '(local.set $r (call $do_alu32 (i32.const 0) (local.get $a) (local.get $b)))'
+        : '(local.set $r (i32.add (local.get $a) (local.get $b)))',
       `(if (i32.eq (local.get $op) (i32.const 0x21)) (then ${set('edx', '(local.get $r)')}) (else ${set('edi', '(local.get $r)')}))`,
-      ...flag('add', '(local.get $a)', '(local.get $b)', '(local.get $r)'),
+      ...(genericAlu ? [] : flag('add', '(local.get $a)', '(local.get $b)', '(local.get $r)')),
     ];
-    case 18: return [set('eax', '(i32.const 0)'), ...flag('logic', '', '', '(i32.const 0)')];
+    case 18: return genericAlu
+      ? ['(local.set $r (call $do_alu32 (i32.const 6) ' + g('eax') + ' ' + g('eax') + '))', set('eax', '(local.get $r)')]
+      : [set('eax', '(i32.const 0)'), ...flag('logic', '', '', '(i32.const 0)')];
     case 20: return [
       read, advance, '(local.set $r (call $gl32 (local.get $a)))',
       `(if (i32.eq (local.get $op) (i32.const 3)) (then ${set('ebx', '(local.get $r)')}) (else ${set('edi', '(local.get $r)')}))`,
@@ -65,13 +161,19 @@ function body(id, local) {
     case 48: return [
       '(local.set $addr (i32.load (local.get $ip_v)))', advance,
       `(local.set $a ${g('edi')})`, '(local.set $b (call $gl32 (local.get $addr)))',
-      '(local.set $r (i32.sub (local.get $a) (local.get $b)))', set('edi', '(local.get $r)'),
-      ...flag('sub', '(local.get $a)', '(local.get $b)', '(local.get $r)'),
+      genericAlu
+        ? '(local.set $r (call $do_alu32 (i32.const 5) (local.get $a) (local.get $b)))'
+        : '(local.set $r (i32.sub (local.get $a) (local.get $b)))',
+      set('edi', '(local.get $r)'),
+      ...(genericAlu ? [] : flag('sub', '(local.get $a)', '(local.get $b)', '(local.get $r)')),
     ];
     case 53: return [
       `(local.set $a ${g('ecx')})`, '(local.set $b (i32.const 4))',
-      '(local.set $r (i32.shr_u (local.get $a) (local.get $b)))', set('ecx', '(local.get $r)'),
-      ...flag('shift', '(local.get $a)', '(i32.and (i32.shr_u (local.get $a) (i32.const 3)) (i32.const 1))', '(local.get $r)'),
+      genericAlu
+        ? '(local.set $r (call $do_shift32 (i32.const 5) (local.get $a) (local.get $b)))'
+        : '(local.set $r (i32.shr_u (local.get $a) (local.get $b)))',
+      set('ecx', '(local.get $r)'),
+      ...(genericAlu ? [] : flag('shift', '(local.get $a)', '(i32.and (i32.shr_u (local.get $a) (i32.const 3)) (i32.const 1))', '(local.get $r)')),
     ];
     case 64: return [
       `(local.set $a ${g('esi')})`, '(local.set $r (i32.add (local.get $a) (i32.const 1)))', set('esi', '(local.get $r)'),
@@ -84,8 +186,10 @@ function body(id, local) {
     case 128: return [
       '(local.set $addr (i32.load (local.get $ip_v)))', advance,
       `(local.set $a ${g('edx')})`, `(local.set $b (call $gl32 (i32.add ${g('ebx')} (local.get $addr))))`,
-      '(local.set $r (i32.sub (local.get $a) (local.get $b)))',
-      ...flag('sub', '(local.get $a)', '(local.get $b)', '(local.get $r)'),
+      genericAlu
+        ? '(local.set $r (call $do_alu32 (i32.const 7) (local.get $a) (local.get $b)))'
+        : '(local.set $r (i32.sub (local.get $a) (local.get $b)))',
+      ...(genericAlu ? [] : flag('sub', '(local.get $a)', '(local.get $b)', '(local.get $r)')),
     ];
     case 312: return [
       read, advance, '(local.set $b (i32.load (local.get $ip_v)))', advance,
@@ -109,7 +213,7 @@ function body(id, local) {
   }
 }
 
-function emitFunction(name, local) {
+function emitFunction(name, { local = false, generic = false, globalIp = false, genericAlu = false } = {}) {
   const out = [];
   const p = (s = '') => out.push(s);
   p(`  (func $${name} (export "${name}") (param $max_blocks i32)`);
@@ -133,18 +237,19 @@ function emitFunction(name, local) {
   p(`      (local.set $thread (call $cache_lookup ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))`);
   p('      (if (i32.eqz (local.get $thread))');
   p(`        (then (local.set $thread (call $decode_block ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))))`);
-  p('      (local.set $ip_v (local.get $thread))');
+  if (globalIp) p('      (global.set $ip (local.get $thread))');
+  else p('      (local.set $ip_v (local.get $thread))');
   p('      (block $block_done (loop $dispatch');
-  p('        (local.set $fn (i32.load (local.get $ip_v)))');
-  p('        (local.set $op (i32.load offset=4 (local.get $ip_v)))');
-  p('        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))');
+  p(`        (local.set $fn (i32.load ${globalIp ? '(global.get $ip)' : '(local.get $ip_v)'}))`);
+  p(`        (local.set $op (i32.load offset=4 ${globalIp ? '(global.get $ip)' : '(local.get $ip_v)'}))`);
+  p(`        (${globalIp ? 'global.set $ip' : 'local.set $ip_v'} (i32.add ${globalIp ? '(global.get $ip)' : '(local.get $ip_v)'} (i32.const 8)))`);
   p('        (block $fallback');
   for (let i = HANDLERS.length - 1; i >= 0; i--) p(`          (block $case_${HANDLERS[i]}`);
   const target = Array.from({ length: 356 }, (_, id) => HANDLERS.includes(id) ? `$case_${id}` : '$fallback').join(' ');
   p(`            (br_table ${target} $fallback (local.get $fn))`);
   for (const id of HANDLERS) {
     p(`          ) ;; case ${id}`);
-    for (const row of body(id, local)) p(`          ${row}`);
+    for (const row of (generic ? bodyGeneric(id, globalIp) : body(id, local, genericAlu))) p(`          ${row}`);
     p('          (br $dispatch)');
   }
   p('        ) ;; fallback');
@@ -164,8 +269,11 @@ function emitFunction(name, local) {
 
 const text = [
   '  ;; GENERATED focused benchmark; see tools/generate-aoe-localregs-dispatch.js.',
-  emitFunction('run_aoe_brtable_globals', false),
-  emitFunction('run_aoe_brtable_locals', true),
+  emitFunction('run_aoe_brtable_generic_global_ip', { generic: true, globalIp: true }),
+  emitFunction('run_aoe_brtable_generic_local_ip', { generic: true }),
+  emitFunction('run_aoe_brtable_direct_generic_alu', { genericAlu: true }),
+  emitFunction('run_aoe_brtable_globals'),
+  emitFunction('run_aoe_brtable_locals', { local: true }),
   '',
 ].join('\n');
 fs.writeFileSync(OUT, text);

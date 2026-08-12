@@ -2138,6 +2138,43 @@ but its dynamic register selection lost slightly in this executor. The next
 benchmark should change dispatch/operand encoding (dense `br_table` or
 register-form packets), not add AoE-shaped superinstructions.
 
+### Focused `br_table` Cost Decomposition
+
+The follow-up benchmark decomposes the earlier fourfold microbenchmark result
+instead of attributing it to persistent register locals. Every stage executes
+the same existing decoded x86 thread words for the same four-block fixture and
+passes the same final register, lazy-flag, memory, and EIP comparison.
+
+The run used a single two-million-block warmup per implementation followed by
+101 interleaved trials of 500,000 blocks. Shorter trials reduce thermal drift;
+the lower percentiles are included because unrelated Chrome processes caused
+positive-only scheduler stalls.
+
+```text
+stage                                      p10 ms   p25 ms   median   cumulative   incremental
+A current call_indirect handlers            50.85     52.43    57.06      1.000x       1.000x
+B br_table + generic helpers + global IP     24.82     26.20    28.03      2.036x       2.036x
+C B + local thread IP                        22.69     24.59    26.06      2.190x       1.075x
+D C + direct register access                 13.94     14.70    15.88      3.593x       1.641x
+E D + specialized ALU/branch semantics       11.57     12.20    13.43      4.248x       1.182x
+F E + all architectural state local          11.25     12.41    13.38      4.263x       1.004x
+```
+
+The largest measured components are therefore the single-function dispatch
+loop and removal of dynamic `get_reg`/`set_reg` selection. Keeping only the
+thread instruction pointer local adds 7.5%, and specializing the ALU/branch
+semantics adds 18.2%. Once those changes are present, moving all architectural
+globals to persistent locals is effectively neutral in this run (0.4%). The
+earlier roughly 6% locals result was within the observed machine-noise range
+and should not be used as the planning estimate.
+
+Stage B is still a focused 16-handler upper bound. In addition to replacing
+`call_indirect`, it puts those handler bodies in one function and omits cold
+fallback/debug paths. It therefore measures dispatch collapse and inlining as
+a bundle, not the isolated cost of the Wasm `call_indirect` opcode. A
+production test still needs a generated hot-handler subset plus synchronized
+fallback to the existing interpreter.
+
 1. Keep and commit the measured 355-handler specialization set.
 2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
 3. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.

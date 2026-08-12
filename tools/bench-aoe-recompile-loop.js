@@ -26,6 +26,7 @@ const BLOCKS = Math.max(BLOCKS_PER_CYCLE,
 const WARMUP_BLOCKS = Math.max(BLOCKS_PER_CYCLE,
   parseInt(process.env.WARMUP_BLOCKS || '2000000', 10) || 2000000);
 const TRIALS = Math.max(1, parseInt(process.env.TRIALS || '5', 10) || 5);
+const WARM_ONCE = process.env.WARM_ONCE === '1';
 
 const blockBytes = new Map([
   [DISPATCH, [
@@ -50,14 +51,15 @@ const warmupBlocks = roundDownCycle(WARMUP_BLOCKS);
 const measuredCycles = measuredBlocks / BLOCKS_PER_CYCLE;
 const requiredSourceBytes = Math.max(measuredBlocks, warmupBlocks) / 2 + 64;
 
-function mean(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function percentile(values, fraction) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor((sorted.length - 1) * fraction)];
 }
 
 (async () => {
@@ -119,6 +121,9 @@ function median(values) {
   }
 
   function runnerFor(variant) {
+    if (variant === 'brtable-generic-global-ip') return e.run_aoe_brtable_generic_global_ip;
+    if (variant === 'brtable-generic-local-ip') return e.run_aoe_brtable_generic_local_ip;
+    if (variant === 'brtable-direct-generic-alu') return e.run_aoe_brtable_direct_generic_alu;
     if (variant === 'brtable-globals') return e.run_aoe_brtable_globals;
     if (variant === 'brtable-locals') return e.run_aoe_brtable_locals;
     return e.run;
@@ -142,14 +147,14 @@ function median(values) {
     if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
       assert.strictEqual(u32(e.get_wat_stack_packet_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
-    } else if (!['x86-threaded', 'brtable-globals', 'brtable-locals'].includes(variant)) {
+    } else if (variant !== 'x86-threaded' && !variant.startsWith('brtable-')) {
       assert.strictEqual(u32(e.get_aoe_recompile_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
     }
   }
 
-  function measure(variant) {
-    configureAndWarm(variant);
+  function measure(variant, prewarmed = false) {
+    if (!prewarmed) configureAndWarm(variant);
     seed();
     e.reset_aoe_recompile_counters();
     e.set_aoe_recompile_count_enabled(0);
@@ -167,6 +172,9 @@ function median(values) {
 
   const defaultVariants = [
     'x86-threaded',
+    'brtable-generic-global-ip',
+    'brtable-generic-local-ip',
+    'brtable-direct-generic-alu',
     'brtable-globals',
     'brtable-locals',
     'wat-threaded',
@@ -178,13 +186,22 @@ function median(values) {
     ? process.env.VARIANTS.split(',').map(value => value.trim()).filter(Boolean)
     : defaultVariants);
   assert(variants.includes('x86-threaded'), 'VARIANTS must include x86-threaded');
+  if (WARM_ONCE) {
+    assert(variants.every(name => name === 'x86-threaded' || name.startsWith('brtable-')),
+      'WARM_ONCE is valid only for variants sharing the ordinary x86 thread stream');
+    configureAndWarm('x86-threaded');
+    for (const variant of variants) {
+      seed();
+      runnerFor(variant)(warmupBlocks);
+    }
+  }
   const samples = Object.fromEntries(variants.map(name => [name, []]));
   let referenceState = null;
   for (let trial = 0; trial < TRIALS; trial++) {
     // Rotate the first variant to reduce ordering/thermal bias.
     const order = variants.slice(trial % variants.length).concat(variants.slice(0, trial % variants.length));
     for (const variant of order) {
-      const result = measure(variant);
+      const result = measure(variant, WARM_ONCE);
       samples[variant].push(result.elapsedMs);
       if (referenceState == null) referenceState = result.state;
       else assert.deepStrictEqual(result.state, referenceState,
@@ -197,19 +214,25 @@ function median(values) {
     console.log(`${variant} ms: ${samples[variant].map(v => v.toFixed(2)).join(', ')}`);
   }
   console.log('');
-  console.log('variant                 mean ms  median ms  blocks/ms  vs x86 median');
+  console.log('variant                     p10 ms   p25 ms  median ms  blocks/ms  vs x86  vs previous');
   const baseMedian = median(samples['x86-threaded']);
+  let previousMedian = null;
   for (const variant of variants) {
-    const sampleMean = mean(samples[variant]);
+    const p10 = percentile(samples[variant], 0.10);
+    const p25 = percentile(samples[variant], 0.25);
     const sampleMedian = median(samples[variant]);
     const speedup = baseMedian / sampleMedian;
+    const incremental = previousMedian == null ? 1 : previousMedian / sampleMedian;
     console.log(
-      variant.padEnd(24) +
-      sampleMean.toFixed(2).padStart(8) + '  ' +
+      variant.padEnd(28) +
+      p10.toFixed(2).padStart(7) + '  ' +
+      p25.toFixed(2).padStart(7) + '  ' +
       sampleMedian.toFixed(2).padStart(9) + '  ' +
       (measuredBlocks / sampleMedian).toFixed(1).padStart(9) + '  ' +
-      speedup.toFixed(3).padStart(8) + 'x'
+      speedup.toFixed(3).padStart(6) + 'x  ' +
+      incremental.toFixed(3).padStart(8) + 'x'
     );
+    previousMedian = sampleMedian;
   }
 })().catch(error => {
   console.error(error && error.stack || error);
