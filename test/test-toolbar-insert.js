@@ -30,9 +30,32 @@ const TB_GETSTATE = 0x0412;
 const TB_BUTTONSTRUCTSIZE = 0x041E;
 const TB_ADDBUTTONSA = 0x0414;
 const TB_INSERTBUTTONA = 0x0415;
+const TB_DELETEBUTTON = 0x0416;
 const TB_GETBUTTON = 0x0417;
 const TB_BUTTONCOUNT = 0x0418;
+const TB_COMMANDTOINDEX = 0x0419;
 const TB_GETITEMRECT = 0x041D;
+const TB_SETBUTTONSIZE = 0x041F;
+const TB_SETBITMAPSIZE = 0x0420;
+const TB_GETROWS = 0x0428;
+const TB_SETROWS = 0x0427;
+const TB_GETBITMAP = 0x042C;
+const TB_GETBUTTONTEXTA = 0x042D;
+const TB_SETIMAGELIST = 0x0430;
+const TB_GETIMAGELIST = 0x0431;
+const TB_GETRECT = 0x0433;
+const TB_SETHOTIMAGELIST = 0x0434;
+const TB_GETHOTIMAGELIST = 0x0435;
+const TB_SETDISABLEDIMAGELIST = 0x0436;
+const TB_GETDISABLEDIMAGELIST = 0x0437;
+const TB_SETSTYLE = 0x0438;
+const TB_GETSTYLE = 0x0439;
+const TB_GETBUTTONSIZE = 0x043A;
+const TB_HITTEST = 0x0445;
+const TB_SETEXTENDEDSTYLE = 0x0454;
+const TB_GETEXTENDEDSTYLE = 0x0455;
+const TB_GETPADDING = 0x0456;
+const TB_SETPADDING = 0x0457;
 const TBSTATE_CHECKED = 0x01;
 const TBSTATE_PRESSED = 0x02;
 const TBSTATE_ENABLED = 0x04;
@@ -152,6 +175,26 @@ async function main() {
       bottom: dv.getInt32(p + 12, true),
     };
   }
+  function readCommandRect(command) {
+    const g = e.guest_alloc(16);
+    const p = wa(g);
+    u8.fill(0, p, p + 16);
+    const ok = e.send_message(toolbar, TB_GETRECT, command, g);
+    return {
+      ok,
+      left: dv.getInt32(p + 0, true),
+      top: dv.getInt32(p + 4, true),
+      right: dv.getInt32(p + 8, true),
+      bottom: dv.getInt32(p + 12, true),
+    };
+  }
+  function hitTest(x, y) {
+    const g = e.guest_alloc(8);
+    const p = wa(g);
+    dv.setInt32(p + 0, x, true);
+    dv.setInt32(p + 4, y, true);
+    return e.send_message(toolbar, TB_HITTEST, 0, g);
+  }
 
   const baselineSlots = e.wnd_count_used();
   check('ToolbarWindow32 is protected from registered-class fallback',
@@ -191,6 +234,10 @@ async function main() {
     e.send_message(toolbar, TB_INSERTBUTTONA, 1, inserted) === 1);
   check('TB_BUTTONCOUNT is 4 after insert',
     e.send_message(toolbar, TB_BUTTONCOUNT, 0, 0) === 4);
+  check('TB_COMMANDTOINDEX maps inserted command',
+    e.send_message(toolbar, TB_COMMANDTOINDEX, 199, 0) === 1);
+  check('TB_GETBITMAP maps command to bitmap index',
+    e.send_message(toolbar, TB_GETBITMAP, 199, 0) === 9);
 
   const buttons = [0, 1, 2, 3].map(readButton);
   const commands = buttons.map(b => b.command);
@@ -213,6 +260,52 @@ async function main() {
   check('TB_GETITEMRECT stays monotonic after insert',
     monotonicRects,
     'rects=' + JSON.stringify(rects));
+  const cmdRect = readCommandRect(199);
+  check('TB_GETRECT returns rect by command id',
+    cmdRect.ok === 1 &&
+      cmdRect.left === rects[1].left &&
+      cmdRect.top === rects[1].top &&
+      cmdRect.right === rects[1].right &&
+      cmdRect.bottom === rects[1].bottom,
+    JSON.stringify(cmdRect));
+  check('TB_HITTEST maps point to inserted button',
+    hitTest(rects[1].left + 1, rects[1].top + 1) === 1);
+  check('TB_GETBUTTONTEXTA returns empty bounded string for stored command', (() => {
+    const g = e.guest_alloc(8);
+    const p = wa(g);
+    u8.fill(0xAA, p, p + 8);
+    const len = e.send_message(toolbar, TB_GETBUTTONTEXTA, 199, g);
+    return len === 0 && u8[p] === 0;
+  })());
+
+  check('TB_SETBUTTONSIZE updates packed button size',
+    e.send_message(toolbar, TB_SETBUTTONSIZE, 0, (24 << 16) | 26) === 1 &&
+      e.send_message(toolbar, TB_GETBUTTONSIZE, 0, 0) === ((24 << 16) | 26));
+  check('TB_SETBITMAPSIZE accepts bitmap dimensions',
+    e.send_message(toolbar, TB_SETBITMAPSIZE, 0, (16 << 16) | 17) === 1);
+  check('TB_SETROWS accepts request and keeps computed rows',
+    e.send_message(toolbar, TB_SETROWS, 2, 0) === 0 &&
+      e.send_message(toolbar, TB_GETROWS, 0, 0) === 1);
+
+  check('TB_SETIMAGELIST stores normal image-list handle',
+    e.send_message(toolbar, TB_SETIMAGELIST, 0, 0x12340001) === 0 &&
+      e.send_message(toolbar, TB_GETIMAGELIST, 0, 0) === 0x12340001);
+  check('TB_SETHOTIMAGELIST stores hot image-list handle',
+    e.send_message(toolbar, TB_SETHOTIMAGELIST, 0, 0x12340002) === 0 &&
+      e.send_message(toolbar, TB_GETHOTIMAGELIST, 0, 0) === 0x12340002);
+  check('TB_SETDISABLEDIMAGELIST stores disabled image-list handle',
+    e.send_message(toolbar, TB_SETDISABLEDIMAGELIST, 0, 0x12340003) === 0 &&
+      e.send_message(toolbar, TB_GETDISABLEDIMAGELIST, 0, 0) === 0x12340003);
+  check('TB_SETSTYLE/TB_GETSTYLE round-trip style bits',
+    e.send_message(toolbar, TB_SETSTYLE, 0, 0x00000800) === 0 &&
+      e.send_message(toolbar, TB_GETSTYLE, 0, 0) === 0x00000800);
+  check('TB_SETEXTENDEDSTYLE supports masked update',
+    e.send_message(toolbar, TB_SETEXTENDEDSTYLE, 0, 0x00000005) === 0 &&
+      e.send_message(toolbar, TB_SETEXTENDEDSTYLE, 0x00000004, 0) === 0x00000005 &&
+      e.send_message(toolbar, TB_GETEXTENDEDSTYLE, 0, 0) === 0x00000001);
+  check('TB_SETPADDING/TB_GETPADDING round-trip packed padding',
+    e.send_message(toolbar, TB_SETPADDING, 0, (6 << 16) | 4) === 0 &&
+      e.send_message(toolbar, TB_GETPADDING, 0, 0) === ((6 << 16) | 4));
 
   check('TB_ISBUTTONENABLED reports enabled inserted command',
     e.send_message(toolbar, TB_ISBUTTONENABLED, 199, 0) === 1);
@@ -244,6 +337,10 @@ async function main() {
   check('TB_ISBUTTON* returns 0 for unknown command',
     e.send_message(toolbar, TB_ISBUTTONCHECKED, 9999, 0) === 0 &&
       e.send_message(toolbar, TB_ISBUTTONPRESSED, 9999, 0) === 0);
+  check('TB_DELETEBUTTON removes button by index',
+    e.send_message(toolbar, TB_DELETEBUTTON, 1, 0) === 1 &&
+      e.send_message(toolbar, TB_BUTTONCOUNT, 0, 0) === 3 &&
+      e.send_message(toolbar, TB_COMMANDTOINDEX, 199, 0) === -1);
 
   console.log('');
   const failed = checks.filter(c => !c.pass).length;

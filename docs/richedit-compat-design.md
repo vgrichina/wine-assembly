@@ -443,9 +443,12 @@ native-editing path is alive.
   successful no-op `LockWindowUpdate` handler for MFC's toolbar UI update
   cycle. `TB_INSERTBUTTONA` now shifts stored `TBBUTTON` records with
   overlap-safe backward copying, preventing MFC toolbar insertion from
-  duplicating later records when source and destination ranges overlap.
-  `test/test-toolbar-insert.js` covers overlap-safe insertion plus
-  `TB_ADDBITMAP` loading a colored `HINST_COMMCTRL` standard small-color strip.
+  duplicating later records when source and destination ranges overlap. The
+  bounded toolbar query surface also covers command rects, bitmap indexes,
+  empty button text, rows/button size, image-list handles, style/extended-style,
+  padding, and deletion. `test/test-toolbar-insert.js` covers these with
+  overlap-safe insertion plus `TB_ADDBITMAP` loading a colored
+  `HINST_COMMCTRL` standard small-color strip.
   `test/test-wordpad-toolbar.js` captures
   `test/output/wordpad-richedit/toolbar-command-new.png`, proving the first
   Standard toolbar button opens WordPad's `New` dialog.
@@ -875,6 +878,7 @@ Acceptance:
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
 [x] WordPad formatting toolbar full button run is visible in the narrow row
 [x] ToolbarWindow32 `TB_INSERTBUTTONA` preserves stored TBBUTTON order
+[x] ToolbarWindow32 bounded query/style/image-list/padding/delete messages are asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
 [x] WordPad formatting toolbar B/I/U click route is explicitly covered
 [x] WordPad toolbar/menu color route has explicit coverage

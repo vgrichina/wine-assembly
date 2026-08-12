@@ -5064,20 +5064,22 @@
   ;; button geometry is enough for MFC's WM_SIZEPARENT layout to allocate a
   ;; visible toolbar instead of collapsing it to its border height.
   ;;
-  ;; ToolbarState (56 bytes):
+  ;; ToolbarState (80 bytes):
   ;; +0 button_count, +4 button_w, +8 button_h, +12 bitmap_w, +16 bitmap_h,
   ;; +20 rows, +24 tbutton_struct_size, +28 bitmap_count,
   ;; +32 buttons_guest (20-byte TBBUTTON snapshots), +36 capacity,
-  ;; +40 pressed_index, +44 hwnd, +48 bitmap_handle, +52 reserved.
+  ;; +40 pressed_index, +44 hwnd, +48 bitmap_handle,
+  ;; +52 image_list, +56 hot_image_list, +60 disabled_image_list,
+  ;; +64 style, +68 extended_style, +72 padding packed, +76 reserved.
 
   (func $toolbar_ensure_state (param $hwnd i32) (result i32)
     (local $state i32) (local $sw i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
       (then
-        (local.set $state (call $heap_alloc (i32.const 56)))
+        (local.set $state (call $heap_alloc (i32.const 80)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 56))
+        (call $zero_memory (local.get $sw) (i32.const 80))
         (i32.store offset=4  (local.get $sw) (i32.const 23)) ;; default dxButton
         (i32.store offset=8  (local.get $sw) (i32.const 22)) ;; default dyButton
         (i32.store offset=12 (local.get $sw) (i32.const 16)) ;; default dxBitmap
@@ -5687,6 +5689,30 @@
             (call $toolbar_init_button (local.get $rect) (local.get $wParam))))
         (return (i32.const 1))))
 
+    ;; TB_GETRECT (WM_USER+51): command ID -> RECT.
+    (if (i32.eq (local.get $msg) (i32.const 0x0433))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (call $toolbar_find_command_index (local.get $sw) (local.get $wParam)))
+        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+        (local.set $rect (call $g2w (local.get $lParam)))
+        (return (call $toolbar_button_rect (local.get $sw) (local.get $idx) (local.get $rect)))))
+
+    ;; TB_GETBITMAP / TB_GETBUTTONTEXTA. The bounded toolbar stores command
+    ;; records but not string tables, so text lookup is an empty successful
+    ;; copy when a buffer is supplied.
+    (if (i32.eq (local.get $msg) (i32.const 0x042C))
+      (then
+        (local.set $idx (call $toolbar_find_command_index (local.get $sw) (local.get $wParam)))
+        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const -1))))
+        (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
+        (return (i32.load (local.get $rec)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x042D))
+      (then
+        (if (local.get $lParam)
+          (then (i32.store8 (call $g2w (local.get $lParam)) (i32.const 0))))
+        (return (i32.const 0))))
+
     ;; TB_BUTTONCOUNT (WM_USER+24), TB_GETROWS (WM_USER+40).
     (if (i32.eq (local.get $msg) (i32.const 0x0418))
       (then (return (i32.load (local.get $sw)))))
@@ -5744,6 +5770,60 @@
           (then (i32.store offset=20 (local.get $sw) (i32.and (local.get $wParam) (i32.const 0xFFFF)))))
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 0))))
+
+    ;; TB_SETIMAGELIST / TB_GETIMAGELIST and hot/disabled variants.
+    (if (i32.eq (local.get $msg) (i32.const 0x0430))
+      (then
+        (local.set $old (i32.load offset=52 (local.get $sw)))
+        (i32.store offset=52 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0431))
+      (then (return (i32.load offset=52 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0434))
+      (then
+        (local.set $old (i32.load offset=56 (local.get $sw)))
+        (i32.store offset=56 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0435))
+      (then (return (i32.load offset=56 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0436))
+      (then
+        (local.set $old (i32.load offset=60 (local.get $sw)))
+        (i32.store offset=60 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0437))
+      (then (return (i32.load offset=60 (local.get $sw)))))
+
+    ;; TB_SETSTYLE / TB_GETSTYLE / TB_SETEXTENDEDSTYLE / TB_GETEXTENDEDSTYLE.
+    (if (i32.eq (local.get $msg) (i32.const 0x0438))
+      (then
+        (i32.store offset=64 (local.get $sw) (local.get $lParam))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0439))
+      (then (return (i32.load offset=64 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0454))
+      (then
+        (local.set $old (i32.load offset=68 (local.get $sw)))
+        (if (local.get $wParam)
+          (then
+            (i32.store offset=68 (local.get $sw)
+              (i32.or (i32.and (local.get $old) (i32.xor (local.get $wParam) (i32.const -1)))
+                      (i32.and (local.get $lParam) (local.get $wParam)))))
+          (else
+            (i32.store offset=68 (local.get $sw) (local.get $lParam))))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0455))
+      (then (return (i32.load offset=68 (local.get $sw)))))
+
+    ;; TB_SETPADDING / TB_GETPADDING.
+    (if (i32.eq (local.get $msg) (i32.const 0x0457))
+      (then
+        (local.set $old (i32.load offset=72 (local.get $sw)))
+        (i32.store offset=72 (local.get $sw) (local.get $lParam))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0456))
+      (then (return (i32.load offset=72 (local.get $sw)))))
 
     ;; Basic state/probe messages by command ID.
     (if (i32.or
