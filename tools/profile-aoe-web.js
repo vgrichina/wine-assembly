@@ -335,6 +335,7 @@ async function main() {
 
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-aoe-profile-'));
   const chromeArgs = [
+    '--mute-audio',
     '--disable-gpu',
     '--no-sandbox',
     '--no-first-run',
