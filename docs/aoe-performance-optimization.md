@@ -335,6 +335,10 @@ compiled allowlist: real 11.54
 
 Three-tier four-block loop microbenchmark:
 
+The proposed general forms of these tiers are specified in
+[`wasm-stack-threaded-code.md`](wasm-stack-threaded-code.md) and
+[`x86-to-wasm-compiler.md`](x86-to-wasm-compiler.md).
+
 ```text
 cycle:
   0x00535c20 command dispatch

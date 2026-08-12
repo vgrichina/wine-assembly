@@ -1,655 +1,392 @@
-# Wasm Stack-Threaded Code Proposal
+# WAT-Threaded Packet Backend Design
 
-ASCII TLDR:
+Status: design validated by an AoE-specific prototype; general implementation
+not started.
+
+Related design: [Direct x86-to-Wasm Compiler](x86-to-wasm-compiler.md)
+
+## ASCII TL;DR
 
 ```text
-Do not pivot to dynamic Wasm generation for AoE performance work.
-Do explore a stack-shaped threaded target as a block-local compiler backend.
-The useful version is not "one Wasm-stack value across each existing handler".
-Wasm values cannot survive the current call_indirect handler boundary.
-The useful version is a static stack-block/threaded-packet handler that keeps
-values in Wasm locals inside one handler invocation, then flushes at exits.
-Expected wins overlap the current block-local plan: fewer register global
-writes, fewer flag materializations, better EA/g2w reuse, and possibly lower
-dispatch. The risk is that it becomes a second interpreter with harder side
-exits, profiling, and debug behavior.
-Recommendation: prototype only after the simple block-local IR skeleton exists,
-and keep it as an optional lowering for hot clean AoE blocks.
+                                      WAT-THREADED PACKET TIER
+
+  guest x86 bytes        shared compiler front end                     static runtime module
+ +----------------+     +---------------------------+     +----------------------------------------+
+ | decode at EIP  | --> | normalized IR             | --> | emit compact packet DATA               |
+ | record pages   |     | liveness + flags + EA     |     | [header][op][args][op][args]...[exit] |
+ +----------------+     +---------------------------+     +-------------------+--------------------+
+                                                                                 |
+                                                                                 v
+ guest state              one Wasm invocation                        +----------------------------+
+ +----------------+     +----------------------------------------+   | static WAT packet executor |
+ | live-in globals| --> | locals: virtual regs / flags / EA / TOS|<--| read op -> dispatch -> loop |
+ | memory + EIP   |<--  | flush dirty live-outs, set exact EIP   |   +----------------------------+
+ +-------+--------+     +------------------+---------------------+
+         ^                                     |
+         | page write / unsupported op /       | normal exit or side exit
+         | debug / yield / guard failure        v
+         +----------------------------- current x86-threaded dispatcher
+
+  FAST INSTALL, NO NEW WASM MODULE              COST LEFT: PACKET DISPATCH + GENERIC STATE SYNC
 ```
 
-## Idea
+## Summary
 
-The current interpreter is threaded code in the Forth/direct-threading sense:
-`src/04-cache.wat` emits `[handler_idx, operand]` words with `$te`, writes
-extra operands with `$te_raw`, and `$next` loads the handler index and operand
-before a `call_indirect`. `src/02-thread-table.wat` defines the handler table.
-`src/07-decoder.wat` decodes x86 into that stream.
-
-The stack-threaded idea is to keep that model, but add a compiler target for
-hot decoded blocks:
+The WAT-threaded backend is an intermediate execution tier between the current
+x86 threaded interpreter and direct x86-to-Wasm compilation:
 
 ```text
 x86 bytes
   -> normalized block IR
-  -> local liveness and memory analysis
-  -> stack-shaped packet
-  -> existing thread arena points at th_stack_block(packet)
-  -> th_stack_block executes packet with Wasm locals / top-of-stack cache
+  -> liveness and flag analysis
+  -> compact packet data
+  -> one static WAT packet executor
+  -> normal interpreter exit
 ```
 
-This is not dynamic Wasm generation. The runtime would not create new Wasm
-functions. It would emit threaded code that calls a static WAT handler, for
-example `th_stack_block`, with a pointer/length to a compact packet in the
-thread arena. That handler would execute a small stack-shaped bytecode or
-template language using Wasm locals such as:
+The name is easy to misread. Runtime code generation does **not** emit WAT.
+The packet is data, and a static executor written in WAT interprets that data.
+"WAT-threaded" is shorthand for "packet-threaded execution inside a WAT
+handler."
+
+This tier is worth building because it can:
+
+- cross several current x86-handler boundaries in one Wasm invocation;
+- hold guest registers and virtual flags in Wasm locals;
+- coalesce repeated writes to the same guest register;
+- evaluate a compare and branch without materializing dead flags;
+- reuse effective-address calculations within a block or short trace; and
+- install a packet immediately without asking the browser to compile a new
+  Wasm module.
+
+It will not match a direct compiler on the best hot paths. Packet opcode
+dispatch and generic state synchronization remain in the hot loop. Its value is
+lower implementation cost, immediate installation, broad coverage, and a
+fallback tier for code that is too mutable or too cold for direct compilation.
+
+## Current Evidence
+
+The branch contains an AoE-specific proof of concept in `src/05-alu.wat` and
+`src/07-decoder.wat`. It covers this four-block blitter cycle:
 
 ```text
-tos0, tos1, tos2       cached stack values
-v_eax..v_edi           optional virtual register locals
-dirty_reg_mask         registers that must be flushed
-flag_kind/a/b/res      virtual lazy flags
-ea0/wa0                address and translated pointer temporaries
+0x00535c20 -> 0x00535e00 -> 0x00535e08 -> 0x00535e7c
+           -> 0x00535c20
 ```
 
-The important distinction:
+The isolated benchmark runs two million blocks after a two-million-block
+warmup. Fifteen trials produced:
 
 ```text
-Bad version:
-  th_push_virtual leaves a Wasm operand-stack value for th_add_virtual.
+variant          median ms   blocks/ms   vs x86-threaded
+x86 threaded        150.36     13301.4        1.000x
+WAT threaded         68.49     29201.3        2.195x
+WAT optimized        44.92     44523.6        3.347x
 
-This cannot work with current handler threading because each handler is a
-separate call_indirect with type (param i32). Wasm validation requires the
-callee and caller stacks to match at the call boundary; the next handler cannot
-inherit arbitrary operand-stack values.
-
-Useful version:
-  th_stack_block keeps temporary values in locals while executing a whole block
-  or trace-local packet, then flushes machine state before any side exit.
+WAT optimized vs WAT threaded: 1.525x
 ```
 
-So "Wasm stack targeted" should mean "use a stack-shaped compiler IR that is
-friendly to Wasm expression/codegen and a local top-of-stack cache", not "make
-the existing per-instruction handlers communicate through the Wasm operand
-stack".
+`WAT optimized` is the hand-written straight-line implementation, not a
+general compiler. This is a loop microbenchmark, not a whole-game result. It
+does establish two useful facts for this exact shape:
 
-## Current Baseline
+1. Keeping state inside one Wasm invocation captures most of the available
+   speedup over current per-handler threading.
+2. Removing the packet interpreter itself still improves throughput by about
+   52%, so direct compilation has meaningful headroom.
 
-Current handlers are simple and robust, but most hot operations use global
-machine state boundaries:
+The benchmark command and full result interpretation live in
+`docs/aoe-performance-optimization.md`.
 
-- `get_reg`/`set_reg` in `src/03-registers.wat` read and write x86 register
-  globals.
-- Lazy flags are also global: `flag_op`, `flag_a`, `flag_b`, `flag_res`, and
-  related helpers.
-- Memory helpers call `g2w` through `gl32`/`gs32` and friends. Direct
-  image-relative translation is cheap arithmetic, but sparse mappings fall into
-  a scan, and stores also call code invalidation.
-- SIB and base/index EAs are often represented by a separate
-  `$th_compute_ea_sib` into `$ea_temp` followed by a consumer handler.
-- `$next` pays handler dispatch for each threaded handler, plus histogram work
-  when enabled.
+## Why The Direct Version Is Faster
 
-AoE profiling already shows the performance shape:
+The current packet prototype is a small interpreter inside Wasm. Every packet
+operation does work like this:
 
 ```text
-top handlers include load32_ro, jcc, push_r, compute_ea_sib, load32,
-mov_r_r, pop_r, cmp_r_r, store32_ro, alu_r_m32_ro
-
-top pairs include cmp_r_r -> jcc, alu_r_m32_ro -> jcc,
-compute_ea_sib -> load32, test_r_r -> jcc, and repeated push/pop/load paths
+read opcode
+select opcode implementation
+read operands
+perform operation
+branch back to packet loop
 ```
 
-The current docs also show that broad runtime fusions often do not pay:
+The prototype currently implements selection as a chain of opcode comparisons;
+a general implementation would likely use a bounded `br_table` or grouped
+switch. Either form still performs runtime packet dispatch. A direct compiler
+instead emits the selected Wasm operations in sequence. There is no packet
+opcode fetch, decode, or dispatch.
 
-- `br_table` register helpers regressed in Chrome.
-- Broad SIB fused handlers regressed.
-- Direct stack load/store handlers were flat to slightly slower.
-- Several branch-fusion probes reduced dispatch but did not produce durable
-  speedups when they still preserved flags or added generic condition work.
-- Adjacent load-pair fusions had real surface but no measured speedup; generic
-  direct-window guards were actively slower.
-
-That is why this proposal should be treated as a compiler/backend experiment,
-not as another broad hand-fused handler set.
-
-## Comparison
-
-### Versus Current Register/Global Threaded Code
-
-Current threaded handlers expose machine state after almost every x86
-instruction. That is correct and easy to debug, but expensive for hot blocks.
-A stack-block packet can keep state virtual until a known exit:
+The prototype also synchronizes all eight 32-bit x86 registers:
 
 ```text
-current:
-  mov edx, edi       -> write global edx
-  add edx, ecx       -> write global edx, write lazy flag globals
-  dec edx            -> write global edx, write lazy flag globals
-  cmp edx,[ebx+8]    -> write lazy flag globals
-  jl target          -> read lazy flag globals
-
-stack-block packet:
-  v_edx = edi
-  v_edx = v_edx + ecx
-  v_edx = v_edx - 1
-  wa0 = g2w(ebx + 8)
-  branch using compare(v_edx, load32(wa0))
-  flush edx only on exits where it is live
-  skip flag globals when both exits overwrite flags before reading them
+packet entry:  global eax..edi -> eight Wasm locals
+packet exit:   eight Wasm locals -> global eax..edi
 ```
 
-This targets the opportunities already estimated in
-`docs/aoe-performance-optimization.md`:
+That policy is deliberately simple, but generic. A block that touches only
+EAX, ECX, and ESI still loads and stores ESP, EBP, EBX, EDX, and EDI. A
+production packet backend should use live-in and dirty-out masks so it imports
+and exports only observable state. A direct compiler can go further by keeping
+intermediate expression values in locals and omitting packet-stack traffic.
 
-- About 29.8% of seen full register writes in covered hot blocks are avoidable
-  under the toy block-local estimator, about 7.2% of total handler-dispatch
-  scale in that profile.
-- Flag-dead branch opportunities cover a large fraction of the hot-block
-  branch surface.
-- Stable same-base memory groups are larger than exact repeated-EA reuse and
-  point toward compiler-local page/window checks, not generic `g2w` caching.
-
-The cost is complexity. Current handlers are uniform; a stack packet needs
-correct side exits, deopt/fallback rules, and enough instrumentation to explain
-what it executed.
-
-### Versus br_table Or Direct Threading
-
-`br_table` or direct-threading changes mostly attack dispatch mechanics. The
-AoE notes already tested `br_table` register helpers and found them slower in
-Chrome. The likely issue is that dispatch is not the only cost; larger or more
-branchy handlers can lose more than they save.
-
-A stack-threaded block may reduce dispatch if a whole block is represented as
-one handler invocation:
+For example:
 
 ```text
-current:
-  N threaded handlers, N calls through $next
+packet form:
+  GET_REG eax
+  CONST 4
+  ADD32
+  SET_REG eax
 
-stack packet:
-  1 outer threaded handler, internal loop/template over packet ops
+direct Wasm shape:
+  local.set $eax_v (i32.add (local.get $eax_v) (i32.const 4))
 ```
 
-But dispatch reduction should be treated as a secondary win. If the packet is
-just a miniature interpreter with one branch per micro-op, it can easily trade
-`$next` dispatch for internal packet dispatch and lose. The primary reason to
-try it is that one handler invocation can keep locals live across several
-guest operations:
+This distinction is why the packet tier should be judged as a useful middle
+tier, not as the final compiler.
 
-- no register global write after every virtual instruction
-- no global lazy-flag materialization when flags are local or dead
-- no repeated EA/g2w work for stable local memory families
-- stack-top values can stay in `tos0`/`tos1` locals instead of memory/globals
+## Runtime Architecture
 
-### Versus Planned Block-Local/Trace-Local Compiler Work
+### Shared Front End
 
-The existing performance direction is:
+Both packet and direct backends should consume the same normalized IR. The
+front end owns x86 correctness:
 
 ```text
-x86 decode -> normalized IR -> local analysis -> better threaded words
+decode variable-length x86
+  -> explicit register reads and writes
+  -> explicit partial-register merge operations
+  -> explicit flag producer and consumer relationships
+  -> explicit guest-memory loads and stores
+  -> explicit control-flow exits
 ```
 
-The stack-threaded target fits under that plan. It is not a replacement for the
-normalized IR or liveness work. It is one possible backend once a block is
-classified as clean enough.
+The IR must preserve instruction boundaries and guest EIPs for faults,
+debugging, invalidation, and side exits. Backend selection happens only after
+analysis.
 
-Two backend choices can coexist:
+### Selection Policy
+
+The packet backend should start with hot basic blocks that have:
+
+- only supported i486 integer operations;
+- no call, return, indirect branch, thunk, API, FPU, or string-operation
+  boundary in the middle;
+- repeated register writes that liveness can coalesce;
+- compare/test plus a branch whose flags can remain virtual; or
+- repeated base-plus-displacement memory accesses that can share address work.
+
+Unsupported or low-value blocks keep today's generic threaded stream. This is
+a per-block decision, not an all-or-nothing runtime mode.
+
+### Cache Entry
+
+The existing cache maps a guest EIP to a thread-arena offset. A packet entry can
+retain that contract:
 
 ```text
-existing threaded backend:
-  emits today's handler ids plus selected purpose-built primitives
-  lower risk, easier to bisect, good for broad coverage
+thread entry:
+  handler = th_stack_block
+  operand = packet_header_offset
 
-stack-block backend:
-  emits th_stack_block plus a packet for hot clean blocks
-  higher risk, better chance of keeping locals/flags/EA live across ops
+packet header:
+  format_version
+  byte_length
+  guest_start_eip
+  live_in_register_mask
+  dirty_out_register_mask
+  live_out_flag_mask
+  dependency_page_count
+  dependency page/version pairs
+  packet operations...
 ```
 
-The first implementation should still build the normal block-local compiler
-skeleton. The stack target should be selected only for blocks where the
-classifier predicts real local savings: multiple full-register writes to
-coalesce, flag-dead branch tail, and/or stable same-base memory accesses.
+The exact representation should remain compact and naturally aligned. Packet
+validation happens when emitted, not on every execution.
 
-## What It Could Optimize
+### Packet Executor
 
-### Register Global Writes
+Use one or a few static executors rather than one giant universal VM:
 
-Current handlers write globals through `set_reg` or direct `global.set`.
-Inside a stack packet, decoded registers become virtual values. Writes only
-need to hit globals:
+- a clean 32-bit integer executor;
+- later, a partial-register executor if profiling justifies it;
+- later, an ESP/stack-aware executor; and
+- the existing generic threaded path for everything else.
 
-- at a normal block exit
-- at a taken branch side exit
-- before a call, return, thunk, yield, unknown op, exception, or fallback
-- before any helper that may observe full machine state
+Keeping packet vocabularies small helps browser engines optimize each switch
+and keeps side-exit rules understandable. Do not begin with all 357 current
+handler shapes.
 
-This directly targets the estimator's "avoidable global writes" surface. It
-should start with non-ESP 32-bit registers. ESP is special because push/pop,
-calls, returns, stack memory addressing, and host callbacks observe it.
+## State Model
 
-### Flag Materialization
+### Registers
 
-Flags are currently lazy but still stored in globals. A stack packet can model
-flags as virtual values:
+At packet entry, load only registers in the live-in mask. Keep them in locals.
+At a normal or side exit, flush only dirty registers that are live on that
+exit. The first correctness implementation may flush all dirty registers at
+every exit; exit-specific masks are a later optimization.
+
+ESP needs conservative treatment because calls, returns, push/pop, stack
+addressing, callbacks, and exception paths observe it. Exclude ESP-changing
+blocks from the first general packet subset.
+
+### Flags
+
+Represent lazy flags as packet-local values:
 
 ```text
-flags = sub32(a, b)
-br_l(flags, fall, target)
+flag_kind
+flag_a
+flag_b
+flag_result
+flag_carry
 ```
 
-If both exits overwrite flags before reading them, the packet can branch
-directly and skip `set_flags_sub`/`set_flags_logic`. If flags may be live, the
-packet flushes the lazy flag globals before exit.
+If a branch immediately consumes a compare/test and all successor paths
+overwrite flags before observing them, branch on the local operands and do not
+write the global lazy-flag state. If flags remain live, flush state in the same
+representation used by the current interpreter.
 
-This should reuse the conservative flag-dead analysis from the AoE notes. In
-particular, `INC`/`DEC` cannot be treated as full flag overwrites because they
-preserve CF.
+INC and DEC preserve CF and therefore cannot be treated as full flag
+overwrites. Partial flag definitions must remain explicit in the IR.
 
-### EA/g2w Reuse
+### Memory
 
-Current base+disp handlers recompute `base + disp` and call `gl32`/`gs32`,
-which call `g2w`. SIB often uses `$th_compute_ea_sib` plus a consumer. A
-stack packet can keep:
+All guest memory operations preserve current `g2w` behavior, including sparse
+mappings and null-sentinel behavior. Selected direct-window or same-page fast
+paths may be added only with a guard and an exact fallback.
+
+Stores must preserve code-write invalidation. Multi-byte and range operations
+must invalidate every touched executable or previously decoded page, not only
+the first address.
+
+### Observable Boundaries
+
+Flush required state before:
+
+- leaving the packet normally;
+- a guard failure or unsupported operation;
+- a call, return, indirect jump, import thunk, or host API;
+- a helper that can inspect full CPU state;
+- a potential exception or fault boundary;
+- a step-budget yield; or
+- debugger, tracing, or watchpoint transfer.
+
+## Control Flow And Side Exits
+
+The first version should compile one basic block per packet. A conditional
+branch chooses an exact guest target, flushes state, writes EIP, and returns to
+the normal run loop.
+
+Once block correctness and speed are established, packets may include short
+traces across biased fallthrough edges. Every non-selected edge becomes a side
+exit. Calls, returns, indirect branches, and API thunks should continue to end
+the trace initially.
+
+Every side exit has this contract:
 
 ```text
-ea_base = esi
-ea0 = ea_base + 0x14
-wa_page = guarded_page_base(ea_base + min_disp)
-load32(wa_page + offset0)
-load32(wa_page + offset1)
-store32(wa_page + offset2, value)
+flush dirty live state
+materialize flags only if live
+set exact next guest EIP
+record exit reason when profiling is enabled
+return to normal dispatcher
 ```
 
-This is not a generic `g2w` cache. The broad page-cache probe regressed because
-it added traffic to every translation. The stack/block target can guard only
-the hot stable groups selected by the compiler, and fall back to the normal
-threaded path if the page/window guard fails.
+## Code Mutation And Invalidation
 
-### Stack-Top Caching
+Packet data is derived from guest code bytes and must not survive a relevant
+write. The current cache invalidates entries whose starting EIP is on a written
+page. A general backend needs stronger dependency tracking because one packet
+can span or read instructions from multiple pages.
 
-There are two different "stacks" here:
-
-- The x86 guest stack at ESP.
-- The compiler's virtual evaluation stack inside the packet handler.
-
-The useful cache is local to `th_stack_block`: `tos0`/`tos1` locals can hold
-temporary expression values and maybe recently loaded guest-stack values within
-one packet. It must not assume that guest memory at ESP is unchanged across
-stores, calls, faults, or side exits.
-
-Stack-heavy blocks are common enough to matter, but they should be delayed
-until clean non-ESP 32-bit blocks prove the approach. The current classifier
-has a "needs stack/ESP model" bucket for a reason.
-
-### Block-Local Temporaries
-
-This is the strongest fit. Local temporaries let the backend represent:
-
-- virtual registers
-- flag producer operands/results
-- address calculations
-- translated Wasm pointers
-- loaded values that are reused before an aliasing store
-
-These are exactly the things the toy block compiler printer already shows.
-
-### Dispatch
-
-A stack packet can reduce outer `$next` dispatch if it covers multiple current
-handlers. But that should not be the acceptance metric by itself. Prior probes
-show that removing 1-2% dispatch without removing helper/global work is not
-enough.
-
-Useful dispatch reduction means:
+Use an executable-page version table shared with the direct compiler:
 
 ```text
-fewer outer handlers
-and fewer global register writes
-and fewer flag global writes
-and fewer repeated g2w/EA computations
-without adding a hot branch per old handler that cancels the win
+page metadata:
+  version
+  has_decoded_code
+  has_packet_code
+  has_direct_code
+  write_count
 ```
 
-### Memory Mapping Overhead
+Each packet records every source-code page and its version. A guest store to a
+tracked page increments its version and invalidates cache mappings for all
+dependent packets. Entry version checks are a defensive backstop.
 
-Direct `g2w` is intentionally cheap for the image-relative window. Sparse
-VirtualAlloc mappings and invalid/null sentinel behavior still matter, so a
-stack packet cannot bypass `g2w` generally. It can only add guarded fast paths:
+Pages that change repeatedly should remain on the generic interpreter or
+packet tier with an increasing recompilation backoff. Ordinary writes to data
+pages require no compiler invalidation.
 
-- same-page/direct-window group guard for selected base+disp families
-- fallback to existing handlers or existing helper path on guard failure
-- preserve `invalidate_code_write` behavior on stores
-- preserve null sentinel semantics for invalid guest addresses
+## Debugging And Profiling
 
-## Risks And Constraints
+Packet execution collapses several existing handler events into one, so it
+needs its own counters:
 
-### Wasm Stack Values Do Not Cross Handler Calls
+- packet entries by guest EIP;
+- packet opcode counts;
+- equivalent generic handlers replaced;
+- live-in loads and dirty-out flushes;
+- flag materializations skipped and performed;
+- memory fast-path hits and fallbacks;
+- side exits by reason; and
+- page-version invalidations.
 
-The current handler type is `(func (param i32))`, and `$next` uses
-`call_indirect`. A handler cannot leave arbitrary Wasm operand-stack values for
-the next handler. Any design that depends on that is invalid.
+Single-step, detailed EIP tracing, and register-comparison modes should disable
+packets initially. A differential mode should execute a packet and the generic
+path from cloned state, then compare registers, flags, selected memory, EIP,
+and exit reason.
 
-The packet must keep values inside one static WAT function invocation, or it
-must store them in an explicit shadow stack. An explicit memory/global shadow
-stack would likely lose most of the point.
+## Implementation Plan
 
-### Indirect Call Boundaries
+### Phase 1: General Clean-Integer Packet
 
-Once execution calls out to a normal threaded handler, a host import, a thunk,
-or a generic helper that can observe machine state, the packet must flush the
-relevant virtual state. This limits how large traces can be.
+Refactor the existing AoE packet proof of concept into IR-driven emission for:
 
-### Side Exits
+- non-ESP 32-bit register moves;
+- 32-bit arithmetic and logic;
+- base-plus-displacement loads and stores;
+- compare/test plus common Jcc forms; and
+- direct jumps and normal block exits.
 
-Conditional branches, guard failures, memory mapping surprises, self-modifying
-code invalidation, and step-budget/yield behavior all need exits that leave
-globals consistent with the current interpreter contract.
+Add live-in and dirty-out masks immediately. Keep all packets disabled by
+default and selected through a small allowlist.
 
-For a first prototype, side exits should be blunt:
+### Phase 2: Correctness And Invalidation
 
-```text
-flush all dirty virtual regs
-flush flags if live
-set eip to the exact exit target
-return to the normal run loop
-```
+Add differential execution, page dependency/version tracking, exact side-exit
+state, step accounting, and packet profiling. Run normal application smoke
+tests in addition to AoE.
 
-After correctness is proven, exits can become more selective.
+### Phase 3: Profile-Guided Selection
 
-### Exceptions, Calls, Returns, Unknown Ops
+Use block heat and predicted savings to choose the backend. Do not packetize a
+block merely because it is supported. Require enough removed global writes,
+flag materializations, address translations, or outer dispatches to cover
+packet dispatch overhead.
 
-Unknown decode, FPU, string/rep, calls, returns, indirect jumps, thunks, and
-API crossings should initially terminate a stack packet. They are not good
-first targets because they need precise state and are harder to validate.
+### Phase 4: Broader Coverage Or Stop
 
-### Debug And Profiling Complexity
-
-Today the handler histogram can explain hot handlers and pairs. A stack packet
-would collapse many operations into one handler unless it adds internal
-counters. That can hide regressions.
-
-The prototype needs packet-level profiling from day one:
-
-- packet entry count by guest EIP
-- internal opcode counts
-- side-exit reason counts
-- dirty register flush counts
-- flag flush/skipped counts
-- g2w guard hit/fallback counts
-- approximate "current handlers replaced" count
-
-Tracing and break/count/watch behavior also needs a policy. The simplest policy
-is to disable stack packets whenever heavyweight tracing/debug flags are active.
-
-## Prototype Plan
-
-### Milestone 0: Offline Packet Printer
-
-Extend the existing offline analysis direction, not runtime code first.
-Starting points:
-
-- `tools/aoe-block-compiler-printer.js`
-- `tools/aoe-block-shape-census.js`
-- `tools/aoe-reg-liveness-estimate.js`
-
-Add a mode that prints a stack-packet lowering for selected hot blocks:
-
-```text
-packet ops
-virtual register inputs
-dirty register exits
-virtual flag status
-EA/g2w groups
-guard/fallback points
-estimated replaced threaded handlers
-```
-
-Measurement:
-
-- top 120 hot AoE block coverage
-- predicted register global writes removed
-- predicted flag writes skipped
-- predicted g2w calls or page translations saved
-- packet byte size versus current threaded words
-
-Exit criteria:
-
-- The best blocks have combined savings, not just dispatch reduction.
-- The printer can explain at least the known examples like `0x00535e08` and
-  the larger combined candidates such as `0x0049d9d1`.
-
-Initial tool:
-
-```sh
-node tools/aoe-stack-packet-compiler.js \
-  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
-  --top=20 \
-  --details=5
-```
-
-This is offline only. It accepts a conservative clean 32-bit subset, emits a
-stack-packet plan, and reports bailout reasons for blocks that still need the
-normal threaded path.
-
-First top-20 result from the 10s hot-block profile:
-
-```text
-rows compiled:                14/20
-block-entry coverage:         10,843,970 / 66,254,912 = 16.4%
-current-dispatch estimate:    37,289,326 = 10.0% vs all handlers
-packet op estimate:          156,445,731
-register writes saved:         4,407,901 = 28.2% of compiled current reg writes
-flag writes skipped:          10,398,327 = 65.9% of compiled flag writes
-virtual flag ops skipped:      4,923,677
-exact EA reuses:                 706,030
-page-window g2w save est:        689,248
-```
-
-The packet op count is intentionally not compared directly to threaded
-dispatches. Packet ops are compiler/backend micro-ops, not current `$next`
-handler calls. The useful signal is whether one eventual packet invocation can
-remove global register writes, lazy-flag materialization, and repeated address
-work.
-
-Known larger candidate:
-
-```sh
-node tools/aoe-stack-packet-compiler.js \
-  --profile=/private/tmp/aoe-web-profile-hot-blocks-32k.json \
-  --addr=0x0049d9d1
-```
-
-```text
-current dispatch estimate:    18
-packet op estimate:           92
-register writes:              11 -> 4
-flag writes:                   5 -> 1
-virtual flag ops skipped:      4
-g2w calls in packet:            9
-exact EA reuse:                 1
-page-window g2w save est:       5
-memory group:                  [esi+disp], 6 accesses, range 0x20
-```
-
-This is the kind of block that justifies a packet backend better than the
-earlier one-off fusions: it combines register coalescing, flag reduction, and
-same-base memory grouping in one place.
-
-### Milestone 1: Static WAT Packet Interpreter, Disabled By Default
-
-Add one static handler conceptually like `th_stack_block`, but keep it behind a
-feature flag. It reads a packet from the thread arena and executes only a tiny
-clean subset:
-
-- 32-bit non-ESP register moves and ALU
-- 32-bit base+disp loads
-- cmp/test plus signed or equality Jcc
-- no calls, returns, FPU, string/rep, partial-width writes, or ESP mutation
-
-This milestone should optimize for correctness and instrumentation, not speed.
-Every packet must be able to fall back to current threaded emission.
-
-Measurement:
-
-- packet execution count
-- side-exit count/reasons
-- comparison against current handler count for the same blocks
-- correctness smoke through AoE startup/gameplay
-
-Exit criteria:
-
-- AoE reaches the same gameplay scenario with packets enabled for a tiny
-  allowlist.
-- No unexplained divergence under a register/flag comparison mode.
-
-### Milestone 2: Local State Wins
-
-Make the packet actually keep locals live:
-
-- virtualize non-ESP 32-bit registers
-- flush dirty registers once at exits
-- keep virtual flags local
-- skip flag materialization for proven flag-dead branch exits
-- preserve current lazy flag globals when flags are live
-
-Measurement:
-
-```sh
-LABEL=stackpkt-local RUNS=3 HANDLER_HIST=0 node tools/profile-aoe-repeat.js
-```
-
-Also collect one hist-enabled run for packet counters.
-
-Exit criteria:
-
-- No-hist AoE repeat mean improves beyond browser noise. A reasonable initial
-  bar is at least 2% guest/interpreter improvement on the 10s scenario, or a
-  smaller win that is accompanied by clear counters showing the expected
-  register/flag writes were removed.
-- If performance is flat, counters must explain whether the packet interpreter
-  dispatch cost ate the local-state savings.
-
-### Milestone 3: Compiler-Local Memory Groups
-
-Add selected same-base page/window lowering for the hottest stable base+disp
-groups. Keep fallback conservative.
-
-Measurement:
-
-- g2w group guard hit rate
-- guard fallback rate
-- g2w calls avoided
-- direct-window versus sparse mapping behavior
-- store invalidation count
-
-Exit criteria:
-
-- No generic `g2w` regression.
-- Guard overhead is paid only in selected packets.
-- The best hot blocks show fewer translations without adding more total time.
-
-### Milestone 4: Broader Coverage Or Stop
-
-Only after the clean subset wins:
-
-- add partial-width register model
-- add limited ESP/stack model
-- add stack setup blocks
-- consider trace-local packets across straight-line fallthroughs
-
-If Milestone 2 cannot beat the existing threaded backend, stop and keep the
-work as an analysis result. The block-local compiler can still use the same IR
-to emit conventional specialized threaded primitives.
-
-## Measurements To Keep Honest
-
-Use both production-style timing and explainability counters:
-
-```text
-production timing:
-  LABEL=<variant> RUNS=3 HANDLER_HIST=0 node tools/profile-aoe-repeat.js
-
-hist/profile run:
-  tools/profile-aoe-web.js with packet counters enabled
-
-offline shape check:
-  node tools/aoe-block-shape-census.js --profile=<hot-block-profile>
-  node tools/aoe-reg-liveness-estimate.js --profile=<hot-block-profile>
-  node tools/aoe-block-compiler-printer.js --profile=<hot-block-profile> --addr=<addr>
-```
-
-Track:
-
-- `main.runSlice`
-- guest/interpreter time
-- present FPS only as a secondary signal
-- outer threaded handler count
-- packet entries
-- current handlers replaced by packets
-- dirty register flushes versus current writes
-- flag writes skipped/materialized
-- branch direct-eval count
-- g2w calls and guarded page-window hits/fallbacks
-- packet side exits
-- code/thread arena size growth
-
-Do not keep a variant based on a single noisy Chrome run.
+Only after a general clean subset improves full browser workloads should the
+backend add partial registers, ESP, longer traces, or more complex memory
+groups. Unsupported and highly mutable code can remain generic indefinitely.
 
 ## Acceptance Criteria
 
-A stack-threaded target is worth continuing only if all of these are true:
+Continue the packet backend only if:
 
-- It remains a threaded-code backend, not runtime Wasm generation.
-- It is optional and profile/shape selected; cold or unsupported blocks still
-  use current threaded emission.
-- Correctness is demonstrated on the AoE gameplay scenario and at least one
-  register/flag consistency mode for allowlisted blocks.
-- With handler histograms disabled, the 10s AoE repeat mean improves by at
-  least 2% in guest/interpreter time, or by at least 1% with very strong
-  counters showing a clear next step to recover overhead.
-- Packet counters show real local savings: fewer register global writes, fewer
-  flag materializations, and/or fewer g2w translations. Dispatch reduction
-  alone is not enough.
-- Debug/profiling behavior is not lost: either stack packets are disabled under
-  debug flags, or packet-internal counters provide equivalent visibility.
-- Fallback and side exits leave global machine state consistent with current
-  handlers.
+- it uses the shared normalized IR rather than AoE-address-specific emission;
+- unsupported blocks always retain the current interpreter fallback;
+- page writes cannot execute stale packets;
+- differential tests match registers, flags, memory effects, and EIP;
+- no-hist browser profiles improve guest execution time outside one isolated
+  loop; and
+- counters demonstrate that state and address work was removed, not merely
+  renamed as packet operations.
 
-## Where This Likely Helps AoE
-
-The best AoE fit is not tiny standalone branch fusion. Prior probes show those
-are too marginal. The likely useful blocks are the combined candidates from
-the shape census:
-
-- clean 32-bit base+disp memory blocks with several accesses
-- scalar/branch blocks where a compare/test feeds a Jcc and flags are dead on
-  both exits
-- blocks with repeated writes to the same non-ESP register before exit
-- stable same-base memory families such as `[esi+disp]`, `[esp+disp]`,
-  `[ebp+disp]`, and absolute `[disp]` loads/stores, once the stack/ESP model is
-  ready
-
-Examples from the current AoE notes:
-
-- `0x00535e08` is a small clear example: `mov/add/dec/cmp/Jcc` can coalesce EDX
-  writes and skip dead flag materialization, but it is too small by itself.
-- `0x0049d9d1` looks more attractive because it combines many current
-  dispatches, several register-write saves, and same-page g2w opportunities.
-- `0x005086c4` has a high per-block score but is stack-heavy, so it should wait
-  until an ESP/stack model exists.
-- `0x00535b13` is a good mixed target after partial-width support, but not a
-  first milestone.
-
-## Recommendation
-
-Treat stack-threaded code as a backend experiment after the normalized
-block-local IR exists. Do not start by replacing the current handler set or by
-trying to pass Wasm operand-stack values across `$next`.
-
-The concrete next step is an offline stack-packet printer that uses the same
-hot-block profile and liveness data already used by the AoE tools. If that
-printer shows combined register, flag, and memory savings on the known hot
-blocks, prototype a disabled-by-default `th_stack_block` for a tiny 32-bit clean
-subset. Keep it only if no-hist repeated AoE timing improves and packet counters
-show the expected work was actually removed.
+The packet tier does not need to equal direct compilation. It succeeds if it
+provides a meaningful, general speedup with much lower compilation latency and
+complexity, and supplies the same IR and profiling foundation for the direct
+compiler.
