@@ -6,6 +6,7 @@
   (func $handle_CreateWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
+    (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
     (local $detected_class i32) (local $name_w i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
@@ -18,6 +19,10 @@
     (local.set $win_y (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $win_cx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (local.set $win_cy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $host_win_x (local.get $win_x))
+    (local.set $host_win_y (local.get $win_y))
+    (local.set $host_win_cx (local.get $win_cx))
+    (local.set $host_win_cy (local.get $win_cy))
     ;; CW_USEDEFAULT (0x80000000) is common for top-level app windows. The
     ;; renderer needs concrete geometry immediately, before WM_SIZE is delivered.
     (if (i32.eq (local.get $win_x) (i32.const 0x80000000))
@@ -30,6 +35,32 @@
         (local.set $win_cy (i32.const 300))))
     (if (i32.eq (local.get $win_cy) (i32.const 0x80000000))
       (then (local.set $win_cy (i32.const 300))))
+    ;; Keep the legacy concrete defaults above for startup WM_SIZE bookkeeping,
+    ;; but resolve the renderer geometry according to the window kind. Only a
+    ;; framed window receives the cascade/default extent. A chrome-less top-level
+    ;; control resolves default sentinels to zero; calc.exe relies on this for
+    ;; its WS_VISIBLE EDIT "CalcMsgPumpWnd" helper, which must not become a
+    ;; visible 400x300 surface behind the real Calculator dialog.
+    (if (i32.eq (local.get $host_win_x) (i32.const 0x80000000))
+      (then (local.set $host_win_x
+        (select (i32.const 20) (i32.const 0)
+          (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
+    (if (i32.eq (local.get $host_win_y) (i32.const 0x80000000))
+      (then (local.set $host_win_y
+        (select (i32.const 20) (i32.const 0)
+          (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
+    (if (i32.eq (local.get $host_win_cx) (i32.const 0x80000000))
+      (then
+        (local.set $host_win_cx
+          (select (i32.const 400) (i32.const 0)
+            (i32.and (local.get $arg3) (i32.const 0x00C40000))))
+        (local.set $host_win_cy
+          (select (i32.const 300) (i32.const 0)
+            (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
+    (if (i32.eq (local.get $host_win_cy) (i32.const 0x80000000))
+      (then (local.set $host_win_cy
+        (select (i32.const 300) (i32.const 0)
+          (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
     ;; Auto-detect WndProc: scan code for WNDCLASSA setup referencing this className
     ;; Pattern: C7 44 24 XX [className] — the mov before it has the WndProc
     (if (i32.and
@@ -157,10 +188,10 @@
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
     (local.get $arg3)                                           ;; style
-    (local.get $win_x)                                         ;; x
-    (local.get $win_y)                                         ;; y
-    (local.get $win_cx)                                        ;; cx
-    (local.get $win_cy)                                        ;; cy
+    (local.get $host_win_x)                                    ;; x
+    (local.get $host_win_y)                                    ;; y
+    (local.get $host_win_cx)                                   ;; cx
+    (local.get $host_win_cy)                                   ;; cy
     (select (i32.const 0) (call $g2w (local.get $arg2)) (i32.eqz (local.get $arg2)))  ;; title_ptr (NULL→0)
     (local.get $tmp)                                            ;; resolved menu
     ))

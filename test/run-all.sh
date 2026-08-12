@@ -70,6 +70,7 @@ E2E=(
   test/test-about-cancel.js
   test/test-calc-about.js
   test/test-calc-drag-close.js
+  test/test-calc-helper-window.js
   test/test-open-cancel.js
   test/test-help.js
   test/test-freecell-select-game.js
