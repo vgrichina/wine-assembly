@@ -307,20 +307,31 @@ async function main() {
   const dibPaste = await evaluate(`new Promise(resolve => {
     const app = runningApps.find(item => item && item.name === 'wordpad');
     const e = app.wine.instance.exports;
-    const guest = e.guest_alloc(56) >>> 0;
+    const width = 32;
+    const height = 24;
+    const stride = 96; // 32 * 24bpp, already DWORD aligned
+    const dibSize = 40 + stride * height;
+    const guest = e.guest_alloc(dibSize) >>> 0;
     const wa = app.wine._guestToWasmAddress(guest);
     const bytes = new Uint8Array(app.wine.memory.buffer);
     const view = new DataView(app.wine.memory.buffer);
-    bytes.fill(0, wa, wa + 56);
+    bytes.fill(0, wa, wa + dibSize);
     view.setUint32(wa, 40, true);       // BITMAPINFOHEADER.biSize
-    view.setInt32(wa + 4, 2, true);    // biWidth
-    view.setInt32(wa + 8, 2, true);    // biHeight (bottom-up)
+    view.setInt32(wa + 4, width, true); // biWidth
+    view.setInt32(wa + 8, height, true);// biHeight (bottom-up)
     view.setUint16(wa + 12, 1, true);  // biPlanes
     view.setUint16(wa + 14, 24, true); // biBitCount
-    view.setUint32(wa + 20, 16, true); // two DWORD-aligned scanlines
-    // Bottom row: red, green. Top row: blue, white. Pixels are BGR.
-    bytes.set([0, 0, 255, 0, 255, 0, 0, 0,
-               255, 0, 0, 255, 255, 255, 0, 0], wa + 40);
+    view.setUint32(wa + 20, stride * height, true);
+    // High-contrast red/blue checker, pixels stored as bottom-up BGR.
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pixel = wa + 40 + y * stride + x * 3;
+        const red = ((x >> 3) + (y >> 3)) % 2 === 0;
+        bytes[pixel] = red ? 0 : 255;
+        bytes[pixel + 1] = 0;
+        bytes[pixel + 2] = red ? 255 : 0;
+      }
+    }
     e.clipboard_clear_all_data();
     const owned = e.clipboard_store_binary_data(8, guest) >>> 0; // CF_DIB
     if (e.guest_free) e.guest_free(guest);
@@ -359,6 +370,16 @@ async function main() {
     return canvas.toDataURL('image/png');
   })()`);
   fs.writeFileSync(PNG, Buffer.from(screenshot.replace(/^data:image\/png;base64,/, ''), 'base64'));
+  const imagePixels = await evaluate(`(() => {
+    const canvas = document.getElementById('screen');
+    const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let red = 0, blue = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 220 && data[i + 1] < 40 && data[i + 2] < 40) red++;
+      if (data[i] < 40 && data[i + 1] < 40 && data[i + 2] > 220) blue++;
+    }
+    return { red, blue };
+  })()`);
 
   const log = await evaluate(`document.getElementById('log').textContent`);
   const menuFontState = await evaluate(`(() => {
@@ -405,12 +426,15 @@ async function main() {
     `WordPad menu should select DEFAULT_GUI_FONT: ${JSON.stringify(menuFontState)}`);
   assert(/W95FA/.test(menuFontState.css),
     `WordPad menu should use the Win98 UI font: ${JSON.stringify(menuFontState)}`);
+  assert(imagePixels.red > 100 && imagePixels.blue > 100,
+    `native RichEdit should visibly paint the red/blue DIB: ${JSON.stringify(imagePixels)}`);
   assert(fs.statSync(PNG).size > 0, 'WordPad browser screenshot should be written');
 
   console.log('PASS  WordPad stays running in the browser');
   console.log('PASS  browser preloads riched20.dll');
   console.log('PASS  native RichEdit accepts "hello world"');
   console.log('PASS  native RichEdit inserts a crash-safe CF_DIB object position:', JSON.stringify(dibPaste));
+  console.log('PASS  native RichEdit paints the inline CF_DIB:', JSON.stringify(imagePixels));
   console.log('PASS  browser toolbar shows 10pt default size');
   console.log('PASS  browser menu font:', JSON.stringify(menuFontState));
   console.log('PASS  screenshot:', PNG);

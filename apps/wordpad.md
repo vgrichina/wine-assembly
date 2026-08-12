@@ -24,12 +24,13 @@ reference-counted current object. WordPad/RichEdit insertion and presentation
 remain the next integration boundary.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
-`CoDisconnectObject`, HGLOBAL-backed `IStream` creation/recovery, and a bounded
-HGLOBAL stream helpers, `OleSetContainedObject`, and bounded static
-`IOleObject`/`IPersistStorage` identity. A native `CF_DIB` paste now inserts one
-inline object position without terminating WordPad; `WM_GETTEXT` preserves the
-surrounding document and exposes that position as a space. The presentation is
-not painted yet, and object save/reopen remains the next OLE milestone.
+`CoDisconnectObject`, HGLOBAL-backed `IStream` helpers,
+`OleSetContainedObject`, and bounded static `IOleObject`/`IPersistStorage`
+identity. A native `CF_DIB` paste now inserts and paints an inline static
+bitmap without terminating WordPad; `WM_GETTEXT` preserves the surrounding
+document and exposes that position as a space. The browser regression asserts
+both the logical object position and visible red/blue presentation pixels.
+Object save/reopen remains the next OLE milestone.
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 

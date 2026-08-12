@@ -677,20 +677,20 @@ is a WordPad-visible static object representation: bridge DIB clipboard data
 into a RichEdit object slot, paint it inline, and then persist that object
 through RTF/storage save and reopen.
 
-The first native integration probe now publishes a valid 2x2 24-bpp `CF_DIB`
+The first native integration probe now publishes a valid 32x24 24-bpp `CF_DIB`
 and delivers `WM_PASTE` to Win98 RichEdit. This exposed and then closed dynamic
 export crash paths including:
 `CoDisconnectObject`, `CreateStreamOnHGlobal` (with HGLOBAL recovery), and
 `OleCreateDefaultHandler` and `OleSetContainedObject`. A bounded in-process
 static handler now exposes shared `IOleObject`/`IPersistStorage` identity,
 client-site/extent state, and storage ownership while activation and unknown
-view interfaces fail explicitly. RichEdit inserts one inline object position
+view interfaces fail explicitly. RichEdit inserts and paints the static DIB
 without exiting WordPad; `WM_GETTEXT` preserves the surrounding text and
-represents that position as a space. `test/test-ole-storage.js` covers caller-
+represents its inline object position as a space. `test/test-ole-storage.js` covers caller-
 owned and COM-created HGLOBAL stream lifetime, `test/test-ole-static-handler.js`
 covers handler identity/refcounts/storage ownership, and the browser smoke
-covers native CF_DIB insertion. Painting the DIB presentation and retaining it
-through save/reopen remain outstanding.
+covers native CF_DIB insertion plus visible red/blue presentation pixels.
+Retaining the object through save/reopen remains outstanding.
 
 ### 2026-08-12 advanced RTF slice
 
