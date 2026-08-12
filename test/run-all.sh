@@ -54,6 +54,7 @@ UNIT=(
 
 E2E=(
   test/test-taskman-tasks.js
+  test/test-taskman-arrange.js
   test/test-taskman-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js
@@ -90,6 +91,7 @@ E2E=(
   test/test-gdi-stock-select.js
   test/test-mspaint-draw.js
   test/test-mspaint-tools.js
+  test/test-statusbar-surface.js
   test/test-regedit-deep.js
   test/test-solitaire-deal.js
   test/test-solitaire-drag.js

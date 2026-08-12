@@ -131,7 +131,7 @@ const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
-const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE: add one foreign top-level window for shell-enumeration tests
+const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
 const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
@@ -384,6 +384,7 @@ async function main() {
   //   B:dump-children:HWND[:LABEL] — log WAT child table entries for HWND
   //   B:dump-tree[:LABEL] — log WAT TreeView item handles, hierarchy, state, and text
   //   B:dump-listbox[:LABEL] — log WAT ListBox rows and selection
+  //   B:listbox-setsel:INDEX:SELECTED — set a row through LB_SETSEL
   //   B:dump-listview[:LABEL] — log WAT ListView columns and cell text
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
@@ -487,6 +488,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-tree', label: parts[2] || '' });
       } else if (kind === 'dump-listbox') {
         scheduledInput.push({ batch, action: 'dump-listbox', label: parts[2] || '' });
+      } else if (kind === 'listbox-setsel') {
+        scheduledInput.push({ batch, action: 'listbox-setsel', index: parseInt(parts[2]), selected: parseInt(parts[3]) !== 0 });
       } else if (kind === 'dump-listview') {
         scheduledInput.push({ batch, action: 'dump-listview', label: parts[2] || '' });
       } else if (kind === 'dump-toolbar') {
@@ -881,7 +884,7 @@ async function main() {
     h.get_window_related = (hwnd, command) => {
       if (!seeded && (hwnd >>> 0) === 0x10000 && command === 5) {
         seeded = true;
-        const foreignHwnd = 0x70001;
+        const titles = SEED_WINDOW.split('|').map(title => title.trim()).filter(Boolean);
         const foreignWasm = { exports: {
           post_message_q(target, msg, wParam, lParam) {
             logs.push(`[seed-window] post hwnd=${hex(target)} msg=${hex(msg)} wParam=${hex(wParam)} lParam=${hex(lParam)}`);
@@ -894,21 +897,26 @@ async function main() {
             return 1;
           },
         } };
-        renderer.windows[foreignHwnd] = {
-          hwnd: foreignHwnd,
-          title: SEED_WINDOW,
-          className: 'CalcFrame',
-          style: 0x10cf0000,
-          visible: true,
-          enabled: true,
-          isChild: false,
-          x: renderer.canvas.width + 20,
-          y: 20,
-          w: 320,
-          h: 240,
-          zOrder: renderer._nextZ++,
-          wasm: foreignWasm,
-        };
+        titles.forEach((title, index) => {
+          const foreignHwnd = 0x70001 + index;
+          renderer.windows[foreignHwnd] = {
+            hwnd: foreignHwnd,
+            title,
+            className: index ? 'Notepad' : 'CalcFrame',
+            style: 0x10cf0000,
+            visible: true,
+            enabled: true,
+            isChild: false,
+            hasCaption: true,
+            x: 30 + index * 48,
+            y: 30 + index * 36,
+            w: 320,
+            h: 240,
+            zOrder: renderer._nextZ++,
+            wasm: foreignWasm,
+          };
+          if (renderer._computeClientRect) renderer._computeClientRect(renderer.windows[foreignHwnd]);
+        });
       }
       return originalGetWindowRelated(hwnd, command);
     };
@@ -3306,9 +3314,10 @@ async function main() {
             if (we && we.ctrl_get_id) ctrlId = we.ctrl_get_id(hwnd) | 0;
             if (we && we.wnd_get_style_export) style = we.wnd_get_style_export(hwnd) >>> 0;
           } catch (_) {}
+          if (!style) style = win.style >>> 0;
           const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
           const enabled = (style & 0x08000000) === 0;
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';
@@ -3358,15 +3367,35 @@ async function main() {
           found++;
           const count = Math.max(0, Math.min(we.listbox_get_count(hwnd) | 0, 128));
           const selection = we.listbox_get_cur_sel ? (we.listbox_get_cur_sel(hwnd) | 0) : -1;
+          const selected = [];
+          if (we.listbox_get_sel) {
+            for (let row = 0; row < count; row++) {
+              if (we.listbox_get_sel(hwnd, row) | 0) selected.push(row);
+            }
+          }
           const buffer = we.guest_alloc(512);
           const rows = [];
           for (let row = 0; row < count; row++) {
             const length = Math.max(0, Math.min(we.listbox_get_item_text(hwnd, row, buffer, 512) | 0, 511));
             rows.push(`#${row} ${JSON.stringify(readStr(g2w(buffer), length))}`);
           }
-          logs.push(`[input] dump-listbox${label}: hwnd=${hwndStr} count=${count} selection=${selection} ${rows.join(' ; ') || '(empty)'} at batch ${batch}`);
+          logs.push(`[input] dump-listbox${label}: hwnd=${hwndStr} count=${count} selection=${selection} selected=${selected.join(',')} ${rows.join(' ; ') || '(empty)'} at batch ${batch}`);
         }
         if (!found) logs.push(`[input] dump-listbox${label}: (none) at batch ${batch}`);
+      } else if (ev.action === 'listbox-setsel' && renderer) {
+        const we = instance.exports;
+        let found = 0;
+        for (const hwndStr of Object.keys(renderer.windows || {})) {
+          const hwnd = parseInt(hwndStr, 10) || 0;
+          if (we.ctrl_get_class && (we.ctrl_get_class(hwnd) | 0) === 4) {
+            found = hwnd;
+            break;
+          }
+        }
+        const result = found && we.send_message
+          ? (we.send_message(found, 0x0185, ev.selected ? 1 : 0, ev.index) | 0)
+          : -1;
+        logs.push(`[input] listbox-setsel index=${ev.index} selected=${ev.selected} hwnd=0x${found.toString(16)} result=${result} at batch ${batch}`);
       } else if (ev.action === 'dump-listview' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
         const we = instance.exports;

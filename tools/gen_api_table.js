@@ -112,6 +112,9 @@ const extra = [
   { name: 'MessageBeep', nargs: 1 },
   { name: 'SetMenuItemInfoA', nargs: 4 },
   { name: 'GetMenuItemInfoA', nargs: 4 },
+  { name: 'CascadeWindows', nargs: 5 },
+  { name: 'TileWindows', nargs: 5 },
+  { name: 'ArrangeIconicWindows', nargs: 1 },
   // APIs with multi-name comments (not caught by single-name regex)
   { name: 'RegisterClassExA', nargs: 1 },
   { name: 'RegisterClassA', nargs: 1 },

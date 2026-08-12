@@ -227,7 +227,7 @@
   ;; reflects the new client area. $size_w is the WM_SIZE wParam:
   ;; 0=SIZE_RESTORED, 2=SIZE_MAXIMIZED. Reads x/y from JS via
   ;; $host_get_window_rect; same source nccalcsize uses.
-  (func $post_resize_messages (param $hwnd i32) (param $size_w i32)
+  (func $post_resize_messages (export "post_resize_messages") (param $hwnd i32) (param $size_w i32)
     (local $rect i32) (local $x i32) (local $y i32)
     (local $cw i32) (local $ch i32)
     (local.set $rect (global.get $PAINT_SCRATCH))
@@ -1597,6 +1597,18 @@
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const -1))))
     (i32.load offset=16 (call $g2w (local.get $s))))
+  (func (export "listbox_get_sel") (param $hwnd i32) (param $idx i32) (result i32)
+    (local $s i32) (local $sw i32)
+    (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $s)))
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (i32.load offset=12 (local.get $sw))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load offset=44 (local.get $sw)))
+      (then (return (i32.eq (local.get $idx) (i32.load offset=16 (local.get $sw))))))
+    (i32.load8_u
+      (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $idx))))
   (func (export "listbox_get_top_index") (param $hwnd i32) (result i32)
     (local $s i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))

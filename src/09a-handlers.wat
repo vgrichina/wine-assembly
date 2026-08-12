@@ -2015,6 +2015,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; CascadeWindows(hwndParent, how, lpRect, cKids, lpKids) → arranged count.
+  (func $handle_CascadeWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_arrange_windows
+      (i32.const 0) (local.get $arg1)
+      (select (call $g2w (local.get $arg2)) (i32.const 0) (i32.ne (local.get $arg2) (i32.const 0)))
+      (local.get $arg3)
+      (select (call $g2w (local.get $arg4)) (i32.const 0) (i32.ne (local.get $arg4) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; TileWindows(hwndParent, how, lpRect, cKids, lpKids) → arranged count.
+  (func $handle_TileWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_arrange_windows
+      (i32.const 1) (local.get $arg1)
+      (select (call $g2w (local.get $arg2)) (i32.const 0) (i32.ne (local.get $arg2) (i32.const 0)))
+      (local.get $arg3)
+      (select (call $g2w (local.get $arg4)) (i32.const 0) (i32.ne (local.get $arg4) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; ArrangeIconicWindows(hwndParent) → height occupied by icon rows.
+  (func $handle_ArrangeIconicWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_arrange_windows
+      (i32.const 2) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; Helper: apply a new cursor and return the previous handle. Shared by
   ;; $handle_SetCursor and DefWindowProc's WM_SETCURSOR path.
   (func $set_cursor_internal (param $hcur i32) (result i32)

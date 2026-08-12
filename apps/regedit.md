@@ -31,6 +31,10 @@ Key fixes:
   depth-first `TVGN_NEXTVISIBLE`, `TVM_GETITEMA` text buffer copying,
   `TVM_EXPAND` visibility toggles, and expand/collapse notifications, with
   `dump-tree`/paint counters available in the harness for future app probes.
+- TreeView double-click routes `WM_LBUTTONDBLCLK` to the clicked row, toggles
+  expansion, selects the hive, and refreshes RegEdit's value pane.
+- `msctls_statusbar32` children now have a Win98-style fallback surface, so
+  View > Status Bar visibly hides and restores the current registry path.
 - `SysListView32` now stores report columns, fixed subitem text, item count,
   single-row selection, top index, hit-testing, `LVM_*` item/text/state queries,
   and vertical scrollbar line/page/thumb behavior through the same helpers.

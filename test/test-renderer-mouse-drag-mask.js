@@ -51,6 +51,16 @@ move = r.inputQueue.find(e => e.msg === 0x0200);
 assert(move, 'hover should enqueue WM_MOUSEMOVE');
 assert.strictEqual(move.wParam & 0x0001, 0, 'hover move after mouseup should not include MK_LBUTTON');
 
+const modifierRenderer = new Win98Renderer(canvas);
+modifierRenderer.windows[105] = {
+  hwnd: 105, visible: true, isChild: false,
+  x: 10, y: 10, w: 200, h: 160, hasCaption: false, style: 0, zOrder: 1,
+};
+modifierRenderer.handleMouseDown(40, 60, 1, { ctrlKey: true, shiftKey: true });
+const modifierDown = modifierRenderer.inputQueue.find(e => e.msg === 0x0201);
+assert.strictEqual(modifierDown.wParam & 0x000d, 0x000d,
+  'mousedown should carry MK_LBUTTON, MK_SHIFT, and MK_CONTROL');
+
 const delayedRenderer = new Win98Renderer(canvas);
 delayedRenderer.windows[110] = {
   hwnd: 110,

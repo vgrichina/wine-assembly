@@ -127,6 +127,22 @@ async function main() {
   // listbox_get_cur_sel export should agree
   check('listbox_get_cur_sel export agrees', e.listbox_get_cur_sel(lb) === 2);
 
+  const selectedItems = e.guest_alloc(items.length * 4);
+  e.send_message(lb, 0x0185, 1, 0); // LB_SETSEL row 0
+  e.send_message(lb, 0x0185, 1, 2); // LB_SETSEL row 2
+  check('LB_SETSEL and LB_GETSEL retain multiple rows',
+    e.send_message(lb, 0x0187, 0, 0) === 1 &&
+    e.send_message(lb, 0x0187, 1, 0) === 0 &&
+    e.send_message(lb, 0x0187, 2, 0) === 1);
+  check('LB_GETSELCOUNT reports both selected rows', e.send_message(lb, 0x0190, 0, 0) === 2);
+  check('LB_GETSELITEMS returns selected indexes',
+    e.send_message(lb, 0x0191, items.length, selectedItems) === 2 &&
+    new DataView(memory.buffer).getUint32(selectedItems - e.get_image_base() + 0x12000, true) === 0 &&
+    new DataView(memory.buffer).getUint32(selectedItems - e.get_image_base() + 0x12004, true) === 2);
+  check('listbox_get_sel export agrees', e.listbox_get_sel(lb, 0) === 1 && e.listbox_get_sel(lb, 2) === 1);
+
+  e.send_message(lb, 0x0186, 2, 0); // restore single selection for following checks
+
   // Out-of-range LB_SETCURSEL → -1
   e.send_message(lb, 0x0186, 99, 0);
   check('out-of-range LB_SETCURSEL clamps to -1', e.send_message(lb, 0x0188, 0, 0) === -1);

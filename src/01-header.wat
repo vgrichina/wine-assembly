@@ -135,12 +135,15 @@
   (import "host" "post_window_message" (func $host_post_window_message (param i32 i32 i32 i32) (result i32)))
   ;; post_window_message(...) → 1 when routed to another app instance.
   (import "host" "activate_window" (func $host_activate_window (param i32) (result i32)))
+  ;; arrange_windows(mode, flags, rectWA, count, hwndsWA):
+  ;; mode 0=cascade, 1=tile, 2=arrange minimized icons.
+  (import "host" "arrange_windows" (func $host_arrange_windows (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
   ;; create_font(height, weight, italic, facePtr) → handle
-  (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32)))
-  ;; note_richedit_charformat_size(yHeightTwips) — latest explicit CFM_SIZE hint
+  (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
+  ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   (import "host" "measure_text" (func $host_measure_text (param i32 i32 i32) (result i32)))
   ;; measure_text(hdc, textPtr, nCount) → pixel width
   (import "host" "get_text_metrics" (func $host_get_text_metrics (param i32) (result i32)))

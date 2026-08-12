@@ -18,9 +18,13 @@ across independent emulator instances:
 - `End Task` routes `WM_CLOSE` to the owning instance, removes the stopped
   app's renderer windows, and refreshes the native task list;
 - `LB_GETSEL` and `LB_GETITEMHEIGHT` use their correct Win32 message IDs.
+- extended ListBox selection supports selecting several applications, and the
+  Windows menu now drives real cascade, horizontal/vertical tile, minimize,
+  and arrange-minimized geometry in the shared renderer.
 
 Coverage is split between `test/test-taskman-tasks.js` (native emulator input,
-menus, task actions, and screenshots) and `test/test-taskman-web.js` (real
+menus, task actions, and screenshots), `test/test-taskman-arrange.js` (two-task
+multi-selection and every arrangement command), and `test/test-taskman-web.js` (real
 Calculator, Sound Recorder, Task Manager, and Volume Control instances in one
 browser renderer). The browser test writes
 `scratch/taskman-web/live-tasks.png` and verifies initial enumeration, live

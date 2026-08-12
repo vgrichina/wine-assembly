@@ -15987,5 +15987,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3236544775
+  },
+  {
+    "id": 2081,
+    "name": "CascadeWindows",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3367822650
+  },
+  {
+    "id": 2082,
+    "name": "TileWindows",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 991328510
+  },
+  {
+    "id": 2083,
+    "name": "ArrangeIconicWindows",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3906337087
   }
 ]
