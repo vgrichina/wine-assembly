@@ -260,8 +260,8 @@ async function main() {
     });
   }
 
-  async function clickGuest(x, y) {
-    const point = await evaluate(`(() => {
+  async function guestPoint(x, y) {
+    return evaluate(`(() => {
       const canvas = document.getElementById('screen');
       const rect = canvas.getBoundingClientRect();
       const t = sharedRenderer && sharedRenderer._exclusiveTransform;
@@ -276,11 +276,36 @@ async function main() {
         y: rect.top + inputY * rect.height / canvas.height,
       };
     })()`);
+  }
+
+  async function clickGuest(x, y) {
+    const point = await guestPoint(x, y);
     await cdp.send('Input.dispatchMouseEvent', {
       type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1, clickCount: 1,
     });
     await cdp.send('Input.dispatchMouseEvent', {
       type: 'mouseReleased', x: point.x, y: point.y, button: 'left', buttons: 0, clickCount: 1,
+    });
+  }
+
+  async function dragGuest(fromX, fromY, toX, toY) {
+    const from = await guestPoint(fromX, fromY);
+    const to = await guestPoint(toX, toY);
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1,
+    });
+    for (let step = 1; step <= 5; step++) {
+      const ratio = step / 5;
+      await cdp.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: from.x + (to.x - from.x) * ratio,
+        y: from.y + (to.y - from.y) * ratio,
+        button: 'none', buttons: 1, clickCount: 0,
+      });
+      await wait(50);
+    }
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1,
     });
   }
 
@@ -301,7 +326,7 @@ async function main() {
     return 1;
   })()`);
   await clickLaunch();
-  const pinballMenuPoint = await evaluate(`new Promise((resolve, reject) => {
+  let pinballMenuPoint = await evaluate(`new Promise((resolve, reject) => {
     const started = performance.now();
     const poll = () => {
       const app = runningApps.find(item => item && item.name === 'pinball');
@@ -327,8 +352,37 @@ async function main() {
     };
     poll();
   })`, 65000);
-  await clickGuest(pinballMenuPoint.x, pinballMenuPoint.y);
-  await wait(1500);
+  let pinballChecked = false;
+  for (let attempt = 0; attempt < 3 && !pinballChecked; attempt++) {
+    await wait(250);
+    await clickGuest(pinballMenuPoint.x, pinballMenuPoint.y);
+    await wait(1500);
+    pinballChecked = await evaluate(`(() => {
+      const app = runningApps.find(item => item && item.name === 'pinball');
+      const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+        .find(w => w && w.visible && /3D Pinball for Windows/i.test(w.title || ''));
+      const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+      return !!(e && win && e.menu_child_flags && (e.menu_child_flags(win.hwnd, 1, 5) & 4));
+    })()`);
+    if (!pinballChecked) {
+      pinballMenuPoint = await evaluate(`(() => {
+        const app = runningApps.find(item => item && item.name === 'pinball');
+        const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+          .find(w => w && w.visible && /3D Pinball for Windows/i.test(w.title || ''));
+        const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+        if (!e || !win) throw new Error('Pinball disappeared while reopening Options');
+        if (e.menu_close) e.menu_close();
+        sharedRenderer.handleKeyDown(18);
+        sharedRenderer.handleKeyDown(79);
+        sharedRenderer.handleKeyUp(79);
+        sharedRenderer.handleKeyUp(18);
+        return {
+          x: (e.menu_bar_screen_x(win.hwnd) | 0) + (e.menu_bar_item_x(win.hwnd, 1) | 0) + 45,
+          y: (e.menu_bar_screen_y(win.hwnd) | 0) + (e.menu_bar_screen_h() | 0) + 2 + 5 * 20 + 10,
+        };
+      })()`);
+    }
+  }
   await evaluate(`(() => {
     sharedRenderer.handleKeyDown(113);
     sharedRenderer.handleKeyUp(113);
@@ -362,11 +416,6 @@ async function main() {
     { running: true, visible: true, checked: true },
     `Pinball should remain alive after checking Music at ${JSON.stringify(pinballMenuPoint)}: ${JSON.stringify(pinballMusic)}\n${pinballConsole.slice(-4000)}`);
   console.log(`PASS  browser Pinball remains live after checking Music (${pinballMusic.mciDevices} MCI device(s))`);
-  await evaluate(`(() => {
-    const app = runningApps.find(item => item && item.name === 'pinball');
-    if (app && app.wine) app.wine.stop();
-    return 1;
-  })()`);
 
   await evaluate(`(() => {
     document.getElementById('app-select').value = 'sndvol32';
@@ -380,13 +429,89 @@ async function main() {
       const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
         .find(w => w && w.visible && /^Volume Control$/i.test(w.title || ''));
       const log = document.getElementById('log').textContent;
-      if (runningApps.length === 1 && win) resolve(1);
+      const pinball = runningApps.some(item => item && item.name === 'pinball');
+      const volume = runningApps.some(item => item && item.name === 'sndvol32');
+      if (pinball && volume && win) resolve(1);
       else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error(log.slice(-1500)));
       else if (performance.now() - started > 25000) reject(new Error('Volume Control did not appear'));
       else setTimeout(poll, 100);
     };
     poll();
   })`, 28000);
+
+  const volumeWindowForMixer = await evaluate(`(() => {
+    const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+      .find(w => w && w.visible && /^Volume Control$/i.test(w.title || ''));
+    const pinball = runningApps.find(item => item && item.name === 'pinball');
+    const volume = runningApps.find(item => item && item.name === 'sndvol32');
+    const voices = pinball && pinball.wine && pinball.wine._sharedAudio && pinball.wine._sharedAudio.voices;
+    const ac = pinball && pinball.wine && (pinball.wine._audioCtx || (voices && voices._ac));
+    const e = volume && volume.wine && volume.wine.instance && volume.wine.instance.exports;
+    const verticalTracks = [];
+    if (win && e && e.wnd_next_child_slot && e.wnd_slot_hwnd) {
+      let slot = 0;
+      while ((slot = e.wnd_next_child_slot(win.hwnd, slot) | 0) >= 0) {
+        const hwnd = e.wnd_slot_hwnd(slot) | 0;
+        slot++;
+        if (!hwnd || !e.ctrl_get_class || (e.ctrl_get_class(hwnd) | 0) !== 19) continue;
+        const x = e.wnd_window_screen_x(hwnd) | 0;
+        const y = e.wnd_window_screen_y(hwnd) | 0;
+        const w = e.wnd_screen_w(hwnd) | 0;
+        const h = e.wnd_screen_h(hwnd) | 0;
+        if (h > w) verticalTracks.push({ hwnd, x, y, w, h });
+      }
+    }
+    verticalTracks.sort((a, b) => a.x - b.x);
+    return win && {
+      x: win.x, y: win.y,
+      before: ac && ac._wineMidiBus && ac._wineMidiBus.gain.value,
+      midiTrack: verticalTracks[verticalTracks.length - 1] || null,
+      verticalTracks,
+    };
+  })()`);
+  assert(volumeWindowForMixer && volumeWindowForMixer.midiTrack,
+    `Volume Control and Pinball MIDI bus should both be live: ${JSON.stringify(volumeWindowForMixer)}`);
+  const midiTrack = volumeWindowForMixer.midiTrack;
+  await dragGuest(
+    midiTrack.x + Math.floor(midiTrack.w / 2), midiTrack.y + 8,
+    midiTrack.x + Math.floor(midiTrack.w / 2), midiTrack.y + Math.floor(midiTrack.h / 2));
+  await wait(500);
+  const crossAppMixer = await evaluate(`(() => {
+    const pinball = runningApps.find(item => item && item.name === 'pinball');
+    const volume = runningApps.find(item => item && item.name === 'sndvol32');
+    const voices = pinball && pinball.wine && pinball.wine._sharedAudio && pinball.wine._sharedAudio.voices;
+    const ac = pinball && pinball.wine && (pinball.wine._audioCtx || (voices && voices._ac));
+    const mixer = volume && volume.wine && volume.wine._sharedMixer;
+    const volumeExports = volume && volume.wine && volume.wine.instance && volume.wine.instance.exports;
+    const packed = mixer && mixer.mixerVolumes ? mixer.mixerVolumes[2] >>> 0 : 0xffffffff;
+    const after = ac && ac._wineMidiBus && ac._wineMidiBus.gain.value;
+    const trackPos = volumeExports && volumeExports.send_message
+      ? volumeExports.send_message(${midiTrack.hwnd}, 0x0400, 0, 0) | 0 : -1;
+    const captureHwnd = volumeExports && volumeExports.get_capture_hwnd
+      ? volumeExports.get_capture_hwnd() >>> 0 : 0;
+    if (volume && volume.wine && volume.wine.hostCtx && volume.wine.hostCtx.setAudioMixerVolume) {
+      volume.wine.hostCtx.setAudioMixerVolume(2, 0xffffffff);
+    }
+    return {
+      before: ${volumeWindowForMixer.before},
+      after,
+      packed,
+      separateAudio: !!(pinball && volume && pinball.wine._sharedAudio !== volume.wine._sharedAudio),
+      midiTrack: ${JSON.stringify(midiTrack)},
+      trackPos,
+      captureHwnd,
+      rendererOwnsVolume: !!(volume && sharedRenderer.wasm === volume.wine.instance),
+      dialogDrag: sharedRenderer._dialogBtnDrag && { ...sharedRenderer._dialogBtnDrag, wasm: !!sharedRenderer._dialogBtnDrag.wasm },
+      exclusiveTransform: sharedRenderer._exclusiveTransform,
+    };
+  })()`);
+  assert(crossAppMixer.separateAudio && crossAppMixer.after < crossAppMixer.before && crossAppMixer.packed !== 0xffffffff,
+    `Volume Control MIDI fader should change Pinball without sharing process audio: ${JSON.stringify(crossAppMixer)}`);
+  await evaluate(`(() => {
+    const app = runningApps.find(item => item && item.name === 'pinball');
+    if (app && app.wine) app.wine.stop();
+    return 1;
+  })()`);
 
   const audioGraph = await evaluate(`(() => {
     const app = runningApps.find(item => item && item.name === 'sndvol32');
@@ -631,6 +756,7 @@ async function main() {
     'browser screenshots should be complete');
 
   console.log('PASS  browser SndVol uses live Web Audio Wave/MIDI analyser buses');
+  console.log(`PASS  browser SndVol MIDI fader controls Pinball (${crossAppMixer.before.toFixed(3)} -> ${crossAppMixer.after.toFixed(3)})`);
   console.log(`PASS  browser native peak meters render independently ${JSON.stringify(volume.meters)}`);
   console.log(`PASS  browser Sound Recorder transport row is complete (${recorder.width}x${recorder.height})`);
   console.log(`PASS  browser Sound Recorder captures microphone PCM (${capture.capturedFrames} frames, ${recorder.displayGreen} waveform pixels)`);

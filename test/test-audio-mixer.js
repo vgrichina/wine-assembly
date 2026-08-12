@@ -123,12 +123,31 @@ try {
   assert.strictEqual(second.audio_mixer_get_volume(1) >>> 0, 0x40004000, 'wave state should be shared');
   assert.strictEqual(second.audio_mixer_get_volume(2) >>> 0, 0x80008000, 'MIDI state should be shared');
 
+  const desktopMixer = {};
+  const pinballAudio = {};
+  const volumeAudio = {};
+  const pinballCtx = { getMemory: () => memory, sharedAudio: pinballAudio, sharedMixer: desktopMixer, midiBackend: 'oscillator' };
+  const volumeCtx = { getMemory: () => memory, sharedAudio: volumeAudio, sharedMixer: desktopMixer, midiBackend: 'oscillator' };
+  const pinball = createHostImports(pinballCtx).host;
+  const volumeControl = createHostImports(volumeCtx).host;
+  const pinballMidi = pinball.midi_out_open(0, 0, 0, 0);
+  pinball.midi_out_short_msg(pinballMidi, 0x00643C90);
+  const pinballAc = pinballCtx._voices._ac;
+  assert.notStrictEqual(pinballAudio, volumeAudio, 'process audio ownership should remain separate');
+  volumeControl.audio_mixer_set_volume(2, 0x20002000);
+  assert(Math.abs(pinballAc._wineMidiBus.gain.value - 0x2000 / 0xFFFF) < 1e-6,
+    'Volume Control should update another process MIDI bus through the desktop mixer');
+  volumeCtx.stopAudio();
+  assert.notStrictEqual(pinballAc.state, 'closed', 'closing Volume Control must not close Pinball audio');
+  pinballCtx.stopAudio();
+
   h.wave_out_close(waveHandle);
   h.midi_out_close(midiHandle);
   console.log('PASS  mixer routes wave and MIDI through independent gain buses');
   console.log('PASS  master volume composes with source volumes');
   console.log('PASS  mute preserves volume and mixer state is shared');
   console.log('PASS  PCM and MIDI activity drive gain-aware peak meters');
+  console.log('PASS  desktop mixer controls other apps without sharing audio ownership');
 } finally {
   globalThis.AudioContext = oldAudioContext;
 }

@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '177';
+  static SOURCE_VERSION = '178';
 
   constructor() {
     this.instance = null;
@@ -175,6 +175,7 @@ class WineAssembly {
     const self = this;
     const opts = options || {};
     const sharedAudio = opts.sharedAudio || self._sharedAudio || (self._sharedAudio = {});
+    const sharedMixer = opts.sharedMixer || self._sharedMixer || null;
     self._guestTickState(sharedAudio);
     const ctx = {
       getMemory: () => self.memory.buffer,
@@ -198,6 +199,7 @@ class WineAssembly {
       get availableDllFiles() { return opts.availableDllFiles || self._availableDllFiles || null; },
       sharedGdi: opts.sharedGdi || null,
       sharedAudio,
+      sharedMixer,
       audioClockMs: () => self._guestAudioClockMs(sharedAudio),
       onAudioCaptureError: (message) => {
         self._lastAudioCaptureError = String(message || 'microphone unavailable');
@@ -640,6 +642,7 @@ class WineAssembly {
         vfs: mainCtx.vfs,
         sharedGdi: mainCtx.sharedGdi,
         sharedAudio: mainCtx.sharedAudio,
+        sharedMixer: mainCtx.sharedMixer,
         threadId: tid,
       });
       wi.__setInstance = (instance) => { workerInstance = instance; };

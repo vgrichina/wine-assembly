@@ -47,6 +47,7 @@ UNIT=(
   test/test-render-open-dlg.js
   test/test-canvas-keydown-preventdefault.js
   test/test-renderer-mouse-drag-mask.js
+  test/test-renderer-dialog-caption-drag.js
 )
 
 E2E=(

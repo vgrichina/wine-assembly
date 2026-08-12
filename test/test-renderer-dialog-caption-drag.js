@@ -211,4 +211,49 @@ function makeRenderer(wasm) {
   assert.strictEqual(up.hwnd, 1);
 }
 
-console.log('PASS  renderer owned dialog captions close, drag, and preserve app mouse-up');
+{
+  const calls = [];
+  const mainWasm = {
+    exports: {
+      dialog_route_mouse_screen() {
+        calls.push('wrong-app');
+        return 0;
+      },
+    },
+  };
+  const dialogWasm = {
+    exports: {
+      dialog_route_mouse_screen(hwnd, msg) {
+        calls.push({ hwnd, msg });
+        return 1;
+      },
+    },
+  };
+  const r = makeRenderer(mainWasm);
+  r.windows[400] = {
+    hwnd: 400,
+    visible: true,
+    isChild: false,
+    isDialog: true,
+    ownerHwnd: 0,
+    x: 10,
+    y: 10,
+    w: 280,
+    h: 300,
+    clientRect: { x: 13, y: 33, w: 274, h: 264 },
+    style: 0x80c808c0,
+    zOrder: 5,
+    wasm: dialogWasm,
+  };
+
+  r.handleMouseDown(120, 150, 0);
+  r.handleMouseUp(120, 150, 0);
+
+  assert.deepStrictEqual(calls, [
+    { hwnd: 400, msg: 0x0201 },
+    { hwnd: 400, msg: 0x0202 },
+  ]);
+  assert.strictEqual(r.wasm, dialogWasm, 'clicking a dialog should activate its owning app context');
+}
+
+console.log('PASS  renderer dialogs close, drag, preserve mouse-up, and route to their owning app');
