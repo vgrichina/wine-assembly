@@ -219,11 +219,11 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/renderer-input.js?v=168'), 'web host should cache-bust renderer input after desktop changes');
-assert(indexHtml.includes('lib/host-imports.js?v=172'), 'web host should cache-bust host-imports after browser host changes');
+assert(indexHtml.includes('lib/renderer-input.js?v=169'), 'web host should cache-bust renderer input after desktop changes');
+assert(indexHtml.includes('lib/host-imports.js?v=177'), 'web host should cache-bust host-imports after browser host changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(indexHtml.includes('host.js?v=172'), 'web host should cache-bust host.js after browser host changes');
-assert(hostJs.includes("SOURCE_VERSION = '172'"), 'host.js should define the current WAT/API cache-buster');
+assert(indexHtml.includes('host.js?v=177'), 'web host should cache-bust host.js after browser host changes');
+assert(hostJs.includes("SOURCE_VERSION = '177'"), 'host.js should define the current WAT/API cache-buster');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
 assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');
@@ -238,7 +238,8 @@ assert(hostJs.includes('audioHot ? (menuOpen ? 20000 : 10000) : 50000'), 'web ho
 assert(hostJs.includes('menuOpen ? (mainThreadWaiting ? 8 : 6) : 4'), 'web host should use a smaller wall budget while waveOut audio is active');
 assert(hostJs.includes('prioritizeAudioThreads: audioHot && !menuOpen'), 'web host should leave WAT menu tracking responsive while waveOut audio is active');
 assert(hostJs.includes('recentInputWake ? 0'), 'web host should give synchronous dialog input a short worker-free grace period');
-assert(hostJs.includes('destroyed && destroyed.isDialog'), 'web multi-app cleanup should not stop apps when startup modal dialogs close');
+assert(hostJs.includes('destroyed && destroyed.isDialog') && hostJs.includes('remainingTopLevel.some(w => w.visible)'),
+  'web multi-app cleanup should retain visible main frames but stop dialog-only accessories');
 assert(hostImportsJs.includes('onTopLevelWindowDestroyed(hwnd, destroyed)'), 'host imports should pass destroyed window metadata to browser cleanup');
 assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');
 assert(indexHtml.includes('onProgress: ({ loaded, failed, total }) =>'), 'web launcher should report data-file preload progress');

@@ -32,7 +32,11 @@ const inputSpec = [
   `0:mousemove:250:114`,    // Hover 2 Players.
   `0:menu-dump:hover-sub`,
   `0:pixel:260:104:submenu-hover`,
-  `0:stop`,
+  `0:keypress:27`,          // Close Options before delivering Music.
+  `20:post-cmd:202`,        // Options > Music.
+  `30:wait-title-menu-open:3D_Pinball_for_Windows_-_Space_Cadet:2000:${VK_O}:music-on`,
+  `30:menu-dump:music-on`,
+  `35:stop`,
 ].join(',');
 
 const runArgs = [
@@ -86,6 +90,12 @@ checks.push({ name: 'no unreachable trap', pass: !/RuntimeError: unreachable|\*\
 checks.push({ name: 'Select Players parent hovered', pass: /menu-dump:hover-parent:[^\n]*hover=2/.test(out) });
 checks.push({ name: 'Select Players hover survives cascade gap', pass: /menu-dump:hover-gap:[^\n]*hover=2/.test(out) });
 checks.push({ name: '2 Players submenu item hovered', pass: /menu-dump:hover-sub:[^\n]*hover=2 subhover=1/.test(out) });
+checks.push({
+  name: 'Music command checks the item without crashing Pinball',
+  pass: /post-cmd wParam=0xca/.test(out) &&
+    /menu-dump:music-on:[^\n]*#5 id=202 flags=0x4 "&Music"/.test(out) &&
+    !/RuntimeError:|\*\*\* CRASH|Thread \d+ crashed/.test(out),
+});
 let submenuPixelPass = false;
 const pixelMatch = /pixel:submenu-hover: 260,104 rgba=(\d+),(\d+),(\d+),(\d+)/.exec(out);
 if (pixelMatch) {

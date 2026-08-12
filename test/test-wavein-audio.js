@@ -82,3 +82,46 @@ assert.strictEqual(posted.length, 0);
 console.log('PASS  waveIn converts/resamples PCM into queued guest WAVEHDR buffers');
 console.log('PASS  waveIn stop/reset complete partial and queued buffers');
 console.log('PASS  waveIn CALLBACK_WINDOW posts MM_WIM_DATA and MM_WIM_CLOSE');
+
+(async () => {
+  let reportedError = '';
+  const rejectedSharedAudio = {};
+  const rejected = createHostImports({
+    getMemory: () => memory,
+    sharedAudio: rejectedSharedAudio,
+    getUserMedia: () => Promise.reject(new Error('permission denied by test')),
+    onAudioCaptureError: message => { reportedError = message; },
+  }).host;
+  const rejectedHandle = rejected.wave_in_open(22050, 1, 16, 0, 0, 0);
+  assert.strictEqual(rejected.wave_in_start(rejectedHandle), 0,
+    'asynchronous permission request should begin normally');
+  await new Promise(resolve => setImmediate(resolve));
+  const rejectedDevice = rejectedSharedAudio.waveIn.devices.get(rejectedHandle);
+  assert.strictEqual(rejectedDevice.running, false, 'permission rejection should stop the capture device');
+  assert.match(reportedError, /permission denied by test/, 'permission rejection should reach the browser error hook');
+  rejected.wave_in_close(rejectedHandle);
+
+  const previousWindow = global.window;
+  let unavailableError = '';
+  try {
+    global.window = { addEventListener() {}, removeEventListener() {} };
+    const unavailable = createHostImports({
+      getMemory: () => memory,
+      sharedAudio: {},
+      onAudioCaptureError: message => { unavailableError = message; },
+    }).host;
+    const unavailableHandle = unavailable.wave_in_open(22050, 1, 16, 0, 0, 0);
+    assert.strictEqual(unavailable.wave_in_start(unavailableHandle), 8,
+      'browser without getUserMedia should reject capture synchronously');
+    assert.match(unavailableError, /secure connection/, 'unavailable capture should explain the secure-origin requirement');
+    unavailable.wave_in_close(unavailableHandle);
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+
+  console.log('PASS  browser waveIn reports permission and secure-context failures');
+})().catch(error => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});

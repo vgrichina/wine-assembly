@@ -21,6 +21,21 @@
   (func $wnd_record_addr (param $slot i32) (result i32)
     (i32.add (global.get $WND_RECORDS) (i32.mul (local.get $slot) (i32.const 24))))
 
+  ;; MENU_DATA_TABLE is parallel to WND_RECORDS. Clear it while the slot is
+  ;; still known; host_destroy_window runs after wnd_table_remove and can no
+  ;; longer resolve hwnd back to the slot. Leaving this pointer behind makes a
+  ;; later CheckMenuItem walk freed menu memory when the slot is reused.
+  (func $menu_data_reset_slot (param $slot i32)
+    (local $addr i32) (local $old i32)
+    (local.set $addr
+      (i32.add (global.get $MENU_DATA_TABLE) (i32.mul (local.get $slot) (i32.const 4))))
+    (local.set $old (i32.load (local.get $addr)))
+    ;; Persistent menu table entries point four bytes past their allocation;
+    ;; the private prefix stores the blob length for safe offset traversal.
+    (if (local.get $old)
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
+    (i32.store (local.get $addr) (i32.const 0)))
+
   ;; Add or update hwnd→wndproc mapping. Allocates a fresh slot for a new
   ;; hwnd, or updates the existing slot's wndproc field.
   (func $wnd_table_set (param $hwnd i32) (param $wndproc i32)
@@ -57,7 +72,8 @@
         (call $paint_flag_reset_slot (local.get $empty))
         (call $ctrl_table_reset_slot (local.get $empty))
         (call $richedit_format_reset_slot (local.get $empty))
-        (call $wnd_owner_reset_slot (local.get $empty))))
+        (call $wnd_owner_reset_slot (local.get $empty))
+        (call $menu_data_reset_slot (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -96,6 +112,7 @@
           (call $ctrl_table_reset_slot (local.get $i))
           (call $richedit_format_reset_slot (local.get $i))
           (call $wnd_owner_reset_slot (local.get $i))
+          (call $menu_data_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))

@@ -87,6 +87,13 @@ function makeRenderer(wasm) {
       send_message(hwnd, msg, wParam, lParam) {
         calls.push({ fn: 'send_message', hwnd, msg, wParam, lParam });
       },
+      nc_sysbutton_down(hwnd) {
+        assert.strictEqual(hwnd, 200);
+        return 20;
+      },
+      nc_sysbutton_up() {
+        throw new Error('top-level dialogs must use the synchronous close path');
+      },
       wnd_destroy_tree(hwnd) {
         calls.push({ fn: 'wnd_destroy_tree', hwnd });
       },
@@ -105,7 +112,7 @@ function makeRenderer(wasm) {
     visible: true,
     isChild: false,
     isDialog: true,
-    ownerHwnd: 1,
+    ownerHwnd: 0,
     x: 20,
     y: 20,
     w: 320,
@@ -128,7 +135,8 @@ function makeRenderer(wasm) {
     wasm,
   };
 
-  r._closeWatDialogFrame(200, wasm);
+  r.handleMouseDown(327, 30, 1);
+  r.handleMouseUp(327, 30, 1);
 
   assert.deepStrictEqual(calls, [
     { fn: 'send_message', hwnd: 200, msg: 0x0010, wParam: 0, lParam: 0 },

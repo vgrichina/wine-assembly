@@ -56,6 +56,17 @@
     (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
     (call $g2w (local.get $g)))
 
+  ;; Persistent menu allocations carry a private i32 byte length immediately
+  ;; before the guest-visible blob. Dynamic TrackPopupMenu blobs do not use
+  ;; this table and are never passed to the global check-state walkers.
+  (func $menu_blob_size (param $hwnd i32) (result i32)
+    (local $slot i32) (local $g i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $g (i32.load (call $menu_data_table_addr (local.get $slot))))
+    (if (i32.lt_u (local.get $g) (i32.const 4)) (then (return (i32.const 0))))
+    (i32.load (call $g2w (i32.sub (local.get $g) (i32.const 4)))))
+
   ;; Dropdown helpers normally read the window's menu-bar blob. Dynamic popup
   ;; menus created with CreatePopupMenu/AppendMenuA do not belong to the menu
   ;; bar, so TrackPopupMenu synthesizes a transient one-popup blob and stores it
@@ -181,6 +192,8 @@
         (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 1)))))
       (if (i32.and (local.get $flags) (i32.const 0x0003))
         (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 2)))))
+      (if (i32.and (local.get $flags) (i32.const 0x0008))
+        (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 4)))))
       (i32.store         (local.get $rec) (local.get $label_off))
       (i32.store offset=4  (local.get $rec) (i32.const 5))
       (i32.store offset=8  (local.get $rec) (i32.const 0))
@@ -207,12 +220,16 @@
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
     (local.set $old (i32.load (local.get $tbl)))
-    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (if (local.get $old)
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
     (i32.store (local.get $tbl) (i32.const 0))
     (if (i32.eqz (local.get $len)) (then (return)))
-    (local.set $newg (call $heap_alloc (local.get $len)))
-    (call $memcpy (call $g2w (local.get $newg)) (local.get $src_wa) (local.get $len))
-    (i32.store (local.get $tbl) (local.get $newg)))
+    (local.set $newg (call $heap_alloc (i32.add (local.get $len) (i32.const 4))))
+    (i32.store (call $g2w (local.get $newg)) (local.get $len))
+    (call $memcpy
+      (call $g2w (i32.add (local.get $newg) (i32.const 4)))
+      (local.get $src_wa) (local.get $len))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 4))))
 
   ;; Drop a window's menu (called from $host_destroy_window path).
   (func (export "menu_clear") (param $hwnd i32)
@@ -221,7 +238,8 @@
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
     (local.set $old (i32.load (local.get $tbl)))
-    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (if (local.get $old)
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
     (i32.store (local.get $tbl) (i32.const 0)))
 
   ;; Top-level item count (0 if no menu). Helper for keyboard nav.
@@ -634,12 +652,25 @@
   ;; matched item's previous state (MF_CHECKED=8 or MF_UNCHECKED=0), or -1
   ;; if nothing matched.
   (func $menu_group_set_check
-        (param $blob_w i32) (param $hdr i32) (param $id i32) (param $check i32)
+        (param $blob_w i32) (param $blob_size i32) (param $hdr i32)
+        (param $id i32) (param $check i32)
         (result i32)
     (local $cc i32) (local $i i32) (local $it i32) (local $flags i32)
-    (local $child_off i32) (local $r i32) (local $prev i32)
+    (local $hdr_off i32) (local $child_off i32) (local $r i32) (local $prev i32)
     (local.set $prev (i32.const -1))
+    (if (i32.lt_u (local.get $hdr) (local.get $blob_w))
+      (then (return (local.get $prev))))
+    (local.set $hdr_off (i32.sub (local.get $hdr) (local.get $blob_w)))
+    (if (i32.or
+          (i32.lt_u (local.get $blob_size) (i32.const 4))
+          (i32.gt_u (local.get $hdr_off) (i32.sub (local.get $blob_size) (i32.const 4))))
+      (then (return (local.get $prev))))
     (local.set $cc (i32.load (local.get $hdr)))
+    (if (i32.gt_u (local.get $cc)
+          (i32.div_u
+            (i32.sub (i32.sub (local.get $blob_size) (local.get $hdr_off)) (i32.const 4))
+            (i32.const 28)))
+      (then (return (local.get $prev))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $cc)))
       (local.set $it (i32.add (local.get $hdr)
@@ -657,11 +688,16 @@
             (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
           (i32.store offset=16 (local.get $it) (local.get $flags))))
       (local.set $child_off (i32.load offset=24 (local.get $it)))
-      (if (local.get $child_off)
+      (if (i32.and
+            (i32.ne (local.get $child_off) (i32.const 0))
+            (i32.and
+              (i32.lt_u (local.get $child_off) (local.get $blob_size))
+              (i32.ge_u (i32.sub (local.get $blob_size) (local.get $child_off)) (i32.const 4))))
         (then
           (local.set $r
             (call $menu_group_set_check
               (local.get $blob_w)
+              (local.get $blob_size)
               (i32.add (local.get $blob_w) (local.get $child_off))
               (local.get $id)
               (local.get $check)))
@@ -678,11 +714,17 @@
   ;; previous checked state (MF_CHECKED=8 or MF_UNCHECKED=0) for the
   ;; first match, or -1 if nothing matched.
   (func $menu_blob_set_check
-        (param $blob_w i32) (param $id i32) (param $check i32) (result i32)
+        (param $blob_w i32) (param $blob_size i32)
+        (param $id i32) (param $check i32) (result i32)
     (local $bar_count i32) (local $i i32) (local $bar_item i32)
     (local $hdr_off i32) (local $r i32) (local $prev i32)
     (local.set $prev (i32.const -1))
+    (if (i32.lt_u (local.get $blob_size) (i32.const 4))
+      (then (return (local.get $prev))))
     (local.set $bar_count (i32.load (local.get $blob_w)))
+    (if (i32.gt_u (local.get $bar_count)
+          (i32.div_u (i32.sub (local.get $blob_size) (i32.const 4)) (i32.const 16)))
+      (then (return (local.get $prev))))
     (local.set $i (i32.const 0))
     (block $done (loop $bar
       (br_if $done (i32.ge_u (local.get $i) (local.get $bar_count)))
@@ -694,6 +736,7 @@
           (local.set $r
             (call $menu_group_set_check
               (local.get $blob_w)
+              (local.get $blob_size)
               (i32.add (local.get $blob_w) (local.get $hdr_off))
               (local.get $id)
               (local.get $check)))
@@ -845,7 +888,7 @@
   ;; original state (MF_UNCHECKED=0, MF_CHECKED=8) or -1 if no match.
   (func $menu_check_item_global (export "menu_check_item_global")
         (param $id i32) (param $check i32) (result i32)
-    (local $i i32) (local $hwnd i32) (local $blob_w i32)
+    (local $i i32) (local $hwnd i32) (local $blob_w i32) (local $blob_size i32)
     (local $r i32) (local $prev i32)
     (local.set $prev (i32.const -1))
     (local.set $i (i32.const 0))
@@ -857,8 +900,10 @@
           (local.set $blob_w (call $menu_blob_w (local.get $hwnd)))
           (if (local.get $blob_w)
             (then
+              (local.set $blob_size (call $menu_blob_size (local.get $hwnd)))
               (local.set $r (call $menu_blob_set_check
-                              (local.get $blob_w) (local.get $id) (local.get $check)))
+                              (local.get $blob_w) (local.get $blob_size)
+                              (local.get $id) (local.get $check)))
               (if (i32.ne (local.get $r) (i32.const -1))
                 (then
                   (if (i32.eq (local.get $prev) (i32.const -1))
@@ -1522,7 +1567,7 @@
           (i32.add (global.get $ml_blob_w) (global.get $ml_string_cur))
           (local.get $sc_chars))
         (global.set $ml_string_cur (i32.add (global.get $ml_string_cur) (local.get $sc_chars)))))
-    ;; Out flags: bit0 separator, bit1 grayed, bit3 popup
+    ;; Out flags: bit0 separator, bit1 grayed, bit2 checked, bit3 popup
     (local.set $out_flags (i32.const 0))
     (if (i32.or (i32.and (local.get $flags) (i32.const 0x800))
                 (i32.and (i32.eqz (local.get $chars))
@@ -1530,6 +1575,8 @@
       (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 1)))))
     (if (i32.and (local.get $flags) (i32.const 0x01))
       (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 2)))))
+    (if (i32.and (local.get $flags) (i32.const 0x08))
+      (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 4)))))
     (if (local.get $child_off)
       (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 8)))))
     ;; Write the child item record (28 bytes) at hdr_off.
@@ -1695,6 +1742,10 @@
       (local.set $flags (i32.and (local.get $type) (i32.const 0x800)))
       (if (i32.and (local.get $state) (i32.const 3))
         (then (local.set $flags (i32.or (local.get $flags) (i32.const 1)))))
+      ;; MENUEX stores MFS_CHECKED in dwState, while the shared record writer
+      ;; consumes the equivalent classic MF_CHECKED bit.
+      (if (i32.and (local.get $state) (i32.const 8))
+        (then (local.set $flags (i32.or (local.get $flags) (i32.const 8)))))
       (local.set $child_off (i32.const 0))
       (if (i32.and (local.get $resInfo) (i32.const 1))
         (then
@@ -1764,7 +1815,8 @@
     (local.set $old (i32.load (local.get $tbl)))
     (if (i32.eqz (local.get $menu_id))
       (then
-        (if (local.get $old) (then (call $heap_free (local.get $old))))
+        (if (local.get $old)
+          (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
         (i32.store (local.get $tbl) (i32.const 0))
         (return)))
     (if (local.get $old) (then (return)))
@@ -1801,9 +1853,10 @@
     (if (i32.eqz (global.get $ml_bar_count)) (then (return)))
     ;; --- Allocate blob and run pass 2 ---
     (local.set $total (i32.add (global.get $ml_struct_size) (global.get $ml_string_size)))
-    (local.set $newg (call $heap_alloc (local.get $total)))
-    (i32.store (local.get $tbl) (local.get $newg))
-    (global.set $ml_blob_w (call $g2w (local.get $newg)))
+    (local.set $newg (call $heap_alloc (i32.add (local.get $total) (i32.const 4))))
+    (i32.store (call $g2w (local.get $newg)) (local.get $total))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 4)))
+    (global.set $ml_blob_w (call $g2w (i32.add (local.get $newg) (i32.const 4))))
     ;; bar_count header
     (i32.store (global.get $ml_blob_w) (global.get $ml_bar_count))
     ;; cursors: $ml_struct_cur runs forward through bar items + child

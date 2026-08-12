@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '172';
+  static SOURCE_VERSION = '177';
 
   constructor() {
     this.instance = null;
@@ -199,6 +199,13 @@ class WineAssembly {
       sharedGdi: opts.sharedGdi || null,
       sharedAudio,
       audioClockMs: () => self._guestAudioClockMs(sharedAudio),
+      onAudioCaptureError: (message) => {
+        self._lastAudioCaptureError = String(message || 'microphone unavailable');
+        if (typeof document !== 'undefined') {
+          const status = document.getElementById('status');
+          if (status) status.textContent = 'Microphone unavailable: ' + self._lastAudioCaptureError;
+        }
+      },
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
       readFile: (name) => {
@@ -233,13 +240,18 @@ class WineAssembly {
       },
       onTopLevelWindowDestroyed: (hwnd, destroyed) => {
         if (!self._multiApp || !self.renderer || !self._hwndBase) return;
-        if (destroyed && destroyed.isDialog) return;
         const lo = self._hwndBase;
         const hi = lo + 0x10000;
         if (hwnd < lo || hwnd >= hi) return;
-        const stillHasTopLevel = Object.values(self.renderer.windows).some(w =>
+        const remainingTopLevel = Object.values(self.renderer.windows).filter(w =>
           w && !w.isChild && w.hwnd >= lo && w.hwnd < hi
         );
+        // Closing a startup/modal dialog must leave its visible main frame
+        // running. Dialog-only accessories instead use an invisible owner,
+        // so their last visible dialog is their application window.
+        const stillHasTopLevel = destroyed && destroyed.isDialog
+          ? remainingTopLevel.some(w => w.visible)
+          : remainingTopLevel.length > 0;
         if (!stillHasTopLevel) self.stop({ repaint: false });
       },
       onExit: (code) => {
@@ -1172,6 +1184,7 @@ class WineAssembly {
   }
 
   stop(options = {}) {
+    const wasRunning = this.running;
     this.running = false;
     this._cleanupAudio();
     if (this.renderer) {
@@ -1184,6 +1197,9 @@ class WineAssembly {
       if (options.repaint !== false && this.renderer.repaint) {
         this.renderer.repaint();
       }
+    }
+    if (wasRunning && typeof this.onStopped === 'function') {
+      try { this.onStopped(this); } catch (_) {}
     }
   }
 
@@ -1360,14 +1376,18 @@ class WineAssembly {
           }
         }
       } catch (e) {
-        let eip = 0, yr = 0;
+        let eip = 0, esp = 0, ebp = 0, yr = 0;
         try { eip = self.instance.exports.get_eip(); } catch {}
+        try { esp = self.instance.exports.get_esp(); } catch {}
+        try { ebp = self.instance.exports.get_ebp(); } catch {}
         try { yr = self.instance.exports.get_yield_reason(); } catch {}
         const eipHex = '0x' + (eip >>> 0).toString(16).padStart(8, '0');
+        const espHex = '0x' + (esp >>> 0).toString(16).padStart(8, '0');
+        const ebpHex = '0x' + (ebp >>> 0).toString(16).padStart(8, '0');
         const unimpl = self.hostCtx && self.hostCtx.lastUnimplemented;
         const tag = unimpl ? ` [unimplemented: ${unimpl}]` : '';
-        console.error('WASM crash:', e, 'EIP=' + eipHex, 'yield=' + yr, tag);
-        self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' yield=' + yr + tag);
+        console.error('WASM crash:', e, 'EIP=' + eipHex, 'ESP=' + espHex, 'EBP=' + ebpHex, 'yield=' + yr, tag);
+        self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' ESP=' + espHex + ' EBP=' + ebpHex + ' yield=' + yr + tag);
         self.stop({ repaint: false });
         return;
       }

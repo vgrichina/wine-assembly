@@ -75,6 +75,7 @@ E2E=(
   test/test-funtris-options.js
   test/test-funtris-new-game.js
   test/test-funtris-web-launch.js
+  test/test-win98-audio-web.js
   test/test-local-candidate-desktop-web.js
   test/test-local-candidates-playability.js
   test/test-pyramid-menu.js
