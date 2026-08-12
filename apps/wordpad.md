@@ -1,36 +1,36 @@
-# WordPad (Win98) — FUNCTIONAL (non-OLE)
+# WordPad (Win98) — FUNCTIONAL (static OLE images)
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-12):** FUNCTIONAL for the bounded non-OLE compatibility scope.
+**Status (2026-08-12):** FUNCTIONAL for the bounded non-OLE scope plus static
+`CF_DIB` image paste, rendering, RTF save, and fresh-process reopen.
 
 Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
 advanced ruler/dialog commands, international UTF-16/IME commit input, and
 real suspended-thread resume semantics now have passing app-level regressions.
 Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences
-are covered as well. The first reusable OLE persistence foundation is now
-implemented: `ILockBytes` has binary random-access storage, `IStorage` owns
-case-insensitive named `IStream` children, streams support read/write/seek and
-size/stat operations, and storage class IDs persist in memory. WordPad does not
-yet insert, render, copy, or reopen an embedded object; those higher OLE layers
-remain outside the completed non-OLE scope.
+are covered as well. The reusable OLE persistence foundation provides binary
+`ILockBytes`, named `IStorage`/`IStream` children, and storage class identity.
+Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports
 `FORMATETC` matching, `GetData`/`QueryGetData`/`SetData`, single-format
 enumeration, and eagerly owned `STGMEDIUM` payloads. `TYMED_HGLOBAL` data such
 as `CF_DIB` is copied byte-for-byte, stream/storage media retain COM ownership,
 `ReleaseStgMedium` releases supported payloads, and the OLE clipboard keeps a
-reference-counted current object. WordPad/RichEdit insertion and presentation
-remain the next integration boundary.
+reference-counted current object. WordPad/RichEdit insertion and static DIB
+presentation are integrated.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
 `CoDisconnectObject`, HGLOBAL-backed `IStream` helpers,
 `OleSetContainedObject`, and bounded static `IOleObject`/`IPersistStorage`
-identity. A native `CF_DIB` paste now inserts and paints an inline static
-bitmap without terminating WordPad; `WM_GETTEXT` preserves the surrounding
-document and exposes that position as a space. The browser regression asserts
-both the logical object position and visible red/blue presentation pixels.
-Object save/reopen remains the next OLE milestone.
+identity plus `IOleCache` and `IViewObject2` presentation contracts. A native
+`CF_DIB` paste inserts and paints an inline static bitmap without terminating
+WordPad; `WM_GETTEXT` preserves the surrounding document and exposes that
+position as a space. `test/test-wordpad-ole-roundtrip.js` saves the object to
+RTF, starts a fresh WordPad, reopens it, and asserts the restored object slot
+and visible red/blue checker pixels. Linked/activated objects and non-DIB OLE
+servers remain outside this bounded static-image slice.
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
@@ -778,9 +778,10 @@ focused app-level trace of WordPad's real startup thread remains to be added.
 
 ## Follow-Up
 
-1. The bounded non-OLE program is complete. Remaining WordPad work is centered
-   on embedded OLE/object clipboard fidelity: `IDataObject`/`STGMEDIUM`,
-   `IRichEditOle`, object rendering, and save/reopen persistence.
+1. The bounded non-OLE program and static `CF_DIB` object path are complete.
+   Remaining OLE work is centered on linked/activated server objects,
+   non-DIB presentation formats, arbitrary compound-storage persistence,
+   object copy/cut back to the clipboard, drag/drop, and in-place activation.
    Covered areas now include mixed-run size reporting, caret blink/XOR cadence,
    Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
@@ -802,10 +803,9 @@ focused app-level trace of WordPad's real startup thread remains to be added.
 2. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
-3. Extend the new memory-backed OLE storage foundation into real WordPad
-   object transfer and presentation. Advanced RTF (including document tables),
-   printing, layout stress, ruler/secondary UI, and international text are
-   complete in `docs/richedit-compat-design.md`.
+3. Keep the static-image boundary explicit: advanced RTF (including document
+   tables), printing, layout stress, ruler/secondary UI, international text,
+   and DIB save/reopen are complete; arbitrary OLE servers remain postponed.
 
 Advanced RTF status (2026-08-12): WordPad now has focused Open -> Save -> Open
 coverage for inherited stylesheets, multiple font/color/format runs, centered

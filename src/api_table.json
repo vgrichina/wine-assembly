@@ -16845,5 +16845,145 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4252282479
+  },
+  {
+    "id": 2198,
+    "name": "IOleCache_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 457491654
+  },
+  {
+    "id": 2199,
+    "name": "IOleCache_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1488284197
+  },
+  {
+    "id": 2200,
+    "name": "IOleCache_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 220876194
+  },
+  {
+    "id": 2201,
+    "name": "IOleCache_Cache",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 113671089
+  },
+  {
+    "id": 2202,
+    "name": "IOleCache_Uncache",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1088943924
+  },
+  {
+    "id": 2203,
+    "name": "IOleCache_EnumCache",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1318970182
+  },
+  {
+    "id": 2204,
+    "name": "IOleCache_InitCache",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3920739603
+  },
+  {
+    "id": 2205,
+    "name": "IOleCache_SetData",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 70143375
+  },
+  {
+    "id": 2206,
+    "name": "IViewObject_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3868106584
+  },
+  {
+    "id": 2207,
+    "name": "IViewObject_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2383695659
+  },
+  {
+    "id": 2208,
+    "name": "IViewObject_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4285216876
+  },
+  {
+    "id": 2209,
+    "name": "IViewObject_Draw",
+    "nargs": 11,
+    "convention": "stdcall",
+    "hash": 1206245173
+  },
+  {
+    "id": 2210,
+    "name": "IViewObject_GetColorSet",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 285830316
+  },
+  {
+    "id": 2211,
+    "name": "IViewObject_Freeze",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2842704296
+  },
+  {
+    "id": 2212,
+    "name": "IViewObject_Unfreeze",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 756718563
+  },
+  {
+    "id": 2213,
+    "name": "IViewObject_SetAdvise",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3367103449
+  },
+  {
+    "id": 2214,
+    "name": "IViewObject_GetAdvise",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2663403397
+  },
+  {
+    "id": 2215,
+    "name": "IViewObject2_GetExtent",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3545551183
+  },
+  {
+    "id": 2216,
+    "name": "OleUIUpdateLinksA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 754592658
+  },
+  {
+    "id": 2217,
+    "name": "OleDraw",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1111766103
   }
 ]

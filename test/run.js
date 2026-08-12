@@ -374,6 +374,7 @@ async function main() {
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
+  //   B:seed-cf-dib[:LABEL] — publish a 32x24 checker CF_DIB and paste it into focus
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
   //   B:set-focus-charformat-size:TWIPS[:LABEL] — EM_SETCHARFORMAT size on focused hwnd
@@ -454,6 +455,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-control-state', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-clipboard') {
         scheduledInput.push({ batch, action: 'dump-clipboard', label: parts[2] || '' });
+      } else if (kind === 'seed-cf-dib') {
+        scheduledInput.push({ batch, action: 'seed-cf-dib', label: parts[2] || '' });
       } else if (kind === 'dump-focus-charformat') {
         scheduledInput.push({ batch, action: 'dump-focus-charformat', label: parts[2] || '' });
       } else if (kind === 'set-focus-selection') {
@@ -2757,6 +2760,41 @@ async function main() {
           logs.push(`[input] dump-clipboard${tag}: count=${count} textLen=${textLen} rtfFmt=0x${fmt.toString(16)} rtfLen=${rtfLen} availText=${availText} availRtf=${availRtf} textHandle=0x${textHandle.toString(16)} rtfHandle=0x${rtfHandle.toString(16)} rtf=${JSON.stringify(rtf)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-clipboard${tag}: NO CLIPBOARD API at batch ${batch}`);
+        }
+      } else if (ev.action === 'seed-cf-dib') {
+        const we = instance.exports;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() >>> 0) : 0;
+        if (!h || !we.guest_alloc || !we.clipboard_store_binary_data || !we.post_message_q) {
+          logs.push(`[input] seed-cf-dib${tag}: unavailable focus=0x${h.toString(16)} at batch ${batch}`);
+        } else {
+          const width = 32, height = 24, stride = 96;
+          const dibSize = 40 + stride * height;
+          const dibG = we.guest_alloc(dibSize) >>> 0;
+          const dibWA = g2w(dibG);
+          const bytes = new Uint8Array(memory.buffer);
+          const dv = new DataView(memory.buffer);
+          bytes.fill(0, dibWA, dibWA + dibSize);
+          dv.setUint32(dibWA, 40, true);
+          dv.setInt32(dibWA + 4, width, true);
+          dv.setInt32(dibWA + 8, height, true);
+          dv.setUint16(dibWA + 12, 1, true);
+          dv.setUint16(dibWA + 14, 24, true);
+          dv.setUint32(dibWA + 20, stride * height, true);
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const p = dibWA + 40 + y * stride + x * 3;
+              const red = ((x >> 3) + (y >> 3)) % 2 === 0;
+              bytes[p] = red ? 0 : 255;
+              bytes[p + 1] = 0;
+              bytes[p + 2] = red ? 255 : 0;
+            }
+          }
+          if (we.clipboard_clear_all_data) we.clipboard_clear_all_data();
+          const owned = we.clipboard_store_binary_data(8, dibG) >>> 0;
+          if (we.guest_free) we.guest_free(dibG);
+          const queued = we.post_message_q(h, 0x0302, 0, 0) | 0;
+          logs.push(`[input] seed-cf-dib${tag}: hwnd=0x${h.toString(16)} owned=0x${owned.toString(16)} queued=${queued} at batch ${batch}`);
         }
       } else if (ev.action === 'set-focus-selection') {
         const e = instance.exports;

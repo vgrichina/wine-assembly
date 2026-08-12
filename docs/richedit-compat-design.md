@@ -683,14 +683,23 @@ export crash paths including:
 `CoDisconnectObject`, `CreateStreamOnHGlobal` (with HGLOBAL recovery), and
 `OleCreateDefaultHandler` and `OleSetContainedObject`. A bounded in-process
 static handler now exposes shared `IOleObject`/`IPersistStorage` identity,
-client-site/extent state, and storage ownership while activation and unknown
-view interfaces fail explicitly. RichEdit inserts and paints the static DIB
-without exiting WordPad; `WM_GETTEXT` preserves the surrounding text and
+client-site/extent state, and storage ownership. RichEdit inserts and paints
+the static DIB without exiting WordPad; `WM_GETTEXT` preserves the surrounding text and
 represents its inline object position as a space. `test/test-ole-storage.js` covers caller-
 owned and COM-created HGLOBAL stream lifetime, `test/test-ole-static-handler.js`
 covers handler identity/refcounts/storage ownership, and the browser smoke
 covers native CF_DIB insertion plus visible red/blue presentation pixels.
-Retaining the object through save/reopen remains outstanding.
+
+The persistence follow-up is complete for this same static-DIB scope. RichEdit
+requires `IOleCache` to retain the streamed RTF presentation, `IViewObject2`
+for extent negotiation, and `OleDraw` to paint it; the bounded handler now owns
+the copied `STGMEDIUM` and exposes those contracts. `OleUIUpdateLinksA` returns
+the successful no-links result for static pictures. The focused
+`test/test-wordpad-ole-roundtrip.js` regression pastes a 32x24 checker DIB,
+saves/exports the native `\pict\dibitmap0` RTF, imports it into a fresh WordPad,
+and verifies both the restored inline-object position and rendered red/blue
+pixels (14/14 checks). This does not claim linked objects, executable OLE
+servers, in-place activation, drag/drop, or arbitrary compound-file fidelity.
 
 ### 2026-08-12 advanced RTF slice
 
@@ -1088,7 +1097,9 @@ Acceptance:
 [x] WordPad menu Copy advertises registered non-OLE RTF clipboard data
 [x] WordPad keyboard Copy/Cut/Paste preserves basic selected RichEdit
     formatting and registered non-OLE RTF clipboard data
-[ ] Embedded-object/OLE clipboard transfer preserves object fidelity
+[x] Static CF_DIB clipboard insertion, rendering, RTF save, and fresh reopen
+    preserve the inline object and presentation
+[ ] Linked/activated and arbitrary non-DIB OLE objects preserve full fidelity
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
 [x] Font dialog face/style handoff is visibly asserted in WordPad

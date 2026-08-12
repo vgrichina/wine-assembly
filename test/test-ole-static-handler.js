@@ -44,9 +44,30 @@ async function main() {
     dv.getUint32(wa(out), true) === object + 12);
   check('secondary interface shares the root reference count', e.test_ole_release(object) === 1);
 
+  const iidOleCache = alloc(16);
+  dv.setUint32(wa(iidOleCache), 0x0000011e, true);
+  check('QueryInterface exposes the embedded static-presentation IOleCache',
+    e.test_ole_static_query(object, iidOleCache, out) === 0 &&
+    dv.getUint32(wa(out), true) === object + 52);
+  check('IOleCache shares the root reference count', e.test_ole_release(object) === 1);
+
+  const iidViewObject = alloc(16);
+  dv.setUint32(wa(iidViewObject), 0x0000010d, true);
+  check('QueryInterface exposes the cached-presentation IViewObject',
+    e.test_ole_static_query(object, iidViewObject, out) === 0 &&
+    dv.getUint32(wa(out), true) === object + 56);
+  check('IViewObject shares the root reference count', e.test_ole_release(object) === 1);
+
+  const iidViewObject2 = alloc(16);
+  dv.setUint32(wa(iidViewObject2), 0x0000011d, true);
+  check('QueryInterface exposes the extended IViewObject2 contract',
+    e.test_ole_static_query(object, iidViewObject2, out) === 0 &&
+    dv.getUint32(wa(out), true) === object + 56);
+  check('IViewObject2 shares the root reference count', e.test_ole_release(object) === 1);
+
   const unknownIid = alloc(16);
-  dv.setUint32(wa(unknownIid), 0x0000010d, true); // IViewObject
-  check('unsupported view interface fails explicitly',
+  dv.setUint32(wa(unknownIid), 0x00000119, true); // IAdviseSink
+  check('unsupported interfaces fail explicitly',
     (e.test_ole_static_query(object, unknownIid, out) >>> 0) === 0x80004002 && dv.getUint32(wa(out), true) === 0);
 
   const lockbytes = e.test_ole_create_lockbytes(0, 1) >>> 0;
