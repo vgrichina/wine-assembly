@@ -3768,13 +3768,30 @@ async function main() {
             const flags = dv.getUint32(wa + 0x0C, true);
             const findBufG = dv.getUint32(wa + 0x10, true);
             const findBufLen = dv.getUint16(wa + 0x18, true);
+            const replaceBufG = dv.getUint32(wa + 0x14, true);
+            const replaceBufLen = dv.getUint16(wa + 0x1A, true);
             const findBufWa = g2w(findBufG);
             const m8 = new Uint8Array(memory.buffer);
             let txt = '';
             for (let i = 0; i < findBufLen && m8[findBufWa + i]; i++) {
               txt += String.fromCharCode(m8[findBufWa + i]);
             }
-            logs.push(`[input] dump-fr: flags=0x${flags.toString(16)} findWhat=${JSON.stringify(txt)} at batch ${batch}`);
+            let replacement = '';
+            if (replaceBufG) {
+              const replaceBufWa = g2w(replaceBufG);
+              for (let i = 0; i < replaceBufLen && m8[replaceBufWa + i]; i++) {
+                replacement += String.fromCharCode(m8[replaceBufWa + i]);
+              }
+            }
+            if (!replacement && we.get_findreplace_replace_edit && we.get_edit_text && we.guest_alloc) {
+              const replaceEdit = we.get_findreplace_replace_edit() | 0;
+              if (replaceEdit) {
+                const scratchG = we.guest_alloc(512);
+                const n = we.get_edit_text(replaceEdit, scratchG, 511) | 0;
+                replacement = Buffer.from(new Uint8Array(memory.buffer, g2w(scratchG), Math.max(0, n))).toString('latin1');
+              }
+            }
+            logs.push(`[input] dump-fr: flags=0x${flags.toString(16)} findWhat=${JSON.stringify(txt)} replaceWith=${JSON.stringify(replacement)} at batch ${batch}`);
           } else {
             logs.push(`[input] dump-fr: no FR ptr at batch ${batch}`);
           }

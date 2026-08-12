@@ -86,7 +86,28 @@ selection:  Find Next selects the native RichEdit range 6..10 without moving
             focus away from the dialog
 result:     PASS for WordPad Undo plus forward Find/Find Next, including the
             app command, common-dialog notification, and native selection
-            paths. Replace remains a separate follow-up.
+            paths.
+```
+
+Focused Replace / Replace All probe:
+
+```text
+type "alpha ALPHA alpha", return to the document start, invoke WordPad's real
+MFC Edit > Replace command (57641), enter find="alpha" / replace="X"
+export:      WordPad's dynamic GetProcAddress("ReplaceTextA") resolves through
+             the normal COMDLG32-compatible API thunk instead of showing the
+             missing-export MessageBox
+dialog:      modeless Replace displays Find what / Replace with edits plus
+             Find Next, Replace, Replace All, Match case, and Cancel controls
+single:      Find Next selects 0..5; Replace produces "X ALPHA alpha" and
+             advances the selection to the next case-insensitive match
+match case:  after enabling Match case, Replace All produces "X ALPHA X",
+             leaving the uppercase middle occurrence untouched
+flags:       FINDREPLACE notifications report FR_REPLACE / FR_REPLACEALL,
+             FR_MATCHCASE, and both text buffers
+result:      PASS for WordPad ReplaceTextA resolution, single Replace,
+             Replace All, Match Case, native RichEdit replacement, and the
+             modeless common-dialog notification path.
 ```
 
 Focused rich clipboard probe:
@@ -733,7 +754,8 @@ blocker.
    toolbar bitmap icon rendering, formatting-toolbar B/I/U mouse commands,
    checked toolbar button visual state, visible formatting-toolbar color-button
    packing, direct RichEdit color rendering, and clipped long-text RichEdit
-   painting, native Undo, and forward Find/Find Next are now covered, and
+   painting, native Undo, forward Find/Find Next, Replace, and Replace All are
+   now covered, and
    WordPad's own toolbar color UI now applies
    Blue through the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed

@@ -578,6 +578,20 @@
   (data (i32.const 0x11073) "Download\00")
   (data (i32.const 0x1107C) "Files of type:\00")
   (data (i32.const 0x110C6) "Microsoft Windows\0AWindows 98\0ACopyright (C) 1981-1998 Microsoft Corp.\00")
+  ;; Find/Replace labels live in the stable USER-owned string page because
+  ;; the modeless dialog can outlive app use of the low scratch page.
+  (data (i32.const 0x11120) "Find what:\00")
+  (data (i32.const 0x1112B) "Replace with:\00")
+  (data (i32.const 0x11139) "Match case\00")
+  (data (i32.const 0x11144) "Direction\00")
+  (data (i32.const 0x1114E) "Up\00")
+  (data (i32.const 0x11151) "Down\00")
+  (data (i32.const 0x11156) "Find Next\00")
+  (data (i32.const 0x11160) "Replace\00")
+  (data (i32.const 0x11168) "Replace All\00")
+  (data (i32.const 0x11174) "Cancel\00")
+  (data (i32.const 0x1117B) "Find\00")
+  (data (i32.const 0x11180) "Replace\00")
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
@@ -1364,6 +1378,8 @@
   ;; get_findreplace_dlg / get_findreplace_edit exports.
   (global $findreplace_dlg_hwnd  (mut i32) (i32.const 0))
   (global $findreplace_edit_hwnd (mut i32) (i32.const 0))
+  (global $findreplace_replace_hwnd (mut i32) (i32.const 0))
+  (global $findreplace_is_replace (mut i32) (i32.const 0))
   ;; Registered FINDMSGSTRING ("commdlg_FindReplace") message. Unlike a
   ;; process-local increment-only stub, repeated registrations of this system
   ;; string must return the same value so modeless Find notifications reach

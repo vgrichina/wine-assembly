@@ -870,7 +870,10 @@ Acceptance:
 [x] Find Next selects the matching native RichEdit range while the dialog
     retains focus
 [x] FINDMSGSTRING registration and modeless notification routing are stable
-[ ] WordPad Replace / Replace All common-dialog paths are covered
+[x] WordPad Replace / Replace All common-dialog paths are covered
+[x] ReplaceTextA resolves dynamically and exposes the modeless Win98 control set
+[x] Single Replace advances to the next native RichEdit match
+[x] Replace All and Match Case behavior are asserted with mixed-case text
 [x] Native RichEdit wheel changes first visible line
 [x] Long WordPad RichEdit text paints through clipped ExtTextOut rectangles
 [x] Native RichEdit scrollbar thumb drag changes first visible line

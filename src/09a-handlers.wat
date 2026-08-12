@@ -3023,9 +3023,22 @@
     ;; Bare host log line for the [FindTextA] gate. All renderer state is
     ;; created from inside $create_findreplace_dialog via host_register_dialog_frame.
     (drop (call $host_show_find_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0)))
-    (call $create_findreplace_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0))
+    (call $create_findreplace_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0) (i32.const 0))
     (global.set $eax (local.get $hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; ReplaceTextA(lpFR) — create modeless Replace dialog, return HWND.
+  ;; This is commonly resolved dynamically by MFC, so it must participate in
+  ;; the normal API hash/GetProcAddress path even when no PE imports it.
+  (func $handle_ReplaceTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hwnd i32) (local $owner i32)
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_findreplace_dialog (local.get $hwnd) (local.get $owner) (local.get $arg0) (i32.const 1))
+    (global.set $eax (local.get $hwnd))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 203: PageSetupDlgA(lpPS) — show placeholder modal dialog

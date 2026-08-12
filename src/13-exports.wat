@@ -839,6 +839,7 @@
   ;; WAT-side find dialog state created by $create_findreplace_dialog.
   (func (export "get_findreplace_dlg")  (result i32) (global.get $findreplace_dlg_hwnd))
   (func (export "get_findreplace_edit") (result i32) (global.get $findreplace_edit_hwnd))
+  (func (export "get_findreplace_replace_edit") (result i32) (global.get $findreplace_replace_hwnd))
   (func (export "wnd_get_userdata_export") (param $hwnd i32) (result i32)
     (call $wnd_get_userdata (local.get $hwnd)))
 
@@ -1426,7 +1427,7 @@
     (local.set $fr (call $heap_alloc (i32.const 32)))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr))
+    (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 0))
     (local.get $dlg))
 
   ;; Test helper: create a parent + SysTreeView32 child, return tree hwnd.

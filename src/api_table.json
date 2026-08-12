@@ -16008,5 +16008,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3906337087
+  },
+  {
+    "id": 2084,
+    "name": "ReplaceTextA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2448881599
   }
 ]

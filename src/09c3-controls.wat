@@ -378,7 +378,60 @@
   ;;   FR_DOWN        = 0x0001
   ;;   FR_MATCHCASE   = 0x0004
   ;;   FR_FINDNEXT    = 0x0008
+  ;;   FR_REPLACE     = 0x0010
+  ;;   FR_REPLACEALL  = 0x0020
   ;;   FR_DIALOGTERM  = 0x0040
+  (func $findreplace_copy_edit_to_buffer
+    (param $edit_h i32) (param $fr_w i32) (param $ptr_off i32) (param $len_off i32)
+    (local $state i32) (local $state_w i32) (local $src_w i32)
+    (local $buf_g i32) (local $buf_w i32) (local $text_len i32) (local $max_len i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $edit_h)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $state_w (call $g2w (local.get $state)))
+    (local.set $buf_g (i32.load (i32.add (local.get $fr_w) (local.get $ptr_off))))
+    (local.set $max_len (i32.load16_u (i32.add (local.get $fr_w) (local.get $len_off))))
+    (if (i32.or (i32.eqz (local.get $buf_g)) (i32.eqz (local.get $max_len))) (then (return)))
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (if (i32.ge_u (local.get $text_len) (local.get $max_len))
+      (then (local.set $text_len (i32.sub (local.get $max_len) (i32.const 1)))))
+    (local.set $buf_w (call $g2w (local.get $buf_g)))
+    ;; Do not combine the length and guest pointer with bitwise i32.and:
+    ;; a one-byte replacement plus an even pointer would incorrectly skip.
+    (if (local.get $text_len)
+      (then
+        (if (i32.load (local.get $state_w))
+          (then
+            (local.set $src_w (call $g2w (i32.load (local.get $state_w))))
+            (call $memcpy (local.get $buf_w) (local.get $src_w) (local.get $text_len))))))
+    (i32.store8 (i32.add (local.get $buf_w) (local.get $text_len)) (i32.const 0)))
+
+  (func $findreplace_native_richedit_replace
+    (param $owner i32) (param $fr_w i32) (result i32)
+    (local $replace_g i32) (local $state i32) (local $empty_g i32)
+    (if (i32.or
+          (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
+          (i32.eqz (call $wnd_get_parent (local.get $owner))))
+      (then (return (i32.const 0))))
+    ;; Use the live dialog edit buffer for the immediate native operation.
+    ;; MFC may clear its temporary FINDREPLACE lpstrReplaceWith field after
+    ;; ReplaceTextA returns, while the modeless WAT edit remains authoritative.
+    (local.set $state (call $wnd_get_state_ptr (global.get $findreplace_replace_hwnd)))
+    (if (local.get $state)
+      (then (local.set $replace_g (i32.load (call $g2w (local.get $state))))))
+    (if (i32.eqz (local.get $replace_g))
+      (then (local.set $replace_g (i32.load offset=20 (local.get $fr_w)))))
+    ;; Empty replacement is valid and means delete the selected match.
+    (if (i32.eqz (local.get $replace_g))
+      (then
+        (local.set $empty_g (call $heap_alloc (i32.const 1)))
+        (i32.store8 (call $g2w (local.get $empty_g)) (i32.const 0))
+        (local.set $replace_g (local.get $empty_g))))
+    (drop (call $wnd_send_message
+      (local.get $owner) (i32.const 0x00C2) (i32.const 1) (local.get $replace_g)))
+    (if (local.get $empty_g) (then (call $heap_free (local.get $empty_g))))
+    (call $paint_flag_set_inv (local.get $owner))
+    (i32.const 1))
+
   (func $findreplace_native_richedit_find
     (param $owner i32) (param $fr_w i32) (param $flags i32) (result i32)
     (local $find_g i32) (local $range_g i32) (local $range_w i32)
@@ -439,7 +492,9 @@
     (local $find_buf_g i32) (local $find_buf_w i32) (local $i i32)
     (local $mc_h i32) (local $rd_h i32)
     (local $main_edit_h i32) (local $main_state i32) (local $main_state_w i32)
-    (local $main_len i32)
+    (local $main_len i32) (local $start_g i32) (local $end_g i32)
+    (local $sel_start i32) (local $sel_end i32) (local $replace_count i32)
+    (local $replace_ready i32)
 
     ;; WM_NCPAINT → paint chrome (title bar + border) on back-canvas.
     (if (i32.eq (local.get $msg) (i32.const 0x0085))
@@ -505,6 +560,67 @@
         (call $host_destroy_window (local.get $hwnd))
         (global.set $findreplace_dlg_hwnd  (i32.const 0))
         (global.set $findreplace_edit_hwnd (i32.const 0))
+        (global.set $findreplace_replace_hwnd (i32.const 0))
+        (global.set $findreplace_is_replace (i32.const 0))
+        (return (i32.const 0))))
+
+    ;; ---- Replace / Replace All (ids 0x400 / 0x401) ----
+    (if (i32.and (global.get $findreplace_is_replace)
+          (i32.or (i32.eq (local.get $cmd) (i32.const 0x400))
+                  (i32.eq (local.get $cmd) (i32.const 0x401))))
+      (then
+        (local.set $flags
+          (select (i32.const 0x20) (i32.const 0x10)
+                  (i32.eq (local.get $cmd) (i32.const 0x401))))
+        (local.set $mc_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x411)))
+        (if (i32.and (local.get $mc_h)
+              (i32.and (call $button_get_flags_internal (local.get $mc_h)) (i32.const 0x02)))
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04)))))
+        (i32.store offset=12 (local.get $fr_w) (local.get $flags))
+        (call $findreplace_copy_edit_to_buffer
+          (global.get $findreplace_edit_hwnd) (local.get $fr_w) (i32.const 16) (i32.const 24))
+        (call $findreplace_copy_edit_to_buffer
+          (global.get $findreplace_replace_hwnd) (local.get $fr_w) (i32.const 20) (i32.const 26))
+        (if (i32.eq (local.get $cmd) (i32.const 0x400))
+          (then
+            ;; Replace the active match. If there is no selection yet, find
+            ;; the first match. Then select the following match, matching the
+            ;; classic modeless dialog's repeated Replace workflow.
+            (local.set $start_g (call $heap_alloc (i32.const 8)))
+            (local.set $end_g (i32.add (local.get $start_g) (i32.const 4)))
+            (drop (call $wnd_send_message (local.get $owner) (i32.const 0x00B0)
+              (local.get $start_g) (local.get $end_g)))
+            (local.set $sel_start (i32.load (call $g2w (local.get $start_g))))
+            (local.set $sel_end (i32.load (call $g2w (local.get $end_g))))
+            (if (i32.eq (local.get $sel_start) (local.get $sel_end))
+              (then (local.set $replace_ready (call $findreplace_native_richedit_find
+                (local.get $owner) (local.get $fr_w)
+                (i32.or (i32.and (local.get $flags) (i32.const 0x04)) (i32.const 0x01)))))
+              (else (local.set $replace_ready (i32.const 1))))
+            (if (local.get $replace_ready)
+              (then
+                (drop (call $findreplace_native_richedit_replace (local.get $owner) (local.get $fr_w)))
+                (drop (call $findreplace_native_richedit_find
+                  (local.get $owner) (local.get $fr_w)
+                  (i32.or (i32.and (local.get $flags) (i32.const 0x04)) (i32.const 0x01))))))
+            (call $heap_free (local.get $start_g)))
+          (else
+            ;; Replace All always scans forward from the document start.
+            (drop (call $wnd_send_message
+              (local.get $owner) (i32.const 0x00B1) (i32.const 0) (i32.const 0)))
+            (block $replace_all_done (loop $replace_all_loop
+              (br_if $replace_all_done (i32.ge_u (local.get $replace_count) (i32.const 65535)))
+              (br_if $replace_all_done (i32.eqz (call $findreplace_native_richedit_find
+                (local.get $owner) (local.get $fr_w)
+                (i32.or (i32.and (local.get $flags) (i32.const 0x04)) (i32.const 0x01)))))
+              (br_if $replace_all_done (i32.eqz (call $findreplace_native_richedit_replace
+                (local.get $owner) (local.get $fr_w))))
+              (local.set $replace_count (i32.add (local.get $replace_count) (i32.const 1)))
+              (br $replace_all_loop)))))
+        (drop (call $post_queue_push (local.get $owner)
+          (select (global.get $findreplace_message) (i32.const 0xC000)
+                  (i32.ne (global.get $findreplace_message) (i32.const 0)))
+          (i32.const 0) (local.get $fr)))
         (return (i32.const 0))))
 
     ;; ---- Find Next (id=1) ----
@@ -520,6 +636,10 @@
         (if (local.get $rd_h)
           (then (if (i32.and (call $button_get_flags_internal (local.get $rd_h)) (i32.const 0x02))
                   (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x01)))))))
+        ;; Replace dialogs do not expose direction controls; Win98 common
+        ;; dialog Find Next always searches downward in this mode.
+        (if (global.get $findreplace_is_replace)
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x01)))))
         (i32.store offset=12 (local.get $fr_w) (local.get $flags))
         ;; Copy edit text into FR.lpstrFindWhat (clamped to wFindWhatLen-1).
         (local.set $edit_h (global.get $findreplace_edit_hwnd))
@@ -10893,18 +11013,20 @@
   ;; $hwnd, the same hwnd handed to the renderer). We register it in the
   ;; window table as WNDPROC_CTRL_NATIVE so $wnd_send_message routes
   ;; messages to it via $control_wndproc_dispatch.
-  (func $create_findreplace_dialog (param $dlg i32) (param $owner i32) (param $fr_guest i32)
-    (local $edit i32) (local $down i32) (local $slot i32) (local $ch i32)
+  (func $create_findreplace_dialog (param $dlg i32) (param $owner i32) (param $fr_guest i32) (param $is_replace i32)
+    (local $edit i32) (local $replace_edit i32) (local $down i32) (local $slot i32) (local $ch i32)
     ;; Frame (renderer.windows[] entry, isFindDialog flag for hit-test path).
     ;; Same pattern as $create_about_dialog: WAT calls into JS via the
     ;; bare host_register_dialog_frame import — JS does no Win32 logic.
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
-      (i32.const 0x1E3)   ;; "Find" title constant
-      (i32.const 340) (i32.const 128)
+      (select (i32.const 0x11180) (i32.const 0x1117B) (local.get $is_replace))
+      (i32.const 340) (select (i32.const 160) (i32.const 128) (local.get $is_replace))
       (i32.const 2))      ;; kind bit 1 = isFindDialog
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
-    (call $title_table_set (local.get $dlg) (i32.const 0x1E3) (i32.const 4))
+    (call $title_table_set (local.get $dlg)
+      (select (i32.const 0x11180) (i32.const 0x1117B) (local.get $is_replace))
+      (select (i32.const 7) (i32.const 4) (local.get $is_replace)))
     (call $wnd_set_owner (local.get $dlg) (local.get $owner))
     (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
     ;; Tag the parent dialog as control class 10 so $control_wndproc_dispatch
@@ -10924,51 +11046,77 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 8) (i32.const 10) (i32.const 64) (i32.const 14)
             (i32.const 0x50000000)
-            (call $wat_str_to_heap (i32.const 0x1A0) (i32.const 10))))
+            (call $wat_str_to_heap (i32.const 0x11120) (i32.const 10))))
     ;; Edit (the one the test cares about)
     (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x480)
                        (i32.const 74) (i32.const 8) (i32.const 164) (i32.const 18)
                        (i32.const 0x50810000) (i32.const 0)))
     (global.set $findreplace_edit_hwnd (local.get $edit))
+    (global.set $findreplace_replace_hwnd (i32.const 0))
+    (global.set $findreplace_is_replace (local.get $is_replace))
+    (if (local.get $is_replace)
+      (then
+        (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+                (i32.const 8) (i32.const 38) (i32.const 74) (i32.const 14)
+                (i32.const 0x50000000)
+                (call $wat_str_to_heap (i32.const 0x1112B) (i32.const 13))))
+        (local.set $replace_edit (call $ctrl_create_child
+          (local.get $dlg) (i32.const 2) (i32.const 0x481)
+          (i32.const 84) (i32.const 34) (i32.const 154) (i32.const 18)
+          (i32.const 0x50810000) (i32.const 0)))
+        (global.set $findreplace_replace_hwnd (local.get $replace_edit))))
     ;; Match case checkbox
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x411)
-            (i32.const 8) (i32.const 38) (i32.const 80) (i32.const 14)
+            (i32.const 8) (select (i32.const 64) (i32.const 38) (local.get $is_replace))
+            (i32.const 80) (i32.const 14)
             (i32.const 0x50010003)
-            (call $wat_str_to_heap (i32.const 0x1AB) (i32.const 10))))
+            (call $wat_str_to_heap (i32.const 0x11139) (i32.const 10))))
     ;; Direction groupbox + radios
+    (if (i32.eqz (local.get $is_replace))
+      (then
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x440)
             (i32.const 128) (i32.const 28) (i32.const 110) (i32.const 38)
             (i32.const 0x50000007)
-            (call $wat_str_to_heap (i32.const 0x1B6) (i32.const 9))))
+            (call $wat_str_to_heap (i32.const 0x11144) (i32.const 9))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x420)
             (i32.const 136) (i32.const 40) (i32.const 42) (i32.const 14)
             (i32.const 0x50010009)
-            (call $wat_str_to_heap (i32.const 0x1C0) (i32.const 2))))
+            (call $wat_str_to_heap (i32.const 0x1114E) (i32.const 2))))
     (local.set $down (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x421)
             (i32.const 184) (i32.const 40) (i32.const 48) (i32.const 14)
             (i32.const 0x50010009)
-            (call $wat_str_to_heap (i32.const 0x1C3) (i32.const 4))))
+            (call $wat_str_to_heap (i32.const 0x11151) (i32.const 4))))
     ;; Default: Down direction checked (matches Win98 Notepad Find dialog).
-    (drop (call $wnd_send_message (local.get $down) (i32.const 0x00F1) (i32.const 1) (i32.const 0)))
+    (drop (call $wnd_send_message (local.get $down) (i32.const 0x00F1) (i32.const 1) (i32.const 0)))))
     ;; Find Next + Cancel buttons
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
             (i32.const 248) (i32.const 6) (i32.const 80) (i32.const 24)
             (i32.const 0x50010001)
-            (call $wat_str_to_heap (i32.const 0x1C8) (i32.const 9))))
+            (call $wat_str_to_heap (i32.const 0x11156) (i32.const 9))))
+    (if (local.get $is_replace)
+      (then
+        (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x400)
+                (i32.const 248) (i32.const 34) (i32.const 80) (i32.const 24)
+                (i32.const 0x50010000)
+                (call $wat_str_to_heap (i32.const 0x11160) (i32.const 7))))
+        (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x401)
+                (i32.const 248) (i32.const 62) (i32.const 80) (i32.const 24)
+                (i32.const 0x50010000)
+                (call $wat_str_to_heap (i32.const 0x11168) (i32.const 11))))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
-            (i32.const 248) (i32.const 34) (i32.const 80) (i32.const 24)
+            (i32.const 248) (select (i32.const 90) (i32.const 34) (local.get $is_replace))
+            (i32.const 80) (i32.const 24)
             (i32.const 0x50010000)
-            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
+            (call $wat_str_to_heap (i32.const 0x11174) (i32.const 6))))
     ;; Stash FR struct ptr in dialog userdata for a future $wndproc_dialog.
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $fr_guest)))
     (global.set $findreplace_dlg_hwnd (local.get $dlg))
     ;; Publish ctrl_count in WND_DLG_RECORDS so renderer-input.js's Tab
     ;; traversal (gated on dlg_get_ctrl_count > 0) recognises this hwnd as
     ;; a dialog. $dlg_load writes this for resource dialogs; WAT-built
-    ;; dialogs must do it themselves. 8 = static + edit + match-case +
-    ;; group-box + 2 radios + Find Next + Cancel.
+    ;; dialogs must do it themselves. Find has 8 controls; Replace has 9.
     (i32.store offset=28 (call $dlg_record_for_hwnd (local.get $dlg))
-               (i32.const 8))
+               (select (i32.const 9) (i32.const 8) (local.get $is_replace)))
     ;; Modeless Find has no modal child-paint drain. Paint the WAT-built
     ;; children once now so the dialog opens with labels/buttons visible.
     (local.set $slot (i32.const 0))
