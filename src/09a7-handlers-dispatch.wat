@@ -200,6 +200,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
+  ;; LoadImageW has identical resource-id semantics for the integer resources
+  ;; used by Win98 Media Player. Named bitmap resources are uncommon here; the
+  ;; host resource lookup accepts the same guest pointer for either variant.
+  (func $handle_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_LoadImageA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   ;; 712: LineDDA(xStart, yStart, xEnd, yEnd, lpProc) — stub: just return, callback not invoked
   (func $handle_LineDDA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; LineDDA calls a callback for each pixel on a line. Cards.dll uses it
@@ -1992,6 +2000,36 @@
         (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
         (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
         (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; mciSendStringW(cmd, retbuf, retlen, hCallback) — use the same host MCI
+  ;; parser as A, converting its command and optional result at the boundary.
+  (func $handle_mciSendStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cmd_g i32) (local $ret_g i32) (local $cmd_len i32) (local $err i32)
+    (if (local.get $arg0)
+      (then
+        (local.set $cmd_len (call $guest_wcslen (local.get $arg0)))
+        (local.set $cmd_g (call $heap_alloc (i32.add (local.get $cmd_len) (i32.const 1))))
+        (drop (call $wide_to_ansi (local.get $arg0) (local.get $cmd_g)
+                (i32.add (local.get $cmd_len) (i32.const 1))))))
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                 (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        (local.set $ret_g (call $heap_alloc (local.get $arg2)))
+        (call $zero_memory (call $g2w (local.get $ret_g)) (local.get $arg2))))
+    (local.set $err
+      (call $host_mci_string
+        (if (result i32) (local.get $cmd_g)
+          (then (call $g2w (local.get $cmd_g))) (else (i32.const 0)))
+        (if (result i32) (local.get $ret_g)
+          (then (call $g2w (local.get $ret_g))) (else (i32.const 0)))
+        (local.get $arg2)))
+    (if (local.get $ret_g)
+      (then
+        (drop (call $ansi_to_wide (local.get $ret_g) (local.get $arg1) (local.get $arg2)))
+        (call $heap_free (local.get $ret_g))))
+    (if (local.get $cmd_g) (then (call $heap_free (local.get $cmd_g))))
+    (global.set $eax (local.get $err))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct

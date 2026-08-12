@@ -21,6 +21,30 @@ function writeGuestString(guestAddr, value) {
   mem[wa + value.length] = 0;
 }
 
+function writeGuestStringW(guestAddr, value) {
+  const wa = g2w(guestAddr, IMAGE_BASE);
+  for (let i = 0; i < value.length; i++) dv.setUint16(wa + i * 2, value.charCodeAt(i), true);
+  dv.setUint16(wa + value.length * 2, 0, true);
+}
+
+function readGuestMultiString(guestAddr, isWide) {
+  const wa = g2w(guestAddr, IMAGE_BASE);
+  const values = [];
+  let current = '';
+  for (let i = 0; i < 512; i++) {
+    const ch = isWide ? dv.getUint16(wa + i * 2, true) : mem[wa + i];
+    if (ch) {
+      current += String.fromCharCode(ch);
+    } else if (current) {
+      values.push(current);
+      current = '';
+    } else {
+      break;
+    }
+  }
+  return values;
+}
+
 function writeGuestU32(guestAddr, value) {
   dv.setUint32(g2w(guestAddr, IMAGE_BASE), value >>> 0, true);
 }
@@ -124,8 +148,48 @@ assert.strictEqual(
   'setIniValue should seed app startup INI values'
 );
 
+writeGuestString(iniSectionGA, 'MCI');
+writeGuestString(iniFileGA, 'SYSTEM.INI');
+assert(storage.ini_get_string(
+  g2w(iniSectionGA, IMAGE_BASE), 0, 0, outGA, 128,
+  g2w(iniFileGA, IMAGE_BASE), 0
+) > 0);
+assert.deepStrictEqual(
+  readGuestMultiString(outGA, false).sort(),
+  ['sequencer', 'waveaudio'],
+  'system.ini should enumerate only supported MCI driver types'
+);
+
+setIniValue('system.ini', 'MCI', 'WaveAudio', 'custom-wave.drv');
+writeGuestStringW(iniSectionGA, 'mci');
+writeGuestStringW(iniKeyGA, 'WAVEAUDIO');
+writeGuestStringW(iniFileGA, 'system.ini');
+assert.strictEqual(storage.ini_get_string(
+  g2w(iniSectionGA, IMAGE_BASE), g2w(iniKeyGA, IMAGE_BASE), 0,
+  outGA, 128, g2w(iniFileGA, IMAGE_BASE), 1
+), 'custom-wave.drv'.length);
+assert.strictEqual(
+  require('../lib/mem-utils').readStrW(memory, g2w(outGA, IMAGE_BASE)),
+  'custom-wave.drv',
+  'INI section/key lookup should be case-insensitive and preserve overrides'
+);
+
+writeGuestStringW(iniSectionGA, 'mci extensions');
+writeGuestStringW(iniFileGA, 'WIN.INI');
+assert(storage.ini_get_string(
+  g2w(iniSectionGA, IMAGE_BASE), 0, 0, outGA, 128,
+  g2w(iniFileGA, IMAGE_BASE), 1
+) > 0);
+assert.deepStrictEqual(
+  readGuestMultiString(outGA, true).sort(),
+  ['mid', 'midi', 'rmi', 'wav'],
+  'win.ini should enumerate the media extensions backed by emulator MCI devices'
+);
+
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
 console.log('PASS  setRegValue materializes parent registry keys');
 console.log('PASS  registry roots, subkeys, and values enumerate with Win32 buffer semantics');
 console.log('PASS  RegQueryInfoKey-style registry metadata reports counts and max lengths');
 console.log('PASS  app startup INI values are visible to profile APIs');
+console.log('PASS  system.ini exposes supported MCI drivers with case-insensitive overrides');
+console.log('PASS  win.ini exposes the supported Media Player file extensions');

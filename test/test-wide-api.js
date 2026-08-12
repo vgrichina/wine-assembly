@@ -69,6 +69,13 @@ async function main() {
     return out;
   }
 
+  function writeDwords(values) {
+    const g = e.guest_alloc(values.length * 4);
+    const p = wa(g);
+    values.forEach((value, i) => dv.setUint32(p + i * 4, value >>> 0, true));
+    return g;
+  }
+
   const exe = writeAscii('demo.exe');
   e.set_exe_name(wa(exe), 'demo.exe'.length);
   const cmd = e.test_call_GetCommandLineW();
@@ -116,6 +123,37 @@ async function main() {
   check('GetClassInfoW finds RegisterClassExW record', e.test_call_GetClassInfoW(classNameEx, outEx) === 1);
   check('GetClassInfoW maps WNDCLASSEXW wndproc into WNDCLASS slot',
     e.guest_read32(outEx + 4) === wndprocEx);
+
+  const titleFmt = writeWide('%ws - %ws');
+  const fileTitle = writeWide('PINBALL.MID');
+  const appTitle = writeWide('Media Player');
+  const titleOut = e.guest_alloc(128);
+  const titleArgs = writeDwords([fileTitle, appTitle]);
+  check('wsprintfW supports Win32 %ws strings',
+    e.test_wsprintf_w(titleOut, titleFmt, titleArgs) === 26 &&
+      readWide(titleOut) === 'PINBALL.MID - Media Player', readWide(titleOut));
+
+  const timeFmt = writeWide('%02d%c%02d (%ws%c%ws)');
+  const minUnit = writeWide('min');
+  const secUnit = writeWide('sec');
+  const timeOut = e.guest_alloc(128);
+  const timeArgs = writeDwords([3, ':'.charCodeAt(0), 7, minUnit, '/'.charCodeAt(0), secUnit]);
+  check('wsprintfW honors zero-padded widths around %ws strings',
+    e.test_wsprintf_w(timeOut, timeFmt, timeArgs) === 15 &&
+      readWide(timeOut) === '03:07 (min/sec)', readWide(timeOut));
+
+  const ansi = writeAscii('mciSendCommandW');
+  const ansiFmt = writeWide('missing %hs');
+  const ansiOut = e.guest_alloc(128);
+  check('wsprintfW converts %hs ANSI strings',
+    e.test_wsprintf_w(ansiOut, ansiFmt, writeDwords([ansi])) === 23 &&
+      readWide(ansiOut) === 'missing mciSendCommandW', readWide(ansiOut));
+
+  const fileInfo = e.guest_alloc(692);
+  const fullPath = writeWide('C:\\MEDIA\\PINBALL.MID');
+  check('SHGetFileInfoW returns a display-name basename',
+    e.test_call_SHGetFileInfoW(fullPath, fileInfo, 692, 0x200) !== 0 &&
+      readWide(fileInfo + 12) === 'PINBALL.MID', readWide(fileInfo + 12));
 
   console.log(`--- wide-api: ${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);

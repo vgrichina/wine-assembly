@@ -34,6 +34,7 @@ const hasFlag = name => args.includes(`--${name}`);
 
 const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
+const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/renderer (guest-state diagnostics)
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
@@ -556,6 +557,20 @@ async function main() {
           label: parts[5] || '',
           startBatch: batch,
         });
+      } else if (kind === 'wait-title-command') {
+        // B:wait-title-command:TITLE:LIMIT:COMMAND[:LABEL]
+        // Resolve the target HWND by its visible title before delivering
+        // WM_COMMAND. This avoids tests accidentally posting to HWND 0 while
+        // an application is still creating its main window.
+        scheduledInput.push({
+          batch,
+          action: 'wait-title-command',
+          title: (parts[2] || '').replace(/_/g, ' '),
+          limit: parseInt(parts[3]) || 2000,
+          command: parseInt(parts[4]) || 0,
+          label: parts[5] || '',
+          startBatch: batch,
+        });
       } else if (kind === 'wait-title-snapshot') {
         // B:wait-title-snapshot:TITLE:LIMIT:LABEL:PNG_PATH
         // Wait for a window title, then dump the top dialog, write a raw
@@ -753,7 +768,7 @@ async function main() {
 
   // Set up renderer if node-canvas is available
   let renderer = null;
-  if (createCanvas && Win98Renderer) {
+  if (!NO_RENDERER && createCanvas && Win98Renderer) {
     const screenArg = args.find(a => a.startsWith('--screen='));
     const [screenW, screenH] = screenArg ? screenArg.split('=')[1].split('x').map(Number) : [640, 480];
     const canvas = createCanvas(screenW, screenH);
@@ -1163,6 +1178,20 @@ async function main() {
             const textMax = dv.getUint32(item + 20, true);
             strInfo += ` TVITEMA{mask=${hex(mask)},hItem=${hex(hItem)},pszText=${hex(textGuest)},cch=${textMax}}`;
             lastTreeItemTrace = { textGuest, textMax };
+          }
+        } catch (_) {}
+      }
+      if (t === 'SendMessageW') {
+        try {
+          const msg = dv.getUint32(g2w(esp + 8), true);
+          const itemGuest = dv.getUint32(g2w(esp + 16), true);
+          if (msg === 0x0443 && itemGuest) { // TB_INSERTBUTTONW
+            const item = g2w(itemGuest);
+            const image = dv.getInt32(item, true);
+            const command = dv.getInt32(item + 4, true);
+            const state = dv.getUint8(item + 8);
+            const style = dv.getUint8(item + 9);
+            strInfo += ` button={image=${image},command=${command},state=0x${state.toString(16)},style=0x${style.toString(16)}}`;
           }
         } catch (_) {}
       }
@@ -3697,6 +3726,20 @@ async function main() {
         } else {
           logs.push(`[input] wait-title-menu-open${ev.label ? ':' + ev.label : ''}: TIMEOUT "${title}" at batch ${batch}`);
         }
+      } else if (ev.action === 'wait-title-command') {
+        const title = ev.title || '';
+        const wins = renderer ? Object.values(renderer.windows || {}) : [];
+        const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
+        const we = found && instance && instance.exports;
+        if (found && we && typeof we.post_message_q === 'function') {
+          const queued = we.post_message_q(found.hwnd | 0, 0x0111, ev.command | 0, 0) | 0;
+          const count = we.get_post_queue_count ? (we.get_post_queue_count() | 0) : -1;
+          logs.push(`[input] wait-title-command${ev.label ? ':' + ev.label : ''}: hwnd=0x${(found.hwnd | 0).toString(16)} command=${ev.command | 0} queued=${queued} count=${count} at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          deferScheduledWait(ev, batch, true);
+        } else {
+          logs.push(`[input] wait-title-command${ev.label ? ':' + ev.label : ''}: TIMEOUT "${title}" at batch ${batch}`);
+        }
       } else if (ev.action === 'wait-title') {
         const title = ev.title || '';
         const wins = renderer ? Object.values(renderer.windows || {}) : [];
@@ -3803,6 +3846,18 @@ async function main() {
                 const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
                 const cur = we.combobox_get_cur_sel ? we.combobox_get_cur_sel(ch) : -1;
                 text = ' sel=' + cur + ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+              } else if (cls === 4 && we.listbox_get_count &&
+                         we.listbox_get_item_text && we.guest_alloc) {
+                const count = Math.max(0, Math.min(we.listbox_get_count(ch) | 0, 64));
+                const buf = we.guest_alloc(256);
+                const rows = [];
+                for (let row = 0; row < count; row++) {
+                  const len = Math.max(0, Math.min(
+                    we.listbox_get_item_text(ch, row, buf, 256) | 0, 255));
+                  rows.push(Buffer.from(new Uint8Array(memory.buffer, g2w(buf), len)).toString('latin1'));
+                }
+                const cur = we.listbox_get_cur_sel ? we.listbox_get_cur_sel(ch) : -1;
+                text = ' sel=' + cur + ' rows="' + rows.join(' || ') + '"';
               }
               let checked = '';
               if (cls === 1 && we.send_message) {
@@ -4623,9 +4678,11 @@ async function main() {
       const slices = installingFiles ? 1000 : THREAD_SLICES;
       for (let s = 0; s < slices; s++) {
         threadManager.runSlice(BATCH_SIZE);
-        // Re-run main thread between worker slices so producer/consumer
-        // patterns (main posts messages, worker processes) progress together.
-        if (s < slices - 1 && !stopped) {
+        // Re-run main between live worker slices so producer/consumer pairs
+        // progress together. Once the last worker exits, return to the outer
+        // loop; repeatedly re-entering the main message pump here can drain
+        // creation-time paints before an app has finished its first layout.
+        if (s < slices - 1 && !stopped && threadManager.hasActiveThreads()) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
       }

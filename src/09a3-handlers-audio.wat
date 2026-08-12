@@ -462,6 +462,44 @@
     (local $type_arg i32)
     (local $element_wa i32)
     (local $err i32)
+    ;; MCI_SYSINFO is handled by MCI itself and accepts MCI_ALL_DEVICE_ID (-1),
+    ;; so it must run before the per-open-device validation below. Advertise
+    ;; exactly the two device classes backed by the host audio implementation.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0810))
+      (then
+        (if (i32.eqz (local.get $arg3))
+          (then
+            (global.set $eax (i32.const 0x105)) ;; MCIERR_MISSING_PARAMETER
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $params_wa (call $g2w (local.get $arg3)))
+        (local.set $element_wa (call $g2w (i32.load offset=4 (local.get $params_wa))))
+        (if (i32.and (local.get $arg2) (i32.const 0x100)) ;; MCI_SYSINFO_QUANTITY
+          (then
+            (i32.store (local.get $element_wa)
+              (if (result i32) (i32.and (local.get $arg2) (i32.const 0x200))
+                (then (i32.const 0)) ;; no devices are open during discovery
+                (else (i32.const 2))))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (if (i32.and (local.get $arg2) (i32.const 0x400)) ;; MCI_SYSINFO_NAME
+          (then
+            (if (i32.eq (i32.load offset=12 (local.get $params_wa)) (i32.const 1))
+              (then
+                (i32.store (local.get $element_wa) (i32.const 0x65766177)) ;; wave
+                (i32.store offset=4 (local.get $element_wa) (i32.const 0x69647561)) ;; audi
+                (i32.store offset=8 (local.get $element_wa) (i32.const 0x0000006f))) ;; o
+              (else
+                (i32.store (local.get $element_wa) (i32.const 0x75716573)) ;; sequ
+                (i32.store offset=4 (local.get $element_wa) (i32.const 0x65636e65)) ;; ence
+                (i32.store offset=8 (local.get $element_wa) (i32.const 0x00000072)))) ;; r
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (global.set $eax (i32.const 0x105))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; MCI_OPEN = 0x0803. MCI_OPEN_PARMSA: +4 wDeviceID, +8 lpstrDeviceType,
     ;; +12 lpstrElementName.
     (if (i32.eq (local.get $arg1) (i32.const 0x0803))
@@ -545,6 +583,55 @@
     (local $type_arg i32)
     (local $element_wa i32)
     (local $err i32)
+    (if (i32.eq (local.get $arg1) (i32.const 0x0810)) ;; MCI_SYSINFO
+      (then
+        (if (i32.eqz (local.get $arg3))
+          (then
+            (global.set $eax (i32.const 0x105))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $params_wa (call $g2w (local.get $arg3)))
+        (local.set $element_wa (call $g2w (i32.load offset=4 (local.get $params_wa))))
+        (if (i32.and (local.get $arg2) (i32.const 0x100)) ;; MCI_SYSINFO_QUANTITY
+          (then
+            (i32.store (local.get $element_wa)
+              (if (result i32) (i32.and (local.get $arg2) (i32.const 0x200))
+                (then (i32.const 0))
+                (else (i32.const 2))))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (if (i32.and (local.get $arg2) (i32.const 0x400)) ;; MCI_SYSINFO_NAME
+          (then
+            (if (i32.eq (i32.load offset=12 (local.get $params_wa)) (i32.const 1))
+              (then
+                (i32.store16 (local.get $element_wa) (i32.const 0x77)) ;; waveaudio
+                (i32.store16 offset=2 (local.get $element_wa) (i32.const 0x61))
+                (i32.store16 offset=4 (local.get $element_wa) (i32.const 0x76))
+                (i32.store16 offset=6 (local.get $element_wa) (i32.const 0x65))
+                (i32.store16 offset=8 (local.get $element_wa) (i32.const 0x61))
+                (i32.store16 offset=10 (local.get $element_wa) (i32.const 0x75))
+                (i32.store16 offset=12 (local.get $element_wa) (i32.const 0x64))
+                (i32.store16 offset=14 (local.get $element_wa) (i32.const 0x69))
+                (i32.store16 offset=16 (local.get $element_wa) (i32.const 0x6f))
+                (i32.store16 offset=18 (local.get $element_wa) (i32.const 0)))
+              (else
+                (i32.store16 (local.get $element_wa) (i32.const 0x73)) ;; sequencer
+                (i32.store16 offset=2 (local.get $element_wa) (i32.const 0x65))
+                (i32.store16 offset=4 (local.get $element_wa) (i32.const 0x71))
+                (i32.store16 offset=6 (local.get $element_wa) (i32.const 0x75))
+                (i32.store16 offset=8 (local.get $element_wa) (i32.const 0x65))
+                (i32.store16 offset=10 (local.get $element_wa) (i32.const 0x6e))
+                (i32.store16 offset=12 (local.get $element_wa) (i32.const 0x63))
+                (i32.store16 offset=14 (local.get $element_wa) (i32.const 0x65))
+                (i32.store16 offset=16 (local.get $element_wa) (i32.const 0x72))
+                (i32.store16 offset=18 (local.get $element_wa) (i32.const 0))))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (global.set $eax (i32.const 0x105))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (if (i32.eq (local.get $arg1) (i32.const 0x0803))
       (then
         (if (i32.eqz (local.get $arg3))

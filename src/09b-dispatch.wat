@@ -6,6 +6,8 @@
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
     (local $arg4 i32)
+    (local $saved_ebx i32) (local $saved_esi i32)
+    (local $saved_edi i32) (local $saved_ebp i32)
 
     ;; Read thunk data
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
@@ -68,7 +70,9 @@
         ;; repaints those children through USER's visible-region pass before the
         ;; dialog is observably idle.
         (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
-        (if (local.get $arg0)
+        (if (i32.and
+              (local.get $arg0)
+              (i32.load offset=4 (call $dlg_record_for_hwnd (local.get $arg0))))
           (then
             (drop (call $paint_drain_native_control_paints))
             (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
@@ -327,6 +331,20 @@
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
         (global.set $steps (i32.const 0))
+        (return)))
+
+    ;; SetFocus's synchronous WM_SETFOCUS callback returned. The callback's
+    ;; stdcall epilogue leaves ESP at the saved API return frame built by
+    ;; $handle_SetFocus.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002A))
+      (then
+        (global.set $eip (call $gl32 (global.get $esp)))
+        (global.set $eax (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (global.set $ebx (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+        (global.set $esi (call $gl32 (i32.add (global.get $esp) (i32.const 12))))
+        (global.set $edi (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+        (global.set $ebp (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
         (return)))
 
     ;; DialogBoxParamA continuation — dialog proc returned, pump next message or finish
@@ -605,6 +623,11 @@
             (return)))
         ;; Modal complete — splice the API call back together.
         (global.set $eax (global.get $modal_result))
+        (global.set $ebx (global.get $modal_saved_ebx))
+        (global.set $esi (global.get $modal_saved_esi))
+        (global.set $edi (global.get $modal_saved_edi))
+        (global.set $ebp (global.get $modal_saved_ebp))
+        (global.set $modal_restore_pending (i32.const 0))
         (global.set $eip (global.get $modal_ret_addr))
         (global.set $esp (i32.add (global.get $modal_saved_esp) (global.get $modal_esp_adjust)))
         (global.set $yield_reason (i32.const 0))
@@ -743,6 +766,13 @@
     (local.set $arg3 (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
     (local.set $arg4 (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
 
+    ;; Win32 APIs use stdcall/cdecl ABIs and must preserve the x86 nonvolatile
+    ;; registers even when a handler recursively dispatches window messages.
+    (local.set $saved_ebx (global.get $ebx))
+    (local.set $saved_esi (global.get $esi))
+    (local.set $saved_edi (global.get $edi))
+    (local.set $saved_ebp (global.get $ebp))
+
     ;; Hot message pumps exercise PeekMessage often enough that a direct path
     ;; avoids large br_table edge cases and keeps idle loops from corrupting ESP.
     (if (i32.eq (local.get $api_id) (i32.const 490))
@@ -750,6 +780,10 @@
         (call $handle_PeekMessageA
           (local.get $arg0) (local.get $arg1) (local.get $arg2)
           (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (global.set $ebx (local.get $saved_ebx))
+        (global.set $esi (local.get $saved_esi))
+        (global.set $edi (local.get $saved_edi))
+        (global.set $ebp (local.get $saved_ebp))
         (call $host_log_api_exit)
         (return)))
     (if (i32.eq (local.get $api_id) (i32.const 491))
@@ -757,11 +791,58 @@
         (call $handle_PeekMessageW
           (local.get $arg0) (local.get $arg1) (local.get $arg2)
           (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (global.set $ebx (local.get $saved_ebx))
+        (global.set $esi (local.get $saved_esi))
+        (global.set $edi (local.get $saved_edi))
+        (global.set $ebp (local.get $saved_ebp))
         (call $host_log_api_exit)
+        (return)))
+    ;; Keep the message-aware wait out of the generated page dispatch. Its
+    ;; private-pump semantics require a completed stdcall frame before the
+    ;; slice yields, just like the hot PeekMessage paths above.
+    (if (i32.eq (local.get $api_id) (i32.const 470))
+      (then
+        (local.set $arg4 (i32.const 0xFFFF))
+        (if (local.get $arg0)
+          (then
+            (local.set $arg4 (call $host_wait_multiple
+              (local.get $arg0) (call $g2w (local.get $arg1))
+              (local.get $arg2) (i32.const 0)))))
+        (if (i32.and
+              (i32.ne (local.get $arg4) (i32.const 0xFFFF))
+              (i32.ne (local.get $arg4) (i32.const 0x102)))
+          (then (global.set $eax (local.get $arg4)))
+          (else
+            (global.set $eax
+              (select
+                (local.get $arg0)
+                (i32.const 0x102)
+                (i32.or
+                  (i32.or (global.get $quit_flag)
+                          (i32.gt_u (global.get $post_queue_count) (i32.const 0)))
+                  (i32.or
+                    (i32.or (global.get $paint_pending) (global.get $nc_flags_count))
+                    (call $paint_flag_any)))))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (global.set $yield_flag (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (global.set $ebx (local.get $saved_ebx))
+        (global.set $esi (local.get $saved_esi))
+        (global.set $edi (local.get $saved_edi))
+        (global.set $ebp (local.get $saved_ebp))
+        (call $host_log_api_exit)
+        ;; This direct handler deliberately completes its own stdcall frame,
+        ;; so resume at the return address instead of relying on thunk auto-pop.
+        (global.set $eip (call $gl32 (i32.sub (global.get $esp) (i32.const 24))))
         (return)))
 
     ;; Delegate to generated br_table
     (call $dispatch_api_table (local.get $api_id) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+
+    (global.set $ebx (local.get $saved_ebx))
+    (global.set $esi (local.get $saved_esi))
+    (global.set $edi (local.get $saved_edi))
+    (global.set $ebp (local.get $saved_ebp))
 
     ;; Post-handler ESP hook for --esp-delta audit
     (call $host_log_api_exit)

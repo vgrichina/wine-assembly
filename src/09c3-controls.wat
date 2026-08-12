@@ -358,6 +358,10 @@
     ;; Class 21 = Toolbar (ToolbarWindow32)
     (if (i32.eq (local.get $class) (i32.const 21))
       (then (return (call $toolbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 22 = StatusBar (msctls_statusbar32). The renderer owns its
+    ;; fallback surface; WAT still owns HWND/parent/geometry bookkeeping.
+    (if (i32.eq (local.get $class) (i32.const 22))
+      (then (return (i32.const 0))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -1927,7 +1931,7 @@
   ;; 1-based in Win32.
   (func $opendlg_populate_filter_combo (param $cb i32) (param $ofn i32)
     (local $ofn_w i32) (local $filter_g i32) (local $p_g i32) (local $p_w i32)
-    (local $slen i32) (local $count i32) (local $sel i32)
+    (local $slen i32) (local $count i32) (local $sel i32) (local $label_g i32)
     (if (i32.or (i32.eqz (local.get $cb)) (i32.eqz (local.get $ofn)))
       (then (return)))
     (local.set $ofn_w (call $g2w (local.get $ofn)))
@@ -1938,18 +1942,43 @@
     (local.set $count (i32.const 0))
     (block $done (loop $scan
       ;; Empty display string marks the double-NUL terminator.
-      (br_if $done (i32.eqz (i32.load8_u (local.get $p_w))))
-      (drop (call $wnd_send_message (local.get $cb) (i32.const 0x0143) ;; CB_ADDSTRING
-              (i32.const 0) (local.get $p_g)))
+      (br_if $done
+        (if (result i32) (global.get $opendlg_wide)
+          (then (i32.eqz (i32.load16_u (local.get $p_w))))
+          (else (i32.eqz (i32.load8_u (local.get $p_w))))))
+      (if (global.get $opendlg_wide)
+        (then
+          (local.set $slen (call $guest_wcslen (local.get $p_g)))
+          (local.set $label_g (call $heap_alloc (i32.add (local.get $slen) (i32.const 1))))
+          (drop (call $wide_to_ansi (local.get $p_g) (local.get $label_g)
+                  (i32.add (local.get $slen) (i32.const 1))))
+          (drop (call $wnd_send_message (local.get $cb) (i32.const 0x0143)
+                  (i32.const 0) (local.get $label_g)))
+          (call $heap_free (local.get $label_g)))
+        (else
+          (drop (call $wnd_send_message (local.get $cb) (i32.const 0x0143)
+                  (i32.const 0) (local.get $p_g)))))
       (local.set $count (i32.add (local.get $count) (i32.const 1)))
       ;; Skip display string.
-      (local.set $slen (call $strlen (local.get $p_w)))
-      (local.set $p_g (i32.add (local.get $p_g) (i32.add (local.get $slen) (i32.const 1))))
+      (local.set $slen
+        (if (result i32) (global.get $opendlg_wide)
+          (then (call $guest_wcslen (local.get $p_g)))
+          (else (call $strlen (local.get $p_w)))))
+      (local.set $p_g (i32.add (local.get $p_g)
+        (if (result i32) (global.get $opendlg_wide)
+          (then (i32.shl (i32.add (local.get $slen) (i32.const 1)) (i32.const 1)))
+          (else (i32.add (local.get $slen) (i32.const 1))))))
       (local.set $p_w (call $g2w (local.get $p_g)))
       ;; Skip pattern string. Malformed filter lists with a missing pattern end
       ;; at the same double-NUL sentinel on the next loop.
-      (local.set $slen (call $strlen (local.get $p_w)))
-      (local.set $p_g (i32.add (local.get $p_g) (i32.add (local.get $slen) (i32.const 1))))
+      (local.set $slen
+        (if (result i32) (global.get $opendlg_wide)
+          (then (call $guest_wcslen (local.get $p_g)))
+          (else (call $strlen (local.get $p_w)))))
+      (local.set $p_g (i32.add (local.get $p_g)
+        (if (result i32) (global.get $opendlg_wide)
+          (then (i32.shl (i32.add (local.get $slen) (i32.const 1)) (i32.const 1)))
+          (else (i32.add (local.get $slen) (i32.const 1))))))
       (local.set $p_w (call $g2w (local.get $p_g)))
       (br $scan)))
     (if (i32.eqz (local.get $count)) (then (return)))
@@ -2020,10 +2049,19 @@
                   (then
                     (local.set $text_src_w (call $g2w (i32.load (local.get $edit_sw))))
                     (if (local.get $text_len)
-                      (then (call $memcpy (local.get $dst_w)
-                                          (local.get $text_src_w)
-                                          (local.get $text_len))))))
-                (i32.store8 (i32.add (local.get $dst_w) (local.get $text_len)) (i32.const 0))))))
+                      (then
+                        (if (global.get $opendlg_wide)
+                          (then
+                            (drop (call $ansi_to_wide
+                              (i32.load (local.get $edit_sw)) (local.get $dst_g)
+                              (local.get $max_len))))
+                          (else
+                            (call $memcpy (local.get $dst_w)
+                              (local.get $text_src_w) (local.get $text_len))))))))
+                (if (global.get $opendlg_wide)
+                  (then (i32.store16 (i32.add (local.get $dst_w)
+                          (i32.shl (local.get $text_len) (i32.const 1))) (i32.const 0)))
+                  (else (i32.store8 (i32.add (local.get $dst_w) (local.get $text_len)) (i32.const 0))))))))
         (local.set $filter_cb (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x445)))
         (if (local.get $filter_cb)
           (then
@@ -6006,8 +6044,12 @@
         (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
 
-    ;; TB_ADDBUTTONSA (WM_USER+20): append wParam TBBUTTON records.
-    (if (i32.eq (local.get $msg) (i32.const 0x0414))
+    ;; TB_ADDBUTTONSA / TB_ADDBUTTONSW: TBBUTTON itself contains no encoded
+    ;; text, so both messages share the same record-copy path. Media Player 32
+    ;; uses the Unicode message even for image-only buttons.
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0414))
+          (i32.eq (local.get $msg) (i32.const 0x0444)))
       (then
         (if (i32.gt_u (local.get $wParam) (i32.const 0))
           (then
@@ -6043,8 +6085,12 @@
         (call $toolbar_autosize (local.get $hwnd))
         (return (i32.const 1))))
 
-    ;; TB_INSERTBUTTONA (WM_USER+21): insert one TBBUTTON at wParam.
-    (if (i32.eq (local.get $msg) (i32.const 0x0415))
+    ;; TB_INSERTBUTTONA/W: insert one TBBUTTON at wParam. TBBUTTON itself is
+    ;; encoding-neutral; only optional text pointers differ, which this control
+    ;; does not dereference while copying the record.
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0415))
+          (i32.eq (local.get $msg) (i32.const 0x0443)))
       (then
         (local.set $count (i32.load (local.get $sw)))
         (local.set $idx (local.get $wParam))
@@ -6452,12 +6498,20 @@
                         (i32.const 0x04)))))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
-              (drop (call $host_gdi_draw_edge (local.get $hdc)
-                      (local.get $left) (local.get $top)
-                      (i32.add (local.get $left) (local.get $bw))
-                      (i32.add (local.get $top) (local.get $bh))
-                      (select (i32.const 0x0A) (i32.const 0x05) (local.get $hit))
-                      (i32.const 0x0F))) ;; EDGE_RAISED/SUNKEN | BF_RECT
+              ;; TBSTYLE_FLAT keeps idle/disabled button faces borderless.
+              ;; The Win98 common control only raises a flat button while it
+              ;; is hot and sinks it while pressed/checked; we do not model a
+              ;; separate hot state yet, so draw the edge only for the latter.
+              (if (i32.or
+                    (local.get $hit)
+                    (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0800))))
+                (then
+                  (drop (call $host_gdi_draw_edge (local.get $hdc)
+                          (local.get $left) (local.get $top)
+                          (i32.add (local.get $left) (local.get $bw))
+                          (i32.add (local.get $top) (local.get $bh))
+                          (select (i32.const 0x0A) (i32.const 0x05) (local.get $hit))
+                          (i32.const 0x0F))))) ;; EDGE_RAISED/SUNKEN | BF_RECT
               (local.set $drawn (i32.const 0))
               (local.set $bmp (i32.load offset=48 (local.get $sw)))
               (if (i32.and
@@ -6507,43 +6561,25 @@
                         (then
                           (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
                           (local.set $drawn
-                            (call $host_gdi_transparent_blt
-                              (local.get $hdc)
-                              (local.get $bmp_dst_x) (local.get $bmp_dst_y)
-                              (local.get $bmp_draw_w) (local.get $bmp_draw_h)
-                              (local.get $memdc)
-                              (local.get $bmp_src_x) (i32.const 0)
-                              (i32.const 0x00C0C0C0))) ;; RGB(192,192,192) toolbar color key
+                            (if (result i32)
+                              (i32.and (local.get $state_byte) (i32.const 0x04))
+                              (then
+                                (call $host_gdi_transparent_blt
+                                  (local.get $hdc)
+                                  (local.get $bmp_dst_x) (local.get $bmp_dst_y)
+                                  (local.get $bmp_draw_w) (local.get $bmp_draw_h)
+                                  (local.get $memdc)
+                                  (local.get $bmp_src_x) (i32.const 0)
+                                  (i32.const 0x00C0C0C0)))
+                              (else
+                                (call $host_gdi_disabled_blt
+                                  (local.get $hdc)
+                                  (local.get $bmp_dst_x) (local.get $bmp_dst_y)
+                                  (local.get $bmp_draw_w) (local.get $bmp_draw_h)
+                                  (local.get $memdc)
+                                  (local.get $bmp_src_x) (i32.const 0)
+                                  (i32.const 0x00C0C0C0))))) ;; RGB(192,192,192) toolbar color key
                           (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
-              (if (i32.and
-                    (local.get $drawn)
-                    (i32.eqz (i32.and (local.get $state_byte) (i32.const 0x04))))
-                (then
-                  ;; No disabled image-list strip yet: dim the successfully
-                  ;; drawn app-strip tile with a BTNFACE crosshatch so disabled
-                  ;; toolbar commands no longer look enabled.
-                  (local.set $y (i32.const 0))
-                  (block $disable_rows_done (loop $disable_rows
-                    (br_if $disable_rows_done (i32.ge_s (local.get $y) (local.get $bmp_draw_h)))
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
-                      (local.get $bmp_dst_x)
-                      (i32.add (local.get $bmp_dst_y) (local.get $y))
-                      (i32.add (local.get $bmp_dst_x) (local.get $bmp_draw_w))
-                      (i32.add (i32.add (local.get $bmp_dst_y) (local.get $y)) (i32.const 1))
-                      (i32.const 0x30011)))
-                    (local.set $y (i32.add (local.get $y) (i32.const 2)))
-                    (br $disable_rows)))
-                  (local.set $x (i32.const 0))
-                  (block $disable_cols_done (loop $disable_cols
-                    (br_if $disable_cols_done (i32.ge_s (local.get $x) (local.get $bmp_draw_w)))
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
-                      (i32.add (local.get $bmp_dst_x) (local.get $x))
-                      (local.get $bmp_dst_y)
-                      (i32.add (i32.add (local.get $bmp_dst_x) (local.get $x)) (i32.const 1))
-                      (i32.add (local.get $bmp_dst_y) (local.get $bmp_draw_h))
-                      (i32.const 0x30011)))
-                    (local.set $x (i32.add (local.get $x) (i32.const 2)))
-                    (br $disable_cols)))))
               (if (i32.eqz (local.get $drawn))
                 (then
                   ;; Fallback glyph: a small dark mark inside each button, so
@@ -6865,6 +6901,7 @@
     (local $style i32) (local $vert i32) (local $range i32) (local $track_len i32)
     (local $thumb_len i32) (local $thumb_pos i32) (local $cx i32) (local $cy i32)
     (local $coord i32) (local $long_dim i32) (local $parent i32) (local $scroll_msg i32)
+    (local $i i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state))
@@ -7100,6 +7137,26 @@
                     (i32.const 4) (i32.sub (local.get $cy) (i32.const 2))
                     (i32.sub (local.get $w) (i32.const 4)) (i32.add (local.get $cy) (i32.const 2))
                     (i32.const 0x0A) (i32.const 0x0F)))
+            ;; TBS_AUTOTICKS is the horizontal default. The Win98 control
+            ;; chooses a readable interval as the range grows; ten divisions
+            ;; reproduce that automatic density for Media Player's time line.
+            (if (i32.eqz (i32.and (local.get $style) (i32.const 0x0010)))
+              (then
+                (local.set $i (i32.const 0))
+                (block $ticks_done (loop $ticks
+                  (br_if $ticks_done (i32.gt_u (local.get $i) (i32.const 10)))
+                  (local.set $cx
+                    (i32.add (i32.const 4)
+                      (i32.div_u
+                        (i32.mul (i32.sub (local.get $w) (i32.const 8)) (local.get $i))
+                        (i32.const 10))))
+                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (local.get $cx) (i32.add (local.get $cy) (i32.const 9))
+                    (i32.add (local.get $cx) (i32.const 1))
+                    (i32.add (local.get $cy) (i32.const 11))
+                    (i32.const 0x30014)))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $ticks)))))
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (local.get $thumb_pos) (i32.sub (local.get $cy) (i32.const 8))
                     (i32.add (local.get $thumb_pos) (local.get $thumb_len)) (i32.add (local.get $cy) (i32.const 8))
@@ -11190,12 +11247,27 @@
   ;;     Called by the dialog's wndproc on OK or Cancel/X. Records the
   ;;     result, tears the dialog down, and clears $modal_dlg_hwnd which
   ;;     unblocks the CACA0006 pump on the next interpreter iteration.
+  (func $modal_capture_nonvolatile
+    (global.set $modal_restore_pending (i32.const 1))
+    (global.set $modal_saved_ebx (global.get $ebx))
+    (global.set $modal_saved_esi (global.get $esi))
+    (global.set $modal_saved_edi (global.get $edi))
+    (global.set $modal_saved_ebp (global.get $ebp)))
+
   (func $modal_begin (param $dlg i32) (param $esp_adjust i32)
     (global.set $modal_dlg_hwnd  (local.get $dlg))
     (global.set $modal_result    (i32.const 0))
     (global.set $modal_ret_addr  (call $gl32 (global.get $esp)))
     (global.set $modal_saved_esp (global.get $esp))
     (global.set $modal_esp_adjust (local.get $esp_adjust))
+    ;; Direct exported test helpers may call modal_begin without entering a
+    ;; guest ABI handler. Do not restore stale register state in that case.
+    (if (i32.eqz (global.get $modal_restore_pending))
+      (then
+        (global.set $modal_saved_ebx (global.get $ebx))
+        (global.set $modal_saved_esi (global.get $esi))
+        (global.set $modal_saved_edi (global.get $edi))
+        (global.set $modal_saved_ebp (global.get $ebp))))
     (global.set $eip             (global.get $modal_loop_thunk))
     (global.set $yield_flag      (i32.const 1))
     (global.set $yield_reason    (i32.const 6))

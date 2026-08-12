@@ -7139,15 +7139,35 @@
     "id": 846,
     "name": "wsprintfA",
     "nargs": -1,
-    "convention": "stdcall",
-    "hash": 2025026003
+    "convention": "cdecl",
+    "hash": 2025026003,
+    "args": [
+      {
+        "name": "buffer",
+        "type": "LPSTR"
+      },
+      {
+        "name": "format",
+        "type": "LPCSTR"
+      }
+    ]
   },
   {
     "id": 847,
     "name": "wsprintfW",
     "nargs": -1,
-    "convention": "stdcall",
-    "hash": 2394133621
+    "convention": "cdecl",
+    "hash": 2394133621,
+    "args": [
+      {
+        "name": "buffer",
+        "type": "LPWSTR"
+      },
+      {
+        "name": "format",
+        "type": "LPCWSTR"
+      }
+    ]
   },
   {
     "id": 848,
@@ -16036,5 +16056,52 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1387901856
+  },
+  {
+    "id": 2088,
+    "name": "GetProfileStringW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 386906578
+  },
+  {
+    "id": 2089,
+    "name": "GetOpenFileNameW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 6453235
+  },
+  {
+    "id": 2090,
+    "name": "mciSendStringW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2394451760,
+    "args": [
+      {
+        "name": "command",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "returnBuffer",
+        "type": "LPWSTR"
+      },
+      {
+        "name": "returnLength",
+        "type": "UINT"
+      },
+      {
+        "name": "callback",
+        "type": "HWND"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2091,
+    "name": "LoadImageW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2998850235
   }
 ]

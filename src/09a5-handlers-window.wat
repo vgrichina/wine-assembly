@@ -208,6 +208,16 @@
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
     ;; Register hwnd→wndproc in window table (look up from class table by className)
     (local.set $tmp (call $class_table_lookup (call $class_name_key (local.get $arg1))))
+    ;; A registered DLL trackbar is authoritative. Without one, do not let the
+    ;; rotating-class fallback attach an unrelated EXE wndproc to the common
+    ;; control before the WAT-native classifier below can claim it.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x7463736d)) ;; "msct"
+            (i32.eqz (call $address_in_loaded_dll (local.get $tmp)))))
+      (then (local.set $tmp (i32.const 0))))
     ;; Prefer the WAT-native ListView for SysListView32 even if comctl32.dll has
     ;; registered its own class. The real Win98 listview code is large and can
     ;; spend unbounded time rebuilding item arrays during startup; our
@@ -244,11 +254,16 @@
             (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                     (i32.const 0x73706974)))) ;; "tips"
       (then (local.set $tmp (i32.const 0))))
-    ;; Prefer the WAT-native ToolbarWindow32 default proc. MFC control bars
-    ;; subclass it and chain TB_* messages to the previous wndproc; the guest
-    ;; comctl32 toolbar proc currently reports no usable button/layout state,
-    ;; collapsing WordPad's toolbar to an 8px border strip.
+    ;; Prefer the WAT-native ToolbarWindow32 default proc for MFC control bars.
+    ;; MFC subclasses it through the active CBT hook and chains TB_* messages
+    ;; to the previous wndproc; the guest comctl32 proc does not yet provide
+    ;; usable MFC layout state and collapses WordPad's toolbar. An un-subclassed
+    ;; native CreateToolbarEx must keep comctl32's registered wndproc, however:
+    ;; it stores private state at GetWindowLong(hwnd, 0) and crashes if USER
+    ;; substitutes the WAT state model underneath it (Media Player 32).
     (if (i32.and
+          (global.get $cbt_hook_proc)
+          (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
             (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
@@ -257,7 +272,7 @@
               (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                       (i32.const 0x77726162)) ;; "barw"
               (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
-                      (i32.const 0x6f646e69))))) ;; "indo"
+                      (i32.const 0x6f646e69)))))) ;; "indo"
       (then (local.set $tmp (i32.const 0))))
     ;; If lookup failed and this isn't the first window, scan class table for an
     ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
@@ -286,7 +301,7 @@
         ;;        SCROLLBAR=0x0084, COMBOBOX=0x0085.
         ;; ctrl class IDs (see $control_wndproc_dispatch):
         ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7,
-        ;;   TreeView=8, ListView=18, Tooltip=20, Toolbar=21.
+        ;;   TreeView=8, ListView=18, TrackBar=19, Tooltip=20, Toolbar=21.
         (local.set $detected_class (i32.const 0))
         (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
         (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
@@ -347,6 +362,21 @@
                   (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
                           (i32.const 0x76747369)))
               (then (local.set $detected_class (i32.const 18))))
+            ;; "msctls_trackbar32" / "Slider1" -> class 19 (TrackBar).
+            ;; Prefix matching also accepts the Win9x A/W common-control aliases.
+            (if (i32.or
+                  (i32.and
+                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x7463736d)) ;; "msct"
+                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x747f736c))) ;; "ls_t" after ASCII lowercase mask
+                  (i32.and
+                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                            (i32.const 0x64696c73)) ;; "slid"
+                    (i32.eq
+                      (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
+                      (i32.const 0x7265)))) ;; "er"
+              (then (local.set $detected_class (i32.const 19))))
             ;; "tooltips_class32" → class 20 (Tooltip)
             ;; LE dwords: "tool"=0x6c6f6f74, "tips"=0x73706974
             (if (i32.and
@@ -975,6 +1005,7 @@
   ;; (or a test driver) clicks a button.
   (func $handle_MessageBoxA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32) (local $cap_wa i32)
+    (call $modal_capture_nonvolatile)
     ;; Log via existing host hook so traces still show the text.
     (drop (call $host_message_box (local.get $arg0)
       (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
@@ -1068,8 +1099,10 @@
         ;; capture/exit. Win98 native child controls are ready to repaint as
         ;; part of showing the window; drain our WAT-native control queue here
         ;; so visible statics/progress/list controls don't remain blank.
-        (drop (call $paint_drain_native_control_paints))
-        (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
+        (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
+          (then
+            (drop (call $paint_drain_native_control_paints))
+            (drop (call $paint_flush_shown_native_children (local.get $arg0)))))))
     ;; SW_MAXIMIZE (cmd=3): host already resized. Queue the actual
     ;; maximized move/size pair before paint and discard the stale
     ;; create-time pending size from CW_USEDEFAULT.

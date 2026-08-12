@@ -305,6 +305,10 @@
       (then (return (i32.const 1)))) ;; syslistview*
     (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c6f6f74))
       (then (return (i32.const 1)))) ;; tool*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x7463736d))
+      (then (return (i32.const 1)))) ;; msct*
+    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x64696c73))
+      (then (return (i32.const 1)))) ;; slid*
     (i32.const 0))
 
   ;; Identify the two pre-msftedit RichEdit class contracts used by Win9x

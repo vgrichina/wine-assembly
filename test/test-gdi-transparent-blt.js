@@ -30,12 +30,14 @@ function setBits(base, x, r, g, b) {
   mem[off + 2] = r;
 }
 
-function pixelsOf(bitmap) {
-  const data = bitmap.canvas.getContext('2d').getImageData(0, 0, width, height).data;
+function pixelsOf(bitmap, w = width, h = height) {
+  const data = bitmap.canvas.getContext('2d').getImageData(0, 0, w, h).data;
   const out = [];
-  for (let x = 0; x < width; x++) {
-    const i = x * 4;
-    out.push([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      out.push([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+    }
   }
   return out;
 }
@@ -83,3 +85,28 @@ assert.deepStrictEqual(pixelsOf(gdi._gdiObjects[dstBitmap]), [
 ]);
 
 console.log('PASS  TransparentBlt color key preserves destination pixels');
+
+const disabledBitmap = host.gdi_create_compat_bitmap(0, 4, 2);
+const disabledDC = host.gdi_create_compat_dc(0);
+host.gdi_select_object(disabledDC, disabledBitmap);
+const disabledCanvas = gdi._gdiObjects[disabledBitmap].canvas;
+const disabledCtx = disabledCanvas.getContext('2d');
+disabledCtx.fillStyle = 'rgb(192,192,192)';
+disabledCtx.fillRect(0, 0, 4, 2);
+
+assert.strictEqual(host.gdi_disabled_blt(
+  disabledDC,
+  0, 0,
+  width, height,
+  srcDC,
+  0, 0,
+  0x00FF00FF,
+), 1, 'disabled blit should succeed');
+assert.deepStrictEqual(pixelsOf(gdi._gdiObjects[disabledBitmap], 4, 2), [
+  [128, 128, 128, 255], [192, 192, 192, 255],
+  [128, 128, 128, 255], [192, 192, 192, 255],
+  [192, 192, 192, 255], [255, 255, 255, 255],
+  [192, 192, 192, 255], [255, 255, 255, 255],
+]);
+
+console.log('PASS  disabled blit embosses non-key mask pixels');

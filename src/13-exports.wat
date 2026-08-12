@@ -364,6 +364,8 @@
         (then (global.set $dialog_cbt_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0029))
         (then (global.set $createwnd_nccreate_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA002A))
+        (then (global.set $setfocus_ret_thunk (local.get $guest))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
@@ -834,6 +836,16 @@
   (func (export "test_call_GetClassInfoW") (param $name i32) (param $out i32) (result i32)
     (call $handle_GetClassInfoW (i32.const 0) (local.get $name) (local.get $out)
       (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
+  ;; Direct formatter hook for Unicode/Win32-format regression tests.
+  (func (export "test_wsprintf_w")
+    (param $out i32) (param $fmt i32) (param $args i32) (result i32)
+    (call $wsprintf_impl_w (local.get $out) (local.get $fmt) (local.get $args)))
+  (func (export "test_call_SHGetFileInfoW")
+    (param $path i32) (param $out i32) (param $size i32) (param $flags i32) (result i32)
+    (call $handle_SHGetFileInfoW (local.get $path) (i32.const 0) (local.get $out)
+      (local.get $size) (local.get $flags) (i32.const 0))
     (global.get $eax))
 
   ;; ============================================================

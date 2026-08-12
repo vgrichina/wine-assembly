@@ -223,6 +223,8 @@
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop)
   (import "host" "gdi_transparent_blt" (func $host_gdi_transparent_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_transparent_blt(dstDC, dx, dy, w, h, srcDC, sx, sy, colorKey)
+  (import "host" "gdi_disabled_blt" (func $host_gdi_disabled_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_disabled_blt(dstDC, dx, dy, w, h, srcDC, sx, sy, colorKey)
 
   (import "host" "gdi_stretch_blt" (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop)
@@ -640,6 +642,8 @@
   (data (i32.const 0x3234) "Tick\00")
   (data (i32.const 0x323C) "Pause\00")
   (data (i32.const 0x3244) "SetRenderTimeout\00")
+  (data (i32.const 0x3260) "msctls_statusbar32\00")
+  (data (i32.const 0x3274) "ToolbarWindow32\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -651,7 +655,7 @@
   ;; 0x00003100  128B    CLASS_NAME_STRINGS (built-in control class names)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
   ;; 0x00003900  ~1.75KB Free
-  ;; 0x00004000  12KB    API dispatch hash table (safe from guest writes via g2w)
+  ;; 0x00004000  12KB    Free (former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -680,8 +684,10 @@
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
-  ;; 0x00011D80  640B    Free (up to GUEST_BASE)
+  ;; 0x00011D80  384B    Free (up to HIT_COUNT_BASE)
   ;; --- High WAT-private tables ---
+  ;; 0x07E00000 32KB     API dispatch hash table
+  ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -746,8 +752,8 @@
   ;; T1's thread cache region. Updated in $init_thread per tid.
   (global $THREAD_END   (mut i32) (i32.const 0x05400000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x07152000))
-  (global $API_HASH_TABLE i32 (i32.const 0x00004000))
-  (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00003000))
+  (global $API_HASH_TABLE i32 (i32.const 0x07E00000))
+  (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00008000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
   ;; All four tables live in the 0x7000..0xC000 region; the old 0x2000..0x4000
   ;; layout is now unused and free for future scratch use.
@@ -1113,6 +1119,7 @@
   (global $child_create_ret_thunk (mut i32) (i32.const 0)) ;; Child WM_CREATE returned → hand hwnd back (CACA0027)
   (global $dialog_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Dialog CBT hook → WM_INITDIALOG/return (CACA0028)
   (global $createwnd_nccreate_ret_thunk (mut i32) (i32.const 0)) ;; WM_NCCREATE returned → dispatch WM_CREATE (CACA0029)
+  (global $setfocus_ret_thunk (mut i32) (i32.const 0)) ;; SetFocus WM_SETFOCUS return (CACA002A)
   (global $child_cbt_saved_hwnd (mut i32) (i32.const 0))
   (global $child_cbt_saved_ret  (mut i32) (i32.const 0))
   (global $dialog_cbt_saved_hwnd (mut i32) (i32.const 0))
@@ -1389,6 +1396,13 @@
   (global $modal_ret_addr  (mut i32) (i32.const 0))  ;; saved EIP to return to
   (global $modal_saved_esp (mut i32) (i32.const 0))  ;; saved ESP at API entry
   (global $modal_esp_adjust (mut i32) (i32.const 0)) ;; bytes to add to ESP on return
+  ;; WAT dialog input is dispatched while the synchronous API call is parked.
+  ;; Preserve the Win32 callee-saved register set across that nested work.
+  (global $modal_saved_ebx (mut i32) (i32.const 0))
+  (global $modal_saved_esi (mut i32) (i32.const 0))
+  (global $modal_saved_edi (mut i32) (i32.const 0))
+  (global $modal_saved_ebp (mut i32) (i32.const 0))
+  (global $modal_restore_pending (mut i32) (i32.const 0))
   (global $modal_loop_thunk (mut i32) (i32.const 0)) ;; CACA0006 thunk addr
   (global $ddenum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0007 DDEnumerate callback return
   ;; D3D EnumDevices multi-device iteration state (CACA000B)
@@ -1403,6 +1417,7 @@
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir
   ;; which frees the old buffer first.
   (global $opendlg_current_dir (mut i32) (i32.const 0))
+  (global $opendlg_wide (mut i32) (i32.const 0)) ;; current OPENFILENAME is W
 
   ;; STEP 6 — find/replace dialog hwnd tracking. Set when $handle_FindTextA
   ;; calls $create_findreplace_dialog. Test bridge queries these via the
@@ -1468,8 +1483,8 @@
   (global $trace_eip_hi (mut i32) (i32.const 0))
 
   ;; 1KB scratch for UTF-16→ANSI conversion in Unicode text handlers (ExtTextOutW,
-  ;; TextOutW, etc.). Below GUEST_BASE so guest cannot reach via image-relative pointers.
-  (global $TEXT_SCRATCH i32 (i32.const 0x00011B00))
+  ;; TextOutW, etc.). WAT-private so guest writes cannot corrupt it.
+  (global $TEXT_SCRATCH i32 (i32.const 0x07E08000))
   (global $TEXT_SCRATCH_SIZE i32 (i32.const 0x00000400))
 
   ;; EIP hit counters: passive per-block counter at 16 slots (HIT_COUNT_BASE=0x11F00,

@@ -413,6 +413,25 @@
       (br $l)))
     (i32.const -1))
 
+  ;; True when an address belongs to the image range of a loaded guest DLL.
+  ;; Registered common-control wndprocs use this to distinguish a real DLL
+  ;; class implementation from USER's EXE-range fallback guesses.
+  (func $address_in_loaded_dll (param $addr i32) (result i32)
+    (local $i i32) (local $rec i32) (local $base i32) (local $size i32)
+    (block $no (loop $scan
+      (br_if $no (i32.ge_u (local.get $i) (global.get $dll_count)))
+      (local.set $rec (i32.add (global.get $DLL_TABLE)
+        (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $base (i32.load (local.get $rec)))
+      (local.set $size (i32.load offset=4 (local.get $rec)))
+      (if (i32.and
+            (i32.ge_u (local.get $addr) (local.get $base))
+            (i32.lt_u (local.get $addr) (i32.add (local.get $base) (local.get $size))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; Switch the resource-lookup context to the given hInstance (HMODULE).
   ;; 0 or the main EXE's image_base → main EXE (ctx cleared, fallback applies).
   ;; A DLL's load_addr → that DLL's rsrc dir. Unknown hInstance → main EXE.

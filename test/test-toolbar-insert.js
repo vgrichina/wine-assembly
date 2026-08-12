@@ -29,7 +29,9 @@ const TB_SETSTATE = 0x0411;
 const TB_GETSTATE = 0x0412;
 const TB_BUTTONSTRUCTSIZE = 0x041E;
 const TB_ADDBUTTONSA = 0x0414;
+const TB_ADDBUTTONSW = 0x0444;
 const TB_INSERTBUTTONA = 0x0415;
+const TB_INSERTBUTTONW = 0x0443;
 const TB_DELETEBUTTON = 0x0416;
 const TB_GETBUTTON = 0x0417;
 const TB_BUTTONCOUNT = 0x0418;
@@ -229,9 +231,26 @@ async function main() {
   check('TB_BUTTONCOUNT is 3 after add',
     e.send_message(toolbar, TB_BUTTONCOUNT, 0, 0) === 3);
 
+  const wide = allocButtons([{ image: 3, command: 104 }]);
+  check('TB_ADDBUTTONSW shares the image-only TBBUTTON copy path',
+    e.send_message(toolbar, TB_ADDBUTTONSW, 1, wide) === 1 &&
+      e.send_message(toolbar, TB_BUTTONCOUNT, 0, 0) === 4 &&
+      e.send_message(toolbar, TB_COMMANDTOINDEX, 104, 0) === 3);
+  check('TB_DELETEBUTTON removes the wide-added fixture',
+    e.send_message(toolbar, TB_DELETEBUTTON, 3, 0) === 1 &&
+      e.send_message(toolbar, TB_BUTTONCOUNT, 0, 0) === 3);
+
   const inserted = allocButtons([{ image: 9, command: 199 }]);
   check('TB_INSERTBUTTONA inserts in the middle',
     e.send_message(toolbar, TB_INSERTBUTTONA, 1, inserted) === 1);
+
+  writeButtonAt(wa(inserted), 0, 12, 612, 0x04, 0x00);
+  check('TB_INSERTBUTTONW aliases encoding-neutral record insertion',
+    e.send_message(toolbar, TB_INSERTBUTTONW, 2, inserted) === 1);
+  check('TB_INSERTBUTTONW preserves the inserted command',
+    readButton(2).command === 612);
+  check('TB_DELETEBUTTON removes the wide-inserted fixture',
+    e.send_message(toolbar, TB_DELETEBUTTON, 2, 0) === 1);
   check('TB_BUTTONCOUNT is 4 after insert',
     e.send_message(toolbar, TB_BUTTONCOUNT, 0, 0) === 4);
   check('TB_COMMANDTOINDEX maps inserted command',

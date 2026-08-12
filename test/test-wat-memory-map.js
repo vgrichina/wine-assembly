@@ -73,6 +73,7 @@ const regions = collectRegions(globals);
 const requiredRegions = [
   'UPDATE_RECT',
   'UPDATE_FLAGS',
+  'API_HASH_TABLE',
   'WND_BG_BRUSH_TABLE',
   'WND_RECORDS',
   'CONTROL_TABLE',
@@ -131,5 +132,11 @@ const hostPaletteMatch = hostImportsSource.match(/\bconst\s+GDI_PALETTE_TABLE\s*
 assert(hostPaletteMatch, 'host-imports.js must define GDI_PALETTE_TABLE');
 assert.strictEqual(parseConstI32(hostPaletteMatch[1]), paletteTable.value,
   'host-imports.js GDI_PALETTE_TABLE must match the WAT global');
+
+const apiTable = JSON.parse(fs.readFileSync(path.join(SRC, 'api_table.json'), 'utf8'));
+assert(apiTable.some(api => api.name === 'GetProfileStringW' && api.nargs === 5),
+  'api_table.json must retain GetProfileStringW for Media Player device discovery');
+assert(apiTable.length * 8 <= globals.get('API_HASH_TABLE_SIZE').value,
+  'api_table.json exceeds the declared API hash table memory region');
 
 console.log(`test-wat-memory-map: ok (${regions.length} fixed regions)`);

@@ -226,6 +226,8 @@ assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API source
 assert(indexHtml.includes('host.js?v=184'), 'web host should cache-bust host.js after Safari-safe Paint WAT changes');
 assert(hostJs.includes("SOURCE_VERSION = '184'"), 'host.js should define the current WAT/API cache-buster');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
+assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
+  'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
 assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');
