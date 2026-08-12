@@ -3301,10 +3301,12 @@
   ;; enough for RegEdit/installer details panes to become stateful and for the
   ;; shared Win98 scrollbar helpers to be reused here.
   ;;
-  ;; ListViewState (56 bytes, allocated in WM_CREATE)
+  ;; ListViewState (60 bytes, allocated in WM_CREATE)
   ;;   +0   item_count
   ;;   +4   item_cap
-  ;;   +8   item_cells_ptr   guest ptr to item_cap * 8 * u32 text pointers
+  ;;   +8   item_cells_ptr   guest ptr to item_cap * 40-byte rows:
+  ;;                          +0..+31 8 x u32 subitem text pointers,
+  ;;                          +32 iImage, +36 lParam
   ;;   +12  reserved
   ;;   +16  col_count
   ;;   +20  col_cap
@@ -3316,6 +3318,7 @@
   ;;   +44  extended_style   LVM_SETEXTENDEDLISTVIEWSTYLE shadow
   ;;   +48  drag_anchor_y
   ;;   +52  drag_anchor_top
+  ;;   +56  small_image_list handle from LVM_SETIMAGELIST
 
   (func $lv_header_h (param $sw i32) (result i32)
     (if (result i32) (i32.gt_s (i32.load offset=16 (local.get $sw)) (i32.const 0))
@@ -3384,9 +3387,19 @@
   (func $lv_cell_addr (param $sw i32) (param $item i32) (param $sub i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
-      (i32.mul
-        (i32.add (i32.mul (local.get $item) (i32.const 8)) (local.get $sub))
-        (i32.const 4))))
+      (i32.add
+        (i32.mul (local.get $item) (i32.const 40))
+        (i32.mul (local.get $sub) (i32.const 4)))))
+
+  (func $lv_item_image_addr (param $sw i32) (param $item i32) (result i32)
+    (i32.add
+      (call $g2w (i32.load offset=8 (local.get $sw)))
+      (i32.add (i32.mul (local.get $item) (i32.const 40)) (i32.const 32))))
+
+  (func $lv_item_param_addr (param $sw i32) (param $item i32) (result i32)
+    (i32.add
+      (call $g2w (i32.load offset=8 (local.get $sw)))
+      (i32.add (i32.mul (local.get $item) (i32.const 40)) (i32.const 36))))
 
   (func $lv_ensure_item_capacity (param $sw i32) (param $want i32)
     (local $cap i32) (local $new_cap i32) (local $new_bytes i32)
@@ -3401,7 +3414,7 @@
       (br_if $grown (i32.le_u (local.get $want) (local.get $new_cap)))
       (local.set $new_cap (i32.mul (local.get $new_cap) (i32.const 2)))
       (br $grow)))
-    (local.set $new_bytes (i32.mul (i32.mul (local.get $new_cap) (i32.const 8)) (i32.const 4)))
+    (local.set $new_bytes (i32.mul (local.get $new_cap) (i32.const 40)))
     (local.set $new_buf (call $heap_alloc (local.get $new_bytes)))
     (call $zero_memory (call $g2w (local.get $new_buf)) (local.get $new_bytes))
     (local.set $old_buf (i32.load offset=8 (local.get $sw)))
@@ -3412,7 +3425,7 @@
           (then
             (call $memcpy (call $g2w (local.get $new_buf))
                           (call $g2w (local.get $old_buf))
-                          (i32.mul (local.get $count) (i32.const 32)))))))
+                          (i32.mul (local.get $count) (i32.const 40)))))))
     (call $heap_free (local.get $old_buf))
     (i32.store offset=4 (local.get $sw) (local.get $new_cap))
     (i32.store offset=8 (local.get $sw) (local.get $new_buf)))
@@ -3582,10 +3595,10 @@
         (call $memcpy
           (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0))
           (call $lv_cell_addr (local.get $sw) (i32.add (local.get $idx) (i32.const 1)) (i32.const 0))
-          (i32.mul (local.get $tail) (i32.const 32)))))
+          (i32.mul (local.get $tail) (i32.const 40)))))
     (call $zero_memory
       (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $count) (i32.const 1)) (i32.const 0))
-      (i32.const 32))
+      (i32.const 40))
     (i32.store (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
     (local.set $selected (i32.load offset=32 (local.get $sw)))
     (if (i32.gt_s (local.get $selected) (local.get $idx))
@@ -3867,7 +3880,7 @@
             (local.set $i (local.get $count))
             (block $done2 (loop $clear_new
               (br_if $done2 (i32.ge_u (local.get $i) (local.get $wParam)))
-              (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 32))
+              (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 40))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $clear_new)))))
         (i32.store (local.get $sw) (local.get $wParam))
@@ -4132,15 +4145,25 @@
           (call $memcpy
             (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0))
             (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $i) (i32.const 1)) (i32.const 0))
-            (i32.const 32))
+            (i32.const 40))
           (local.set $i (i32.sub (local.get $i) (i32.const 1)))
           (br $item_shift)))
-        (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 32))
+        (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 40))
         (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (if (i32.and (local.get $mask) (i32.const 0x0001))
           (then
             (local.set $sub (i32.load offset=8 (local.get $lvi_w)))
             (call $lv_set_cell_text (local.get $sw) (local.get $idx) (local.get $sub) (i32.load offset=20 (local.get $lvi_w)))))
+        (if (i32.and (local.get $mask) (i32.const 0x0002))
+          (then
+            (i32.store
+              (call $lv_item_image_addr (local.get $sw) (local.get $idx))
+              (i32.load offset=28 (local.get $lvi_w)))))
+        (if (i32.and (local.get $mask) (i32.const 0x0004))
+          (then
+            (i32.store
+              (call $lv_item_param_addr (local.get $sw) (local.get $idx))
+              (i32.load offset=36 (local.get $lvi_w)))))
         (if (i32.and (local.get $mask) (i32.const 0x0008))
           (then
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
@@ -4166,6 +4189,16 @@
         (if (i32.or (i32.eq (local.get $msg) (i32.const 0x102E))
                     (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0001)))
           (then (call $lv_set_cell_text (local.get $sw) (local.get $idx) (local.get $sub) (i32.load offset=20 (local.get $lvi_w)))))
+        (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0002))
+          (then
+            (i32.store
+              (call $lv_item_image_addr (local.get $sw) (local.get $idx))
+              (i32.load offset=28 (local.get $lvi_w)))))
+        (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0004))
+          (then
+            (i32.store
+              (call $lv_item_param_addr (local.get $sw) (local.get $idx))
+              (i32.load offset=36 (local.get $lvi_w)))))
         (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
           (then
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
@@ -4194,6 +4227,14 @@
         (local.set $sub (i32.load offset=8 (local.get $lvi_w)))
         (if (i32.eq (local.get $msg) (i32.const 0x1005))
           (then
+            (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0002))
+              (then
+                (i32.store offset=28 (local.get $lvi_w)
+                  (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $idx))))))
+            (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0004))
+              (then
+                (i32.store offset=36 (local.get $lvi_w)
+                  (i32.load (call $lv_item_param_addr (local.get $sw) (local.get $idx))))))
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
               (then
                 (i32.store offset=12 (local.get $lvi_w)

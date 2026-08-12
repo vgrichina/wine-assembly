@@ -101,7 +101,9 @@ scrollbar hit/drag math as the RichEdit/Edit/ListBox paths. The ListView
 subset also has bounded report-column get/set, item/subitem rectangle queries,
 subitem hit-test output, selection/click notifications, and a pseudo-header
 query surface for RegEdit/installer-style report panes. Single row/column
-deletion keeps the bounded report state coherent.
+deletion keeps the bounded report state coherent, and ListView image-list
+handles plus per-item image/lParam metadata now round-trip without claiming
+full icon-mode rendering.
 
 That means these pieces are already good enough for basic insertion:
 
@@ -882,6 +884,7 @@ Acceptance:
 [x] SysListView32 selection/click notifications are asserted
 [x] SysListView32 pseudo-header query messages are asserted
 [x] SysListView32 row/column deletion is asserted
+[x] SysListView32 image-list handles and LVIF_IMAGE/LVIF_PARAM metadata are asserted
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes
 ```

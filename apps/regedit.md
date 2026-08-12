@@ -46,6 +46,9 @@ Key fixes:
   queries against the ListView's report-column state.
 - `LVM_DELETEITEM` and `LVM_DELETECOLUMN` now free shifted text buffers and keep
   count, selection, scroll, and pseudo-header state coherent after removal.
+- `LVM_SETIMAGELIST` / `LVM_GETIMAGELIST` and `LVIF_IMAGE` / `LVIF_PARAM`
+  now round-trip ListView image-list handles and per-item metadata, while
+  report-mode drawing continues to use the existing bounded placeholder glyph.
 - `SysListView32` is now protected from registered-class fallback, so
   `CreateWindowExA("SysListView32", ...)` routes to the WAT-native ListView
   instead of RegEdit's/COMCTL32's guest window proc.
@@ -58,9 +61,9 @@ Key fixes:
 Current gaps:
 
 - Advanced ListView behavior remains later work: icon/small-icon/list view
-  layout, image lists, sorting, custom draw, notifications beyond the current
-  selection/click subset, label edits, and high-fidelity real Header-control
-  interaction beyond the current pseudo-header query surface.
+  layout, real image-list rendering, sorting, custom draw, notifications beyond
+  the current selection/click subset, label edits, and high-fidelity real
+  Header-control interaction beyond the current pseudo-header query surface.
 - The app-level regression now expands
   `HKEY_CURRENT_USER\Control Panel\Desktop`, verifies its four value rows, and
   captures both the populated pane and Registry menu. Value editing, context
@@ -71,7 +74,7 @@ Validation:
 ```sh
 node test/test-treeview-scroll.js   # passes 27/27
 node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
-node test/test-listview.js           # passes 90/90
+node test/test-listview.js           # passes 97/97
 node test/test-listbox.js
 node test/test-regedit-deep.js
 node test/test-wat-memory-map.js

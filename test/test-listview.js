@@ -14,6 +14,8 @@ const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
 
 const LVM_GETITEMCOUNT = 0x1004;
+const LVM_GETITEMA = 0x1005;
+const LVM_SETITEMA = 0x1006;
 const LVM_INSERTITEMA = 0x1007;
 const LVM_DELETEITEM = 0x1008;
 const LVM_DELETEALLITEMS = 0x1009;
@@ -34,6 +36,8 @@ const LVM_SETITEMSTATE = 0x102B;
 const LVM_GETITEMSTATE = 0x102C;
 const LVM_GETITEMTEXTA = 0x102D;
 const LVM_SETITEMTEXTA = 0x102E;
+const LVM_GETIMAGELIST = 0x1002;
+const LVM_SETIMAGELIST = 0x1003;
 const LVM_GETSELECTEDCOUNT = 0x1032;
 const LVM_GETSUBITEMRECT = 0x1038;
 const WM_PAINT = 0x000F;
@@ -43,6 +47,8 @@ const WM_LBUTTONUP = 0x0202;
 const WM_MOUSEMOVE = 0x0200;
 const WM_MOUSEWHEEL = 0x020A;
 const LVIF_TEXT = 0x0001;
+const LVIF_IMAGE = 0x0002;
+const LVIF_PARAM = 0x0004;
 const LVIF_STATE = 0x0008;
 const LVIS_SELECTED = 0x0002;
 const LVNI_SELECTED = 0x0002;
@@ -176,14 +182,16 @@ async function main() {
       storedItem: dv.getInt32(p + 12, true),
     };
   }
-  function insertItem(idx, text) {
+  function insertItem(idx, text, image = 0, lParam = 0) {
     const g = e.guest_alloc(40);
     const p = wa(g);
     u8.fill(0, p, p + 40);
-    dv.setUint32(p + 0, LVIF_TEXT, true);
+    dv.setUint32(p + 0, LVIF_TEXT | LVIF_IMAGE | LVIF_PARAM, true);
     dv.setInt32(p + 4, idx, true);
     dv.setInt32(p + 8, 0, true);
     dv.setUint32(p + 20, writeStr(text), true);
+    dv.setInt32(p + 28, image, true);
+    dv.setUint32(p + 36, lParam >>> 0, true);
     return e.send_message(lv, LVM_INSERTITEMA, 0, g);
   }
   function setSubitem(item, sub, text) {
@@ -204,6 +212,30 @@ async function main() {
     dv.setInt32(p + 24, 64, true);
     const len = e.send_message(lv, LVM_GETITEMTEXTA, item, itemG);
     return { len, text: readStr(textG, 64) };
+  }
+  function setItemMeta(item, image, lParam) {
+    const g = e.guest_alloc(40);
+    const p = wa(g);
+    u8.fill(0, p, p + 40);
+    dv.setUint32(p + 0, LVIF_IMAGE | LVIF_PARAM, true);
+    dv.setInt32(p + 4, item, true);
+    dv.setInt32(p + 28, image, true);
+    dv.setUint32(p + 36, lParam >>> 0, true);
+    return e.send_message(lv, LVM_SETITEMA, 0, g);
+  }
+  function getItemMeta(item) {
+    const g = e.guest_alloc(40);
+    const p = wa(g);
+    u8.fill(0, p, p + 40);
+    dv.setUint32(p + 0, LVIF_IMAGE | LVIF_PARAM | LVIF_STATE, true);
+    dv.setInt32(p + 4, item, true);
+    const len = e.send_message(lv, LVM_GETITEMA, 0, g);
+    return {
+      len,
+      image: dv.getInt32(p + 28, true),
+      lParam: dv.getUint32(p + 36, true),
+      state: dv.getUint32(p + 12, true),
+    };
   }
   function getRect(msg, item, leftInput, topInput = 0) {
     const g = e.guest_alloc(16);
@@ -226,6 +258,10 @@ async function main() {
   const lv = e.test_create_listview(0, 0, 220, 82, 1, 0x200);
   check('listview hwnd allocated', lv !== 0, 'hwnd=0x' + lv.toString(16));
   check('create added 2 slots (parent + listview)', e.wnd_count_used() === baselineSlots + 2);
+  check('initial LVM_GETIMAGELIST is empty', e.send_message(lv, LVM_GETIMAGELIST, 1, 0) === 0);
+  check('LVM_SETIMAGELIST stores small image-list handle', e.send_message(lv, LVM_SETIMAGELIST, 1, 0x1234501) === 0);
+  check('LVM_GETIMAGELIST returns assigned handle', e.send_message(lv, LVM_GETIMAGELIST, 1, 0) === 0x1234501);
+  check('LVM_SETIMAGELIST returns previous handle', e.send_message(lv, LVM_SETIMAGELIST, 1, 0x1234502) === 0x1234501);
 
   check('LVM_INSERTCOLUMNA Name returns 0', insertColumn(0, 'Name', 120) === 0);
   check('LVM_INSERTCOLUMNA Type returns 1', insertColumn(1, 'Type', 80) === 1);
@@ -249,7 +285,7 @@ async function main() {
   check('HDM_HITTEST maps x coordinate to header item', hdHit.item === 1 && hdHit.flags === HHT_ONHEADER && hdHit.storedItem === 1, JSON.stringify(hdHit));
 
   for (let i = 0; i < 12; i++) {
-    check(`LVM_INSERTITEMA row ${i}`, insertItem(i, `Value ${i}`) === i);
+    check(`LVM_INSERTITEMA row ${i}`, insertItem(i, `Value ${i}`, i + 10, 0xCAFE0000 + i) === i);
     check(`LVM_SETITEMTEXTA row ${i} subitem`, setSubitem(i, 1, i % 2 ? 'REG_DWORD' : 'REG_SZ') === 1);
   }
   check('LVM_GETITEMCOUNT is 12', e.send_message(lv, LVM_GETITEMCOUNT, 0, 0) === 12);
@@ -260,6 +296,11 @@ async function main() {
   check('LVM_GETITEMTEXTA row text value', row5.text === 'Value 5', row5.text);
   const row5Type = getItemText(5, 1);
   check('LVM_GETITEMTEXTA subitem text value', row5Type.text === 'REG_DWORD', row5Type.text);
+  const row5Meta = getItemMeta(5);
+  check('LVM_GETITEMA returns inserted image/lParam', row5Meta.image === 15 && row5Meta.lParam === 0xCAFE0005, JSON.stringify(row5Meta));
+  check('LVM_SETITEMA updates image/lParam', setItemMeta(5, 77, 0x1234ABCD) === 1);
+  const row5MetaUpdated = getItemMeta(5);
+  check('LVM_GETITEMA returns updated image/lParam', row5MetaUpdated.image === 77 && row5MetaUpdated.lParam === 0x1234ABCD, JSON.stringify(row5MetaUpdated));
 
   const exportBuf = e.guest_alloc(64);
   const exportLen = e.listview_get_item_text(lv, 4, 1, exportBuf, 64);
