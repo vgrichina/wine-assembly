@@ -1558,8 +1558,11 @@
         (return)))
     ;; WM_PAINT if pending (lowest priority). Selection and child propagation
     ;; live in WAT; the host only schedules repaint work.
-    (if (i32.and (local.get $arg4) (i32.const 1))
-      (then (drop (call $paint_drain_native_control_paints))))
+    ;; Native controls service paint internally before USER exposes queued
+    ;; messages. Do this for PM_NOREMOVE too: otherwise PeekMessage can report
+    ;; a native-control WM_PAINT that the following GetMessage retires
+    ;; internally and then blocks, violating the observable peek/get contract.
+    (drop (call $paint_drain_native_control_paints))
     (local.set $tmp (call $paint_select_next_dirty))
     (if (local.get $tmp)
     (then
@@ -1971,8 +1974,6 @@
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32)
-    (local $fr i32) (local $cp_min i32) (local $cp_max i32)
-    (local $page_chars i32) (local $next_cp i32) (local $cols i32) (local $lines i32)
     (call $richedit_note_charformat_message
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
     ;; EM_FORMATRANGE. The Win98 RichEdit DLL's printer message path cannot
@@ -1986,27 +1987,7 @@
           (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0)))
       ;; Native RichEdit is an unclassified child; ToolbarWindow32 is class 21.
       (then
-        (if (i32.eqz (local.get $arg3))
-          (then (global.set $eax (i32.const 0)))
-          (else
-            (local.set $fr (call $g2w (local.get $arg3)))
-            (local.set $cp_min (i32.load offset=40 (local.get $fr)))
-            (local.set $cp_max (i32.load offset=44 (local.get $fr)))
-            ;; Average 120 twips/character and 240 twips/line at 10pt.
-            (local.set $cols
-              (i32.div_u (i32.sub (i32.load offset=16 (local.get $fr))
-                                  (i32.load offset=8 (local.get $fr))) (i32.const 120)))
-            (local.set $lines
-              (i32.div_u (i32.sub (i32.load offset=20 (local.get $fr))
-                                  (i32.load offset=12 (local.get $fr))) (i32.const 240)))
-            (if (i32.eqz (local.get $cols)) (then (local.set $cols (i32.const 1))))
-            (if (i32.eqz (local.get $lines)) (then (local.set $lines (i32.const 1))))
-            (local.set $page_chars (i32.mul (local.get $cols) (local.get $lines)))
-            (local.set $next_cp (i32.add (local.get $cp_min) (local.get $page_chars)))
-            (if (i32.and (i32.ne (local.get $cp_max) (i32.const -1))
-                         (i32.gt_u (local.get $next_cp) (local.get $cp_max)))
-              (then (local.set $next_cp (local.get $cp_max))))
-            (global.set $eax (local.get $next_cp))))
+        (global.set $eax (call $richedit_formatrange_next (local.get $arg3)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; EM_GETCHARFORMAT needs post-call patching of the output buffer. Route

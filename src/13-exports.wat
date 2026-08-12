@@ -424,6 +424,10 @@
     (i32.eqz (global.get $yield_reason)))
   (func (export "get_sync_table") (result i32) (global.get $SYNC_TABLE))
   (func (export "get_yield_flag") (result i32) (global.get $yield_flag))
+  ;; Diagnostic state used by app-level print lifecycle tests.
+  (func (export "get_quit_flag") (result i32) (global.get $quit_flag))
+  (func (export "get_printer_doc_state") (result i32) (global.get $printer_doc_state))
+  (func (export "get_printer_page_count") (result i32) (global.get $printer_page_count))
   (func (export "get_sleep_yielded") (result i32)
     (local $v i32)
     (local.set $v (global.get $sleep_yielded))
@@ -950,6 +954,9 @@
     (call $richedit_patch_get_paraformat_message
       (local.get $hwnd) (local.get $msg) (local.get $lParam))
     (local.get $ret))
+
+  (func (export "richedit_formatrange_next") (param $fr i32) (result i32)
+    (call $richedit_formatrange_next (local.get $fr)))
 
   ;; Send WM_CHAR to the currently-focused hwnd. Returns 1 if dispatched.
   (func (export "send_char_to_focus") (param $code i32) (result i32)

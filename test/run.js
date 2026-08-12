@@ -367,6 +367,8 @@ async function main() {
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
   //   B:dump-focus-unicode[:LABEL] — log focused RichEdit text via EM_GETTEXTEX/UTF-16
+  //   B:dump-print-state[:LABEL] — log printer lifecycle and message-loop state
+  //   B:formatrange-probe:WIDTH_TWIPS:HEIGHT_TWIPS[:LABEL] — paginate focused RichEdit
   //   B:main-resize:WIDTH:HEIGHT — resize the top-level main window and deliver WM_SIZE
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
@@ -399,6 +401,7 @@ async function main() {
   //   B:vfs-import:FILENAME:PATH — load one host file into the virtual filesystem
   //   B:assert-standard-scroll:AXIS:MIN_POS[:LABEL] — fail unless a visible standard bar reaches MIN_POS
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
+  //   B:wait-focus-length:MIN_LENGTH[:LIMIT] — delay until focused text reaches MIN_LENGTH
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
   //   B:read-dword:ADDR[:LABEL] — log a guest dword value
@@ -439,6 +442,13 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
       } else if (kind === 'dump-focus-unicode') {
         scheduledInput.push({ batch, action: 'dump-focus-unicode', label: parts[2] || '' });
+      } else if (kind === 'dump-print-state') {
+        scheduledInput.push({ batch, action: 'dump-print-state', label: parts[2] || '' });
+      } else if (kind === 'formatrange-probe') {
+        scheduledInput.push({ batch, action: 'formatrange-probe',
+          width: parseInt(parts[2]) || 7200,
+          height: parseInt(parts[3]) || 14400,
+          label: parts[4] || '' });
       } else if (kind === 'dump-control-state') {
         scheduledInput.push({ batch, action: 'dump-control-state', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-clipboard') {
@@ -590,6 +600,14 @@ async function main() {
           batch,
           action: 'wait-dlg-control',
           ctrlId: parseInt(parts[2]),
+          limit: parseInt(parts[3]) || 2000,
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-focus-length') {
+        scheduledInput.push({
+          batch,
+          action: 'wait-focus-length',
+          minLength: parseInt(parts[2]) || 1,
           limit: parseInt(parts[3]) || 2000,
           startBatch: batch,
         });
@@ -2590,6 +2608,40 @@ async function main() {
         } else {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-print-state') {
+        const tag = ev.label ? `:${ev.label}` : '';
+        const state = instance.exports.get_printer_doc_state ? instance.exports.get_printer_doc_state() | 0 : -1;
+        const pages = instance.exports.get_printer_page_count ? instance.exports.get_printer_page_count() | 0 : -1;
+        const quit = instance.exports.get_quit_flag ? instance.exports.get_quit_flag() | 0 : -1;
+        const reason = instance.exports.get_yield_reason ? instance.exports.get_yield_reason() | 0 : -1;
+        logs.push(`[input] dump-print-state${tag}: state=${state} pages=${pages} quit=${quit} yield=${reason} eip=0x${(instance.exports.get_eip() >>> 0).toString(16)} at batch ${batch}`);
+      } else if (ev.action === 'formatrange-probe') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? we.get_focus_hwnd() >>> 0 : 0;
+        const tag = ev.label ? `:${ev.label}` : '';
+        if (!h || !we.send_message || !we.guest_alloc || !we.guest_write32) {
+          logs.push(`[input] formatrange-probe${tag}: unavailable at batch ${batch}`);
+        } else {
+          const len = Math.max(0, we.send_message(h, 0x000E, 0, 0) | 0);
+          const fr = we.guest_alloc(48) >>> 0;
+          const put = (off, value) => we.guest_write32((fr + off) >>> 0, value | 0);
+          put(0, 1); put(4, 1); // deterministic non-null display/target DCs
+          put(8, 0); put(12, 0); put(16, ev.width); put(20, ev.height);
+          put(24, 0); put(28, 0); put(32, ev.width); put(36, ev.height);
+          const bounds = [0];
+          let cp = 0;
+          for (let page = 0; page < 256 && cp < len; page++) {
+            put(40, cp); put(44, len);
+            const next = we.richedit_formatrange_next
+              ? we.richedit_formatrange_next(fr) | 0
+              : we.send_message(h, 0x0439, 0, fr) | 0;
+            if (next <= cp || next > len) break;
+            cp = next;
+            bounds.push(cp);
+          }
+          we.send_message(h, 0x0439, 0, 0); // release RichEdit format cache
+          logs.push(`[input] formatrange-probe${tag}: hwnd=0x${h.toString(16)} len=${len} pages=${Math.max(0, bounds.length - 1)} bounds=${bounds.join(',')} complete=${cp === len ? 1 : 0} at batch ${batch}`);
+        }
       } else if (ev.action === 'dump-focus-unicode') {
         const we = instance.exports;
         const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
@@ -3828,6 +3880,17 @@ async function main() {
           deferScheduledWait(ev, batch);
         } else {
           logs.push(`[input] wait-dlg-control: TIMEOUT id=${ev.ctrlId} at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-focus-length') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? we.get_focus_hwnd() >>> 0 : 0;
+        const len = h && we.send_message ? Math.max(0, we.send_message(h, 0x000E, 0, 0) | 0) : 0;
+        if (len >= ev.minLength) {
+          logs.push(`[input] wait-focus-length: matched len=${len} min=${ev.minLength} hwnd=0x${h.toString(16)} at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          deferScheduledWait(ev, batch);
+        } else {
+          logs.push(`[input] wait-focus-length: TIMEOUT len=${len} min=${ev.minLength} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.

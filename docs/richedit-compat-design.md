@@ -604,10 +604,10 @@ screenshot where the result is visual.
 2. Printing
    [x] Page Setup edits margins and returns stable PAGESETUPDLG state
    [x] Print returns a printer DC plus Win98-compatible PRINTDLG fields
-   [ ] StartDoc/StartPage/EndPage/EndDoc execute in the expected order
-   [ ] EM_FORMATRANGE paginates a multi-page document using printer metrics
+   [x] StartDoc/StartPage/EndPage/EndDoc execute in the expected order
+   [x] EM_FORMATRANGE paginates a multi-page document using printer metrics
    [x] Print Preview displays the preview frame and page-view surface
-   [ ] Print Preview advances between pages
+   [x] Print Preview advances between pages
 
 3. Editing and layout stress
    [x] large multi-paragraph documents remain editable and scrollable
@@ -673,11 +673,19 @@ view and normal bars, creates the preview toolbar, and installs an
 `AfxFrameOrView42` page surface. Preview also drove implementation of the DC
 state queries `GetBkMode`, `Get/SetPolyFillMode`, and `GetStretchBltMode`.
 
-Two printing acceptance points remain open. A multi-page fixture still needs
-to prove successive `EM_FORMATRANGE` boundaries and preview navigation. In the
-physical Print route, the app calls `StartDoc`, `StartPage`, `EM_FORMATRANGE`,
-and `EndPage`, but then spends indefinitely in its native print-progress
-cleanup/paint path; it has not yet called `EndDoc` or re-enabled the main frame.
+The printing acceptance matrix is now complete. MFC's abort procedure exposed
+a queue-fidelity bug: `PeekMessage(PM_NOREMOVE)` could expose a native-control
+paint which `GetMessage` then retired internally and blocked behind. Native
+control paints are now retired before both peek variants select an observable
+message. The physical route reaches `EndDoc`, destroys its progress dialog,
+returns the printer state to idle, and re-enables the WordPad frame.
+
+`test/test-wordpad-printing.js` also opens a 9,673-character fixture and proves
+monotonic `EM_FORMATRANGE` page boundaries through EOF. Print Preview's Next
+command now renders through legacy Win9x `Escape` printer queries
+(`GETPHYSPAGESIZE`, `GETPRINTINGOFFSET`, and `GETSCALINGFACTOR`) without a fatal
+stub. The expanded 14-point regression captures the first and next preview
+pages and passes without an unimplemented API or crash.
 
 ### 2026-08-12 editing/layout stress slice
 

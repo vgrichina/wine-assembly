@@ -1510,6 +1510,31 @@
   ;; RichEdit path renders explicit CFM_SIZE but can return the 32767 sentinel;
   ;; keeping the formatted range prevents that fallback from falsely claiming
   ;; a larger mixed-size selection is uniformly the latest size.
+  (func $richedit_formatrange_next (param $fr_guest i32) (result i32)
+    (local $fr i32) (local $cp_min i32) (local $cp_max i32)
+    (local $cols i32) (local $lines i32) (local $next_cp i32)
+    (if (i32.eqz (local.get $fr_guest)) (then (return (i32.const 0))))
+    (local.set $fr (call $g2w (local.get $fr_guest)))
+    (local.set $cp_min (i32.load offset=40 (local.get $fr)))
+    (local.set $cp_max (i32.load offset=44 (local.get $fr)))
+    ;; Bounded 10pt printer model: average 120 twips/character and 240
+    ;; twips/line. Clamp malformed/reversed rectangles to one cell.
+    (if (i32.gt_s (i32.load offset=16 (local.get $fr)) (i32.load offset=8 (local.get $fr)))
+      (then (local.set $cols (i32.div_u
+        (i32.sub (i32.load offset=16 (local.get $fr)) (i32.load offset=8 (local.get $fr)))
+        (i32.const 120)))))
+    (if (i32.gt_s (i32.load offset=20 (local.get $fr)) (i32.load offset=12 (local.get $fr)))
+      (then (local.set $lines (i32.div_u
+        (i32.sub (i32.load offset=20 (local.get $fr)) (i32.load offset=12 (local.get $fr)))
+        (i32.const 240)))))
+    (if (i32.eqz (local.get $cols)) (then (local.set $cols (i32.const 1))))
+    (if (i32.eqz (local.get $lines)) (then (local.set $lines (i32.const 1))))
+    (local.set $next_cp (i32.add (local.get $cp_min) (i32.mul (local.get $cols) (local.get $lines))))
+    (if (i32.and (i32.ne (local.get $cp_max) (i32.const -1))
+                 (i32.gt_u (local.get $next_cp) (local.get $cp_max)))
+      (then (local.set $next_cp (local.get $cp_max))))
+    (local.get $next_cp))
+
   (func $richedit_format_addr_for_slot (param $slot i32) (result i32)
     (i32.add (global.get $RICHEDIT_FORMAT_TABLE)
              (i32.shl (local.get $slot) (i32.const 2))))

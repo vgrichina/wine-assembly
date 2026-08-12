@@ -5406,9 +5406,56 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 376: Escape — STUB: unimplemented
+  ;; 376: Escape(hdc, nEscape, cbInput, lpInData, lpOutData).
+  ;; Win9x MFC print preview still uses the legacy physical-page escapes even
+  ;; when the printer DC otherwise exposes modern GetDeviceCaps metrics.
   (func $handle_Escape (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $query i32) (local $out i32)
+    (local.set $out (local.get $arg4))
+    ;; QUERYESCSUPPORT: lpInData contains the escape number being queried.
+    (if (i32.eq (local.get $arg1) (i32.const 8))
+      (then
+        (if (local.get $arg3)
+          (then (local.set $query (call $gl32 (local.get $arg3)))))
+        (global.set $eax
+          (i32.or
+            (i32.or (i32.eq (local.get $query) (i32.const 12))
+                    (i32.eq (local.get $query) (i32.const 13)))
+            (i32.eq (local.get $query) (i32.const 14))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; GETPHYSPAGESIZE: Letter at 300 DPI.
+    (if (i32.eq (local.get $arg1) (i32.const 12))
+      (then
+        (if (local.get $out)
+          (then
+            (call $gs32 (local.get $out) (i32.const 2550))
+            (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 3300))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; GETPRINTINGOFFSET: 0.25-inch non-printable origin at 300 DPI.
+    (if (i32.eq (local.get $arg1) (i32.const 13))
+      (then
+        (if (local.get $out)
+          (then
+            (call $gs32 (local.get $out) (i32.const 75))
+            (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 75))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; GETSCALINGFACTOR: no device-side scaling.
+    (if (i32.eq (local.get $arg1) (i32.const 14))
+      (then
+        (if (local.get $out)
+          (then
+            (call $gs32 (local.get $out) (i32.const 0))
+            (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 0))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; Minimal font enumeration callback. Enumerate one stable TrueType-style

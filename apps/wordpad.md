@@ -1,7 +1,14 @@
-# WordPad (Win98) — PARTIAL
+# WordPad (Win98) — FUNCTIONAL (non-OLE)
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-12):** PARTIAL.
+**Status (2026-08-12):** FUNCTIONAL for the bounded non-OLE compatibility scope.
+
+Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
+pagination, Print Preview navigation, large-document resize/edit stress,
+advanced ruler/dialog commands, international UTF-16/IME commit input, and
+real suspended-thread resume semantics now have passing app-level regressions.
+Embedded OLE objects and full RichEdit version-parity remain outside this
+scope.
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
