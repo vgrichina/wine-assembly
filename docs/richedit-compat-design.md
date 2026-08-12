@@ -596,10 +596,10 @@ screenshot where the result is visual.
 
 ```text
 1. Advanced RTF
-   [ ] multiple character and paragraph runs survive Open -> Save -> Open
-   [ ] stylesheet/font/color-table references resolve without flattening
-   [ ] simple tables preserve cell boundaries and visible row layout
-   [ ] tabs, indents, spacing, alignment, and wrapping coexist across paragraphs
+   [x] multiple character and paragraph runs survive Open -> Save -> Open
+   [x] stylesheet/font/color-table references resolve without flattening
+   [x] simple tables preserve cell boundaries and visible row layout
+   [x] tabs, indents, spacing, alignment, and wrapping coexist across paragraphs
 
 2. Printing
    [ ] Page Setup edits margins and returns stable PAGESETUPDLG state
@@ -638,6 +638,20 @@ activation, structured-storage object persistence, and object clipboard
 transfer. TOM/COM, deep accessibility, and drag/drop editing are also outside
 this non-OLE completion program unless one of the probes proves they are a
 hard dependency.
+
+### 2026-08-12 advanced RTF slice
+
+`test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through
+the VFS, opens it through WordPad's real File Open path, saves it under a new
+name, reopens it, and verifies range-specific character/paragraph state. The
+fixture covers an inherited stylesheet heading, two fonts, two colors, mixed
+inline bold, multiple paragraph alignments, a two-cell table with an italic
+cell, and a trailing paragraph. Native RichEdit already preserves the direct
+run/table model. A bounded VFS read projection expands `\sN` stylesheet
+inheritance to equivalent direct controls, including `\plain` at style
+boundaries, while leaving stored bytes unchanged. The 17-point acceptance
+matrix passes against the saved artifact and screenshot
+`test/output/wordpad-richedit/advanced-rtf.png`.
 
 ## Suggested implementation slice
 

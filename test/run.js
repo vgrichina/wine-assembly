@@ -365,6 +365,7 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
+  //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
@@ -439,6 +440,14 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-clipboard', label: parts[2] || '' });
       } else if (kind === 'dump-focus-charformat') {
         scheduledInput.push({ batch, action: 'dump-focus-charformat', label: parts[2] || '' });
+      } else if (kind === 'set-focus-selection') {
+        scheduledInput.push({
+          batch,
+          action: 'set-focus-selection',
+          start: parseInt(parts[2]) || 0,
+          end: parseInt(parts[3]) || 0,
+          label: parts[4] || '',
+        });
       } else if (kind === 'set-focus-charformat-color') {
         scheduledInput.push({ batch, action: 'set-focus-charformat-color',
           color: parseInt(parts[2]), label: parts[3] || '' });
@@ -2629,6 +2638,18 @@ async function main() {
           logs.push(`[input] dump-clipboard${tag}: count=${count} textLen=${textLen} rtfFmt=0x${fmt.toString(16)} rtfLen=${rtfLen} availText=${availText} availRtf=${availRtf} textHandle=0x${textHandle.toString(16)} rtfHandle=0x${rtfHandle.toString(16)} rtf=${JSON.stringify(rtf)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-clipboard${tag}: NO CLIPBOARD API at batch ${batch}`);
+        }
+      } else if (ev.action === 'set-focus-selection') {
+        const e = instance.exports;
+        const h = e.get_focus_hwnd ? (e.get_focus_hwnd() >>> 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] set-focus-selection${tag}: NO FOCUS at batch ${batch}`);
+        } else if (e.send_message) {
+          const ret = e.send_message(h, 0x00B1, ev.start | 0, ev.end | 0) >>> 0; // EM_SETSEL
+          logs.push(`[input] set-focus-selection${tag}: hwnd=0x${h.toString(16)} range=${ev.start}..${ev.end} ret=0x${ret.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] set-focus-selection${tag}: hwnd=0x${h.toString(16)} NO SEND API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-focus-charformat') {
         const we = instance.exports;

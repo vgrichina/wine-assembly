@@ -763,6 +763,14 @@ focused app-level trace of WordPad's real startup thread remains to be added.
    layout stress, ruler/secondary UI, and international text. Embedded OLE
    objects and object clipboard transfer remain postponed.
 
+Advanced RTF status (2026-08-12): WordPad now has focused Open -> Save -> Open
+coverage for inherited stylesheets, multiple font/color/format runs, centered
+and left paragraphs, and a visible two-cell table. The VFS presents native
+RichEdit with inherited style properties as equivalent direct RTF controls;
+saved files retain the table/font/color/paragraph structure. See
+`test/test-wordpad-advanced-rtf.js` and
+`test/output/wordpad-richedit/advanced-rtf.png`.
+
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
 
