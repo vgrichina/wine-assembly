@@ -323,18 +323,7 @@ async function main() {
                255, 0, 0, 255, 255, 255, 0, 0], wa + 40);
     e.clipboard_clear_all_data();
     const owned = e.clipboard_store_binary_data(8, guest) >>> 0; // CF_DIB
-    const slash = String.fromCharCode(92);
-    const hex = Array.from(bytes.slice(wa, wa + 56), value => value.toString(16).padStart(2, '0')).join('');
-    const rtf = '{' + slash + 'rtf1' + slash + 'ansi{' + slash + 'pict' + slash +
-      'dibitmap0' + slash + 'picw2' + slash + 'pich2' + slash +
-      'picwgoal300' + slash + 'pichgoal300 ' + hex + '}}';
-    const rtfGuest = e.guest_alloc(rtf.length + 1) >>> 0;
-    const rtfWa = app.wine._guestToWasmAddress(rtfGuest);
-    for (let i = 0; i < rtf.length; i++) bytes[rtfWa + i] = rtf.charCodeAt(i);
-    bytes[rtfWa + rtf.length] = 0;
-    const ownedRtf = e.clipboard_store_rtf_data(rtfGuest) >>> 0;
     if (e.guest_free) e.guest_free(guest);
-    if (e.guest_free) e.guest_free(rtfGuest);
     const result = e.post_message_q(${ready.editor}, 0x0302, 0, 0) | 0; // WM_PASTE
     setTimeout(() => {
       const length = e.send_message(${ready.editor}, 0x000E, 0, 0) | 0;
@@ -345,7 +334,7 @@ async function main() {
       for (let i = 0; i < length && bytes[outWa + i]; i++) text += String.fromCharCode(bytes[outWa + i]);
       if (e.guest_free) e.guest_free(out);
       resolve({
-        owned, ownedRtf, result, length, text, running: app.wine.running,
+        owned, result, length, text, running: app.wine.running,
         eip: e.get_eip ? e.get_eip() >>> 0 : 0,
         yieldReason: e.get_yield_reason ? e.get_yield_reason() | 0 : -1,
         postQueue: e.get_post_queue_count ? e.get_post_queue_count() | 0 : -1,
@@ -355,13 +344,14 @@ async function main() {
   })`, 5000);
 
   assert(dibPaste.owned, `CF_DIB clipboard copy should succeed: ${JSON.stringify(dibPaste)}`);
-  assert(dibPaste.ownedRtf, `RTF picture clipboard copy should succeed: ${JSON.stringify(dibPaste)}`);
   if (!dibPaste.running) {
     throw new Error(`WordPad did not survive native CF_DIB paste: ${JSON.stringify(dibPaste)}\n` +
       consoleSummary(cdp.events).slice(-120).join('\n'));
   }
-  assert.strictEqual(dibPaste.text, 'hello world',
-    `unsupported static image fallback must preserve document text: ${JSON.stringify(dibPaste)}`);
+  assert.strictEqual(dibPaste.length, 12,
+    `native RichEdit should add one inline object position: ${JSON.stringify(dibPaste)}`);
+  assert.strictEqual(dibPaste.text, 'hello world ',
+    `WM_GETTEXT should preserve text and expose the object position as a space: ${JSON.stringify(dibPaste)}`);
 
   const screenshot = await evaluate(`(() => {
     sharedRenderer.repaint();
@@ -420,7 +410,7 @@ async function main() {
   console.log('PASS  WordPad stays running in the browser');
   console.log('PASS  browser preloads riched20.dll');
   console.log('PASS  native RichEdit accepts "hello world"');
-  console.log('PASS  native RichEdit safely rejects unsupported static-image paste:', JSON.stringify(dibPaste));
+  console.log('PASS  native RichEdit inserts a crash-safe CF_DIB object position:', JSON.stringify(dibPaste));
   console.log('PASS  browser toolbar shows 10pt default size');
   console.log('PASS  browser menu font:', JSON.stringify(menuFontState));
   console.log('PASS  screenshot:', PNG);

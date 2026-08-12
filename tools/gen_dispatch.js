@@ -101,6 +101,8 @@ const comInterfaces = [
   { prefix: 'IStorage',             global: 'DX_VTBL_OLE_STORAGE' },
   { prefix: 'IDataObject',          global: 'DX_VTBL_OLE_DATAOBJECT' },
   { prefix: 'IEnumFORMATETC',       global: 'DX_VTBL_OLE_ENUMFORMATETC' },
+  { prefix: 'IOleObject',           global: 'DX_VTBL_OLE_OBJECT' },
+  { prefix: 'IPersistStorage',      global: 'DX_VTBL_OLE_PERSISTSTORAGE' },
   { prefix: 'IDirect3DDevice3',     global: 'DX_VTBL_D3DDEV3' },
   { prefix: 'IDirect3DViewport3',   global: 'DX_VTBL_D3DVP3' },
   { prefix: 'IDirect3DLight',       global: 'DX_VTBL_D3DLIGHT' },

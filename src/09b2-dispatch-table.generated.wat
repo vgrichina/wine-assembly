@@ -38,7 +38,7 @@
       (then
         (call $dispatch_api_table_page_7 (i32.sub (local.get $api_id) (i32.const 1792)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2162))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2198))
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -8302,8 +8302,44 @@
   )
 
   (func $dispatch_api_table_page_8 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2048..2161
+    ;; api ids 2048..2197
     (block $fallback
+    (block $api_149
+    (block $api_148
+    (block $api_147
+    (block $api_146
+    (block $api_145
+    (block $api_144
+    (block $api_143
+    (block $api_142
+    (block $api_141
+    (block $api_140
+    (block $api_139
+    (block $api_138
+    (block $api_137
+    (block $api_136
+    (block $api_135
+    (block $api_134
+    (block $api_133
+    (block $api_132
+    (block $api_131
+    (block $api_130
+    (block $api_129
+    (block $api_128
+    (block $api_127
+    (block $api_126
+    (block $api_125
+    (block $api_124
+    (block $api_123
+    (block $api_122
+    (block $api_121
+    (block $api_120
+    (block $api_119
+    (block $api_118
+    (block $api_117
+    (block $api_116
+    (block $api_115
+    (block $api_114
     (block $api_113
     (block $api_112
     (block $api_111
@@ -8418,7 +8454,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $fallback (local.get $api_id))
     ) ;; 2048: GetClipboardOwner
       (call $handle_GetClipboardOwner (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -8761,6 +8797,114 @@
     ) ;; 2161: OleCreateDefaultHandler
       (call $handle_OleCreateDefaultHandler (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
+    ) ;; 2162: IOleObject_QueryInterface
+      (call $handle_IOleObject_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2163: IOleObject_AddRef
+      (call $handle_IOleObject_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2164: IOleObject_Release
+      (call $handle_IOleObject_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2165: IOleObject_SetClientSite
+      (call $handle_IOleObject_SetClientSite (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2166: IOleObject_GetClientSite
+      (call $handle_IOleObject_GetClientSite (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2167: IOleObject_SetHostNames
+      (call $handle_IOleObject_SetHostNames (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2168: IOleObject_Close
+      (call $handle_IOleObject_Close (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2169: IOleObject_SetMoniker
+      (call $handle_IOleObject_SetMoniker (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2170: IOleObject_GetMoniker
+      (call $handle_IOleObject_GetMoniker (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2171: IOleObject_InitFromData
+      (call $handle_IOleObject_InitFromData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2172: IOleObject_GetClipboardData
+      (call $handle_IOleObject_GetClipboardData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2173: IOleObject_DoVerb
+      (call $handle_IOleObject_DoVerb (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2174: IOleObject_EnumVerbs
+      (call $handle_IOleObject_EnumVerbs (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2175: IOleObject_Update
+      (call $handle_IOleObject_Update (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2176: IOleObject_IsUpToDate
+      (call $handle_IOleObject_IsUpToDate (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2177: IOleObject_GetUserClassID
+      (call $handle_IOleObject_GetUserClassID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2178: IOleObject_GetUserType
+      (call $handle_IOleObject_GetUserType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2179: IOleObject_SetExtent
+      (call $handle_IOleObject_SetExtent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2180: IOleObject_GetExtent
+      (call $handle_IOleObject_GetExtent (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2181: IOleObject_Advise
+      (call $handle_IOleObject_Advise (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2182: IOleObject_Unadvise
+      (call $handle_IOleObject_Unadvise (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2183: IOleObject_EnumAdvise
+      (call $handle_IOleObject_EnumAdvise (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2184: IOleObject_GetMiscStatus
+      (call $handle_IOleObject_GetMiscStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2185: IOleObject_SetColorScheme
+      (call $handle_IOleObject_SetColorScheme (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2186: IPersistStorage_QueryInterface
+      (call $handle_IPersistStorage_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2187: IPersistStorage_AddRef
+      (call $handle_IPersistStorage_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2188: IPersistStorage_Release
+      (call $handle_IPersistStorage_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2189: IPersistStorage_GetClassID
+      (call $handle_IPersistStorage_GetClassID (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2190: IPersistStorage_IsDirty
+      (call $handle_IPersistStorage_IsDirty (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2191: IPersistStorage_InitNew
+      (call $handle_IPersistStorage_InitNew (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2192: IPersistStorage_Load
+      (call $handle_IPersistStorage_Load (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2193: IPersistStorage_Save
+      (call $handle_IPersistStorage_Save (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2194: IPersistStorage_SaveCompleted
+      (call $handle_IPersistStorage_SaveCompleted (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2195: IPersistStorage_HandsOffStorage
+      (call $handle_IPersistStorage_HandsOffStorage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2196: OleCreateStaticFromData
+      (call $handle_OleCreateStaticFromData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2197: OleSetContainedObject
+      (call $handle_OleSetContainedObject (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2048)))
   )
@@ -8822,6 +8966,10 @@
     (global.set $DX_VTBL_OLE_DATAOBJECT (call $init_com_vtable (i32.const 2138) (i32.const 12)))
     ;; IEnumFORMATETC: 7 methods starting at api_id 2150
     (global.set $DX_VTBL_OLE_ENUMFORMATETC (call $init_com_vtable (i32.const 2150) (i32.const 7)))
+    ;; IOleObject: 24 methods starting at api_id 2162
+    (global.set $DX_VTBL_OLE_OBJECT (call $init_com_vtable (i32.const 2162) (i32.const 24)))
+    ;; IPersistStorage: 10 methods starting at api_id 2186
+    (global.set $DX_VTBL_OLE_PERSISTSTORAGE (call $init_com_vtable (i32.const 2186) (i32.const 10)))
     ;; IDirect3DDevice3: 42 methods starting at api_id 1146
     (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1146) (i32.const 42)))
     ;; IDirect3DViewport3: 21 methods starting at api_id 1188

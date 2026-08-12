@@ -678,16 +678,19 @@ into a RichEdit object slot, paint it inline, and then persist that object
 through RTF/storage save and reopen.
 
 The first native integration probe now publishes a valid 2x2 24-bpp `CF_DIB`
-plus an RTF `\\pict\\dibitmap0` representation and delivers `WM_PASTE` to
-Win98 RichEdit. This exposed and then closed three dynamic-export crash paths:
+and delivers `WM_PASTE` to Win98 RichEdit. This exposed and then closed dynamic
+export crash paths including:
 `CoDisconnectObject`, `CreateStreamOnHGlobal` (with HGLOBAL recovery), and
-`OleCreateDefaultHandler`. The current default-handler contract intentionally
-returns `REGDB_E_CLASSNOTREG` with a null output because there is no local OLE
-server/`IOleObject` yet. RichEdit now rejects the static image without exiting
-WordPad or changing existing text. `test/test-ole-storage.js` covers caller-
-owned and COM-created HGLOBAL stream lifetime; the browser WordPad smoke covers
-the crash-safe native clipboard attempt. The remaining visible-image step is a
-bounded static default handler/presentation object, followed by save/reopen.
+`OleCreateDefaultHandler` and `OleSetContainedObject`. A bounded in-process
+static handler now exposes shared `IOleObject`/`IPersistStorage` identity,
+client-site/extent state, and storage ownership while activation and unknown
+view interfaces fail explicitly. RichEdit inserts one inline object position
+without exiting WordPad; `WM_GETTEXT` preserves the surrounding text and
+represents that position as a space. `test/test-ole-storage.js` covers caller-
+owned and COM-created HGLOBAL stream lifetime, `test/test-ole-static-handler.js`
+covers handler identity/refcounts/storage ownership, and the browser smoke
+covers native CF_DIB insertion. Painting the DIB presentation and retaining it
+through save/reopen remain outstanding.
 
 ### 2026-08-12 advanced RTF slice
 

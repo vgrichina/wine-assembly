@@ -16593,5 +16593,257 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1306895378
+  },
+  {
+    "id": 2162,
+    "name": "IOleObject_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2715841609
+  },
+  {
+    "id": 2163,
+    "name": "IOleObject_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3442842106
+  },
+  {
+    "id": 2164,
+    "name": "IOleObject_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1212505431
+  },
+  {
+    "id": 2165,
+    "name": "IOleObject_SetClientSite",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3900830350
+  },
+  {
+    "id": 2166,
+    "name": "IOleObject_GetClientSite",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1640916418
+  },
+  {
+    "id": 2167,
+    "name": "IOleObject_SetHostNames",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2062387888
+  },
+  {
+    "id": 2168,
+    "name": "IOleObject_Close",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3803225242
+  },
+  {
+    "id": 2169,
+    "name": "IOleObject_SetMoniker",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2367689803
+  },
+  {
+    "id": 2170,
+    "name": "IOleObject_GetMoniker",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1620119063
+  },
+  {
+    "id": 2171,
+    "name": "IOleObject_InitFromData",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1747042340
+  },
+  {
+    "id": 2172,
+    "name": "IOleObject_GetClipboardData",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1160349468
+  },
+  {
+    "id": 2173,
+    "name": "IOleObject_DoVerb",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 241602258
+  },
+  {
+    "id": 2174,
+    "name": "IOleObject_EnumVerbs",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1542674455
+  },
+  {
+    "id": 2175,
+    "name": "IOleObject_Update",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 691549207
+  },
+  {
+    "id": 2176,
+    "name": "IOleObject_IsUpToDate",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2757278334
+  },
+  {
+    "id": 2177,
+    "name": "IOleObject_GetUserClassID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3484505306
+  },
+  {
+    "id": 2178,
+    "name": "IOleObject_GetUserType",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1237406517
+  },
+  {
+    "id": 2179,
+    "name": "IOleObject_SetExtent",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4089001450
+  },
+  {
+    "id": 2180,
+    "name": "IOleObject_GetExtent",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 417354134
+  },
+  {
+    "id": 2181,
+    "name": "IOleObject_Advise",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1281326282
+  },
+  {
+    "id": 2182,
+    "name": "IOleObject_Unadvise",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1023920585
+  },
+  {
+    "id": 2183,
+    "name": "IOleObject_EnumAdvise",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2848173611
+  },
+  {
+    "id": 2184,
+    "name": "IOleObject_GetMiscStatus",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1463843740
+  },
+  {
+    "id": 2185,
+    "name": "IOleObject_SetColorScheme",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 83796750
+  },
+  {
+    "id": 2186,
+    "name": "IPersistStorage_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3997852281
+  },
+  {
+    "id": 2187,
+    "name": "IPersistStorage_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 311358282
+  },
+  {
+    "id": 2188,
+    "name": "IPersistStorage_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2845451047
+  },
+  {
+    "id": 2189,
+    "name": "IPersistStorage_GetClassID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2448759575
+  },
+  {
+    "id": 2190,
+    "name": "IPersistStorage_IsDirty",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1382006826
+  },
+  {
+    "id": 2191,
+    "name": "IPersistStorage_InitNew",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4237246466
+  },
+  {
+    "id": 2192,
+    "name": "IPersistStorage_Load",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2705374430
+  },
+  {
+    "id": 2193,
+    "name": "IPersistStorage_Save",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 776665339
+  },
+  {
+    "id": 2194,
+    "name": "IPersistStorage_SaveCompleted",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4105476196
+  },
+  {
+    "id": 2195,
+    "name": "IPersistStorage_HandsOffStorage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3596855318
+  },
+  {
+    "id": 2196,
+    "name": "OleCreateStaticFromData",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 1595334699
+  },
+  {
+    "id": 2197,
+    "name": "OleSetContainedObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4252282479
   }
 ]
