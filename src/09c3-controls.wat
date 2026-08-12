@@ -3301,7 +3301,7 @@
   ;; enough for RegEdit/installer details panes to become stateful and for the
   ;; shared Win98 scrollbar helpers to be reused here.
   ;;
-  ;; ListViewState (60 bytes, allocated in WM_CREATE)
+  ;; ListViewState (72 bytes, allocated in WM_CREATE)
   ;;   +0   item_count
   ;;   +4   item_cap
   ;;   +8   item_cells_ptr   guest ptr to item_cap * 40-byte rows:
@@ -3319,6 +3319,9 @@
   ;;   +48  drag_anchor_y
   ;;   +52  drag_anchor_top
   ;;   +56  small_image_list handle from LVM_SETIMAGELIST
+  ;;   +60  bk_color COLORREF
+  ;;   +64  text_color COLORREF
+  ;;   +68  text_bk_color COLORREF or CLR_NONE
 
   (func $lv_header_h (param $sw i32) (result i32)
     (if (result i32) (i32.gt_s (i32.load offset=16 (local.get $sw)) (i32.const 0))
@@ -3831,6 +3834,7 @@
     (local $x i32) (local $y i32) (local $row i32) (local $new_top i32)
     (local $header_h i32) (local $content_right i32) (local $draw_row i32)
     (local $cell_g i32) (local $cell_w i32) (local $text_len i32) (local $icon_brush i32)
+    (local $bk_brush i32)
     (local $col_count i32) (local $col_x i32) (local $col_idx i32)
     (local $widths_w i32) (local $texts_w i32) (local $pressed_part i32)
     (local $delta i32) (local $code i32)
@@ -3841,11 +3845,14 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 60)))
+        (local.set $state (call $heap_alloc (i32.const 72)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 60))
+        (call $zero_memory (local.get $sw) (i32.const 72))
         (i32.store offset=32 (local.get $sw) (i32.const -1))
         (i32.store offset=40 (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
+        (i32.store offset=60 (local.get $sw) (i32.const 0x00FFFFFF))
+        (i32.store offset=64 (local.get $sw) (i32.const 0x00000000))
+        (i32.store offset=68 (local.get $sw) (i32.const 0x00FFFFFF))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -4732,6 +4739,33 @@
     (if (i32.eq (local.get $msg) (i32.const 0x1037))
       (then (return (i32.load offset=44 (local.get $sw)))))
 
+    ;; LVM_GET/SETBKCOLOR, LVM_GET/SETTEXTCOLOR, LVM_GET/SETTEXTBKCOLOR.
+    ;; Store caller-provided COLORREF values exactly so CLR_NONE round-trips.
+    (if (i32.eq (local.get $msg) (i32.const 0x1000))
+      (then (return (i32.load offset=60 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1001))
+      (then
+        (local.set $old (i32.load offset=60 (local.get $sw)))
+        (i32.store offset=60 (local.get $sw) (local.get $lParam))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1023))
+      (then (return (i32.load offset=64 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1024))
+      (then
+        (local.set $old (i32.load offset=64 (local.get $sw)))
+        (i32.store offset=64 (local.get $sw) (local.get $lParam))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (local.get $old))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1025))
+      (then (return (i32.load offset=68 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1026))
+      (then
+        (local.set $old (i32.load offset=68 (local.get $sw)))
+        (i32.store offset=68 (local.get $sw) (local.get $lParam))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (local.get $old))))
+
     ;; WM_ERASEBKGND
     (if (i32.eq (local.get $msg) (i32.const 0x0014))
       (then (return (call $host_erase_background (local.get $hwnd) (i32.const 0)))))
@@ -4760,10 +4794,18 @@
         (local.set $content_right (local.get $w))
         (if (i32.gt_s (local.get $max) (i32.const 0))
           (then (local.set $content_right (i32.sub (local.get $w) (i32.const 16)))))
+        (local.set $bk_brush (i32.const 0))
+        (if (i32.ne (i32.load offset=60 (local.get $sw)) (i32.const -1))
+          (then
+            (local.set $bk_brush
+              (call $host_gdi_create_solid_brush
+                (i32.and (i32.load offset=60 (local.get $sw)) (i32.const 0x00FFFFFF))))))
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0)
                 (local.get $w) (local.get $h)
-                (i32.const 0x30010)))
+                (select (local.get $bk_brush) (i32.const 0x30010) (i32.ne (local.get $bk_brush) (i32.const 0)))))
+        (if (local.get $bk_brush)
+          (then (drop (call $host_gdi_delete_object (local.get $bk_brush)))))
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
@@ -4827,10 +4869,20 @@
                             (i32.lt_s (i32.add (local.get $y) (i32.const 16)) (local.get $h)))
                           (i32.const 14)))
                   (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+                  (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00800000)))
                   (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 2))))
                 (else
-                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
-                  (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))))
+                  (drop (call $host_gdi_set_text_color
+                    (local.get $hdc)
+                    (i32.and (i32.load offset=64 (local.get $sw)) (i32.const 0x00FFFFFF))))
+                  (if (i32.eq (i32.load offset=68 (local.get $sw)) (i32.const -1))
+                    (then
+                      (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1))))
+                    (else
+                      (drop (call $host_gdi_set_bk_color
+                        (local.get $hdc)
+                        (i32.and (i32.load offset=68 (local.get $sw)) (i32.const 0x00FFFFFF))))
+                      (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 2)))))))
               (local.set $col_count (i32.load offset=16 (local.get $sw)))
               (if (i32.eqz (local.get $col_count))
                 (then (local.set $col_count (i32.const 1))))
@@ -4882,6 +4934,7 @@
                 (local.set $col_idx (i32.add (local.get $col_idx) (i32.const 1)))
                 (br $row_cols)))
               (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+              (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00FFFFFF)))
               (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))))
           (local.set $draw_row (i32.add (local.get $draw_row) (i32.const 1)))
           (br $rows)))

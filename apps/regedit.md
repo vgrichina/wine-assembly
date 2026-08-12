@@ -54,6 +54,10 @@ Key fixes:
 - `LVM_SETIMAGELIST` / `LVM_GETIMAGELIST` and `LVIF_IMAGE` / `LVIF_PARAM`
   now round-trip ListView image-list handles and per-item metadata, while
   report-mode drawing continues to use the existing bounded placeholder glyph.
+- `LVM_GETBKCOLOR` / `LVM_SETBKCOLOR`, `LVM_GETTEXTCOLOR` /
+  `LVM_SETTEXTCOLOR`, and `LVM_GETTEXTBKCOLOR` / `LVM_SETTEXTBKCOLOR`
+  round-trip caller colors and feed report-mode row/background painting,
+  including `CLR_NONE` text-background handling.
 - `SysListView32` is now protected from registered-class fallback, so
   `CreateWindowExA("SysListView32", ...)` routes to the WAT-native ListView
   instead of RegEdit's/COMCTL32's guest window proc.
@@ -79,7 +83,7 @@ Validation:
 ```sh
 node test/test-treeview-scroll.js   # passes 27/27
 node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
-node test/test-listview.js           # passes 110/110
+node test/test-listview.js           # passes 127/127
 node test/test-listbox.js
 node test/test-regedit-deep.js
 node test/test-wat-memory-map.js

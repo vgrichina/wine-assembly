@@ -13,6 +13,8 @@ const { compileWat } = require('../lib/compile-wat');
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
 
+const LVM_GETBKCOLOR = 0x1000;
+const LVM_SETBKCOLOR = 0x1001;
 const LVM_GETITEMCOUNT = 0x1004;
 const LVM_GETITEMA = 0x1005;
 const LVM_SETITEMA = 0x1006;
@@ -44,6 +46,10 @@ const LVM_GETSTRINGWIDTHA = 0x1011;
 const LVM_REDRAWITEMS = 0x1015;
 const LVM_FINDITEMA = 0x100D;
 const LVM_GETVIEWRECT = 0x1022;
+const LVM_GETTEXTCOLOR = 0x1023;
+const LVM_SETTEXTCOLOR = 0x1024;
+const LVM_GETTEXTBKCOLOR = 0x1025;
+const LVM_SETTEXTBKCOLOR = 0x1026;
 const LVM_GETORIGIN = 0x1029;
 const LVM_UPDATE = 0x102A;
 const LVM_GETSELECTEDCOUNT = 0x1032;
@@ -81,6 +87,10 @@ const HDI_TEXT = 0x0002;
 const HDI_FORMAT = 0x0004;
 const HDI_ORDER = 0x0080;
 const HHT_ONHEADER = 0x0002;
+const CLR_NONE = 0xFFFFFFFF;
+const CUSTOM_BK = 0x0000E8D8;
+const CUSTOM_TEXT = 0x000020A0;
+const CUSTOM_TEXT_BK = 0x0000D0F0;
 
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
@@ -101,6 +111,49 @@ async function main() {
   base.host.wait_single = () => 0;
   base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
+  const gdiTrace = {
+    solidBrushColors: [],
+    fillBrushColors: [],
+    textColors: [],
+    bkColors: [],
+    bkModes: [],
+  };
+  const brushColors = new Map();
+  const resetGdiTrace = () => {
+    gdiTrace.solidBrushColors.length = 0;
+    gdiTrace.fillBrushColors.length = 0;
+    gdiTrace.textColors.length = 0;
+    gdiTrace.bkColors.length = 0;
+    gdiTrace.bkModes.length = 0;
+  };
+  const originalCreateSolidBrush = base.host.gdi_create_solid_brush;
+  base.host.gdi_create_solid_brush = color => {
+    const handle = originalCreateSolidBrush(color);
+    gdiTrace.solidBrushColors.push(color >>> 0);
+    brushColors.set(handle >>> 0, color >>> 0);
+    return handle;
+  };
+  const originalFillRect = base.host.gdi_fill_rect;
+  base.host.gdi_fill_rect = (hdc, left, top, right, bottom, hbrush) => {
+    const brush = hbrush >>> 0;
+    gdiTrace.fillBrushColors.push(brushColors.has(brush) ? brushColors.get(brush) : brush);
+    return originalFillRect(hdc, left, top, right, bottom, hbrush);
+  };
+  const originalSetTextColor = base.host.gdi_set_text_color;
+  base.host.gdi_set_text_color = (hdc, color) => {
+    gdiTrace.textColors.push(color >>> 0);
+    return originalSetTextColor(hdc, color);
+  };
+  const originalSetBkColor = base.host.gdi_set_bk_color;
+  base.host.gdi_set_bk_color = (hdc, color) => {
+    gdiTrace.bkColors.push(color >>> 0);
+    return originalSetBkColor(hdc, color);
+  };
+  const originalSetBkMode = base.host.gdi_set_bk_mode;
+  base.host.gdi_set_bk_mode = (hdc, mode) => {
+    gdiTrace.bkModes.push(mode);
+    return originalSetBkMode(hdc, mode);
+  };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   ctx.exports = instance.exports;
@@ -294,6 +347,15 @@ async function main() {
   check('LVM_SETIMAGELIST stores small image-list handle', e.send_message(lv, LVM_SETIMAGELIST, 1, 0x1234501) === 0);
   check('LVM_GETIMAGELIST returns assigned handle', e.send_message(lv, LVM_GETIMAGELIST, 1, 0) === 0x1234501);
   check('LVM_SETIMAGELIST returns previous handle', e.send_message(lv, LVM_SETIMAGELIST, 1, 0x1234502) === 0x1234501);
+  check('initial LVM_GETBKCOLOR is COLOR_WINDOW white', e.send_message(lv, LVM_GETBKCOLOR, 0, 0) === 0x00FFFFFF);
+  check('initial LVM_GETTEXTCOLOR is black', e.send_message(lv, LVM_GETTEXTCOLOR, 0, 0) === 0);
+  check('initial LVM_GETTEXTBKCOLOR is white', e.send_message(lv, LVM_GETTEXTBKCOLOR, 0, 0) === 0x00FFFFFF);
+  check('LVM_SETBKCOLOR returns previous background color', e.send_message(lv, LVM_SETBKCOLOR, 0, CUSTOM_BK) === 0x00FFFFFF);
+  check('LVM_GETBKCOLOR returns stored background color', e.send_message(lv, LVM_GETBKCOLOR, 0, 0) === CUSTOM_BK);
+  check('LVM_SETTEXTCOLOR returns previous text color', e.send_message(lv, LVM_SETTEXTCOLOR, 0, CUSTOM_TEXT) === 0);
+  check('LVM_GETTEXTCOLOR returns stored text color', e.send_message(lv, LVM_GETTEXTCOLOR, 0, 0) === CUSTOM_TEXT);
+  check('LVM_SETTEXTBKCOLOR returns previous text background', e.send_message(lv, LVM_SETTEXTBKCOLOR, 0, CUSTOM_TEXT_BK) === 0x00FFFFFF);
+  check('LVM_GETTEXTBKCOLOR returns stored text background', e.send_message(lv, LVM_GETTEXTBKCOLOR, 0, 0) === CUSTOM_TEXT_BK);
 
   check('LVM_INSERTCOLUMNA Name returns 0', insertColumn(0, 'Name', 120) === 0);
   check('LVM_INSERTCOLUMNA Type returns 1', insertColumn(1, 'Type', 80) === 1);
@@ -350,7 +412,17 @@ async function main() {
   check('initial top index is 0', e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 0);
   check('LVM_GETCOUNTPERPAGE is 4', e.send_message(lv, LVM_GETCOUNTPERPAGE, 0, 0) === 4);
 
+  resetGdiTrace();
   check('WM_PAINT handles populated listview', e.send_message(lv, WM_PAINT, 0, 0) === 0);
+  check('WM_PAINT uses ListView custom background color', gdiTrace.solidBrushColors.includes(CUSTOM_BK), JSON.stringify(gdiTrace.solidBrushColors));
+  check('WM_PAINT uses ListView custom text color', gdiTrace.textColors.includes(CUSTOM_TEXT), JSON.stringify(gdiTrace.textColors));
+  check('WM_PAINT uses ListView custom text background color', gdiTrace.bkColors.includes(CUSTOM_TEXT_BK), JSON.stringify(gdiTrace.bkColors));
+  check('WM_PAINT paints opaque row text background when text-bk is set', gdiTrace.bkModes.includes(2), JSON.stringify(gdiTrace.bkModes));
+  check('LVM_SETTEXTBKCOLOR accepts CLR_NONE', e.send_message(lv, LVM_SETTEXTBKCOLOR, 0, CLR_NONE) === CUSTOM_TEXT_BK);
+  check('LVM_GETTEXTBKCOLOR returns CLR_NONE', (e.send_message(lv, LVM_GETTEXTBKCOLOR, 0, 0) >>> 0) === CLR_NONE);
+  resetGdiTrace();
+  check('WM_PAINT handles CLR_NONE text background', e.send_message(lv, WM_PAINT, 0, 0) === 0);
+  check('CLR_NONE row paint leaves row text transparent', gdiTrace.textColors.includes(CUSTOM_TEXT) && !gdiTrace.bkColors.includes(CUSTOM_TEXT_BK), JSON.stringify(gdiTrace));
 
   e.send_message(lv, WM_MOUSEWHEEL, (-120 << 16), 0);
   check('mouse wheel scrolls down 3 rows', e.listview_get_top_index(lv) === 3);
