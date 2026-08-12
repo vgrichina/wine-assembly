@@ -1,7 +1,7 @@
 # WAT-Threaded Packet Backend Design
 
-Status: design validated by an AoE-specific prototype; general implementation
-not started.
+Status: generic stack executor and packet assembler implemented; decoder
+integration is still an AoE benchmark fixture and remains disabled by default.
 
 Related design: [Direct x86-to-Wasm Compiler](x86-to-wasm-compiler.md)
 
@@ -84,6 +84,64 @@ lower implementation cost, immediate installation, broad coverage, and a
 fallback tier for code that is too mutable or too cold for direct compilation.
 
 ## Current Evidence
+
+### Generic Implementation Snapshot
+
+The branch now contains an application-neutral stack packet VM in
+`src/05-alu.wat` and a compiler-side assembler/verifier in
+`tools/wat-stack-packet.js`. The executor knows only x86 architectural register
+IDs, stack operations, integer/memory operations, flags, and control flow. It
+does not contain AoE addresses or blitter algorithms.
+
+The initial vocabulary is:
+
+```text
+PUSH_REG / POP_REG / PUSH_I32
+LOAD8_U / LOAD32 / STORE32
+ADD / ADD_FLAGS / SUB / SUB_FLAGS / AND_FLAGS
+SHL / SHR_U_FLAGS
+JMP / JCC / CMP_JCC
+CMP_RM32_JCC reg,[base+disp],cc,target,fall
+```
+
+The decoder currently hand-emits packets for four AoE addresses solely as a
+repeatable fixture. Replacing that fixture with normalized-IR emission is the
+next compiler step.
+
+Stack underflow, maximum depth, register IDs, condition codes, immediates, and
+terminal control flow are checked once by the assembler. The WAT hot loop does
+not repeat stack-depth or operand-validity checks. Packets are trusted compiler
+output, just as a generated Wasm function is trusted after validation.
+
+Differential coverage executes x86-threaded, the original narrow packet, the
+generic stack packet, and the hand-optimized block from identical state and
+compares registers, flags, memory, and EIP.
+
+### Generic Stack Benchmark
+
+The 2,000,000-block four-block loop was run in 15 interleaved trials. The host
+was noisy, so medians are more useful than means:
+
+| variant | median ms | blocks/ms | vs x86 |
+|---|---:|---:|---:|
+| x86 threaded | 191.34 | 10,452.8 | 1.000x |
+| narrow WAT packet | 93.24 | 21,449.5 | 2.052x |
+| generic WAT stack | 206.16 | 9,701.0 | 0.928x |
+| generic stack + `CMP_RM32_JCC` | 209.02 | 9,568.3 | 0.915x |
+| hand-optimized WAT | 54.27 | 36,851.0 | 3.525x |
+
+The generic stack implementation is correct but is not yet a performance win.
+It expands simple x86 operations into too many packet dispatches. The first
+generic fusion was selected from the existing census: `cmp r,[base+disp]; Jcc`
+has 858 static sites and 7,248,406 weighted hot-block entries in the recorded
+top-120 profile. Despite that broad basis, its dynamic register-selection
+chain cost slightly more than the dispatches it removed in this benchmark.
+It therefore remains an A/B experiment, not a recommended fast path.
+
+This result changes the implementation priority: generate a dense `br_table`
+executor or a register-form packet format before adding more fused operations.
+Only retain fusions that improve both their isolated A/B and the full packet
+benchmark. Do not encode application algorithms as packet opcodes.
 
 The branch contains an AoE-specific proof of concept in `src/05-alu.wat` and
 `src/07-decoder.wat`. It covers this four-block blitter cycle:

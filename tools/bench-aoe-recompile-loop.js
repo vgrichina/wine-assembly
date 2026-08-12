@@ -4,7 +4,7 @@
 //
 //   0x535c20 -> 0x535e00 -> 0x535e08 -> 0x535e7c -> 0x535c20
 //
-// Setup and first decode are outside the timed region. All three variants
+// Setup and first decode are outside the timed region. All four variants
 // execute the same guest bytes/state, and every measured trial checks state.
 
 const assert = require('assert');
@@ -120,14 +120,23 @@ function median(values) {
 
   function configureAndWarm(variant) {
     e.set_aoe_recompile_count_enabled(1);
+    e.set_wat_stack_packet_count_enabled(1);
     e.set_aoe_recompile_enabled(0);
     e.set_aoe_wat_threaded_enabled(0);
+    e.set_wat_stack_packet_enabled(0);
+    e.set_wat_stack_superops_enabled(variant === 'wat-stack-cmp-jcc' ? 1 : 0);
     if (variant === 'wat-threaded') e.set_aoe_wat_threaded_enabled(1);
+    if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
+      e.set_wat_stack_packet_enabled(1);
+    }
     if (variant === 'wat-optimized') e.set_aoe_recompile_enabled(1);
     seed();
     e.reset_aoe_recompile_counters();
     e.run(warmupBlocks);
-    if (variant !== 'x86-threaded') {
+    if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
+      assert.strictEqual(u32(e.get_wat_stack_packet_entries()), warmupBlocks,
+        `warmup must reach the ${variant} backend`);
+    } else if (variant !== 'x86-threaded') {
       assert.strictEqual(u32(e.get_aoe_recompile_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
     }
@@ -138,6 +147,7 @@ function median(values) {
     seed();
     e.reset_aoe_recompile_counters();
     e.set_aoe_recompile_count_enabled(0);
+    e.set_wat_stack_packet_count_enabled(0);
     const start = performance.now();
     e.run(measuredBlocks);
     const elapsedMs = performance.now() - start;
@@ -149,7 +159,13 @@ function median(values) {
     return { elapsedMs, state };
   }
 
-  const variants = ['x86-threaded', 'wat-threaded', 'wat-optimized'];
+  const variants = [
+    'x86-threaded',
+    'wat-threaded',
+    'wat-stack',
+    'wat-stack-cmp-jcc',
+    'wat-optimized',
+  ];
   const samples = Object.fromEntries(variants.map(name => [name, []]));
   let referenceState = null;
   for (let trial = 0; trial < TRIALS; trial++) {
@@ -169,14 +185,14 @@ function median(values) {
     console.log(`${variant} ms: ${samples[variant].map(v => v.toFixed(2)).join(', ')}`);
   }
   console.log('');
-  console.log('variant         mean ms  median ms  blocks/ms  vs x86 median');
+  console.log('variant                 mean ms  median ms  blocks/ms  vs x86 median');
   const baseMedian = median(samples['x86-threaded']);
   for (const variant of variants) {
     const sampleMean = mean(samples[variant]);
     const sampleMedian = median(samples[variant]);
     const speedup = baseMedian / sampleMedian;
     console.log(
-      variant.padEnd(15) +
+      variant.padEnd(24) +
       sampleMean.toFixed(2).padStart(8) + '  ' +
       sampleMedian.toFixed(2).padStart(9) + '  ' +
       (measuredBlocks / sampleMedian).toFixed(1).padStart(9) + '  ' +

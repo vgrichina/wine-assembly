@@ -632,6 +632,103 @@
         (return (i32.const 1))))
     (i32.const 0))
 
+  ;; Benchmark fixture for the application-neutral stack packet VM. These
+  ;; packets are intentionally expressed only in the generic ISA documented by
+  ;; $wat_stack_packet; the executor contains no AoE addresses or operations.
+  (func $emit_aoe_wat_stack_packet (param $start_eip i32) (result i32)
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; [save_esi]=esi; [save_edi]=edi
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775050))
+        (call $te_raw (i32.const 20))
+        (call $te_raw (i32.const 8))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 20))
+        ;; eax=0; eax=load8[esi]
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0))
+        (call $te_raw (i32.const 9))
+        (call $te_raw (i32.const 7)) (call $te_raw (i32.const 18))
+        (call $te_raw (i32.const 9))
+        ;; edi-=load32[absolute]
+        (call $te_raw (i32.const 8))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775020))
+        (call $te_raw (i32.const 19)) (call $te_raw (i32.const 23))
+        (call $te_raw (i32.const 16))
+        ;; ecx=eax; esi=esi+1; eax=eax&15 with flags
+        (call $te_raw (i32.const 1)) (call $te_raw (i32.const 10))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 25)) (call $te_raw (i32.const 9))
+        ;; ebx=load32[absolute]
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x0077503C))
+        (call $te_raw (i32.const 19)) (call $te_raw (i32.const 12))
+        ;; jmp load32[0x00534400 + (eax << 2)]
+        (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 26))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00534400))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 19))
+        (call $te_raw (i32.const 28))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; ecx >>= 4; jnz 0x535e08
+        (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 27)) (call $te_raw (i32.const 10))
+        (call $te_raw (i32.const 29)) (call $te_raw (i32.const 5))
+        (call $te_raw (i32.const 0x00535E08))
+        (call $te_raw (i32.const 0x00535E05))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; edx=edi+ecx-1
+        (call $te_raw (i32.const 8)) (call $te_raw (i32.const 11))
+        (call $te_raw (i32.const 3)) (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 11))
+        (call $te_raw (i32.const 3))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 23)) (call $te_raw (i32.const 11))
+        (if (global.get $wat_stack_superops_enabled)
+          (then
+            ;; Generic CMP_RM32_JCC edx,ebx,+8,JL,target,fall.
+            (call $te_raw (i32.const 31))
+            (call $te_raw (i32.const 2)) (call $te_raw (i32.const 3))
+            (call $te_raw (i32.const 8)) (call $te_raw (i32.const 12))
+            (call $te_raw (i32.const 0x00535E7C))
+            (call $te_raw (i32.const 0x00535E12)))
+          (else
+            (call $te_raw (i32.const 3))
+            (call $te_raw (i32.const 4))
+            (call $te_raw (i32.const 17)) (call $te_raw (i32.const 8))
+            (call $te_raw (i32.const 21)) (call $te_raw (i32.const 19))
+            (call $te_raw (i32.const 30)) (call $te_raw (i32.const 12))
+            (call $te_raw (i32.const 0x00535E7C))
+            (call $te_raw (i32.const 0x00535E12))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; edi=load32[absolute]; esi=esi+1; edi=edi+ecx; jmp
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 19)) (call $te_raw (i32.const 16))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 8)) (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 22)) (call $te_raw (i32.const 16))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00535C20))
+        (call $te_raw (i32.const 28))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func $decode_block (param $start_eip i32) (result i32)
     (local $tstart i32)
     (local $op i32)
@@ -670,6 +767,12 @@
         (if (i32.eq (local.get $start_eip) (i32.const 0x0049DD20))
           (then
             (call $te (i32.const 356) (i32.const 2))
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+    (if (global.get $wat_stack_packet_enabled)
+      (then
+        (if (call $emit_aoe_wat_stack_packet (local.get $start_eip))
+          (then
             (call $cache_store (local.get $start_eip) (local.get $tstart))
             (return (local.get $tstart))))))
     (if (global.get $aoe_wat_threaded_enabled)

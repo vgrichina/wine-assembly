@@ -2116,6 +2116,28 @@ Practical implication for this project:
 
 ## Suggested Next Order
 
+### Generic WAT Stack Packet Checkpoint
+
+The continued compiler branch now includes a generic stack packet executor,
+an ahead-of-time assembler/verifier, and an AoE-only decoder fixture. The VM
+opcodes themselves are application-neutral. Correctness is differential across
+x86 threading, the old narrow packet, the generic stack VM, and optimized WAT.
+
+Fifteen interleaved two-million-block trials produced this median comparison:
+
+```text
+x86 threaded                 191.34 ms   1.000x
+narrow WAT packet             93.24 ms   2.052x
+generic WAT stack            206.16 ms   0.928x
+generic + CMP_RM32_JCC       209.02 ms   0.915x
+hand-optimized WAT            54.27 ms   3.525x
+```
+
+`CMP_RM32_JCC` is a generic, census-backed fusion rather than an AoE operation,
+but its dynamic register selection lost slightly in this executor. The next
+benchmark should change dispatch/operand encoding (dense `br_table` or
+register-form packets), not add AoE-shaped superinstructions.
+
 1. Keep and commit the measured 355-handler specialization set.
 2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
 3. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.

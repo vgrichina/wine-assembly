@@ -1001,6 +1001,12 @@
   (global $stack_packet_0049dd20_to_e0ad_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_enabled (mut i32) (i32.const 0))
   (global $aoe_wat_threaded_enabled (mut i32) (i32.const 0))
+  ;; Application-neutral stack packet VM. The AoE POC only supplies benchmark
+  ;; packets; no guest addresses or algorithms are built into the executor.
+  (global $wat_stack_packet_enabled (mut i32) (i32.const 0))
+  (global $wat_stack_superops_enabled (mut i32) (i32.const 0))
+  (global $wat_stack_packet_count_enabled (mut i32) (i32.const 1))
+  (global $wat_stack_packet_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_count_enabled (mut i32) (i32.const 1))
   (global $aoe_recompile_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_00535c20_entries (mut i32) (i32.const 0))
