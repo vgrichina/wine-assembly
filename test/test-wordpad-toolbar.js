@@ -84,7 +84,7 @@ function parseWindowByCtrlId(id) {
     `window:final hwnd=(\\d+) class=("[^"]*") ctrlClass=(-?\\d+) ctrlId=${id} ` +
     `parent=(0x[0-9a-f]+) pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
     `client=\\{"x":(-?\\d+),"y":(-?\\d+),"w":(-?\\d+),"h":(-?\\d+)\\} ` +
-    `visible=(true|false)(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
+    `visible=(true|false)(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
     'i');
   const line = out.split('\n').find(l => re.test(l)) || '';
   const m = line.match(re);
@@ -288,7 +288,7 @@ const sizeComboWhitePixels = sizeCombo
       sizeCombo.clientX + sizeCombo.clientW - 22, sizeCombo.clientY + 18)
   : 0;
 const openedNewDialog =
-  /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);
+  /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);
 
 const checks = [];
 function check(name, pass) { checks.push({ name, pass: !!pass }); }

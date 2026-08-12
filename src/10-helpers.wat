@@ -1676,7 +1676,26 @@
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $cache_g
       (i32.load (call $richedit_format_addr_for_slot (local.get $slot))))
-    (if (i32.eqz (local.get $cache_g)) (then (return)))
+    ;; Native RichEdit 2.0 reports its mixed/unknown-size sentinel (32767
+    ;; twips) for a brand-new empty document. WordPad treats the value as a
+    ;; real point size and puts "1638.5" in its formatting toolbar. There is
+    ;; no mixed run in an empty document, so report WordPad's 10pt default.
+    ;; Keep the native sentinel for non-empty mixed selections.
+    (if (i32.eqz (local.get $cache_g))
+      (then
+        (local.set $cf_w (call $g2w (local.get $lParam)))
+        (local.set $native_yHeight (i32.load offset=12 (local.get $cf_w)))
+        (if (i32.and
+              (i32.ge_u (local.get $native_yHeight) (i32.const 32767))
+              (i32.eqz (call $wnd_send_message
+                (local.get $hwnd) (i32.const 0x000E)
+                (i32.const 0) (i32.const 0)))) ;; WM_GETTEXTLENGTH
+          (then
+            (i32.store offset=4 (local.get $cf_w)
+              (i32.or (i32.load offset=4 (local.get $cf_w))
+                      (i32.const 0x80000000))) ;; CFM_SIZE
+            (i32.store offset=12 (local.get $cf_w) (i32.const 200)))) ;; 10pt
+        (return)))
     (local.set $cache_w (call $g2w (local.get $cache_g)))
     (local.set $yHeight (i32.load (local.get $cache_w)))
     (local.set $scratch_g (call $heap_alloc (i32.const 8)))

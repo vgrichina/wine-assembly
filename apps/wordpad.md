@@ -501,6 +501,10 @@ Current evidence from the 2026-08-11 follow-up probe:
 - The `32767 twips` RichEdit sentinel is clamped during the exact screen-DPI
   `MulDiv(32767, 96, 1440)` conversion, so text no longer paints at a large
   negative y coordinate.
+- WordPad's empty-document size query and toolbar handoff now resolve to the 10pt default
+  instead of exposing the native mixed-size sentinel as a literal `1638.5`
+  point value. Both the browser renderer and combo `WM_GETTEXT` state report
+  `10`; actual selected sizes and non-empty mixed selections remain untouched.
 - `ExtTextOutA/W` now honors `ETO_OPAQUE` rect fills and `ETO_CLIPPED` glyph
   clipping, so RichEdit's erase bands clear to the DC background and long-line
   paints stay constrained to the native paint rectangle.

@@ -8122,16 +8122,36 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000C))
       (then
         (if (i32.eq (local.get $variant) (i32.const 2))
-          (then (return (call $wnd_send_message
-                          (i32.load offset=28 (local.get $state_w))
-                          (i32.const 0x000C) (local.get $wParam) (local.get $lParam)))))
+          (then
+            ;; WordPad converts RichEdit 2.0's empty-document 32767-twip
+            ;; sentinel to literal point-size text "1638.5". Normalize that
+            ;; exact value only in its toolbar size combo (control id 166).
+            (if (i32.and
+                  (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 166))
+                  (i32.and
+                    (i32.eq (call $strlen (call $g2w (local.get $lParam))) (i32.const 6))
+                    (i32.and
+                      (i32.eq (i32.load (call $g2w (local.get $lParam))) (i32.const 0x38333631))
+                      (i32.eq (i32.load16_u offset=4 (call $g2w (local.get $lParam))) (i32.const 0x352E)))))
+              (then
+                (local.set $name_ptr (call $heap_alloc (i32.const 3)))
+                (i32.store16 (call $g2w (local.get $name_ptr)) (i32.const 0x3031))
+                (i32.store8 offset=2 (call $g2w (local.get $name_ptr)) (i32.const 0))
+                (local.set $idx (call $wnd_send_message
+                  (i32.load offset=28 (local.get $state_w))
+                  (i32.const 0x000C) (local.get $wParam) (local.get $name_ptr)))
+                (call $heap_free (local.get $name_ptr))
+                (return (local.get $idx))))
+            (return (call $wnd_send_message
+                      (i32.load offset=28 (local.get $state_w))
+                      (i32.const 0x000C) (local.get $wParam) (local.get $lParam)))))
         (call $heap_free (i32.load (local.get $state_w)))
         (i32.store          (local.get $state_w) (i32.const 0))
         (i32.store offset=4 (local.get $state_w) (i32.const 0))
         (if (local.get $lParam)
           (then
             (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
-            (i32.store          (local.get $state_w)
+            (i32.store (local.get $state_w)
               (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
             (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
         (call $invalidate_hwnd (local.get $hwnd))

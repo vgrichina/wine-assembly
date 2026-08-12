@@ -898,6 +898,8 @@ Acceptance:
 [x] WordPad checked toolbar button visual state is explicitly asserted
 [x] WordPad formatting toolbar combo fields are visibly asserted
 [x] WordPad formatting toolbar font/size combo text is populated and asserted
+[x] Empty-document font-size toolbar pixels and `WM_GETTEXT` report 10pt
+    instead of rendering the native mixed-size sentinel as `1638.5`
 [x] WordPad formatting toolbar full button run is visible in the narrow row
 [x] ToolbarWindow32 `TB_INSERTBUTTONA` preserves stored TBBUTTON order
 [x] ToolbarWindow32 bounded query/style/image-list/padding/delete messages are asserted

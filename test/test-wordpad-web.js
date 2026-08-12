@@ -312,6 +312,22 @@ async function main() {
   fs.writeFileSync(PNG, Buffer.from(screenshot.replace(/^data:image\/png;base64,/, ''), 'base64'));
 
   const log = await evaluate(`document.getElementById('log').textContent`);
+  const sizeState = await evaluate(`(() => {
+    const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+      .find(item => item && item.wasm && item.wasm.exports.ctrl_get_id &&
+        (item.wasm.exports.ctrl_get_id(item.hwnd) | 0) === 166);
+    if (!win) return null;
+    const app = runningApps.find(item => item && item.wine && item.wine.instance === win.wasm);
+    const e = win.wasm.exports;
+    const guest = e.guest_alloc(32) >>> 0;
+    e.send_message(win.hwnd, 0x000D, 32, guest);
+    const wa = app.wine._guestToWasmAddress(guest);
+    const bytes = new Uint8Array(app.wine.memory.buffer);
+    let guestText = '';
+    for (let i = 0; i < 31 && bytes[wa + i]; i++) guestText += String.fromCharCode(bytes[wa + i]);
+    if (e.guest_free) e.guest_free(guest);
+    return { rendererText: win.title, guestText };
+  })()`);
   const consoleText = consoleSummary(cdp.events).join('\n');
   assert.strictEqual(typed.text, 'hello world', `native RichEdit text mismatch: ${JSON.stringify(typed)}`);
   assert(typed.running, 'WordPad should remain running after typing');
@@ -319,11 +335,14 @@ async function main() {
   assert(!/--- Program exited ---/.test(log), `WordPad should not exit:\n${log.slice(-3000)}`);
   assert(/DLL: riched20\.dll at/i.test(consoleText),
     `browser should preload riched20.dll:\n${consoleText.slice(-5000)}`);
+  assert.deepStrictEqual(sizeState, { rendererText: '10', guestText: '10' },
+    'WordPad browser toolbar should show the 10pt default in renderer and control state');
   assert(fs.statSync(PNG).size > 0, 'WordPad browser screenshot should be written');
 
   console.log('PASS  WordPad stays running in the browser');
   console.log('PASS  browser preloads riched20.dll');
   console.log('PASS  native RichEdit accepts "hello world"');
+  console.log('PASS  browser toolbar shows 10pt default size');
   console.log('PASS  screenshot:', PNG);
   cleanup();
 }
