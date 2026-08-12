@@ -365,6 +365,7 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
+  //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
@@ -432,6 +433,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus-text', label: parts[2] || '' });
       } else if (kind === 'dump-focus-state') {
         scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
+      } else if (kind === 'dump-control-state') {
+        scheduledInput.push({ batch, action: 'dump-control-state', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-clipboard') {
         scheduledInput.push({ batch, action: 'dump-clipboard', label: parts[2] || '' });
       } else if (kind === 'dump-focus-charformat') {
@@ -2561,6 +2564,41 @@ async function main() {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
+        }
+      } else if (ev.action === 'dump-control-state') {
+        const we = instance.exports;
+        let h = 0;
+        for (const w of Object.values((renderer && renderer.windows) || {})) {
+          if (w.visible && we.ctrl_get_id && we.ctrl_get_id(w.hwnd) === ev.ctrlId) {
+            h = w.hwnd;
+            break;
+          }
+        }
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] dump-control-state${tag}: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cls = we.ctrl_get_class ? we.ctrl_get_class(h) : -1;
+          const parent = we.wnd_get_parent ? (we.wnd_get_parent(h) | 0) : 0;
+          const cap = 8192;
+          const textG = we.guest_alloc(cap);
+          const n = we.send_message(h, 0x000D, cap, textG) | 0; // WM_GETTEXT
+          const wa = g2w(textG);
+          const viewLen = Math.max(0, Math.min(n, cap - 1));
+          const txt = Buffer.from(new Uint8Array(memory.buffer, wa, viewLen)).toString('latin1');
+          const startG = we.guest_alloc(4);
+          const endG = we.guest_alloc(4);
+          const dv = new DataView(memory.buffer);
+          dv.setUint32(g2w(startG), 0, true);
+          dv.setUint32(g2w(endG), 0, true);
+          const selRet = we.send_message(h, 0x00B0, startG, endG) >>> 0; // EM_GETSEL
+          const selStart = dv.getUint32(g2w(startG), true) >>> 0;
+          const selEnd = dv.getUint32(g2w(endG), true) >>> 0;
+          const lineCount = we.send_message(h, 0x00BA, 0, 0) | 0;
+          const firstVisible = we.send_message(h, 0x00CE, 0, 0) | 0;
+          logs.push(`[input] dump-control-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${ev.ctrlId} parent=0x${parent.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-control-state${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} NO STATE API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-clipboard') {
         const we = instance.exports;

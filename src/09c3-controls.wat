@@ -379,6 +379,57 @@
   ;;   FR_MATCHCASE   = 0x0004
   ;;   FR_FINDNEXT    = 0x0008
   ;;   FR_DIALOGTERM  = 0x0040
+  (func $findreplace_native_richedit_find
+    (param $owner i32) (param $fr_w i32) (param $flags i32) (result i32)
+    (local $find_g i32) (local $range_g i32) (local $range_w i32)
+    (local $sel_a i32) (local $sel_b i32) (local $start i32) (local $ret i32)
+    ;; A class-0 child with a real native wndproc is the shape used by
+    ;; RichEdit20A. Plain WAT Edit owners (Notepad) continue through their
+    ;; application FINDMSGSTRING handler below.
+    (if (i32.or
+          (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
+          (i32.eqz (call $wnd_get_parent (local.get $owner))))
+      (then (return (i32.const 0))))
+    (local.set $find_g (i32.load offset=16 (local.get $fr_w)))
+    (if (i32.eqz (local.get $find_g)) (then (return (i32.const 0))))
+    (local.set $range_g (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $range_g)) (then (return (i32.const 0))))
+    (local.set $range_w (call $g2w (local.get $range_g)))
+    (call $zero_memory (local.get $range_w) (i32.const 20))
+    ;; Use the current selection end for a downward Find Next and the start
+    ;; for an upward search. FINDTEXTEXA is CHARRANGE + lpstrText + result
+    ;; CHARRANGE; all pointers passed to native RichEdit stay in guest space.
+    (drop (call $wnd_send_message
+      (local.get $owner) (i32.const 0x00B0)
+      (local.get $range_g) (i32.add (local.get $range_g) (i32.const 4))))
+    (local.set $sel_a (i32.load (local.get $range_w)))
+    (local.set $sel_b (i32.load offset=4 (local.get $range_w)))
+    (if (i32.and (local.get $flags) (i32.const 0x01))
+      (then
+        (local.set $start (local.get $sel_a))
+        (if (i32.gt_s (local.get $sel_b) (local.get $start))
+          (then (local.set $start (local.get $sel_b))))
+        (i32.store (local.get $range_w) (local.get $start))
+        (i32.store offset=4 (local.get $range_w) (i32.const -1)))
+      (else
+        (local.set $start (local.get $sel_a))
+        (if (i32.lt_s (local.get $sel_b) (local.get $start))
+          (then (local.set $start (local.get $sel_b))))
+        (i32.store (local.get $range_w) (i32.const 0))
+        (i32.store offset=4 (local.get $range_w) (local.get $start))))
+    (i32.store offset=8 (local.get $range_w) (local.get $find_g))
+    (local.set $ret (call $wnd_send_message
+      (local.get $owner) (i32.const 0x044F) (local.get $flags) (local.get $range_g))) ;; EM_FINDTEXTEXA
+    (if (i32.ge_s (local.get $ret) (i32.const 0))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $owner) (i32.const 0x00B1)
+          (i32.load offset=12 (local.get $range_w))
+          (i32.load offset=16 (local.get $range_w))))
+        (call $paint_flag_set_inv (local.get $owner))))
+    (call $heap_free (local.get $range_g))
+    (i32.ge_s (local.get $ret) (i32.const 0)))
+
   (func $findreplace_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $cmd i32) (local $fr i32) (local $fr_w i32)
@@ -402,7 +453,10 @@
     (local.set $fr (call $wnd_get_userdata (local.get $hwnd)))
     (if (i32.eqz (local.get $fr)) (then (return (i32.const 0))))
     (local.set $fr_w (call $g2w (local.get $fr)))
-    (local.set $owner (i32.load offset=4 (local.get $fr_w)))
+    ;; Some MFC callers release/clear their temporary FINDREPLACE wrapper
+    ;; fields after FindTextA returns. The modeless dialog's owner relationship
+    ;; remains authoritative for the dialog lifetime.
+    (local.set $owner (call $wnd_get_owner (local.get $hwnd)))
 
     ;; ---- WM_CLOSE (0x0010) — title-bar X click ----
     ;; Real commdlg routes a title-bar close through IDCANCEL; do the same.
@@ -441,7 +495,9 @@
                                   (i32.const 0x40)))
         (i32.store offset=12 (local.get $fr_w) (local.get $flags))
         (drop (call $post_queue_push (local.get $owner)
-                (i32.const 0xC000) (i32.const 0) (local.get $fr)))
+                (select (global.get $findreplace_message) (i32.const 0xC000)
+                        (i32.ne (global.get $findreplace_message) (i32.const 0)))
+                (i32.const 0) (local.get $fr)))
         ;; Tear down the dialog: free child WAT state via WM_DESTROY,
         ;; release the WND_RECORDS slots, drop the visible JS window,
         ;; and clear the globals so the next FindTextA opens fresh state.
@@ -491,6 +547,8 @@
                                           (local.get $text_src_w)
                                           (local.get $text_len))))))
                 (i32.store8 (i32.add (local.get $find_buf_w) (local.get $text_len)) (i32.const 0))))))))
+        (drop (call $findreplace_native_richedit_find
+          (local.get $owner) (local.get $fr_w) (local.get $flags)))
         ;; Win98 Notepad's Find starts at the current caret. In the web UI
         ;; the common case is: type text, open Find, search for text that is
         ;; before the caret. When the main edit is exactly at EOF with no
@@ -512,7 +570,9 @@
                   (then (drop (call $wnd_send_message
                     (local.get $main_edit_h) (i32.const 0x00B1) (i32.const 0) (i32.const 0)))))))))
         (drop (call $post_queue_push (local.get $owner)
-                (i32.const 0xC000) (i32.const 0) (local.get $fr)))
+                (select (global.get $findreplace_message) (i32.const 0xC000)
+                        (i32.ne (global.get $findreplace_message) (i32.const 0)))
+                (i32.const 0) (local.get $fr)))
         (return (i32.const 0))))
 
     (i32.const 0)

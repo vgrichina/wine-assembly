@@ -1,7 +1,7 @@
 # WordPad (Win98) — PARTIAL
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-11):** PARTIAL.
+**Status (2026-08-12):** PARTIAL.
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
@@ -69,6 +69,24 @@ result:     PASS for Edit-menu Select All / Copy / Cut / Paste plain-text
             behavior on WordPad's focused native RichEdit child. The current
             screenshot guard also confirms multiline editing no longer copies
             title/menu chrome into the toolbar/ruler band.
+```
+
+Focused Undo / Find probe:
+
+```text
+type "alpha beta", press Ctrl+Z, verify the native RichEdit buffer is empty,
+retype the text, return to the document start, invoke WordPad's real MFC
+Edit > Find command (57636), enter "beta", and activate Find Next
+undo:       WordPad's accelerator reaches native RichEdit Undo
+dialog:     the modeless common Find dialog retains its RichEdit owner even
+            after MFC clears its temporary FINDREPLACE wrapper fields
+message:    repeated RegisterWindowMessageA("commdlg_FindReplace") calls use
+            one stable process-local message ID
+selection:  Find Next selects the native RichEdit range 6..10 without moving
+            focus away from the dialog
+result:     PASS for WordPad Undo plus forward Find/Find Next, including the
+            app command, common-dialog notification, and native selection
+            paths. Replace remains a separate follow-up.
 ```
 
 Focused rich clipboard probe:
@@ -715,7 +733,8 @@ blocker.
    toolbar bitmap icon rendering, formatting-toolbar B/I/U mouse commands,
    checked toolbar button visual state, visible formatting-toolbar color-button
    packing, direct RichEdit color rendering, and clipped long-text RichEdit
-   painting are now covered, and WordPad's own toolbar color UI now applies
+   painting, native Undo, and forward Find/Find Next are now covered, and
+   WordPad's own toolbar color UI now applies
    Blue through the covered dynamic-popup path.
 4. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through

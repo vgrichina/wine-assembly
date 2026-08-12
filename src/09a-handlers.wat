@@ -1347,6 +1347,23 @@
 
   ;; 66: RegisterWindowMessageA(lpString) — return unique msg ID from 0xC000+ range
   (func $handle_RegisterWindowMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; FNV-1a("commdlg_FindReplace") = 0x1A9C8FD4. Common-dialog clients
+    ;; independently register FINDMSGSTRING and later compare the delivered
+    ;; message against that returned value, so remember it instead of assuming
+    ;; this was the process's first registered message (0xC000).
+    (if (i32.and
+          (local.get $arg0)
+          (i32.eq (call $hash_api_name (call $g2w (local.get $arg0)))
+                  (i32.const 0x1A9C8FD4)))
+      (then
+        (if (i32.eqz (global.get $findreplace_message))
+          (then
+            (global.set $clipboard_format_counter
+              (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
+            (global.set $findreplace_message (global.get $clipboard_format_counter))))
+        (global.set $eax (global.get $findreplace_message))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (global.set $clipboard_format_counter (i32.add (global.get $clipboard_format_counter) (i32.const 1)))
     (global.set $eax (global.get $clipboard_format_counter))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))

@@ -1364,6 +1364,11 @@
   ;; get_findreplace_dlg / get_findreplace_edit exports.
   (global $findreplace_dlg_hwnd  (mut i32) (i32.const 0))
   (global $findreplace_edit_hwnd (mut i32) (i32.const 0))
+  ;; Registered FINDMSGSTRING ("commdlg_FindReplace") message. Unlike a
+  ;; process-local increment-only stub, repeated registrations of this system
+  ;; string must return the same value so modeless Find notifications reach
+  ;; MFC applications that register other messages first.
+  (global $findreplace_message (mut i32) (i32.const 0))
 
   ;; Help system state
   (global $help_hwnd        (mut i32) (i32.const 0))  ;; Help window handle (0 = not open)

@@ -865,6 +865,12 @@ Acceptance:
 [x] Mouse-drag selection changes selection range
 [x] Plain-text Ctrl+A/C/X/V work for native RichEdit focus
 [x] Menu Copy/Cut/Paste has explicit coverage
+[x] Native RichEdit Undo works through WordPad's Ctrl+Z accelerator
+[x] WordPad Edit > Find opens the modeless common dialog
+[x] Find Next selects the matching native RichEdit range while the dialog
+    retains focus
+[x] FINDMSGSTRING registration and modeless notification routing are stable
+[ ] WordPad Replace / Replace All common-dialog paths are covered
 [x] Native RichEdit wheel changes first visible line
 [x] Long WordPad RichEdit text paints through clipped ExtTextOut rectangles
 [x] Native RichEdit scrollbar thumb drag changes first visible line
