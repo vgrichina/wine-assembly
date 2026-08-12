@@ -791,6 +791,16 @@ under `test/output/wordpad-richedit/`.
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
 
+International-text status (2026-08-12): WordPad accepts and reads back Greek,
+CJK, Hebrew, Arabic, Devanagari, and supplementary-plane emoji through native
+`RichEdit20A` and UTF-16 `EM_GETTEXTEX`. Browser IME composition preserves
+start/update/commit/cancel semantics at the input boundary: only the finalized
+UTF-16 result is inserted, exactly once, while an empty result cancels without
+changing the document. The browser owns candidate/pre-edit presentation rather
+than sending the unsafe native `WM_IME_STARTCOMPOSITION` sequence without a
+guest IMM module. See `test/test-wordpad-international.js` and
+`test/output/wordpad-richedit/international-text.png`.
+
 **Key files:** `lib/thread-manager.js`, `lib/renderer-input.js`,
 `lib/renderer.js`, `lib/host-imports.js`, `lib/filesystem.js`,
 `src/09a-handlers.wat`, `src/09a5-handlers-window.wat`,

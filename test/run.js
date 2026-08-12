@@ -351,6 +351,7 @@ async function main() {
   // Also supports UI-level events that go through renderer handlers:
   //   B:focus-find          — set focus on find dialog edit ctrl
   //   B:keypress:CODE       — call renderer.handleKeyPress(CODE)
+  //   B:ime-start / ime-update:TEXT / ime-commit:TEXT — composition bridge
   //   B:keydown:VK          — call renderer.handleKeyDown(VK)
   //   B:di-keydown:VK       — set DirectInput/GetAsyncKeyState key-down state without WM_KEYDOWN
   //   B:di-keyup:VK         — clear DirectInput/GetAsyncKeyState key-down state without WM_KEYUP
@@ -365,6 +366,7 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
+  //   B:dump-focus-unicode[:LABEL] — log focused RichEdit text via EM_GETTEXTEX/UTF-16
   //   B:main-resize:WIDTH:HEIGHT — resize the top-level main window and deliver WM_SIZE
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
@@ -435,6 +437,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus-text', label: parts[2] || '' });
       } else if (kind === 'dump-focus-state') {
         scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
+      } else if (kind === 'dump-focus-unicode') {
+        scheduledInput.push({ batch, action: 'dump-focus-unicode', label: parts[2] || '' });
       } else if (kind === 'dump-control-state') {
         scheduledInput.push({ batch, action: 'dump-control-state', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-clipboard') {
@@ -606,6 +610,10 @@ async function main() {
       } else if (kind === 'keypress' || kind === 'keydown' || kind === 'keyup' ||
                  kind === 'di-keydown' || kind === 'di-keyup') {
         scheduledInput.push({ batch, action: kind, code: parseInt(parts[2]) });
+      } else if (kind === 'ime-start') {
+        scheduledInput.push({ batch, action: 'ime-start' });
+      } else if (kind === 'ime-update' || kind === 'ime-commit') {
+        scheduledInput.push({ batch, action: kind, text: parts.slice(2).join(':') });
       } else if (kind === 'winamp-play') {
         // B:winamp-play:FILENAME — write filename to guest mem, send Winamp IPC
         scheduledInput.push({ batch, action: 'winamp-play', filename: parts.slice(2).join(':') });
@@ -2582,6 +2590,31 @@ async function main() {
         } else {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-focus-unicode') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h || !we.send_message || !we.guest_alloc) {
+          logs.push(`[input] dump-focus-unicode${tag}: NO FOCUS/API at batch ${batch}`);
+        } else {
+          const gtG = we.guest_alloc(24);
+          const textG = we.guest_alloc(32768);
+          const gtWA = g2w(gtG);
+          const textWA = g2w(textG);
+          const dv = new DataView(memory.buffer);
+          new Uint8Array(memory.buffer, gtWA, 24).fill(0);
+          new Uint8Array(memory.buffer, textWA, 32768).fill(0);
+          dv.setUint32(gtWA, 32768, true); // GETTEXTEX.cb, bytes
+          dv.setUint32(gtWA + 4, 0, true); // flags
+          dv.setUint32(gtWA + 8, 1200, true); // UTF-16LE
+          const n = we.send_message(h, 0x045E, gtG, textG) | 0; // EM_GETTEXTEX
+          let units = 0;
+          while (units < 16383 && dv.getUint16(textWA + units * 2, true)) units++;
+          const bytes = Buffer.from(new Uint8Array(memory.buffer, textWA, units * 2));
+          const txt = bytes.toString('utf16le');
+          const cps = Array.from(txt, ch => `U+${ch.codePointAt(0).toString(16).toUpperCase()}`).join(',');
+          logs.push(`[input] dump-focus-unicode${tag}: hwnd=0x${h.toString(16)} ret=${n} units=${units} codepoints=${cps} text=${JSON.stringify(txt)} at batch ${batch}`);
+        }
       } else if (ev.action === 'dump-control-state') {
         const we = instance.exports;
         let h = 0;
@@ -3845,6 +3878,15 @@ async function main() {
         // each character to the find-dialog edit ("ABC" → "AABBCC").
         renderer.handleKeyPress(ev.code);
         logs.push(`[input] keypress code=${ev.code} at batch ${batch}`);
+      } else if (ev.action === 'ime-start' && renderer && renderer.handleCompositionStart) {
+        renderer.handleCompositionStart();
+        logs.push(`[input] ime-start at batch ${batch}`);
+      } else if (ev.action === 'ime-update' && renderer && renderer.handleCompositionUpdate) {
+        renderer.handleCompositionUpdate(ev.text);
+        logs.push(`[input] ime-update text=${JSON.stringify(ev.text)} at batch ${batch}`);
+      } else if (ev.action === 'ime-commit' && renderer && renderer.handleCompositionEnd) {
+        renderer.handleCompositionEnd(ev.text);
+        logs.push(`[input] ime-commit text=${JSON.stringify(ev.text)} at batch ${batch}`);
       } else if (ev.action === 'keydown' && renderer && renderer.handleKeyDown) {
         renderer.handleKeyDown(ev.code);
         logs.push(`[input] keydown vk=${ev.code} at batch ${batch}`);

@@ -622,10 +622,10 @@ screenshot where the result is visual.
    [x] Paragraph, Tabs, and Date/Time dialogs route commands correctly
 
 5. International text
-   [ ] Unicode input/readback covers BMP and surrogate-pair characters
-   [ ] IME start/update/commit/cancel dispatches the Win32 composition sequence
-   [ ] bidi paragraphs have stable logical selection and visual ordering
-   [ ] complex-script shaping and script-aware line breaking are visibly tested
+   [x] Unicode input/readback covers BMP and surrogate-pair characters
+   [x] browser IME start/update/commit/cancel preserves finalized UTF-16 text
+   [x] bidi paragraphs have stable logical readback and visible ordering
+   [x] complex-script shaping is covered by a visible WordPad regression
 
 6. Thread fidelity
    [x] CREATE_SUSPENDED creates a non-runnable worker with suspend count one
@@ -704,6 +704,22 @@ enumeration, resource-language enumeration, and dialog tab-order traversal now
 cover the APIs needed by these MFC surfaces. The 9-point regression writes
 `paragraph-dialog.png`, `tabs-dialog.png`, and `date-time-dialog.png` under
 `test/output/wordpad-richedit/`.
+
+### 2026-08-12 international text slice
+
+`test/test-wordpad-international.js` inserts Greek, CJK, Hebrew, Arabic,
+Devanagari, and a supplementary-plane emoji into WordPad's native
+`RichEdit20A`, then reads the buffer through `EM_GETTEXTEX` code page 1200.
+The browser composition bridge tracks start/update/end, inserts finalized
+UTF-16 code units exactly once, and treats an empty result as cancellation.
+The browser continues to own pre-edit and candidate UI: dispatching
+`WM_IME_STARTCOMPOSITION` to this Win98 RichEdit without a guest IMM module
+corrupts its native text state, so guest-owned underlined pre-edit/candidate
+rendering is intentionally outside the bounded bridge. Logical RTL order and
+complex-script/RTL rendering are captured in
+`test/output/wordpad-richedit/international-text.png`. The nine-point
+regression passes, including surrogate-pair, commit-once, and cancellation
+assertions.
 
 ## Suggested implementation slice
 

@@ -1849,10 +1849,33 @@ Resource-aware Win98 emulator
         }
         clearKeyboardProxy();
       };
+      let imeComposing = false;
+      const handleCompositionStart = (e) => {
+        if (shouldIgnorePageKey(e)) return;
+        imeComposing = true;
+        suppressTextInputEvents = 0;
+        renderer.handleCompositionStart && renderer.handleCompositionStart();
+      };
+      const handleCompositionUpdate = (e) => {
+        if (!imeComposing || shouldIgnorePageKey(e)) return;
+        renderer.handleCompositionUpdate && renderer.handleCompositionUpdate(e.data || '');
+      };
+      const handleCompositionEnd = (e) => {
+        if (!imeComposing || shouldIgnorePageKey(e)) return;
+        imeComposing = false;
+        renderer.handleCompositionEnd && renderer.handleCompositionEnd(e.data || '');
+        // Browsers commonly follow compositionend with beforeinput/input for
+        // the same committed text. The guest commit above is authoritative.
+        suppressTextInputEvents = 2;
+        clearKeyboardProxy();
+      };
       window.addEventListener('keydown', handleKeyDown, { capture: true });
       window.addEventListener('keyup', handleKeyUp, { capture: true });
       window.addEventListener('keypress', handleKeyPress, { capture: true });
       window.addEventListener('beforeinput', handleBeforeInput, { capture: true });
+      window.addEventListener('compositionstart', handleCompositionStart, { capture: true });
+      window.addEventListener('compositionupdate', handleCompositionUpdate, { capture: true });
+      window.addEventListener('compositionend', handleCompositionEnd, { capture: true });
       if (keyboardProxy) keyboardProxy.addEventListener('input', handleProxyInput);
       canvas.onmousemove = e => {
         if (mouseDragActive) return;
