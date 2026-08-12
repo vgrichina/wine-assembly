@@ -1941,7 +1941,7 @@
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32)
     (call $richedit_note_charformat_message
-      (local.get $arg0) (local.get $arg1) (local.get $arg3))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
     ;; EM_GETCHARFORMAT needs post-call patching of the output buffer. Route
     ;; this narrow message through the recursive synchronous sender so the WAT
     ;; handler regains control before returning to the guest SendMessageA call.

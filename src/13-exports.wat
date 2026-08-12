@@ -938,7 +938,7 @@
     (call $richedit_note_text_reset_message
       (local.get $hwnd) (local.get $msg))
     (call $richedit_note_charformat_message
-      (local.get $hwnd) (local.get $msg) (local.get $lParam))
+      (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam))
     (call $richedit_note_paraformat_message
       (local.get $hwnd) (local.get $msg) (local.get $lParam))
     (local.set $ret

@@ -396,10 +396,11 @@ native-editing path is alive.
   native RichEdit reporting the selected face/style/size with visible pixel
   changes. A follow-up GDI/RichEdit font-size hint records the latest explicit
   `CFM_SIZE` twips value and uses it only when native RichEdit later asks GDI to
-  create the known sentinel-derived huge font height. The same per-HWND latest
-  size cache now patches `EM_GETCHARFORMAT` output, so the font dialog
-  regression asserts `yHeight=480` after applying 24pt. This is still not a
-  full mixed-run format model.
+  create the known sentinel-derived huge font height. The per-HWND fallback
+  also records the explicit selection range before patching
+  `EM_GETCHARFORMAT`, so the font dialog regression reports `yHeight=480` for
+  that exact run while a larger mixed-size selection retains the native 32767
+  sentinel. This is still not a full mixed-run format model.
 - Added a focused `set-focus-charformat-color` harness action and
   `test/test-wordpad-richedit-color.js`. The bounded probe applies
   `EM_SETCHARFORMAT(CFM_COLOR)` directly to the focused WordPad RichEdit child,
@@ -811,6 +812,8 @@ Acceptance:
 [x] WordPad Font dialog face/style application has visible/pixel assertions
 [x] WordPad Font dialog 24pt selection visibly increases text height
 [x] `EM_GETCHARFORMAT` reports concrete selected size instead of the sentinel
+[x] mixed-size selections retain RichEdit's mixed sentinel instead of being
+    overwritten by the latest explicit selected-size fallback
 [x] text color renders through direct focused RichEdit `EM_SETCHARFORMAT`
 [x] WordPad standard/format toolbar rows are allocated and layout RichEdit below them
 [x] WordPad toolbar app bitmap strips render visible color-keyed icon pixels

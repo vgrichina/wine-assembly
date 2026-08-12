@@ -1505,10 +1505,11 @@
     (i64.store offset=8 (call $update_rect_addr_for_slot (local.get $slot)) (i64.const 0))
     (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
 
-  ;; RichEdit charformat compatibility cache. The current native RichEdit path
-  ;; accepts CFM_SIZE and renders with the latest explicit yHeight, but the DLL
-  ;; still reports the 32767 sentinel through EM_GETCHARFORMAT. Track the same
-  ;; per-window yHeight so tests and app UI state can read the concrete size.
+  ;; RichEdit charformat compatibility cache. Each table entry is a guest heap
+  ;; pointer to { yHeight, selectionLo, selectionHi, reserved }. The native
+  ;; RichEdit path renders explicit CFM_SIZE but can return the 32767 sentinel;
+  ;; keeping the formatted range prevents that fallback from falsely claiming
+  ;; a larger mixed-size selection is uniformly the latest size.
   (func $richedit_format_addr_for_slot (param $slot i32) (result i32)
     (i32.add (global.get $RICHEDIT_FORMAT_TABLE)
              (i32.shl (local.get $slot) (i32.const 2))))
@@ -1527,8 +1528,12 @@
     (i32.store (local.get $addr) (i32.const 0)))
 
   (func $richedit_format_reset_slot (param $slot i32)
+    (local $addr i32) (local $ptr i32)
     (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)) (then (return)))
-    (i32.store (call $richedit_format_addr_for_slot (local.get $slot)) (i32.const 0))
+    (local.set $addr (call $richedit_format_addr_for_slot (local.get $slot)))
+    (local.set $ptr (i32.load (local.get $addr)))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (i32.store (local.get $addr) (i32.const 0))
     (call $richedit_para_reset_slot (local.get $slot)))
 
   (func $richedit_format_reset_hwnd (param $hwnd i32)
@@ -1545,8 +1550,10 @@
         (call $richedit_format_reset_hwnd (local.get $hwnd)))))
 
   (func $richedit_note_charformat_message
-        (param $hwnd i32) (param $msg i32) (param $lParam i32)
+        (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
     (local $slot i32) (local $cf_w i32) (local $mask i32) (local $yHeight i32)
+    (local $cache_g i32) (local $cache_w i32) (local $scratch_g i32)
+    (local $lo i32) (local $hi i32) (local $tmp i32)
     (if (i32.ne (local.get $msg) (i32.const 0x0444)) (then (return))) ;; EM_SETCHARFORMAT
     (if (i32.eqz (local.get $lParam)) (then (return)))
     (local.set $cf_w (call $g2w (local.get $lParam)))
@@ -1559,11 +1566,42 @@
           (i32.ge_u (local.get $yHeight) (i32.const 32767)))
       (then (return)))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
-    (if (i32.ne (local.get $slot) (i32.const -1))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $cache_g
+      (i32.load (call $richedit_format_addr_for_slot (local.get $slot))))
+    (if (i32.eqz (local.get $cache_g))
       (then
-        (i32.store
-          (call $richedit_format_addr_for_slot (local.get $slot))
-          (local.get $yHeight))))
+        (local.set $cache_g (call $heap_alloc (i32.const 16)))
+        (if (i32.eqz (local.get $cache_g)) (then (return)))
+        (i32.store (call $richedit_format_addr_for_slot (local.get $slot))
+          (local.get $cache_g))))
+    (local.set $cache_w (call $g2w (local.get $cache_g)))
+    (if (i32.and (local.get $wParam) (i32.const 1)) ;; SCF_SELECTION
+      (then
+        (local.set $scratch_g (call $heap_alloc (i32.const 8)))
+        (if (i32.eqz (local.get $scratch_g)) (then (return)))
+        (call $gs32 (local.get $scratch_g) (i32.const 0))
+        (call $gs32 (i32.add (local.get $scratch_g) (i32.const 4)) (i32.const 0))
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x00B0)
+          (local.get $scratch_g)
+          (i32.add (local.get $scratch_g) (i32.const 4)))) ;; EM_GETSEL
+        (local.set $lo (call $gl32 (local.get $scratch_g)))
+        (local.set $hi (call $gl32 (i32.add (local.get $scratch_g) (i32.const 4))))
+        (call $heap_free (local.get $scratch_g))
+        (if (i32.gt_u (local.get $lo) (local.get $hi))
+          (then
+            (local.set $tmp (local.get $lo))
+            (local.set $lo (local.get $hi))
+            (local.set $hi (local.get $tmp)))))
+      (else
+        (local.set $lo (i32.const 0))
+        (local.set $hi (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x000E) (i32.const 0) (i32.const 0))))) ;; WM_GETTEXTLENGTH
+    (i32.store (local.get $cache_w) (local.get $yHeight))
+    (i32.store offset=4 (local.get $cache_w) (local.get $lo))
+    (i32.store offset=8 (local.get $cache_w) (local.get $hi))
+    (i32.store offset=12 (local.get $cache_w) (i32.const 0))
     (call $host_note_richedit_charformat_size (local.get $yHeight)))
 
   ;; RichEdit paragraph compatibility cache. Native RichEdit already handles
@@ -1629,13 +1667,37 @@
   (func $richedit_patch_get_charformat_message
         (param $hwnd i32) (param $msg i32) (param $lParam i32)
     (local $slot i32) (local $yHeight i32) (local $cf_w i32) (local $native_yHeight i32)
+    (local $cache_g i32) (local $cache_w i32) (local $scratch_g i32)
+    (local $lo i32) (local $hi i32) (local $tmp i32)
     (if (i32.ne (local.get $msg) (i32.const 0x043A)) (then (return))) ;; EM_GETCHARFORMAT
     (if (i32.eqz (local.get $lParam)) (then (return)))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
-    (local.set $yHeight
+    (local.set $cache_g
       (i32.load (call $richedit_format_addr_for_slot (local.get $slot))))
-    (if (i32.eqz (local.get $yHeight)) (then (return)))
+    (if (i32.eqz (local.get $cache_g)) (then (return)))
+    (local.set $cache_w (call $g2w (local.get $cache_g)))
+    (local.set $yHeight (i32.load (local.get $cache_w)))
+    (local.set $scratch_g (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $scratch_g)) (then (return)))
+    (call $gs32 (local.get $scratch_g) (i32.const 0))
+    (call $gs32 (i32.add (local.get $scratch_g) (i32.const 4)) (i32.const 0))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x00B0)
+      (local.get $scratch_g)
+      (i32.add (local.get $scratch_g) (i32.const 4)))) ;; EM_GETSEL
+    (local.set $lo (call $gl32 (local.get $scratch_g)))
+    (local.set $hi (call $gl32 (i32.add (local.get $scratch_g) (i32.const 4))))
+    (call $heap_free (local.get $scratch_g))
+    (if (i32.gt_u (local.get $lo) (local.get $hi))
+      (then
+        (local.set $tmp (local.get $lo))
+        (local.set $lo (local.get $hi))
+        (local.set $hi (local.get $tmp))))
+    (if (i32.or
+          (i32.ne (local.get $lo) (i32.load offset=4 (local.get $cache_w)))
+          (i32.ne (local.get $hi) (i32.load offset=8 (local.get $cache_w))))
+      (then (return)))
     (local.set $cf_w (call $g2w (local.get $lParam)))
     (local.set $native_yHeight (i32.load offset=12 (local.get $cf_w)))
     (if (i32.and
@@ -2657,7 +2719,7 @@
     (if (global.get $clipboard_richedit_cf_valid)
       (then
         (call $richedit_note_charformat_message
-          (local.get $hwnd) (i32.const 0x0444)
+          (local.get $hwnd) (i32.const 0x0444) (i32.const 1)
           (global.get $clipboard_richedit_cf_ptr)) ;; EM_SETCHARFORMAT
         (drop (call $wnd_send_message
           (local.get $hwnd) (i32.const 0x0444) (i32.const 1)

@@ -211,6 +211,21 @@ scope:       The VFS write boundary rewrites RichEdit's native RTF sentinels
              a full mixed-run formatting model.
 ```
 
+Focused mixed-size selection probe:
+
+```text
+type "small large", select only "small", apply 24pt, then query
+EM_GETCHARFORMAT; select the whole document and query again
+uniform:     the explicitly formatted first-word selection reports yHeight=480
+mixed:       the whole selection preserves RichEdit's yHeight=32767 mixed-size
+             sentinel instead of being overwritten by the latest-size cache
+result:      PASS for range-aware selected-size reporting. The compatibility
+             cache records the explicit CFM_SIZE selection range, so toolbar
+             size state no longer falsely claims a mixed selection is uniform.
+scope:       this remains a bounded latest-run cache, not arbitrary per-run
+             formatting storage or advanced RTF layout.
+```
+
 Focused paragraph alignment round-trip probe:
 
 ```text
@@ -415,8 +430,9 @@ Current evidence from the 2026-08-11 follow-up probe:
   face/style/size/color state preserved in RichEdit charformat state. The
   focused round-trip now covers Arial / Bold Italic / Underline / 24pt / Blue.
   The VFS write boundary rewrites RichEdit's native `\up3276` / `\fs3277`
-  sentinels to `\up0` / `\fs48` from the latest explicit size hint; mixed-size
-  runs and advanced RTF remain follow-up work.
+  sentinels to `\up0` / `\fs48` from the latest explicit size hint. Immediate
+  mixed-selection readback is now range-aware; arbitrary mixed-run persistence
+  and advanced RTF remain follow-up work.
 - WordPad paragraph center alignment now routes through the app command path.
   The focused regression verifies `EM_GETPARAFORMAT` reports `alignment=3`
   after Ctrl+E and after Save As; the saved stream includes centered paragraph
@@ -582,6 +598,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   and writes `test/output/wordpad-richedit/format-roundtrip.png`; it covers
   Save As -> New -> Open of a simple RTF document with Arial / Bold Italic /
   Underline / 24pt / Blue preserved on the reopened selected text.
+- Regression test: `node test/test-wordpad-mixed-charformat.js` passes 7/7;
+  it applies 24pt to only the first word, verifies that exact selection reports
+  480 twips, then verifies a whole-document mixed-size selection retains the
+  native 32767 sentinel instead of being patched to a false uniform size.
 - Regression test: `node test/test-wordpad-paragraph-align.js` passes 17/17
   and writes `test/output/wordpad-richedit/paragraph-align-left.png`,
   and `test/output/wordpad-richedit/paragraph-align-center.png`; it covers

@@ -368,6 +368,7 @@ async function main() {
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
+  //   B:set-focus-charformat-size:TWIPS[:LABEL] — EM_SETCHARFORMAT size on focused hwnd
   //   B:dump-focus-paraformat[:LABEL] — log focused hwnd EM_GETPARAFORMAT state
   //   B:set-focus-paraformat-align:ALIGN[:LABEL] — EM_SETPARAFORMAT alignment on focused hwnd
   //   B:set-focus-paraformat-basic:NUMBERING:START:RIGHT:OFFSET:TAB[:LABEL]
@@ -434,6 +435,9 @@ async function main() {
       } else if (kind === 'set-focus-charformat-color') {
         scheduledInput.push({ batch, action: 'set-focus-charformat-color',
           color: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'set-focus-charformat-size') {
+        scheduledInput.push({ batch, action: 'set-focus-charformat-size',
+          twips: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-focus-paraformat') {
         scheduledInput.push({ batch, action: 'dump-focus-paraformat', label: parts[2] || '' });
       } else if (kind === 'set-focus-paraformat-align') {
@@ -2611,6 +2615,28 @@ async function main() {
           logs.push(`[input] set-focus-charformat-color${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} color=0x${(ev.color >>> 0).toString(16)} ret=0x${ret.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] set-focus-charformat-color${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO CHARFORMAT API at batch ${batch}`);
+        }
+      } else if (ev.action === 'set-focus-charformat-size') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] set-focus-charformat-size${tag}: NO FOCUS at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cfG = we.guest_alloc(128);
+          const cfWA = g2w(cfG);
+          const dv = new DataView(memory.buffer);
+          new Uint8Array(memory.buffer, cfWA, 128).fill(0);
+          dv.setUint32(cfWA, 60, true); // CHARFORMATA cbSize
+          dv.setUint32(cfWA + 4, 0x80000000, true); // CFM_SIZE
+          dv.setInt32(cfWA + 12, ev.twips | 0, true); // yHeight
+          const ret = we.send_message(h, 0x0444, 1, cfG) >>> 0; // EM_SETCHARFORMAT, SCF_SELECTION
+          logs.push(`[input] set-focus-charformat-size${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} twips=${ev.twips | 0} ret=0x${ret.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] set-focus-charformat-size${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO CHARFORMAT API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-focus-paraformat') {
         const we = instance.exports;
