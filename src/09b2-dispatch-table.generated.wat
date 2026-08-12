@@ -38,7 +38,7 @@
       (then
         (call $dispatch_api_table_page_7 (i32.sub (local.get $api_id) (i32.const 1792)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2092))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2134))
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -8302,8 +8302,50 @@
   )
 
   (func $dispatch_api_table_page_8 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2048..2091
+    ;; api ids 2048..2133
     (block $fallback
+    (block $api_85
+    (block $api_84
+    (block $api_83
+    (block $api_82
+    (block $api_81
+    (block $api_80
+    (block $api_79
+    (block $api_78
+    (block $api_77
+    (block $api_76
+    (block $api_75
+    (block $api_74
+    (block $api_73
+    (block $api_72
+    (block $api_71
+    (block $api_70
+    (block $api_69
+    (block $api_68
+    (block $api_67
+    (block $api_66
+    (block $api_65
+    (block $api_64
+    (block $api_63
+    (block $api_62
+    (block $api_61
+    (block $api_60
+    (block $api_59
+    (block $api_58
+    (block $api_57
+    (block $api_56
+    (block $api_55
+    (block $api_54
+    (block $api_53
+    (block $api_52
+    (block $api_51
+    (block $api_50
+    (block $api_49
+    (block $api_48
+    (block $api_47
+    (block $api_46
+    (block $api_45
+    (block $api_44
     (block $api_43
     (block $api_42
     (block $api_41
@@ -8348,7 +8390,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $fallback (local.get $api_id))
     ) ;; 2048: GetClipboardOwner
       (call $handle_GetClipboardOwner (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -8481,6 +8523,132 @@
     ) ;; 2091: LoadImageW
       (call $handle_LoadImageW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
+    ) ;; 2092: ILockBytes_QueryInterface
+      (call $handle_ILockBytes_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2093: ILockBytes_AddRef
+      (call $handle_ILockBytes_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2094: ILockBytes_Release
+      (call $handle_ILockBytes_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2095: ILockBytes_ReadAt
+      (call $handle_ILockBytes_ReadAt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2096: ILockBytes_WriteAt
+      (call $handle_ILockBytes_WriteAt (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2097: ILockBytes_Flush
+      (call $handle_ILockBytes_Flush (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2098: ILockBytes_SetSize
+      (call $handle_ILockBytes_SetSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2099: ILockBytes_LockRegion
+      (call $handle_ILockBytes_LockRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2100: ILockBytes_UnlockRegion
+      (call $handle_ILockBytes_UnlockRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2101: ILockBytes_Stat
+      (call $handle_ILockBytes_Stat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2102: IStream_QueryInterface
+      (call $handle_IStream_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2103: IStream_AddRef
+      (call $handle_IStream_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2104: IStream_Release
+      (call $handle_IStream_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2105: IStream_Read
+      (call $handle_IStream_Read (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2106: IStream_Write
+      (call $handle_IStream_Write (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2107: IStream_Seek
+      (call $handle_IStream_Seek (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2108: IStream_SetSize
+      (call $handle_IStream_SetSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2109: IStream_CopyTo
+      (call $handle_IStream_CopyTo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2110: IStream_Commit
+      (call $handle_IStream_Commit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2111: IStream_Revert
+      (call $handle_IStream_Revert (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2112: IStream_LockRegion
+      (call $handle_IStream_LockRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2113: IStream_UnlockRegion
+      (call $handle_IStream_UnlockRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2114: IStream_Stat
+      (call $handle_IStream_Stat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2115: IStream_Clone
+      (call $handle_IStream_Clone (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2116: IStorage_QueryInterface
+      (call $handle_IStorage_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2117: IStorage_AddRef
+      (call $handle_IStorage_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2118: IStorage_Release
+      (call $handle_IStorage_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2119: IStorage_CreateStream
+      (call $handle_IStorage_CreateStream (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2120: IStorage_OpenStream
+      (call $handle_IStorage_OpenStream (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2121: IStorage_CreateStorage
+      (call $handle_IStorage_CreateStorage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2122: IStorage_OpenStorage
+      (call $handle_IStorage_OpenStorage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2123: IStorage_CopyTo
+      (call $handle_IStorage_CopyTo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2124: IStorage_MoveElementTo
+      (call $handle_IStorage_MoveElementTo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2125: IStorage_Commit
+      (call $handle_IStorage_Commit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2126: IStorage_Revert
+      (call $handle_IStorage_Revert (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2127: IStorage_EnumElements
+      (call $handle_IStorage_EnumElements (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2128: IStorage_DestroyElement
+      (call $handle_IStorage_DestroyElement (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2129: IStorage_RenameElement
+      (call $handle_IStorage_RenameElement (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2130: IStorage_SetElementTimes
+      (call $handle_IStorage_SetElementTimes (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2131: IStorage_SetClass
+      (call $handle_IStorage_SetClass (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2132: IStorage_SetStateBits
+      (call $handle_IStorage_SetStateBits (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2133: IStorage_Stat
+      (call $handle_IStorage_Stat (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2048)))
   )
@@ -8532,6 +8700,12 @@
     (global.set $DX_VTBL_IMALLOC (call $init_com_vtable (i32.const 2015) (i32.const 9)))
     ;; IRunningObjectTable: 10 methods starting at api_id 2059
     (global.set $DX_VTBL_OLE_ROT (call $init_com_vtable (i32.const 2059) (i32.const 10)))
+    ;; ILockBytes: 10 methods starting at api_id 2092
+    (global.set $DX_VTBL_OLE_LOCKBYTES (call $init_com_vtable (i32.const 2092) (i32.const 10)))
+    ;; IStream: 14 methods starting at api_id 2102
+    (global.set $DX_VTBL_OLE_STREAM (call $init_com_vtable (i32.const 2102) (i32.const 14)))
+    ;; IStorage: 18 methods starting at api_id 2116
+    (global.set $DX_VTBL_OLE_STORAGE (call $init_com_vtable (i32.const 2116) (i32.const 18)))
     ;; IDirect3DDevice3: 42 methods starting at api_id 1146
     (global.set $DX_VTBL_D3DDEV3 (call $init_com_vtable (i32.const 1146) (i32.const 42)))
     ;; IDirect3DViewport3: 21 methods starting at api_id 1188

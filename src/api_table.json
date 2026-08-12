@@ -16103,5 +16103,299 @@
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2998850235
+  },
+  {
+    "id": 2092,
+    "name": "ILockBytes_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1617681516
+  },
+  {
+    "id": 2093,
+    "name": "ILockBytes_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 104124279
+  },
+  {
+    "id": 2094,
+    "name": "ILockBytes_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3844332864
+  },
+  {
+    "id": 2095,
+    "name": "ILockBytes_ReadAt",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2928557330
+  },
+  {
+    "id": 2096,
+    "name": "ILockBytes_WriteAt",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3874982595
+  },
+  {
+    "id": 2097,
+    "name": "ILockBytes_Flush",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1871531943
+  },
+  {
+    "id": 2098,
+    "name": "ILockBytes_SetSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2392874016
+  },
+  {
+    "id": 2099,
+    "name": "ILockBytes_LockRegion",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3251546320
+  },
+  {
+    "id": 2100,
+    "name": "ILockBytes_UnlockRegion",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3278977363
+  },
+  {
+    "id": 2101,
+    "name": "ILockBytes_Stat",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2241217961
+  },
+  {
+    "id": 2102,
+    "name": "IStream_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1722864590
+  },
+  {
+    "id": 2103,
+    "name": "IStream_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1665549629
+  },
+  {
+    "id": 2104,
+    "name": "IStream_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1419775130
+  },
+  {
+    "id": 2105,
+    "name": "IStream_Read",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1556718457
+  },
+  {
+    "id": 2106,
+    "name": "IStream_Write",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3341106528
+  },
+  {
+    "id": 2107,
+    "name": "IStream_Seek",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1474728421
+  },
+  {
+    "id": 2108,
+    "name": "IStream_SetSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2693254406
+  },
+  {
+    "id": 2109,
+    "name": "IStream_CopyTo",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1985077417
+  },
+  {
+    "id": 2110,
+    "name": "IStream_Commit",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1499460960
+  },
+  {
+    "id": 2111,
+    "name": "IStream_Revert",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2399729415
+  },
+  {
+    "id": 2112,
+    "name": "IStream_LockRegion",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1303675602
+  },
+  {
+    "id": 2113,
+    "name": "IStream_UnlockRegion",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3673127553
+  },
+  {
+    "id": 2114,
+    "name": "IStream_Stat",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 829110747
+  },
+  {
+    "id": 2115,
+    "name": "IStream_Clone",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 602170990
+  },
+  {
+    "id": 2116,
+    "name": "IStorage_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3535787537
+  },
+  {
+    "id": 2117,
+    "name": "IStorage_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 954046898
+  },
+  {
+    "id": 2118,
+    "name": "IStorage_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 224916079
+  },
+  {
+    "id": 2119,
+    "name": "IStorage_CreateStream",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3293432794
+  },
+  {
+    "id": 2120,
+    "name": "IStorage_OpenStream",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 983749750
+  },
+  {
+    "id": 2121,
+    "name": "IStorage_CreateStorage",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 232764871
+  },
+  {
+    "id": 2122,
+    "name": "IStorage_OpenStorage",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 4180494227
+  },
+  {
+    "id": 2123,
+    "name": "IStorage_CopyTo",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2931285078
+  },
+  {
+    "id": 2124,
+    "name": "IStorage_MoveElementTo",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 792798660
+  },
+  {
+    "id": 2125,
+    "name": "IStorage_Commit",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 385390675
+  },
+  {
+    "id": 2126,
+    "name": "IStorage_Revert",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2953234632
+  },
+  {
+    "id": 2127,
+    "name": "IStorage_EnumElements",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3853471902
+  },
+  {
+    "id": 2128,
+    "name": "IStorage_DestroyElement",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2338253472
+  },
+  {
+    "id": 2129,
+    "name": "IStorage_RenameElement",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 916116360
+  },
+  {
+    "id": 2130,
+    "name": "IStorage_SetElementTimes",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1490303668
+  },
+  {
+    "id": 2131,
+    "name": "IStorage_SetClass",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1451896382
+  },
+  {
+    "id": 2132,
+    "name": "IStorage_SetStateBits",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 584609319
+  },
+  {
+    "id": 2133,
+    "name": "IStorage_Stat",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 412025532
   }
 ]

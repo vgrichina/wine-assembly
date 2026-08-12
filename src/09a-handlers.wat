@@ -6983,9 +6983,13 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 462: WriteClassStg(pStg, rclsid) — no-op success for placeholder OLE storage.
+  ;; 462: WriteClassStg(pStg, rclsid) — persist the root storage CLSID.
   (func $handle_WriteClassStg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) ;; S_OK
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (memory.copy (call $g2w (i32.add (local.get $arg0) (i32.const 20))) (call $g2w (local.get $arg1)) (i32.const 16))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

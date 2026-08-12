@@ -8,8 +8,12 @@ pagination, Print Preview navigation, large-document resize/edit stress,
 advanced ruler/dialog commands, international UTF-16/IME commit input, and
 real suspended-thread resume semantics now have passing app-level regressions.
 Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences
-are covered as well. Embedded OLE objects and exhaustive undocumented
-version-parity remain outside this scope.
+are covered as well. The first reusable OLE persistence foundation is now
+implemented: `ILockBytes` has binary random-access storage, `IStorage` owns
+case-insensitive named `IStream` children, streams support read/write/seek and
+size/stat operations, and storage class IDs persist in memory. WordPad does not
+yet insert, render, copy, or reopen an embedded object; those higher OLE layers
+remain outside the completed non-OLE scope.
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
@@ -133,8 +137,9 @@ format:    Paste restores selected character color plus paragraph numbering,
            insertion formatting is reset
 result:    PASS for same-session non-OLE RTF clipboard data plus basic
            RichEdit character/paragraph-format preservation on menu and
-           Ctrl+C/Ctrl+X/Ctrl+V paths. Embedded objects, OLE storage transfer,
-           images, tables, and advanced RTF remain deferred.
+           Ctrl+C/Ctrl+X/Ctrl+V paths. Embedded-object transfer and image
+           clipboard formats remain deferred. Advanced document RTF tables
+           are covered separately below.
 ```
 
 Focused selection-highlight probe:
@@ -475,7 +480,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   helpers in the covered path (`GetProfileSectionA`, `GlobalFlags`,
   `CreateILockBytesOnHGlobal`, `StgCreateDocfileOnILockBytes`,
   `WriteClassStg`, `WriteFmtUserTypeStg`). This is compatibility scaffolding,
-  not full OLE storage or rich clipboard support.
+  The original placeholders have since become functional memory-backed
+  `ILockBytes`/`IStorage` objects with named `IStream` children. RichEdit object
+  transfer, rendering, and compound-file byte serialization are still later
+  layers; this is not yet full embedded-object clipboard support.
 - WordPad Save As now reaches the common dialog, accepts a picked filename,
   creates/writes/closes the target file, updates the top-level title, and
   returns focus to the native RichEdit child. The MFC/OLE save bookkeeping path
@@ -753,9 +761,9 @@ focused app-level trace of WordPad's real startup thread remains to be added.
 
 ## Follow-Up
 
-1. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
-   broader RichEdit wrapping/layout edge cases, advanced toolbar UI state,
-   and embedded OLE/object clipboard fidelity still need focused probes.
+1. The bounded non-OLE program is complete. Remaining WordPad work is centered
+   on embedded OLE/object clipboard fidelity: `IDataObject`/`STGMEDIUM`,
+   `IRichEditOle`, object rendering, and save/reopen persistence.
    Covered areas now include mixed-run size reporting, caret blink/XOR cadence,
    Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
@@ -777,10 +785,10 @@ focused app-level trace of WordPad's real startup thread remains to be added.
 2. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
-3. Complete the expanded non-OLE program in
-   `docs/richedit-compat-design.md`: advanced RTF (including tables), printing,
-   layout stress, ruler/secondary UI, and international text. Embedded OLE
-   objects and object clipboard transfer remain postponed.
+3. Extend the new memory-backed OLE storage foundation into real WordPad
+   object transfer and presentation. Advanced RTF (including document tables),
+   printing, layout stress, ruler/secondary UI, and international text are
+   complete in `docs/richedit-compat-design.md`.
 
 Advanced RTF status (2026-08-12): WordPad now has focused Open -> Save -> Open
 coverage for inherited stylesheets, multiple font/color/format runs, centered
@@ -790,14 +798,11 @@ saved files retain the table/font/color/paragraph structure. See
 `test/test-wordpad-advanced-rtf.js` and
 `test/output/wordpad-richedit/advanced-rtf.png`.
 
-Printing status (2026-08-12): concrete Print and Page Setup dialogs now expose
-page range, copies, Letter paper, and editable margins. The default printer DC
-reports 300-DPI Letter metrics and supports the GDI document/page lifecycle.
-Print Preview reaches WordPad's native preview toolbar and page-view surface;
-DC state cloning no longer crashes on background, polygon-fill, or stretch
-mode queries. Remaining printing work is multi-page preview navigation and a
-native print-progress cleanup loop after the first `EndPage` (the app has not
-yet reached `EndDoc`).
+Printing status (2026-08-12): concrete Print and Page Setup dialogs expose page
+range, copies, Letter paper, and editable margins. The default printer DC
+reports 300-DPI Letter metrics and completes `StartDoc` through `EndDoc` while
+cleaning up its progress dialog. Multi-page `EM_FORMATRANGE` pagination and
+Print Preview first/next navigation have passing app-level coverage.
 
 Ruler/UI status (2026-08-12): ruler dragging now has an app-level assertion
 that adds a 1278-twip native RichEdit tab stop. Paragraph, Tabs, and Date/Time

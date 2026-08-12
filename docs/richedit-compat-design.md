@@ -641,6 +641,24 @@ transfer. TOM/COM, deep accessibility, and drag/drop editing are also outside
 this non-OLE completion program unless one of the probes proves they are a
 hard dependency.
 
+### 2026-08-12 OLE storage foundation
+
+The first post-non-OLE slice replaces the inert RichEdit clipboard-storage
+objects with heap-backed COM implementations. `ILockBytes` supports binary
+`ReadAt`/`WriteAt`, resizing, stat, and independent offsets. Root `IStorage`
+objects hold a persistent CLSID and case-insensitive named `IStream` children;
+streams support binary read/write/seek, sizing, commit/stat, and reference-counted
+storage ownership. `StgCreateDocfileOnILockBytes` associates the root storage
+with its lock-bytes object, and `StgOpenStorageOnILockBytes` can reopen that
+live in-memory root.
+
+`test/test-ole-storage.js` provides direct coverage for object creation,
+binary round-trip including compound-file-signature bytes, EOF semantics,
+case-insensitive stream lookup, CLSID persistence, and COM lifetime ownership.
+This does not yet serialize a Compound File Binary container, expose an
+`IDataObject`, insert a `REOBJECT`, or render/activate an OLE server. Those are
+the next WordPad layers.
+
 ### 2026-08-12 advanced RTF slice
 
 `test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through
