@@ -229,15 +229,35 @@ async function main() {
     }; poll();
   })`, 28000);
 
+  const appearance = await evaluate(`(() => {
+    sharedRenderer.repaint();
+    const canvas = document.getElementById('screen');
+    const pixels = canvas.getContext('2d').getImageData(26, 62, 52, 200).data;
+    let brightRed = 0;
+    let buttonFace = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] > 240 && pixels[i + 1] < 24 && pixels[i + 2] < 24) brightRed++;
+      if (Math.abs(pixels[i] - 192) <= 2 &&
+          Math.abs(pixels[i + 1] - 192) <= 2 &&
+          Math.abs(pixels[i + 2] - 192) <= 2) buttonFace++;
+    }
+    return { brightRed, buttonFace };
+  })()`);
+
   const screenshot = await evaluate(`(() => {
     sharedRenderer.repaint();
     return document.getElementById('screen').toDataURL('image/png');
   })()`);
   fs.writeFileSync(PNG, Buffer.from(screenshot.replace(/^data:image\/png;base64,/, ''), 'base64'));
   assert(!/--- Program exited ---/.test(state.log), `Paint exited:\n${state.log.slice(-2500)}`);
+  assert(appearance.brightRed < 40,
+    `Paint tool buttons should not expose the red mask color (${appearance.brightRed} red pixels)`);
+  assert(appearance.buttonFace > 1000,
+    `Paint tool palette should retain Win98 button faces (${appearance.buttonFace} gray pixels)`);
   assert(fs.statSync(PNG).size > 0, 'Paint browser screenshot should be written');
   console.log('PASS  Paint Win98 stays running in the browser');
   console.log('PASS  Paint frame, Tools, and Colors windows are visible');
+  console.log('PASS  Paint tool-strip mask color is mapped to button face');
   console.log('PASS  screenshot:', PNG);
   cleanup();
 }

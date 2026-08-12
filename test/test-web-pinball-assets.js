@@ -221,10 +221,11 @@ assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch sho
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(indexHtml.includes('lib/renderer-input.js?v=184'), 'web host should cache-bust renderer input after Paint scrollbar input changes');
 assert(indexHtml.includes('lib/renderer.js?v=172'), 'web host should cache-bust renderer after status bar surface reconstruction changes');
-assert(indexHtml.includes('lib/host-imports.js?v=184'), 'web host should cache-bust host-imports after Safari-safe Paint client geometry changes');
+assert(indexHtml.includes('lib/host-imports.js?v=185'), 'web host should cache-bust host-imports after Paint tool-strip color mapping');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('host.js?v=184'), 'web host should cache-bust host.js after Safari-safe Paint WAT changes');
 assert(hostJs.includes("SOURCE_VERSION = '184'"), 'host.js should define the current WAT/API cache-buster');
+assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
 assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
 assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');
