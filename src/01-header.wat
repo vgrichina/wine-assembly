@@ -212,6 +212,10 @@
   ;; gdi_get_rgn_box(hrgn, lprect_wa) -> complexity
   (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
+  (import "host" "gdi_poly_bezier" (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_poly_bezier(hdc, pointsWaPtr, nCount, fromCurrent)
+  (import "host" "gdi_polyline_to" (func $host_gdi_polyline_to (param i32 i32 i32) (result i32)))
+  ;; gdi_polyline_to(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
   (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32) (result i32)))
   ;; gdi_line_to(hdc, x, y)
@@ -274,6 +278,8 @@
   ;; gdi_frame_rect(hdc, left, top, right, bottom, hbrush, hwnd) → 1
   (import "host" "gdi_get_pixel" (func $host_gdi_get_pixel (param i32 i32 i32) (result i32)))
   ;; gdi_get_pixel(hdc, x, y) → COLORREF
+  (import "host" "gdi_ext_flood_fill" (func $host_gdi_ext_flood_fill (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_ext_flood_fill(hdc, x, y, color, fillType) → BOOL
   (import "host" "gdi_get_di_bits" (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_get_di_bits(hdc, hBitmap, startScan, numScans, bitsGA, bmiWA, colorUse) → numScans
   (import "host" "gdi_set_dib_bits" (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))

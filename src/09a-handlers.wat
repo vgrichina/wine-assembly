@@ -5336,9 +5336,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
-  ;; 365: PlayMetaFile — STUB: unimplemented
+  ;; 365: PlayMetaFile(hdc, hmf) — metafile playback is not implemented.
+  ;; Return FALSE so callers can reject the content without terminating the app.
   (func $handle_PlayMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 366: CreatePalette(lpLogPalette) — 1 arg stdcall
@@ -6792,9 +6794,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
-  ;; 453: ExtFloodFill — STUB: unimplemented
+  ;; 453: ExtFloodFill(hdc, x, y, color, fillType)
   (func $handle_ExtFloodFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_ext_flood_fill
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 454: CreatePolygonRgn(lpPoints, cPoints, fnPolyFillMode) → HRGN
@@ -6805,9 +6809,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 455: PolyBezier — STUB: unimplemented
+  ;; 455: PolyBezier(hdc, lppt, cPoints)
   (func $handle_PolyBezier (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_poly_bezier
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 456: Polyline(hdc, lppt, cPoints) — MoveTo first, LineTo rest
@@ -8416,9 +8422,11 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 568: PolyBezierTo — STUB: unimplemented
+  ;; 568: PolyBezierTo(hdc, lppt, cPoints)
   (func $handle_PolyBezierTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_poly_bezier
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 569: SetColorAdjustment — STUB: unimplemented
@@ -8426,9 +8434,11 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 570: PolylineTo — STUB: unimplemented
+  ;; 570: PolylineTo(hdc, lppt, cPoints)
   (func $handle_PolylineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_polyline_to
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 571: PolyDraw — STUB: unimplemented

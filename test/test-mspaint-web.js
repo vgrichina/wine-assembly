@@ -189,6 +189,13 @@ async function main() {
   cdp = connectWebSocket(page.webSocketDebuggerUrl);
   await cdp.opened;
   await cdp.send('Runtime.enable');
+  await cdp.send('Page.enable');
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 1600,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
 
   async function evaluate(expression, timeoutMs = 10000) {
     const response = await Promise.race([
@@ -208,6 +215,22 @@ async function main() {
       else setTimeout(poll, 50);
     }; poll();
   })`, 18000);
+  const viewport = await evaluate(`(() => {
+    resizeCanvas();
+    const canvas = document.getElementById('screen');
+    const wrap = document.getElementById('screen-wrap');
+    return {
+      innerWidth,
+      innerHeight,
+      wrapWidth: wrap.clientWidth,
+      wrapHeight: wrap.clientHeight,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+    };
+  })()`);
+  assert(viewport.wrapWidth >= 1200 && viewport.canvasWidth >= 1200,
+    `Paint browser test did not enter wide layout: ${JSON.stringify(viewport)}`);
+  console.log('INFO  wide viewport:', JSON.stringify(viewport));
   await evaluate(`(() => {
     document.getElementById('app-select').value = 'mspaint98';
     return launchApp();
@@ -244,6 +267,79 @@ async function main() {
     return { brightRed, buttonFace };
   })()`);
 
+  const interaction = await evaluate(`new Promise((resolve, reject) => {
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+    const sample = () => Array.from(ctx.getImageData(130, 160, 130, 110).data);
+    const before = sample();
+    const app = runningApps.find(item => item && item.name === 'mspaint98');
+    const wine = app && app.wine;
+    const slicesBefore = wine && wine._runSliceCount || 0;
+    sharedRenderer.handleMouseDown(39, 146, 1);
+    sharedRenderer.handleMouseUp(39, 146, 1);
+    sharedRenderer.handleMouseDown(140, 170, 1);
+    sharedRenderer.handleMouseMove(175, 205);
+    sharedRenderer.handleMouseMove(210, 235);
+    sharedRenderer.handleMouseUp(240, 260, 1);
+    const started = performance.now();
+    const poll = () => {
+      const slicesAfter = wine && wine._runSliceCount || 0;
+      const after = sample();
+      let changed = 0;
+      for (let i = 0; i < after.length; i += 4) {
+        if (before[i] !== after[i] || before[i + 1] !== after[i + 1] ||
+            before[i + 2] !== after[i + 2] || before[i + 3] !== after[i + 3]) changed++;
+      }
+      if (changed >= 20 && slicesAfter > slicesBefore) {
+        resolve({ changed, slicesBefore, slicesAfter });
+      } else if (performance.now() - started > 10000) {
+        reject(new Error('Paint did not respond in wide layout: ' + JSON.stringify({
+          changed, slicesBefore, slicesAfter,
+          log: document.getElementById('log').textContent.slice(-2000),
+        })));
+      } else setTimeout(poll, 100);
+    };
+    poll();
+  })`, 12000);
+
+  const floodFill = await evaluate(`(async () => {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const click = (x, y) => {
+      sharedRenderer.handleMouseDown(x, y, 1);
+      sharedRenderer.handleMouseUp(x, y, 1);
+    };
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+    click(39, 221); // rectangle
+    await pause(150);
+    sharedRenderer.handleMouseDown(100, 90, 1);
+    sharedRenderer.handleMouseMove(145, 120);
+    sharedRenderer.handleMouseUp(190, 150, 1);
+    await pause(200);
+    click(91, 375); // red foreground
+    await pause(100);
+    click(64, 96); // fill
+    await pause(100);
+    click(140, 120);
+    const started = performance.now();
+    while (performance.now() - started < 10000) {
+      await pause(100);
+      sharedRenderer.repaint();
+      const pixels = ctx.getImageData(105, 95, 80, 50).data;
+      let red = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] > 180 && pixels[i + 1] < 100 && pixels[i + 2] < 100) red++;
+      }
+      const app = runningApps.find(item => item && item.name === 'mspaint98');
+      if (red >= 2000 && app && app.wine.running) return { red, running: true };
+    }
+    const app = runningApps.find(item => item && item.name === 'mspaint98');
+    throw new Error('Paint browser flood fill failed: ' + JSON.stringify({
+      running: !!(app && app.wine.running),
+      log: document.getElementById('log').textContent.slice(-2000),
+    }));
+  })()`, 13000);
+
   const screenshot = await evaluate(`(() => {
     sharedRenderer.repaint();
     return document.getElementById('screen').toDataURL('image/png');
@@ -256,6 +352,9 @@ async function main() {
     `Paint tool palette should retain Win98 button faces (${appearance.buttonFace} gray pixels)`);
   assert(fs.statSync(PNG).size > 0, 'Paint browser screenshot should be written');
   console.log('PASS  Paint Win98 stays running in the browser');
+  console.log(`PASS  Paint runs on wide ${viewport.canvasWidth}x${viewport.canvasHeight} browser canvas`);
+  console.log(`PASS  Paint accepts wide-layout drawing input (${interaction.changed} changed pixels)`);
+  console.log(`PASS  Paint flood fill stays running and paints the closed area (${floodFill.red} red pixels)`);
   console.log('PASS  Paint frame, Tools, and Colors windows are visible');
   console.log('PASS  Paint tool-strip mask color is mapped to button face');
   console.log('PASS  screenshot:', PNG);

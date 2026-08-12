@@ -221,10 +221,12 @@ assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch sho
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(indexHtml.includes('lib/renderer-input.js?v=184'), 'web host should cache-bust renderer input after Paint scrollbar input changes');
 assert(indexHtml.includes('lib/renderer.js?v=172'), 'web host should cache-bust renderer after status bar surface reconstruction changes');
-assert(indexHtml.includes('lib/host-imports.js?v=185'), 'web host should cache-bust host-imports after Paint tool-strip color mapping');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(indexHtml.includes('host.js?v=184'), 'web host should cache-bust host.js after Safari-safe Paint WAT changes');
-assert(hostJs.includes("SOURCE_VERSION = '184'"), 'host.js should define the current WAT/API cache-buster');
+assert(indexHtml.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
+assert(indexHtml.includes('lib/host-imports.js?v=187'), 'web host should cache-bust host imports after Paint flood fill support');
+assert(indexHtml.includes('lib/thread-manager.js?v=169'), 'web host should cache-bust thread manager after wait handling changes');
+assert(indexHtml.includes('host.js?v=188'), 'web host should cache-bust host.js after Paint flood fill dispatch changes');
+assert(hostJs.includes("static SOURCE_VERSION = '188'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
