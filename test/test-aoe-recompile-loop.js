@@ -99,7 +99,7 @@ function le16(mem, wa, v) {
   mem[wa + 1] = (v >>> 8) & 0xff;
 }
 
-async function makeHarness(compiled) {
+async function makeHarness(mode) {
   const h = await bootRenderHarness();
   const e = h.exports;
   const mem = new Uint8Array(h.memory.buffer);
@@ -109,7 +109,8 @@ async function makeHarness(compiled) {
   for (const [addr, bytes] of Object.entries(blocks)) {
     mem.set(bytes, wa(Number(addr)));
   }
-  e.set_aoe_recompile_enabled(compiled ? 1 : 0);
+  e.set_aoe_recompile_enabled(mode === 'optimized' ? 1 : 0);
+  e.set_aoe_wat_threaded_enabled(mode === 'packet' ? 1 : 0);
   return { e, mem, wa };
 }
 
@@ -206,52 +207,57 @@ function snapshot(h) {
   };
 }
 
-function runCase(generic, compiled, name, start, customize = () => {}) {
+function runCase(generic, packet, compiled, name, start, customize = () => {}) {
   resetAndSeed(generic, start);
+  resetAndSeed(packet, start);
   resetAndSeed(compiled, start);
   customize(generic.e, generic.mem, generic.wa);
+  customize(packet.e, packet.mem, packet.wa);
   customize(compiled.e, compiled.mem, compiled.wa);
   generic.e.run(1);
+  packet.e.run(1);
   compiled.e.run(1);
+  assert.deepStrictEqual(snapshot(packet), snapshot(generic), `${name} packet`);
   assert.deepStrictEqual(snapshot(compiled), snapshot(generic), name);
 }
 
 (async () => {
-  const generic = await makeHarness(false);
-  const compiled = await makeHarness(true);
+  const generic = await makeHarness('generic');
+  const packet = await makeHarness('packet');
+  const compiled = await makeHarness('optimized');
 
-  runCase(generic, compiled, 'primary dispatch 0x00535c20', 0x00535c20);
-  runCase(generic, compiled, 'simple dispatch 0x00536420', 0x00536420);
-  runCase(generic, compiled, 'simple dispatch 0x005360a0', 0x005360a0);
-  runCase(generic, compiled, 'run-length zero path 0x00535e00', 0x00535e00,
+  runCase(generic, packet, compiled, 'primary dispatch 0x00535c20', 0x00535c20);
+  runCase(generic, packet, compiled, 'simple dispatch 0x00536420', 0x00536420);
+  runCase(generic, packet, compiled, 'simple dispatch 0x005360a0', 0x005360a0);
+  runCase(generic, packet, compiled, 'run-length zero path 0x00535e00', 0x00535e00,
     e => e.set_ecx(0x0f));
-  runCase(generic, compiled, 'run-length byte path 0x00535e05', 0x00535e05,
+  runCase(generic, packet, compiled, 'run-length byte path 0x00535e05', 0x00535e05,
     e => e.set_ecx(0));
-  runCase(generic, compiled, 'run-length nonzero path 0x00535e00', 0x00535e00,
+  runCase(generic, packet, compiled, 'run-length nonzero path 0x00535e00', 0x00535e00,
     e => e.set_ecx(0x2f));
-  runCase(generic, compiled, 'clip branch 0x00535e08 fall', 0x00535e08);
-  runCase(generic, compiled, 'clip branch 0x00535e08 target', 0x00535e08,
+  runCase(generic, packet, compiled, 'clip branch 0x00535e08 fall', 0x00535e08);
+  runCase(generic, packet, compiled, 'clip branch 0x00535e08 target', 0x00535e08,
     e => e.guest_write32(SPAN + 8, 0x00400000));
-  runCase(generic, compiled, 'pixel dispatch 0x00535e40', 0x00535e40);
-  runCase(generic, compiled, 'skip clipped run 0x00535e7c', 0x00535e7c);
-  runCase(generic, compiled, 'next span dispatch 0x00535bc0', 0x00535bc0,
+  runCase(generic, packet, compiled, 'pixel dispatch 0x00535e40', 0x00535e40);
+  runCase(generic, packet, compiled, 'skip clipped run 0x00535e7c', 0x00535e7c);
+  runCase(generic, packet, compiled, 'next span dispatch 0x00535bc0', 0x00535bc0,
     e => {
       e.guest_write32(0x0077503c, SPAN + 16);
       e.guest_write32(SPAN + 16, SPAN);
     });
-  runCase(generic, compiled, 'next span command dispatch 0x00535bdc', 0x00535bdc,
+  runCase(generic, packet, compiled, 'next span command dispatch 0x00535bdc', 0x00535bdc,
     e => {
       e.set_esi(SOURCE);
       e.set_edi(0x00340001);
       e.set_ebx(SPAN);
     });
-  runCase(generic, compiled, 'row advance branch 0x005362e0', 0x005362e0);
-  runCase(generic, compiled, 'row advance return 0x005362e0', 0x005362e0,
+  runCase(generic, packet, compiled, 'row advance branch 0x005362e0', 0x005362e0);
+  runCase(generic, packet, compiled, 'row advance return 0x005362e0', 0x005362e0,
     e => e.guest_write32(EBP + 0x18, 1));
-  runCase(generic, compiled, 'row epilogue 0x005362f4', 0x005362f4);
-  runCase(generic, compiled, 'alternate pixel dispatch 0x00536528', 0x00536528);
+  runCase(generic, packet, compiled, 'row epilogue 0x005362f4', 0x005362f4);
+  runCase(generic, packet, compiled, 'alternate pixel dispatch 0x00536528', 0x00536528);
 
-  console.log('PASS  AoE compiled blitter loop blocks match generic decoder');
+  console.log('PASS  AoE WAT-threaded and optimized blitter blocks match generic decoder');
 })().catch(err => {
   console.error(err && err.stack || err);
   process.exit(1);

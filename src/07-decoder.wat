@@ -585,6 +585,53 @@
   ;; ============================================================
   ;; DECODE BLOCK
   ;; ============================================================
+  ;; Emit normalized micro-op packets for the four-block AoE benchmark cycle.
+  ;; The outer thread still contains a normal handler entry; raw words after it
+  ;; are consumed by $aoe_wat_threaded_packet instead of by $next.
+  (func $emit_aoe_wat_threaded_packet (param $start_eip i32) (result i32)
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 1))  (call $te_raw (i32.const 0x00775050))
+        (call $te_raw (i32.const 2))  (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 3))
+        (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 5))  (call $te_raw (i32.const 0x00775020))
+        (call $te_raw (i32.const 6))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 8))  (call $te_raw (i32.const 0x0000000F))
+        (call $te_raw (i32.const 9))  (call $te_raw (i32.const 0x0077503C))
+        (call $te_raw (i32.const 10)) (call $te_raw (i32.const 0x00534400))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 11))
+        (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 0x00535E08))
+        (call $te_raw (i32.const 0x00535E05))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 12))
+        (call $te_raw (i32.const 13))
+        (call $te_raw (i32.const 14))
+        (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 8))
+        (call $te_raw (i32.const 0x00535E7C))
+        (call $te_raw (i32.const 0x00535E12))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 16)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17))
+        (call $te_raw (i32.const 18)) (call $te_raw (i32.const 0x00535C20))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func $decode_block (param $start_eip i32) (result i32)
     (local $tstart i32)
     (local $op i32)
@@ -623,6 +670,12 @@
         (if (i32.eq (local.get $start_eip) (i32.const 0x0049DD20))
           (then
             (call $te (i32.const 356) (i32.const 2))
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+    (if (global.get $aoe_wat_threaded_enabled)
+      (then
+        (if (call $emit_aoe_wat_threaded_packet (local.get $start_eip))
+          (then
             (call $cache_store (local.get $start_eip) (local.get $tstart))
             (return (local.get $tstart))))))
     (if (global.get $aoe_recompile_enabled)

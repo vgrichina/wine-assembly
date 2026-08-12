@@ -1000,6 +1000,8 @@
   (global $stack_packet_0049dd20_to_ddc7_entries (mut i32) (i32.const 0))
   (global $stack_packet_0049dd20_to_e0ad_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_enabled (mut i32) (i32.const 0))
+  (global $aoe_wat_threaded_enabled (mut i32) (i32.const 0))
+  (global $aoe_recompile_count_enabled (mut i32) (i32.const 1))
   (global $aoe_recompile_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_00535c20_entries (mut i32) (i32.const 0))
 

@@ -533,9 +533,25 @@
   ;; decoded-block cache so already-decoded generic/compiled blocks do not linger.
   (func (export "set_aoe_recompile_enabled") (param $flag i32)
     (global.set $aoe_recompile_enabled (local.get $flag))
+    (if (local.get $flag)
+      (then (global.set $aoe_wat_threaded_enabled (i32.const 0))))
     (call $clear_cache))
   (func (export "get_aoe_recompile_enabled") (result i32)
     (global.get $aoe_recompile_enabled))
+  ;; Generic packet-threaded middle tier used by the AoE loop benchmark. It
+  ;; executes normalized micro-ops in one static WAT handler, unlike the
+  ;; straight-line hand-optimized recompile handler above.
+  (func (export "set_aoe_wat_threaded_enabled") (param $flag i32)
+    (global.set $aoe_wat_threaded_enabled (local.get $flag))
+    (if (local.get $flag)
+      (then (global.set $aoe_recompile_enabled (i32.const 0))))
+    (call $clear_cache))
+  (func (export "get_aoe_wat_threaded_enabled") (result i32)
+    (global.get $aoe_wat_threaded_enabled))
+  (func (export "set_aoe_recompile_count_enabled") (param $flag i32)
+    (global.set $aoe_recompile_count_enabled (local.get $flag)))
+  (func (export "get_aoe_recompile_count_enabled") (result i32)
+    (global.get $aoe_recompile_count_enabled))
   (func (export "reset_aoe_recompile_counters")
     (global.set $aoe_recompile_entries (i32.const 0))
     (global.set $aoe_recompile_00535c20_entries (i32.const 0)))

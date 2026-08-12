@@ -333,6 +333,40 @@ baseline:          real 12.16
 compiled allowlist: real 11.54
 ```
 
+Three-tier four-block loop microbenchmark:
+
+```text
+cycle:
+  0x00535c20 command dispatch
+  0x00535e00 run-length decode
+  0x00535e08 span-bound comparison
+  0x00535e7c clipped-run advance
+  -> 0x00535c20
+
+command:
+  BLOCKS=2000000 WARMUP_BLOCKS=2000000 TRIALS=15 \
+    node tools/bench-aoe-recompile-loop.js
+
+variant          median ms   blocks/ms   vs x86-threaded
+x86 threaded        150.36     13301.4        1.000x
+WAT threaded         68.49     29201.3        2.195x
+WAT optimized        44.92     44523.6        3.347x
+
+WAT optimized vs WAT threaded: 1.525x
+```
+
+`x86 threaded` is the current decoded generic-handler stream. `WAT threaded`
+is a prototype normalized micro-op packet interpreted inside one static WAT
+handler, with guest registers held in WAT locals until block exit. `WAT
+optimized` is the straight-line hand-written block implementation. Setup,
+initial decode, and counters are outside the timed region. Each variant runs
+500,000 identical four-block cycles, and every measured trial verifies the same
+final registers, lazy flags, selected memory, and EIP. This is an isolated hot
+loop result, not a whole-game speedup. It shows that a packet backend can retain
+most of the gain from crossing the per-x86-handler boundary, while specialized
+straight-line lowering still has another ~52% throughput advantage over packet
+dispatch on this shape.
+
 Full Chrome browser profile, same scripted 10s Bronze Age Art of War gameplay.
 Default harness mode uses `--headless=new`:
 

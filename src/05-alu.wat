@@ -3222,6 +3222,7 @@
   ;; 357: disabled AoE recompilation POC.
   ;; Selected op IDs are hand-compiled blocks from AoE's hot blitter/span loop.
   (func $th_aoe_recompile (param $op i32)
+    (if (i32.eq (local.get $op) (i32.const 100)) (then (call $aoe_wat_threaded_packet) (return)))
     (if (i32.eq (local.get $op) (i32.const 1)) (then (call $aoe_recompile_00535c20) (return)))
     (if (i32.eq (local.get $op) (i32.const 2)) (then (call $aoe_recompile_simple_dispatch (i32.const 0x00534540)) (return)))
     (if (i32.eq (local.get $op) (i32.const 3)) (then (call $aoe_recompile_simple_dispatch (i32.const 0x00534440)) (return)))
@@ -3251,9 +3252,151 @@
     (call $host_log_i32 (i32.const 0xA0E0BAD))
     (global.set $eip (i32.const 0x00535C20)))
 
+  ;; Generic WAT-threaded packet executor for the benchmarked AoE blitter
+  ;; cycle. Unlike the hand-optimized functions below, this executes a compact
+  ;; normalized micro-op stream emitted into the ordinary thread arena. Guest
+  ;; registers stay in WAT locals until the packet exits.
+  ;;
+  ;; Packet opcodes:
+  ;;   0 end                         10 jmp [table+eax*4], end
+  ;;   1 store [imm],esi             11 ecx>>=count; jnz target/fall, end
+  ;;   2 store [imm],edi             12 edx=edi
+  ;;   3 eax=0                       13 edx+=ecx
+  ;;   4 eax=load8 [esi]             14 edx--
+  ;;   5 edi-=load32 [imm]           15 cmp edx,[ebx+disp]; jl t/f, end
+  ;;   6 ecx=eax                     16 edi=load32 [imm]
+  ;;   7 esi++                       17 edi+=ecx
+  ;;   8 eax&=imm                    18 jmp imm, end
+  ;;   9 ebx=load32 [imm]
+  (func $aoe_wat_threaded_packet
+    (local $eax_v i32) (local $ecx_v i32) (local $edx_v i32) (local $ebx_v i32)
+    (local $esp_v i32) (local $ebp_v i32) (local $esi_v i32) (local $edi_v i32)
+    (local $code i32) (local $a i32) (local $b i32) (local $res i32)
+    (local $count i32) (local $target i32) (local $fall i32)
+
+    (call $aoe_recompile_count)
+    (local.set $eax_v (global.get $eax))
+    (local.set $ecx_v (global.get $ecx))
+    (local.set $edx_v (global.get $edx))
+    (local.set $ebx_v (global.get $ebx))
+    (local.set $esp_v (global.get $esp))
+    (local.set $ebp_v (global.get $ebp))
+    (local.set $esi_v (global.get $esi))
+    (local.set $edi_v (global.get $edi))
+
+    (block $packet_done
+      (loop $packet
+        (local.set $code (call $read_thread_word))
+        (br_if $packet_done (i32.eqz (local.get $code)))
+
+        (if (i32.eq (local.get $code) (i32.const 1))
+          (then
+            (i32.store (call $g2w (call $read_thread_word)) (local.get $esi_v))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 2))
+          (then
+            (i32.store (call $g2w (call $read_thread_word)) (local.get $edi_v))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 3))
+          (then (local.set $eax_v (i32.const 0)) (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 4))
+          (then
+            (local.set $eax_v (i32.load8_u (call $g2w (local.get $esi_v))))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 5))
+          (then
+            (local.set $edi_v
+              (i32.sub (local.get $edi_v) (i32.load (call $g2w (call $read_thread_word)))))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 6))
+          (then (local.set $ecx_v (local.get $eax_v)) (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 7))
+          (then (local.set $esi_v (i32.add (local.get $esi_v) (i32.const 1))) (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 8))
+          (then
+            (local.set $eax_v (i32.and (local.get $eax_v) (call $read_thread_word)))
+            (call $set_flags_logic (local.get $eax_v))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 9))
+          (then
+            (local.set $ebx_v (i32.load (call $g2w (call $read_thread_word))))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 10))
+          (then
+            (local.set $a (call $read_thread_word))
+            (global.set $eip
+              (i32.load (call $g2w
+                (i32.add (local.get $a) (i32.shl (local.get $eax_v) (i32.const 2))))))
+            (br $packet_done)))
+        (if (i32.eq (local.get $code) (i32.const 11))
+          (then
+            (local.set $count (call $read_thread_word))
+            (local.set $target (call $read_thread_word))
+            (local.set $fall (call $read_thread_word))
+            (local.set $a (local.get $ecx_v))
+            (local.set $ecx_v (i32.shr_u (local.get $ecx_v) (local.get $count)))
+            (call $set_flags_shift
+              (local.get $ecx_v)
+              (i32.and
+                (i32.shr_u (local.get $a) (i32.sub (local.get $count) (i32.const 1)))
+                (i32.const 1)))
+            (global.set $eip
+              (if (result i32) (local.get $ecx_v)
+                (then (local.get $target))
+                (else (local.get $fall))))
+            (br $packet_done)))
+        (if (i32.eq (local.get $code) (i32.const 12))
+          (then (local.set $edx_v (local.get $edi_v)) (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 13))
+          (then (local.set $edx_v (i32.add (local.get $edx_v) (local.get $ecx_v))) (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 14))
+          (then (local.set $edx_v (i32.sub (local.get $edx_v) (i32.const 1))) (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 15))
+          (then
+            (local.set $a (local.get $edx_v))
+            (local.set $b
+              (i32.load (call $g2w
+                (i32.add (local.get $ebx_v) (call $read_thread_word)))))
+            (local.set $target (call $read_thread_word))
+            (local.set $fall (call $read_thread_word))
+            (local.set $res (i32.sub (local.get $a) (local.get $b)))
+            (call $set_flags_sub (local.get $a) (local.get $b) (local.get $res))
+            (global.set $eip
+              (if (result i32) (i32.lt_s (local.get $a) (local.get $b))
+                (then (local.get $target))
+                (else (local.get $fall))))
+            (br $packet_done)))
+        (if (i32.eq (local.get $code) (i32.const 16))
+          (then
+            (local.set $edi_v (i32.load (call $g2w (call $read_thread_word))))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 17))
+          (then
+            (local.set $a (local.get $edi_v))
+            (local.set $edi_v (i32.add (local.get $edi_v) (local.get $ecx_v)))
+            (call $set_flags_add (local.get $a) (local.get $ecx_v) (local.get $edi_v))
+            (br $packet)))
+        (if (i32.eq (local.get $code) (i32.const 18))
+          (then (global.set $eip (call $read_thread_word)) (br $packet_done)))
+
+        (call $host_log_i32 (i32.const 0xA0E0B17E))
+        (global.set $eip (i32.const 0))
+        (br $packet_done)))
+
+    (global.set $eax (local.get $eax_v))
+    (global.set $ecx (local.get $ecx_v))
+    (global.set $edx (local.get $edx_v))
+    (global.set $ebx (local.get $ebx_v))
+    (global.set $esp (local.get $esp_v))
+    (global.set $ebp (local.get $ebp_v))
+    (global.set $esi (local.get $esi_v))
+    (global.set $edi (local.get $edi_v)))
+
   (func $aoe_recompile_count
-    (global.set $aoe_recompile_entries
-      (i32.add (global.get $aoe_recompile_entries) (i32.const 1))))
+    (if (global.get $aoe_recompile_count_enabled)
+      (then
+        (global.set $aoe_recompile_entries
+          (i32.add (global.get $aoe_recompile_entries) (i32.const 1))))))
 
   (func $aoe_set_al (param $r i32) (param $v i32) (result i32)
     (i32.or
@@ -3295,8 +3438,10 @@
     (local $esi_v i32) (local $edi_v i32)
 
     (call $aoe_recompile_count)
-    (global.set $aoe_recompile_00535c20_entries
-      (i32.add (global.get $aoe_recompile_00535c20_entries) (i32.const 1)))
+    (if (global.get $aoe_recompile_count_enabled)
+      (then
+        (global.set $aoe_recompile_00535c20_entries
+          (i32.add (global.get $aoe_recompile_00535c20_entries) (i32.const 1)))))
 
     (local.set $old_esi (global.get $esi))
     (local.set $old_edi (global.get $edi))
