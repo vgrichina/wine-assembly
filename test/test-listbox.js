@@ -103,7 +103,7 @@ async function main() {
   const count = e.send_message(lb, 0x018B, 0, 0); // LB_GETCOUNT
   check('LB_GETCOUNT matches inserts', count === items.length,
     `got ${count} expected ${items.length}`);
-  check('LB_GETITEMHEIGHT reports 16px rows', e.send_message(lb, 0x0187, 0, 0) === 16);
+  check('LB_GETITEMHEIGHT reports 16px rows', e.send_message(lb, 0x01A1, 0, 0) === 16);
 
   // Round-trip every item via LB_GETTEXT and check LB_GETTEXTLEN agrees
   let allOk = true;
@@ -122,6 +122,8 @@ async function main() {
   // LB_SETCURSEL / LB_GETCURSEL
   e.send_message(lb, 0x0186, 2, 0); // LB_SETCURSEL idx=2
   check('LB_GETCURSEL after set=2', e.send_message(lb, 0x0188, 0, 0) === 2);
+  check('LB_GETSEL reports only selected row',
+    e.send_message(lb, 0x0187, 2, 0) === 1 && e.send_message(lb, 0x0187, 1, 0) === 0);
   // listbox_get_cur_sel export should agree
   check('listbox_get_cur_sel export agrees', e.listbox_get_cur_sel(lb) === 2);
 

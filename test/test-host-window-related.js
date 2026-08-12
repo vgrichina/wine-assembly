@@ -21,6 +21,7 @@ const wasm = {
 const renderer = {
   _nextZ: 100,
   repaintScheduled: false,
+  _computeClientRect() {},
   scheduleRepaint() {
     this.repaintScheduled = true;
   },
@@ -77,5 +78,14 @@ assert.deepStrictEqual(posted.pop(), { hwnd: 100, msg: 0x0111, wParam: 123, lPar
 assert.strictEqual(host.activate_window(100), 1, 'activate_window succeeds');
 assert(renderer.windows[100].zOrder >= 100, 'activate_window raises z-order');
 assert(renderer.repaintScheduled, 'activate_window schedules repaint');
+
+const activatedZ = renderer.windows[100].zOrder;
+host.move_window(300, 0, 0, 0, 0, 0x43); // SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+assert.strictEqual(renderer.windows[300].zOrder, 30,
+  'SWP_SHOWWINDOW does not re-raise an already-visible normal window');
+renderer.windows[300].visible = false;
+host.move_window(300, 0, 0, 0, 0, 0x43);
+assert(renderer.windows[300].zOrder > activatedZ,
+  'SWP_SHOWWINDOW raises a normal window when it becomes visible');
 
 console.log('PASS  host renderer window relations cover GetWindow fallback helpers');

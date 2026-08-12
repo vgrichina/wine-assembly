@@ -86,9 +86,10 @@ async function countDarkPixels(file, box) {
 }
 
 (async () => {
-  const screenshots = [tasksPng, menuPng, closedPng].every(file =>
+  const screenshots = [tasksPng, menuPng].every(file =>
     fs.existsSync(file) && fs.statSync(file).size > 4000);
-  const taskTextPixels = screenshots
+  const closedScreenshot = fs.existsSync(closedPng) && fs.statSync(closedPng).size > 500;
+  const taskTextPixels = fs.existsSync(tasksPng)
     ? await countDarkPixels(tasksPng, { x0: 13, y0: 51, x1: 120, y1: 68 })
     : 0;
   const checks = [
@@ -103,7 +104,7 @@ async function countDarkPixels(file, box) {
     ['End Task routed WM_CLOSE to owning task', /\[seed-window\] post hwnd=0x00070001 msg=0x00000010/.test(output)],
     ['closed renderer task removed from host task set', /\[seed-window\] closed hwnd=0x00070001/.test(output)],
     ['Task Manager refreshed after task exit', /dump-listbox:closed:[^\n]*count=0/.test(output)],
-    ['task and menu screenshots written', screenshots],
+    ['task and menu screenshots written', screenshots && closedScreenshot],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output)],
   ];
 

@@ -48,10 +48,13 @@ UNIT=(
   test/test-canvas-keydown-preventdefault.js
   test/test-renderer-mouse-drag-mask.js
   test/test-renderer-dialog-caption-drag.js
+  test/test-renderer-shell-dialog.js
+  test/test-renderer-multi-app-modal.js
 )
 
 E2E=(
   test/test-taskman-tasks.js
+  test/test-taskman-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js
   test/test-notepad.js

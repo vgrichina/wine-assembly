@@ -3,6 +3,30 @@
 **Binary:** `test/binaries/win98-apps/taskman.exe`
 **imageBase:** 0x400000, **sizeOfImage:** 0xc000
 
+## Status (2026-08-11) — browser multi-app workflow passing
+
+The real browser desktop now supports Task Manager's Applications workflow
+across independent emulator instances:
+
+- visible dialog-only applications are announced through the shell hook;
+- top-level `GetWindow` walks use the renderer-wide z-order while child walks
+  remain local to the owning WAT instance;
+- pointer hit-testing, coordinates, modal blocking, and mouse-up capture stay
+  within the app under the pointer, including overlapping windows;
+- `Switch To` raises the selected application and `Minimize on Use` applies
+  real minimized visibility state;
+- `End Task` routes `WM_CLOSE` to the owning instance, removes the stopped
+  app's renderer windows, and refreshes the native task list;
+- `LB_GETSEL` and `LB_GETITEMHEIGHT` use their correct Win32 message IDs.
+
+Coverage is split between `test/test-taskman-tasks.js` (native emulator input,
+menus, task actions, and screenshots) and `test/test-taskman-web.js` (real
+Calculator, Sound Recorder, Task Manager, and Volume Control instances in one
+browser renderer). The browser test writes
+`scratch/taskman-web/live-tasks.png` and verifies initial enumeration, live
+addition/removal, Switch To, End Task, and closing Task Manager without
+stopping the other apps.
+
 ## Follow-up (2026-08-11): renderer-wide task enumeration
 
 Task Manager's Applications tab depends on USER window walks that cross the
@@ -26,7 +50,7 @@ Related coverage:
 - `test/test-taskman-tasks.js` asserts a seeded renderer-only "Calculator"
   task appears in the Applications list, renders, activates, minimizes on use,
   receives End Task, and exposes the File/Windows/Options menus.
-- `LB_GETITEMHEIGHT` returns the Win98-style 16px row height used by the
+- `LB_GETITEMHEIGHT` (`0x01A1`) returns the Win98-style 16px row height used by the
   renderer and Task Manager listbox hit-testing.
 
 ## Status (2026-04-11) — FIXED

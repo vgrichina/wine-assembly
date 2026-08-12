@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '178';
+  static SOURCE_VERSION = '180';
 
   constructor() {
     this.instance = null;
@@ -1267,6 +1267,17 @@ class WineAssembly {
           const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
           const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          // ExitProcess/last-window teardown can stop the app from inside a
+          // host callback while the current guest slice still unwinds. Run a
+          // final ownership cleanup at the slice boundary so those trailing
+          // instructions cannot leave a recreated dialog/frame behind.
+          if (!self.running) {
+            if (self.renderer && self._multiApp) {
+              self._removeAppWindows();
+              self.renderer.repaint();
+            }
+            return;
+          }
           if (pageProfileStart && pageProfile && pageProfile.add) {
             const dt = performance.now() - pageProfileStart;
             pageProfile.add('main.runSlice', dt, { steps: activeStepsPerSlice });

@@ -4307,33 +4307,41 @@
     (if (i32.eq (local.get $arg1) (i32.const 0))
       (then
         (local.set $parent (call $wnd_get_parent (local.get $arg0)))
-        (global.set $eax (call $wnd_find_first_child (local.get $parent)))
-        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
-          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
+        ;; The renderer owns the combined top-level z-order across app
+        ;; instances. WAT remains authoritative for local child siblings.
+        (global.set $eax
+          (if (result i32) (i32.eqz (local.get $parent))
+            (then (call $host_get_window_related (local.get $arg0) (local.get $arg1)))
+            (else (call $wnd_find_first_child (local.get $parent)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (if (i32.eq (local.get $arg1) (i32.const 1))
       (then
         (local.set $parent (call $wnd_get_parent (local.get $arg0)))
-        (global.set $eax (call $wnd_find_last_child (local.get $parent)))
-        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
-          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
+        (global.set $eax
+          (if (result i32) (i32.eqz (local.get $parent))
+            (then (call $host_get_window_related (local.get $arg0) (local.get $arg1)))
+            (else (call $wnd_find_last_child (local.get $parent)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_HWNDNEXT = 2
     (if (i32.eq (local.get $arg1) (i32.const 2))
       (then
-        (global.set $eax (call $wnd_find_next_sibling (local.get $arg0)))
-        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
-          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
+        (local.set $parent (call $wnd_get_parent (local.get $arg0)))
+        (global.set $eax
+          (if (result i32) (i32.eqz (local.get $parent))
+            (then (call $host_get_window_related (local.get $arg0) (local.get $arg1)))
+            (else (call $wnd_find_next_sibling (local.get $arg0)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_HWNDPREV = 3
     (if (i32.eq (local.get $arg1) (i32.const 3))
       (then
-        (global.set $eax (call $wnd_find_prev_sibling (local.get $arg0)))
-        (if (i32.and (i32.eqz (global.get $eax)) (i32.eqz (local.get $known)))
-          (then (global.set $eax (call $host_get_window_related (local.get $arg0) (local.get $arg1)))))
+        (local.set $parent (call $wnd_get_parent (local.get $arg0)))
+        (global.set $eax
+          (if (result i32) (i32.eqz (local.get $parent))
+            (then (call $host_get_window_related (local.get $arg0) (local.get $arg1)))
+            (else (call $wnd_find_prev_sibling (local.get $arg0)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; GW_OWNER = 4 → return owner hwnd, not child geometry parent.

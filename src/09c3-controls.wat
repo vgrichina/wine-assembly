@@ -6968,9 +6968,20 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0188))
       (then (return (i32.load offset=16 (local.get $sw)))))
 
-    ;; ---------- LB_GETITEMHEIGHT (0x0187) ----------
-    ;; The renderer and mouse hit-testing use the Win98 default 16px row.
+    ;; ---------- LB_GETSEL (0x0187) ----------
+    ;; Single-select listboxes report 1 only for the current row.
     (if (i32.eq (local.get $msg) (i32.const 0x0187))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (local.get $count)))
+          (then (return (i32.const -1))))
+        (return (i32.eq (local.get $idx) (i32.load offset=16 (local.get $sw))))))
+
+    ;; ---------- LB_GETITEMHEIGHT (0x01A1) ----------
+    ;; The renderer and mouse hit-testing use the Win98 default 16px row.
+    (if (i32.eq (local.get $msg) (i32.const 0x01A1))
       (then (return (i32.const 16))))
 
     ;; ---------- LB_SETCURSEL (0x0186) ----------
