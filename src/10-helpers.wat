@@ -2566,7 +2566,26 @@
     (if (global.get $clipboard_ptr)
       (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
     (call $clipboard_clear_rtf_data)
+    (if (global.get $clipboard_binary_ptr)
+      (then (call $heap_free (global.get $clipboard_binary_ptr))))
+    (global.set $clipboard_binary_format (i32.const 0))
+    (global.set $clipboard_binary_ptr (i32.const 0))
+    (global.set $clipboard_binary_len (i32.const 0))
     (call $richedit_clipboard_clear_format))
+
+  (func $clipboard_store_binary_data (param $fmt i32) (param $src_g i32) (result i32)
+    (local $size i32) (local $dst i32)
+    (if (i32.or (i32.eqz (local.get $fmt)) (i32.eqz (local.get $src_g)))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.sub (call $gl32 (i32.sub (local.get $src_g) (i32.const 4))) (i32.const 4)))
+    (local.set $dst (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+    (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $src_g)) (local.get $size))
+    (if (global.get $clipboard_binary_ptr) (then (call $heap_free (global.get $clipboard_binary_ptr))))
+    (global.set $clipboard_binary_format (local.get $fmt))
+    (global.set $clipboard_binary_ptr (local.get $dst))
+    (global.set $clipboard_binary_len (local.get $size))
+    (local.get $dst))
 
   (func $clipboard_store_rtf_data (param $src_g i32) (result i32)
     (local $len i32) (local $need i32) (local $cap i32)
@@ -2699,6 +2718,10 @@
       (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
     (if (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))
       (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_binary_format) (i32.const 0))
+          (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))
+      (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
     (local.get $n))
 
   (func $clipboard_is_format_available (param $fmt i32) (result i32)
@@ -2706,6 +2729,10 @@
           (i32.or (i32.eq (local.get $fmt) (i32.const 1))  ;; CF_TEXT
                   (i32.eq (local.get $fmt) (i32.const 7))) ;; CF_OEMTEXT
           (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (if (i32.and
+          (i32.eq (local.get $fmt) (global.get $clipboard_binary_format))
+          (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))
       (then (return (i32.const 1))))
     (if (i32.and
           (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
@@ -2727,6 +2754,10 @@
             (i32.eq (local.get $fmt) (global.get $clipboard_rtf_format_id))
             (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))))
       (then (return (global.get $clipboard_rtf_ptr))))
+    (if (i32.and
+          (i32.eq (local.get $fmt) (global.get $clipboard_binary_format))
+          (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))
+      (then (return (global.get $clipboard_binary_ptr))))
     (i32.const 0))
 
   (func $richedit_clipboard_clear_format

@@ -659,6 +659,24 @@ This does not yet serialize a Compound File Binary container, expose an
 `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server. Those are
 the next WordPad layers.
 
+### 2026-08-12 OLE data-transfer foundation
+
+A bounded, single-format `IDataObject` now owns a `FORMATETC` plus copied
+`STGMEDIUM`. It supports `QueryGetData`, `GetData`, `SetData`, and one-entry
+`IEnumFORMATETC`; advisory connections remain explicitly unsupported.
+`TYMED_HGLOBAL` payloads, including opaque `CF_DIB` bytes, are duplicated for
+each receiver. `TYMED_ISTREAM`/`TYMED_ISTORAGE` retain COM references, and
+`ReleaseStgMedium` now releases supported media and clears the structure.
+`OleSetClipboard`, `OleGetClipboard`, `OleFlushClipboard`, and
+`OleIsCurrentClipboard` provide bounded reference-counted clipboard ownership.
+
+`test/test-ole-data-object.js` covers format acceptance/rejection, independent
+HGLOBAL copies, binary DIB preservation, medium release, OLE clipboard
+lifetime, and stream-medium AddRef/Release behavior. The next integration step
+is a WordPad-visible static object representation: bridge DIB clipboard data
+into a RichEdit object slot, paint it inline, and then persist that object
+through RTF/storage save and reopen.
+
 ### 2026-08-12 advanced RTF slice
 
 `test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through

@@ -16397,5 +16397,166 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 412025532
+  },
+  {
+    "id": 2134,
+    "name": "OleSetClipboard",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2614966087
+  },
+  {
+    "id": 2135,
+    "name": "OleGetClipboard",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2528419507
+  },
+  {
+    "id": 2136,
+    "name": "OleFlushClipboard",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3657469453
+  },
+  {
+    "id": 2137,
+    "name": "OleIsCurrentClipboard",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 863037264
+  },
+  {
+    "id": 2138,
+    "name": "IDataObject_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3491606587
+  },
+  {
+    "id": 2139,
+    "name": "IDataObject_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2718493816
+  },
+  {
+    "id": 2140,
+    "name": "IDataObject_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2890542945
+  },
+  {
+    "id": 2141,
+    "name": "IDataObject_GetData",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 95865312
+  },
+  {
+    "id": 2142,
+    "name": "IDataObject_GetDataHere",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3641951518
+  },
+  {
+    "id": 2143,
+    "name": "IDataObject_QueryGetData",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1861475772
+  },
+  {
+    "id": 2144,
+    "name": "IDataObject_GetCanonicalFormatEtc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3144876665
+  },
+  {
+    "id": 2145,
+    "name": "IDataObject_SetData",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3011324076
+  },
+  {
+    "id": 2146,
+    "name": "IDataObject_EnumFormatEtc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3287886044
+  },
+  {
+    "id": 2147,
+    "name": "IDataObject_DAdvise",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2042470076
+  },
+  {
+    "id": 2148,
+    "name": "IDataObject_DUnadvise",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3856140751
+  },
+  {
+    "id": 2149,
+    "name": "IDataObject_EnumDAdvise",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2489303891
+  },
+  {
+    "id": 2150,
+    "name": "IEnumFORMATETC_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1163916966
+  },
+  {
+    "id": 2151,
+    "name": "IEnumFORMATETC_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1750762885
+  },
+  {
+    "id": 2152,
+    "name": "IEnumFORMATETC_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2799785922
+  },
+  {
+    "id": 2153,
+    "name": "IEnumFORMATETC_Next",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2652693164
+  },
+  {
+    "id": 2154,
+    "name": "IEnumFORMATETC_Skip",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2205645134
+  },
+  {
+    "id": 2155,
+    "name": "IEnumFORMATETC_Reset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1283670508
+  },
+  {
+    "id": 2156,
+    "name": "IEnumFORMATETC_Clone",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4179835350
   }
 ]

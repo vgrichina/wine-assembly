@@ -6712,9 +6712,16 @@
     (if (i32.lt_s (local.get $h) (i32.const 0))
       (then (local.set $h (i32.sub (i32.const 0) (local.get $h)))))
     (local.set $bpp (i32.and (i32.shr_u (call $gl32 (i32.add (local.get $arg1) (i32.const 12))) (i32.const 16)) (i32.const 0xFFFF)))
-    ;; size = width * height * bytes_per_pixel
-    (local.set $size (i32.mul (i32.mul (local.get $w) (local.get $h))
-      (select (i32.shr_u (local.get $bpp) (i32.const 3)) (i32.const 1) (i32.gt_u (local.get $bpp) (i32.const 8)))))
+    ;; DIB scanlines are padded to a 32-bit boundary.  Using width * bytes-per-pixel
+    ;; under-allocates 1/4/24-bpp images at many widths and lets the final scanlines
+    ;; overwrite the next guest heap object.
+    (local.set $size
+      (i32.mul (local.get $h)
+        (i32.shl
+          (i32.shr_u
+            (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.const 31))
+            (i32.const 5))
+          (i32.const 2))))
     (if (i32.lt_s (local.get $size) (i32.const 4)) (then (local.set $size (i32.const 4))))
     (local.set $ptr (call $heap_alloc (local.get $size)))
     (if (local.get $arg3)
@@ -10491,9 +10498,9 @@
   )
 
   ;; SetClipboardData(uFormat, hMem) — copy CF_TEXT/CF_OEMTEXT and registered
-  ;; non-OLE Rich Text Format payloads into emulator-owned buffers. Other
-  ;; formats remain inert success so apps publishing object/OLE formats can
-  ;; continue without claiming object fidelity.
+  ;; non-OLE Rich Text Format payloads into emulator-owned buffers. CF_DIB is
+  ;; copied as opaque HGLOBAL bytes for the RichEdit static-object path. Other
+  ;; formats remain inert success until their ownership rules are implemented.
   (func $handle_SetClipboardData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $len i32) (local $need i32) (local $cap i32)
     (drop (local.get $arg2))
@@ -10519,6 +10526,11 @@
           (i32.or (i32.eq (local.get $arg0) (i32.const 1))  ;; CF_TEXT
                   (i32.eq (local.get $arg0) (i32.const 7)))) ;; CF_OEMTEXT
       (then
+        (if (i32.eq (local.get $arg0) (i32.const 8)) ;; CF_DIB
+          (then
+            (global.set $eax (call $clipboard_store_binary_data (local.get $arg0) (local.get $arg1)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
         (global.set $eax (local.get $arg1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))

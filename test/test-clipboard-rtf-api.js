@@ -91,6 +91,16 @@ async function main() {
   check('empty clipboard has no advertised formats', e.clipboard_count_formats() === 0);
   check('empty clipboard has no RTF availability', e.clipboard_is_format_available(fmtA) === 0);
 
+  const dib = e.guest_alloc(40);
+  for (let i = 0; i < 40; i++) u8[wa(dib) + i] = (i * 9 + 1) & 0xff;
+  const storedDib = e.clipboard_store_binary_data(8, dib) >>> 0;
+  check('CF_DIB HGLOBAL bytes are copied into clipboard ownership', storedDib !== 0 && storedDib !== dib);
+  u8[wa(dib)] = 0xee;
+  check('CF_DIB is advertised and returned independently',
+    e.clipboard_is_format_available(8) === 1 && e.clipboard_get_data_handle(8) === storedDib && u8[wa(storedDib)] === 1);
+  check('CountClipboardFormats includes the binary DIB slot', e.clipboard_count_formats() === 1);
+  e.clipboard_clear_all_data();
+
   const rtfText = '{\\rtf1\\ansi api\\par smoke}';
   const rtfData = writeAscii(rtfText);
   const stored = e.clipboard_store_rtf_data(rtfData) >>> 0;

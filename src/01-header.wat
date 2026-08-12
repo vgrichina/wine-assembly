@@ -1288,6 +1288,14 @@
   (global $clipboard_rtf_ptr (mut i32) (i32.const 0))
   (global $clipboard_rtf_cap (mut i32) (i32.const 0))
   (global $clipboard_rtf_len (mut i32) (i32.const 0))
+  ;; Current OLE clipboard IDataObject. The object owns copied STGMEDIUM data;
+  ;; OleSetClipboard swaps this reference and OleGetClipboard AddRefs it.
+  (global $clipboard_ole_data_object (mut i32) (i32.const 0))
+  ;; Opaque binary USER clipboard slot used first for CF_DIB. Unlike text/RTF,
+  ;; its byte length comes from the HGLOBAL allocation rather than a NUL scan.
+  (global $clipboard_binary_format (mut i32) (i32.const 0))
+  (global $clipboard_binary_ptr (mut i32) (i32.const 0))
+  (global $clipboard_binary_len (mut i32) (i32.const 0))
   ;; Basic RichEdit formatting captured by WordPad's WAT menu clipboard bridge.
   ;; Text remains in the CF_TEXT-style globals above; these fixed-size snapshots
   ;; preserve selected CHARFORMAT/PARAFORMAT fields for same-session paste.

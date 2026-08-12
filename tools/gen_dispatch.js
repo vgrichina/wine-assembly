@@ -99,6 +99,8 @@ const comInterfaces = [
   { prefix: 'ILockBytes',           global: 'DX_VTBL_OLE_LOCKBYTES' },
   { prefix: 'IStream',              global: 'DX_VTBL_OLE_STREAM' },
   { prefix: 'IStorage',             global: 'DX_VTBL_OLE_STORAGE' },
+  { prefix: 'IDataObject',          global: 'DX_VTBL_OLE_DATAOBJECT' },
+  { prefix: 'IEnumFORMATETC',       global: 'DX_VTBL_OLE_ENUMFORMATETC' },
   { prefix: 'IDirect3DDevice3',     global: 'DX_VTBL_D3DDEV3' },
   { prefix: 'IDirect3DViewport3',   global: 'DX_VTBL_D3DVP3' },
   { prefix: 'IDirect3DLight',       global: 'DX_VTBL_D3DLIGHT' },

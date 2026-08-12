@@ -15,6 +15,14 @@ size/stat operations, and storage class IDs persist in memory. WordPad does not
 yet insert, render, copy, or reopen an embedded object; those higher OLE layers
 remain outside the completed non-OLE scope.
 
+The next transfer layer is also present: a bounded `IDataObject` supports
+`FORMATETC` matching, `GetData`/`QueryGetData`/`SetData`, single-format
+enumeration, and eagerly owned `STGMEDIUM` payloads. `TYMED_HGLOBAL` data such
+as `CF_DIB` is copied byte-for-byte, stream/storage media retain COM ownership,
+`ReleaseStgMedium` releases supported payloads, and the OLE clipboard keeps a
+reference-counted current object. WordPad/RichEdit insertion and presentation
+remain the next integration boundary.
+
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
 ```text
