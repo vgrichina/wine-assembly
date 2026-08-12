@@ -112,6 +112,8 @@ async function makeHarness(mode) {
   e.set_aoe_recompile_enabled(mode === 'optimized' ? 1 : 0);
   e.set_aoe_wat_threaded_enabled(mode === 'packet' ? 1 : 0);
   e.set_wat_stack_packet_enabled(mode === 'stack-packet' ? 1 : 0);
+  e.set_wat_slot_packet_allocation_mode(mode === 'slot-reuse' ? 1 : 0);
+  e.set_wat_slot_packet_enabled(mode === 'slot-copy' || mode === 'slot-reuse' ? 1 : 0);
   return { e, mem, wa };
 }
 
@@ -208,62 +210,63 @@ function snapshot(h) {
   };
 }
 
-function runCase(generic, packet, stackPacket, compiled, name, start, customize = () => {}) {
-  resetAndSeed(generic, start);
-  resetAndSeed(packet, start);
-  resetAndSeed(stackPacket, start);
-  resetAndSeed(compiled, start);
-  customize(generic.e, generic.mem, generic.wa);
-  customize(packet.e, packet.mem, packet.wa);
-  customize(stackPacket.e, stackPacket.mem, stackPacket.wa);
-  customize(compiled.e, compiled.mem, compiled.wa);
-  generic.e.run(1);
-  packet.e.run(1);
-  stackPacket.e.run(1);
-  compiled.e.run(1);
-  assert.deepStrictEqual(snapshot(packet), snapshot(generic), `${name} packet`);
-  assert.deepStrictEqual(snapshot(stackPacket), snapshot(generic), `${name} stack packet`);
-  assert.deepStrictEqual(snapshot(compiled), snapshot(generic), name);
+function runCase(backends, name, start, customize = () => {}) {
+  for (const { harness } of backends) {
+    resetAndSeed(harness, start);
+    customize(harness.e, harness.mem, harness.wa);
+    harness.e.run(1);
+  }
+  const reference = snapshot(backends[0].harness);
+  for (const backend of backends.slice(1)) {
+    assert.deepStrictEqual(snapshot(backend.harness), reference, `${name} ${backend.name}`);
+  }
 }
 
 (async () => {
-  const generic = await makeHarness('generic');
-  const packet = await makeHarness('packet');
-  const stackPacket = await makeHarness('stack-packet');
-  const compiled = await makeHarness('optimized');
+  const backends = [];
+  for (const [name, mode] of [
+    ['x86', 'generic'],
+    ['narrow packet', 'packet'],
+    ['stack packet', 'stack-packet'],
+    ['slot explicit copy', 'slot-copy'],
+    ['slot destructive reuse', 'slot-reuse'],
+    ['optimized', 'optimized'],
+  ]) {
+    backends.push({ name, harness: await makeHarness(mode) });
+  }
 
-  runCase(generic, packet, stackPacket, compiled, 'primary dispatch 0x00535c20', 0x00535c20);
-  runCase(generic, packet, stackPacket, compiled, 'simple dispatch 0x00536420', 0x00536420);
-  runCase(generic, packet, stackPacket, compiled, 'simple dispatch 0x005360a0', 0x005360a0);
-  runCase(generic, packet, stackPacket, compiled, 'run-length zero path 0x00535e00', 0x00535e00,
+  runCase(backends, 'primary dispatch 0x00535c20', 0x00535c20);
+  runCase(backends, 'simple dispatch 0x00536420', 0x00536420);
+  runCase(backends, 'simple dispatch 0x005360a0', 0x005360a0);
+  runCase(backends, 'run-length zero path 0x00535e00', 0x00535e00,
     e => e.set_ecx(0x0f));
-  runCase(generic, packet, stackPacket, compiled, 'run-length byte path 0x00535e05', 0x00535e05,
+  runCase(backends, 'run-length byte path 0x00535e05', 0x00535e05,
     e => e.set_ecx(0));
-  runCase(generic, packet, stackPacket, compiled, 'run-length nonzero path 0x00535e00', 0x00535e00,
+  runCase(backends, 'run-length nonzero path 0x00535e00', 0x00535e00,
     e => e.set_ecx(0x2f));
-  runCase(generic, packet, stackPacket, compiled, 'clip branch 0x00535e08 fall', 0x00535e08);
-  runCase(generic, packet, stackPacket, compiled, 'clip branch 0x00535e08 target', 0x00535e08,
+  runCase(backends, 'clip branch 0x00535e08 fall', 0x00535e08);
+  runCase(backends, 'clip branch 0x00535e08 target', 0x00535e08,
     e => e.guest_write32(SPAN + 8, 0x00400000));
-  runCase(generic, packet, stackPacket, compiled, 'pixel dispatch 0x00535e40', 0x00535e40);
-  runCase(generic, packet, stackPacket, compiled, 'skip clipped run 0x00535e7c', 0x00535e7c);
-  runCase(generic, packet, stackPacket, compiled, 'next span dispatch 0x00535bc0', 0x00535bc0,
+  runCase(backends, 'pixel dispatch 0x00535e40', 0x00535e40);
+  runCase(backends, 'skip clipped run 0x00535e7c', 0x00535e7c);
+  runCase(backends, 'next span dispatch 0x00535bc0', 0x00535bc0,
     e => {
       e.guest_write32(0x0077503c, SPAN + 16);
       e.guest_write32(SPAN + 16, SPAN);
     });
-  runCase(generic, packet, stackPacket, compiled, 'next span command dispatch 0x00535bdc', 0x00535bdc,
+  runCase(backends, 'next span command dispatch 0x00535bdc', 0x00535bdc,
     e => {
       e.set_esi(SOURCE);
       e.set_edi(0x00340001);
       e.set_ebx(SPAN);
     });
-  runCase(generic, packet, stackPacket, compiled, 'row advance branch 0x005362e0', 0x005362e0);
-  runCase(generic, packet, stackPacket, compiled, 'row advance return 0x005362e0', 0x005362e0,
+  runCase(backends, 'row advance branch 0x005362e0', 0x005362e0);
+  runCase(backends, 'row advance return 0x005362e0', 0x005362e0,
     e => e.guest_write32(EBP + 0x18, 1));
-  runCase(generic, packet, stackPacket, compiled, 'row epilogue 0x005362f4', 0x005362f4);
-  runCase(generic, packet, stackPacket, compiled, 'alternate pixel dispatch 0x00536528', 0x00536528);
+  runCase(backends, 'row epilogue 0x005362f4', 0x005362f4);
+  runCase(backends, 'alternate pixel dispatch 0x00536528', 0x00536528);
 
-  console.log('PASS  AoE primitive-packet, generic-stack, and optimized blocks match x86 decoder');
+  console.log('PASS  AoE packet, stack, four-slot, and optimized blocks match x86 decoder');
 })().catch(err => {
   console.error(err && err.stack || err);
   process.exit(1);

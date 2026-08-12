@@ -4109,6 +4109,7 @@
   (func $th_aoe_recompile (param $op i32)
     (if (i32.eq (local.get $op) (i32.const 100)) (then (call $aoe_wat_threaded_packet) (return)))
     (if (i32.eq (local.get $op) (i32.const 101)) (then (call $wat_stack_packet) (return)))
+    (if (i32.eq (local.get $op) (i32.const 102)) (then (call $wat_slot_packet) (return)))
     (if (i32.eq (local.get $op) (i32.const 1)) (then (call $aoe_recompile_00535c20) (return)))
     (if (i32.eq (local.get $op) (i32.const 2)) (then (call $aoe_recompile_simple_dispatch (i32.const 0x00534540)) (return)))
     (if (i32.eq (local.get $op) (i32.const 3)) (then (call $aoe_recompile_simple_dispatch (i32.const 0x00534440)) (return)))

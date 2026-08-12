@@ -1017,6 +1017,12 @@
   (global $wat_stack_superops_enabled (mut i32) (i32.const 0))
   (global $wat_stack_packet_count_enabled (mut i32) (i32.const 1))
   (global $wat_stack_packet_entries (mut i32) (i32.const 0))
+  ;; Four-slot register packet benchmark. Allocation mode 0 preserves the
+  ;; incoming slot value and copies; mode 1 reuses a dead value's slot.
+  (global $wat_slot_packet_enabled (mut i32) (i32.const 0))
+  (global $wat_slot_packet_allocation_mode (mut i32) (i32.const 0))
+  (global $wat_slot_packet_count_enabled (mut i32) (i32.const 1))
+  (global $wat_slot_packet_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_count_enabled (mut i32) (i32.const 1))
   (global $aoe_recompile_entries (mut i32) (i32.const 0))
   (global $aoe_recompile_00535c20_entries (mut i32) (i32.const 0))

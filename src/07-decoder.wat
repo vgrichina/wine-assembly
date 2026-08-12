@@ -729,6 +729,75 @@
         (return (i32.const 1))))
     (i32.const 0))
 
+  ;; Four-slot register-packet benchmark fixture. Packet headers map arbitrary
+  ;; guest registers to L0..L3; operation opcodes statically encode slot
+  ;; operands. Allocation mode 1 reuses L0 after incoming EDI's last use.
+  (func $emit_aoe_wat_slot_packet (param $start_eip i32) (result i32)
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; imports: L0=ESI,L1=EDI; exports: L0=ESI,L1=EBX,L2=EAX,L3=ECX
+        (call $te_raw (i32.const 0x0000FF76))
+        (call $te_raw (i32.const 0x00001036))
+        (call $te_raw (i32.const 33)) (call $te_raw (i32.const 0x00775050))
+        (call $te_raw (i32.const 34)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 109))
+        (call $te_raw (i32.const 120)) (call $te_raw (i32.const 0x00775020))
+        (call $te_raw (i32.const 128))
+        (call $te_raw (i32.const 51))
+        (call $te_raw (i32.const 85)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 95)) (call $te_raw (i32.const 15))
+        ;; EDI is dirty but L1 is now reused for EBX, so export it here.
+        (call $te_raw (i32.const 16))
+        (call $te_raw (i32.const 118)) (call $te_raw (i32.const 0x0077503C))
+        (call $te_raw (i32.const 139))
+        (call $te_raw (i32.const 0x00534400)) (call $te_raw (i32.const 2))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; L0=ECX in and out.
+        (call $te_raw (i32.const 0x0000FFF1))
+        (call $te_raw (i32.const 0x0000FFF1))
+        (call $te_raw (i32.const 97)) (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 157)) (call $te_raw (i32.const 5))
+        (call $te_raw (i32.const 0x00535E08)) (call $te_raw (i32.const 0x00535E05))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; imports: L0=EDI,L1=ECX,L2=EBX.
+        (call $te_raw (i32.const 0x0000F317))
+        (if (i32.eqz (global.get $wat_slot_packet_allocation_mode))
+          (then
+            ;; Preserve L0=EDI and explicitly copy the new EDX value to L3.
+            (call $te_raw (i32.const 0x00002FFF))
+            (call $te_raw (i32.const 49))
+            (call $te_raw (i32.const 66))
+            (call $te_raw (i32.const 92)) (call $te_raw (i32.const 1))
+            (call $te_raw (i32.const 155)))
+          (else
+            ;; EDI is dead locally: destructively reuse L0 for outgoing EDX.
+            (call $te_raw (i32.const 0x0000FFF2))
+            (call $te_raw (i32.const 54))
+            (call $te_raw (i32.const 89)) (call $te_raw (i32.const 1))
+            (call $te_raw (i32.const 143))))
+        (call $te_raw (i32.const 8)) (call $te_raw (i32.const 12))
+        (call $te_raw (i32.const 0x00535E7C)) (call $te_raw (i32.const 0x00535E12))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; imports: L0=ECX,L1=ESI; exports: L1=ESI,L2=EDI.
+        (call $te_raw (i32.const 0x0000FF61))
+        (call $te_raw (i32.const 0x0000F76F))
+        (call $te_raw (i32.const 119)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 86)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 77))
+        (call $te_raw (i32.const 158)) (call $te_raw (i32.const 0x00535C20))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func $decode_block (param $start_eip i32) (result i32)
     (local $tstart i32)
     (local $op i32)
@@ -767,6 +836,12 @@
         (if (i32.eq (local.get $start_eip) (i32.const 0x0049DD20))
           (then
             (call $te (i32.const 356) (i32.const 2))
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+    (if (global.get $wat_slot_packet_enabled)
+      (then
+        (if (call $emit_aoe_wat_slot_packet (local.get $start_eip))
+          (then
             (call $cache_store (local.get $start_eip) (local.get $tstart))
             (return (local.get $tstart))))))
     (if (global.get $wat_stack_packet_enabled)

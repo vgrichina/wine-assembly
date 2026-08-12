@@ -189,13 +189,19 @@ function percentile(values, fraction) {
   function configureAndWarm(variant) {
     e.set_aoe_recompile_count_enabled(1);
     e.set_wat_stack_packet_count_enabled(1);
+    e.set_wat_slot_packet_count_enabled(1);
     e.set_aoe_recompile_enabled(0);
     e.set_aoe_wat_threaded_enabled(0);
     e.set_wat_stack_packet_enabled(0);
+    e.set_wat_slot_packet_enabled(0);
     e.set_wat_stack_superops_enabled(variant === 'wat-stack-cmp-jcc' ? 1 : 0);
     if (variant === 'wat-threaded') e.set_aoe_wat_threaded_enabled(1);
     if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
       e.set_wat_stack_packet_enabled(1);
+    }
+    if (variant === 'wat-slot-copy' || variant === 'wat-slot-reuse') {
+      e.set_wat_slot_packet_allocation_mode(variant === 'wat-slot-reuse' ? 1 : 0);
+      e.set_wat_slot_packet_enabled(1);
     }
     if (variant === 'wat-optimized') e.set_aoe_recompile_enabled(1);
     seed();
@@ -207,7 +213,10 @@ function percentile(values, fraction) {
       e.reset_aoe_recompile_counters();
     }
     runnerFor(variant)(warmupBlocks);
-    if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
+    if (variant === 'wat-slot-copy' || variant === 'wat-slot-reuse') {
+      assert.strictEqual(u32(e.get_wat_slot_packet_entries()), warmupBlocks,
+        `warmup must reach the ${variant} backend`);
+    } else if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
       assert.strictEqual(u32(e.get_wat_stack_packet_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
     } else if (!variant.startsWith('x86-') && !variant.startsWith('brtable-')) {
@@ -223,6 +232,7 @@ function percentile(values, fraction) {
     e.reset_aoe_recompile_counters();
     e.set_aoe_recompile_count_enabled(0);
     e.set_wat_stack_packet_count_enabled(0);
+    e.set_wat_slot_packet_count_enabled(0);
     const start = performance.now();
     runnerFor(variant)(measuredBlocks);
     const elapsedMs = performance.now() - start;
@@ -247,11 +257,16 @@ function percentile(values, fraction) {
     'wat-threaded',
     'wat-stack',
     'wat-stack-cmp-jcc',
+    'wat-slot-copy',
+    'wat-slot-reuse',
     'wat-optimized',
   ];
   const variants = (process.env.VARIANTS
     ? process.env.VARIANTS.split(',').map(value => value.trim()).filter(Boolean)
     : defaultVariants);
+  for (const variant of variants) {
+    assert(defaultVariants.includes(variant), `unknown benchmark variant ${variant}`);
+  }
   assert(variants.includes('x86-threaded'), 'VARIANTS must include x86-threaded');
   if (WARM_ONCE) {
     assert(variants.every(name => name.startsWith('x86-') || name.startsWith('brtable-')),
