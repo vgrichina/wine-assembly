@@ -588,19 +588,56 @@ every RichEdit version.
 - The behavior is covered by bounded tests and screenshots so later GDI/USER
   changes do not silently regress it.
 
-## Non-goals for the next phase
+## Expanded non-OLE completion program
 
-These are valid RichEdit features, but they should not block the next app-status
-push:
+The 2026-08-12 expansion promotes the following former non-goals into active
+work. Each area needs an app-level WordPad probe, state assertions, and a
+screenshot where the result is visual.
 
-- embedded OLE objects and in-place activation;
-- image rendering/editing through `\pict`, metafiles, or bitmap objects;
-- tables, high-fidelity layout, and complex RTF style sheets;
-- IME composition, bidi layout, complex script shaping, and script-specific
-  line breaking;
-- print layout, pagination, rulers, and printer-device metric fidelity;
-- TOM/COM surfaces, deep accessibility, and drag/drop editing;
-- exact behavioral differences between RichEdit 1.0, 2.0, 3.0, and later.
+```text
+1. Advanced RTF
+   [ ] multiple character and paragraph runs survive Open -> Save -> Open
+   [ ] stylesheet/font/color-table references resolve without flattening
+   [ ] simple tables preserve cell boundaries and visible row layout
+   [ ] tabs, indents, spacing, alignment, and wrapping coexist across paragraphs
+
+2. Printing
+   [ ] Page Setup edits margins and returns stable PAGESETUPDLG state
+   [ ] Print returns a printer DC plus Win98-compatible PRINTDLG fields
+   [ ] StartDoc/StartPage/EndPage/EndDoc execute in the expected order
+   [ ] EM_FORMATRANGE paginates a multi-page document using printer metrics
+   [ ] Print Preview displays page bounds and advances between pages
+
+3. Editing and layout stress
+   [ ] large multi-paragraph documents remain editable and scrollable
+   [ ] repeated narrow/wide resize recomputes wrapping without stale pixels
+   [ ] selection, replacement, undo, and find work across wrapped line breaks
+   [ ] RichEdit 1.0/2.0 class and message differences have bounded probes
+
+4. WordPad UI fidelity
+   [ ] ruler tabs/indents update paragraph state and track selection changes
+   [ ] advanced toolbar/menu enabled, disabled, and checked state stays coherent
+   [ ] secondary formatting and document dialogs route commands correctly
+
+5. International text
+   [ ] Unicode input/readback covers BMP and surrogate-pair characters
+   [ ] IME start/update/commit/cancel dispatches the Win32 composition sequence
+   [ ] bidi paragraphs have stable logical selection and visual ordering
+   [ ] complex-script shaping and script-aware line breaking are visibly tested
+
+6. Thread fidelity
+   [x] CREATE_SUSPENDED creates a non-runnable worker with suspend count one
+   [x] SuspendThread/ResumeThread return previous nested suspend counts
+   [x] only the final ResumeThread makes a worker runnable
+   [x] invalid/exited handles return 0xFFFFFFFF
+   [ ] app-level WordPad startup regression covers the real ResumeThread path
+```
+
+Still postponed because it is OLE/object work: embedded objects, in-place
+activation, structured-storage object persistence, and object clipboard
+transfer. TOM/COM, deep accessibility, and drag/drop editing are also outside
+this non-OLE completion program unless one of the probes proves they are a
+hard dependency.
 
 ## Suggested implementation slice
 

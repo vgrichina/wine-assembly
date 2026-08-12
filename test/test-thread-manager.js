@@ -46,6 +46,17 @@ assert(!tm.threads.has(handles[0]), 'reused exited slot should drop old handle b
 
 assert.strictEqual(tm.createThread(0x5000, 0, 0), 0, 'a pending reused slot still counts as occupied');
 
+const suspendTm = makeThreadManager();
+const suspendedHandle = suspendTm.createThread(0x6000, 0, 0);
+assert.strictEqual(suspendTm.suspendThread(suspendedHandle), 0, 'initial suspend returns the previous zero count');
+assert.strictEqual(suspendTm.suspendThread(suspendedHandle), 1, 'nested suspend returns the previous count');
+assert.strictEqual(suspendTm._pendingThreads[0].suspendCount, 2, 'pending CREATE_SUSPENDED state survives until instantiation');
+assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 2, 'first resume returns two and leaves the thread suspended');
+assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 1, 'final resume returns one and makes the thread runnable');
+assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 0, 'resuming a running thread returns zero without underflow');
+assert.strictEqual(suspendTm.suspendThread(0xdeadbeef), 0xFFFFFFFF, 'invalid suspend handle fails');
+assert.strictEqual(suspendTm.resumeThread(0xdeadbeef), 0xFFFFFFFF, 'invalid resume handle fails');
+
 const fullMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
 const cacheTm = makeThreadManagerWithMemory(fullMemory);
 const worker1CacheIndex = 0x07152000 + 0x8000;
@@ -76,6 +87,19 @@ function makeRunnableThread(tid, onRun) {
     },
   };
 }
+
+const suspendedRunTm = makeThreadManager();
+let suspendedRuns = 0;
+const suspendedRunnable = makeRunnableThread(1, () => { suspendedRuns++; });
+suspendedRunnable.suspendCount = 1;
+suspendedRunTm.threads.set(0xe1010, suspendedRunnable);
+assert.strictEqual(suspendedRunTm.hasActiveThreads(), false, 'a suspended worker is not runnable');
+suspendedRunTm.runSlice(100);
+assert.strictEqual(suspendedRuns, 0, 'scheduler does not execute a suspended worker');
+assert.strictEqual(suspendedRunTm.resumeThread(0xe1010), 1, 'resuming an instantiated worker returns its previous count');
+assert.strictEqual(suspendedRunTm.hasActiveThreads(), true, 'the final resume makes the worker runnable');
+suspendedRunTm.runSlice(100);
+assert.strictEqual(suspendedRuns, 1, 'scheduler executes the worker after its final resume');
 
 let now = 0;
 const budgetTm = makeThreadManager();

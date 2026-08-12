@@ -684,6 +684,10 @@
     (local $lpThreadId i32)
     (local.set $lpThreadId (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (global.set $eax (call $host_create_thread (local.get $arg2) (local.get $arg3) (local.get $arg1)))
+    ;; CREATE_SUSPENDED (0x00000004) creates all thread bookkeeping but keeps
+    ;; the worker off the runnable scheduler until ResumeThread reaches zero.
+    (if (i32.and (local.get $arg4) (i32.const 4))
+      (then (drop (call $host_suspend_thread (global.get $eax)))))
     (if (local.get $lpThreadId)
       (then (call $gs32 (local.get $lpThreadId) (global.get $eax))))
     (call $host_log_i32 (global.get $eax))
@@ -6002,12 +6006,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 409: ResumeThread — STUB: unimplemented
   ;; ResumeThread(hThread) — 1 arg stdcall, return previous suspend count
-  ;; Threads are never actually suspended in our implementation, so return 1
-  ;; (was suspended once via CREATE_SUSPENDED, now running).
   (func $handle_ResumeThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $host_resume_thread (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -7798,10 +7799,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 540: SuspendThread — STUB: unimplemented
   ;; SuspendThread(hThread) — 1 arg stdcall, return previous suspend count (0 = not suspended)
   (func $handle_SuspendThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_suspend_thread (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

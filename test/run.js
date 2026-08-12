@@ -1557,6 +1557,8 @@ async function main() {
 
   // Wire thread/event imports to ThreadManager
   h.create_thread = (startAddr, param, stackSize) => threadManager.createThread(startAddr, param, stackSize);
+  h.suspend_thread = (handle) => threadManager.suspendThread(handle);
+  h.resume_thread = (handle) => threadManager.resumeThread(handle);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
   h.create_event = (manualReset, initialState) => threadManager.createEvent(manualReset, initialState);
@@ -1630,6 +1632,8 @@ async function main() {
     wh.memory = memory;
     // Wire thread/event to same ThreadManager
     wh.create_thread = h.create_thread;
+    wh.suspend_thread = h.suspend_thread;
+    wh.resume_thread = h.resume_thread;
     wh.exit_thread = h.exit_thread;
     wh.get_exit_code_thread = h.get_exit_code_thread;
     wh.create_event = h.create_event;

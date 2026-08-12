@@ -725,19 +725,16 @@ the blank-canvas gate for this case.
 
 ## Threading Note
 
-The older blocker was `ResumeThread` during OLE/COM initialization. The current
-handler returns a previous suspend count and advances the stack, which is enough
-for the WordPad startup smoke. Thread creation still does not fully model
-`CREATE_SUSPENDED`; that is a fidelity issue, not a current WordPad startup
-blocker.
+The older blocker was `ResumeThread` during OLE/COM initialization. As of
+2026-08-12, `CreateThread(CREATE_SUSPENDED)` records an initial suspend count,
+the cooperative scheduler excludes suspended workers, and `SuspendThread` /
+`ResumeThread` return the previous nested count. Only the transition to zero
+makes the worker runnable. The scheduler-level regression is complete; a
+focused app-level trace of WordPad's real startup thread remains to be added.
 
 ## Follow-Up
 
-1. Add true `CREATE_SUSPENDED` handling in `lib/thread-manager.js` if another
-   app depends on threads staying suspended until `ResumeThread`.
-2. Extend `$handle_ResumeThread` to call a host unsuspend import once the thread
-   manager tracks suspend counts.
-3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
+1. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    broader RichEdit wrapping/layout edge cases, advanced toolbar UI state,
    and embedded OLE/object clipboard fidelity still need focused probes.
    Covered areas now include mixed-run size reporting, caret blink/XOR cadence,
@@ -758,11 +755,13 @@ blocker.
    now covered, and
    WordPad's own toolbar color UI now applies
    Blue through the covered dynamic-popup path.
-4. Add richer native RichEdit state dumps if deeper assertions are needed
+2. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
-5. Treat images, tables, embedded OLE objects, and advanced RTF layout as later
-   RichEdit work; the current target is app-useful plain-text editing.
+3. Complete the expanded non-OLE program in
+   `docs/richedit-compat-design.md`: advanced RTF (including tables), printing,
+   layout stress, ruler/secondary UI, and international text. Embedded OLE
+   objects and object clipboard transfer remain postponed.
 
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
