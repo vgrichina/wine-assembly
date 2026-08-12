@@ -365,6 +365,7 @@ async function main() {
   //   B:dump-main-edit-state[:LABEL] — log main edit text/cursor/selection/scroll
   //   B:dump-focus-text[:LABEL] — log focused hwnd text via WAT EditState or WM_GETTEXT
   //   B:dump-focus-state[:LABEL] — log focused hwnd text, selection, and scroll state
+  //   B:main-resize:WIDTH:HEIGHT — resize the top-level main window and deliver WM_SIZE
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
@@ -682,6 +683,8 @@ async function main() {
       } else if (kind === 'canvas-resize') {
         // B:canvas-resize:WIDTH:HEIGHT — emulate browser backing-canvas resize.
         scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
+      } else if (kind === 'main-resize') {
+        scheduledInput.push({ batch, action: 'main-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousedown') {
@@ -2557,7 +2560,8 @@ async function main() {
         if (!h) {
           logs.push(`[input] dump-focus-state${tag}: NO FOCUS at batch ${batch}`);
         } else if (we.send_message && we.guest_alloc) {
-          const cap = 8192;
+          const reportedLen = Math.max(0, we.send_message(h, 0x000E, 0, 0) | 0); // WM_GETTEXTLENGTH
+          const cap = Math.min(reportedLen + 1, 1024 * 1024);
           const textG = we.guest_alloc(cap);
           const n = we.send_message(h, 0x000D, cap, textG) | 0; // WM_GETTEXT
           const wa = g2w(textG);
@@ -2593,7 +2597,8 @@ async function main() {
         } else if (we.send_message && we.guest_alloc) {
           const cls = we.ctrl_get_class ? we.ctrl_get_class(h) : -1;
           const parent = we.wnd_get_parent ? (we.wnd_get_parent(h) | 0) : 0;
-          const cap = 8192;
+          const reportedLen = Math.max(0, we.send_message(h, 0x000E, 0, 0) | 0); // WM_GETTEXTLENGTH
+          const cap = Math.min(reportedLen + 1, 1024 * 1024);
           const textG = we.guest_alloc(cap);
           const n = we.send_message(h, 0x000D, cap, textG) | 0; // WM_GETTEXT
           const wa = g2w(textG);
@@ -3954,6 +3959,21 @@ async function main() {
         }
         if (typeof renderer.repaint === 'function') renderer.repaint();
         logs.push(`[input] canvas-resize ${oldW}x${oldH} -> ${ev.w}x${ev.h} at batch ${batch}`);
+      } else if (ev.action === 'main-resize' && renderer) {
+        const we = instance.exports;
+        const hwnd = we.get_main_hwnd ? (we.get_main_hwnd() | 0) : 0;
+        const win = hwnd ? renderer.windows[hwnd] : null;
+        if (!win) {
+          logs.push(`[input] main-resize FAILED: no main window at batch ${batch}`);
+        } else {
+          win.w = Math.max(1, ev.w | 0);
+          win.h = Math.max(1, ev.h | 0);
+          win._maximized = false;
+          if (we.host_resize_commit) we.host_resize_commit(hwnd, win.x | 0, win.y | 0, win.w, win.h);
+          if (typeof renderer._computeClientRect === 'function') renderer._computeClientRect(win);
+          if (typeof renderer.invalidate === 'function') renderer.invalidate(hwnd);
+          logs.push(`[input] main-resize hwnd=0x${hwnd.toString(16)} -> ${win.w}x${win.h} at batch ${batch}`);
+        }
       } else if (ev.action === 'winamp-play') {
         // Winamp IPC: write filename to guest memory, send WM_USER messages
         const we = instance.exports;

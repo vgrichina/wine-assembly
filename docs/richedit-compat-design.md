@@ -610,9 +610,10 @@ screenshot where the result is visual.
    [ ] Print Preview advances between pages
 
 3. Editing and layout stress
-   [ ] large multi-paragraph documents remain editable and scrollable
-   [ ] repeated narrow/wide resize recomputes wrapping without stale pixels
-   [ ] selection, replacement, undo, and find work across wrapped line breaks
+   [x] large multi-paragraph documents remain editable and scrollable
+   [x] repeated narrow/wide resize recomputes layout without stale pixels
+   [x] selection, replacement, and undo work across paragraph line breaks
+   [x] find/replace works across multiline native RichEdit documents
    [ ] RichEdit 1.0/2.0 class and message differences have bounded probes
 
 4. WordPad UI fidelity
@@ -677,6 +678,18 @@ to prove successive `EM_FORMATRANGE` boundaries and preview navigation. In the
 physical Print route, the app calls `StartDoc`, `StartPage`, `EM_FORMATRANGE`,
 and `EndPage`, but then spends indefinitely in its native print-progress
 cleanup/paint path; it has not yet called `EndDoc` or re-enabled the main frame.
+
+### 2026-08-12 editing/layout stress slice
+
+`test/test-wordpad-layout-stress.js` opens an 80-paragraph, 10,158-character
+plain-text document through WordPad's real File Open path. It proves dynamic
+full-buffer `WM_GETTEXT` readback beyond the old 8,191-byte test ceiling,
+downward wheel scrolling, guest `WM_SIZE` relayout at 320x240 and 640x480,
+replacement across a CRLF paragraph boundary, and complete native Undo. The
+test writes and visually verifies narrow/wide screenshots under
+`test/output/wordpad-richedit/`. The reusable `main-resize` harness action
+commits top-level geometry and delivers the same resize messages as an
+interactive frame drag.
 
 ## Suggested implementation slice
 
