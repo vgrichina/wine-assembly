@@ -378,10 +378,93 @@
   ;; pulls title from TITLE_TABLE, derives flags from style + auxiliary
   ;; tables, then calls $defwndproc_ncpaint. No JS-side plumbing.
   ;; ============================================================
+  ;; Paint one standard non-client scrollbar from SCROLLINFO state.
+  (func $defwndproc_paint_standard_scrollbar
+        (param $hdc i32) (param $x i32) (param $y i32)
+        (param $w i32) (param $h i32) (param $vert i32)
+        (param $pos i32) (param $smin i32) (param $smax i32) (param $page i32)
+    (local $long i32) (local $cross i32) (local $arrow i32) (local $track i32)
+    (local $total i32) (local $thumb i32) (local $travel i32)
+    (local $max_pos i32) (local $range i32) (local $thumb_pos i32)
+    (local.set $long (select (local.get $h) (local.get $w) (local.get $vert)))
+    (local.set $cross (select (local.get $w) (local.get $h) (local.get $vert)))
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (local.get $w))
+      (i32.add (local.get $y) (local.get $h))
+      (i32.const 0x30011)))
+    (local.set $arrow (call $scrollbar_arrow_size (local.get $long)))
+    (if (local.get $arrow)
+      (then
+        (if (local.get $vert)
+          (then
+            (call $draw_sb_arrow (local.get $hdc)
+              (local.get $x) (local.get $y) (local.get $cross) (local.get $arrow)
+              (i32.const 0) (i32.const 0))
+            (call $draw_sb_arrow (local.get $hdc)
+              (local.get $x) (i32.sub (i32.add (local.get $y) (local.get $long)) (local.get $arrow))
+              (local.get $cross) (local.get $arrow) (i32.const 1) (i32.const 0)))
+          (else
+            (call $draw_sb_arrow (local.get $hdc)
+              (local.get $x) (local.get $y) (local.get $arrow) (local.get $cross)
+              (i32.const 2) (i32.const 0))
+            (call $draw_sb_arrow (local.get $hdc)
+              (i32.sub (i32.add (local.get $x) (local.get $long)) (local.get $arrow)) (local.get $y)
+              (local.get $arrow) (local.get $cross) (i32.const 3) (i32.const 0))))))
+    (local.set $track (i32.sub (local.get $long) (i32.mul (local.get $arrow) (i32.const 2))))
+    (local.set $total (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1)))
+    (if (i32.or (i32.le_s (local.get $track) (i32.const 0))
+                (i32.le_s (local.get $total) (i32.const 0)))
+      (then (return)))
+    (local.set $thumb
+      (if (result i32) (i32.gt_u (local.get $page) (i32.const 0))
+        (then (i32.div_u (i32.mul (local.get $track) (local.get $page)) (local.get $total)))
+        (else (i32.const 16))))
+    (if (i32.lt_u (local.get $thumb) (i32.const 16)) (then (local.set $thumb (i32.const 16))))
+    (if (i32.gt_u (local.get $thumb) (local.get $track)) (then (local.set $thumb (local.get $track))))
+    (local.set $max_pos (local.get $smax))
+    (if (i32.gt_u (local.get $page) (i32.const 1))
+      (then (local.set $max_pos (i32.sub (local.get $smax) (i32.sub (local.get $page) (i32.const 1))))))
+    (if (i32.lt_s (local.get $max_pos) (local.get $smin)) (then (local.set $max_pos (local.get $smin))))
+    (local.set $range (i32.sub (local.get $max_pos) (local.get $smin)))
+    (local.set $travel (i32.sub (local.get $track) (local.get $thumb)))
+    (local.set $thumb_pos (local.get $arrow))
+    (if (i32.and (i32.gt_s (local.get $range) (i32.const 0)) (i32.gt_s (local.get $travel) (i32.const 0)))
+      (then (local.set $thumb_pos
+        (i32.add (local.get $arrow)
+          (i32.div_u
+            (i32.mul (i32.sub (local.get $pos) (local.get $smin)) (local.get $travel))
+            (local.get $range))))))
+    (if (local.get $vert)
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (local.get $thumb_pos))
+          (i32.sub (i32.add (local.get $x) (local.get $w)) (i32.const 2))
+          (i32.add (i32.add (local.get $y) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (local.get $thumb_pos))
+          (i32.sub (i32.add (local.get $x) (local.get $w)) (i32.const 2))
+          (i32.add (i32.add (local.get $y) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.const 0x05) (i32.const 0x0F))))
+      (else
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.add (local.get $x) (local.get $thumb_pos)) (i32.add (local.get $y) (i32.const 2))
+          (i32.add (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.sub (i32.add (local.get $y) (local.get $h)) (i32.const 2))
+          (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.add (local.get $x) (local.get $thumb_pos)) (i32.add (local.get $y) (i32.const 2))
+          (i32.add (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.sub (i32.add (local.get $y) (local.get $h)) (i32.const 2))
+          (i32.const 0x05) (i32.const 0x0F))))))
+
   (func $defwndproc_do_ncpaint (param $hwnd i32)
     (local $rect i32) (local $w i32) (local $h i32)
     (local $style i32) (local $flags i32) (local $is_child i32) (local $has_caption i32)
     (local $title_wa i32) (local $title_len i32)
+    (local $hdc i32) (local $slot i32) (local $base i32) (local $aux i32)
+    (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     ;; Reuse PAINT_SCRATCH for the rect — it's 16 bytes and not in use
     ;; between the GetWindowRect/DrawText overlap here.
@@ -427,7 +510,38 @@
     (drop (call $defwndproc_ncpaint
       (local.get $hwnd) (local.get $w) (local.get $h)
       (local.get $title_wa) (local.get $title_len)
-      (local.get $flags) (i32.const 0))))
+      (local.get $flags) (i32.const 0)))
+    (if (i32.and (local.get $style) (i32.const 0x00300000))
+      (then
+        (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+        (if (i32.ge_s (local.get $slot) (i32.const 0))
+          (then
+            (local.set $base (i32.add (global.get $SCROLL_TABLE) (i32.mul (local.get $slot) (i32.const 24))))
+            (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+            (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+            (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+            (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+            (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+            (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
+            (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd) (local.get $w) (local.get $h))
+            (if (i32.and (local.get $style) (i32.const 0x00200000))
+              (then (call $defwndproc_paint_standard_scrollbar
+                (local.get $hdc) (local.get $cr) (local.get $ct)
+                (i32.const 16) (i32.sub (local.get $cb) (local.get $ct)) (i32.const 1)
+                (i32.load offset=12 (local.get $base)) (i32.load offset=16 (local.get $base))
+                (i32.load offset=20 (local.get $base)) (i32.load offset=8 (local.get $aux)))))
+            (if (i32.and (local.get $style) (i32.const 0x00100000))
+              (then (call $defwndproc_paint_standard_scrollbar
+                (local.get $hdc) (local.get $cl) (local.get $cb)
+                (i32.sub (local.get $cr) (local.get $cl)) (i32.const 16) (i32.const 0)
+                (i32.load (local.get $base)) (i32.load offset=4 (local.get $base))
+                (i32.load offset=8 (local.get $base)) (i32.load (local.get $aux)))))
+            (if (i32.eq (i32.and (local.get $style) (i32.const 0x00300000)) (i32.const 0x00300000))
+              (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (local.get $cr) (local.get $cb)
+                (i32.add (local.get $cr) (i32.const 16)) (i32.add (local.get $cb) (i32.const 16))
+                (i32.const 0x30011)))))
+            (drop (call $host_release_dc (local.get $hdc))))))))
 
   ;; Default WM_NCCALCSIZE: compute the client rect (window-local) from
   ;; window rect minus standard borders / caption / menu bar.  Writes the
@@ -437,7 +551,7 @@
     (local $style i32)
     (local $has_cap i32) (local $has_border i32)
     (local $is_child i32) (local $simple_child_border i32)
-    (local $bw i32) (local $cy i32) (local $bot i32)
+    (local $bw i32) (local $cy i32) (local $bot i32) (local $right i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (local.set $rect (global.get $PAINT_SCRATCH))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
@@ -489,10 +603,17 @@
           (then (local.set $cy (i32.add (local.get $cy) (i32.const 18)))))
         (if (local.get $has_border) (then (local.set $cy (i32.add (local.get $cy) (i32.const 1)))))
         (local.set $bot (select (i32.const 4) (i32.const 0) (local.get $has_border)))))
+    ;; Standard window scrollbars are non-client strips. USER removes their
+    ;; 16px metrics from the usable client area whenever the style bit is set.
+    (local.set $right (local.get $bw))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then (local.set $right (i32.add (local.get $right) (i32.const 16)))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then (local.set $bot (i32.add (local.get $bot) (i32.const 16)))))
     ;; Store window-local l/t/r/b.
     (call $client_rect_set (local.get $hwnd)
       (local.get $bw) (local.get $cy)
-      (i32.sub (local.get $w) (local.get $bw))
+      (i32.sub (local.get $w) (local.get $right))
       (i32.sub (local.get $h) (local.get $bot))))
 
   ;; Default WM_NCHITTEST: classify (screen_x, screen_y) against window

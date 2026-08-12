@@ -391,6 +391,8 @@ async function main() {
   //   B:wave-in-feed:FRAMES[:RATE:AMPLITUDE] — feed synthetic sine PCM to waveIn
   //   B:mixer-peak:BUS:VALUE[:HOLD_MS] — inject a 0..32767 mixer peak for visual tests
   //   B:vfs-export:FILENAME:PATH — write one virtual file to the host filesystem
+  //   B:vfs-import:FILENAME:PATH — load one host file into the virtual filesystem
+  //   B:assert-standard-scroll:AXIS:MIN_POS[:LABEL] — fail unless a visible standard bar reaches MIN_POS
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
@@ -631,6 +633,21 @@ async function main() {
           action: 'vfs-export',
           filename: parts[2],
           path: parts.slice(3).join(':'),
+        });
+      } else if (kind === 'vfs-import') {
+        scheduledInput.push({
+          batch,
+          action: 'vfs-import',
+          filename: parts[2],
+          path: parts.slice(3).join(':'),
+        });
+      } else if (kind === 'assert-standard-scroll') {
+        scheduledInput.push({
+          batch,
+          action: 'assert-standard-scroll',
+          axis: parts[2] === 'v' ? 'v' : 'h',
+          minPos: parseInt(parts[3]) || 0,
+          label: parts[4] || '',
         });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
@@ -3769,6 +3786,32 @@ async function main() {
         } catch (e) {
           logs.push(`[input] vfs-export FAILED ${ev.filename}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'vfs-import') {
+        try {
+          const key = ctx.vfs._resolvePath(ev.filename);
+          const data = new Uint8Array(fs.readFileSync(ev.path));
+          ctx.vfs.files.set(key, { data, attrs: 0x20 });
+          logs.push(`[input] vfs-import ${ev.path} -> ${key} (${data.length} bytes) at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] vfs-import FAILED ${ev.path}: ${e.message} at batch ${batch}`);
+        }
+      } else if (ev.action === 'assert-standard-scroll') {
+        const e = instance.exports;
+        const bit = ev.axis === 'v' ? 0x00200000 : 0x00100000;
+        const bar = ev.axis === 'v' ? 1 : 0;
+        let match = null;
+        if (renderer && e.standard_scroll_pos) {
+          for (const win of Object.values(renderer.windows || {})) {
+            if (!win || !win.visible || !win.hwnd) continue;
+            const style = e.wnd_get_style_export ? e.wnd_get_style_export(win.hwnd) >>> 0 : win.style >>> 0;
+            if (!(style & bit)) continue;
+            const pos = e.standard_scroll_pos(win.hwnd, bar) | 0;
+            if (!match || pos > match.pos) match = { hwnd: win.hwnd | 0, pos };
+          }
+        }
+        const pass = !!match && match.pos >= ev.minPos;
+        logs.push(`[assert] ${pass ? 'PASS' : 'FAIL'} standard-scroll${ev.label ? ':' + ev.label : ''} axis=${ev.axis} min=${ev.minPos} actual=${match ? match.pos : 'none'} hwnd=${match ? '0x' + match.hwnd.toString(16) : 'none'} at batch ${batch}`);
+        if (!pass) process.exitCode = 1;
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();

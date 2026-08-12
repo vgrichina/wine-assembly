@@ -2314,6 +2314,7 @@
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
+    (call $host_sync_window_client (local.get $arg0))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
           (i32.ne (local.get $dlg_rec) (i32.const 0))
@@ -2707,6 +2708,7 @@
           (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))
         (call $paint_clear_subtree (local.get $arg0))))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
+    (call $host_sync_window_client (local.get $arg0))
     (if (i32.and
           (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
           (i32.ne (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)) (i32.const 0)))
@@ -8721,20 +8723,31 @@
 
   ;; 633: DeferWindowPos(hWinPosInfo, hWnd, hWndInsertAfter, x, y, cx, cy, uFlags) → HDWP
   (func $handle_DeferWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $old_cs i32) (local $new_cs i32) (local $flags i32)
     ;; Apply position immediately (no batching needed)
     ;; arg0=hDWP, arg1=hWnd, arg2=hInsertAfter, arg3=x, arg4=y, cx=stack[24], cy=stack[28], uFlags=stack[32]
+    (local.set $old_cs (call $host_get_window_client_size (local.get $arg1)))
+    (local.set $flags (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
     (call $host_move_window (local.get $arg1) (local.get $arg3) (local.get $arg4)
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+      (local.get $flags))
     (call $ctrl_geom_sync (local.get $arg1) (local.get $arg3) (local.get $arg4)
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+      (local.get $flags))
     ;; Refresh CLIENT_RECT now (MFC's AfxWndProc may not forward NCCALCSIZE to
     ;; DefWindowProc, so queuing the message alone doesn't update our table),
     ;; and queue a paint so the moved child redraws.
     (call $defwndproc_do_nccalcsize (local.get $arg1))
+    (call $host_sync_window_client (local.get $arg1))
+    (local.set $new_cs (call $host_get_window_client_size (local.get $arg1)))
+    (if (i32.and
+          (i32.eqz (i32.and (local.get $flags) (i32.const 1))) ;; !SWP_NOSIZE
+          (i32.ne (local.get $new_cs) (local.get $old_cs)))
+      (then
+        (drop (call $post_queue_push
+          (local.get $arg1) (i32.const 0x0005) (i32.const 0) (local.get $new_cs)))))
     (call $paint_flag_set (local.get $arg1))
     (if (i32.and
           (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 0))
@@ -8904,6 +8917,7 @@
   (func $handle_SetScrollInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $slot i32) (local $base i32) (local $aux i32) (local $lpsi i32) (local $fMask i32)
     (local $smin i32) (local $smax i32) (local $page i32) (local $pos i32) (local $max_pos i32)
+    (local $style i32) (local $new_style i32) (local $bar_bit i32)
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (local.set $lpsi (call $g2w (local.get $arg2)))
     (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
@@ -8955,6 +8969,32 @@
         (if (i32.gt_s (local.get $pos) (local.get $max_pos))
           (then (local.set $pos (local.get $max_pos))))
         (i32.store (local.get $base) (local.get $pos))
+        ;; SetScrollInfo controls standard scrollbar visibility. A page that
+        ;; covers the inclusive range hides the bar; otherwise USER adds the
+        ;; corresponding non-client style and recalculates the client area.
+        (local.set $style (call $wnd_get_style (local.get $arg0)))
+        (local.set $bar_bit
+          (select (i32.const 0x00200000) (i32.const 0x00100000)
+                  (i32.ne (local.get $arg1) (i32.const 0))))
+        (local.set $new_style (local.get $style))
+        (if (i32.and
+              (i32.gt_s (local.get $smax) (local.get $smin))
+              (i32.or
+                (i32.eqz (local.get $page))
+                (i32.lt_u (local.get $page)
+                  (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1)))))
+          (then (local.set $new_style (i32.or (local.get $style) (local.get $bar_bit))))
+          (else (local.set $new_style
+            (i32.and (local.get $style) (i32.xor (local.get $bar_bit) (i32.const -1))))))
+        (if (i32.ne (local.get $new_style) (local.get $style))
+          (then
+            (drop (call $wnd_set_style (local.get $arg0) (local.get $new_style)))
+            (call $defwndproc_do_nccalcsize (local.get $arg0))
+            (call $host_sync_window_client (local.get $arg0))))
+        (if (i32.or
+              (i32.ne (local.get $arg3) (i32.const 0))
+              (i32.ne (local.get $new_style) (local.get $style)))
+          (then (call $defwndproc_do_ncpaint (local.get $arg0))))
         (global.set $eax (i32.load (local.get $base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))

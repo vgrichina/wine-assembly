@@ -1,5 +1,22 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-08-11): large documents scroll correctly
+
+`test/test-mspaint-large-scroll.js` generates and opens a 900x700 BMP, checks
+that Paint displays both standard scrollbars, exercises the vertical and
+horizontal arrows, drags the horizontal thumb, and verifies both bars after
+maximizing the frame. The emulator now keeps MFC child
+client geometry synchronized after deferred resizes and paints/routes standard
+non-client scrollbars using page-proportional thumbs.
+
+```sh
+node test/test-mspaint-large-scroll.js
+```
+
+The generated BMP is written to `scratch/mspaint-large-scroll/`. Manual visual
+captures are `/private/tmp/mspaint-large-bars-painted.png` and
+`/private/tmp/mspaint-large-bars-max-painted.png`.
+
 ## Status (2026-08-11): working BMP file round trip
 
 `test/test-mspaint-file-roundtrip.js` covers the complete native Paint workflow:

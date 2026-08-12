@@ -95,6 +95,7 @@ E2E=(
   test/test-mspaint-tools.js
   test/test-mspaint-file-roundtrip.js
   test/test-mspaint-dirty-new.js
+  test/test-mspaint-large-scroll.js
   test/test-statusbar-surface.js
   test/test-regedit-deep.js
   test/test-solitaire-deal.js
