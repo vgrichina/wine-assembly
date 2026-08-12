@@ -2278,6 +2278,81 @@ Artifacts:
 /private/tmp/rct-hotform-candidate-{1,2,3}.json
 ```
 
+### Four-Slot Register Packet Checkpoint
+
+The next prototype maps arbitrary guest registers into four packet-local WAT
+locals. Its 158 generated opcodes encode slot operands statically, so the hot
+executor does not dynamically select guest registers for each operation. The
+AoE fixture compares preserving a live slot with an explicit copy against
+destructively reusing a slot after its prior value becomes dead.
+
+Five interleaved two-million-block trials produced:
+
+```text
+variant                 median ms   vs x86 threaded
+x86 threaded               290.91        1.000x
+narrow WAT packet          137.48        2.116x
+generic WAT stack          339.60        0.857x
+stack + CMP_RM32_JCC       318.85        0.912x
+four-slot explicit copy    238.41        1.220x
+four-slot dead reuse       232.54        1.251x
+hand-optimized WAT          90.21        3.225x
+```
+
+The four-slot design recovers a real part of the locals benefit without fixing
+guest register identities to WAT locals. Dead-slot reuse is slightly better
+than explicit copying, but the remaining packet opcode dispatch and generic
+packet boundary work leave substantial distance to straight-line WAT. This is
+still an isolated AoE blitter-loop result, not a whole-game speedup.
+
+Implementation and verification:
+
+```text
+tools/generate-wat-slot-packet.js
+src/05a-slot-packet.generated.wat
+node test/test-aoe-recompile-loop.js
+node tools/bench-aoe-recompile-loop.js
+```
+
+### Dormant Debug/Profiling Overhead Check
+
+Normal execution still contains disabled checks for handler histograms,
+watchpoints, breakpoints, hit counters, EIP/ESP tracing, `dbg_prev_eip`, and the
+shadow call stack. A temporary production build compiled those paths out,
+including all exact `handler_hist_enabled` branches in instruction handlers.
+The experiment kept yield handling, cache validation, and functional error
+guards.
+
+Four silent-Chrome 10-second gameplay pairs were not stable enough to claim a
+gain. The first three ran baseline first and appeared progressively faster;
+reversing the order made the later baseline win:
+
+```text
+pair/order                 production guest/slice delta   slice-count delta
+1 baseline -> production             -5.5%                    +5.3%
+2 baseline -> production            -17.5%                   +19.4%
+3 baseline -> production            -30.4%                   +33.6%
+4 production -> baseline             +15.1%                    -8.8%
+```
+
+The reversal shows that browser/system warmup dominated these full-game
+numbers. A fixed-work two-million-block x86-threaded comparison was essentially
+flat: the first low-noise medians were 140.70 ms debug versus 140.58 ms with the
+checks removed (0.09%), and the stable paired subset did not favor the stripped
+build. The production-mode experiment was therefore removed rather than
+shipping a second build that disables debugging without a measured speed win.
+
+Direct logging measurement reached the same conclusion. During one 10-second
+silent gameplay window, 26 `logToUI` calls consumed 5.5 ms total (about 0.055%
+of wall time). AoE also made 8,333 no-op `log_i32` imports, but a V8 boundary
+microbenchmark put that call shape at roughly 4-6 ns per call. Ordinary logging
+is not a meaningful AoE bottleneck.
+
+The browser harness now launches Chrome with `--mute-audio` and uses the correct
+`CDP_INPUT_TIMEOUT_MS` value for keyboard events. Keep `HANDLER_HIST=0` explicit
+for timing because the harness otherwise enables the expensive histogram by
+default.
+
 1. Keep the measured seven-form allowlist small and extend it only from
    full-app operand censuses.
 2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
