@@ -614,7 +614,7 @@ screenshot where the result is visual.
    [x] repeated narrow/wide resize recomputes layout without stale pixels
    [x] selection, replacement, and undo work across paragraph line breaks
    [x] find/replace works across multiline native RichEdit documents
-   [ ] RichEdit 1.0/2.0 class and message differences have bounded probes
+   [x] RichEdit 1.0/2.0 class and message differences have bounded probes
 
 4. WordPad UI fidelity
    [x] ruler tab interaction updates native paragraph state
@@ -728,6 +728,24 @@ complex-script/RTL rendering are captured in
 `test/output/wordpad-richedit/international-text.png`. The nine-point
 regression passes, including surrogate-pair, commit-once, and cancellation
 assertions.
+
+### 2026-08-12 RichEdit version-compatibility slice
+
+The WAT fallback now distinguishes the Win98 `RICHEDIT` class (Riched32 /
+RichEdit 1.0) from `RichEdit20A` and `RichEdit20W` (Riched20 / RichEdit 2.0+)
+without changing WordPad's native `RichEdit20A` execution path. Both fallback
+generations share the edit-control-compatible selection surface and begin with
+the documented 32,767-character input limit. A zero legacy `EM_LIMITTEXT`
+selects the 64,000-character RichEdit compatibility limit. The 2.0 fallback
+additionally supports full-width `EM_EXGETSEL` / `EM_EXSETSEL` `CHARRANGE`
+fields and `EM_EXLIMITTEXT` values above 64K; those extended messages remain
+unsupported on the 1.0 fallback.
+
+`test/test-richedit-version-compat.js` passes 11/11 across exact and
+case-insensitive class recognition, shared versus version-gated selection
+messages, and the 32K/64K/greater-than-64K limit transitions. The real WordPad
+editing regression remains green at 23/23. Exhaustive undocumented DLL-version
+quirks are not part of the non-OLE compatibility target.
 
 ## Suggested implementation slice
 

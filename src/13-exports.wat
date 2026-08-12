@@ -1542,6 +1542,25 @@
   (func (export "test_is_builtin_control_class") (param $class_name i32) (result i32)
     (call $is_builtin_control_class (local.get $class_name)))
 
+  (func (export "test_richedit_class_version") (param $class_name i32) (result i32)
+    (call $richedit_class_version (local.get $class_name)))
+
+  ;; Create the bounded WAT RichEdit fallback used when a guest requests a
+  ;; RichEdit class without a usable native class proc. version=1 models
+  ;; RICHEDIT/Riched32; all other values model RichEdit20A/W.
+  (func (export "test_create_richedit")
+    (param $version i32) (param $style i32) (param $text_g i32) (result i32)
+    (local $parent i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_CTRL_NATIVE))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x80000000)))
+    (call $ctrl_create_child
+      (local.get $parent)
+      (select (i32.const 24) (i32.const 25) (i32.eq (local.get $version) (i32.const 1)))
+      (i32.const 100) (i32.const 0) (i32.const 0) (i32.const 320) (i32.const 200)
+      (local.get $style) (local.get $text_g)))
+
   (func (export "listview_get_count") (param $hwnd i32) (result i32)
     (local $s i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))

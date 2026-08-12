@@ -307,11 +307,14 @@
                           (i32.const 0x74696465))
                   (i32.eqz (i32.load8_u offset=4 (local.get $name_w))))
               (then (local.set $detected_class (i32.const 2))))
-            ;; "richedit*", "RichEdit20A", etc. Use edit-class state and
-            ;; paint; RichEdit-specific streaming is handled by $edit_wndproc.
-            (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                        (i32.const 0x68636972))
-              (then (local.set $detected_class (i32.const 2))))
+            ;; Keep RichEdit 1.0 and 2.0+ distinguishable while sharing the
+            ;; edit state/paint implementation. Class 24 is RICHEDIT;
+            ;; class 25 is RichEdit20A/W.
+            (local.set $v (call $richedit_class_version (local.get $arg1)))
+            (if (i32.eq (local.get $v) (i32.const 1))
+              (then (local.set $detected_class (i32.const 24))))
+            (if (i32.eq (local.get $v) (i32.const 2))
+              (then (local.set $detected_class (i32.const 25))))
             (if (i32.and
                   (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
                           (i32.const 0x74747562))

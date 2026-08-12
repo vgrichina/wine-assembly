@@ -7,8 +7,9 @@ Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
 advanced ruler/dialog commands, international UTF-16/IME commit input, and
 real suspended-thread resume semantics now have passing app-level regressions.
-Embedded OLE objects and full RichEdit version-parity remain outside this
-scope.
+Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences
+are covered as well. Embedded OLE objects and exhaustive undocumented
+version-parity remain outside this scope.
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
@@ -581,8 +582,14 @@ Current evidence from the 2026-08-11 follow-up probe:
 - The shared WAT multiline `EDIT` / RichEdit-compatible path now recalculates
   wrapped visual lines on `WM_SIZE` and clamps stale first-visible-line state to
   the resized scroll range. This covers the bounded resize/wrap edge used by
-  the current native-edit path; broader RichEdit layout/version quirks remain
-  follow-up work.
+  the current native-edit path.
+- The fallback class router now distinguishes Win98 `RICHEDIT` (Riched32 /
+  RichEdit 1.0) from `RichEdit20A` and `RichEdit20W` (Riched20 / RichEdit
+  2.0+). Both retain the common edit-message surface and 32,767-character
+  initial input limit; zero `EM_LIMITTEXT` selects 64,000. Only the 2.0 class
+  accepts `EM_EXGETSEL`, `EM_EXSETSEL`, and `EM_EXLIMITTEXT`, including limits
+  above 64K. This is deliberately a bounded app-compatibility contract rather
+  than emulation of every undocumented DLL-version quirk.
 - Direct GDI regression test:
   `node test/test-gdi-exttextout-clipping.js` verifies clipped glyph drawing
   and null-text opaque erases on a surface DC.
@@ -594,6 +601,11 @@ Current evidence from the 2026-08-11 follow-up probe:
   `node test/test-edit-wrap-resize.js` verifies narrow wrapped multiline edit
   layout, scroll range, wheel-to-bottom behavior, resize to a smaller maximum,
   and `WM_SIZE` clamping of `EM_GETFIRSTVISIBLELINE`.
+- Direct WAT regression test:
+  `node test/test-richedit-version-compat.js` passes 11/11 for case-insensitive
+  `RICHEDIT` / `RichEdit20A/W` identification, shared 1.0 selection messages,
+  2.0 full-width `CHARRANGE` messages, version-gated unsupported messages, and
+  the 32K/64K/greater-than-64K text-limit transitions.
 - Regression test: `node test/test-wordpad-richedit.js` passes 23/23 and
   writes `test/output/wordpad-richedit/hello-world-edited.png`, which shows
   visible edited text in the editor and asserts there is no duplicated

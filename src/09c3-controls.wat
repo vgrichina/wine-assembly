@@ -293,8 +293,13 @@
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
-    ;; Class 2 = Edit
-    (if (i32.eq (local.get $class) (i32.const 2))
+    ;; Class 2 = Edit; 24 = RichEdit 1.0; 25 = RichEdit 2.0+.
+    ;; They share editing/painting state, while $edit_wndproc gates messages
+    ;; that did not exist in the 1.0 contract.
+    (if (i32.or
+          (i32.eq (local.get $class) (i32.const 2))
+          (i32.or (i32.eq (local.get $class) (i32.const 24))
+                  (i32.eq (local.get $class) (i32.const 25))))
       (then (return (call $edit_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Class 3 = Static
     (if (i32.eq (local.get $class) (i32.const 3))
@@ -9493,7 +9498,14 @@
         (i32.store offset=16 (local.get $state_w) (i32.const 0))
         (i32.store offset=20 (local.get $state_w) (i32.const 0))
         (i32.store offset=24 (local.get $state_w) (i32.const 0))
-        (i32.store offset=28 (local.get $state_w) (i32.const 0))
+        ;; Plain EDIT keeps the existing unlimited internal default. Both
+        ;; Win9x RichEdit generations start at the documented 32,767-character
+        ;; input limit until the application explicitly changes it.
+        (i32.store offset=28 (local.get $state_w)
+          (select (i32.const 32767) (i32.const 0)
+            (i32.or
+              (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
+              (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25)))))
         ;; Copy initial text from CREATESTRUCT if provided (lParam may be 0
         ;; when WM_CREATE is delivered via pending_child_create from GetMessageA)
         (if (local.get $lParam)
@@ -10537,7 +10549,17 @@
     (if (i32.eq (local.get $msg) (i32.const 0x00C5))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $wParam))
+        (local.set $text_len (local.get $wParam))
+        ;; For both RichEdit generations, zero selects the documented 64,000
+        ;; compatibility limit. Plain EDIT retains the emulator's unlimited
+        ;; zero sentinel.
+        (if (i32.and
+              (i32.eqz (local.get $text_len))
+              (i32.or
+                (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
+                (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25))))
+          (then (local.set $text_len (i32.const 64000))))
+        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $text_len))
         (return (i32.const 0))))
 
     ;; ---------- EM_GETLIMITTEXT (0x00D5) ----------
@@ -10545,6 +10567,55 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (return (i32.load offset=28 (call $g2w (local.get $state))))))
+
+    ;; ---------- RichEdit 2.0+ extended range/limit messages ----------
+    ;; RichEdit 1.0 intentionally leaves these unsupported and continues to
+    ;; expose EM_GETSEL/EM_SETSEL/EM_LIMITTEXT, which are shared with EDIT.
+    (if (i32.and
+          (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25))
+          (i32.eq (local.get $msg) (i32.const 0x0434))) ;; EM_EXGETSEL
+      (then
+        (if (i32.or (i32.eqz (local.get $state)) (i32.eqz (local.get $lParam)))
+          (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (call $gs32 (local.get $lParam) (call $edit_sel_lo (local.get $state_w)))
+        (call $gs32 (i32.add (local.get $lParam) (i32.const 4))
+          (call $edit_sel_hi (local.get $state_w)))
+        (return (i32.const 0))))
+
+    (if (i32.and
+          (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25))
+          (i32.eq (local.get $msg) (i32.const 0x0435))) ;; EM_EXLIMITTEXT
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $text_len (local.get $lParam))
+        (if (i32.eqz (local.get $text_len))
+          (then (local.set $text_len (i32.const 64000))))
+        (i32.store offset=28 (call $g2w (local.get $state)) (local.get $text_len))
+        (return (i32.const 0))))
+
+    (if (i32.and
+          (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25))
+          (i32.eq (local.get $msg) (i32.const 0x0437))) ;; EM_EXSETSEL
+      (then
+        (if (i32.or (i32.eqz (local.get $state)) (i32.eqz (local.get $lParam)))
+          (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $lo (call $gl32 (local.get $lParam)))
+        (local.set $hi (call $gl32 (i32.add (local.get $lParam) (i32.const 4))))
+        (if (i32.eq (local.get $lo) (i32.const -1))
+          (then (local.set $lo (local.get $text_len))))
+        (if (i32.eq (local.get $hi) (i32.const -1))
+          (then (local.set $hi (local.get $text_len))))
+        (if (i32.gt_u (local.get $lo) (local.get $text_len))
+          (then (local.set $lo (local.get $text_len))))
+        (if (i32.gt_u (local.get $hi) (local.get $text_len))
+          (then (local.set $hi (local.get $text_len))))
+        (i32.store offset=16 (local.get $state_w) (local.get $lo))
+        (i32.store offset=12 (local.get $state_w) (local.get $hi))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $hi))))
 
     ;; ---------- EM_GETSEL (0x00B0) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00B0))
