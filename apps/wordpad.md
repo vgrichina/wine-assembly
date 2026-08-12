@@ -3,11 +3,23 @@
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
 **Status (2026-08-11):** PARTIAL.
 
-WordPad opens and renders in the focused smoke:
+WordPad opens and renders in both the CLI and browser-focused smokes:
 
 ```text
 WordPad ... PASS  134 APIs, window created, 392 colors
+browser: WordPad remains running with preloaded riched20.dll/usp10.dll,
+         native RichEdit accepts "hello world", screenshot written
 ```
+
+The browser launcher now preloads `riched20.dll` and `usp10.dll` before
+WordPad startup, matching the working CLI load order. Previously the browser
+advertised neither dynamically requested DLL: WordPad created its frame and
+toolbar children, failed to initialize the native editor, and exited on the
+third run slice. Browser keyboard events without an explicit HWND now route to
+the guest focus owner, so the native `RichEdit20A` child receives `WM_CHAR`
+instead of the WordPad frame. The bounded `test/test-wordpad-web.js` regression
+proves the app stays alive, types `hello world`, and writes
+`test/output/wordpad-web/hello-world.png`.
 
 Focused typing probe:
 

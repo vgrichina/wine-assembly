@@ -1159,7 +1159,14 @@ Resource-aware Win98 emulator
       winmine_wep: { exe: 'binaries/entertainment-pack/winmine.exe' },
       mspaint98: { exe: 'binaries/mspaint.exe' },
       notepad98: { exe: 'binaries/win98-apps/notepad98.exe' },
-      wordpad:   { exe: 'binaries/win98-apps/wordpad.exe' },
+      wordpad:   {
+        exe: 'binaries/win98-apps/wordpad.exe',
+        // WordPad calls LoadLibrary for RichEdit during document-view setup.
+        // Preload the native editor and its shaping dependency so their
+        // DllMain/import initialization completes before WordPad creates the
+        // RichEdit20A child, matching the CLI harness.
+        dlls: ['binaries/dlls/riched20.dll', 'binaries/dlls/usp10.dll'],
+      },
       write:     { exe: 'binaries/win98-apps/write.exe' },
       mplayer:  { exe: 'binaries/win98-apps/mplayer.exe' },
       mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' },
@@ -2122,6 +2129,11 @@ Resource-aware Win98 emulator
           'mfc42.dll': 'binaries/dlls/mfc42.dll',
           'msvcp60.dll': 'binaries/dlls/msvcp60.dll',
           'oleaut32.dll': 'binaries/dlls/oleaut32.dll',
+          // WordPad loads RichEdit dynamically after its MFC frame/toolbars
+          // exist. Advertising these lets LoadLibraryA yield to the browser
+          // loader instead of returning the synthetic system-DLL handle.
+          'riched20.dll': 'binaries/dlls/riched20.dll',
+          'usp10.dll': 'binaries/dlls/usp10.dll',
           'd3drm.dll': 'binaries/dlls/d3drm.dll',
           'cards.dll': 'binaries/entertainment-pack/cards.dll',
         };

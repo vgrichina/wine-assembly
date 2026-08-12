@@ -565,6 +565,12 @@ compatibility layer around it:
 - enough formatting messages for visible WordPad toolbar actions.
 - enough common-control behavior for app toolbars to participate in layout.
 
+The browser launcher must preload the native `riched20.dll` plus `usp10.dll`
+for WordPad. Dynamic discoverability alone is too late for WordPad's document
+view initialization. HWND-less browser keyboard events are resolved to the
+guest focus owner at the host input boundary, matching the CLI harness and
+allowing the native RichEdit child to receive `WM_CHAR`.
+
 The target is app-useful compatibility, not exact implementation parity with
 every RichEdit version.
 
@@ -845,6 +851,8 @@ Acceptance:
 
 ```text
 [x] WordPad accepts focus and inserts visible "hello world"
+[x] Browser WordPad preloads native RichEdit, stays running, and inserts
+    visible "hello world" through focus-routed browser keyboard events
 [x] Automated WordPad/RichEdit probe exists
 [x] Backspace edits visible text correctly
 [x] Delete-forward edits visible text correctly

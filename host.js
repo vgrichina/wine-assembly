@@ -488,7 +488,21 @@ class WineAssembly {
       return self._lastInputEvent ? (self._lastInputEvent.lParam | 0) : 0;
     };
     h.check_input_hwnd = () => {
-      return self._lastInputEvent ? (self._lastInputEvent.hwnd | 0) : 0;
+      const evt = self._lastInputEvent;
+      if (!evt) return 0;
+      if (evt.hwnd) return evt.hwnd | 0;
+      // Browser key events are queued without a target HWND. Route them to
+      // the guest focus owner just like the CLI harness; otherwise GetMessage
+      // substitutes main_hwnd and native child controls such as WordPad's
+      // RichEdit20A never receive WM_KEYDOWN/WM_CHAR.
+      if (evt.msg >= 0x0100 && evt.msg <= 0x0108) {
+        const exports = self.instance && self.instance.exports;
+        if (exports && exports.get_focus_hwnd) {
+          const focus = exports.get_focus_hwnd() | 0;
+          if (focus) return focus;
+        }
+      }
+      return 0;
     };
 
     // Wire thread/event imports to ThreadManager

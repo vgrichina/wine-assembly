@@ -56,6 +56,7 @@ E2E=(
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
   test/test-taskman-web.js
+  test/test-wordpad-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js
   test/test-notepad.js
