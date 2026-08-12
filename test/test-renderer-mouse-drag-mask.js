@@ -226,4 +226,25 @@ const exclusiveDown = exclusiveRenderer.inputQueue.find(e => e.msg === 0x0201);
 assert(exclusiveDown, 'exclusive fullscreen click should enqueue WM_LBUTTONDOWN');
 assert.strictEqual(exclusiveDown.lParam, (250 << 16) | 400, 'exclusive fullscreen click should map canvas coords to source coords');
 
+const ownerRenderer = new Win98Renderer(canvas);
+const appA = { exports: {} };
+let appBChars = 0;
+const appB = {
+  exports: {
+    get_focus_hwnd() { return 602; },
+    ctrl_get_class(hwnd) { return hwnd === 602 ? 2 : 0; },
+    send_message(hwnd, msg) { if (hwnd === 602 && msg === 0x0102) appBChars++; },
+  },
+};
+ownerRenderer.windows[601] = {
+  hwnd: 601, visible: true, isChild: false, x: 0, y: 0, w: 200, h: 100,
+  clientRect: { x: 0, y: 0, w: 200, h: 100 }, style: 0, zOrder: 2,
+  wasm: appB, wasmMemory: { buffer: new ArrayBuffer(16) },
+};
+ownerRenderer.showWindow(601, 5);
+ownerRenderer.wasm = appA; // another app's run slice changes the drawing context
+ownerRenderer.handleKeyPress(88);
+assert.strictEqual(appBChars, 1,
+  'keyboard input should retain the last clicked app across other app run slices');
+
 console.log('PASS  renderer mouse drag moves carry button state');

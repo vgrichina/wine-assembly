@@ -270,6 +270,28 @@ async function main() {
     })`, timeoutMs + 3000);
   }
 
+  const regedit = await launch('regedit', 'Registry Editor');
+  const notepad = await launch('notepad', 'Notepad');
+  assert(regedit.hwnd !== notepad.hwnd, 'RegEdit and Notepad should use distinct HWND ranges');
+  const notepadInput = await evaluate(`new Promise(resolve => {
+    const app = runningApps.find(item => item && item.name === 'notepad');
+    const win = sharedRenderer.windows[${notepad.hwnd}];
+    setTimeout(() => {
+      const ownsKeyboard = sharedRenderer._keyboardInputWasm === app.wine.instance;
+      sharedRenderer.handleKeyPress(88);
+      const e = app.wine.instance.exports;
+      let editHwnd = 0;
+      let slot = 0;
+      while ((slot = e.wnd_next_child_slot(win.hwnd, slot) | 0) >= 0) {
+        const hwnd = e.wnd_slot_hwnd(slot) | 0;
+        slot++;
+        if (hwnd && (e.ctrl_get_class(hwnd) | 0) === 2) { editHwnd = hwnd; break; }
+      }
+      setTimeout(() => resolve({ ownsKeyboard, editHwnd, length: editHwnd ? e.get_edit_text_len(editHwnd) | 0 : -1 }), 100);
+    }, 250);
+  })`, 5000);
+  assert(notepadInput.ownsKeyboard, 'launching Notepad after RegEdit should make Notepad the keyboard owner');
+  assert.strictEqual(notepadInput.length, 1, 'Notepad should accept text immediately after launching behind RegEdit');
   const calculator = await launch('calc', 'Calculator');
   const recorder = await launch('sndrec32_98', 'Sound Recorder');
   const taskman = await launch('taskman', '^Tasks$');
@@ -463,6 +485,7 @@ async function main() {
     `Task Manager screenshot should be complete: ${JSON.stringify(screenshot)}`);
 
   console.log(`PASS  browser Task Manager initially enumerates real Calculator and Sound Recorder tasks`);
+  console.log('PASS  Notepad accepts delayed keyboard input after RegEdit launches first');
   console.log(`PASS  browser Task Manager live refresh adds and removes Volume Control (${liveTasks.rows.length} tasks)`);
   console.log('PASS  browser Task Manager Switch To raises the selected real app');
   console.log('PASS  browser Task Manager End Task closes only the selected real app');
