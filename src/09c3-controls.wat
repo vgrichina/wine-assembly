@@ -4212,6 +4212,102 @@
         (if (i32.and (local.get $mask) (i32.const 0x0080))
           (then (i32.store offset=32 (local.get $ptr) (local.get $idx))))
         (return (i32.const 1))))
+    ;; HDM_SETITEMA. Update the same bounded report-column backing state used
+    ;; by LVM_SETCOLUMNA. Header reordering is still identity-only.
+    (if (i32.eq (local.get $msg) (i32.const 0x1204))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load offset=16 (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $mask (i32.load (local.get $ptr)))
+        (if (i32.and (local.get $mask) (i32.const 0x0080))
+          (then
+            (if (i32.ne (i32.load offset=32 (local.get $ptr)) (local.get $idx))
+              (then (return (i32.const 0))))))
+        (if (i32.and (local.get $mask) (i32.const 0x0001))
+          (then
+            (local.set $width (i32.load offset=4 (local.get $ptr)))
+            (if (i32.le_s (local.get $width) (i32.const 0))
+              (then (local.set $width (i32.const 80))))
+            (i32.store
+              (i32.add (call $g2w (i32.load offset=24 (local.get $sw)))
+                       (i32.mul (local.get $idx) (i32.const 4)))
+              (local.get $width))))
+        (if (i32.and (local.get $mask) (i32.const 0x0002))
+          (then
+            (call $lv_set_col_text (local.get $sw) (local.get $idx) (i32.load offset=8 (local.get $ptr)))))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
+    ;; HDM_LAYOUT
+    (if (i32.eq (local.get $msg) (i32.const 0x1205))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $src (i32.load (local.get $ptr))) ;; RECT*
+        (local.set $dst (i32.load offset=4 (local.get $ptr))) ;; WINDOWPOS*
+        (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+        (local.set $header_h (call $lv_header_h (local.get $sw)))
+        (if (i32.eqz (local.get $header_h)) (then (local.set $header_h (i32.const 18))))
+        (if (local.get $src)
+          (then
+            (local.set $src (call $g2w (local.get $src)))
+            (local.set $x (i32.load (local.get $src)))
+            (local.set $y (i32.load offset=4 (local.get $src)))
+            (local.set $width (i32.sub (i32.load offset=8 (local.get $src)) (local.get $x)))
+            (i32.store offset=4 (local.get $src) (i32.add (local.get $y) (local.get $header_h))))
+          (else
+            (local.set $x (i32.const 0))
+            (local.set $y (i32.const 0))
+            (local.set $width (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))))
+        (local.set $dst (call $g2w (local.get $dst)))
+        (i32.store          (local.get $dst) (local.get $hwnd))
+        (i32.store offset=4 (local.get $dst) (i32.const 0))
+        (i32.store offset=8 (local.get $dst) (local.get $x))
+        (i32.store offset=12 (local.get $dst) (local.get $y))
+        (i32.store offset=16 (local.get $dst) (local.get $width))
+        (i32.store offset=20 (local.get $dst) (local.get $header_h))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x0014)) ;; SWP_NOZORDER | SWP_NOACTIVATE
+        (return (i32.const 1))))
+    ;; HDM_ORDERTOINDEX / HDM_GETORDERARRAY / HDM_SETORDERARRAY. The pseudo
+    ;; header exposes only identity order until real header reordering lands.
+    (if (i32.eq (local.get $msg) (i32.const 0x120F))
+      (then
+        (if (i32.or (i32.lt_s (local.get $wParam) (i32.const 0))
+                    (i32.ge_s (local.get $wParam) (i32.load offset=16 (local.get $sw))))
+          (then (return (i32.const -1))))
+        (return (local.get $wParam))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1211))
+      (then
+        (local.set $count (i32.load offset=16 (local.get $sw)))
+        (if (i32.or (i32.eqz (local.get $lParam))
+                    (i32.lt_u (local.get $wParam) (local.get $count)))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $i (i32.const 0))
+        (block $order_get_done (loop $order_get
+          (br_if $order_get_done (i32.ge_u (local.get $i) (local.get $count)))
+          (i32.store (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 4))) (local.get $i))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $order_get)))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1212))
+      (then
+        (local.set $count (i32.load offset=16 (local.get $sw)))
+        (if (i32.or (i32.eqz (local.get $lParam))
+                    (i32.lt_u (local.get $wParam) (local.get $count)))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $i (i32.const 0))
+        (block $order_set_done (loop $order_set
+          (br_if $order_set_done (i32.ge_u (local.get $i) (local.get $count)))
+          (if (i32.ne (i32.load (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 4)))) (local.get $i))
+            (then (return (i32.const 0))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $order_set)))
+        (return (i32.const 1))))
     ;; HDM_HITTEST
     (if (i32.eq (local.get $msg) (i32.const 0x1206))
       (then

@@ -363,12 +363,13 @@ Remaining:
   the WAT-native ListView path at app runtime. The report subset also covers
   column get/set, item/subitem rect queries, subitem hit-test output, and
   bounded selection/click notifications. `LVM_GETHEADER` exposes a pseudo
-  Header message surface for common query messages, and the ListView itself now
-  answers bounded string-width, find-by-text/lParam, item-position, origin,
-  view-rect, spacing, update, and redraw messages. Background/text color
-  messages round-trip and feed bounded report-mode row painting, including
-  `CLR_NONE` text-background handling. Row/column deletion keeps report state
-  and pseudo-header counts coherent. Image-list handles and per-item
+  Header message surface for common query/set/layout messages, including
+  identity order-array/index support, and the ListView itself now answers
+  bounded string-width, find-by-text/lParam, item-position, origin, view-rect,
+  spacing, update, and redraw messages. Background/text color messages
+  round-trip and feed bounded report-mode row painting, including `CLR_NONE`
+  text-background handling. Row/column deletion keeps report state and
+  pseudo-header counts coherent. Image-list handles and per-item
   image/lParam metadata round-trip, but real image-list rendering is still
   deferred. Advanced ListView modes, broader notifications, sorting, and real
   Header control fidelity remain later work.

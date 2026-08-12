@@ -80,8 +80,13 @@ const NM_CLICK = -2;
 const LVN_ITEMCHANGED = -101;
 const HDM_GETITEMCOUNT = 0x1200;
 const HDM_GETITEMA = 0x1203;
+const HDM_SETITEMA = 0x1204;
+const HDM_LAYOUT = 0x1205;
 const HDM_HITTEST = 0x1206;
 const HDM_GETITEMRECT = 0x1207;
+const HDM_ORDERTOINDEX = 0x120F;
+const HDM_GETORDERARRAY = 0x1211;
+const HDM_SETORDERARRAY = 0x1212;
 const HDI_WIDTH = 0x0001;
 const HDI_TEXT = 0x0002;
 const HDI_FORMAT = 0x0004;
@@ -234,6 +239,69 @@ async function main() {
       order: dv.getInt32(p + 32, true),
     };
   }
+  function setHeaderItem(header, idx, text, width, order = idx) {
+    const g = e.guest_alloc(48);
+    const p = wa(g);
+    u8.fill(0, p, p + 48);
+    dv.setUint32(p + 0, HDI_TEXT | HDI_WIDTH | HDI_ORDER, true);
+    dv.setInt32(p + 4, width, true);
+    dv.setUint32(p + 8, writeStr(text), true);
+    dv.setInt32(p + 16, text.length + 1, true);
+    dv.setInt32(p + 32, order, true);
+    return e.send_message(header, HDM_SETITEMA, idx, g);
+  }
+  function headerLayout(header, left, top, right, bottom) {
+    const rectG = e.guest_alloc(16);
+    const rectP = wa(rectG);
+    u8.fill(0, rectP, rectP + 16);
+    dv.setInt32(rectP + 0, left, true);
+    dv.setInt32(rectP + 4, top, true);
+    dv.setInt32(rectP + 8, right, true);
+    dv.setInt32(rectP + 12, bottom, true);
+    const wpG = e.guest_alloc(28);
+    const wpP = wa(wpG);
+    u8.fill(0, wpP, wpP + 28);
+    const layoutG = e.guest_alloc(8);
+    const layoutP = wa(layoutG);
+    dv.setUint32(layoutP + 0, rectG, true);
+    dv.setUint32(layoutP + 4, wpG, true);
+    const ok = e.send_message(header, HDM_LAYOUT, 0, layoutG);
+    return {
+      ok,
+      rect: {
+        left: dv.getInt32(rectP + 0, true),
+        top: dv.getInt32(rectP + 4, true),
+        right: dv.getInt32(rectP + 8, true),
+        bottom: dv.getInt32(rectP + 12, true),
+      },
+      wp: {
+        hwnd: dv.getUint32(wpP + 0, true),
+        insertAfter: dv.getUint32(wpP + 4, true),
+        x: dv.getInt32(wpP + 8, true),
+        y: dv.getInt32(wpP + 12, true),
+        cx: dv.getInt32(wpP + 16, true),
+        cy: dv.getInt32(wpP + 20, true),
+        flags: dv.getUint32(wpP + 24, true),
+      },
+    };
+  }
+  function headerOrderArray(header, setValues = null) {
+    const g = e.guest_alloc(8);
+    const p = wa(g);
+    if (setValues) {
+      for (let i = 0; i < setValues.length; i++) dv.setInt32(p + i * 4, setValues[i], true);
+      return {
+        ok: e.send_message(header, HDM_SETORDERARRAY, setValues.length, g),
+        values: setValues,
+      };
+    }
+    u8.fill(0xCC, p, p + 8);
+    const ok = e.send_message(header, HDM_GETORDERARRAY, 2, g);
+    return {
+      ok,
+      values: [dv.getInt32(p + 0, true), dv.getInt32(p + 4, true)],
+    };
+  }
   function headerHit(header, x, y) {
     const g = e.guest_alloc(16);
     const p = wa(g);
@@ -373,8 +441,28 @@ async function main() {
   check('HDM_GETITEMCOUNT follows report columns', e.send_message(header, HDM_GETITEMCOUNT, 0, 0) === 2);
   const hd1 = getHeaderItem(header, 1);
   check('HDM_GETITEMA returns updated header item', hd1.ok === 1 && hd1.width === 90 && hd1.text === 'Kind' && hd1.fmt === 0 && hd1.order === 1, JSON.stringify(hd1));
+  check('HDM_SETITEMA updates second header item', setHeaderItem(header, 1, 'Class', 96) === 1);
+  const hd1Set = getHeaderItem(header, 1);
+  check('HDM_GETITEMA returns header item set through HDM_SETITEMA', hd1Set.ok === 1 && hd1Set.width === 96 && hd1Set.text === 'Class' && hd1Set.order === 1, JSON.stringify(hd1Set));
+  check('LVM_GETCOLUMNA follows HDM_SETITEMA width/text', (() => {
+    const c = getColumn(1);
+    return c.ok === 1 && c.width === 96 && c.text === 'Class';
+  })());
+  check('HDM_SETITEMA rejects non-identity order in pseudo-header', setHeaderItem(header, 1, 'BadOrder', 96, 0) === 0);
+  const layout = headerLayout(header, 10, 20, 220, 120);
+  check('HDM_LAYOUT returns header WINDOWPOS and shrinks client rect',
+    layout.ok === 1 &&
+      layout.rect.left === 10 && layout.rect.top === 38 && layout.rect.right === 220 && layout.rect.bottom === 120 &&
+      layout.wp.hwnd === header && layout.wp.x === 10 && layout.wp.y === 20 &&
+      layout.wp.cx === 210 && layout.wp.cy === 18 && (layout.wp.flags & 0x0014) === 0x0014,
+    JSON.stringify(layout));
+  check('HDM_ORDERTOINDEX is identity order', e.send_message(header, HDM_ORDERTOINDEX, 1, 0) === 1);
+  const order = headerOrderArray(header);
+  check('HDM_GETORDERARRAY returns identity order', order.ok === 1 && order.values[0] === 0 && order.values[1] === 1, JSON.stringify(order));
+  check('HDM_SETORDERARRAY accepts identity order', headerOrderArray(header, [0, 1]).ok === 1);
+  check('HDM_SETORDERARRAY rejects non-identity order', headerOrderArray(header, [1, 0]).ok === 0);
   const hdRect = getRect(HDM_GETITEMRECT, 1, 0);
-  check('HDM_GETITEMRECT returns report header cell bounds', hdRect.ok === 1 && hdRect.left === 120 && hdRect.top === 0 && hdRect.right === 210 && hdRect.bottom === 18, JSON.stringify(hdRect));
+  check('HDM_GETITEMRECT returns report header cell bounds', hdRect.ok === 1 && hdRect.left === 120 && hdRect.top === 0 && hdRect.right === 216 && hdRect.bottom === 18, JSON.stringify(hdRect));
   const hdHit = headerHit(header, 130, 5);
   check('HDM_HITTEST maps x coordinate to header item', hdHit.item === 1 && hdHit.flags === HHT_ONHEADER && hdHit.storedItem === 1, JSON.stringify(hdHit));
 
@@ -433,7 +521,7 @@ async function main() {
   const origin = getPoint(LVM_GETORIGIN, 0);
   check('LVM_GETORIGIN reflects top-index scroll', origin.ok === 1 && origin.x === 0 && origin.y === -48, JSON.stringify(origin));
   const viewRect = getRect(LVM_GETVIEWRECT, 0, 0);
-  check('LVM_GETVIEWRECT returns report content bounds', viewRect.ok === 1 && viewRect.left === 0 && viewRect.top === 0 && viewRect.right === 210 && viewRect.bottom === 210, JSON.stringify(viewRect));
+  check('LVM_GETVIEWRECT returns report content bounds', viewRect.ok === 1 && viewRect.left === 0 && viewRect.top === 0 && viewRect.right === 216 && viewRect.bottom === 210, JSON.stringify(viewRect));
   check('LVM_GETITEMSPACING returns report spacing', e.send_message(lv, LVM_GETITEMSPACING, 0, 0) === ((16 << 16) | 120));
   check('LVM_UPDATE accepts valid item', e.send_message(lv, LVM_UPDATE, 5, 0) === 1);
   check('LVM_REDRAWITEMS accepts visible range', e.send_message(lv, LVM_REDRAWITEMS, 0, 3) === 1);
@@ -452,9 +540,9 @@ async function main() {
   const itemRect = getRect(LVM_GETITEMRECT, 5, LVIR_BOUNDS);
   check('LVM_GETITEMRECT returns scrolled row bounds', itemRect.ok === 1 && itemRect.left === 0 && itemRect.top === 50 && itemRect.right === 204 && itemRect.bottom === 66, JSON.stringify(itemRect));
   const subRect = getRect(LVM_GETSUBITEMRECT, 5, LVIR_BOUNDS, 1);
-  check('LVM_GETSUBITEMRECT returns second-column bounds', subRect.ok === 1 && subRect.left === 120 && subRect.top === 50 && subRect.right === 210 && subRect.bottom === 66, JSON.stringify(subRect));
+  check('LVM_GETSUBITEMRECT returns second-column bounds', subRect.ok === 1 && subRect.left === 120 && subRect.top === 50 && subRect.right === 216 && subRect.bottom === 66, JSON.stringify(subRect));
   const subLabelRect = getRect(LVM_GETSUBITEMRECT, 5, LVIR_LABEL, 1);
-  check('LVM_GETSUBITEMRECT honors label inset', subLabelRect.ok === 1 && subLabelRect.left === 124 && subLabelRect.top === 50 && subLabelRect.right === 210 && subLabelRect.bottom === 66, JSON.stringify(subLabelRect));
+  check('LVM_GETSUBITEMRECT honors label inset', subLabelRect.ok === 1 && subLabelRect.left === 124 && subLabelRect.top === 50 && subLabelRect.right === 216 && subLabelRect.bottom === 66, JSON.stringify(subLabelRect));
 
   const notifyBeforeClick = e.listview_get_debug_notify_count();
   e.send_message(lv, WM_LBUTTONDOWN, 1, makeLParam(20, 38));
