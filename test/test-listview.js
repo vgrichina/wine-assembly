@@ -96,6 +96,7 @@ const CLR_NONE = 0xFFFFFFFF;
 const CUSTOM_BK = 0x0000E8D8;
 const CUSTOM_TEXT = 0x000020A0;
 const CUSTOM_TEXT_BK = 0x0000D0F0;
+const IMAGE_MASK = 0x00C0C0C0;
 
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
@@ -122,6 +123,7 @@ async function main() {
     textColors: [],
     bkColors: [],
     bkModes: [],
+    transparentBlts: [],
   };
   const brushColors = new Map();
   const resetGdiTrace = () => {
@@ -130,6 +132,7 @@ async function main() {
     gdiTrace.textColors.length = 0;
     gdiTrace.bkColors.length = 0;
     gdiTrace.bkModes.length = 0;
+    gdiTrace.transparentBlts.length = 0;
   };
   const originalCreateSolidBrush = base.host.gdi_create_solid_brush;
   base.host.gdi_create_solid_brush = color => {
@@ -159,6 +162,17 @@ async function main() {
     gdiTrace.bkModes.push(mode);
     return originalSetBkMode(hdc, mode);
   };
+  const originalTransparentBlt = base.host.gdi_transparent_blt;
+  base.host.gdi_transparent_blt = (dstDC, x, y, w, h, srcDC, sx, sy, key) => {
+    gdiTrace.transparentBlts.push({
+      dstDC: dstDC >>> 0,
+      x, y, w, h,
+      srcDC: srcDC >>> 0,
+      sx, sy,
+      key: key >>> 0,
+    });
+    return originalTransparentBlt(dstDC, x, y, w, h, srcDC, sx, sy, key);
+  };
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   ctx.exports = instance.exports;
@@ -187,6 +201,32 @@ async function main() {
   }
   function makeLParam(x, y) {
     return (x & 0xFFFF) | ((y & 0xFFFF) << 16);
+  }
+  function makeColorStripBitmap() {
+    const width = 32;
+    const height = 16;
+    const bpp = 24;
+    const rowBytes = Math.ceil((width * bpp) / 16) * 2;
+    const bitsG = e.guest_alloc(rowBytes * height);
+    const bits = wa(bitsG);
+    u8.fill(0, bits, bits + rowBytes * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let r = 192;
+        let g = 192;
+        let b = 192;
+        if (x < 16 && x >= 3 && x < 13 && y >= 3 && y < 13) {
+          r = 220; g = 20; b = 20;
+        } else if (x >= 16 && x >= 19 && x < 29 && y >= 3 && y < 13) {
+          r = 20; g = 160; b = 30;
+        }
+        const p = bits + y * rowBytes + x * 3;
+        u8[p + 0] = b;
+        u8[p + 1] = g;
+        u8[p + 2] = r;
+      }
+    }
+    return base.host.gdi_create_bitmap(width, height, bpp, bits);
   }
   function insertColumn(idx, text, width) {
     const g = e.guest_alloc(32);
@@ -415,6 +455,11 @@ async function main() {
   check('LVM_SETIMAGELIST stores small image-list handle', e.send_message(lv, LVM_SETIMAGELIST, 1, 0x1234501) === 0);
   check('LVM_GETIMAGELIST returns assigned handle', e.send_message(lv, LVM_GETIMAGELIST, 1, 0) === 0x1234501);
   check('LVM_SETIMAGELIST returns previous handle', e.send_message(lv, LVM_SETIMAGELIST, 1, 0x1234502) === 0x1234501);
+  const imageStrip = makeColorStripBitmap();
+  const imageList = e.test_create_imagelist(16, 16, imageStrip, 2, IMAGE_MASK);
+  check('test image-list helper returns a bounded handle', imageList !== 0);
+  check('LVM_SETIMAGELIST accepts bounded image-list handle', e.send_message(lv, LVM_SETIMAGELIST, 1, imageList) === 0x1234502);
+  check('LVM_GETIMAGELIST returns bounded image-list handle', e.send_message(lv, LVM_GETIMAGELIST, 1, 0) === imageList);
   check('initial LVM_GETBKCOLOR is COLOR_WINDOW white', e.send_message(lv, LVM_GETBKCOLOR, 0, 0) === 0x00FFFFFF);
   check('initial LVM_GETTEXTCOLOR is black', e.send_message(lv, LVM_GETTEXTCOLOR, 0, 0) === 0);
   check('initial LVM_GETTEXTBKCOLOR is white', e.send_message(lv, LVM_GETTEXTBKCOLOR, 0, 0) === 0x00FFFFFF);
@@ -489,6 +534,9 @@ async function main() {
   check('LVM_SETITEMA updates image/lParam', setItemMeta(5, 77, 0x1234ABCD) === 1);
   const row5MetaUpdated = getItemMeta(5);
   check('LVM_GETITEMA returns updated image/lParam', row5MetaUpdated.image === 77 && row5MetaUpdated.lParam === 0x1234ABCD, JSON.stringify(row5MetaUpdated));
+  check('LVM_SETITEMA updates a visible row to in-range image', setItemMeta(0, 1, 0xCAFE0000) === 1);
+  const row0MetaUpdated = getItemMeta(0);
+  check('LVM_GETITEMA returns in-range image metadata', row0MetaUpdated.image === 1 && row0MetaUpdated.lParam === 0xCAFE0000, JSON.stringify(row0MetaUpdated));
 
   const exportBuf = e.guest_alloc(64);
   const exportLen = e.listview_get_item_text(lv, 4, 1, exportBuf, 64);
@@ -506,6 +554,9 @@ async function main() {
   check('WM_PAINT uses ListView custom text color', gdiTrace.textColors.includes(CUSTOM_TEXT), JSON.stringify(gdiTrace.textColors));
   check('WM_PAINT uses ListView custom text background color', gdiTrace.bkColors.includes(CUSTOM_TEXT_BK), JSON.stringify(gdiTrace.bkColors));
   check('WM_PAINT paints opaque row text background when text-bk is set', gdiTrace.bkModes.includes(2), JSON.stringify(gdiTrace.bkModes));
+  check('WM_PAINT draws in-range report image from image-list strip',
+    gdiTrace.transparentBlts.some(b => b.w === 16 && b.h === 16 && b.sx === 16 && b.sy === 0 && b.key === IMAGE_MASK),
+    JSON.stringify(gdiTrace.transparentBlts));
   check('LVM_SETTEXTBKCOLOR accepts CLR_NONE', e.send_message(lv, LVM_SETTEXTBKCOLOR, 0, CLR_NONE) === CUSTOM_TEXT_BK);
   check('LVM_GETTEXTBKCOLOR returns CLR_NONE', (e.send_message(lv, LVM_GETTEXTBKCOLOR, 0, 0) >>> 0) === CLR_NONE);
   resetGdiTrace();

@@ -3824,6 +3824,58 @@
           (i32.const 0) (i32.const 0x0002) (i32.const -101)))))
     (i32.const 1))
 
+  (func $lv_paint_report_icon
+    (param $hdc i32) (param $sw i32) (param $row i32) (param $x i32) (param $y i32) (result i32)
+    (local $img_list i32) (local $img_idx i32) (local $img_sw i32)
+    (local $img_cx i32) (local $img_cy i32) (local $img_count i32) (local $img_bmp i32)
+    (local $img_bmp_w i32) (local $img_bmp_h i32) (local $img_src_x i32)
+    (local $img_draw_w i32) (local $img_draw_h i32) (local $img_dst_y i32)
+    (local $img_memdc i32) (local $ret i32)
+    (local.set $img_list (i32.load offset=56 (local.get $sw)))
+    (if (i32.eqz (local.get $img_list)) (then (return (i32.const 0))))
+    (local.set $img_idx (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $row))))
+    (if (i32.lt_s (local.get $img_idx) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $img_sw (call $g2w (local.get $img_list)))
+    (local.set $img_cx (i32.load (local.get $img_sw)))
+    (local.set $img_cy (i32.load offset=4 (local.get $img_sw)))
+    (local.set $img_count (i32.load offset=12 (local.get $img_sw)))
+    (local.set $img_bmp (i32.load offset=16 (local.get $img_sw)))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $img_cx) (i32.const 0))
+                  (i32.le_s (local.get $img_cy) (i32.const 0)))
+          (i32.or (i32.le_s (local.get $img_count) (local.get $img_idx))
+                  (i32.eqz (local.get $img_bmp))))
+      (then (return (i32.const 0))))
+    (local.set $img_bmp_w (call $host_gdi_get_object_w (local.get $img_bmp)))
+    (local.set $img_bmp_h (call $host_gdi_get_object_h (local.get $img_bmp)))
+    (local.set $img_src_x (i32.mul (local.get $img_idx) (local.get $img_cx)))
+    (if (i32.or
+          (i32.gt_s (i32.add (local.get $img_src_x) (local.get $img_cx)) (local.get $img_bmp_w))
+          (i32.gt_s (local.get $img_cy) (local.get $img_bmp_h)))
+      (then (return (i32.const 0))))
+    (local.set $img_draw_w (local.get $img_cx))
+    (if (i32.gt_s (local.get $img_draw_w) (i32.const 16))
+      (then (local.set $img_draw_w (i32.const 16))))
+    (local.set $img_draw_h (local.get $img_cy))
+    (if (i32.gt_s (local.get $img_draw_h) (i32.const 16))
+      (then (local.set $img_draw_h (i32.const 16))))
+    (local.set $img_dst_y
+      (i32.add (local.get $y)
+        (i32.div_s (i32.sub (i32.const 16) (local.get $img_draw_h)) (i32.const 2))))
+    (local.set $img_memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+    (if (i32.eqz (local.get $img_memdc)) (then (return (i32.const 0))))
+    (drop (call $host_gdi_select_object (local.get $img_memdc) (local.get $img_bmp)))
+    (local.set $ret
+      (call $host_gdi_transparent_blt
+        (local.get $hdc)
+        (i32.add (local.get $x) (i32.const 4)) (local.get $img_dst_y)
+        (local.get $img_draw_w) (local.get $img_draw_h)
+        (local.get $img_memdc)
+        (local.get $img_src_x) (i32.const 0)
+        (i32.load offset=20 (local.get $img_sw))))
+    (drop (call $host_gdi_delete_dc (local.get $img_memdc)))
+    (local.get $ret))
+
   (func $listview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $sw i32) (local $cs_w i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
@@ -4014,6 +4066,7 @@
             (block $done2 (loop $clear_new
               (br_if $done2 (i32.ge_u (local.get $i) (local.get $wParam)))
               (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 40))
+              (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $i)) (i32.const -1))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $clear_new)))))
         (i32.store (local.get $sw) (local.get $wParam))
@@ -4378,6 +4431,7 @@
           (local.set $i (i32.sub (local.get $i) (i32.const 1)))
           (br $item_shift)))
         (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 40))
+        (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $idx)) (i32.const -1))
         (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (if (i32.and (local.get $mask) (i32.const 0x0001))
           (then
@@ -5000,24 +5054,28 @@
                   (then
                     (local.set $cell_w (call $g2w (local.get $cell_g)))
                     (local.set $text_len (call $strlen (local.get $cell_w)))
-                    (if (i32.and
-                          (i32.eqz (local.get $col_idx))
-                          (i32.load offset=56 (local.get $sw)))
+                    (if (i32.eqz (local.get $col_idx))
                       (then
-                        ;; Small registry/document glyph: outlined page with
-                        ;; the blue Win98 registry mark inside.
-                        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                          (i32.add (local.get $col_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
-                          (i32.add (local.get $col_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
-                          (i32.const 0x30014)))
-                        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                          (i32.add (local.get $col_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
-                          (i32.add (local.get $col_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
-                          (i32.const 0x30010)))
-                        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                          (i32.add (local.get $col_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
-                          (i32.add (local.get $col_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
-                          (local.get $icon_brush)))))
+                        (if (i32.load offset=56 (local.get $sw))
+                          (then
+                            (if (i32.eqz (call $lv_paint_report_icon
+                                  (local.get $hdc) (local.get $sw) (local.get $row)
+                                  (local.get $col_x) (local.get $y)))
+                              (then
+                                ;; Fallback registry/document glyph: outlined page
+                                ;; with the blue Win98 registry mark inside.
+                                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                                  (i32.add (local.get $col_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
+                                  (i32.add (local.get $col_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
+                                  (i32.const 0x30014)))
+                                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                                  (i32.add (local.get $col_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
+                                  (i32.add (local.get $col_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
+                                  (i32.const 0x30010)))
+                                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                                  (i32.add (local.get $col_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
+                                  (i32.add (local.get $col_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
+                                  (local.get $icon_brush)))))))))
                     (drop (call $host_gdi_text_out (local.get $hdc)
                       (i32.add (local.get $col_x)
                         (select (i32.const 21) (i32.const 4)

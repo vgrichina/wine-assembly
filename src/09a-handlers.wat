@@ -10417,11 +10417,13 @@
   ;; ImageList_Create(cx, cy, flags, cInitial, cGrow) — 5 args, returns HIMAGELIST handle
   (func $handle_ImageList_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32)
-    ;; Allocate a small struct to track the image list: [cx, cy, flags, count]
-    (local.set $buf (call $heap_alloc (i32.const 16)))
+    ;; ImageList struct:
+    ;; +0 cx, +4 cy, +8 bk color, +12 count, +16 bitmap strip, +20 mask color.
+    (local.set $buf (call $heap_alloc (i32.const 24)))
+    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 24))
     (i32.store (call $g2w (local.get $buf)) (local.get $arg0))           ;; cx
     (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg1))  ;; cy
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (local.get $arg2))  ;; flags
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))     ;; CLR_NONE
     (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))     ;; count=0
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
@@ -10436,42 +10438,86 @@
 
   ;; ImageList_LoadImageA(hi, lpbmp, cx, cGrow, crMask, uType, uFlags) — 7 args
   (func $handle_ImageList_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    ;; Create an empty image list — real bitmap loading would need host support
-    ;; arg2=cx (icon width), return a valid HIMAGELIST
-    (local.set $buf (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $buf)) (local.get $arg2))           ;; cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg2))  ;; cy=cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const 0))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))
+    (local $buf i32) (local $cx i32) (local $bmp i32) (local $bmp_w i32) (local $count i32)
+    ;; LoadImage returns an image-list wrapper around a bitmap strip when host
+    ;; resource loading can resolve the bitmap. If not, still return a valid
+    ;; empty image list so callers can proceed.
+    (local.set $cx (local.get $arg2))
+    (if (i32.le_s (local.get $cx) (i32.const 0))
+      (then (local.set $cx (i32.const 16))))
+    (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg0) (local.get $arg1)))
+    (if (local.get $bmp)
+      (then
+        (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
+        (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
+          (then
+            (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
+            (if (i32.eqz (local.get $count))
+              (then (local.set $count (i32.const 1))))))))
+    (local.set $buf (call $heap_alloc (i32.const 24)))
+    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 24))
+    (i32.store (call $g2w (local.get $buf)) (local.get $cx))           ;; cx
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $cx))  ;; cy=cx
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))   ;; CLR_NONE
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (local.get $count))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 16))) (local.get $bmp))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 20))) (local.get $arg4))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
   )
 
   ;; ImageList_LoadImageW — same as A, 7 args
   (func $handle_ImageList_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    (local.set $buf (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $buf)) (local.get $arg2))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg2))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const 0))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))
+    (local $buf i32) (local $cx i32) (local $bmp i32) (local $bmp_w i32) (local $count i32)
+    (local.set $cx (local.get $arg2))
+    (if (i32.le_s (local.get $cx) (i32.const 0))
+      (then (local.set $cx (i32.const 16))))
+    (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg0) (local.get $arg1)))
+    (if (local.get $bmp)
+      (then
+        (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
+        (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
+          (then
+            (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
+            (if (i32.eqz (local.get $count))
+              (then (local.set $count (i32.const 1))))))))
+    (local.set $buf (call $heap_alloc (i32.const 24)))
+    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 24))
+    (i32.store (call $g2w (local.get $buf)) (local.get $cx))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $cx))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (local.get $count))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 16))) (local.get $bmp))
+    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 20))) (local.get $arg4))
     (global.set $eax (local.get $buf))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
   ;; ImageList_AddMasked(himl, hbmImage, crMask) — 3 args, returns image index
   (func $handle_ImageList_AddMasked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32)
-    (if (i32.eqz (local.get $arg0))
+    (local $count i32) (local $cx i32) (local $bmp_w i32) (local $add_count i32) (local $sw i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then
         (global.set $eax (i32.const 0xffffffff))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
-    (i32.store
-      (call $g2w (i32.add (local.get $arg0) (i32.const 12)))
-      (i32.add (local.get $count) (i32.const 1)))
+    (local.set $sw (call $g2w (local.get $arg0)))
+    (local.set $count (i32.load offset=12 (local.get $sw)))
+    (local.set $cx (i32.load (local.get $sw)))
+    (if (i32.le_s (local.get $cx) (i32.const 0))
+      (then (local.set $cx (i32.const 16))))
+    (local.set $add_count (i32.const 1))
+    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $arg1)))
+    (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
+      (then
+        (local.set $add_count (i32.div_u (local.get $bmp_w) (local.get $cx)))
+        (if (i32.eqz (local.get $add_count))
+          (then (local.set $add_count (i32.const 1))))))
+    (if (i32.eqz (i32.load offset=16 (local.get $sw)))
+      (then
+        (i32.store offset=16 (local.get $sw) (local.get $arg1))
+        (i32.store offset=20 (local.get $sw) (local.get $arg2))))
+    (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (local.get $add_count)))
     (global.set $eax (local.get $count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -10612,6 +10658,11 @@
   ;; ImageList_SetBkColor(himl, clrBk) — 2 args, returns old bk color
   (func $handle_ImageList_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $old i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $old (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
     (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $arg1))
     (global.set $eax (local.get $old))
@@ -10620,6 +10671,11 @@
 
   ;; ImageList_GetBkColor(himl) — 1 arg
   (func $handle_ImageList_GetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (global.set $eax (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

@@ -1460,6 +1460,28 @@
     (call $ctrl_set_ex_style (local.get $lv) (local.get $ex_style))
     (local.get $lv))
 
+  ;; Test helper: create the same bounded ImageList struct used by the
+  ;; COMCTL32 handlers, optionally backed by a bitmap strip.
+  (func (export "test_create_imagelist")
+    (param $cx i32) (param $cy i32) (param $bmp i32) (param $count i32) (param $mask i32) (result i32)
+    (local $himl i32) (local $sw i32)
+    (if (i32.le_s (local.get $cx) (i32.const 0))
+      (then (local.set $cx (i32.const 16))))
+    (if (i32.le_s (local.get $cy) (i32.const 0))
+      (then (local.set $cy (local.get $cx))))
+    (if (i32.lt_s (local.get $count) (i32.const 0))
+      (then (local.set $count (i32.const 0))))
+    (local.set $himl (call $heap_alloc (i32.const 24)))
+    (local.set $sw (call $g2w (local.get $himl)))
+    (call $zero_memory (local.get $sw) (i32.const 24))
+    (i32.store        (local.get $sw) (local.get $cx))
+    (i32.store offset=4  (local.get $sw) (local.get $cy))
+    (i32.store offset=8  (local.get $sw) (i32.const -1)) ;; CLR_NONE
+    (i32.store offset=12 (local.get $sw) (local.get $count))
+    (i32.store offset=16 (local.get $sw) (local.get $bmp))
+    (i32.store offset=20 (local.get $sw) (local.get $mask))
+    (local.get $himl))
+
   ;; Test helper: create a parent + ToolbarWindow32 child, return toolbar hwnd.
   ;; This exercises the WAT-native ToolbarWindow32 wndproc without booting MFC.
   (func (export "test_create_toolbar")

@@ -370,9 +370,10 @@ Remaining:
   round-trip and feed bounded report-mode row painting, including `CLR_NONE`
   text-background handling. Row/column deletion keeps report state and
   pseudo-header counts coherent. Image-list handles and per-item
-  image/lParam metadata round-trip, but real image-list rendering is still
-  deferred. Advanced ListView modes, broader notifications, sorting, and real
-  Header control fidelity remain later work.
+  image/lParam metadata round-trip, and bounded report-mode image-list bitmap
+  strips now render in-range item images through color-keyed `TransparentBlt`.
+  Advanced ListView modes, richer image-list composition, broader
+  notifications, sorting, and real Header control fidelity remain later work.
 - Each migration adds a `$create_xxx_dialog` WAT function and (once visible-side rendering goes through `_drawWatChildren`) deletes the `showXxxDialog` JS body.
 
 **STEP 7: Route guest `CreateWindowExA` for EDIT/BUTTON/STATIC to WAT wndprocs.**

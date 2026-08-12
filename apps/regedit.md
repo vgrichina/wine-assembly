@@ -53,8 +53,9 @@ Key fixes:
 - `LVM_DELETEITEM` and `LVM_DELETECOLUMN` now free shifted text buffers and keep
   count, selection, scroll, and pseudo-header state coherent after removal.
 - `LVM_SETIMAGELIST` / `LVM_GETIMAGELIST` and `LVIF_IMAGE` / `LVIF_PARAM`
-  now round-trip ListView image-list handles and per-item metadata, while
-  report-mode drawing continues to use the existing bounded placeholder glyph.
+  now round-trip ListView image-list handles and per-item metadata. In-range
+  report-mode images backed by bounded bitmap-strip image lists render through
+  color-keyed `TransparentBlt`, with the placeholder glyph kept as fallback.
 - `LVM_GETBKCOLOR` / `LVM_SETBKCOLOR`, `LVM_GETTEXTCOLOR` /
   `LVM_SETTEXTCOLOR`, and `LVM_GETTEXTBKCOLOR` / `LVM_SETTEXTBKCOLOR`
   round-trip caller colors and feed report-mode row/background painting,
@@ -71,9 +72,10 @@ Key fixes:
 Current gaps:
 
 - Advanced ListView behavior remains later work: icon/small-icon/list view
-  layout, real image-list rendering, sorting, custom draw, notifications beyond
-  the current selection/click subset, label edits, and high-fidelity real
-  Header-control interaction beyond the current pseudo-header query surface.
+  layout, richer image-list composition, sorting, custom draw, notifications
+  beyond the current selection/click subset, label edits, and high-fidelity
+  real Header-control interaction beyond the current pseudo-header query
+  surface.
 - The app-level regression now expands
   `HKEY_CURRENT_USER\Control Panel\Desktop`, verifies its four value rows, and
   captures both the populated pane and Registry menu. Value editing, context

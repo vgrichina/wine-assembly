@@ -107,8 +107,10 @@ find-by-text/lParam, item position, origin/view rect, spacing, update, and
 redraw. ListView background/text color messages round-trip and feed bounded
 report-mode row painting, including `CLR_NONE` text-background handling.
 Single row/column deletion keeps the bounded report state coherent, and
-ListView image-list handles plus per-item image/lParam metadata now round-trip
-without claiming full icon-mode rendering.
+ListView image-list handles plus per-item image/lParam metadata now round-trip.
+The report painter also draws in-range items from bounded bitmap-strip image
+lists through color-keyed `TransparentBlt`, without claiming full icon-mode
+rendering.
 
 That means these pieces are already good enough for basic insertion:
 
@@ -217,8 +219,8 @@ native-editing path is alive.
 - Added `test/test-listview.js`, a standalone WAT regression that creates a
   ListView, inserts report columns plus 12 rows, verifies text/subitem
   round-trips, hit-testing through the scroll offset, selection, scrollbar
-  behavior, bounded query/invalidation messages, color messages/paint use, and
-  cleanup.
+  behavior, bounded query/invalidation messages, color messages/paint use,
+  bounded report-mode image-list strip painting, and cleanup.
 - Protected `SysListView32` from registered-class fallback so RegEdit routes
   `CreateWindowExA("SysListView32", ...)` to the WAT-native ListView instead
   of its guest/COMCTL32 window proc.
@@ -251,8 +253,8 @@ native-editing path is alive.
   that counts duplicated title-bar-blue pixels in the toolbar/ruler band; the
   regenerated `hello-world-edited.png` has zero such pixels.
 - Kept advanced ListView behavior postponed: icon/small-icon/list layouts,
-  image lists, sorting, custom draw, label edit, full notifications, and
-  high-fidelity header interaction.
+  richer image-list composition, sorting, custom draw, label edit, full
+  notifications, and high-fidelity header interaction.
 - Updated `apps/regedit.md` with the current app-level RegEdit screenshot
   status.
 
@@ -895,7 +897,7 @@ Acceptance:
 [x] SysListView32 pseudo-header query messages are asserted
 [x] SysListView32 pseudo-header set/layout/identity-order messages are asserted
 [x] SysListView32 row/column deletion is asserted
-[x] SysListView32 image-list handles and LVIF_IMAGE/LVIF_PARAM metadata are asserted
+[x] SysListView32 image-list handles, LVIF_IMAGE/LVIF_PARAM metadata, and bounded report-mode image painting are asserted
 [x] SysListView32 report query/invalidation messages are asserted
 [x] SysListView32 background/text color messages and paint use are asserted
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
