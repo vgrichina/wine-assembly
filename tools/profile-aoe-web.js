@@ -33,6 +33,7 @@ const HANDLER_HIST = process.env.HANDLER_HIST !== '0';
 const STACK_PACKET = process.env.STACK_PACKET === '1';
 const STACK_PACKET_ADDR = parseU32(process.env.STACK_PACKET_ADDR || '0x0049d9d1', 0x0049d9d1);
 const STACK_PACKET_COUNT = process.env.STACK_PACKET_COUNT !== '0';
+const AOE_RECOMPILE = process.env.AOE_RECOMPILE === '1';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -566,13 +567,13 @@ async function main() {
       key,
       text: key,
       unmodifiedText: key,
-    }), 3000, 'keyDown');
+    }), INPUT_TIMEOUT_MS, 'keyDown');
     await withTimeout(cdp.send('Input.dispatchKeyEvent', {
       type: 'keyUp',
       windowsVirtualKeyCode: code,
       nativeVirtualKeyCode: code,
       key,
-    }), 3000, 'keyUp');
+    }), INPUT_TIMEOUT_MS, 'keyUp');
   }
 
   await evalExpr(`new Promise(r => {
@@ -859,6 +860,32 @@ async function main() {
       };
     };
     window.__aoeSnapshotHandlerHistogram = snapshotHandlerHistogram;
+    window.__aoeSnapshotPhaseTimings = () => {
+      const phases = window.__aoePhaseTimings || {};
+      const now = performance.now();
+      const get = key => {
+        const v = Number(phases[key]);
+        return Number.isFinite(v) ? v : NaN;
+      };
+      const diff = (end, start) => (
+        Number.isFinite(end) && Number.isFinite(start) ? round(end - start) : 0
+      );
+      const launchRequestedAtMs = get('launchRequestedAtMs');
+      const instanceReadyAtMs = get('instanceReadyAtMs');
+      const gameplayReadyAtMs = get('gameplayReadyAtMs');
+      const gameplayProfileStartedAtMs = get('gameplayProfileStartedAtMs');
+      return {
+        launchRequestedAtMs: Number.isFinite(launchRequestedAtMs) ? round(launchRequestedAtMs) : 0,
+        instanceReadyAtMs: Number.isFinite(instanceReadyAtMs) ? round(instanceReadyAtMs) : 0,
+        gameplayReadyAtMs: Number.isFinite(gameplayReadyAtMs) ? round(gameplayReadyAtMs) : 0,
+        gameplayProfileStartedAtMs: Number.isFinite(gameplayProfileStartedAtMs) ? round(gameplayProfileStartedAtMs) : 0,
+        snapshotAtMs: round(now),
+        launchToInstanceReadyMs: diff(instanceReadyAtMs, launchRequestedAtMs),
+        instanceReadyToGameplayReadyMs: diff(gameplayReadyAtMs, instanceReadyAtMs),
+        launchToGameplayReadyMs: diff(gameplayReadyAtMs, launchRequestedAtMs),
+        gameplayProfileElapsedMs: diff(now, gameplayProfileStartedAtMs),
+      };
+    };
       const p = window.__aoeProfile = {
         t0: performance.now(),
         label: 'startup',
@@ -1185,6 +1212,14 @@ async function main() {
   })()`);
   progress('prelaunch ' + JSON.stringify(preLaunch));
   await evalExpr(`(() => {
+    window.__aoePhaseTimings = {
+      launchRequestedAtMs: performance.now(),
+      instanceReadyAtMs: 0,
+      gameplayReadyAtMs: 0,
+      gameplayProfileStartedAtMs: 0,
+    };
+    window.__aoeLaunchProfile = null;
+    if (window.__aoeProfile) window.__aoeProfile.reset('launch_to_gameplay');
     return launchApp();
   })()`, 60000, true);
   progress('launchApp(aoe1) requested');
@@ -1201,11 +1236,14 @@ async function main() {
       const app = runningApps && runningApps[0];
       const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
       if (app && app.wine && app.wine.instance) {
+        const phases = window.__aoePhaseTimings || (window.__aoePhaseTimings = {});
+        phases.instanceReadyAtMs = performance.now();
         resolve({
           ready: true,
           status: document.getElementById('status').textContent,
           mainHwnd: e && e.get_main_hwnd ? (e.get_main_hwnd() >>> 0) : 0,
           logTail: document.getElementById('log').textContent.slice(-2000),
+          phaseTimings: window.__aoeSnapshotPhaseTimings ? window.__aoeSnapshotPhaseTimings() : null,
         });
       } else if (performance.now() - started > 120000) {
         resolve({
@@ -1258,8 +1296,12 @@ async function main() {
   await refreshGameScale();
   await stageShot('campaign-gameplay-ready');
 
-  await evalExpr(`(() => {
+  const gameplayProfileStart = await evalExpr(`(() => {
+    const phases = window.__aoePhaseTimings || (window.__aoePhaseTimings = {});
+    phases.gameplayReadyAtMs = performance.now();
+    window.__aoeLaunchProfile = window.__aoeProfile ? window.__aoeProfile.snapshot() : null;
     if (window.__aoeProfile) window.__aoeProfile.reset('gameplay');
+    phases.gameplayProfileStartedAtMs = performance.now();
     const appForHist = runningApps && runningApps[0];
     const wineForHist = appForHist && appForHist.wine;
     const exForHist = wineForHist && wineForHist.instance && wineForHist.instance.exports;
@@ -1267,6 +1309,10 @@ async function main() {
       if (exForHist.set_stack_packet_count_enabled) exForHist.set_stack_packet_count_enabled(${STACK_PACKET_COUNT ? '1' : '0'});
       if (exForHist.reset_stack_packet_counters) exForHist.reset_stack_packet_counters();
       exForHist.set_stack_packet_enabled(1, ${STACK_PACKET_ADDR >>> 0});
+    }
+    if (${AOE_RECOMPILE ? 'true' : 'false'} && exForHist && exForHist.set_aoe_recompile_enabled) {
+      if (exForHist.reset_aoe_recompile_counters) exForHist.reset_aoe_recompile_counters();
+      exForHist.set_aoe_recompile_enabled(1);
     }
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
@@ -1319,6 +1365,15 @@ async function main() {
           block0049dd20ToDdc7Entries: e.get_stack_packet_0049dd20_to_ddc7_entries ? (e.get_stack_packet_0049dd20_to_ddc7_entries() >>> 0) : 0,
           block0049dd20ToE0adEntries: e.get_stack_packet_0049dd20_to_e0ad_entries ? (e.get_stack_packet_0049dd20_to_e0ad_entries() >>> 0) : 0,
         } : null,
+        phaseTimings: window.__aoeSnapshotPhaseTimings ? window.__aoeSnapshotPhaseTimings() : null,
+        aoeRecompile: e && e.get_aoe_recompile_enabled ? {
+          enabled: e.get_aoe_recompile_enabled() >>> 0,
+          entries: e.get_aoe_recompile_entries ? (e.get_aoe_recompile_entries() >>> 0) : 0,
+          block00535c20Entries: e.get_aoe_recompile_00535c20_entries
+            ? (e.get_aoe_recompile_00535c20_entries() >>> 0)
+            : 0,
+        } : null,
+        launchProfile: window.__aoeLaunchProfile || null,
         profile: window.__aoeProfile ? window.__aoeProfile.snapshot() : null,
       };
     };
@@ -1330,9 +1385,11 @@ async function main() {
         console.log(${JSON.stringify(PROFILE_PREFIX)} + JSON.stringify({ error: e && e.message ? e.message : String(e) }));
       }
     }, ${GAMEPLAY_MS});
-    return 1;
+    return {
+      phaseTimings: window.__aoeSnapshotPhaseTimings ? window.__aoeSnapshotPhaseTimings() : null,
+    };
   })()`);
-  progress('gameplay profile started');
+  progress('gameplay profile started ' + JSON.stringify(gameplayProfileStart && gameplayProfileStart.phaseTimings || {}));
 
   let cpuProfileStarted = false;
   if (CPU_PROFILE) {
@@ -1384,6 +1441,9 @@ async function main() {
   }
   if (result.profile) {
     result.profile.runSliceBreakdown = deriveRunSliceBreakdown(result.profile);
+  }
+  if (result.launchProfile) {
+    result.launchProfile.runSliceBreakdown = deriveRunSliceBreakdown(result.launchProfile);
   }
 
   if (cpuProfileStarted) {

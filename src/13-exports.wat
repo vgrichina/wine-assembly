@@ -529,6 +529,20 @@
     (global.get $stack_packet_0049dd20_to_ddc7_entries))
   (func (export "get_stack_packet_0049dd20_to_e0ad_entries") (result i32)
     (global.get $stack_packet_0049dd20_to_e0ad_entries))
+  ;; Disabled-by-default AoE recompilation proof-of-concept. Toggling clears the
+  ;; decoded-block cache so already-decoded generic/compiled blocks do not linger.
+  (func (export "set_aoe_recompile_enabled") (param $flag i32)
+    (global.set $aoe_recompile_enabled (local.get $flag))
+    (call $clear_cache))
+  (func (export "get_aoe_recompile_enabled") (result i32)
+    (global.get $aoe_recompile_enabled))
+  (func (export "reset_aoe_recompile_counters")
+    (global.set $aoe_recompile_entries (i32.const 0))
+    (global.set $aoe_recompile_00535c20_entries (i32.const 0)))
+  (func (export "get_aoe_recompile_entries") (result i32)
+    (global.get $aoe_recompile_entries))
+  (func (export "get_aoe_recompile_00535c20_entries") (result i32)
+    (global.get $aoe_recompile_00535c20_entries))
 
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.

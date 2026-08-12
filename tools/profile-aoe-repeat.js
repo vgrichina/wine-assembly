@@ -56,17 +56,28 @@ function stats(values) {
 
 function extractMetrics(file, result) {
   const profile = result && result.profile ? result.profile : {};
+  const launchProfile = result && result.launchProfile ? result.launchProfile : {};
   const counters = profile.counters || {};
+  const launchCounters = launchProfile.counters || {};
   const runSlice = counters['main.runSlice'] || {};
+  const launchRunSlice = launchCounters['main.runSlice'] || {};
   const breakdown = profile.runSliceBreakdown || {};
+  const launchBreakdown = launchProfile.runSliceBreakdown || {};
   const jitter = profile.jitter || {};
   const present = jitter.present || {};
   const raf = jitter.raf || {};
   const repaint = jitter.repaint || {};
   const stackPacket = result && result.stackPacket ? result.stackPacket : {};
+  const phaseTimings = result && result.phaseTimings ? result.phaseTimings : {};
+  const aoeRecompile = result && result.aoeRecompile ? result.aoeRecompile : {};
   return {
     file,
     screenshot: result && result.screenshot ? result.screenshot : '',
+    launchToInstanceReadyMs: round(phaseTimings.launchToInstanceReadyMs),
+    instanceReadyToGameplayReadyMs: round(phaseTimings.instanceReadyToGameplayReadyMs),
+    launchToGameplayReadyMs: round(phaseTimings.launchToGameplayReadyMs),
+    launchRunSliceMs: round(launchRunSlice.totalMs),
+    launchGuestMs: round(launchBreakdown.guestOrUnwrappedMs),
     elapsedMs: round(profile.elapsedMs),
     runSliceMs: round(runSlice.totalMs),
     runSliceCount: runSlice.count || 0,
@@ -88,6 +99,9 @@ function extractMetrics(file, result) {
     stackPacket0049dd20ToDd8bEntries: stackPacket.block0049dd20ToDd8bEntries >>> 0,
     stackPacket0049dd20ToDdc7Entries: stackPacket.block0049dd20ToDdc7Entries >>> 0,
     stackPacket0049dd20ToE0adEntries: stackPacket.block0049dd20ToE0adEntries >>> 0,
+    aoeRecompileEnabled: aoeRecompile.enabled >>> 0,
+    aoeRecompileEntries: aoeRecompile.entries >>> 0,
+    aoeRecompile00535c20Entries: aoeRecompile.block00535c20Entries >>> 0,
   };
 }
 
@@ -156,11 +170,12 @@ function printSummary(summary) {
   console.log(`AoE repeat profile: ${summary.label}`);
   console.log(`runs=${summary.runs.length} timeoutMs=${summary.timeoutMs} summary=${summary.summaryFile}`);
   console.log('');
-  console.log('run  runSlice  guest    host   present  events  packet1  packet2    output');
+  console.log('run  launch   runSlice  guest    host   present  events  packet1  packet2  recompile  output');
   for (let i = 0; i < summary.runs.length; i++) {
     const r = summary.runs[i];
     console.log(
       String(i + 1).padStart(3) + '  ' +
+      String(r.launchToGameplayReadyMs.toFixed(1)).padStart(7) + '  ' +
       String(r.runSliceMs.toFixed(1)).padStart(8) + '  ' +
       String(r.guestMs.toFixed(1)).padStart(7) + '  ' +
       String(r.hostMs.toFixed(1)).padStart(6) + '  ' +
@@ -168,11 +183,12 @@ function printSummary(summary) {
       String(r.presentEvents).padStart(6) + '  ' +
       String(r.stackPacket0049d9d1Entries || 0).padStart(6) + '  ' +
       String(r.stackPacket0049dd20Entries || 0).padStart(7) + '  ' +
+      String(r.aoeRecompile00535c20Entries || 0).padStart(9) + '  ' +
       r.file
     );
   }
   console.log('');
-  for (const key of ['runSliceMs', 'guestMs', 'hostMs', 'presentFps', 'presentEvents', 'stackPacket0049d9d1Entries', 'stackPacket0049dd20Entries']) {
+  for (const key of ['launchToGameplayReadyMs', 'launchRunSliceMs', 'runSliceMs', 'guestMs', 'hostMs', 'presentFps', 'presentEvents', 'stackPacket0049d9d1Entries', 'stackPacket0049dd20Entries', 'aoeRecompile00535c20Entries']) {
     const s = summary.stats[key];
     console.log(`${key}: mean=${s.mean} min=${s.min} max=${s.max} sd=${s.sd}`);
   }
@@ -232,6 +248,8 @@ async function main() {
     summaryFile,
     runs: metrics,
     stats: {
+      launchToGameplayReadyMs: stats(metrics.map(r => r.launchToGameplayReadyMs)),
+      launchRunSliceMs: stats(metrics.map(r => r.launchRunSliceMs)),
       runSliceMs: stats(metrics.map(r => r.runSliceMs)),
       guestMs: stats(metrics.map(r => r.guestMs)),
       hostMs: stats(metrics.map(r => r.hostMs)),
@@ -243,6 +261,7 @@ async function main() {
       stackPacket0049dd20ToDd8bEntries: stats(metrics.map(r => r.stackPacket0049dd20ToDd8bEntries)),
       stackPacket0049dd20ToDdc7Entries: stats(metrics.map(r => r.stackPacket0049dd20ToDdc7Entries)),
       stackPacket0049dd20ToE0adEntries: stats(metrics.map(r => r.stackPacket0049dd20ToE0adEntries)),
+      aoeRecompile00535c20Entries: stats(metrics.map(r => r.aoeRecompile00535c20Entries)),
     },
   };
   fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));

@@ -199,6 +199,237 @@ side path matter. The attempted append-after-tail path is too rare to justify
 checks on every non-empty row. The next useful trace work should target one of
 the hotter non-empty merge/delete paths only if profiling can prove a cheap
 selector for that path.
+### Manual Recompile POC: AoE Blitter Dispatch
+
+Target block:
+
+```text
+0x00535c20:
+  mov [0x775050], esi
+  xor eax,eax
+  mov [0x775054], edi
+  mov al,[esi]
+  sub edi,[0x775020]
+  mov ecx,eax
+  inc esi
+  and eax,0xf
+  mov ebx,[0x77503c]
+  jmp [0x534400+eax*4]
+```
+
+This block is part of AoE's software blitter command decoder. It was a useful
+manual recompile target because the offline stack-packet prototype rejected it
+for partial-width state (`mov al,[esi]`) and an indirect jump-table exit, while
+the runtime decoder can still execute it today through many generic handlers.
+
+The POC adds one disabled-by-default handler selected only when
+`AOE_RECOMPILE=1` / `set_aoe_recompile_enabled(1)` is active. It emits a single
+threaded word for `0x00535c20`, performs the same register/memory/flag updates,
+and sets `EIP` from the jump table.
+
+Verification:
+
+```text
+node tools/build-compile-wat.js
+node tools/check-handler-count.js
+node test/test-aoe-recompile-535c20.js
+```
+
+Headless AoE reachability:
+
+```text
+AOE_RECOMPILE=1 node test/run.js ... --count=0x00535c20
+Hit counts:
+  0x00535c20 = 1686419
+[aoe-recompile] entries=1686419 0x00535c20=1686419
+```
+
+Corrected same-input headless timing was only a small full-scenario signal:
+
+```text
+baseline:          real 10.82  hits=1686419
+compiled handler:  real 10.69  hits=1686419
+```
+
+The isolated WAT loop shows the important local result:
+
+```text
+node tools/bench-aoe-recompile-535c20.js
+generic cached threaded: 263.16ms 7599.9 blocks/ms
+compiled handler:         51.81ms 38599.0 blocks/ms
+speedup: 5.079x (2000000 blocks)
+```
+
+Conclusion:
+
+```text
+Manual WAT recompilation can be much faster for a hot AoE block.
+One small command-dispatch block is not enough to move whole-game timing much.
+The real compiler should promote larger hot blocks/traces and combine wins:
+  register virtualization, flag-local branches, EA/g2w reuse, and jump exits.
+Keep the cold interpreter as fallback; use an allowlist/counter path first.
+```
+
+Follow-up multi-block loop POC:
+
+```text
+allowlist:
+  0x00535b4d  span cmp-left
+  0x00535b56  span cmp-right
+  0x00535b5b  next linked span
+  0x00535b66  overlap cmp-left
+  0x00535b6b  overlap cmp-right
+  0x00535b70  unclipped command dispatcher setup
+  0x00535b8b  clipped command dispatcher setup
+  0x00535bc0  linked-span test
+  0x00535bdc  linked-span command dispatch
+  0x00535c20  primary command dispatch
+  0x00535e00  high-nibble run length
+  0x00535e05  byte run length + run-end cmp
+  0x00535e08  run-end cmp
+  0x00535e12  span-right cmp
+  0x00535e17  span-left cmp
+  0x00535e1e  left clip adjust
+  0x00535e25  right clip cmp
+  0x00535e2f  right clip adjust
+  0x00535e40  clipped pixel dispatch
+  0x00535e7c  skip clipped run
+  0x00535e8a  advance linked span
+  0x005360a0  alternate command dispatch
+  0x005362e0  row advance cmp
+  0x005362f4  row epilogue
+  0x00536420  alternate command dispatch
+  0x00536528  alternate pixel dispatch
+```
+
+`0x00535aa0` was intentionally left out of the active decoder allowlist after
+initial implementation because it needs to be split around its internal
+branches. Keeping it monolithic would hide real block entries and distort
+counter/profiling behavior.
+
+Verification:
+
+```text
+node test/test-aoe-recompile-loop.js
+PASS  AoE compiled blitter loop blocks match generic decoder
+```
+
+Headless AoE reachability with 16 sampled block counters:
+
+```text
+[aoe-recompile] entries=9396084 0x00535c20=1688120
+sampled hits included:
+  0x00535c20 = 1688120
+  0x005360a0 = 1131066
+  0x00535e00 = 1664872
+  0x00535e08 = 1653513
+  0x00535e7c = 1413630
+```
+
+Clean no-count headless timing on the same 260100-batch input:
+
+```text
+baseline:          real 12.16
+compiled allowlist: real 11.54
+```
+
+Full Chrome browser profile, same scripted 10s Bronze Age Art of War gameplay.
+Default harness mode uses `--headless=new`:
+
+```text
+baseline:
+  main.runSlice total 7364.5 ms
+  guest/unwrapped     6877.7 ms
+  avg runSlice          14.054 ms
+  present FPS           15.855
+  repaint FPS           52.041
+
+compiled allowlist:
+  main.runSlice total 6921.0 ms
+  guest/unwrapped     6471.9 ms
+  avg runSlice          11.056 ms
+  present FPS           19.170
+  repaint FPS           57.736
+  recompile entries  6954138
+  0x00535c20 entries  771686
+
+delta:
+  main.runSlice total -6.0%   / 1.064x
+  guest/unwrapped     -5.9%   / 1.063x
+  avg runSlice        -21.3%  / 1.271x
+  present FPS         +20.9%  / 1.209x
+  repaint FPS         +10.9%  / 1.109x
+```
+
+20s gameplay-only rerun with explicit launch/profile split:
+
+```text
+baseline:
+  launch->gameplay    51001.7 ms
+  main.runSlice total 12909.5 ms
+  guest/unwrapped     12087.0 ms
+  avg runSlice            9.188 ms
+  present FPS            25.238
+  repaint FPS            59.738
+
+compiled allowlist:
+  launch->gameplay    51640.7 ms
+  main.runSlice total 12454.9 ms
+  guest/unwrapped     11634.5 ms
+  avg runSlice            8.359 ms
+  present FPS            26.729
+  repaint FPS            59.913
+  recompile entries  14558151
+  0x00535c20 entries 1575794
+
+delta:
+  main.runSlice total -3.5%   / 1.036x
+  guest/unwrapped     -3.7%   / 1.039x
+  avg runSlice         -9.0%  / 1.099x
+  present FPS          +5.9%  / 1.059x
+  repaint FPS          +0.3%  / 1.003x
+```
+
+Visible Chrome (`HEADLESS=0`) single-run check:
+
+```text
+baseline:
+  main.runSlice total 6494.3 ms
+  guest/unwrapped     6113.7 ms
+  avg runSlice           9.134 ms
+  present FPS           22.228
+  repaint FPS           59.588
+
+compiled allowlist:
+  main.runSlice total 6537.4 ms
+  guest/unwrapped     6129.9 ms
+  avg runSlice           9.586 ms
+  present FPS           21.396
+  repaint FPS           59.877
+  recompile entries  7384214
+  0x00535c20 entries  780248
+
+delta:
+  main.runSlice total +0.7%   / 0.993x
+  guest/unwrapped     +0.3%   / 0.997x
+  avg runSlice         +5.0%  / 0.953x
+  present FPS          -3.7%  / 0.963x
+  repaint FPS          +0.5%  / 1.005x
+```
+
+The browser numbers are single runs and need repetition because AoE startup,
+Chrome mode, and scripted interaction timing can shift the exact game state.
+The 20s visible rerun was not comparable: CDP input delivery stalled for
+seconds after gameplay start, leaving the gameplay window mostly idle
+(`main.runSlice` only 26.3 ms and no present/repaint events). Use the default
+headless-Chrome browser harness for this 20s comparison until the visible input
+path is made deterministic.
+The POC clearly executes millions of promoted blocks in the browser; the
+headless-Chrome CPU signal is positive, while the visible-Chrome run is
+effectively within noise/slightly negative. This is still materially better
+than the one-block POC for proving the mechanism, and it confirms the next
+direction: promote connected hot-loop blocks, not isolated peepholes, then
+measure with repeated browser trials.
 
 ## Handler Histogram
 
