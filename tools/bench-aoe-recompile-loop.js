@@ -4,7 +4,7 @@
 //
 //   0x535c20 -> 0x535e00 -> 0x535e08 -> 0x535e7c -> 0x535c20
 //
-// Setup and first decode are outside the timed region. All four variants
+// Setup and first decode are outside the timed region. All variants
 // execute the same guest bytes/state, and every measured trial checks state.
 
 const assert = require('assert');
@@ -118,6 +118,12 @@ function median(values) {
     };
   }
 
+  function runnerFor(variant) {
+    if (variant === 'brtable-globals') return e.run_aoe_brtable_globals;
+    if (variant === 'brtable-locals') return e.run_aoe_brtable_locals;
+    return e.run;
+  }
+
   function configureAndWarm(variant) {
     e.set_aoe_recompile_count_enabled(1);
     e.set_wat_stack_packet_count_enabled(1);
@@ -132,11 +138,11 @@ function median(values) {
     if (variant === 'wat-optimized') e.set_aoe_recompile_enabled(1);
     seed();
     e.reset_aoe_recompile_counters();
-    e.run(warmupBlocks);
+    runnerFor(variant)(warmupBlocks);
     if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
       assert.strictEqual(u32(e.get_wat_stack_packet_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
-    } else if (variant !== 'x86-threaded') {
+    } else if (!['x86-threaded', 'brtable-globals', 'brtable-locals'].includes(variant)) {
       assert.strictEqual(u32(e.get_aoe_recompile_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
     }
@@ -149,7 +155,7 @@ function median(values) {
     e.set_aoe_recompile_count_enabled(0);
     e.set_wat_stack_packet_count_enabled(0);
     const start = performance.now();
-    e.run(measuredBlocks);
+    runnerFor(variant)(measuredBlocks);
     const elapsedMs = performance.now() - start;
     const state = snapshot();
     const expected = expectedState();
@@ -159,13 +165,19 @@ function median(values) {
     return { elapsedMs, state };
   }
 
-  const variants = [
+  const defaultVariants = [
     'x86-threaded',
+    'brtable-globals',
+    'brtable-locals',
     'wat-threaded',
     'wat-stack',
     'wat-stack-cmp-jcc',
     'wat-optimized',
   ];
+  const variants = (process.env.VARIANTS
+    ? process.env.VARIANTS.split(',').map(value => value.trim()).filter(Boolean)
+    : defaultVariants);
+  assert(variants.includes('x86-threaded'), 'VARIANTS must include x86-threaded');
   const samples = Object.fromEntries(variants.map(name => [name, []]));
   let referenceState = null;
   for (let trial = 0; trial < TRIALS; trial++) {
