@@ -2335,7 +2335,12 @@
     (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
-    (call $host_sync_window_client (local.get $arg0))
+    (call $host_sync_window_client
+      (local.get $arg0)
+      (call $wnd_client_screen_x (local.get $arg0))
+      (call $wnd_client_screen_y (local.get $arg0))
+      (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
+      (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
           (i32.ne (local.get $dlg_rec) (i32.const 0))
@@ -2729,7 +2734,12 @@
           (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))
         (call $paint_clear_subtree (local.get $arg0))))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
-    (call $host_sync_window_client (local.get $arg0))
+    (call $host_sync_window_client
+      (local.get $arg0)
+      (call $wnd_client_screen_x (local.get $arg0))
+      (call $wnd_client_screen_y (local.get $arg0))
+      (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
+      (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
     (if (i32.and
           (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
           (i32.ne (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)) (i32.const 0)))
@@ -8770,7 +8780,12 @@
     ;; DefWindowProc, so queuing the message alone doesn't update our table),
     ;; and queue a paint so the moved child redraws.
     (call $defwndproc_do_nccalcsize (local.get $arg1))
-    (call $host_sync_window_client (local.get $arg1))
+    (call $host_sync_window_client
+      (local.get $arg1)
+      (call $wnd_client_screen_x (local.get $arg1))
+      (call $wnd_client_screen_y (local.get $arg1))
+      (i32.sub (call $client_rect_get_r (local.get $arg1)) (call $client_rect_get_l (local.get $arg1)))
+      (i32.sub (call $client_rect_get_b (local.get $arg1)) (call $client_rect_get_t (local.get $arg1))))
     (local.set $new_cs (call $host_get_window_client_size (local.get $arg1)))
     (if (i32.and
           (i32.eqz (i32.and (local.get $flags) (i32.const 1))) ;; !SWP_NOSIZE
@@ -9020,7 +9035,12 @@
           (then
             (drop (call $wnd_set_style (local.get $arg0) (local.get $new_style)))
             (call $defwndproc_do_nccalcsize (local.get $arg0))
-            (call $host_sync_window_client (local.get $arg0))))
+            (call $host_sync_window_client
+              (local.get $arg0)
+              (call $wnd_client_screen_x (local.get $arg0))
+              (call $wnd_client_screen_y (local.get $arg0))
+              (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
+              (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))))
         (if (i32.or
               (i32.ne (local.get $arg3) (i32.const 0))
               (i32.ne (local.get $new_style) (local.get $style)))
