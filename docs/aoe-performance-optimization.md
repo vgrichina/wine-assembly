@@ -2215,7 +2215,71 @@ direct handler IDs for census-backed register forms and retain generic handlers
 for the long tail. It does not support adding ALU-only handler variants unless
 a different real workload identifies a helper operation that remains costly.
 
-1. Keep and commit the measured 355-handler specialization set.
+### Full-App Profile-Guided Exact Forms
+
+The smallest production experiment keeps the existing threaded packet format,
+global thread IP, handler-to-`$next` tail calls, and one `call_indirect` per x86
+operation. `$te` changes only the cached handler ID for seven exact operand
+forms; every other form still uses its existing generic handler.
+
+```text
+AoE census forms                 RCT census forms
+mov ecx,eax                      add byte [eax+disp],al
+mov edx,edi                      add byte [ecx+disp],al
+add edx,ecx                      add dl,dh
+add edi,ecx
+```
+
+The RCT selection is particularly narrow: those three forms represented
+136.4M of 199.8M dispatched handlers (68.3%) in its stable runtime loop. The
+specialized handlers inline exact register access and ADD semantics but retain
+the same guest-memory helpers, lazy-flag representation, cache invalidation,
+and `call_indirect` dispatch as the generic handlers. A decoder toggle clears
+the block cache so baseline and candidate packets cannot mix. The optimization
+is enabled by default; `set_hotform_specialization_enabled(0)` provides the
+generic baseline and fallback.
+
+Three default-headless Chrome runs per variant used `HANDLER_HIST=0`, 100,000
+steps per run slice, and a nominal 10-second measurement window. AoE used its
+scripted campaign launch and an additional 2.5-second gameplay settle. RCT used
+a 30-second post-instance warmup. Medians are shown because the game state and
+host load move exact run-slice counts.
+
+```text
+                                  baseline    exact forms       delta / speedup
+AoE runSlice avg, ms                19.568        17.858        -8.7% / 1.096x
+AoE guest ms per slice              17.073        15.594        -8.7% / 1.095x
+AoE guest CPU in fixed window     6863.2       6761.1           -1.5% / 1.015x
+AoE completed slices               402          435             +8.2%
+AoE present FPS                      8.325        8.939           +7.4%
+
+RCT runSlice avg, ms              3790.800      3566.667        -5.9% / 1.063x
+RCT guest CPU in measured window 11372.4      10733.2           -5.6% / 1.060x
+```
+
+All AoE candidates recorded 8,162-8,237 specialized decode emissions; all RCT
+candidates recorded 10,594. Direct generic-vs-specialized tests cover all seven
+forms, including registers, memory, EIP, and lazy flags.
+
+The RCT number is a full browser/app run but not an interactive park benchmark:
+after the 30-second warmup the current emulator is still in a deterministic,
+instruction-heavy runtime loop at `EIP=0x00850000`, with an RCT window but no
+present events. Each 100,000-step slice takes seconds, so the nominal timer can
+overshoot while a slice is executing. Per-slice latency is therefore the useful
+comparison. A future RCT gameplay harness must detect a rendered park state
+instead of relying on a fixed warmup.
+
+Artifacts:
+
+```text
+/private/tmp/aoe-hotform-baseline-{1,2,3}.json
+/private/tmp/aoe-hotform-candidate-{1,2,3}.json
+/private/tmp/rct-hotform-baseline-{1,2,3}.json
+/private/tmp/rct-hotform-candidate-{1,2,3}.json
+```
+
+1. Keep the measured seven-form allowlist small and extend it only from
+   full-app operand censuses.
 2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
 3. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.
 4. Revisit branch fusion only as generated trace-specific blocks or larger multi-op superinstructions.

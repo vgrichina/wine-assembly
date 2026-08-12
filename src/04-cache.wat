@@ -55,6 +55,31 @@
 
   ;; Thread emit helpers
   (func $te (param $fn i32) (param $op i32)
+    (local $original_fn i32)
+    (local.set $original_fn (local.get $fn))
+    (if (i32.and (global.get $hotform_specialization_enabled)
+                 (i32.eqz (global.get $handler_hist_enabled)))
+      (then
+        ;; AoE's four hottest exact register-register forms.
+        (if (i32.eq (local.get $fn) (i32.const 11))
+          (then
+            (if (i32.eq (local.get $op) (i32.const 0x10)) (then (local.set $fn (i32.const 368))))
+            (if (i32.eq (local.get $op) (i32.const 0x27)) (then (local.set $fn (i32.const 373))))))
+        (if (i32.eq (local.get $fn) (i32.const 12))
+          (then
+            (if (i32.eq (local.get $op) (i32.const 0x21)) (then (local.set $fn (i32.const 374))))
+            (if (i32.eq (local.get $op) (i32.const 0x71)) (then (local.set $fn (i32.const 378))))))
+        ;; RCT's three dominant exact byte-ALU forms.
+        (if (i32.eq (local.get $fn) (i32.const 129))
+          (then
+            (if (i32.eq (local.get $op) (i32.const 0x000)) (then (local.set $fn (i32.const 382))))
+            (if (i32.eq (local.get $op) (i32.const 0x001)) (then (local.set $fn (i32.const 383))))))
+        (if (i32.and (i32.eq (local.get $fn) (i32.const 153))
+                     (i32.eq (local.get $op) (i32.const 0x026)))
+          (then (local.set $fn (i32.const 384))))
+        (if (i32.ne (local.get $fn) (local.get $original_fn))
+          (then (global.set $hotform_specialized_emits
+            (i32.add (global.get $hotform_specialized_emits) (i32.const 1)))))))
     ;; Inline overflow check — reset this thread's decoded arena before THREAD_END.
     (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
       (then
@@ -82,7 +107,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 382))
+    (if (i32.ge_u (local.get $fn) (i32.const 385))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))
@@ -217,6 +242,32 @@
       (then
         (global.set $branch_hist_kind (local.get $kind))
         (global.set $branch_hist_operand (local.get $operand)))))
+
+  ;; Five 64-entry profiling rows: mov/add/cmp/load32_ro/store32_ro.
+  (func $regform_hist_record (param $kind i32) (param $operand i32)
+    (local $ptr i32)
+    (local.set $ptr (i32.add (global.get $REGFORM_HIST)
+      (i32.shl
+        (i32.add (i32.shl (local.get $kind) (i32.const 6))
+                 (i32.and (local.get $operand) (i32.const 63)))
+        (i32.const 2))))
+    (i32.store (local.get $ptr)
+      (i32.add (i32.load (local.get $ptr)) (i32.const 1))))
+
+  ;; Three 512-entry profiling rows: alu_m8_r_ro, alu_r8_r8, alu_m32_r_ro.
+  ;; Each operand is compacted to alu<<6 | reg<<3 | base/src.
+  (func $opform_hist_record (param $kind i32) (param $operand i32)
+    (local $idx i32) (local $ptr i32)
+    (local.set $idx
+      (i32.or
+        (i32.shl (i32.and (i32.shr_u (local.get $operand) (i32.const 8)) (i32.const 7)) (i32.const 6))
+        (i32.or
+          (i32.shl (i32.and (i32.shr_u (local.get $operand) (i32.const 4)) (i32.const 7)) (i32.const 3))
+          (i32.and (local.get $operand) (i32.const 7)))))
+    (local.set $ptr (i32.add (global.get $OPFORM_HIST)
+      (i32.shl (i32.add (i32.shl (local.get $kind) (i32.const 9)) (local.get $idx)) (i32.const 2))))
+    (i32.store (local.get $ptr)
+      (i32.add (i32.load (local.get $ptr)) (i32.const 1))))
 
   (func $branch_hist_record_jcc (param $cc i32)
     (local $base i32) (local $idx i32) (local $kind i32)

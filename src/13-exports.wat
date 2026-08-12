@@ -574,6 +574,14 @@
     (global.get $wat_stack_packet_count_enabled))
   (func (export "get_wat_stack_packet_entries") (result i32)
     (global.get $wat_stack_packet_entries))
+  (func (export "set_hotform_specialization_enabled") (param $flag i32)
+    (global.set $hotform_specialization_enabled (local.get $flag))
+    (global.set $hotform_specialized_emits (i32.const 0))
+    (call $clear_cache))
+  (func (export "get_hotform_specialization_enabled") (result i32)
+    (global.get $hotform_specialization_enabled))
+  (func (export "get_hotform_specialized_emits") (result i32)
+    (global.get $hotform_specialized_emits))
   (func (export "set_aoe_recompile_count_enabled") (param $flag i32)
     (global.set $aoe_recompile_count_enabled (local.get $flag)))
   (func (export "get_aoe_recompile_count_enabled") (result i32)
@@ -590,10 +598,16 @@
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)
+    (local $changed i32)
+    (local.set $changed (i32.ne (global.get $handler_hist_enabled) (local.get $flag)))
     (global.set $handler_hist_enabled (local.get $flag))
     (global.set $branch_hist_kind (i32.const 0))
     (if (local.get $flag)
-      (then (global.set $handler_hist_last (i32.const -1)))))
+      (then (global.set $handler_hist_last (i32.const -1))))
+    ;; Exact-form IDs live above the intentionally compact dense pair matrix.
+    ;; Re-decode generic packets while histograms are active, then restore the
+    ;; optimized forms after profiling is disabled.
+    (if (local.get $changed) (then (call $clear_cache))))
   (func (export "reset_handler_hist")
     (local $ptr i32) (local $end i32)
     (local.set $ptr (global.get $HANDLER_HIST_COUNTS))
@@ -645,6 +659,20 @@
       (i32.store (local.get $ptr) (i32.const 0))
       (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
       (br $sib_consumer)))
+    (local.set $ptr (global.get $REGFORM_HIST))
+    (local.set $end (i32.add (global.get $REGFORM_HIST) (global.get $REGFORM_HIST_SIZE)))
+    (block $regform_done (loop $regform
+      (br_if $regform_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $regform)))
+    (local.set $ptr (global.get $OPFORM_HIST))
+    (local.set $end (i32.add (global.get $OPFORM_HIST) (global.get $OPFORM_HIST_SIZE)))
+    (block $opform_done (loop $opform
+      (br_if $opform_done (i32.ge_u (local.get $ptr) (local.get $end)))
+      (i32.store (local.get $ptr) (i32.const 0))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+      (br $opform)))
     (global.set $branch_hist_kind (i32.const 0))
     (global.set $hot_block_hist_collisions (i32.const 0))
     (global.set $sib_consumer_hist_collisions (i32.const 0))
@@ -663,6 +691,8 @@
   (func (export "get_sib_consumer_hist_count") (result i32) (global.get $SIB_CONSUMER_HIST_COUNT))
   (func (export "get_sib_consumer_hist_collisions") (result i32) (global.get $sib_consumer_hist_collisions))
   (func (export "get_sib_consumer_hist_total") (result i32) (global.get $sib_consumer_hist_total))
+  (func (export "get_regform_hist_base") (result i32) (global.get $REGFORM_HIST))
+  (func (export "get_opform_hist_base") (result i32) (global.get $OPFORM_HIST))
 
   ;; Size-aware load for watchpoint. $watch_size: 1=byte, 2=word, anything else=dword.
   (func $watch_load (param $addr i32) (result i32)

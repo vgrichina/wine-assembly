@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 382 funcref)
+  (table $handlers 385 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -438,4 +438,8 @@
     $th_bench_sub_edi_m32_direct_alu     ;; 379
     $th_bench_shr_ecx_direct_alu         ;; 380
     $th_bench_cmp_edx_ebx_disp_direct_alu ;; 381
+    ;; -- Profile-guided exact forms (decoder-selected, generic fallback) --
+    $th_hot_add_m8_eax_al                 ;; 382: [eax+disp] += al
+    $th_hot_add_m8_ecx_al                 ;; 383: [ecx+disp] += al
+    $th_hot_add_dl_dh                     ;; 384: dl += dh
   )

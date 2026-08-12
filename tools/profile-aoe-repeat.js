@@ -70,6 +70,7 @@ function extractMetrics(file, result) {
   const stackPacket = result && result.stackPacket ? result.stackPacket : {};
   const phaseTimings = result && result.phaseTimings ? result.phaseTimings : {};
   const aoeRecompile = result && result.aoeRecompile ? result.aoeRecompile : {};
+  const hotform = result && result.hotformSpecialization ? result.hotformSpecialization : {};
   return {
     file,
     screenshot: result && result.screenshot ? result.screenshot : '',
@@ -102,6 +103,8 @@ function extractMetrics(file, result) {
     aoeRecompileEnabled: aoeRecompile.enabled >>> 0,
     aoeRecompileEntries: aoeRecompile.entries >>> 0,
     aoeRecompile00535c20Entries: aoeRecompile.block00535c20Entries >>> 0,
+    hotformEnabled: hotform.enabled >>> 0,
+    hotformDecodedEmits: hotform.decodedEmits >>> 0,
   };
 }
 
@@ -188,7 +191,7 @@ function printSummary(summary) {
     );
   }
   console.log('');
-  for (const key of ['launchToGameplayReadyMs', 'launchRunSliceMs', 'runSliceMs', 'guestMs', 'hostMs', 'presentFps', 'presentEvents', 'stackPacket0049d9d1Entries', 'stackPacket0049dd20Entries', 'aoeRecompile00535c20Entries']) {
+  for (const key of ['launchToGameplayReadyMs', 'launchRunSliceMs', 'runSliceMs', 'runSliceAvgMs', 'guestMs', 'hostMs', 'presentFps', 'presentEvents', 'stackPacket0049d9d1Entries', 'stackPacket0049dd20Entries', 'aoeRecompile00535c20Entries', 'hotformDecodedEmits']) {
     const s = summary.stats[key];
     console.log(`${key}: mean=${s.mean} min=${s.min} max=${s.max} sd=${s.sd}`);
   }
@@ -251,6 +254,7 @@ async function main() {
       launchToGameplayReadyMs: stats(metrics.map(r => r.launchToGameplayReadyMs)),
       launchRunSliceMs: stats(metrics.map(r => r.launchRunSliceMs)),
       runSliceMs: stats(metrics.map(r => r.runSliceMs)),
+      runSliceAvgMs: stats(metrics.map(r => r.runSliceAvgMs)),
       guestMs: stats(metrics.map(r => r.guestMs)),
       hostMs: stats(metrics.map(r => r.hostMs)),
       presentFps: stats(metrics.map(r => r.presentFps)),
@@ -262,6 +266,7 @@ async function main() {
       stackPacket0049dd20ToDdc7Entries: stats(metrics.map(r => r.stackPacket0049dd20ToDdc7Entries)),
       stackPacket0049dd20ToE0adEntries: stats(metrics.map(r => r.stackPacket0049dd20ToE0adEntries)),
       aoeRecompile00535c20Entries: stats(metrics.map(r => r.aoeRecompile00535c20Entries)),
+      hotformDecodedEmits: stats(metrics.map(r => r.hotformDecodedEmits)),
     },
   };
   fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
