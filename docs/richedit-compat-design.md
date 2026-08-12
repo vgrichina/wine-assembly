@@ -677,6 +677,18 @@ is a WordPad-visible static object representation: bridge DIB clipboard data
 into a RichEdit object slot, paint it inline, and then persist that object
 through RTF/storage save and reopen.
 
+The first native integration probe now publishes a valid 2x2 24-bpp `CF_DIB`
+plus an RTF `\\pict\\dibitmap0` representation and delivers `WM_PASTE` to
+Win98 RichEdit. This exposed and then closed three dynamic-export crash paths:
+`CoDisconnectObject`, `CreateStreamOnHGlobal` (with HGLOBAL recovery), and
+`OleCreateDefaultHandler`. The current default-handler contract intentionally
+returns `REGDB_E_CLASSNOTREG` with a null output because there is no local OLE
+server/`IOleObject` yet. RichEdit now rejects the static image without exiting
+WordPad or changing existing text. `test/test-ole-storage.js` covers caller-
+owned and COM-created HGLOBAL stream lifetime; the browser WordPad smoke covers
+the crash-safe native clipboard attempt. The remaining visible-image step is a
+bounded static default handler/presentation object, followed by save/reopen.
+
 ### 2026-08-12 advanced RTF slice
 
 `test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through

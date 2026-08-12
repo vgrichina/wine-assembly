@@ -94,6 +94,25 @@ async function main() {
     Array.from(u8.slice(wa(reread), wa(reread) + payload.length)).every((v, i) => v === payload[i]));
   e.test_ole_release(reopened);
 
+  const globalPayload = writeBytes(Uint8Array.from([9, 8, 7, 6]));
+  const globalStream = e.test_ole_create_hglobal_stream(globalPayload, 0) >>> 0;
+  check('CreateStreamOnHGlobal exposes the caller HGLOBAL without copying',
+    globalStream !== 0 && (e.test_ole_get_hglobal(globalStream) >>> 0) === globalPayload && e.test_ole_stream_size(globalStream) >= 4);
+  e.test_ole_stream_seek(globalStream, 0);
+  const globalOut = alloc(4);
+  check('HGLOBAL-backed IStream reads the original allocation',
+    e.test_ole_stream_read(globalStream, globalOut, 4, count) === 0 &&
+    Array.from(u8.slice(wa(globalOut), wa(globalOut) + 4)).join(',') === '9,8,7,6');
+  e.test_ole_release(globalStream);
+  // fDeleteOnRelease=FALSE leaves ownership with the caller.
+  u8[wa(globalPayload)] = 5;
+  check('non-owning HGLOBAL stream leaves the caller allocation valid', u8[wa(globalPayload)] === 5);
+
+  const createdGlobalStream = e.test_ole_create_hglobal_stream(0, 0) >>> 0;
+  check('NULL HGLOBAL stream creates a stable backing handle',
+    createdGlobalStream !== 0 && (e.test_ole_get_hglobal(createdGlobalStream) >>> 0) !== 0 && e.test_ole_stream_size(createdGlobalStream) === 0);
+  e.test_ole_release(createdGlobalStream);
+
   e.test_ole_release(storage);
   e.test_ole_release(lockbytes);
   console.log(`\n${passed}/${passed + failed} checks passed`);

@@ -23,6 +23,14 @@ as `CF_DIB` is copied byte-for-byte, stream/storage media retain COM ownership,
 reference-counted current object. WordPad/RichEdit insertion and presentation
 remain the next integration boundary.
 
+RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
+`CoDisconnectObject`, HGLOBAL-backed `IStream` creation/recovery, and a bounded
+`OleCreateDefaultHandler` failure contract. Native RichEdit can inspect
+`CF_DIB` plus RTF `\\pict` clipboard data without calling a missing dynamic
+export or terminating WordPad. A live default handler/`IOleObject` is not yet
+provided, so the image is rejected and existing document text is preserved;
+visible insertion remains the next OLE milestone.
+
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
 ```text

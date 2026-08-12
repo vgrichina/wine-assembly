@@ -804,6 +804,33 @@
     (call $gs32 (i32.add (local.get $obj) (i32.const 36)) (local.get $owner))
     (local.get $obj))
 
+  (func $ole_create_hglobal_stream (param $hglobal i32) (param $delete_on_release i32) (result i32)
+    (local $obj i32) (local $capacity i32)
+    (local.set $obj (call $ole_create_stream (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $hglobal))
+      (then
+        ;; A NULL input requests a new zero-length HGLOBAL. Keep one backing
+        ;; byte allocated so GetHGlobalFromStream can return a stable handle.
+        (local.set $hglobal (call $heap_alloc (i32.const 1)))
+        (if (i32.eqz (local.get $hglobal))
+          (then (call $heap_free (local.get $obj)) (return (i32.const 0))))
+        (local.set $capacity
+          (i32.sub (call $gl32 (i32.sub (local.get $hglobal) (i32.const 4))) (i32.const 4)))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $hglobal))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $capacity))
+        ;; COM owns HGLOBALs it creates even when the caller supplied FALSE.
+        (call $gs32 (i32.add (local.get $obj) (i32.const 32)) (i32.const 1)))
+      (else
+        (local.set $capacity
+          (i32.sub (call $gl32 (i32.sub (local.get $hglobal) (i32.const 4))) (i32.const 4)))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $hglobal))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $capacity))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $capacity))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 32)) (local.get $delete_on_release))))
+    (local.get $obj))
+
   (func $ole_storage_find_stream (param $storage i32) (param $name i32) (result i32)
     (local $stream i32) (local $stored_name i32)
     (local.set $stream (call $gl32 (i32.add (local.get $storage) (i32.const 16))))
@@ -1454,6 +1481,48 @@
   (func $handle_OleIsCurrentClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (select (i32.const 0) (i32.const 1) (i32.and (local.get $arg0) (i32.eq (local.get $arg0) (global.get $clipboard_ole_data_object)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; CoDisconnectObject(pUnk, reserved) — all supported COM objects are
+  ;; process-local, eagerly owned values. There is no proxy/RPC connection to
+  ;; sever, so disconnecting is a successful lifetime no-op.
+  (func $handle_CoDisconnectObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_CreateStreamOnHGlobal (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $stream i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg2) (i32.const 0))
+        (local.set $stream (call $ole_create_hglobal_stream (local.get $arg0) (local.get $arg1)))
+        (if (local.get $stream)
+          (then (call $gs32 (local.get $arg2) (local.get $stream)) (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x8007000E))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetHGlobalFromStream (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetHGlobalFromILockBytes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; No local OLE server exists yet. Preserve the API contract so RichEdit can
+  ;; reject/fall back from live activation without calling a NULL export.
+  (func $handle_OleCreateDefaultHandler (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x80040154) (i32.const 0x80004003) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; OleRegGetUserType(rclsid, dwFormOfType, lplpszUserType)
   (func $handle_OleRegGetUserType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

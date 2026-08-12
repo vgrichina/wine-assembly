@@ -16558,5 +16558,40 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4179835350
+  },
+  {
+    "id": 2157,
+    "name": "CoDisconnectObject",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1282816226
+  },
+  {
+    "id": 2158,
+    "name": "CreateStreamOnHGlobal",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2357198967
+  },
+  {
+    "id": 2159,
+    "name": "GetHGlobalFromStream",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2136777050
+  },
+  {
+    "id": 2160,
+    "name": "GetHGlobalFromILockBytes",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 103255237
+  },
+  {
+    "id": 2161,
+    "name": "OleCreateDefaultHandler",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1306895378
   }
 ]

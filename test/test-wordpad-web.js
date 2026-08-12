@@ -304,6 +304,65 @@ async function main() {
     poll();
   })`, 10000);
 
+  const dibPaste = await evaluate(`new Promise(resolve => {
+    const app = runningApps.find(item => item && item.name === 'wordpad');
+    const e = app.wine.instance.exports;
+    const guest = e.guest_alloc(56) >>> 0;
+    const wa = app.wine._guestToWasmAddress(guest);
+    const bytes = new Uint8Array(app.wine.memory.buffer);
+    const view = new DataView(app.wine.memory.buffer);
+    bytes.fill(0, wa, wa + 56);
+    view.setUint32(wa, 40, true);       // BITMAPINFOHEADER.biSize
+    view.setInt32(wa + 4, 2, true);    // biWidth
+    view.setInt32(wa + 8, 2, true);    // biHeight (bottom-up)
+    view.setUint16(wa + 12, 1, true);  // biPlanes
+    view.setUint16(wa + 14, 24, true); // biBitCount
+    view.setUint32(wa + 20, 16, true); // two DWORD-aligned scanlines
+    // Bottom row: red, green. Top row: blue, white. Pixels are BGR.
+    bytes.set([0, 0, 255, 0, 255, 0, 0, 0,
+               255, 0, 0, 255, 255, 255, 0, 0], wa + 40);
+    e.clipboard_clear_all_data();
+    const owned = e.clipboard_store_binary_data(8, guest) >>> 0; // CF_DIB
+    const slash = String.fromCharCode(92);
+    const hex = Array.from(bytes.slice(wa, wa + 56), value => value.toString(16).padStart(2, '0')).join('');
+    const rtf = '{' + slash + 'rtf1' + slash + 'ansi{' + slash + 'pict' + slash +
+      'dibitmap0' + slash + 'picw2' + slash + 'pich2' + slash +
+      'picwgoal300' + slash + 'pichgoal300 ' + hex + '}}';
+    const rtfGuest = e.guest_alloc(rtf.length + 1) >>> 0;
+    const rtfWa = app.wine._guestToWasmAddress(rtfGuest);
+    for (let i = 0; i < rtf.length; i++) bytes[rtfWa + i] = rtf.charCodeAt(i);
+    bytes[rtfWa + rtf.length] = 0;
+    const ownedRtf = e.clipboard_store_rtf_data(rtfGuest) >>> 0;
+    if (e.guest_free) e.guest_free(guest);
+    if (e.guest_free) e.guest_free(rtfGuest);
+    const result = e.post_message_q(${ready.editor}, 0x0302, 0, 0) | 0; // WM_PASTE
+    setTimeout(() => {
+      const length = e.send_message(${ready.editor}, 0x000E, 0, 0) | 0;
+      const out = e.guest_alloc(64) >>> 0;
+      e.send_message(${ready.editor}, 0x000D, 64, out);
+      const outWa = app.wine._guestToWasmAddress(out);
+      let text = '';
+      for (let i = 0; i < length && bytes[outWa + i]; i++) text += String.fromCharCode(bytes[outWa + i]);
+      if (e.guest_free) e.guest_free(out);
+      resolve({
+        owned, ownedRtf, result, length, text, running: app.wine.running,
+        eip: e.get_eip ? e.get_eip() >>> 0 : 0,
+        yieldReason: e.get_yield_reason ? e.get_yield_reason() | 0 : -1,
+        postQueue: e.get_post_queue_count ? e.get_post_queue_count() | 0 : -1,
+        log: document.getElementById('log').textContent.slice(-5000),
+      });
+    }, 500);
+  })`, 5000);
+
+  assert(dibPaste.owned, `CF_DIB clipboard copy should succeed: ${JSON.stringify(dibPaste)}`);
+  assert(dibPaste.ownedRtf, `RTF picture clipboard copy should succeed: ${JSON.stringify(dibPaste)}`);
+  if (!dibPaste.running) {
+    throw new Error(`WordPad did not survive native CF_DIB paste: ${JSON.stringify(dibPaste)}\n` +
+      consoleSummary(cdp.events).slice(-120).join('\n'));
+  }
+  assert.strictEqual(dibPaste.text, 'hello world',
+    `unsupported static image fallback must preserve document text: ${JSON.stringify(dibPaste)}`);
+
   const screenshot = await evaluate(`(() => {
     sharedRenderer.repaint();
     const canvas = document.getElementById('screen');
@@ -361,6 +420,7 @@ async function main() {
   console.log('PASS  WordPad stays running in the browser');
   console.log('PASS  browser preloads riched20.dll');
   console.log('PASS  native RichEdit accepts "hello world"');
+  console.log('PASS  native RichEdit safely rejects unsupported static-image paste:', JSON.stringify(dibPaste));
   console.log('PASS  browser toolbar shows 10pt default size');
   console.log('PASS  browser menu font:', JSON.stringify(menuFontState));
   console.log('PASS  screenshot:', PNG);
