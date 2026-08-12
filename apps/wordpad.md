@@ -21,6 +21,23 @@ instead of the WordPad frame. The bounded `test/test-wordpad-web.js` regression
 proves the app stays alive, types `hello world`, and writes
 `test/output/wordpad-web/hello-world.png`.
 
+WordPad's menu bar now retains the Win98 `DEFAULT_GUI_FONT` (`W95FA`) instead
+of changing to a wide monospace fallback during MFC startup. The GDI layer no
+longer destroys process-owned stock objects when an app calls `DeleteObject`
+on a temporary/stock font. The browser regression checks the selected stock
+font handle and CSS family as well as capturing the corrected menu rendering.
+
+Focused menu-font probe:
+
+```text
+startup: MFC calls DeleteObject while replacing temporary/stock fonts
+GDI:     DEFAULT_GUI_FONT handle 0x30021 remains alive and selectable
+menu:    bar paint selects W95FA; the second item begins at x=36 instead of
+         the x=55 width produced by the 13px monospace fallback
+result:  PASS for proportional Win98 menu text plus matching paint/hit-test
+         geometry in the browser WordPad smoke.
+```
+
 Focused typing probe:
 
 ```text

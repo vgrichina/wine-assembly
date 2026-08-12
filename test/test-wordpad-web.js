@@ -312,6 +312,21 @@ async function main() {
   fs.writeFileSync(PNG, Buffer.from(screenshot.replace(/^data:image\/png;base64,/, ''), 'base64'));
 
   const log = await evaluate(`document.getElementById('log').textContent`);
+  const menuFontState = await evaluate(`(() => {
+    const app = runningApps.find(item => item && item.name === 'wordpad');
+    const main = sharedRenderer.windows[${ready.main}];
+    const e = app.wine.instance.exports;
+    const hdc = (${ready.main} + 0x40000) >>> 0;
+    const gdi = app.wine.hostCtx && app.wine.hostCtx.sharedGdi;
+    const dc = gdi && gdi._dcState && gdi._dcState[hdc];
+    const handle = dc && dc.selectedFont || 0;
+    const font = gdi && gdi._gdiObjects && gdi._gdiObjects[handle];
+    return {
+      handle,
+      css: font && font.css || '',
+      secondItemX: e.menu_bar_item_x ? e.menu_bar_item_x(main.hwnd, 1) | 0 : -1,
+    };
+  })()`);
   const sizeState = await evaluate(`(() => {
     const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
       .find(item => item && item.wasm && item.wasm.exports.ctrl_get_id &&
@@ -337,12 +352,17 @@ async function main() {
     `browser should preload riched20.dll:\n${consoleText.slice(-5000)}`);
   assert.deepStrictEqual(sizeState, { rendererText: '10', guestText: '10' },
     'WordPad browser toolbar should show the 10pt default in renderer and control state');
+  assert.strictEqual(menuFontState.handle, 0x30021,
+    `WordPad menu should select DEFAULT_GUI_FONT: ${JSON.stringify(menuFontState)}`);
+  assert(/W95FA/.test(menuFontState.css),
+    `WordPad menu should use the Win98 UI font: ${JSON.stringify(menuFontState)}`);
   assert(fs.statSync(PNG).size > 0, 'WordPad browser screenshot should be written');
 
   console.log('PASS  WordPad stays running in the browser');
   console.log('PASS  browser preloads riched20.dll');
   console.log('PASS  native RichEdit accepts "hello world"');
   console.log('PASS  browser toolbar shows 10pt default size');
+  console.log('PASS  browser menu font:', JSON.stringify(menuFontState));
   console.log('PASS  screenshot:', PNG);
   cleanup();
 }

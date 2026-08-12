@@ -52,4 +52,12 @@ assert.strictEqual(host.gdi_select_object(dc, 0x30007), bitmap,
 assert.strictEqual(dcState.selectedBitmap, 0x30007,
   'restoring the default bitmap should detach the document bitmap');
 
+assert.strictEqual(host.gdi_delete_object(0x30021), 1,
+  'DeleteObject should tolerate DEFAULT_GUI_FONT');
+assert(gdi._gdiObjects[0x30021],
+  'DeleteObject must not destroy process-owned stock fonts');
+assert.strictEqual(host.gdi_select_object(dc, 0x30021), 0x3001d,
+  'DEFAULT_GUI_FONT should remain selectable after DeleteObject');
+assert.strictEqual(dcState.selectedFont, 0x30021);
+
 console.log('PASS  stock objects round-trip without losing the memory-DC bitmap');
