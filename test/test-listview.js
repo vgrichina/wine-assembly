@@ -38,7 +38,16 @@ const LVM_GETITEMTEXTA = 0x102D;
 const LVM_SETITEMTEXTA = 0x102E;
 const LVM_GETIMAGELIST = 0x1002;
 const LVM_SETIMAGELIST = 0x1003;
+const LVM_SETITEMPOSITION = 0x100F;
+const LVM_GETITEMPOSITION = 0x1010;
+const LVM_GETSTRINGWIDTHA = 0x1011;
+const LVM_REDRAWITEMS = 0x1015;
+const LVM_FINDITEMA = 0x100D;
+const LVM_GETVIEWRECT = 0x1022;
+const LVM_GETORIGIN = 0x1029;
+const LVM_UPDATE = 0x102A;
 const LVM_GETSELECTEDCOUNT = 0x1032;
+const LVM_GETITEMSPACING = 0x1033;
 const LVM_GETSUBITEMRECT = 0x1038;
 const WM_PAINT = 0x000F;
 const WM_VSCROLL = 0x0115;
@@ -50,6 +59,9 @@ const LVIF_TEXT = 0x0001;
 const LVIF_IMAGE = 0x0002;
 const LVIF_PARAM = 0x0004;
 const LVIF_STATE = 0x0008;
+const LVFI_PARAM = 0x0001;
+const LVFI_STRING = 0x0002;
+const LVFI_PARTIAL = 0x0008;
 const LVIS_SELECTED = 0x0002;
 const LVNI_SELECTED = 0x0002;
 const LVIR_BOUNDS = 0x0000;
@@ -237,6 +249,15 @@ async function main() {
       state: dv.getUint32(p + 12, true),
     };
   }
+  function findItem(start, flags, text = '', lParam = 0) {
+    const g = e.guest_alloc(24);
+    const p = wa(g);
+    u8.fill(0, p, p + 24);
+    dv.setUint32(p + 0, flags, true);
+    if (text) dv.setUint32(p + 4, writeStr(text), true);
+    dv.setUint32(p + 8, lParam >>> 0, true);
+    return e.send_message(lv, LVM_FINDITEMA, start, g);
+  }
   function getRect(msg, item, leftInput, topInput = 0) {
     const g = e.guest_alloc(16);
     const p = wa(g);
@@ -250,6 +271,17 @@ async function main() {
       top: dv.getInt32(p + 4, true),
       right: dv.getInt32(p + 8, true),
       bottom: dv.getInt32(p + 12, true),
+    };
+  }
+  function getPoint(msg, item) {
+    const g = e.guest_alloc(8);
+    const p = wa(g);
+    u8.fill(0, p, p + 8);
+    const ok = e.send_message(lv, msg, item, g);
+    return {
+      ok,
+      x: dv.getInt32(p + 0, true),
+      y: dv.getInt32(p + 4, true),
     };
   }
 
@@ -290,6 +322,12 @@ async function main() {
   }
   check('LVM_GETITEMCOUNT is 12', e.send_message(lv, LVM_GETITEMCOUNT, 0, 0) === 12);
   check('count export is 12', e.listview_get_count(lv) === 12);
+  check('LVM_GETSTRINGWIDTHA returns bounded text width', e.send_message(lv, LVM_GETSTRINGWIDTHA, 0, writeStr('abc')) === 26);
+  check('LVM_FINDITEMA finds exact text case-insensitively', findItem(-1, LVFI_STRING, 'value 5') === 5);
+  check('LVM_FINDITEMA honors partial text match', findItem(-1, LVFI_STRING | LVFI_PARTIAL, 'Val') === 0);
+  check('LVM_FINDITEMA starts after supplied index', findItem(5, LVFI_STRING | LVFI_PARTIAL, 'Value') === 6);
+  check('LVM_FINDITEMA finds lParam', findItem(-1, LVFI_PARAM, '', 0xCAFE0004) === 4);
+  check('LVM_FINDITEMA reports not found', findItem(-1, LVFI_STRING, 'missing') === -1);
 
   const row5 = getItemText(5, 0);
   check('LVM_GETITEMTEXTA row text length', row5.len === 'Value 5'.length);
@@ -317,6 +355,16 @@ async function main() {
   e.send_message(lv, WM_MOUSEWHEEL, (-120 << 16), 0);
   check('mouse wheel scrolls down 3 rows', e.listview_get_top_index(lv) === 3);
   check('LVM_GETTOPINDEX follows wheel scroll', e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 3);
+  const pos5 = getPoint(LVM_GETITEMPOSITION, 5);
+  check('LVM_GETITEMPOSITION returns scrolled report y', pos5.ok === 1 && pos5.x === 0 && pos5.y === 50, JSON.stringify(pos5));
+  check('LVM_SETITEMPOSITION is accepted as report no-op', e.send_message(lv, LVM_SETITEMPOSITION, 5, makeLParam(33, 44)) === 1);
+  const origin = getPoint(LVM_GETORIGIN, 0);
+  check('LVM_GETORIGIN reflects top-index scroll', origin.ok === 1 && origin.x === 0 && origin.y === -48, JSON.stringify(origin));
+  const viewRect = getRect(LVM_GETVIEWRECT, 0, 0);
+  check('LVM_GETVIEWRECT returns report content bounds', viewRect.ok === 1 && viewRect.left === 0 && viewRect.top === 0 && viewRect.right === 210 && viewRect.bottom === 210, JSON.stringify(viewRect));
+  check('LVM_GETITEMSPACING returns report spacing', e.send_message(lv, LVM_GETITEMSPACING, 0, 0) === ((16 << 16) | 120));
+  check('LVM_UPDATE accepts valid item', e.send_message(lv, LVM_UPDATE, 5, 0) === 1);
+  check('LVM_REDRAWITEMS accepts visible range', e.send_message(lv, LVM_REDRAWITEMS, 0, 3) === 1);
 
   const ht = e.guest_alloc(20);
   const htp = wa(ht);

@@ -38,6 +38,11 @@ Key fixes:
   `LVM_GETCOLUMNA` / `LVM_SETCOLUMNA`, `LVM_GETITEMRECT`,
   `LVM_GETSUBITEMRECT`, and report-column subitem hit-test output for apps
   that query geometry before drawing, selecting, or dispatching context actions.
+- The same bounded ListView path now answers common report-pane probes:
+  `LVM_GETSTRINGWIDTHA`, `LVM_FINDITEMA` for text/lParam searches,
+  `LVM_GETITEMPOSITION`, `LVM_GETORIGIN`, `LVM_GETVIEWRECT`,
+  `LVM_GETITEMSPACING`, and repaint hints through `LVM_UPDATE` /
+  `LVM_REDRAWITEMS`.
 - ListView selection changes now send bounded `LVN_ITEMCHANGING` /
   `LVN_ITEMCHANGED` state notifications, and row click release sends `NM_CLICK`
   to the parent window.
@@ -74,7 +79,7 @@ Validation:
 ```sh
 node test/test-treeview-scroll.js   # passes 27/27
 node test/test-storage-registry.js  # passes registry root/subkey/value/info coverage
-node test/test-listview.js           # passes 97/97
+node test/test-listview.js           # passes 110/110
 node test/test-listbox.js
 node test/test-regedit-deep.js
 node test/test-wat-memory-map.js

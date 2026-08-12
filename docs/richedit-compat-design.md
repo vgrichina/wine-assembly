@@ -100,10 +100,12 @@ bounded report-style `SysListView32` subset now reuse the same shared vertical
 scrollbar hit/drag math as the RichEdit/Edit/ListBox paths. The ListView
 subset also has bounded report-column get/set, item/subitem rectangle queries,
 subitem hit-test output, selection/click notifications, and a pseudo-header
-query surface for RegEdit/installer-style report panes. Single row/column
-deletion keeps the bounded report state coherent, and ListView image-list
-handles plus per-item image/lParam metadata now round-trip without claiming
-full icon-mode rendering.
+query surface for RegEdit/installer-style report panes. It also covers common
+query/invalidation messages used by report-pane callers: string width,
+find-by-text/lParam, item position, origin/view rect, spacing, update, and
+redraw. Single row/column deletion keeps the bounded report state coherent,
+and ListView image-list handles plus per-item image/lParam metadata now
+round-trip without claiming full icon-mode rendering.
 
 That means these pieces are already good enough for basic insertion:
 
@@ -212,7 +214,7 @@ native-editing path is alive.
 - Added `test/test-listview.js`, a standalone WAT regression that creates a
   ListView, inserts report columns plus 12 rows, verifies text/subitem
   round-trips, hit-testing through the scroll offset, selection, scrollbar
-  behavior, and cleanup.
+  behavior, bounded query/invalidation messages, and cleanup.
 - Protected `SysListView32` from registered-class fallback so RegEdit routes
   `CreateWindowExA("SysListView32", ...)` to the WAT-native ListView instead
   of its guest/COMCTL32 window proc.
@@ -885,6 +887,7 @@ Acceptance:
 [x] SysListView32 pseudo-header query messages are asserted
 [x] SysListView32 row/column deletion is asserted
 [x] SysListView32 image-list handles and LVIF_IMAGE/LVIF_PARAM metadata are asserted
+[x] SysListView32 report query/invalidation messages are asserted
 [ ] Advanced ListView modes/notifications/header fidelity are implemented
 [x] App status docs are updated from current screenshots/probes
 ```

@@ -3384,6 +3384,44 @@
       (br $cols)))
     (local.get $x))
 
+  (func $lv_report_total_width (param $sw i32) (result i32)
+    (local $col_count i32) (local $i i32) (local $x i32) (local $width i32)
+    (local.set $col_count (i32.load offset=16 (local.get $sw)))
+    (if (i32.eqz (local.get $col_count))
+      (then (return (i32.const 120))))
+    (local.set $i (i32.const 0))
+    (local.set $x (i32.const 0))
+    (block $done (loop $cols
+      (br_if $done (i32.ge_s (local.get $i) (local.get $col_count)))
+      (local.set $width (call $lv_report_col_width (local.get $sw) (local.get $i)))
+      (if (i32.le_s (local.get $width) (i32.const 0))
+        (then (local.set $width (i32.const 80))))
+      (local.set $x (i32.add (local.get $x) (local.get $width)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cols)))
+    (local.get $x))
+
+  (func $lv_cell_text_matches (param $cell_g i32) (param $needle_g i32) (param $partial i32) (result i32)
+    (local $hay_w i32) (local $needle_w i32) (local $i i32) (local $hc i32) (local $nc i32)
+    (if (i32.or (i32.eqz (local.get $cell_g)) (i32.eqz (local.get $needle_g)))
+      (then (return (i32.const 0))))
+    (local.set $hay_w (call $g2w (local.get $cell_g)))
+    (local.set $needle_w (call $g2w (local.get $needle_g)))
+    (block $done (loop $scan
+      (local.set $hc (i32.load8_u (i32.add (local.get $hay_w) (local.get $i))))
+      (local.set $nc (i32.load8_u (i32.add (local.get $needle_w) (local.get $i))))
+      (if (i32.eqz (local.get $nc))
+        (then
+          (if (local.get $partial) (then (return (i32.const 1))))
+          (return (select (i32.const 1) (i32.const 0) (i32.eqz (local.get $hc))))))
+      (if (i32.eqz (local.get $hc))
+        (then (return (i32.const 0))))
+      (if (i32.ne (call $tolower (local.get $hc)) (call $tolower (local.get $nc)))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $lv_cell_addr (param $sw i32) (param $item i32) (param $sub i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
@@ -3842,6 +3880,94 @@
     ;; LVM_GETITEMCOUNT
     (if (i32.eq (local.get $msg) (i32.const 0x1004))
       (then (return (i32.load (local.get $sw)))))
+
+    ;; LVM_GETSTRINGWIDTHA
+    (if (i32.eq (local.get $msg) (i32.const 0x1011))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (return (i32.add
+          (i32.mul (call $strlen (call $g2w (local.get $lParam))) (i32.const 6))
+          (i32.const 8)))))
+
+    ;; LVM_GETITEMPOSITION / LVM_SETITEMPOSITION
+    (if (i32.eq (local.get $msg) (i32.const 0x1010))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $idx (local.get $wParam))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
+          (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (i32.store (local.get $ptr) (i32.const 0))
+        (i32.store offset=4 (local.get $ptr)
+          (i32.add (call $lv_header_h (local.get $sw))
+                   (i32.mul (i32.sub (local.get $idx) (i32.load offset=36 (local.get $sw))) (i32.const 16))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x100F))
+      (then
+        ;; Report mode owns row layout; accept the message as a compatibility
+        ;; no-op so apps that cache icon positions can continue.
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; LVM_FINDITEMA
+    (if (i32.eq (local.get $msg) (i32.const 0x100D))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (local.set $mask (i32.load (local.get $ptr)))
+        (local.set $idx (i32.add (local.get $wParam) (i32.const 1)))
+        (if (i32.lt_s (local.get $idx) (i32.const 0))
+          (then (local.set $idx (i32.const 0))))
+        (block $find_done (loop $find
+          (br_if $find_done (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
+          (if (i32.and (local.get $mask) (i32.const 0x0002)) ;; LVFI_STRING
+            (then
+              (if (call $lv_cell_text_matches
+                    (i32.load (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)))
+                    (i32.load offset=4 (local.get $ptr))
+                    (i32.and (local.get $mask) (i32.const 0x0008)))
+                (then (return (local.get $idx))))))
+          (if (i32.and (local.get $mask) (i32.const 0x0001)) ;; LVFI_PARAM
+            (then
+              (if (i32.eq (i32.load (call $lv_item_param_addr (local.get $sw) (local.get $idx)))
+                          (i32.load offset=8 (local.get $ptr)))
+                (then (return (local.get $idx))))))
+          (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+          (br $find)))
+        (return (i32.const -1))))
+
+    ;; LVM_GETORIGIN / LVM_GETVIEWRECT / LVM_GETITEMSPACING
+    (if (i32.eq (local.get $msg) (i32.const 0x1029))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (i32.store (local.get $ptr) (i32.const 0))
+        (i32.store offset=4 (local.get $ptr)
+          (i32.sub (i32.const 0) (i32.mul (i32.load offset=36 (local.get $sw)) (i32.const 16))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1022))
+      (then
+        (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
+        (local.set $ptr (call $g2w (local.get $lParam)))
+        (i32.store (local.get $ptr) (i32.const 0))
+        (i32.store offset=4 (local.get $ptr) (i32.const 0))
+        (i32.store offset=8 (local.get $ptr) (call $lv_report_total_width (local.get $sw)))
+        (i32.store offset=12 (local.get $ptr)
+          (i32.add (call $lv_header_h (local.get $sw))
+                   (i32.mul (i32.load (local.get $sw)) (i32.const 16))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x1033))
+      (then
+        (return (i32.or (i32.const 120) (i32.shl (i32.const 16) (i32.const 16))))))
+
+    ;; LVM_UPDATE / LVM_REDRAWITEMS. The WAT control repaints as one surface;
+    ;; accept these range invalidation hints and schedule a repaint.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x102A))
+                (i32.eq (local.get $msg) (i32.const 0x1015)))
+      (then
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
 
     ;; LVM_DELETEITEM / LVM_DELETEALLITEMS
     (if (i32.eq (local.get $msg) (i32.const 0x1008))
