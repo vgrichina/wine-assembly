@@ -1602,7 +1602,8 @@
     (i32.store offset=4 (local.get $cache_w) (local.get $lo))
     (i32.store offset=8 (local.get $cache_w) (local.get $hi))
     (i32.store offset=12 (local.get $cache_w) (i32.const 0))
-    (call $host_note_richedit_charformat_size (local.get $yHeight)))
+    (call $host_note_richedit_charformat_size
+      (local.get $yHeight) (local.get $lo) (local.get $hi)))
 
   ;; RichEdit paragraph compatibility cache. Native RichEdit already handles
   ;; simple alignment for WordPad; this preserves the other explicitly set

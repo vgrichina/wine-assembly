@@ -431,8 +431,11 @@ Current evidence from the 2026-08-11 follow-up probe:
   focused round-trip now covers Arial / Bold Italic / Underline / 24pt / Blue.
   The VFS write boundary rewrites RichEdit's native `\up3276` / `\fs3277`
   sentinels to `\up0` / `\fs48` from the latest explicit size hint. Immediate
-  mixed-selection readback is now range-aware; arbitrary mixed-run persistence
-  and advanced RTF remain follow-up work.
+  mixed-selection readback is now range-aware. The stream-out compatibility
+  rewrite also preserves one explicitly sized selection against surrounding
+  default-size text (`\\fs48 ... \\fs20`), with focused Save As -> New -> Open
+  coverage. Multiple overlapping format edits and advanced RTF remain
+  follow-up work.
 - WordPad paragraph center alignment now routes through the app command path.
   The focused regression verifies `EM_GETPARAFORMAT` reports `alignment=3`
   after Ctrl+E and after Save As; the saved stream includes centered paragraph
@@ -453,8 +456,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   GDI/RichEdit font-size hint uses the latest explicit `CFM_SIZE` value when
   native RichEdit later asks GDI for the known sentinel-derived huge font
   height, so the before/after editor screenshots visibly show 24pt text. The
-  same latest-size value is cached per HWND and patched into
-  `EM_GETCHARFORMAT`; mixed-size run reporting remains later work.
+  explicit-size value is cached per HWND and patched into
+  `EM_GETCHARFORMAT` only when the queried selection exactly matches the
+  formatted range. A mixed-size selection keeps RichEdit's sentinel instead
+  of being misreported as uniformly 24pt.
 - A direct focused RichEdit color probe now applies
   `EM_SETCHARFORMAT(CFM_COLOR)` to the selected WordPad text. Native RichEdit
   reports `color=0xff0000` with autocolor cleared, `SetTextColor` receives that
@@ -602,6 +607,11 @@ Current evidence from the 2026-08-11 follow-up probe:
   it applies 24pt to only the first word, verifies that exact selection reports
   480 twips, then verifies a whole-document mixed-size selection retains the
   native 32767 sentinel instead of being patched to a false uniform size.
+- Regression test: `node test/test-wordpad-mixed-format-roundtrip.js` passes
+  9/9; it saves `small` at 24pt beside default-size `large`, reopens the RTF,
+  verifies the individual runs report 480/200 twips, verifies the whole
+  selection clears `CFM_SIZE` as mixed, and inspects the saved stream for
+  `\\fs48 ... \\fs20` without the native size sentinel.
 - Regression test: `node test/test-wordpad-paragraph-align.js` passes 17/17
   and writes `test/output/wordpad-richedit/paragraph-align-left.png`,
   and `test/output/wordpad-richedit/paragraph-align-center.png`; it covers
@@ -657,12 +667,13 @@ blocker.
    manager tracks suspend counts.
 3. Expand WordPad coverage beyond basic insertion/deletion/newline/navigation:
    broader RichEdit wrapping/layout edge cases, advanced toolbar UI state,
-   mixed-run size reporting, and embedded OLE/object clipboard fidelity still
-   need focused probes. Covered areas now include caret blink/XOR cadence,
+   and embedded OLE/object clipboard fidelity still need focused probes.
+   Covered areas now include mixed-run size reporting, caret blink/XOR cadence,
    Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
    reporting, visible 24pt rendering, simple RTF face/style/size/color
-   round-trip, simple paragraph center-alignment round-trip, Edit-menu
+   round-trip, one selected-size run against default-size text across RTF
+   Save As -> New -> Open, simple paragraph center-alignment round-trip, Edit-menu
    Select All/Copy/Cut/Paste plain-text commands, menu Copy/Paste basic
    RichEdit character/paragraph-format preservation, keyboard rich-format
    clipboard shortcuts, registered non-OLE RTF clipboard data, paragraph

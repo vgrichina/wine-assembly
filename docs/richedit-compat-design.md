@@ -400,7 +400,12 @@ native-editing path is alive.
   also records the explicit selection range before patching
   `EM_GETCHARFORMAT`, so the font dialog regression reports `yHeight=480` for
   that exact run while a larger mixed-size selection retains the native 32767
-  sentinel. This is still not a full mixed-run format model.
+  sentinel. `test/test-wordpad-mixed-format-roundtrip.js` extends this bounded
+  cache through RTF stream-out: one explicitly sized range gets `\\fs48` and
+  surrounding default text is restored to `\\fs20`; reopening reports the
+  individual runs as 480/200 twips and clears `CFM_SIZE` for the mixed whole
+  selection. Multiple overlapping explicit-size edits are still not a full
+  mixed-run format model.
 - Added a focused `set-focus-charformat-color` harness action and
   `test/test-wordpad-richedit-color.js`. The bounded probe applies
   `EM_SETCHARFORMAT(CFM_COLOR)` directly to the focused WordPad RichEdit child,
@@ -761,6 +766,8 @@ Acceptance:
 [x] plain text save/reopen through the text filter works in WordPad
 [x] basic RTF save/reopen preserves bold/italic/underline charformat
 [x] basic RTF save/reopen preserves one selected run's font face/size/color
+[x] basic RTF save/reopen preserves one selected-size run against surrounding
+    default-size text and reports the reopened whole selection as mixed
 [x] basic RTF save emits selected paragraph center alignment and reopens text
 [x] focused PARAFORMAT2 numbering/indents/tabs read back through RichEdit bridge
 [x] basic RTF save/reopen preserves paragraph numbering/indents/tabs
@@ -828,6 +835,7 @@ Acceptance:
 [x] WordPad toolbar/menu color command route applies Blue through app UI
 [x] simple RTF round-trips without losing basic character-format effects
 [x] simple RTF round-trips one selected run's font size/color
+[x] simple RTF round-trips one selected-size run against default-size text
 [x] simple RTF stream-out records selected paragraph center alignment
 [x] focused paragraph indents/tabs/numbering read back through RichEdit bridge
 [x] paragraph indents/tabs/numbering RTF round-trip correctly
@@ -858,6 +866,7 @@ Acceptance:
 [x] Plain text save/reopen through the text filter works
 [x] Basic RTF save/reopen preserves bold/italic/underline styling state
 [x] Basic RTF save/reopen preserves selected font size/color state
+[x] Basic RTF save/reopen preserves one selected-size run against default text
 [x] Basic RTF save emits selected paragraph alignment state and reopens text
 [x] Focused RichEdit PARAFORMAT2 fields read back for numbering/indents/tabs
 [x] Basic paragraph numbering/indents/tabs round-trip through WordPad RTF
