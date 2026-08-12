@@ -602,11 +602,12 @@ screenshot where the result is visual.
    [x] tabs, indents, spacing, alignment, and wrapping coexist across paragraphs
 
 2. Printing
-   [ ] Page Setup edits margins and returns stable PAGESETUPDLG state
-   [ ] Print returns a printer DC plus Win98-compatible PRINTDLG fields
+   [x] Page Setup edits margins and returns stable PAGESETUPDLG state
+   [x] Print returns a printer DC plus Win98-compatible PRINTDLG fields
    [ ] StartDoc/StartPage/EndPage/EndDoc execute in the expected order
    [ ] EM_FORMATRANGE paginates a multi-page document using printer metrics
-   [ ] Print Preview displays page bounds and advances between pages
+   [x] Print Preview displays the preview frame and page-view surface
+   [ ] Print Preview advances between pages
 
 3. Editing and layout stress
    [ ] large multi-paragraph documents remain editable and scrollable
@@ -630,7 +631,7 @@ screenshot where the result is visual.
    [x] SuspendThread/ResumeThread return previous nested suspend counts
    [x] only the final ResumeThread makes a worker runnable
    [x] invalid/exited handles return 0xFFFFFFFF
-   [ ] app-level WordPad startup regression covers the real ResumeThread path
+   [x] app-level WordPad startup regression covers the real ResumeThread path
 ```
 
 Still postponed because it is OLE/object work: embedded objects, in-place
@@ -652,6 +653,30 @@ inheritance to equivalent direct controls, including `\plain` at style
 boundaries, while leaving stored bytes unchanged. The 17-point acceptance
 matrix passes against the saved artifact and screenshot
 `test/output/wordpad-richedit/advanced-rtf.png`.
+
+### 2026-08-12 printing slice
+
+WordPad now receives a stable default `Web Printer` through `PrintDlgA`, with
+Letter paper, portrait orientation, page range/copy fields, a canvas-backed
+printer DC, 300-DPI metrics, and 0.25-inch physical offsets. The interactive
+Print form exposes page range and copies; Page Setup exposes four editable
+inch margins and commits them to `PAGESETUPDLG`. The accepted forms were
+visually verified in `/private/tmp/wordpad-print-dialog.png` and
+`/private/tmp/wordpad-page-setup.png`.
+
+The GDI print lifecycle now validates `StartDoc` -> `StartPage` -> `EndPage` ->
+`EndDoc`, and `EM_FORMATRANGE` returns a bounded next-character index derived
+from the requested twip rectangle instead of leaking the native structure
+pointer. Print Preview reaches WordPad's real preview mode: it hides the edit
+view and normal bars, creates the preview toolbar, and installs an
+`AfxFrameOrView42` page surface. Preview also drove implementation of the DC
+state queries `GetBkMode`, `Get/SetPolyFillMode`, and `GetStretchBltMode`.
+
+Two printing acceptance points remain open. A multi-page fixture still needs
+to prove successive `EM_FORMATRANGE` boundaries and preview navigation. In the
+physical Print route, the app calls `StartDoc`, `StartPage`, `EM_FORMATRANGE`,
+and `EndPage`, but then spends indefinitely in its native print-progress
+cleanup/paint path; it has not yet called `EndDoc` or re-enabled the main frame.
 
 ## Suggested implementation slice
 

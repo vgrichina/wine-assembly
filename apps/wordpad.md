@@ -771,6 +771,15 @@ saved files retain the table/font/color/paragraph structure. See
 `test/test-wordpad-advanced-rtf.js` and
 `test/output/wordpad-richedit/advanced-rtf.png`.
 
+Printing status (2026-08-12): concrete Print and Page Setup dialogs now expose
+page range, copies, Letter paper, and editable margins. The default printer DC
+reports 300-DPI Letter metrics and supports the GDI document/page lifecycle.
+Print Preview reaches WordPad's native preview toolbar and page-view surface;
+DC state cloning no longer crashes on background, polygon-fill, or stretch
+mode queries. Remaining printing work is multi-page preview navigation and a
+native print-progress cleanup loop after the first `EndPage` (the app has not
+yet reached `EndDoc`).
+
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
 

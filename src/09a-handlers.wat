@@ -1450,6 +1450,25 @@
   ;; 86: GetDeviceCaps
   (func $handle_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $screen i32)
+    ;; Letter printer: 8.5x11 inches at 300 DPI, printable 8x10.5 inches.
+    (if (i32.and (global.get $printer_hdc) (i32.eq (local.get $arg0) (global.get $printer_hdc)))
+      (then
+        (global.set $eax (i32.const 0))
+        (if (i32.eq (local.get $arg1) (i32.const 2)) (then (global.set $eax (i32.const 2))))    ;; DT_RASPRINTER
+        (if (i32.eq (local.get $arg1) (i32.const 4)) (then (global.set $eax (i32.const 216))))  ;; HORZSIZE mm
+        (if (i32.eq (local.get $arg1) (i32.const 6)) (then (global.set $eax (i32.const 279))))  ;; VERTSIZE mm
+        (if (i32.eq (local.get $arg1) (i32.const 8)) (then (global.set $eax (i32.const 2400)))) ;; HORZRES
+        (if (i32.eq (local.get $arg1) (i32.const 10)) (then (global.set $eax (i32.const 3150)))) ;; VERTRES
+        (if (i32.eq (local.get $arg1) (i32.const 12)) (then (global.set $eax (i32.const 32))))   ;; BITSPIXEL
+        (if (i32.eq (local.get $arg1) (i32.const 14)) (then (global.set $eax (i32.const 1))))    ;; PLANES
+        (if (i32.eq (local.get $arg1) (i32.const 88)) (then (global.set $eax (i32.const 300))))  ;; LOGPIXELSX
+        (if (i32.eq (local.get $arg1) (i32.const 90)) (then (global.set $eax (i32.const 300))))  ;; LOGPIXELSY
+        (if (i32.eq (local.get $arg1) (i32.const 110)) (then (global.set $eax (i32.const 2550)))) ;; PHYSICALWIDTH
+        (if (i32.eq (local.get $arg1) (i32.const 111)) (then (global.set $eax (i32.const 3300)))) ;; PHYSICALHEIGHT
+        (if (i32.eq (local.get $arg1) (i32.const 112)) (then (global.set $eax (i32.const 75))))   ;; PHYSICALOFFSETX
+        (if (i32.eq (local.get $arg1) (i32.const 113)) (then (global.set $eax (i32.const 75))))   ;; PHYSICALOFFSETY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     ;; Return reasonable defaults for common caps
     ;; TECHNOLOGY=2, HORZSIZE=4, VERTSIZE=6, HORZRES=8, VERTRES=10,
     ;; RASTERCAPS=38, ASPECT*=40/42/44, LOGPIXELSX=88, LOGPIXELSY=90.
@@ -3057,11 +3076,39 @@
 
   ;; 203: PageSetupDlgA(lpPS) — show placeholder modal dialog
   (func $handle_PageSetupDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dlg i32) (local $owner i32)
+    (local $dlg i32) (local $owner i32) (local $flags i32)
+    (local.set $flags (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))
+    ;; PAGESETUPDLG ptPaperSize + rtMinMargin + rtMargin. WordPad requests
+    ;; thousandths of an inch; also honor hundredths-of-mm callers.
+    (if (i32.and (local.get $flags) (i32.const 8)) ;; PSD_INHUNDREDTHSOFMILLIMETERS
+      (then
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 21590))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 24)) (i32.const 27940))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 28)) (i32.const 635))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 32)) (i32.const 635))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 36)) (i32.const 635))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 40)) (i32.const 635))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 44)) (i32.const 2540))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 48)) (i32.const 2540))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 52)) (i32.const 2540))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 56)) (i32.const 2540)))
+      (else
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 8500))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 24)) (i32.const 11000))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 28)) (i32.const 250))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 32)) (i32.const 250))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 36)) (i32.const 250))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 40)) (i32.const 250))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 44)) (i32.const 1000))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 48)) (i32.const 1000))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 52)) (i32.const 1000))
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 56)) (i32.const 1000))))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-    (call $create_stub_dialog (local.get $dlg) (local.get $owner) (i32.const 0x241))   ;; "Page Setup"
+    (global.set $common_dialog_kind (i32.const 1))
+    (global.set $common_dialog_struct (local.get $arg0))
+    (call $create_page_setup_dialog (local.get $dlg) (local.get $owner))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
 
   ;; 204: CommDlgExtendedError() — return 0 (no error)
@@ -8201,14 +8248,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 581: SetPolyFillMode — STUB: unimplemented
+  ;; 581: SetPolyFillMode(hdc, mode) — canvas fill accepts either rule;
+  ;; return the previous default (ALTERNATE) as Win32 requires.
   (func $handle_SetPolyFillMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 582: StartDocW — STUB: unimplemented
   (func $handle_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.ne (global.get $printer_doc_state) (i32.const 0))
+      (then (global.set $eax (i32.const -1)))
+      (else
+        (global.set $printer_doc_state (i32.const 1))
+        (global.set $printer_page_count (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 583: CloseMetaFile — STUB: unimplemented
@@ -8381,14 +8435,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 597: GetPolyFillMode — STUB: unimplemented
+  ;; 597: GetPolyFillMode(hdc) — default ALTERNATE winding rule
   (func $handle_GetPolyFillMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 598: GetBkMode — STUB: unimplemented
+  ;; 598: GetBkMode(hdc) — current OPAQUE/TRANSPARENT setting
   (func $handle_GetBkMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $host_gdi_get_bk_mode (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 599: GetTextColor — STUB: unimplemented
@@ -8398,9 +8454,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 600: GetStretchBltMode — STUB: unimplemented
+  ;; 600: GetStretchBltMode(hdc) — BLACKONWHITE default
   (func $handle_GetStretchBltMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 601: GetBkColor — STUB: unimplemented
@@ -11299,23 +11356,52 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 953: PrintDlgA(lppd) — show placeholder modal dialog
+  ;; 953: PrintDlgA(lppd) — default printer data plus interactive form
   (func $handle_PrintDlgA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dlg i32) (local $owner i32)
+    (local $dlg i32) (local $owner i32) (local $flags i32)
+    (local $devmode i32) (local $devnames i32)
+    (local.set $flags (call $gl32 (i32.add (local.get $arg0) (i32.const 20))))
+    ;; Stable DEVMODEA/DEVNAMES handles. Global handles are direct guest heap
+    ;; pointers in this runtime, so GlobalLock remains identity as MFC expects.
+    (local.set $devmode (call $heap_alloc (i32.const 156)))
+    (memory.fill (call $g2w (local.get $devmode)) (i32.const 0) (i32.const 156))
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 36)) (i32.const 156)) ;; dmSize
+    (call $gs32 (i32.add (local.get $devmode) (i32.const 40)) (i32.const 0x00000F03)) ;; orientation/paper/copies/quality
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 44)) (i32.const 1))   ;; portrait
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 46)) (i32.const 1))   ;; Letter
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 48)) (i32.const 2794)) ;; 11in in 0.1mm
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 50)) (i32.const 2159)) ;; 8.5in
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 54)) (i32.const 1))   ;; copies
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 58)) (i32.const 300)) ;; print quality
+    (local.set $devnames (call $heap_alloc (i32.const 32)))
+    (memory.fill (call $g2w (local.get $devnames)) (i32.const 0) (i32.const 32))
+    (call $gs16 (local.get $devnames) (i32.const 8))
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 16))
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 4)) (i32.const 28))
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 6)) (i32.const 0))
+    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 8)) (i32.const 0x11220) (i32.const 8)) ;; WINSPOOL
+    (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 16)) (i32.const 0x11229) (i32.const 12)) ;; Web Printer
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
+    (global.set $printer_hdc (call $host_alloc_screen_dc))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 16)) (global.get $printer_hdc))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 24)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 26)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 28)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 30)) (i32.const 9999))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 32)) (i32.const 1))
     ;; PD_RETURNDEFAULT (0x400) is a noninteractive default-printer probe.
-    ;; There is no printer device in the web runtime, so report no defaults;
-    ;; displaying the placeholder here incorrectly blocks MFC's printer-setup
-    ;; worker during application startup (WordPad is the canonical caller).
-    (if (i32.and (call $gl32 (i32.add (local.get $arg0) (i32.const 20)))
-                 (i32.const 0x00000400))
+    (if (i32.and (local.get $flags) (i32.const 0x00000400))
       (then
-        (global.set $eax (i32.const 0))
+        (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-    (call $create_stub_dialog (local.get $dlg) (local.get $owner) (i32.const 0x24C))   ;; "Print"
+    (global.set $common_dialog_kind (i32.const 2))
+    (global.set $common_dialog_struct (local.get $arg0))
+    (call $create_print_dialog (local.get $dlg) (local.get $owner))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
 
   ;; 954: CoFreeUnusedLibraries() — no args, no-op

@@ -22,6 +22,10 @@
 
   ;; 147: DeleteDC(hdc) — delegate to host GDI
   (func $handle_DeleteDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg0) (global.get $printer_hdc))
+      (then
+        (global.set $printer_hdc (i32.const 0))
+        (global.set $printer_doc_state (i32.const 0))))
     (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -395,18 +399,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
   )
 
-  ;; 169: CreateDCA — STUB: unimplemented
   ;; CreateDCA(lpszDriver, lpszDevice, lpszOutput, lpInitData) — 4 args stdcall.
-  ;; Return the same fake screen DC as GetDC(NULL) (0x40000) for any driver; we don't
-  ;; model per-device DCs, and callers (KVDD, printer probes) just query GetDeviceCaps.
+  ;; Allocate a real host DC record so native RichEdit can draw preview/print
+  ;; bands through the normal canvas GDI path, then tag it for printer caps.
   (func $handle_CreateDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x40000))
+    (global.set $printer_hdc (call $host_alloc_screen_dc))
+    (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 170: SetAbortProc — STUB: unimplemented
+  ;; SetAbortProc records no callback yet, but succeeds like a printer driver.
   (func $handle_SetAbortProc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; ExtEscape(hdc, nEscape, cbInput, lpszInData, cbOutput, lpszOutData) — 6 args stdcall.
@@ -486,19 +491,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 178: StartDocA — STUB: unimplemented
   (func $handle_StartDocA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.ne (global.get $printer_doc_state) (i32.const 0))
+      (then (global.set $eax (i32.const -1)))
+      (else
+        (global.set $printer_doc_state (i32.const 1))
+        (global.set $printer_page_count (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 179: StartPage — STUB: unimplemented
   (func $handle_StartPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.ne (global.get $printer_doc_state) (i32.const 1))
+      (then (global.set $eax (i32.const -1)))
+      (else
+        (global.set $printer_doc_state (i32.const 2))
+        (global.set $printer_page_count (i32.add (global.get $printer_page_count) (i32.const 1)))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 180: EndPage — STUB: unimplemented
   (func $handle_EndPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.ne (global.get $printer_doc_state) (i32.const 2))
+      (then (global.set $eax (i32.const -1)))
+      (else
+        (global.set $printer_doc_state (i32.const 1))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 181: EndPaint(hwnd, lpPaintStruct) — validate rcPaint range, return TRUE.
@@ -521,14 +540,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 182: EndDoc — STUB: unimplemented
   (func $handle_EndDoc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.eq (global.get $printer_doc_state) (i32.const 1))
+      (then
+        (global.set $printer_doc_state (i32.const 0))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 183: AbortDoc — STUB: unimplemented
   (func $handle_AbortDoc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $printer_doc_state (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 184: SetCapture — STUB: unimplemented

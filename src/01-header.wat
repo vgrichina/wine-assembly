@@ -241,6 +241,7 @@
   (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
   (import "host" "gdi_get_bk_color" (func $host_gdi_get_bk_color (param i32) (result i32)))
   (import "host" "gdi_get_text_color" (func $host_gdi_get_text_color (param i32) (result i32)))
+  (import "host" "gdi_get_bk_mode" (func $host_gdi_get_bk_mode (param i32) (result i32)))
   (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
   (import "host" "gdi_set_text_align" (func $host_gdi_set_text_align (param i32 i32) (result i32)))
@@ -594,6 +595,24 @@
   (data (i32.const 0x11174) "Cancel\00")
   (data (i32.const 0x1117B) "Find\00")
   (data (i32.const 0x11180) "Replace\00")
+  (data (i32.const 0x11188) "Printer: Web Printer\00")
+  (data (i32.const 0x1119D) "Page range\00")
+  (data (i32.const 0x111A8) "All\00")
+  (data (i32.const 0x111AC) "From:\00")
+  (data (i32.const 0x111B2) "To:\00")
+  (data (i32.const 0x111B6) "Copies:\00")
+  (data (i32.const 0x111BE) "Margins (inches)\00")
+  (data (i32.const 0x111CF) "Left:\00")
+  (data (i32.const 0x111D5) "Top:\00")
+  (data (i32.const 0x111DA) "Right:\00")
+  (data (i32.const 0x111E1) "Bottom:\00")
+  (data (i32.const 0x111E9) "Paper: Letter 8.5 x 11 in\00")
+  (data (i32.const 0x11203) "1.00\00")
+  (data (i32.const 0x11208) "Pages\00")
+  (data (i32.const 0x1120E) "1\00")
+  (data (i32.const 0x11210) "9999\00")
+  (data (i32.const 0x11220) "WINSPOOL\00")
+  (data (i32.const 0x11229) "Web Printer\00")
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
@@ -1344,6 +1363,16 @@
   (global $handler_set_eip (mut i32) (i32.const 0))
   (global $current_thunk_eip (mut i32) (i32.const 0))
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
+
+  ;; ---- Printer compatibility state ----
+  ;; A printer DC is still canvas-backed, but GetDeviceCaps exposes Letter
+  ;; paper at 300 DPI and a 0.25-inch non-printable margin. The job/page state
+  ;; makes GDI print lifecycle ordering observable and rejects invalid nesting.
+  (global $printer_hdc       (mut i32) (i32.const 0))
+  (global $printer_doc_state (mut i32) (i32.const 0)) ;; 0=idle, 1=document, 2=page
+  (global $printer_page_count (mut i32) (i32.const 0))
+  (global $common_dialog_kind (mut i32) (i32.const 0)) ;; 1=page setup, 2=print
+  (global $common_dialog_struct (mut i32) (i32.const 0))
 
   ;; ---- Modal dialog (Open/Save/Color/Font/...) state ----
   ;;
