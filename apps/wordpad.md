@@ -780,6 +780,14 @@ mode queries. Remaining printing work is multi-page preview navigation and a
 native print-progress cleanup loop after the first `EndPage` (the app has not
 yet reached `EndDoc`).
 
+Ruler/UI status (2026-08-12): ruler dragging now has an app-level assertion
+that adds a 1278-twip native RichEdit tab stop. Paragraph, Tabs, and Date/Time
+dialogs open through WordPad commands, expose their expected control sets, and
+render screenshots. Date/Time enumerates `1/1/01`,
+`Monday, January 1, 2001`, and `12:00:00 AM`; choosing the time entry inserts
+it into the document. See `test/test-wordpad-ui-advanced.js` and the UI images
+under `test/output/wordpad-richedit/`.
+
 RichEdit implementation scope is tracked in
 [`docs/richedit-compat-design.md`](../docs/richedit-compat-design.md).
 

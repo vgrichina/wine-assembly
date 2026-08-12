@@ -16015,5 +16015,26 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2448881599
+  },
+  {
+    "id": 2085,
+    "name": "EnumDateFormatsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2740872135
+  },
+  {
+    "id": 2086,
+    "name": "EnumTimeFormatsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2617681786
+  },
+  {
+    "id": 2087,
+    "name": "EnumResourceLanguagesW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1387901856
   }
 ]

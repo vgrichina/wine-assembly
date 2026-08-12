@@ -339,57 +339,151 @@
 
   ;; 7: GetTimeFormatA(Locale, dwFlags, lpTime, lpFormat, lpTimeStr, cchTime) — 6 args stdcall
   (func $handle_GetTimeFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $buf i32) (local $cch i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $cch (call $gl32 (i32.add (local.get $wa_esp) (i32.const 24))))
+    (local $buf i32) (local $cch i32)
+    (local.set $cch (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $buf (call $g2w (local.get $arg4)))
-    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 9)))
+    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 12)))
       (then
-        ;; Write "12:00 AM\0"
-        (i32.store8 (local.get $buf) (i32.const 49))          ;; '1'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 50))  ;; '2'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 58))  ;; ':'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 48))  ;; '0'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 48))  ;; '0'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 32))  ;; ' '
-        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 65))  ;; 'A'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 7)) (i32.const 77))  ;; 'M'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))   ;; NUL
-        (global.set $eax (i32.const 9))
+        ;; Write "12:00:00 AM\0".
+        (i32.store (local.get $buf) (i32.const 0x303a3231))
+        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x30303a30))
+        (i32.store (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x004d4120))
+        (global.set $eax (i32.const 12))
       )
       (else
-        (global.set $eax (i32.const 9))
+        (global.set $eax (i32.const 12))
       ))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args + ret
   )
 
   ;; 8: GetDateFormatA(Locale, dwFlags, lpDate, lpFormat, lpDateStr, cchDateStr) — 6 args stdcall
   (func $handle_GetDateFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $buf i32) (local $len i32) (local $cch i32)
+    (local $buf i32) (local $cch i32) (local $long i32)
     ;; Read cchDateStr from stack (6th arg at esp+24)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $cch (call $gl32 (i32.add (local.get $wa_esp) (i32.const 24))))
-    ;; If lpDate (arg2) is NULL, use current date; if lpFormat (arg3) is NULL, use default
-    ;; Simple implementation: write "1/1/01" as a short date
-    (local.set $buf (call $g2w (local.get $arg4)))
-    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 7)))
+    (local.set $cch (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $long (i32.and (local.get $arg1) (i32.const 2))) ;; DATE_LONGDATE
+    ;; EnumDateFormats callers pass the format explicitly. The stable long
+    ;; pattern starts with 'd'; the stable short pattern starts with 'M'.
+    (if (local.get $arg3)
       (then
-        ;; Write "1/1/01\0"
-        (i32.store8 (local.get $buf) (i32.const 49))          ;; '1'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 47))  ;; '/'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 49))  ;; '1'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 47))  ;; '/'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 48))  ;; '0'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 49))  ;; '1'
-        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0))   ;; NUL
-        (global.set $eax (i32.const 7))  ;; chars written including NUL
+        (if (i32.eq (i32.load8_u (call $g2w (local.get $arg3))) (i32.const 0x64))
+          (then (local.set $long (i32.const 1))))))
+    (local.set $buf (call $g2w (local.get $arg4)))
+    (if (i32.and (local.get $long)
+          (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 24))))
+      (then
+        ;; "Monday, January 1, 2001\0"
+        (i32.store (local.get $buf) (i32.const 0x646e6f4d))
+        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x202c7961))
+        (i32.store (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x756e614a))
+        (i32.store (i32.add (local.get $buf) (i32.const 12)) (i32.const 0x20797261))
+        (i32.store (i32.add (local.get $buf) (i32.const 16)) (i32.const 0x32202c31))
+        (i32.store (i32.add (local.get $buf) (i32.const 20)) (i32.const 0x00313030))
+        (global.set $eax (i32.const 24))
       )
       (else
-        ;; Buffer too small or NULL — return required size
+        (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 7)))
+          (then
+            ;; "1/1/01\0"
+            (i32.store (local.get $buf) (i32.const 0x2f312f31))
+            (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x3130))
+            (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0)))
+          (else
+            (global.set $eax (select (i32.const 24) (i32.const 7) (local.get $long)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+            (return)))
         (global.set $eax (i32.const 7))
       ))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args + ret
   )
+
+  ;; EnumDateFormatsA / EnumTimeFormatsA invoke one stable US-English format
+  ;; callback per call. Callers such as Win98 WordPad request short and long
+  ;; date formats separately, so one representative for each flag is enough
+  ;; to populate their Date and Time dialog without inventing locale state.
+  (func $locale_format_enum_a (param $callback i32) (param $flags i32)
+        (param $ret_addr i32) (param $is_time i32)
+    (local $text i32) (local $wa i32)
+    (if (i32.eqz (local.get $callback))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    (local.set $text (call $heap_alloc (i32.const 32)))
+    (local.set $wa (call $g2w (local.get $text)))
+    (call $zero_memory (local.get $wa) (i32.const 32))
+    (if (local.get $is_time)
+      (then
+        ;; "h:mm:ss tt"
+        (i32.store (local.get $wa) (i32.const 0x3a6d3a68))
+        (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x74207373))
+        (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x0074)))
+      (else
+        (if (i32.and (local.get $flags) (i32.const 2)) ;; DATE_LONGDATE
+          (then
+            ;; "dddd, MMMM d, yyyy"
+            (i32.store (local.get $wa) (i32.const 0x64646464))
+            (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x4d4d202c))
+            (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x64204d4d))
+            (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x7979202c))
+            (i32.store16 (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x7979)))
+          (else
+            ;; "M/d/yy"
+            (i32.store (local.get $wa) (i32.const 0x2f642f4d))
+            (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x7979))))))
+    ;; Preserve the API caller return address above the callback's stdcall
+    ;; frame. CACA0011 is a generic one-callback continuation: it restores this
+    ;; address after the callback has popped its LPSTR argument.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $text))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0)))
+
+  (func $handle_EnumDateFormatsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $locale_format_enum_a (local.get $arg0) (local.get $arg2) (local.get $ret) (i32.const 0)))
+
+  (func $handle_EnumTimeFormatsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $locale_format_enum_a (local.get $arg0) (local.get $arg2) (local.get $ret) (i32.const 1)))
+
+  ;; EnumResourceLanguagesW(hModule, type, name, callback, lParam). PE resource
+  ;; lookup already falls back to the available language; enumerate the stable
+  ;; US-English LANGID expected by Win98 common controls and MFC property sheets.
+  (func $handle_EnumResourceLanguagesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (local.get $ret))
+        (return)))
+    ;; Preserve API return and push ENUMRESLANGPROCW args right-to-left.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg4))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x0409))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg2))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg1))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $arg3))
+    (global.set $steps (i32.const 0)))
 
   ;; 9: GetProfileStringA(appName, keyName, default, retBuf, nSize) → chars copied
   (func $handle_GetProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2227,10 +2321,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable) — stub, return previous state
+  ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable).
   (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable) — return previous state
-    (global.set $eax (i32.const 0))  ;; MF_ENABLED (previous state)
+    (global.set $eax (call $menu_enable_item_global
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -2408,9 +2502,13 @@
   ;; MF_UNCHECKED (0); MF_BYPOSITION isn't supported here — in practice
   ;; callers use MF_BYCOMMAND, which is what our id-based walk matches.
   (func $handle_CheckMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_check_item_global
-      (local.get $arg1)
-      (i32.and (local.get $arg2) (i32.const 8))))
+    (if (i32.and (local.get $arg2) (i32.const 0x400))
+      (then (global.set $eax (call $menu_check_position_global
+        (local.get $arg0) (local.get $arg1)
+        (i32.and (local.get $arg2) (i32.const 8)))))
+      (else (global.set $eax (call $menu_check_item_global
+        (local.get $arg1)
+        (i32.and (local.get $arg2) (i32.const 8))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -9834,9 +9932,14 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 661: GetNextDlgTabItem — STUB: unimplemented
+  ;; 661: GetNextDlgTabItem — use the same visible/enabled WS_TABSTOP walk as
+  ;; IsDialogMessage keyboard traversal. bPrevious selects reverse order and
+  ;; both directions wrap at the ends, matching USER32.
   (func $handle_GetNextDlgTabItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (call $dialog_next_tabstop (local.get $arg0) (local.get $arg1)
+        (select (i32.const -1) (i32.const 1) (local.get $arg2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 662: GetAsyncKeyState — STUB: unimplemented

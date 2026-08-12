@@ -3262,6 +3262,18 @@ async function main() {
               const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, len));
               const cur = we.combobox_get_cur_sel ? we.combobox_get_cur_sel(ch) : -1;
               text = ' sel=' + cur + ' text="' + Buffer.from(bytes).toString('latin1') + '"';
+            } else if (cls === 4 && we.listbox_get_count &&
+                       we.listbox_get_item_text && we.guest_alloc) {
+              const count = Math.max(0, Math.min(we.listbox_get_count(ch) | 0, 64));
+              const buf = we.guest_alloc(256);
+              const rows = [];
+              for (let row = 0; row < count; row++) {
+                const len = Math.max(0, Math.min(
+                  we.listbox_get_item_text(ch, row, buf, 256) | 0, 255));
+                rows.push(Buffer.from(new Uint8Array(memory.buffer, g2w(buf), len)).toString('latin1'));
+              }
+              const cur = we.listbox_get_cur_sel ? we.listbox_get_cur_sel(ch) : -1;
+              text = ' sel=' + cur + ' rows="' + rows.join(' || ') + '"';
             }
             let checked = '';
             if (cls === 1 && we.send_message) {

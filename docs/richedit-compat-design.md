@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-11.
+Last updated: 2026-08-12.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -617,9 +617,9 @@ screenshot where the result is visual.
    [ ] RichEdit 1.0/2.0 class and message differences have bounded probes
 
 4. WordPad UI fidelity
-   [ ] ruler tabs/indents update paragraph state and track selection changes
-   [ ] advanced toolbar/menu enabled, disabled, and checked state stays coherent
-   [ ] secondary formatting and document dialogs route commands correctly
+   [x] ruler tab interaction updates native paragraph state
+   [x] toolbar checked/disabled state is covered by focused visual regressions
+   [x] Paragraph, Tabs, and Date/Time dialogs route commands correctly
 
 5. International text
    [ ] Unicode input/readback covers BMP and surrogate-pair characters
@@ -690,6 +690,20 @@ test writes and visually verifies narrow/wide screenshots under
 `test/output/wordpad-richedit/`. The reusable `main-resize` harness action
 commits top-level geometry and delivers the same resize messages as an
 interactive frame drag.
+
+### 2026-08-12 ruler and secondary UI slice
+
+`test/test-wordpad-ui-advanced.js` drives WordPad's real ruler and three less-used
+dialogs in bounded, isolated emulator runs. Dragging on the ruler changes the
+focused native RichEdit paragraph from zero tab stops to one 1278-twip stop.
+The Paragraph dialog exposes left/right/first-line indentation and alignment;
+the Tabs dialog exposes Set, Clear, and Clear All; and Date and Time enumerates
+stable short-date, long-date, and time choices. Selecting the time entry and
+accepting the dialog inserts `12:00:00 AM` into the document. Locale-format
+enumeration, resource-language enumeration, and dialog tab-order traversal now
+cover the APIs needed by these MFC surfaces. The 9-point regression writes
+`paragraph-dialog.png`, `tabs-dialog.png`, and `date-time-dialog.png` under
+`test/output/wordpad-richedit/`.
 
 ## Suggested implementation slice
 

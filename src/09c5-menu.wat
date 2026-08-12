@@ -748,6 +748,117 @@
       (br $bar)))
     (local.get $prev))
 
+  ;; Set/clear checked state by submenu position. GetSubMenu handles are
+  ;; represented as menu-id | ((top-index+1)<<16), which makes the resource
+  ;; submenu deterministic without a separate HMENU object table.
+  (func $menu_check_position_global (export "menu_check_position_global")
+        (param $hmenu i32) (param $pos i32) (param $check i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $blob i32) (local $it i32)
+    (local $tidx i32) (local $flags i32) (local $prev i32)
+    (local.set $prev (i32.const -1))
+    (local.set $tidx (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
+    (if (i32.lt_s (local.get $tidx) (i32.const 0)) (then (return (local.get $prev))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+      (if (local.get $hwnd)
+        (then
+          (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+          (if (local.get $blob)
+            (then
+              (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $pos)))
+              (if (local.get $it)
+                (then
+                  (local.set $flags (i32.load offset=16 (local.get $it)))
+                  (if (i32.eq (local.get $prev) (i32.const -1))
+                    (then (local.set $prev
+                      (select (i32.const 8) (i32.const 0)
+                        (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0)))))))
+                  (i32.store offset=16 (local.get $it)
+                    (select (i32.or (local.get $flags) (i32.const 4))
+                            (i32.and (local.get $flags) (i32.const -5))
+                            (local.get $check)))
+                  (call $invalidate_hwnd (local.get $hwnd)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $prev))
+
+  ;; Resource menu enable/disable state. Internal flag bit1 is rendered as
+  ;; MF_GRAYED; return values use the public MF_GRAYED/MF_ENABLED constants.
+  (func $menu_group_set_disabled
+        (param $blob i32) (param $hdr i32) (param $id i32) (param $disabled i32)
+        (result i32)
+    (local $count i32) (local $i i32) (local $it i32) (local $flags i32)
+    (local $ret i32)
+    (local.set $ret (i32.const -1))
+    (local.set $count (i32.load (local.get $hdr)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $it (i32.add (local.get $hdr)
+        (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 28)))))
+      (if (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id))
+        (then
+          (local.set $flags (i32.load offset=16 (local.get $it)))
+          (if (i32.eq (local.get $ret) (i32.const -1))
+            (then (local.set $ret
+              (select (i32.const 1) (i32.const 0)
+                (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0)))))))
+          (i32.store offset=16 (local.get $it)
+            (select (i32.or (local.get $flags) (i32.const 2))
+                    (i32.and (local.get $flags) (i32.const -3))
+                    (local.get $disabled))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (return (local.get $ret))
+    (unreachable))
+
+  (func $menu_enable_item_global (export "menu_enable_item_global")
+        (param $hmenu i32) (param $item i32) (param $flags i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $blob i32) (local $bar_count i32)
+    (local $bar i32) (local $hdr_off i32) (local $ret i32) (local $r i32)
+    (local $disabled i32)
+    (local.set $ret (i32.const -1))
+    (local.set $disabled (i32.and (local.get $flags) (i32.const 3)))
+    (block $done
+      (loop $wins
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+        (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+        (if (local.get $hwnd)
+          (then
+            (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+            (if (local.get $blob)
+              (then
+                (local.set $bar_count (i32.load (local.get $blob)))
+                (local.set $bar (i32.const 0))
+                (block $bars_done
+                  (loop $bars
+                    (br_if $bars_done
+                      (i32.ge_u (local.get $bar) (local.get $bar_count)))
+                    (local.set $hdr_off
+                      (i32.load offset=8
+                        (i32.add (local.get $blob)
+                          (i32.add (i32.const 4)
+                            (i32.mul (local.get $bar) (i32.const 16))))))
+                    (if (local.get $hdr_off)
+                      (then
+                        (local.set $r
+                          (call $menu_group_set_disabled
+                            (local.get $blob)
+                            (i32.add (local.get $blob) (local.get $hdr_off))
+                            (local.get $item) (local.get $disabled)))
+                        (if (i32.and
+                              (i32.eq (local.get $ret) (i32.const -1))
+                              (i32.ne (local.get $r) (i32.const -1)))
+                          (then (local.set $ret (local.get $r))))))
+                    (local.set $bar
+                      (i32.add (local.get $bar) (i32.const 1)))
+                    (br $bars)))
+                (if (i32.ne (local.get $ret) (i32.const -1))
+                  (then (call $invalidate_hwnd (local.get $hwnd))))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $wins)))
+    (local.get $ret))
+
   ;; CheckMenuRadioItem by submenu position. Fake submenu handles encode
   ;; GetSubMenu(hMenu,nPos) as low-word | ((nPos+1)<<16), so $tidx is
   ;; high-word-1. Sets bit2 on the selected child item and clears it on
