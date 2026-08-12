@@ -30,6 +30,25 @@ Related design: [Direct x86-to-Wasm Compiler](x86-to-wasm-compiler.md)
   FAST INSTALL, NO NEW WASM MODULE              COST LEFT: PACKET DISPATCH + GENERIC STATE SYNC
 ```
 
+## Mermaid Overview
+
+```mermaid
+flowchart LR
+    X86[Guest x86 bytes] --> Decode[Decoder]
+    Decode --> IR[Normalized block IR]
+    IR --> Analysis[Liveness, flags, and EA analysis]
+    Analysis --> Emit[Packet emitter]
+    Emit --> Packet[(Packet data in thread arena)]
+    Packet --> VM[Static WAT packet executor]
+    State[(CPU globals and guest memory)] --> VM
+    VM --> State
+    VM --> Exit[Exact EIP and side-exit state]
+    Exit --> Dispatch[Current x86-threaded dispatcher]
+    Dispatch -->|unsupported or cold block| Decode
+    Write[Write to tracked code page] --> Invalidate[Increment page version and invalidate]
+    Invalidate --> Dispatch
+```
+
 ## Summary
 
 The WAT-threaded backend is an intermediate execution tier between the current

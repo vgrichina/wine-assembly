@@ -35,6 +35,30 @@ Related design: [WAT-Threaded Packet Backend](wasm-stack-threaded-code.md)
   KNOWN BUNDLED EXE: HASH-VALIDATED OFFLINE .WASM     ARBITRARY EXE: PROFILE, COMPILE, INSTALL LAZILY
 ```
 
+## Mermaid Overview
+
+```mermaid
+flowchart LR
+    PE[PE file] --> Map[Map sections]
+    Map --> Patch[Loader patches and imports]
+    Patch --> Pages[Module registry and page versions]
+    Pages --> T0[x86-threaded or packet execution]
+    T0 --> Profile[Hot and stable block profile]
+    Profile --> IR[Normalized x86 IR]
+    IR --> Emit[Emit Wasm binary batch]
+    Emit --> Compile[WebAssembly.compile]
+    Compile --> Loader[Compiled-code module loader]
+    Runtime[(Memory, globals, helpers, handler tables)] --> Loader
+    Pages --> Loader
+    Loader --> Aux[Auxiliary Wasm instances]
+    Aux --> Table[Installed handler-table slots]
+    Table --> Direct[Direct specialized execution]
+    Direct --> Runtime
+    Write[Tracked code-page write] --> Pages
+    Pages -->|version changed| Retire[Unpublish and retire dependent units]
+    Retire --> T0
+```
+
 ## Decision
 
 Direct x86-to-Wasm compilation is feasible, but eagerly compiling an entire
@@ -284,6 +308,288 @@ Keep batches small enough that:
 Compilation should run asynchronously. Installation is atomic from the guest
 dispatcher's point of view: until the module is compiled, instantiated, and
 version-validated, the old cache entry remains active.
+
+## Auxiliary Wasm Module Loader
+
+The compiler needs a flexible loader for auxiliary Wasm modules. This is a new
+compiled-code module manager next to the PE loader, not a replacement for the
+PE loader:
+
+```text
+PE loader:
+  maps Windows modules and reports their final guest-visible code pages
+
+compiled-code module manager:
+  compiles or retrieves Wasm batches
+  links them to every emulator instance
+  installs and retires dispatch-table entries
+```
+
+The distinction matters because a live WebAssembly instance cannot have new
+defined functions appended to it. The browser can compile and instantiate
+additional modules, and those modules can import the main instance's memory,
+globals, helpers, and table. The loader makes those separate module instances
+behave like one execution tier.
+
+### Components
+
+```mermaid
+flowchart TB
+    subgraph Discovery[Guest-code discovery]
+        PE[PE and DLL loader]
+        Registry[Code-module and page registry]
+        Profiler[Hot block profiler]
+        PE --> Registry
+        Registry --> Profiler
+    end
+
+    subgraph Compilation[Compilation service]
+        Scheduler[Tier scheduler and deduplicator]
+        Frontend[x86 decoder and shared IR]
+        Backend[Direct Wasm binary emitter]
+        Cache[(Offline or persistent artifact cache)]
+        Scheduler --> Frontend --> Backend
+        Scheduler <--> Cache
+    end
+
+    subgraph Loading[Compiled-code module manager]
+        Validator[Manifest and ABI validator]
+        Compiler[WebAssembly.compile]
+        Linker[Per-instance linker]
+        Slots[Handler-table slot allocator]
+        Publisher[Atomic dispatch publisher]
+        Validator --> Compiler --> Linker --> Slots --> Publisher
+    end
+
+    subgraph Runtime[Runtime instances]
+        Main[Main emulator instance]
+        Workers[Worker emulator instances]
+        Dispatch[(Shared block dispatch metadata)]
+        Epochs[(Atomic page versions)]
+    end
+
+    Profiler --> Scheduler
+    Backend --> Validator
+    Cache --> Validator
+    Registry --> Validator
+    Linker --> Main
+    Linker --> Workers
+    Publisher --> Dispatch
+    Epochs --> Validator
+    Epochs --> Publisher
+```
+
+The manager owns these responsibilities:
+
+- deduplicate compile requests for the same module, EIP set, and page versions;
+- retrieve an exact-version offline or persistent artifact when available;
+- compile generated Wasm bytes asynchronously when no valid artifact exists;
+- validate the compiler ABI, Wasm features, imports, exports, and resource
+  limits before instantiation;
+- instantiate the compiled module against every active emulator instance;
+- allocate the same handler-table slot numbers in every instance;
+- revalidate source-page versions after compilation and linking;
+- publish compiled cache entries only after every required instance is ready;
+- bring a newly created worker to the current compiled-batch generation before
+  allowing it to execute shared dispatch entries; and
+- unpublish, tombstone, recycle, and eventually release invalidated batches.
+
+### Runtime ABI
+
+Define a versioned import namespace, for example `wa_compiler_v1`. A compiled
+batch may import only an allowlisted ABI:
+
+```text
+memory
+eax..edi, esp, ebp, eip
+lazy flag globals
+step budget and execution-mode globals
+g2w and slow memory helpers
+code_write_notify
+fault and unsupported-operation exits
+handler table
+```
+
+The first ABI should favor a small implementation delta over permanence.
+Later versions may replace imported register globals with a `CpuState` memory
+frame. The ABI version is part of every artifact cache key, so incompatible
+batches are rejected rather than adapted implicitly.
+
+Compiled modules must not import arbitrary browser or host functions. This
+keeps code generated from an untrusted EXE confined to the emulator's existing
+memory and helper semantics.
+
+### Batch Manifest
+
+Wasm bytes are accompanied by a manifest that is validated before linking:
+
+```text
+CompiledBatchManifest:
+  format_version
+  compiler_version
+  runtime_abi_version
+  required_wasm_features
+  source_module_identities[]
+  mapped_image_bases[]
+  source_page_versions[]
+  source_page_hashes[]          optional persistent-cache validation
+  units[]:
+    guest_entry_eip
+    exported_function_name
+    source_page_indices[]
+    live_in_mask
+    dirty_exit_masks[]
+    expected_handler_signature
+  encoded_wasm_byte_length
+```
+
+The manifest is runtime metadata, not trusted proof. The Wasm engine still
+validates the module, the loader allowlists imports and export signatures, and
+entry guards still verify page versions.
+
+### Batch Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Candidate
+    Candidate --> Encoding: hot, supported, stable
+    Encoding --> Compiling: Wasm bytes and manifest ready
+    Compiling --> Linking: WebAssembly.compile succeeds
+    Compiling --> Backoff: compile or validation failure
+    Linking --> VersionCheck: all active instances linked
+    Linking --> Backoff: any required instance fails
+    VersionCheck --> Active: page versions still match
+    VersionCheck --> Candidate: source changed
+    Active --> Retiring: dependency page changed
+    Active --> Retiring: ABI or module unloaded
+    Retiring --> Tombstoned: dispatch entries unpublished
+    Tombstoned --> Candidate: hot again after backoff
+    Backoff --> Candidate: retry threshold reached
+```
+
+Only `Active` units are reachable from compiled dispatch entries. A compiled
+module may physically remain alive during `Retiring` or `Tombstoned`; removing
+all table and registry references makes it eligible for garbage collection.
+
+### Load And Publish Protocol
+
+```mermaid
+sequenceDiagram
+    participant D as Dispatcher and profiler
+    participant S as Compile scheduler
+    participant C as Wasm compiler or cache
+    participant L as Module loader
+    participant E as Page epoch registry
+    participant R as Runtime instances
+
+    D->>S: Request hot unit at EIP with page snapshot
+    S->>C: Get or build batch bytes and manifest
+    C-->>L: Compiled module artifact
+    L->>E: Validate source page versions
+    L->>R: Reserve identical table slots
+    L->>R: Instantiate and link batch per instance
+    L->>E: Revalidate source page versions
+    alt versions still match and every instance linked
+        L->>R: Populate table slots
+        L->>D: Publish dispatch entries last
+    else page changed or an instance failed
+        L->>R: Tombstone reserved slots
+        L->>D: Keep generic or packet entries
+    end
+```
+
+Publication order is deliberate:
+
+1. snapshot atomic source-page versions;
+2. obtain and compile the batch;
+3. validate manifest, imports, exports, and function signatures;
+4. reserve the same slots in all active handler tables;
+5. instantiate against each instance's globals, helpers, table, and shared
+   memory;
+6. re-read source-page versions;
+7. populate table slots with the compiled functions; and
+8. publish guest-EIP dispatch entries last.
+
+The dispatch entry records the table slot, slot generation, and expected source
+page versions. The compiled function repeats the version guard on entry. That
+guard closes the race where another worker writes a code page immediately
+after loader validation but before or during publication.
+
+### Handler-Table Slots And Workers
+
+The current handler table and the `$next` upper-bound check assume only the
+static handler count. The loader design requires:
+
+- exporting the table from every main emulator instance;
+- making it growable or reserving a compiled-slot range;
+- replacing the fixed handler-index check with validation of generic and
+  allocated compiled ranges; and
+- using a slot generation so a stale cache entry cannot call a newly recycled
+  function at the same numeric slot.
+
+Because dispatch metadata and guest memory are shared while CPU globals and
+tables are instance-local, slot `N` must mean the same compiled unit in the
+main instance and every worker. Install a batch into all active instances
+before publication. A worker created later must link all active batches, or run
+with compiled dispatch disabled, before it begins guest execution.
+
+Compile module bytes once per artifact. Instantiate them once per runtime
+instance so each compiled function imports the correct instance-local CPU
+globals and handler table.
+
+### Invalidation And Retirement
+
+A tracked code-page write atomically increments its version and unpublishes
+every dependent unit. The fast path redirects immediately to tier 0 or tier 1.
+Retirement then:
+
+1. clears compiled dispatch records;
+2. replaces table slots with a safe fallback/tombstone function;
+3. increments each slot generation;
+4. removes reverse page dependencies;
+5. releases slots to a bounded free list; and
+6. drops batch instance/module references when no active unit uses them.
+
+WebAssembly tables do not need to shrink. Bounded slot reuse plus generations
+prevents unbounded growth and stale-slot aliasing.
+
+### Failure Recovery And Limits
+
+No loader failure may prevent guest execution. On cache corruption, compile
+failure, ABI mismatch, instantiation failure, table exhaustion, version race,
+or worker-link failure, leave or restore the generic/packet cache entry and
+record a reason-specific backoff.
+
+Set explicit limits for:
+
+- functions and bytes per batch;
+- concurrent compilations;
+- total active compiled bytes;
+- handler-table slots;
+- compile time per scheduling window; and
+- repeated failures or invalidations per guest page.
+
+Eviction first unpublishes the coldest batch and tombstones its slots. It must
+not depend on immediate browser garbage collection to remain within logical
+resource limits.
+
+### Offline Artifacts Use The Same Loader
+
+A known AoE build can ship a precompiled auxiliary `.wasm` plus manifest. The
+runtime skips code generation and `WebAssembly.compile` may benefit from the
+browser's own module cache, but the rest of the protocol is identical:
+
+```text
+verify EXE/module hash
+validate compiler and runtime ABI versions
+validate mapped bases and source page versions
+instantiate once per emulator instance
+install slots and publish entries
+retain interpreter fallback for missed or changed code
+```
+
+Keeping one loader for offline and runtime-generated artifacts prevents the
+AOT path from acquiring different invalidation or worker semantics.
 
 ## Direct Lowering
 
