@@ -390,6 +390,7 @@ async function main() {
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wave-in-feed:FRAMES[:RATE:AMPLITUDE] — feed synthetic sine PCM to waveIn
   //   B:mixer-peak:BUS:VALUE[:HOLD_MS] — inject a 0..32767 mixer peak for visual tests
+  //   B:vfs-export:FILENAME:PATH — write one virtual file to the host filesystem
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
@@ -623,6 +624,13 @@ async function main() {
           bus: Math.max(0, Math.min(2, parseInt(parts[2]) || 0)),
           value: Math.max(0, Math.min(32767, parseInt(parts[3]) || 0)),
           holdMs: Math.max(50, parseInt(parts[4]) || 500),
+        });
+      } else if (kind === 'vfs-export') {
+        scheduledInput.push({
+          batch,
+          action: 'vfs-export',
+          filename: parts[2],
+          path: parts.slice(3).join(':'),
         });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
@@ -3750,6 +3758,17 @@ async function main() {
       } else if (ev.action === 'mixer-peak') {
         if (h.audio_mixer_mark_peak) h.audio_mixer_mark_peak(ev.bus, ev.value, ev.holdMs);
         logs.push(`[input] mixer-peak bus=${ev.bus} value=${ev.value} hold=${ev.holdMs} at batch ${batch}`);
+      } else if (ev.action === 'vfs-export') {
+        try {
+          const key = ctx.vfs._resolvePath(ev.filename);
+          const entry = ctx.vfs.files.get(key);
+          if (!entry) throw new Error(`virtual file not found: ${key}`);
+          fs.mkdirSync(path.dirname(ev.path), { recursive: true });
+          fs.writeFileSync(ev.path, Buffer.from(entry.data));
+          logs.push(`[input] vfs-export ${key} -> ${ev.path} (${entry.data.length} bytes) at batch ${batch}`);
+        } catch (e) {
+          logs.push(`[input] vfs-export FAILED ${ev.filename}: ${e.message} at batch ${batch}`);
+        }
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();

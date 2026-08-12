@@ -1,5 +1,26 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Status (2026-08-11): working BMP file round trip
+
+`test/test-mspaint-file-roundtrip.js` covers the complete native Paint workflow:
+draw, Save As, New, Open, modify, and Save. It compares the captured canvas
+before and after reopening, exports the single saved file from the virtual
+filesystem, and validates its BMP header, 320x240 dimensions, 24-bit pixel
+format, and drawing pixels. Save reuses the selected filename without opening
+a second Save As dialog.
+
+`test/test-mspaint-dirty-new.js` verifies the destructive New path: the native
+Yes/No/Cancel prompt appears, Cancel preserves the drawing pixel-for-pixel,
+and No discards it into a blank untitled document.
+
+```sh
+node test/test-mspaint-file-roundtrip.js
+node test/test-mspaint-dirty-new.js
+```
+
+Artifacts are written to `scratch/mspaint-file-roundtrip/` and
+`scratch/mspaint-dirty-new/`.
+
 ## Status (2026-08-11): 9/9 focused tool/menu regression
 
 `test/test-mspaint-tools.js` now passes all 9 checks. It exercises the Win98
