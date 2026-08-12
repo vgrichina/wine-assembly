@@ -129,6 +129,63 @@ function percentile(values, fraction) {
     return e.run;
   }
 
+  const rawWordsByHandler = new Map([
+    [7, 1], [20, 1], [21, 1], [28, 1], [43, 1], [48, 1], [128, 1],
+    [312, 2], [319, 2], [355, 1],
+  ]);
+  const terminalHandlers = new Set([43, 312, 319, 355]);
+  const aluOnlyHandlers = new Map([
+    ['48:87', 358], ['53:263425', 359], ['128:1827', 360],
+    ['312:0', 361], ['319:0', 362],
+  ]);
+  const registerOnlyHandlers = new Map([
+    ['21:6', 363], ['18:0', 364], ['21:7', 365], ['28:6', 366],
+    ['48:87', 367], ['11:16', 368], ['64:6', 369], ['7:0', 370],
+    ['20:3', 371], ['53:263425', 372], ['11:39', 373], ['12:33', 374],
+    ['65:2', 375], ['128:1827', 376], ['20:7', 377], ['12:113', 378],
+  ]);
+  const combinedOverrides = new Map([
+    ['48:87', 379], ['53:263425', 380], ['128:1827', 381],
+    ['312:0', 361], ['319:0', 362],
+  ]);
+  const originalHandlerBySpecialized = new Map([
+    [358, 48], [359, 53], [360, 128], [361, 312], [362, 319],
+    [363, 21], [364, 18], [365, 21], [366, 28], [367, 48], [368, 11],
+    [369, 64], [370, 7], [371, 20], [372, 53], [373, 11], [374, 12],
+    [375, 65], [376, 128], [377, 20], [378, 12], [379, 48], [380, 53], [381, 128],
+  ]);
+
+  function promotionMap(variant) {
+    if (variant === 'x86-alu-specialized') return aluOnlyHandlers;
+    if (variant === 'x86-register-specialized') return registerOnlyHandlers;
+    if (variant === 'x86-register-alu-specialized') {
+      return new Map([...registerOnlyHandlers, ...combinedOverrides]);
+    }
+    return null;
+  }
+
+  function rewriteCachedHandlers(variant) {
+    const promotions = promotionMap(variant);
+    const words = new Uint32Array(memory.buffer);
+    const cacheBase = 0x07152000;
+    for (const guestAddress of blockBytes.keys()) {
+      const cacheEntry = cacheBase + (((guestAddress >>> 2) & 0xfff) * 8);
+      assert.strictEqual(words[cacheEntry >>> 2] >>> 0, guestAddress,
+        `missing decoded cache entry for 0x${guestAddress.toString(16)}`);
+      let cursor = words[(cacheEntry + 4) >>> 2] >>> 0;
+      for (let count = 0; count < 64; count++) {
+        const encodedHandler = words[cursor >>> 2] >>> 0;
+        const handler = originalHandlerBySpecialized.get(encodedHandler) || encodedHandler;
+        const operand = words[(cursor + 4) >>> 2] >>> 0;
+        const promoted = promotions && promotions.get(`${handler}:${operand}`);
+        words[cursor >>> 2] = promoted == null ? handler : promoted;
+        cursor += 8 + (rawWordsByHandler.get(handler) || 0) * 4;
+        if (terminalHandlers.has(handler)) break;
+        assert(count !== 63, `unterminated thread stream for 0x${guestAddress.toString(16)}`);
+      }
+    }
+  }
+
   function configureAndWarm(variant) {
     e.set_aoe_recompile_count_enabled(1);
     e.set_wat_stack_packet_count_enabled(1);
@@ -143,11 +200,17 @@ function percentile(values, fraction) {
     if (variant === 'wat-optimized') e.set_aoe_recompile_enabled(1);
     seed();
     e.reset_aoe_recompile_counters();
+    if (promotionMap(variant)) {
+      e.run(BLOCKS_PER_CYCLE);
+      seed();
+      rewriteCachedHandlers(variant);
+      e.reset_aoe_recompile_counters();
+    }
     runnerFor(variant)(warmupBlocks);
     if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
       assert.strictEqual(u32(e.get_wat_stack_packet_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
-    } else if (variant !== 'x86-threaded' && !variant.startsWith('brtable-')) {
+    } else if (!variant.startsWith('x86-') && !variant.startsWith('brtable-')) {
       assert.strictEqual(u32(e.get_aoe_recompile_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
     }
@@ -155,6 +218,7 @@ function percentile(values, fraction) {
 
   function measure(variant, prewarmed = false) {
     if (!prewarmed) configureAndWarm(variant);
+    else rewriteCachedHandlers(variant);
     seed();
     e.reset_aoe_recompile_counters();
     e.set_aoe_recompile_count_enabled(0);
@@ -172,6 +236,9 @@ function percentile(values, fraction) {
 
   const defaultVariants = [
     'x86-threaded',
+    'x86-alu-specialized',
+    'x86-register-specialized',
+    'x86-register-alu-specialized',
     'brtable-generic-global-ip',
     'brtable-generic-local-ip',
     'brtable-direct-generic-alu',
@@ -187,10 +254,11 @@ function percentile(values, fraction) {
     : defaultVariants);
   assert(variants.includes('x86-threaded'), 'VARIANTS must include x86-threaded');
   if (WARM_ONCE) {
-    assert(variants.every(name => name === 'x86-threaded' || name.startsWith('brtable-')),
+    assert(variants.every(name => name.startsWith('x86-') || name.startsWith('brtable-')),
       'WARM_ONCE is valid only for variants sharing the ordinary x86 thread stream');
     configureAndWarm('x86-threaded');
     for (const variant of variants) {
+      rewriteCachedHandlers(variant);
       seed();
       runnerFor(variant)(warmupBlocks);
     }
@@ -214,7 +282,7 @@ function percentile(values, fraction) {
     console.log(`${variant} ms: ${samples[variant].map(v => v.toFixed(2)).join(', ')}`);
   }
   console.log('');
-  console.log('variant                     p10 ms   p25 ms  median ms  blocks/ms  vs x86  vs previous');
+  console.log('variant                     p10 ms   p25 ms  median ms  blocks/ms  vs x86  paired  vs previous');
   const baseMedian = median(samples['x86-threaded']);
   let previousMedian = null;
   for (const variant of variants) {
@@ -222,6 +290,8 @@ function percentile(values, fraction) {
     const p25 = percentile(samples[variant], 0.25);
     const sampleMedian = median(samples[variant]);
     const speedup = baseMedian / sampleMedian;
+    const pairedSpeedup = median(samples['x86-threaded'].map((value, index) =>
+      value / samples[variant][index]));
     const incremental = previousMedian == null ? 1 : previousMedian / sampleMedian;
     console.log(
       variant.padEnd(28) +
@@ -230,6 +300,7 @@ function percentile(values, fraction) {
       sampleMedian.toFixed(2).padStart(9) + '  ' +
       (measuredBlocks / sampleMedian).toFixed(1).padStart(9) + '  ' +
       speedup.toFixed(3).padStart(6) + 'x  ' +
+      pairedSpeedup.toFixed(3).padStart(6) + 'x  ' +
       incremental.toFixed(3).padStart(8) + 'x'
     );
     previousMedian = sampleMedian;

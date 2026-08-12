@@ -2175,6 +2175,46 @@ a bundle, not the isolated cost of the Wasm `call_indirect` opcode. A
 production test still needs a generated hot-handler subset plus synchronized
 fallback to the existing interpreter.
 
+### Existing `call_indirect` Specialization Check
+
+A second experiment retains the current global thread IP, one
+`call_indirect` per x86 operation, and handler-to-`$next` tail-call structure.
+After ordinary decode, the harness promotes only matching handler IDs in the
+cached four-block fixture. Raw thread operands and the number of dispatches do
+not change.
+
+The isolated variants are:
+
+- ALU/branch only: direct SUB, SHR, CMP, JNZ, and JL semantics while retaining
+  dynamic register helpers.
+- register only: direct register-form handlers for the 17 matching operations
+  per cycle while retaining the generic ALU/shift helpers where they existed.
+- combined: direct registers plus direct ALU/branch semantics.
+
+The confirming run used one two-million-block warmup and 31 rotated trials of
+one million blocks. The machine remained heavily contended, so both absolute
+medians and paired same-trial ratios are shown.
+
+```text
+variant                         p10 ms   p25 ms   median   median ratio   paired ratio
+x86 threaded                     231.57    241.76   301.52      1.000x         1.000x
+ALU/branch specialized           224.96    243.24   311.78      0.967x         0.872x
+register-form specialized        198.74    208.60   234.58      1.285x         1.192x
+register + ALU specialized       196.98    212.00   239.09      1.261x         1.198x
+```
+
+An earlier 101-trial, 500,000-block run agreed on the direction: 1.052x for
+ALU/branch, 1.219x for register forms, and 1.265x combined by median. Across
+both runs, ALU/branch-only specialization ranges from neutral to slower and
+does not improve reliably on top of register forms. Register-form handlers are
+consistently about 16-29% faster by aggregate timing, with paired ratios near
+20% in the confirming run.
+
+This supports a selective, application-neutral decoder optimization: emit
+direct handler IDs for census-backed register forms and retain generic handlers
+for the long tail. It does not support adding ALU-only handler variants unless
+a different real workload identifies a helper operation that remains costly.
+
 1. Keep and commit the measured 355-handler specialization set.
 2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
 3. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.

@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 358 funcref)
+  (table $handlers 382 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -413,4 +413,29 @@
     $th_jmp_ind_sib_eax4_abs ;; 355: jmp [disp+eax*4]
     $th_stack_packet         ;; 356: flagged stack-packet prototype
     $th_aoe_recompile        ;; 357: disabled-by-default AoE compiled block POC
+    ;; -- Focused call_indirect cost-decomposition handlers (benchmark only) --
+    $th_bench_sub_r_m32_direct_alu       ;; 358
+    $th_bench_shr_r_direct_alu           ;; 359
+    $th_bench_cmp_r_m32_ro_direct_alu    ;; 360
+    $th_bench_jnz_direct                 ;; 361
+    $th_bench_jl_direct                  ;; 362
+    $th_bench_store_esi_abs              ;; 363
+    $th_bench_xor_eax_eax                ;; 364
+    $th_bench_store_edi_abs              ;; 365
+    $th_bench_load8_al_esi_disp          ;; 366
+    $th_bench_sub_edi_m32_generic_alu    ;; 367
+    $th_bench_mov_ecx_eax                ;; 368
+    $th_bench_inc_esi                    ;; 369
+    $th_bench_and_eax_i32                ;; 370
+    $th_bench_load_ebx_abs               ;; 371
+    $th_bench_shr_ecx_generic_alu        ;; 372
+    $th_bench_mov_edx_edi                ;; 373
+    $th_bench_add_edx_ecx                ;; 374
+    $th_bench_dec_edx                    ;; 375
+    $th_bench_cmp_edx_ebx_disp_generic_alu ;; 376
+    $th_bench_load_edi_abs               ;; 377
+    $th_bench_add_edi_ecx                ;; 378
+    $th_bench_sub_edi_m32_direct_alu     ;; 379
+    $th_bench_shr_ecx_direct_alu         ;; 380
+    $th_bench_cmp_edx_ebx_disp_direct_alu ;; 381
   )
