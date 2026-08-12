@@ -1166,6 +1166,8 @@
   ;; 127: [base+disp] OP= reg32. operand = alu_op<<8 | reg<<4 | base. disp in next word.
   (func $th_alu_m32_r_ro (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (if (global.get $handler_hist_enabled)
+      (then (call $opform_hist_record (i32.const 2) (local.get $op))))
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
@@ -1194,6 +1196,8 @@
   ;; 129: [base+disp] OP= reg8. operand = alu_op<<8 | reg<<4 | base.
   (func $th_alu_m8_r_ro (param $op i32)
     (local $addr i32) (local $alu i32) (local $reg i32) (local $val i32)
+    (if (global.get $handler_hist_enabled)
+      (then (call $opform_hist_record (i32.const 0) (local.get $op))))
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))

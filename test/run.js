@@ -121,6 +121,7 @@ const TRACE_AT_WATCH = hasFlag('trace-at-watch'); // --trace-at-watch: diff --tr
 const SHOW_CSTRING = getArg('show-cstring', null); // --show-cstring=0xADDR[,0xADDR...]: decode MFC CString at these addrs in trace-at and debug prompt
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const COUNT_SPEC = getArg('count', null);        // --count=0xADDR[,0xADDR,...]: passive hit counter per block dispatch (up to 16 slots)
+const AOE_RECOMPILE = process.env.AOE_RECOMPILE === '1'; // opt-in AoE compiled-block POC
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save back canvases alongside PNG snapshots
@@ -1801,6 +1802,18 @@ async function main() {
   const g2w = addr => {
     return translateGuest(addr, instance.exports.get_image_base(), memory.buffer);
   };
+
+  if (AOE_RECOMPILE) {
+    if (instance.exports.set_aoe_recompile_enabled) {
+      if (instance.exports.reset_aoe_recompile_counters) {
+        instance.exports.reset_aoe_recompile_counters();
+      }
+      instance.exports.set_aoe_recompile_enabled(1);
+      console.log('[aoe-recompile] enabled');
+    } else {
+      console.log('[aoe-recompile] requested, but exports are not present');
+    }
+  }
 
   const dumpStack = (label, count = 14) => {
     try {
@@ -4166,6 +4179,14 @@ if (VERBOSE) {
     for (let i = 0; i < countAddrs.length; i++) {
       console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i)}`);
     }
+  }
+
+  if (AOE_RECOMPILE && instance.exports.get_aoe_recompile_entries) {
+    const total = instance.exports.get_aoe_recompile_entries();
+    const block535c20 = instance.exports.get_aoe_recompile_00535c20_entries
+      ? instance.exports.get_aoe_recompile_00535c20_entries()
+      : 0;
+    console.log(`[aoe-recompile] entries=${total} 0x00535c20=${block535c20}`);
   }
 
   if (DUMP_VFS && ctx.vfs) {

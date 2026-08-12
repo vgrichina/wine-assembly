@@ -199,6 +199,275 @@ side path matter. The attempted append-after-tail path is too rare to justify
 checks on every non-empty row. The next useful trace work should target one of
 the hotter non-empty merge/delete paths only if profiling can prove a cheap
 selector for that path.
+### Manual Recompile POC: AoE Blitter Dispatch
+
+Target block:
+
+```text
+0x00535c20:
+  mov [0x775050], esi
+  xor eax,eax
+  mov [0x775054], edi
+  mov al,[esi]
+  sub edi,[0x775020]
+  mov ecx,eax
+  inc esi
+  and eax,0xf
+  mov ebx,[0x77503c]
+  jmp [0x534400+eax*4]
+```
+
+This block is part of AoE's software blitter command decoder. It was a useful
+manual recompile target because the offline stack-packet prototype rejected it
+for partial-width state (`mov al,[esi]`) and an indirect jump-table exit, while
+the runtime decoder can still execute it today through many generic handlers.
+
+The POC adds one disabled-by-default handler selected only when
+`AOE_RECOMPILE=1` / `set_aoe_recompile_enabled(1)` is active. It emits a single
+threaded word for `0x00535c20`, performs the same register/memory/flag updates,
+and sets `EIP` from the jump table.
+
+Verification:
+
+```text
+node tools/build-compile-wat.js
+node tools/check-handler-count.js
+node test/test-aoe-recompile-535c20.js
+```
+
+Headless AoE reachability:
+
+```text
+AOE_RECOMPILE=1 node test/run.js ... --count=0x00535c20
+Hit counts:
+  0x00535c20 = 1686419
+[aoe-recompile] entries=1686419 0x00535c20=1686419
+```
+
+Corrected same-input headless timing was only a small full-scenario signal:
+
+```text
+baseline:          real 10.82  hits=1686419
+compiled handler:  real 10.69  hits=1686419
+```
+
+The isolated WAT loop shows the important local result:
+
+```text
+node tools/bench-aoe-recompile-535c20.js
+generic cached threaded: 263.16ms 7599.9 blocks/ms
+compiled handler:         51.81ms 38599.0 blocks/ms
+speedup: 5.079x (2000000 blocks)
+```
+
+Conclusion:
+
+```text
+Manual WAT recompilation can be much faster for a hot AoE block.
+One small command-dispatch block is not enough to move whole-game timing much.
+The real compiler should promote larger hot blocks/traces and combine wins:
+  register virtualization, flag-local branches, EA/g2w reuse, and jump exits.
+Keep the cold interpreter as fallback; use an allowlist/counter path first.
+```
+
+Follow-up multi-block loop POC:
+
+```text
+allowlist:
+  0x00535b4d  span cmp-left
+  0x00535b56  span cmp-right
+  0x00535b5b  next linked span
+  0x00535b66  overlap cmp-left
+  0x00535b6b  overlap cmp-right
+  0x00535b70  unclipped command dispatcher setup
+  0x00535b8b  clipped command dispatcher setup
+  0x00535bc0  linked-span test
+  0x00535bdc  linked-span command dispatch
+  0x00535c20  primary command dispatch
+  0x00535e00  high-nibble run length
+  0x00535e05  byte run length + run-end cmp
+  0x00535e08  run-end cmp
+  0x00535e12  span-right cmp
+  0x00535e17  span-left cmp
+  0x00535e1e  left clip adjust
+  0x00535e25  right clip cmp
+  0x00535e2f  right clip adjust
+  0x00535e40  clipped pixel dispatch
+  0x00535e7c  skip clipped run
+  0x00535e8a  advance linked span
+  0x005360a0  alternate command dispatch
+  0x005362e0  row advance cmp
+  0x005362f4  row epilogue
+  0x00536420  alternate command dispatch
+  0x00536528  alternate pixel dispatch
+```
+
+`0x00535aa0` was intentionally left out of the active decoder allowlist after
+initial implementation because it needs to be split around its internal
+branches. Keeping it monolithic would hide real block entries and distort
+counter/profiling behavior.
+
+Verification:
+
+```text
+node test/test-aoe-recompile-loop.js
+PASS  AoE compiled blitter loop blocks match generic decoder
+```
+
+Headless AoE reachability with 16 sampled block counters:
+
+```text
+[aoe-recompile] entries=9396084 0x00535c20=1688120
+sampled hits included:
+  0x00535c20 = 1688120
+  0x005360a0 = 1131066
+  0x00535e00 = 1664872
+  0x00535e08 = 1653513
+  0x00535e7c = 1413630
+```
+
+Clean no-count headless timing on the same 260100-batch input:
+
+```text
+baseline:          real 12.16
+compiled allowlist: real 11.54
+```
+
+Three-tier four-block loop microbenchmark:
+
+The proposed general forms of these tiers are specified in
+[`wasm-stack-threaded-code.md`](wasm-stack-threaded-code.md) and
+[`x86-to-wasm-compiler.md`](x86-to-wasm-compiler.md).
+
+```text
+cycle:
+  0x00535c20 command dispatch
+  0x00535e00 run-length decode
+  0x00535e08 span-bound comparison
+  0x00535e7c clipped-run advance
+  -> 0x00535c20
+
+command:
+  BLOCKS=2000000 WARMUP_BLOCKS=2000000 TRIALS=15 \
+    node tools/bench-aoe-recompile-loop.js
+
+variant          median ms   blocks/ms   vs x86-threaded
+x86 threaded        150.36     13301.4        1.000x
+WAT threaded         68.49     29201.3        2.195x
+WAT optimized        44.92     44523.6        3.347x
+
+WAT optimized vs WAT threaded: 1.525x
+```
+
+`x86 threaded` is the current decoded generic-handler stream. `WAT threaded`
+is a prototype normalized micro-op packet interpreted inside one static WAT
+handler, with guest registers held in WAT locals until block exit. `WAT
+optimized` is the straight-line hand-written block implementation. Setup,
+initial decode, and counters are outside the timed region. Each variant runs
+500,000 identical four-block cycles, and every measured trial verifies the same
+final registers, lazy flags, selected memory, and EIP. This is an isolated hot
+loop result, not a whole-game speedup. It shows that a packet backend can retain
+most of the gain from crossing the per-x86-handler boundary, while specialized
+straight-line lowering still has another ~52% throughput advantage over packet
+dispatch on this shape.
+
+Full Chrome browser profile, same scripted 10s Bronze Age Art of War gameplay.
+Default harness mode uses `--headless=new`:
+
+```text
+baseline:
+  main.runSlice total 7364.5 ms
+  guest/unwrapped     6877.7 ms
+  avg runSlice          14.054 ms
+  present FPS           15.855
+  repaint FPS           52.041
+
+compiled allowlist:
+  main.runSlice total 6921.0 ms
+  guest/unwrapped     6471.9 ms
+  avg runSlice          11.056 ms
+  present FPS           19.170
+  repaint FPS           57.736
+  recompile entries  6954138
+  0x00535c20 entries  771686
+
+delta:
+  main.runSlice total -6.0%   / 1.064x
+  guest/unwrapped     -5.9%   / 1.063x
+  avg runSlice        -21.3%  / 1.271x
+  present FPS         +20.9%  / 1.209x
+  repaint FPS         +10.9%  / 1.109x
+```
+
+20s gameplay-only rerun with explicit launch/profile split:
+
+```text
+baseline:
+  launch->gameplay    51001.7 ms
+  main.runSlice total 12909.5 ms
+  guest/unwrapped     12087.0 ms
+  avg runSlice            9.188 ms
+  present FPS            25.238
+  repaint FPS            59.738
+
+compiled allowlist:
+  launch->gameplay    51640.7 ms
+  main.runSlice total 12454.9 ms
+  guest/unwrapped     11634.5 ms
+  avg runSlice            8.359 ms
+  present FPS            26.729
+  repaint FPS            59.913
+  recompile entries  14558151
+  0x00535c20 entries 1575794
+
+delta:
+  main.runSlice total -3.5%   / 1.036x
+  guest/unwrapped     -3.7%   / 1.039x
+  avg runSlice         -9.0%  / 1.099x
+  present FPS          +5.9%  / 1.059x
+  repaint FPS          +0.3%  / 1.003x
+```
+
+Visible Chrome (`HEADLESS=0`) single-run check:
+
+```text
+baseline:
+  main.runSlice total 6494.3 ms
+  guest/unwrapped     6113.7 ms
+  avg runSlice           9.134 ms
+  present FPS           22.228
+  repaint FPS           59.588
+
+compiled allowlist:
+  main.runSlice total 6537.4 ms
+  guest/unwrapped     6129.9 ms
+  avg runSlice           9.586 ms
+  present FPS           21.396
+  repaint FPS           59.877
+  recompile entries  7384214
+  0x00535c20 entries  780248
+
+delta:
+  main.runSlice total +0.7%   / 0.993x
+  guest/unwrapped     +0.3%   / 0.997x
+  avg runSlice         +5.0%  / 0.953x
+  present FPS          -3.7%  / 0.963x
+  repaint FPS          +0.5%  / 1.005x
+```
+
+The browser numbers are single runs and need repetition because AoE startup,
+Chrome mode, and scripted interaction timing can shift the exact game state.
+The 20s visible rerun was not comparable: CDP input delivery stalled for
+seconds after gameplay start, leaving the gameplay window mostly idle
+(`main.runSlice` only 26.3 ms and no present/repaint events). Use the default
+headless-Chrome browser harness for this 20s comparison until the visible input
+path is made deterministic.
+The POC clearly executes millions of promoted blocks in the browser; the
+headless-Chrome CPU signal is positive, while the visible-Chrome run is
+effectively within noise/slightly negative. This is still materially better
+than the one-block POC for proving the mechanism, and it confirms the next
+direction: promote connected hot-loop blocks, not isolated peepholes, then
+measure with repeated browser trials.
 
 ## Handler Histogram
 
@@ -1847,7 +2116,245 @@ Practical implication for this project:
 
 ## Suggested Next Order
 
-1. Keep and commit the measured 355-handler specialization set.
+### Generic WAT Stack Packet Checkpoint
+
+The continued compiler branch now includes a generic stack packet executor,
+an ahead-of-time assembler/verifier, and an AoE-only decoder fixture. The VM
+opcodes themselves are application-neutral. Correctness is differential across
+x86 threading, the old narrow packet, the generic stack VM, and optimized WAT.
+
+Fifteen interleaved two-million-block trials produced this median comparison:
+
+```text
+x86 threaded                 191.34 ms   1.000x
+narrow WAT packet             93.24 ms   2.052x
+generic WAT stack            206.16 ms   0.928x
+generic + CMP_RM32_JCC       209.02 ms   0.915x
+hand-optimized WAT            54.27 ms   3.525x
+```
+
+`CMP_RM32_JCC` is a generic, census-backed fusion rather than an AoE operation,
+but its dynamic register selection lost slightly in this executor. The next
+benchmark should change dispatch/operand encoding (dense `br_table` or
+register-form packets), not add AoE-shaped superinstructions.
+
+### Focused `br_table` Cost Decomposition
+
+The follow-up benchmark decomposes the earlier fourfold microbenchmark result
+instead of attributing it to persistent register locals. Every stage executes
+the same existing decoded x86 thread words for the same four-block fixture and
+passes the same final register, lazy-flag, memory, and EIP comparison.
+
+The run used a single two-million-block warmup per implementation followed by
+101 interleaved trials of 500,000 blocks. Shorter trials reduce thermal drift;
+the lower percentiles are included because unrelated Chrome processes caused
+positive-only scheduler stalls.
+
+```text
+stage                                      p10 ms   p25 ms   median   cumulative   incremental
+A current call_indirect handlers            50.85     52.43    57.06      1.000x       1.000x
+B br_table + generic helpers + global IP     24.82     26.20    28.03      2.036x       2.036x
+C B + local thread IP                        22.69     24.59    26.06      2.190x       1.075x
+D C + direct register access                 13.94     14.70    15.88      3.593x       1.641x
+E D + specialized ALU/branch semantics       11.57     12.20    13.43      4.248x       1.182x
+F E + all architectural state local          11.25     12.41    13.38      4.263x       1.004x
+```
+
+The largest measured components are therefore the single-function dispatch
+loop and removal of dynamic `get_reg`/`set_reg` selection. Keeping only the
+thread instruction pointer local adds 7.5%, and specializing the ALU/branch
+semantics adds 18.2%. Once those changes are present, moving all architectural
+globals to persistent locals is effectively neutral in this run (0.4%). The
+earlier roughly 6% locals result was within the observed machine-noise range
+and should not be used as the planning estimate.
+
+Stage B is still a focused 16-handler upper bound. In addition to replacing
+`call_indirect`, it puts those handler bodies in one function and omits cold
+fallback/debug paths. It therefore measures dispatch collapse and inlining as
+a bundle, not the isolated cost of the Wasm `call_indirect` opcode. A
+production test still needs a generated hot-handler subset plus synchronized
+fallback to the existing interpreter.
+
+### Existing `call_indirect` Specialization Check
+
+A second experiment retains the current global thread IP, one
+`call_indirect` per x86 operation, and handler-to-`$next` tail-call structure.
+After ordinary decode, the harness promotes only matching handler IDs in the
+cached four-block fixture. Raw thread operands and the number of dispatches do
+not change.
+
+The isolated variants are:
+
+- ALU/branch only: direct SUB, SHR, CMP, JNZ, and JL semantics while retaining
+  dynamic register helpers.
+- register only: direct register-form handlers for the 17 matching operations
+  per cycle while retaining the generic ALU/shift helpers where they existed.
+- combined: direct registers plus direct ALU/branch semantics.
+
+The confirming run used one two-million-block warmup and 31 rotated trials of
+one million blocks. The machine remained heavily contended, so both absolute
+medians and paired same-trial ratios are shown.
+
+```text
+variant                         p10 ms   p25 ms   median   median ratio   paired ratio
+x86 threaded                     231.57    241.76   301.52      1.000x         1.000x
+ALU/branch specialized           224.96    243.24   311.78      0.967x         0.872x
+register-form specialized        198.74    208.60   234.58      1.285x         1.192x
+register + ALU specialized       196.98    212.00   239.09      1.261x         1.198x
+```
+
+An earlier 101-trial, 500,000-block run agreed on the direction: 1.052x for
+ALU/branch, 1.219x for register forms, and 1.265x combined by median. Across
+both runs, ALU/branch-only specialization ranges from neutral to slower and
+does not improve reliably on top of register forms. Register-form handlers are
+consistently about 16-29% faster by aggregate timing, with paired ratios near
+20% in the confirming run.
+
+This supports a selective, application-neutral decoder optimization: emit
+direct handler IDs for census-backed register forms and retain generic handlers
+for the long tail. It does not support adding ALU-only handler variants unless
+a different real workload identifies a helper operation that remains costly.
+
+### Full-App Profile-Guided Exact Forms
+
+The smallest production experiment keeps the existing threaded packet format,
+global thread IP, handler-to-`$next` tail calls, and one `call_indirect` per x86
+operation. `$te` changes only the cached handler ID for seven exact operand
+forms; every other form still uses its existing generic handler.
+
+```text
+AoE census forms                 RCT census forms
+mov ecx,eax                      add byte [eax+disp],al
+mov edx,edi                      add byte [ecx+disp],al
+add edx,ecx                      add dl,dh
+add edi,ecx
+```
+
+The RCT selection is particularly narrow: those three forms represented
+136.4M of 199.8M dispatched handlers (68.3%) in its stable runtime loop. The
+specialized handlers inline exact register access and ADD semantics but retain
+the same guest-memory helpers, lazy-flag representation, cache invalidation,
+and `call_indirect` dispatch as the generic handlers. A decoder toggle clears
+the block cache so baseline and candidate packets cannot mix. The optimization
+is enabled by default; `set_hotform_specialization_enabled(0)` provides the
+generic baseline and fallback.
+
+Three default-headless Chrome runs per variant used `HANDLER_HIST=0`, 100,000
+steps per run slice, and a nominal 10-second measurement window. AoE used its
+scripted campaign launch and an additional 2.5-second gameplay settle. RCT used
+a 30-second post-instance warmup. Medians are shown because the game state and
+host load move exact run-slice counts.
+
+```text
+                                  baseline    exact forms       delta / speedup
+AoE runSlice avg, ms                19.568        17.858        -8.7% / 1.096x
+AoE guest ms per slice              17.073        15.594        -8.7% / 1.095x
+AoE guest CPU in fixed window     6863.2       6761.1           -1.5% / 1.015x
+AoE completed slices               402          435             +8.2%
+AoE present FPS                      8.325        8.939           +7.4%
+
+RCT runSlice avg, ms              3790.800      3566.667        -5.9% / 1.063x
+RCT guest CPU in measured window 11372.4      10733.2           -5.6% / 1.060x
+```
+
+All AoE candidates recorded 8,162-8,237 specialized decode emissions; all RCT
+candidates recorded 10,594. Direct generic-vs-specialized tests cover all seven
+forms, including registers, memory, EIP, and lazy flags.
+
+The RCT number is a full browser/app run but not an interactive park benchmark:
+after the 30-second warmup the current emulator is still in a deterministic,
+instruction-heavy runtime loop at `EIP=0x00850000`, with an RCT window but no
+present events. Each 100,000-step slice takes seconds, so the nominal timer can
+overshoot while a slice is executing. Per-slice latency is therefore the useful
+comparison. A future RCT gameplay harness must detect a rendered park state
+instead of relying on a fixed warmup.
+
+Artifacts:
+
+```text
+/private/tmp/aoe-hotform-baseline-{1,2,3}.json
+/private/tmp/aoe-hotform-candidate-{1,2,3}.json
+/private/tmp/rct-hotform-baseline-{1,2,3}.json
+/private/tmp/rct-hotform-candidate-{1,2,3}.json
+```
+
+### Four-Slot Register Packet Checkpoint
+
+The next prototype maps arbitrary guest registers into four packet-local WAT
+locals. Its 158 generated opcodes encode slot operands statically, so the hot
+executor does not dynamically select guest registers for each operation. The
+AoE fixture compares preserving a live slot with an explicit copy against
+destructively reusing a slot after its prior value becomes dead.
+
+Five interleaved two-million-block trials produced:
+
+```text
+variant                 median ms   vs x86 threaded
+x86 threaded               290.91        1.000x
+narrow WAT packet          137.48        2.116x
+generic WAT stack          339.60        0.857x
+stack + CMP_RM32_JCC       318.85        0.912x
+four-slot explicit copy    238.41        1.220x
+four-slot dead reuse       232.54        1.251x
+hand-optimized WAT          90.21        3.225x
+```
+
+The four-slot design recovers a real part of the locals benefit without fixing
+guest register identities to WAT locals. Dead-slot reuse is slightly better
+than explicit copying, but the remaining packet opcode dispatch and generic
+packet boundary work leave substantial distance to straight-line WAT. This is
+still an isolated AoE blitter-loop result, not a whole-game speedup.
+
+Implementation and verification:
+
+```text
+tools/generate-wat-slot-packet.js
+src/05a-slot-packet.generated.wat
+node test/test-aoe-recompile-loop.js
+node tools/bench-aoe-recompile-loop.js
+```
+
+### Dormant Debug/Profiling Overhead Check
+
+Normal execution still contains disabled checks for handler histograms,
+watchpoints, breakpoints, hit counters, EIP/ESP tracing, `dbg_prev_eip`, and the
+shadow call stack. A temporary production build compiled those paths out,
+including all exact `handler_hist_enabled` branches in instruction handlers.
+The experiment kept yield handling, cache validation, and functional error
+guards.
+
+Four silent-Chrome 10-second gameplay pairs were not stable enough to claim a
+gain. The first three ran baseline first and appeared progressively faster;
+reversing the order made the later baseline win:
+
+```text
+pair/order                 production guest/slice delta   slice-count delta
+1 baseline -> production             -5.5%                    +5.3%
+2 baseline -> production            -17.5%                   +19.4%
+3 baseline -> production            -30.4%                   +33.6%
+4 production -> baseline             +15.1%                    -8.8%
+```
+
+The reversal shows that browser/system warmup dominated these full-game
+numbers. A fixed-work two-million-block x86-threaded comparison was essentially
+flat: the first low-noise medians were 140.70 ms debug versus 140.58 ms with the
+checks removed (0.09%), and the stable paired subset did not favor the stripped
+build. The production-mode experiment was therefore removed rather than
+shipping a second build that disables debugging without a measured speed win.
+
+Direct logging measurement reached the same conclusion. During one 10-second
+silent gameplay window, 26 `logToUI` calls consumed 5.5 ms total (about 0.055%
+of wall time). AoE also made 8,333 no-op `log_i32` imports, but a V8 boundary
+microbenchmark put that call shape at roughly 4-6 ns per call. Ordinary logging
+is not a meaningful AoE bottleneck.
+
+The browser harness now launches Chrome with `--mute-audio` and uses the correct
+`CDP_INPUT_TIMEOUT_MS` value for keyboard events. Keep `HANDLER_HIST=0` explicit
+for timing because the harness otherwise enables the expensive histogram by
+default.
+
+1. Keep the measured seven-form allowlist small and extend it only from
+   full-app operand censuses.
 2. Use operand histograms for candidate selection, then verify with `HANDLER_HIST=0`.
 3. Add hot block/EIP sequence profiling so superinstructions can be tied to actual AoE routines, not only global pair counts.
 4. Revisit branch fusion only as generated trace-specific blocks or larger multi-op superinstructions.

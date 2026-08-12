@@ -17,6 +17,8 @@ const VIEWPORT_HEIGHT = Math.max(480, parseInt(process.env.VIEWPORT_HEIGHT || '7
 const OUTPUT = process.env.OUTPUT || '/private/tmp/aoe-web-profile.json';
 const SCREENSHOT = process.env.SCREENSHOT || '/private/tmp/aoe-web-profile.png';
 const RUN_SLICE = Math.max(1000, parseInt(process.env.RUN_SLICE || '100000', 10) || 100000);
+const PROFILE_APP = process.env.PROFILE_APP || 'aoe1';
+const RCT_WARMUP_MS = Math.max(0, parseInt(process.env.RCT_WARMUP_MS || '30000', 10) || 0);
 const GAMEPLAY_MS = Math.max(1000, parseInt(process.env.GAMEPLAY_MS || '10000', 10) || 10000);
 const CDP_INPUT_TIMEOUT_MS = Math.max(3000, parseInt(process.env.CDP_INPUT_TIMEOUT_MS || '10000', 10) || 10000);
 const MENU_WAIT_MS = Math.max(0, parseInt(process.env.MENU_WAIT_MS || '8500', 10) || 0);
@@ -33,6 +35,10 @@ const HANDLER_HIST = process.env.HANDLER_HIST !== '0';
 const STACK_PACKET = process.env.STACK_PACKET === '1';
 const STACK_PACKET_ADDR = parseU32(process.env.STACK_PACKET_ADDR || '0x0049d9d1', 0x0049d9d1);
 const STACK_PACKET_COUNT = process.env.STACK_PACKET_COUNT !== '0';
+const AOE_RECOMPILE = process.env.AOE_RECOMPILE === '1';
+const HOTFORM_SPECIALIZE = process.env.HOTFORM_SPECIALIZE === undefined
+  ? null
+  : process.env.HOTFORM_SPECIALIZE === '1';
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -329,6 +335,7 @@ async function main() {
 
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-aoe-profile-'));
   const chromeArgs = [
+    '--mute-audio',
     '--disable-gpu',
     '--no-sandbox',
     '--no-first-run',
@@ -337,7 +344,7 @@ async function main() {
     `--remote-debugging-port=${DEBUG_PORT}`,
     `--user-data-dir=${userData}`,
     `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
-    `http://127.0.0.1:${PORT}/index.html?profile=${Date.now()}`,
+    `http://127.0.0.1:${PORT}/index.html?${PROFILE_APP === 'aoe1' ? '' : 'debug&'}profile=${Date.now()}`,
   ];
   if (HEADLESS) chromeArgs.unshift('--headless=new');
   const chrome = spawn(CHROME, chromeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -352,7 +359,7 @@ async function main() {
   process.on('exit', cleanup);
 
   let page = null;
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 300; i++) {
     try {
       const pages = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`);
       page = pages.find(p =>
@@ -566,13 +573,13 @@ async function main() {
       key,
       text: key,
       unmodifiedText: key,
-    }), 3000, 'keyDown');
+    }), CDP_INPUT_TIMEOUT_MS, 'keyDown');
     await withTimeout(cdp.send('Input.dispatchKeyEvent', {
       type: 'keyUp',
       windowsVirtualKeyCode: code,
       nativeVirtualKeyCode: code,
       key,
-    }), 3000, 'keyUp');
+    }), CDP_INPUT_TIMEOUT_MS, 'keyUp');
   }
 
   await evalExpr(`new Promise(r => {
@@ -585,11 +592,11 @@ async function main() {
       if (typeof Win98Renderer !== 'undefined' &&
           typeof ThreadManager !== 'undefined' &&
           typeof launchApp === 'function') resolve(1);
-      else if (performance.now() - started > 10000) reject(new Error('app globals not ready'));
+      else if (performance.now() - started > 60000) reject(new Error('app globals not ready'));
       else setTimeout(tick, 50);
     };
     tick();
-  })`, 11000);
+  })`, 65000);
 
   await evalExpr(`(() => {
     const round = v => +((Number(v) || 0).toFixed(3));
@@ -704,6 +711,76 @@ async function main() {
         testJcc: readTop((e.get_branch_test_jcc_hist_base() >>> 2) >>> 0, 64, 'testJcc', 80),
         aluM32RoJcc: readTop((e.get_branch_alu_m32_ro_jcc_hist_base() >>> 2) >>> 0, 512, 'aluM32RoJcc', 120),
       };
+    };
+    const snapshotRegisterFormHist = (u32, e) => {
+      if (!e.get_regform_hist_base) return null;
+      const familyNames = ['mov', 'add', 'cmp', 'load32', 'store32'];
+      const base = (e.get_regform_hist_base() >>> 2) >>> 0;
+      const families = {};
+      for (let kind = 0; kind < familyNames.length; kind++) {
+        const top = [];
+        let total = 0;
+        for (let operand = 0; operand < 64; operand++) {
+          const count = u32[base + kind * 64 + operand] >>> 0;
+          total += count;
+          if (!count) continue;
+          const dst = (operand >>> 3) & 7;
+          const src = operand & 7;
+          top.push({
+            operand,
+            dst,
+            dstName: regNames[dst],
+            src,
+            srcName: regNames[src],
+            label: familyNames[kind] + ' ' + regNames[dst] + ',' +
+              (kind >= 3 ? '[' + regNames[src] + '+disp]' : regNames[src]),
+            count,
+          });
+        }
+        top.sort((a, b) => b.count - a.count);
+        top.length = Math.min(top.length, 32);
+        for (const row of top) row.pct = total ? round(row.count * 100 / total) : 0;
+        families[familyNames[kind]] = { total, top };
+      }
+      return families;
+    };
+    const snapshotOperandFormHist = (u32, e) => {
+      if (!e.get_opform_hist_base) return null;
+      const familyNames = ['aluM8Reg', 'aluReg8Reg8', 'aluM32Reg'];
+      const aluNames = ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'];
+      const base = (e.get_opform_hist_base() >>> 2) >>> 0;
+      const families = {};
+      for (let kind = 0; kind < familyNames.length; kind++) {
+        const top = [];
+        let total = 0;
+        for (let operand = 0; operand < 512; operand++) {
+          const count = u32[base + kind * 512 + operand] >>> 0;
+          total += count;
+          if (!count) continue;
+          const alu = (operand >>> 6) & 7;
+          const reg = (operand >>> 3) & 7;
+          const other = operand & 7;
+          const memory = kind !== 1;
+          top.push({
+            operand,
+            alu,
+            aluName: aluNames[alu],
+            reg,
+            regName: regNames[reg],
+            other,
+            otherName: regNames[other],
+            label: memory
+              ? '[' + regNames[other] + '+disp] ' + aluNames[alu] + '= ' + regNames[reg]
+              : regNames[reg] + ' ' + aluNames[alu] + '= ' + regNames[other],
+            count,
+          });
+        }
+        top.sort((a, b) => b.count - a.count);
+        top.length = Math.min(top.length, 64);
+        for (const row of top) row.pct = total ? round(row.count * 100 / total) : 0;
+        families[familyNames[kind]] = { total, top };
+      }
+      return families;
     };
     const snapshotHotBlockHist = (u32, e) => {
       if (!e.get_hot_block_hist_base || !e.get_hot_block_hist_count) return null;
@@ -859,6 +936,34 @@ async function main() {
       };
     };
     window.__aoeSnapshotHandlerHistogram = snapshotHandlerHistogram;
+    window.__aoeSnapshotRegisterFormHistogram = snapshotRegisterFormHist;
+    window.__aoeSnapshotOperandFormHistogram = snapshotOperandFormHist;
+    window.__aoeSnapshotPhaseTimings = () => {
+      const phases = window.__aoePhaseTimings || {};
+      const now = performance.now();
+      const get = key => {
+        const v = Number(phases[key]);
+        return Number.isFinite(v) ? v : NaN;
+      };
+      const diff = (end, start) => (
+        Number.isFinite(end) && Number.isFinite(start) ? round(end - start) : 0
+      );
+      const launchRequestedAtMs = get('launchRequestedAtMs');
+      const instanceReadyAtMs = get('instanceReadyAtMs');
+      const gameplayReadyAtMs = get('gameplayReadyAtMs');
+      const gameplayProfileStartedAtMs = get('gameplayProfileStartedAtMs');
+      return {
+        launchRequestedAtMs: Number.isFinite(launchRequestedAtMs) ? round(launchRequestedAtMs) : 0,
+        instanceReadyAtMs: Number.isFinite(instanceReadyAtMs) ? round(instanceReadyAtMs) : 0,
+        gameplayReadyAtMs: Number.isFinite(gameplayReadyAtMs) ? round(gameplayReadyAtMs) : 0,
+        gameplayProfileStartedAtMs: Number.isFinite(gameplayProfileStartedAtMs) ? round(gameplayProfileStartedAtMs) : 0,
+        snapshotAtMs: round(now),
+        launchToInstanceReadyMs: diff(instanceReadyAtMs, launchRequestedAtMs),
+        instanceReadyToGameplayReadyMs: diff(gameplayReadyAtMs, instanceReadyAtMs),
+        launchToGameplayReadyMs: diff(gameplayReadyAtMs, launchRequestedAtMs),
+        gameplayProfileElapsedMs: diff(now, gameplayProfileStartedAtMs),
+      };
+    };
       const p = window.__aoeProfile = {
         t0: performance.now(),
         label: 'startup',
@@ -1166,18 +1271,18 @@ async function main() {
 
   const preLaunch = await evalExpr(`(() => {
     const sel = document.getElementById('app-select');
-    if (sel && !Array.from(sel.options).some(o => o.value === 'aoe1')) {
+    if (sel && ${JSON.stringify(PROFILE_APP)} === 'aoe1' && !Array.from(sel.options).some(o => o.value === 'aoe1')) {
       const opt = document.createElement('option');
       opt.value = 'aoe1';
       opt.textContent = 'Age of Empires (demo)';
       sel.appendChild(opt);
     }
-    if (sel) sel.value = 'aoe1';
+    if (sel) sel.value = ${JSON.stringify(PROFILE_APP)};
     const slice = document.getElementById('slice-size-select');
     if (slice) slice.value = String(${RUN_SLICE});
     return {
       value: sel && sel.value,
-      hasAoe: typeof apps !== 'undefined' && !!apps.aoe1,
+      hasApp: typeof apps !== 'undefined' && !!apps[${JSON.stringify(PROFILE_APP)}],
       options: sel ? Array.from(sel.options).map(o => o.value).filter(Boolean).slice(-20) : [],
       status: document.getElementById('status').textContent,
       logTail: document.getElementById('log').textContent.slice(-500),
@@ -1185,9 +1290,17 @@ async function main() {
   })()`);
   progress('prelaunch ' + JSON.stringify(preLaunch));
   await evalExpr(`(() => {
+    window.__aoePhaseTimings = {
+      launchRequestedAtMs: performance.now(),
+      instanceReadyAtMs: 0,
+      gameplayReadyAtMs: 0,
+      gameplayProfileStartedAtMs: 0,
+    };
+    window.__aoeLaunchProfile = null;
+    if (window.__aoeProfile) window.__aoeProfile.reset('launch_to_gameplay');
     return launchApp();
   })()`, 60000, true);
-  progress('launchApp(aoe1) requested');
+  progress(`launchApp(${PROFILE_APP}) requested`);
   const postLaunch = await evalExpr(`(() => ({
     status: document.getElementById('status').textContent,
     apps: runningApps ? runningApps.length : 0,
@@ -1201,11 +1314,14 @@ async function main() {
       const app = runningApps && runningApps[0];
       const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
       if (app && app.wine && app.wine.instance) {
+        const phases = window.__aoePhaseTimings || (window.__aoePhaseTimings = {});
+        phases.instanceReadyAtMs = performance.now();
         resolve({
           ready: true,
           status: document.getElementById('status').textContent,
           mainHwnd: e && e.get_main_hwnd ? (e.get_main_hwnd() >>> 0) : 0,
           logTail: document.getElementById('log').textContent.slice(-2000),
+          phaseTimings: window.__aoeSnapshotPhaseTimings ? window.__aoeSnapshotPhaseTimings() : null,
         });
       } else if (performance.now() - started > 120000) {
         resolve({
@@ -1223,8 +1339,24 @@ async function main() {
     throw new Error('AoE did not launch: ' + JSON.stringify(launchState));
   }
   progress('AoE instance ready');
+  if (HOTFORM_SPECIALIZE !== null) {
+    const hotformState = await evalExpr(`(() => {
+      const app = runningApps && runningApps[0];
+      const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+      if (!e || !e.set_hotform_specialization_enabled) return { available: false };
+      e.set_hotform_specialization_enabled(${HOTFORM_SPECIALIZE ? '1' : '0'});
+      return {
+        available: true,
+        enabled: e.get_hotform_specialization_enabled
+          ? (e.get_hotform_specialization_enabled() >>> 0)
+          : 1,
+      };
+    })()`);
+    progress('hotform specialization ' + JSON.stringify(hotformState));
+  }
   await stageShot('launched');
 
+  if (PROFILE_APP === 'aoe1') {
   await wait(MENU_WAIT_MS);
   await refreshCanvasMetrics();
   await refreshGameScale();
@@ -1257,9 +1389,20 @@ async function main() {
   await refreshCanvasMetrics();
   await refreshGameScale();
   await stageShot('campaign-gameplay-ready');
+  } else {
+    progress(`waiting ${RCT_WARMUP_MS}ms for ${PROFILE_APP} runtime`);
+    await wait(RCT_WARMUP_MS);
+    await refreshCanvasMetrics();
+    await refreshGameScale();
+    await stageShot('rct-runtime-ready');
+  }
 
-  await evalExpr(`(() => {
+  const gameplayProfileStart = await evalExpr(`(() => {
+    const phases = window.__aoePhaseTimings || (window.__aoePhaseTimings = {});
+    phases.gameplayReadyAtMs = performance.now();
+    window.__aoeLaunchProfile = window.__aoeProfile ? window.__aoeProfile.snapshot() : null;
     if (window.__aoeProfile) window.__aoeProfile.reset('gameplay');
+    phases.gameplayProfileStartedAtMs = performance.now();
     const appForHist = runningApps && runningApps[0];
     const wineForHist = appForHist && appForHist.wine;
     const exForHist = wineForHist && wineForHist.instance && wineForHist.instance.exports;
@@ -1267,6 +1410,10 @@ async function main() {
       if (exForHist.set_stack_packet_count_enabled) exForHist.set_stack_packet_count_enabled(${STACK_PACKET_COUNT ? '1' : '0'});
       if (exForHist.reset_stack_packet_counters) exForHist.reset_stack_packet_counters();
       exForHist.set_stack_packet_enabled(1, ${STACK_PACKET_ADDR >>> 0});
+    }
+    if (${AOE_RECOMPILE ? 'true' : 'false'} && exForHist && exForHist.set_aoe_recompile_enabled) {
+      if (exForHist.reset_aoe_recompile_counters) exForHist.reset_aoe_recompile_counters();
+      exForHist.set_aoe_recompile_enabled(1);
     }
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
@@ -1283,10 +1430,12 @@ async function main() {
         yieldReason: e && e.get_yield_reason ? (e.get_yield_reason() >>> 0) : 0,
         mainHwnd: e && e.get_main_hwnd ? (e.get_main_hwnd() >>> 0) : 0,
         scenario: {
-          mode: 'campaign',
-          name: 'Bronze Age Art of War',
+          mode: ${JSON.stringify(PROFILE_APP === 'aoe1' ? 'campaign' : 'runtime')},
+          name: ${JSON.stringify(PROFILE_APP === 'aoe1' ? 'Bronze Age Art of War' : 'RCT startup/runtime')},
           gameplayMs: ${GAMEPLAY_MS},
-          action: 'box-select starting army, then issue right-click move orders to eastern terrain',
+          action: ${JSON.stringify(PROFILE_APP === 'aoe1'
+            ? 'box-select starting army, then issue right-click move orders to eastern terrain'
+            : 'move pointer across the RCT window during the runtime sample')},
           selectionRect: { x1: 6, y1: 122, x2: 470, y2: 535 },
           moveTargets: [{ x: 760, y: 220 }, { x: 705, y: 300 }, { x: 805, y: 405 }],
         },
@@ -1307,6 +1456,18 @@ async function main() {
         handlerHistogram: window.__aoeSnapshotHandlerHistogram
           ? window.__aoeSnapshotHandlerHistogram(wine, e)
           : null,
+        registerFormHistogram: wine && wine.memory && e && window.__aoeSnapshotRegisterFormHistogram
+          ? window.__aoeSnapshotRegisterFormHistogram(new Uint32Array(wine.memory.buffer), e)
+          : null,
+        operandFormHistogram: wine && wine.memory && e && window.__aoeSnapshotOperandFormHistogram
+          ? window.__aoeSnapshotOperandFormHistogram(new Uint32Array(wine.memory.buffer), e)
+          : null,
+        hotformSpecialization: e && e.get_hotform_specialization_enabled ? {
+          enabled: e.get_hotform_specialization_enabled() >>> 0,
+          decodedEmits: e.get_hotform_specialized_emits
+            ? (e.get_hotform_specialized_emits() >>> 0)
+            : 0,
+        } : null,
         stackPacket: e && e.get_stack_packet_enabled ? {
           enabled: e.get_stack_packet_enabled() >>> 0,
           addr: e.get_stack_packet_addr ? (e.get_stack_packet_addr() >>> 0) : 0,
@@ -1319,6 +1480,15 @@ async function main() {
           block0049dd20ToDdc7Entries: e.get_stack_packet_0049dd20_to_ddc7_entries ? (e.get_stack_packet_0049dd20_to_ddc7_entries() >>> 0) : 0,
           block0049dd20ToE0adEntries: e.get_stack_packet_0049dd20_to_e0ad_entries ? (e.get_stack_packet_0049dd20_to_e0ad_entries() >>> 0) : 0,
         } : null,
+        phaseTimings: window.__aoeSnapshotPhaseTimings ? window.__aoeSnapshotPhaseTimings() : null,
+        aoeRecompile: e && e.get_aoe_recompile_enabled ? {
+          enabled: e.get_aoe_recompile_enabled() >>> 0,
+          entries: e.get_aoe_recompile_entries ? (e.get_aoe_recompile_entries() >>> 0) : 0,
+          block00535c20Entries: e.get_aoe_recompile_00535c20_entries
+            ? (e.get_aoe_recompile_00535c20_entries() >>> 0)
+            : 0,
+        } : null,
+        launchProfile: window.__aoeLaunchProfile || null,
         profile: window.__aoeProfile ? window.__aoeProfile.snapshot() : null,
       };
     };
@@ -1330,9 +1500,11 @@ async function main() {
         console.log(${JSON.stringify(PROFILE_PREFIX)} + JSON.stringify({ error: e && e.message ? e.message : String(e) }));
       }
     }, ${GAMEPLAY_MS});
-    return 1;
+    return {
+      phaseTimings: window.__aoeSnapshotPhaseTimings ? window.__aoeSnapshotPhaseTimings() : null,
+    };
   })()`);
-  progress('gameplay profile started');
+  progress('gameplay profile started ' + JSON.stringify(gameplayProfileStart && gameplayProfileStart.phaseTimings || {}));
 
   let cpuProfileStarted = false;
   if (CPU_PROFILE) {
@@ -1345,6 +1517,7 @@ async function main() {
 
   const eventStart = cdp.events.length;
   const actionStartedAt = Date.now();
+  if (PROFILE_APP === 'aoe1') {
   await dragCanvas(6, 122, 470, 535, 18);
   await wait(300);
   await stageShot('selected-starting-army');
@@ -1354,6 +1527,7 @@ async function main() {
   await wait(1200);
   await rightClickCanvas(805, 405);
   await stageShot('move-orders-issued');
+  }
   const remainingGameplayMs = GAMEPLAY_MS - (Date.now() - actionStartedAt);
   if (remainingGameplayMs > 0) {
     const moveCount = Math.max(1, Math.floor(remainingGameplayMs / 250));
@@ -1384,6 +1558,9 @@ async function main() {
   }
   if (result.profile) {
     result.profile.runSliceBreakdown = deriveRunSliceBreakdown(result.profile);
+  }
+  if (result.launchProfile) {
+    result.launchProfile.runSliceBreakdown = deriveRunSliceBreakdown(result.launchProfile);
   }
 
   if (cpuProfileStarted) {

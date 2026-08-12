@@ -611,7 +611,7 @@
   ;; 0x00011140  1064B   DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
-  ;; 0x00011980  ~1.4KB  Free (up to GUEST_BASE)
+  ;; 0x00011980 1664B   Free (TEXT_SCRATCH occupies 0x11B00..0x11F00)
   ;; --- High WAT-private tables ---
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
@@ -622,7 +622,7 @@
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
-  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
+  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (358 x 358 i32 counters)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F92000 4KB      BRANCH_TEST_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
@@ -634,6 +634,8 @@
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
   ;; 0x07FF8000  8KB     COM_WRAPPERS   (1024 entries × 8 bytes, ends 0x07FFA000)
   ;; 0x07FFA000 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FFE000)
+  ;; 0x07FFE000  6KB     OPFORM_HIST (3 families × 512 ALU/reg/base counters)
+  ;; 0x07FFF800 1280B    REGFORM_HIST (5 families × 64 register-pair counters)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
@@ -765,7 +767,7 @@
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
-  (global $HANDLER_HIST_COUNT i32 (i32.const 357))
+  (global $HANDLER_HIST_COUNT i32 (i32.const 358))
   (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
   (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
   (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))
@@ -781,6 +783,10 @@
   (global $SIB_CONSUMER_HIST_COUNT i32 (i32.const 8192))
   (global $sib_consumer_hist_collisions (mut i32) (i32.const 0))
   (global $sib_consumer_hist_total (mut i32) (i32.const 0))
+  (global $REGFORM_HIST i32 (i32.const 0x07FFF800))
+  (global $REGFORM_HIST_SIZE i32 (i32.const 0x00000500))
+  (global $OPFORM_HIST i32 (i32.const 0x07FFE000))
+  (global $OPFORM_HIST_SIZE i32 (i32.const 0x00001800))
   ;; CLIENT_RECT: parallel to WND_RECORDS, 16 bytes per slot = { l,t,r,b } i32s.
   ;; Window-local coordinates of the client area after WM_NCCALCSIZE.
   (global $CLIENT_RECT   i32 (i32.const 0x0000F670))
@@ -986,6 +992,10 @@
   (global $handler_hist_last (mut i32) (i32.const -1))
   (global $branch_hist_kind (mut i32) (i32.const 0))
   (global $branch_hist_operand (mut i32) (i32.const 0))
+  ;; Decoder-selected exact operand forms. This keeps the existing threaded
+  ;; call_indirect dispatch and changes only which handler ID is cached.
+  (global $hotform_specialization_enabled (mut i32) (i32.const 1))
+  (global $hotform_specialized_emits (mut i32) (i32.const 0))
   ;; Disabled-by-default compiled packet prototype. The decoder only emits
   ;; handler 356 for exact AoE block/trace addresses implemented by
   ;; $th_stack_packet.
@@ -999,6 +1009,23 @@
   (global $stack_packet_0049dd20_to_dd8b_entries (mut i32) (i32.const 0))
   (global $stack_packet_0049dd20_to_ddc7_entries (mut i32) (i32.const 0))
   (global $stack_packet_0049dd20_to_e0ad_entries (mut i32) (i32.const 0))
+  (global $aoe_recompile_enabled (mut i32) (i32.const 0))
+  (global $aoe_wat_threaded_enabled (mut i32) (i32.const 0))
+  ;; Application-neutral stack packet VM. The AoE POC only supplies benchmark
+  ;; packets; no guest addresses or algorithms are built into the executor.
+  (global $wat_stack_packet_enabled (mut i32) (i32.const 0))
+  (global $wat_stack_superops_enabled (mut i32) (i32.const 0))
+  (global $wat_stack_packet_count_enabled (mut i32) (i32.const 1))
+  (global $wat_stack_packet_entries (mut i32) (i32.const 0))
+  ;; Four-slot register packet benchmark. Allocation mode 0 preserves the
+  ;; incoming slot value and copies; mode 1 reuses a dead value's slot.
+  (global $wat_slot_packet_enabled (mut i32) (i32.const 0))
+  (global $wat_slot_packet_allocation_mode (mut i32) (i32.const 0))
+  (global $wat_slot_packet_count_enabled (mut i32) (i32.const 1))
+  (global $wat_slot_packet_entries (mut i32) (i32.const 0))
+  (global $aoe_recompile_count_enabled (mut i32) (i32.const 1))
+  (global $aoe_recompile_entries (mut i32) (i32.const 0))
+  (global $aoe_recompile_00535c20_entries (mut i32) (i32.const 0))
 
   ;; PE info
   (global $image_base   (mut i32) (i32.const 0))

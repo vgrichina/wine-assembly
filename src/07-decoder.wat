@@ -585,6 +585,219 @@
   ;; ============================================================
   ;; DECODE BLOCK
   ;; ============================================================
+  ;; Emit normalized micro-op packets for the four-block AoE benchmark cycle.
+  ;; The outer thread still contains a normal handler entry; raw words after it
+  ;; are consumed by $aoe_wat_threaded_packet instead of by $next.
+  (func $emit_aoe_wat_threaded_packet (param $start_eip i32) (result i32)
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 1))  (call $te_raw (i32.const 0x00775050))
+        (call $te_raw (i32.const 2))  (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 3))
+        (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 5))  (call $te_raw (i32.const 0x00775020))
+        (call $te_raw (i32.const 6))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 8))  (call $te_raw (i32.const 0x0000000F))
+        (call $te_raw (i32.const 9))  (call $te_raw (i32.const 0x0077503C))
+        (call $te_raw (i32.const 10)) (call $te_raw (i32.const 0x00534400))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 11))
+        (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 0x00535E08))
+        (call $te_raw (i32.const 0x00535E05))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 12))
+        (call $te_raw (i32.const 13))
+        (call $te_raw (i32.const 14))
+        (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 8))
+        (call $te_raw (i32.const 0x00535E7C))
+        (call $te_raw (i32.const 0x00535E12))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+      (then
+        (call $te (i32.const 357) (i32.const 100))
+        (call $te_raw (i32.const 16)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17))
+        (call $te_raw (i32.const 18)) (call $te_raw (i32.const 0x00535C20))
+        (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; Benchmark fixture for the application-neutral stack packet VM. These
+  ;; packets are intentionally expressed only in the generic ISA documented by
+  ;; $wat_stack_packet; the executor contains no AoE addresses or operations.
+  (func $emit_aoe_wat_stack_packet (param $start_eip i32) (result i32)
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; [save_esi]=esi; [save_edi]=edi
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775050))
+        (call $te_raw (i32.const 20))
+        (call $te_raw (i32.const 8))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 20))
+        ;; eax=0; eax=load8[esi]
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0))
+        (call $te_raw (i32.const 9))
+        (call $te_raw (i32.const 7)) (call $te_raw (i32.const 18))
+        (call $te_raw (i32.const 9))
+        ;; edi-=load32[absolute]
+        (call $te_raw (i32.const 8))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775020))
+        (call $te_raw (i32.const 19)) (call $te_raw (i32.const 23))
+        (call $te_raw (i32.const 16))
+        ;; ecx=eax; esi=esi+1; eax=eax&15 with flags
+        (call $te_raw (i32.const 1)) (call $te_raw (i32.const 10))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 25)) (call $te_raw (i32.const 9))
+        ;; ebx=load32[absolute]
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x0077503C))
+        (call $te_raw (i32.const 19)) (call $te_raw (i32.const 12))
+        ;; jmp load32[0x00534400 + (eax << 2)]
+        (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 26))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00534400))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 19))
+        (call $te_raw (i32.const 28))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; ecx >>= 4; jnz 0x535e08
+        (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 27)) (call $te_raw (i32.const 10))
+        (call $te_raw (i32.const 29)) (call $te_raw (i32.const 5))
+        (call $te_raw (i32.const 0x00535E08))
+        (call $te_raw (i32.const 0x00535E05))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; edx=edi+ecx-1
+        (call $te_raw (i32.const 8)) (call $te_raw (i32.const 11))
+        (call $te_raw (i32.const 3)) (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 11))
+        (call $te_raw (i32.const 3))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 23)) (call $te_raw (i32.const 11))
+        (if (global.get $wat_stack_superops_enabled)
+          (then
+            ;; Generic CMP_RM32_JCC edx,ebx,+8,JL,target,fall.
+            (call $te_raw (i32.const 31))
+            (call $te_raw (i32.const 2)) (call $te_raw (i32.const 3))
+            (call $te_raw (i32.const 8)) (call $te_raw (i32.const 12))
+            (call $te_raw (i32.const 0x00535E7C))
+            (call $te_raw (i32.const 0x00535E12)))
+          (else
+            (call $te_raw (i32.const 3))
+            (call $te_raw (i32.const 4))
+            (call $te_raw (i32.const 17)) (call $te_raw (i32.const 8))
+            (call $te_raw (i32.const 21)) (call $te_raw (i32.const 19))
+            (call $te_raw (i32.const 30)) (call $te_raw (i32.const 12))
+            (call $te_raw (i32.const 0x00535E7C))
+            (call $te_raw (i32.const 0x00535E12))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+      (then
+        (call $te (i32.const 357) (i32.const 101))
+        ;; edi=load32[absolute]; esi=esi+1; edi=edi+ecx; jmp
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 19)) (call $te_raw (i32.const 16))
+        (call $te_raw (i32.const 7))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 21)) (call $te_raw (i32.const 15))
+        (call $te_raw (i32.const 8)) (call $te_raw (i32.const 2))
+        (call $te_raw (i32.const 22)) (call $te_raw (i32.const 16))
+        (call $te_raw (i32.const 17)) (call $te_raw (i32.const 0x00535C20))
+        (call $te_raw (i32.const 28))
+        (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; Four-slot register-packet benchmark fixture. Packet headers map arbitrary
+  ;; guest registers to L0..L3; operation opcodes statically encode slot
+  ;; operands. Allocation mode 1 reuses L0 after incoming EDI's last use.
+  (func $emit_aoe_wat_slot_packet (param $start_eip i32) (result i32)
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; imports: L0=ESI,L1=EDI; exports: L0=ESI,L1=EBX,L2=EAX,L3=ECX
+        (call $te_raw (i32.const 0x0000FF76))
+        (call $te_raw (i32.const 0x00001036))
+        (call $te_raw (i32.const 33)) (call $te_raw (i32.const 0x00775050))
+        (call $te_raw (i32.const 34)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 109))
+        (call $te_raw (i32.const 120)) (call $te_raw (i32.const 0x00775020))
+        (call $te_raw (i32.const 128))
+        (call $te_raw (i32.const 51))
+        (call $te_raw (i32.const 85)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 95)) (call $te_raw (i32.const 15))
+        ;; EDI is dirty but L1 is now reused for EBX, so export it here.
+        (call $te_raw (i32.const 16))
+        (call $te_raw (i32.const 118)) (call $te_raw (i32.const 0x0077503C))
+        (call $te_raw (i32.const 139))
+        (call $te_raw (i32.const 0x00534400)) (call $te_raw (i32.const 2))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; L0=ECX in and out.
+        (call $te_raw (i32.const 0x0000FFF1))
+        (call $te_raw (i32.const 0x0000FFF1))
+        (call $te_raw (i32.const 97)) (call $te_raw (i32.const 4))
+        (call $te_raw (i32.const 157)) (call $te_raw (i32.const 5))
+        (call $te_raw (i32.const 0x00535E08)) (call $te_raw (i32.const 0x00535E05))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; imports: L0=EDI,L1=ECX,L2=EBX.
+        (call $te_raw (i32.const 0x0000F317))
+        (if (i32.eqz (global.get $wat_slot_packet_allocation_mode))
+          (then
+            ;; Preserve L0=EDI and explicitly copy the new EDX value to L3.
+            (call $te_raw (i32.const 0x00002FFF))
+            (call $te_raw (i32.const 49))
+            (call $te_raw (i32.const 66))
+            (call $te_raw (i32.const 92)) (call $te_raw (i32.const 1))
+            (call $te_raw (i32.const 155)))
+          (else
+            ;; EDI is dead locally: destructively reuse L0 for outgoing EDX.
+            (call $te_raw (i32.const 0x0000FFF2))
+            (call $te_raw (i32.const 54))
+            (call $te_raw (i32.const 89)) (call $te_raw (i32.const 1))
+            (call $te_raw (i32.const 143))))
+        (call $te_raw (i32.const 8)) (call $te_raw (i32.const 12))
+        (call $te_raw (i32.const 0x00535E7C)) (call $te_raw (i32.const 0x00535E12))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+      (then
+        (call $te (i32.const 357) (i32.const 102))
+        ;; imports: L0=ECX,L1=ESI; exports: L1=ESI,L2=EDI.
+        (call $te_raw (i32.const 0x0000FF61))
+        (call $te_raw (i32.const 0x0000F76F))
+        (call $te_raw (i32.const 119)) (call $te_raw (i32.const 0x00775054))
+        (call $te_raw (i32.const 86)) (call $te_raw (i32.const 1))
+        (call $te_raw (i32.const 77))
+        (call $te_raw (i32.const 158)) (call $te_raw (i32.const 0x00535C20))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func $decode_block (param $start_eip i32) (result i32)
     (local $tstart i32)
     (local $op i32)
@@ -625,6 +838,78 @@
             (call $te (i32.const 356) (i32.const 2))
             (call $cache_store (local.get $start_eip) (local.get $tstart))
             (return (local.get $tstart))))))
+    (if (global.get $wat_slot_packet_enabled)
+      (then
+        (if (call $emit_aoe_wat_slot_packet (local.get $start_eip))
+          (then
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+    (if (global.get $wat_stack_packet_enabled)
+      (then
+        (if (call $emit_aoe_wat_stack_packet (local.get $start_eip))
+          (then
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+    (if (global.get $aoe_wat_threaded_enabled)
+      (then
+        (if (call $emit_aoe_wat_threaded_packet (local.get $start_eip))
+          (then
+            (call $cache_store (local.get $start_eip) (local.get $tstart))
+            (return (local.get $tstart))))))
+    (if (global.get $aoe_recompile_enabled)
+      (then
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535C20))
+          (then (call $te (i32.const 357) (i32.const 1)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00536420))
+          (then (call $te (i32.const 357) (i32.const 2)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x005360A0))
+          (then (call $te (i32.const 357) (i32.const 3)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E00))
+          (then (call $te (i32.const 357) (i32.const 4)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E05))
+          (then (call $te (i32.const 357) (i32.const 25)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E08))
+          (then (call $te (i32.const 357) (i32.const 5)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E12))
+          (then (call $te (i32.const 357) (i32.const 6)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E17))
+          (then (call $te (i32.const 357) (i32.const 7)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E1E))
+          (then (call $te (i32.const 357) (i32.const 8)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E25))
+          (then (call $te (i32.const 357) (i32.const 9)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E2F))
+          (then (call $te (i32.const 357) (i32.const 10)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E40))
+          (then (call $te (i32.const 357) (i32.const 11)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E7C))
+          (then (call $te (i32.const 357) (i32.const 12)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535E8A))
+          (then (call $te (i32.const 357) (i32.const 13)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535BC0))
+          (then (call $te (i32.const 357) (i32.const 14)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535BDC))
+          (then (call $te (i32.const 357) (i32.const 26)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B4D))
+          (then (call $te (i32.const 357) (i32.const 15)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B56))
+          (then (call $te (i32.const 357) (i32.const 16)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B5B))
+          (then (call $te (i32.const 357) (i32.const 17)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B66))
+          (then (call $te (i32.const 357) (i32.const 18)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B6B))
+          (then (call $te (i32.const 357) (i32.const 19)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B70))
+          (then (call $te (i32.const 357) (i32.const 20)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00535B8B))
+          (then (call $te (i32.const 357) (i32.const 21)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x005362E0))
+          (then (call $te (i32.const 357) (i32.const 22)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x005362F4))
+          (then (call $te (i32.const 357) (i32.const 27)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))
+        (if (i32.eq (local.get $start_eip) (i32.const 0x00536528))
+          (then (call $te (i32.const 357) (i32.const 24)) (call $cache_store (local.get $start_eip) (local.get $tstart)) (return (local.get $tstart))))))
 
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
