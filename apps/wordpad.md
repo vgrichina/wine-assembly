@@ -49,7 +49,11 @@ as `CF_DIB` is copied byte-for-byte, stream/storage media retain COM ownership,
 reference-counted current object. WordPad/RichEdit insertion and static DIB
 presentation are integrated. WordPad can copy, cut, and paste an existing
 inline static DIB without retaining a source-control-owned RichEdit object.
-The focused data-object suite passes 21/21; `GetDataHere`, text/RTF conversion,
+`GetDataHere` now fills caller-owned HGLOBAL, IStream, and IStorage media; it
+rejects undersized globals without partial writes, preserves caller interface
+ownership, and stages storage replacement atomically. The focused data-object
+suite passes 28/28. Exact `FORMATETC` error negotiation, Unicode/ANSI/OEM/RTF
+conversion, durable `OleFlushClipboard` snapshots, custom medium releasers,
 and advisory connections remain broader transfer work.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
@@ -754,6 +758,10 @@ Current evidence from the 2026-08-11 follow-up probe:
   13/13; it covers stable ANSI/Unicode `"Rich Text Format"` registration,
   distinct ids for unrelated registered formats, RTF availability/count/handle
   queries, byte round-trip, and `EmptyClipboard` clearing.
+- Direct WAT regression test: `node test/test-ole-data-object.js` passes 28/28;
+  it covers owned multi-format media, stable cloned enumeration, `SetData`
+  transfer semantics, independent `GetData`, and caller-owned `GetDataHere`
+  transfers for HGLOBAL, IStream, and recursively copied IStorage trees.
 - Regression test: `node test/test-wordpad-selection-highlight.js` passes 8/8
   and writes `test/output/wordpad-richedit/selection-highlight-plain.png` plus
   `test/output/wordpad-richedit/selection-highlight.png`; it verifies Ctrl+A

@@ -30,7 +30,9 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 21/21 and 68/68.
+storage suites remain green at 28/28 and 68/68. The data-object suite now
+includes caller-owned HGLOBAL, IStream, and recursive IStorage `GetDataHere`
+transfers.
 
 ## ASCII TLDR
 

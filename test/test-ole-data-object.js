@@ -121,6 +121,12 @@ async function main() {
     dv.setUint32(wa(value) + 4, handle, true);
     return { value, handle };
   };
+  const writeWide = text => {
+    const value = alloc((text.length + 1) * 2);
+    for (let i = 0; i < text.length; i++) dv.setUint16(wa(value) + i * 2, text.charCodeAt(i), true);
+    dv.setUint16(wa(value) + text.length * 2, 0, true);
+    return value;
+  };
   const multi = e.test_ole_create_data_object(format, medium) >>> 0;
   const unicodeFormat = makeFormat(13);
   const targetDevice = alloc(8);
@@ -200,6 +206,113 @@ async function main() {
   e.test_ole_release(enumClone);
   e.test_ole_release(formatEnum);
   e.test_ole_release(multi);
+
+  // GetDataHere fills media owned by the caller. It must not replace handles
+  // or interface pointers, and partial HGLOBAL writes are forbidden.
+  const hereObject = e.test_ole_create_data_object(format, medium) >>> 0;
+  const hereHandle = alloc(64);
+  u8.fill(0xcc, wa(hereHandle), wa(hereHandle) + 64);
+  const hereMedium = alloc(12);
+  u8.fill(0, wa(hereMedium), wa(hereMedium) + 12);
+  dv.setUint32(wa(hereMedium), 1, true);
+  dv.setUint32(wa(hereMedium) + 4, hereHandle, true);
+  dv.setUint32(wa(hereMedium) + 8, 0x11223344, true);
+  check('GetDataHere fills a caller-owned HGLOBAL without replacing its medium',
+    e.test_ole_data_get_here(hereObject, format, hereMedium) === 0 &&
+    dv.getUint32(wa(hereMedium) + 4, true) === hereHandle &&
+    dv.getUint32(wa(hereMedium) + 8, true) === 0x11223344 &&
+    u8[wa(hereHandle)] === 0xee && u8[wa(hereHandle) + 47] === ((47 * 17 + 3) & 0xff));
+  const smallHandle = alloc(8);
+  u8.fill(0xa5, wa(smallHandle), wa(smallHandle) + 8);
+  const smallMedium = alloc(12);
+  u8.fill(0, wa(smallMedium), wa(smallMedium) + 12);
+  dv.setUint32(wa(smallMedium), 1, true);
+  dv.setUint32(wa(smallMedium) + 4, smallHandle, true);
+  check('GetDataHere rejects an undersized HGLOBAL without a partial write',
+    (e.test_ole_data_get_here(hereObject, format, smallMedium) >>> 0) === 0x80030070 &&
+    Array.from(u8.slice(wa(smallHandle), wa(smallHandle) + 8)).every(byte => byte === 0xa5));
+
+  const hereStreamSource = e.test_ole_create_stream(0, 0) >>> 0;
+  const hereStreamBytes = alloc(6);
+  u8.set(Uint8Array.from([9, 8, 7, 6, 5, 4]), wa(hereStreamBytes));
+  const hereCount = alloc(4);
+  e.test_ole_stream_write(hereStreamSource, hereStreamBytes, 6, hereCount);
+  const hereStreamFormat = makeFormat(0xc201, 4);
+  const hereStreamStoredMedium = alloc(12);
+  u8.fill(0, wa(hereStreamStoredMedium), wa(hereStreamStoredMedium) + 12);
+  dv.setUint32(wa(hereStreamStoredMedium), 4, true);
+  dv.setUint32(wa(hereStreamStoredMedium) + 4, hereStreamSource, true);
+  const hereStreamObject = e.test_ole_create_data_object(hereStreamFormat, hereStreamStoredMedium) >>> 0;
+  e.test_ole_release(hereStreamSource);
+  const hereStreamDest = e.test_ole_create_stream(0, 0) >>> 0;
+  const staleStreamBytes = alloc(9);
+  u8.fill(0xee, wa(staleStreamBytes), wa(staleStreamBytes) + 9);
+  e.test_ole_stream_write(hereStreamDest, staleStreamBytes, 9, hereCount);
+  const hereStreamMedium = alloc(12);
+  u8.fill(0, wa(hereStreamMedium), wa(hereStreamMedium) + 12);
+  dv.setUint32(wa(hereStreamMedium), 4, true);
+  dv.setUint32(wa(hereStreamMedium) + 4, hereStreamDest, true);
+  check('GetDataHere rewrites a caller-owned IStream to the exact stored payload',
+    e.test_ole_data_get_here(hereStreamObject, hereStreamFormat, hereStreamMedium) === 0 &&
+    e.test_ole_stream_size(hereStreamDest) === 6 && e.test_ole_stream_position(hereStreamDest) === 6 &&
+    (() => {
+      const result = alloc(6);
+      e.test_ole_stream_seek(hereStreamDest, 0);
+      return e.test_ole_stream_read(hereStreamDest, result, 6, hereCount) === 0 &&
+        Array.from(u8.slice(wa(result), wa(result) + 6)).join(',') === '9,8,7,6,5,4';
+    })());
+  const wrongHereMedium = alloc(12);
+  u8.fill(0, wa(wrongHereMedium), wa(wrongHereMedium) + 12);
+  dv.setUint32(wa(wrongHereMedium), 4, true);
+  dv.setUint32(wa(wrongHereMedium) + 4, hereStreamDest, true);
+  check('GetDataHere reports DV_E_TYMED for incompatible caller media',
+    (e.test_ole_data_get_here(hereObject, format, wrongHereMedium) >>> 0) === 0x80040069);
+  check('GetDataHere retains caller ownership of the destination IStream',
+    e.test_ole_release(hereStreamDest) === 0);
+  e.test_ole_release(hereStreamObject);
+
+  const hereStorageSource = e.test_ole_create_storage(0) >>> 0;
+  const storageClass = alloc(16);
+  for (let i = 0; i < 16; i++) u8[wa(storageClass) + i] = 0x80 + i;
+  e.test_ole_set_class(hereStorageSource, storageClass);
+  e.test_ole_storage_set_state_bits(hereStorageSource, 0x12340000, 0xffffffff);
+  const storedName = writeWide('Payload');
+  const storedStream = e.test_ole_create_stream(hereStorageSource, storedName) >>> 0;
+  e.test_ole_stream_write(storedStream, hereStreamBytes, 6, hereCount);
+  e.test_ole_release(storedStream);
+  const folderName = writeWide('Folder');
+  const storedFolder = e.test_ole_create_child_storage(hereStorageSource, folderName) >>> 0;
+  e.test_ole_release(storedFolder);
+  const hereStorageFormat = makeFormat(0xc202, 8);
+  const hereStorageStoredMedium = alloc(12);
+  u8.fill(0, wa(hereStorageStoredMedium), wa(hereStorageStoredMedium) + 12);
+  dv.setUint32(wa(hereStorageStoredMedium), 8, true);
+  dv.setUint32(wa(hereStorageStoredMedium) + 4, hereStorageSource, true);
+  const hereStorageObject = e.test_ole_create_data_object(hereStorageFormat, hereStorageStoredMedium) >>> 0;
+  e.test_ole_release(hereStorageSource);
+  const hereStorageDest = e.test_ole_create_storage(0) >>> 0;
+  const obsoleteName = writeWide('Obsolete');
+  const obsoleteStream = e.test_ole_create_stream(hereStorageDest, obsoleteName) >>> 0;
+  e.test_ole_release(obsoleteStream);
+  const hereStorageMedium = alloc(12);
+  u8.fill(0, wa(hereStorageMedium), wa(hereStorageMedium) + 12);
+  dv.setUint32(wa(hereStorageMedium), 8, true);
+  dv.setUint32(wa(hereStorageMedium) + 4, hereStorageDest, true);
+  const hereStorageHr = e.test_ole_data_get_here(hereStorageObject, hereStorageFormat, hereStorageMedium) >>> 0;
+  const copiedStream = e.test_ole_find_stream(hereStorageDest, storedName) >>> 0;
+  const copiedFolder = e.test_ole_find_storage(hereStorageDest, folderName) >>> 0;
+  const copiedClass = alloc(16);
+  e.test_ole_get_class(hereStorageDest, copiedClass);
+  check('GetDataHere atomically replaces caller IStorage contents and metadata',
+    hereStorageHr === 0 && copiedStream !== 0 && copiedFolder !== 0 &&
+    e.test_ole_find_stream(hereStorageDest, obsoleteName) === 0 &&
+    Array.from(u8.slice(wa(copiedClass), wa(copiedClass) + 16)).every((byte, i) => byte === 0x80 + i));
+  if (copiedStream) e.test_ole_release(copiedStream);
+  if (copiedFolder) e.test_ole_release(copiedFolder);
+  check('GetDataHere retains caller ownership of the destination IStorage',
+    e.test_ole_release(hereStorageDest) === 0);
+  e.test_ole_release(hereStorageObject);
+  e.test_ole_release(hereObject);
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   if (fail) process.exit(1);

@@ -133,8 +133,9 @@ an earlier ownership/persistence contract is still ambiguous.
    metadata pass 68/68.
 4. **CFB persistence:** deterministic writer, defensive reader, and
    fresh-process tree comparison.
-5. **Multi-format transfer:** format collection, full enumerator, Unicode text,
-   `GetDataHere`, and lifetime tests.
+5. **Multi-format transfer:** in progress. Format collection, full enumerator,
+   and caller-owned `GetDataHere` media are complete; Unicode text conversion,
+   exact negotiation, clipboard snapshots, and remaining lifetime cases follow.
 6. **Generic persistence:** storage-backed object record and complete
    `IPersistStorage` lifecycle, retaining unknown children.
 7. **Synthetic OLE server:** lifecycle, cache, advisory, clipboard, and verb
@@ -326,7 +327,7 @@ transfer breadth below.
   `tymed` masks with accurate `DV_E_*` errors.
 - Support `TYMED_HGLOBAL`, `TYMED_ISTREAM`, and `TYMED_ISTORAGE` ownership,
   duplication, `pUnkForRelease`, and `ReleaseStgMedium` behavior.
-- Implement `GetDataHere` for compatible caller-provided global memory,
+- [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
 - Preserve stable format enumeration and media lifetime after clipboard owner
@@ -336,14 +337,17 @@ transfer breadth below.
 - Add advisory plumbing only after a traced consumer requires it:
   `DAdvise`, `DUnadvise`, `EnumDAdvise`, and change notification.
 
-2026-08-12 collection result: `IDataObject` owns a growable collection of
+2026-08-13 transfer result: `IDataObject` owns a growable collection of
 deep-copied `FORMATETC`/`STGMEDIUM` entries. `SetData` appends or replaces
 matching formats, honors `fRelease`, and retains stream/storage media with COM
 ownership; `DVTARGETDEVICE` data is copied independently. `IEnumFORMATETC`
 captures stable deep snapshots and implements exact multi-entry
-`Next`/`Skip`/`Reset`/`Clone` behavior. The focused suite passes 21/21, while
-the existing static handler, storage, CFB, and timed WordPad clipboard suites
-remain green.
+`Next`/`Skip`/`Reset`/`Clone` behavior. `GetDataHere` fills caller-owned
+HGLOBALs without replacing them, rejects undersized buffers before writing,
+rewrites caller streams exactly, and atomically replaces caller storage trees
+through a detached staging copy. The focused suite passes 28/28, while the
+existing static-handler, storage, and CFB suites remain green at 13/13, 68/68,
+and 22/22.
 
 ### Acceptance
 

@@ -1615,6 +1615,8 @@
     (if (result i32) (local.get $entry)
       (then (call $ole_copy_medium (local.get $medium) (i32.add (local.get $entry) (i32.const 20))))
       (else (i32.const 0x80040064))))
+  (func (export "test_ole_data_get_here") (param $obj i32) (param $formatetc i32) (param $medium i32) (result i32)
+    (call $ole_data_get_here (local.get $obj) (local.get $formatetc) (local.get $medium)))
   (func (export "test_ole_data_set") (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
     (call $ole_data_set_entry (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))
   (func (export "test_ole_data_count") (param $obj i32) (result i32)

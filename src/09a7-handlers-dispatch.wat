@@ -3154,6 +3154,76 @@
     (if (local.get $take) (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
     (i32.const 0))
 
+  ;; Fill storage supplied by the caller without transferring its ownership.
+  ;; This intentionally accepts only like-for-like media: format conversion is
+  ;; a separate IDataObject negotiation concern.
+  (func $ole_data_get_here (param $obj i32) (param $formatetc i32) (param $medium i32) (result i32)
+    (local $entry i32) (local $source_medium i32) (local $tymed i32)
+    (local $source i32) (local $dest i32) (local $source_root i32) (local $dest_root i32)
+    (local $source_size i32) (local $dest_size i32) (local $staged i32) (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
+      (then (return (i32.const 0x80004003))))
+    (local.set $entry (call $ole_data_find_entry (local.get $obj) (local.get $formatetc)))
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80040064))))
+    (local.set $source_medium (i32.add (local.get $entry) (i32.const 20)))
+    (local.set $tymed (call $gl32 (local.get $source_medium)))
+    (if (i32.ne (call $gl32 (local.get $medium)) (local.get $tymed))
+      (then (return (i32.const 0x80040069)))) ;; DV_E_TYMED
+    (local.set $source (call $gl32 (i32.add (local.get $source_medium) (i32.const 4))))
+    (local.set $dest (call $gl32 (i32.add (local.get $medium) (i32.const 4))))
+    (if (i32.or (i32.eqz (local.get $source)) (i32.eqz (local.get $dest)))
+      (then (return (i32.const 0x80004003))))
+    (if (i32.eq (local.get $tymed) (i32.const 1)) ;; TYMED_HGLOBAL
+      (then
+        (local.set $source_size
+          (i32.sub (call $gl32 (i32.sub (local.get $source) (i32.const 4))) (i32.const 4)))
+        (local.set $dest_size
+          (i32.sub (call $gl32 (i32.sub (local.get $dest) (i32.const 4))) (i32.const 4)))
+        (if (i32.lt_u (local.get $dest_size) (local.get $source_size))
+          (then (return (i32.const 0x80030070)))) ;; STG_E_MEDIUMFULL
+        (if (local.get $source_size)
+          (then (memory.copy (call $g2w (local.get $dest)) (call $g2w (local.get $source)) (local.get $source_size))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $tymed) (i32.const 4)) ;; TYMED_ISTREAM
+      (then
+        (if (i32.or
+              (i32.ne (call $gl32 (i32.add (local.get $source) (i32.const 8))) (i32.const 3))
+              (i32.ne (call $gl32 (i32.add (local.get $dest) (i32.const 8))) (i32.const 3)))
+          (then (return (i32.const 0x80040069))))
+        (local.set $source_root (call $ole_stream_root (local.get $source)))
+        (local.set $dest_root (call $ole_stream_root (local.get $dest)))
+        (local.set $source_size (call $gl32 (i32.add (local.get $source_root) (i32.const 16))))
+        (local.set $hr (call $ole_stream_set_size (local.get $dest) (local.get $source_size)))
+        (if (local.get $hr) (then (return (local.get $hr))))
+        (if (local.get $source_size)
+          (then (memory.copy
+            (call $g2w (call $gl32 (i32.add (local.get $dest_root) (i32.const 12))))
+            (call $g2w (call $gl32 (i32.add (local.get $source_root) (i32.const 12))))
+            (local.get $source_size))))
+        (call $ole_set_data_position (local.get $dest) (local.get $source_size))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $tymed) (i32.const 8)) ;; TYMED_ISTORAGE
+      (then
+        (if (i32.or
+              (i32.ne (call $gl32 (i32.add (local.get $source) (i32.const 8))) (i32.const 2))
+              (i32.ne (call $gl32 (i32.add (local.get $dest) (i32.const 8))) (i32.const 2)))
+          (then (return (i32.const 0x80040069))))
+        (local.set $staged (call $ole_create_storage (i32.const 0)))
+        (if (i32.eqz (local.get $staged)) (then (return (i32.const 0x8007000E))))
+        (memory.copy
+          (call $g2w (i32.add (local.get $staged) (i32.const 20)))
+          (call $g2w (i32.add (local.get $source) (i32.const 20)))
+          (i32.const 16))
+        (call $gs32 (i32.add (local.get $staged) (i32.const 56))
+          (call $gl32 (i32.add (local.get $source) (i32.const 56))))
+        (local.set $hr (call $ole_storage_copy_contents (local.get $source) (local.get $staged)))
+        (if (local.get $hr)
+          (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+        (call $ole_storage_adopt_contents (local.get $dest) (local.get $staged))
+        (drop (call $ole_obj_release (local.get $staged)))
+        (return (i32.const 0))))
+    (i32.const 0x80040069)) ;; DV_E_TYMED
+
   (func $ole_create_data_object (param $formatetc i32) (param $medium i32) (result i32)
     (local $obj i32) (local $hr i32)
     (local.set $obj (call $heap_alloc (i32.const 32)))
@@ -3290,7 +3360,8 @@
       (else (global.set $eax (call $ole_copy_medium (local.get $arg2) (i32.add (local.get $entry) (i32.const 20))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_GetDataHere (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004001)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $eax (call $ole_data_get_here (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_QueryGetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (select (i32.const 0) (i32.const 0x80040064) (call $ole_data_find_entry (local.get $arg0) (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
