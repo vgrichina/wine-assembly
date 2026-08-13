@@ -208,6 +208,61 @@ async function main() {
     assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
   });
 
+  check('FillRect accepts COLOR_BTNFACE+1 and FrameRect keeps its interior', () => {
+    const t = target(8, 6);
+    assert.strictEqual(wat.test_gdi_fill_rect_desc(t.hdc, t.desc, 1, 1, 7, 5, 16), 1);
+    assert.strictEqual(wat.test_gdi_frame_rect_desc(t.hdc, t.desc, 2, 2, 6, 5, 0x30014), 1);
+    assert.deepStrictEqual(rows(t).map(row => row.replace(/\?/g, 'X')), [
+      '........',
+      '.XXXXXX.',
+      '.X....X.',
+      '.X.XX.X.',
+      '.X....X.',
+      '........',
+    ]);
+    for (let y = 1; y < 5; y++) {
+      for (let x = 1; x < 7; x++) {
+        const edge = (x >= 2 && x < 6 && (y === 2 || y === 4)) ||
+          (y > 2 && y < 4 && (x === 2 || x === 5));
+        assert.strictEqual(colorAt(t, x, y), edge ? 0 : 0xC0C0C0, `${x},${y}`);
+      }
+    }
+  });
+
+  check('DrawEdge emits Win98 raised/sunken masks and BF_ADJUST', () => {
+    const raised = target(8, 7);
+    const adjust = 0x00190000;
+    [1, 1, 7, 6].forEach((value, index) => dv.setInt32(adjust + index * 4, value, true));
+    assert.strictEqual(wat.test_gdi_draw_edge_desc(
+      raised.hdc, raised.desc, 1, 1, 7, 6, 5, 0x200F, adjust), 1);
+    assert.deepStrictEqual([
+      dv.getInt32(adjust, true), dv.getInt32(adjust + 4, true),
+      dv.getInt32(adjust + 8, true), dv.getInt32(adjust + 12, true),
+    ], [3, 3, 5, 4]);
+    assert.strictEqual(colorAt(raised, 1, 1), 0xFFFFFF);
+    assert.strictEqual(colorAt(raised, 2, 2), 0xC0C0C0);
+    assert.strictEqual(colorAt(raised, 6, 3), 0);
+    assert.strictEqual(colorAt(raised, 5, 4), 0x808080);
+
+    const sunken = target(8, 7);
+    assert.strictEqual(wat.test_gdi_draw_edge_desc(
+      sunken.hdc, sunken.desc, 1, 1, 7, 6, 10, 0xF, 0), 1);
+    assert.strictEqual(colorAt(sunken, 1, 1), 0);
+    assert.strictEqual(colorAt(sunken, 2, 2), 0x808080);
+    assert.strictEqual(colorAt(sunken, 6, 3), 0xFFFFFF);
+    assert.strictEqual(colorAt(sunken, 5, 4), 0xC0C0C0);
+  });
+
+  check('DrawFocusRect XOR pattern toggles twice back to original bytes', () => {
+    const t = target(8, 6, 24, false);
+    bytes.fill(0x55, t.bits, t.bits + t.stride * t.height);
+    const before = bytes.slice(t.bits, t.bits + t.stride * t.height);
+    assert.strictEqual(wat.test_gdi_focus_rect_desc(t.hdc, t.desc, 1, 1, 7, 5), 1);
+    assert.notDeepStrictEqual(bytes.slice(t.bits, t.bits + t.stride * t.height), before);
+    assert.strictEqual(wat.test_gdi_focus_rect_desc(t.hdc, t.desc, 1, 1, 7, 5), 1);
+    assert.deepStrictEqual(bytes.slice(t.bits, t.bits + t.stride * t.height), before);
+  });
+
   check('line uses integer Bresenham coverage and excludes its endpoint', () => {
     const t = target(9, 7);
     const red = object(1, 0, 1, 0x000000FF);
