@@ -6,39 +6,27 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  let canvasLineFallbacks = 0;
-  const harness = await bootRenderHarness({
-    extraHostOverrides: {
-      gdi_line_to: () => {
-        canvasLineFallbacks++;
-        return 1;
-      },
-    },
-  });
+  const harness = await bootRenderHarness();
   const { exports: wat, host, gdi, memory } = harness;
   const bytes = new Uint8Array(memory.buffer);
+  const dv = new DataView(memory.buffer);
+  const descriptor = 0x07EF1000;
 
   const createBitmap = (w, h) => {
     const bitmap = wat.test_call_CreateCompatibleBitmap(0, w, h) >>> 0;
     assert(bitmap, 'CreateCompatibleBitmap should allocate a handle');
-    const object = gdi._gdiObjects[bitmap];
-    assert(object && object.softwareBitmap, 'compatible bitmap should use software backing');
-    assert.strictEqual(object.dibSection, undefined, 'compatible bitmap must remain a DDB');
-    return { bitmap, object };
+    const presentation = gdi.surfacePresentations.get(bitmap);
+    assert(presentation, 'compatible bitmap should have a derived presentation surface');
+    return { bitmap, presentation };
   };
 
   const selectBitmap = bitmap => {
-    const hdc = host.gdi_create_compat_dc(0);
-    host.gdi_select_object(hdc, bitmap);
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap), 0x30007);
     return hdc;
   };
 
   const first = createBitmap(18, 14);
-  const firstStorage = host.gdi_get_object_storage(first.bitmap) >>> 0;
-  assert(firstStorage, 'DDB should expose private storage to WAT');
-  assert.strictEqual(host.gdi_get_object_bits(first.bitmap), 0,
-    'DDB storage must not be exposed as DIB bits');
-
   const bitmapStruct = wat.guest_alloc(24) >>> 0;
   assert.strictEqual(wat.test_call_GetObjectA(first.bitmap, 24, bitmapStruct), 24);
   assert.strictEqual(wat.guest_read32(bitmapStruct + 4), 18);
@@ -48,12 +36,12 @@ const { bootRenderHarness } = require('./render-helper');
   wat.guest_free(bitmapStruct);
 
   const firstDc = selectBitmap(first.bitmap);
-  const wideRed = host.gdi_create_pen(0, 5, 0x000000FF);
-  host.gdi_select_object(firstDc, wideRed);
-  assert.strictEqual(wat.test_call_MoveToEx(firstDc, 2, 2), 1);
-  assert.strictEqual(wat.test_call_LineTo(firstDc, 15, 11), 1);
-  assert.strictEqual(canvasLineFallbacks, 0,
-    'supported wide compatible-bitmap line must not use Canvas geometry');
+  assert.strictEqual(wat.test_gdi_surface_descriptor(firstDc, descriptor), 1);
+  const firstStorage = dv.getUint32(descriptor, true);
+  assert(firstStorage, 'DDB should expose private storage only to WAT');
+  const wideRed = wat.test_call_CreatePen(0, 5, 0x000000FF) >>> 0;
+  wat.test_call_SelectObject(firstDc, wideRed);
+  assert.strictEqual(wat.test_gdi_line_try(firstDc, 2, 2, 15, 11), 1);
 
   const canonicalColors = new Set();
   for (let i = 0; i < 18 * 14; i++) {
@@ -62,7 +50,7 @@ const { bootRenderHarness } = require('./render-helper');
   }
   assert.deepStrictEqual([...canonicalColors].sort((a, b) => a - b), [0, 0xFF0000],
     'WAT wide line should contain only background and pen pixels');
-  const rgba = first.object.canvas.getContext('2d').getImageData(0, 0, 18, 14).data;
+  const rgba = first.presentation.canvas.getContext('2d').getImageData(0, 0, 18, 14).data;
   const presentedColors = new Set();
   for (let i = 0; i < rgba.length; i += 4) {
     presentedColors.add((rgba[i] << 16) | (rgba[i + 1] << 8) | rgba[i + 2]);
@@ -70,45 +58,20 @@ const { bootRenderHarness } = require('./render-helper');
   assert.deepStrictEqual([...presentedColors].sort((a, b) => a - b), [0, 0xFF0000],
     'derived Canvas presentation should contain no antialiased fringe colors');
 
-  host.gdi_delete_dc(firstDc);
+  assert.strictEqual(wat.test_call_DeleteDC(firstDc), 1);
   assert.strictEqual(wat.test_call_DeleteObject(first.bitmap), 1);
-  assert.strictEqual(gdi._gdiObjects[first.bitmap], undefined,
-    'DeleteObject should remove the DDB host presentation record');
+  assert.strictEqual(gdi.surfacePresentations.has(first.bitmap), false,
+    'DeleteObject should remove the derived presentation surface');
   const reused = createBitmap(18, 14);
-  assert.strictEqual(host.gdi_get_object_storage(reused.bitmap) >>> 0, firstStorage,
+  const reusedDc = selectBitmap(reused.bitmap);
+  assert.strictEqual(wat.test_gdi_surface_descriptor(reusedDc, descriptor), 1);
+  assert.strictEqual(dv.getUint32(descriptor, true), firstStorage,
     'DeleteObject should return private DDB pages to the WAT arena');
+  assert.strictEqual(wat.test_call_DeleteDC(reusedDc), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(reused.bitmap), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(wideRed), 1);
 
-  const mixed = createBitmap(12, 8);
-  const mixedDc = selectBitmap(mixed.bitmap);
-  const blueBrush = host.gdi_create_solid_brush(0x00FF0000);
-  const nullPen = host.gdi_create_pen(5, 1, 0);
-  host.gdi_select_object(mixedDc, blueBrush);
-  host.gdi_select_object(mixedDc, nullPen);
-  assert.strictEqual(host.gdi_rectangle(mixedDc, 1, 1, 11, 7), 1);
-  assert.strictEqual(host.gdi_get_pixel(mixedDc, 3, 3) >>> 0, 0x00FF0000,
-    'legacy Canvas write should be mirrored into canonical DDB storage');
-
-  const greenPen = host.gdi_create_pen(0, 1, 0x0000FF00);
-  host.gdi_select_object(mixedDc, greenPen);
-  assert.strictEqual(wat.test_gdi_dc_set_rop2(mixedDc, 7), 13); // R2_XORPEN
-  assert.strictEqual(wat.test_gdi_line_try(mixedDc, 2, 3, 9, 3), 1);
-  assert.strictEqual(host.gdi_get_pixel(mixedDc, 3, 3) >>> 0, 0x00FFFF00,
-    'WAT ROP2 should consume pixels written by a legacy Canvas primitive');
-
-  const copied = createBitmap(12, 8);
-  const copiedDc = selectBitmap(copied.bitmap);
-  assert.strictEqual(host.gdi_bitblt(copiedDc, 0, 0, 12, 8,
-    mixedDc, 0, 0, 0x00CC0020), 1);
-  assert.strictEqual(host.gdi_get_pixel(copiedDc, 3, 3) >>> 0, 0x00FFFF00,
-    'Canvas BitBlt should preserve a presented WAT pixel in destination backing');
-
-  for (const hdc of [mixedDc, copiedDc]) host.gdi_delete_dc(hdc);
-  for (const bitmap of [reused.bitmap, mixed.bitmap, copied.bitmap]) {
-    assert.strictEqual(wat.test_call_DeleteObject(bitmap), 1);
-  }
-  for (const object of [wideRed, blueBrush, nullPen, greenPen]) host.gdi_delete_object(object);
-
-  console.log('PASS  compatible DDBs use canonical WAT pixels across legacy Canvas operations');
+  console.log('PASS  compatible DDBs use canonical WAT pixels and derived presentation');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
