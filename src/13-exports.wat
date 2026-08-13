@@ -908,6 +908,16 @@
   (func (export "test_ole_move_element") (param $source i32) (param $name i32) (param $dest i32) (param $new_name i32) (param $flags i32) (result i32)
     (call $ole_storage_move_element
       (local.get $source) (local.get $name) (local.get $dest) (local.get $new_name) (local.get $flags)))
+  (func (export "test_ole_create_stat_enum") (param $storage i32) (result i32)
+    (call $ole_create_stat_enum (local.get $storage)))
+  (func (export "test_ole_stat_enum_next") (param $obj i32) (param $requested i32) (param $stats i32) (param $fetched i32) (result i32)
+    (call $ole_stat_enum_next (local.get $obj) (local.get $requested) (local.get $stats) (local.get $fetched)))
+  (func (export "test_ole_stat_enum_skip") (param $obj i32) (param $requested i32) (result i32)
+    (call $ole_stat_enum_skip (local.get $obj) (local.get $requested)))
+  (func (export "test_ole_stat_enum_reset") (param $obj i32) (result i32)
+    (call $ole_stat_enum_reset (local.get $obj)))
+  (func (export "test_ole_clone_stat_enum") (param $obj i32) (result i32)
+    (call $ole_clone_stat_enum (local.get $obj)))
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (if (i32.or

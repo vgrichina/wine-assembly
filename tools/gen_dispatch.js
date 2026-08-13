@@ -101,6 +101,7 @@ const comInterfaces = [
   { prefix: 'IStorage',             global: 'DX_VTBL_OLE_STORAGE' },
   { prefix: 'IDataObject',          global: 'DX_VTBL_OLE_DATAOBJECT' },
   { prefix: 'IEnumFORMATETC',       global: 'DX_VTBL_OLE_ENUMFORMATETC' },
+  { prefix: 'IEnumSTATSTG',         global: 'DX_VTBL_OLE_ENUMSTATSTG' },
   { prefix: 'IOleObject',           global: 'DX_VTBL_OLE_OBJECT' },
   { prefix: 'IPersistStorage',      global: 'DX_VTBL_OLE_PERSISTSTORAGE' },
   { prefix: 'IOleCache',            global: 'DX_VTBL_OLE_CACHE' },

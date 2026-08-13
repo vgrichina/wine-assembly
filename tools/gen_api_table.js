@@ -834,6 +834,14 @@ const extra = [
   // GDI32 — region builders + queries (exact polygon clip + GetRgnBox).
   { name: 'CreateEllipticRgn', nargs: 4 },
   { name: 'GetRgnBox', nargs: 2 },
+  // OLE32 — structured-storage element enumerator.
+  { name: 'IEnumSTATSTG_QueryInterface', nargs: 3 },
+  { name: 'IEnumSTATSTG_AddRef', nargs: 1 },
+  { name: 'IEnumSTATSTG_Release', nargs: 1 },
+  { name: 'IEnumSTATSTG_Next', nargs: 4 },
+  { name: 'IEnumSTATSTG_Skip', nargs: 2 },
+  { name: 'IEnumSTATSTG_Reset', nargs: 1 },
+  { name: 'IEnumSTATSTG_Clone', nargs: 2 },
   // MSVCRT — binary search with guest-callback comparator (CACA000C continuation).
   { name: 'bsearch', nargs: 5 },
   // WINMM — RIFF file seek used by RCT after the 16-bit POP decoder fix.

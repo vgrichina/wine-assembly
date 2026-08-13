@@ -17006,5 +17006,54 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3330116242
+  },
+  {
+    "id": 2221,
+    "name": "IEnumSTATSTG_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 474961117
+  },
+  {
+    "id": 2222,
+    "name": "IEnumSTATSTG_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 933605526
+  },
+  {
+    "id": 2223,
+    "name": "IEnumSTATSTG_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 631326731
+  },
+  {
+    "id": 2224,
+    "name": "IEnumSTATSTG_Next",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1918108007
+  },
+  {
+    "id": 2225,
+    "name": "IEnumSTATSTG_Skip",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1354906097
+  },
+  {
+    "id": 2226,
+    "name": "IEnumSTATSTG_Reset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3677116269
+  },
+  {
+    "id": 2227,
+    "name": "IEnumSTATSTG_Clone",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3858993295
   }
 ]

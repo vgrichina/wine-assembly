@@ -44,6 +44,15 @@ async function main() {
     dv.setUint16(wa(gp) + text.length * 2, 0, true);
     return gp;
   }
+  function readWide(gp, max = 256) {
+    let text = '';
+    for (let i = 0; i < max; i++) {
+      const code = dv.getUint16(wa(gp) + i * 2, true);
+      if (!code) break;
+      text += String.fromCharCode(code);
+    }
+    return text;
+  }
   function writeBytes(bytes) {
     const gp = alloc(bytes.length);
     u8.set(bytes, wa(gp));
@@ -262,6 +271,73 @@ async function main() {
   e.test_ole_release(moveFolder);
   e.test_ole_release(moveSource);
   e.test_ole_release(moveDestination);
+
+  const enumStorage = e.test_ole_create_storage(0) >>> 0;
+  const enumAlphaName = writeWide('Alpha');
+  const enumBetaName = writeWide('Beta');
+  const enumFolderName = writeWide('EnumFolder');
+  const enumAlpha = e.test_ole_create_stream(enumStorage, enumAlphaName) >>> 0;
+  const enumBeta = e.test_ole_create_stream(enumStorage, enumBetaName) >>> 0;
+  e.test_ole_stream_set_size(enumAlpha, 5);
+  e.test_ole_stream_set_size(enumBeta, 2);
+  const enumFolder = e.test_ole_create_child_storage(enumStorage, enumFolderName) >>> 0;
+  const enumClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0xa0 + i));
+  e.test_ole_set_class(enumFolder, enumClsid);
+  const statEnum = e.test_ole_create_stat_enum(enumStorage) >>> 0;
+  check('IStorage EnumElements creates a snapshot enumerator', statEnum !== 0);
+  e.test_ole_rename_element(enumStorage, enumAlphaName, writeWide('AlphaNow'));
+  e.test_ole_destroy_element(enumStorage, enumBetaName);
+  e.test_ole_rename_element(enumStorage, enumFolderName, writeWide('FolderNow'));
+  e.test_ole_release(enumAlpha);
+  e.test_ole_release(enumBeta);
+  e.test_ole_release(enumFolder);
+  e.test_ole_release(enumStorage);
+
+  const stats = alloc(72 * 4);
+  const enumFetched = alloc(4);
+  const enumHr = e.test_ole_stat_enum_next(statEnum, 4, stats, enumFetched) >>> 0;
+  const fetchedStats = [];
+  for (let i = 0; i < dv.getUint32(wa(enumFetched), true); i++) {
+    const stat = stats + i * 72;
+    const statName = dv.getUint32(wa(stat), true) >>> 0;
+    fetchedStats.push({
+      name: readWide(statName),
+      type: dv.getUint32(wa(stat) + 4, true),
+      size: dv.getUint32(wa(stat) + 8, true),
+      clsid: Array.from(u8.slice(wa(stat) + 48, wa(stat) + 64)),
+    });
+    e.guest_free(statName);
+  }
+  check('IEnumSTATSTG Next returns S_FALSE with an exact partial fetched count',
+    enumHr === 1 && fetchedStats.length === 3);
+  check('IEnumSTATSTG snapshot preserves names, types, sizes and storage CLSID after live mutation',
+    fetchedStats.some(s => s.name === 'Alpha' && s.type === 2 && s.size === 5) &&
+    fetchedStats.some(s => s.name === 'Beta' && s.type === 2 && s.size === 2) &&
+    fetchedStats.some(s => s.name === 'EnumFolder' && s.type === 1 &&
+      s.clsid.every((v, i) => v === 0xa0 + i)));
+
+  check('IEnumSTATSTG Reset and Skip update the snapshot cursor',
+    e.test_ole_stat_enum_reset(statEnum) === 0 && e.test_ole_stat_enum_skip(statEnum, 1) === 0);
+  const statEnumClone = e.test_ole_clone_stat_enum(statEnum) >>> 0;
+  const oneStat = alloc(72);
+  const cloneStat = alloc(72);
+  const originalNextHr = e.test_ole_stat_enum_next(statEnum, 1, oneStat, 0) >>> 0;
+  const cloneNextHr = e.test_ole_stat_enum_next(statEnumClone, 1, cloneStat, 0) >>> 0;
+  const originalNamePtr = dv.getUint32(wa(oneStat), true) >>> 0;
+  const cloneNamePtr = dv.getUint32(wa(cloneStat), true) >>> 0;
+  check('IEnumSTATSTG Clone starts at the same cursor with independent name ownership',
+    statEnumClone !== 0 && originalNextHr === 0 && cloneNextHr === 0 &&
+    readWide(originalNamePtr) === readWide(cloneNamePtr) && originalNamePtr !== cloneNamePtr);
+  e.guest_free(originalNamePtr);
+  e.guest_free(cloneNamePtr);
+  check('IEnumSTATSTG cloned cursors advance independently',
+    e.test_ole_stat_enum_skip(statEnum, 1) === 0 &&
+    e.test_ole_stat_enum_next(statEnum, 1, oneStat, 0) === 1 &&
+    e.test_ole_stat_enum_next(statEnumClone, 1, cloneStat, 0) === 0);
+  const cloneLastName = dv.getUint32(wa(cloneStat), true) >>> 0;
+  e.guest_free(cloneLastName);
+  e.test_ole_release(statEnumClone);
+  e.test_ole_release(statEnum);
   e.test_ole_release(grandchildStorage);
 
   check('COM reference counts include storage and clone ownership',

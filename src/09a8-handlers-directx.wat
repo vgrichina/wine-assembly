@@ -66,6 +66,7 @@
   (global $DX_VTBL_OLE_STORAGE   (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_DATAOBJECT (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_ENUMFORMATETC (mut i32) (i32.const 0))
+  (global $DX_VTBL_OLE_ENUMSTATSTG (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_OBJECT (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_PERSISTSTORAGE (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_CACHE (mut i32) (i32.const 0))
