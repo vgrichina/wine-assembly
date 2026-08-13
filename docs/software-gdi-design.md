@@ -2,15 +2,18 @@
 
 ## Status
 
-Implementation started 2026-08-12. `lib/gdi-surface.js` provides native-format
-canonical pixel access, palette handling, orientation/stride handling, solid
-rectangles, RGBA extraction, and dirty-rectangle coalescing. DIB-backed memory
-DCs use it for `GetPixel`, unclipped `SetPixel`, `FillRect`, and source-less
-solid `BitBlt` operations (`BLACKNESS`, `WHITENESS`, and `PATCOPY`). Rectangle
-clip regions are intersected in integer surface coordinates. Complex regions,
-geometric primitives outside the initial solid-pen `LineTo` slice, source
-blits, and window surfaces remain follow-up WAT work. Canvas text remains the
-intentional rasterizer policy, as described below.
+Implementation started 2026-08-12. WAT now owns canonical bitmap and window
+surfaces, GDI object/DC state, regions and explicit clipping, native-format
+pixel access, all ROP2/ROP3 truth tables, source and stretch blits, flood fill,
+and integer geometry. JavaScript retains presentation uploads/composition and
+the deliberate Canvas text rasterization boundary; text output is copied back
+into the same canonical WAT surface before returning.
+
+The public compatibility surface is not complete yet. Current high-priority
+gaps are DIB/pattern brushes in pattern-dependent blits, path selection,
+callback APIs such as `LineDDA` and object/font enumeration, and metafile and
+printer compatibility. A machine-checked public-API inventory is required
+before this effort can be declared complete.
 
 Rectangular HRGN ownership and Boolean algebra now run in WAT. WAT allocates
 generation-tagged handles and owns normalization, mutation, offset, bounding
@@ -67,6 +70,14 @@ client, and non-client coordinates. One-pixel dash, dot, dash-dot, and
 dash-dot-dot pens use fixed
 device-step WAT coverage tables. `CreatePen` dash/dot styles wider than one are
 normalized to solid as Win32 specifies.
+
+Solid, null, and all six Win32 hatch brushes are canonical WAT objects.
+Rectangle, ellipse, round-rectangle, polygon, `FillRect`, and region fill paths
+sample hatch masks in device coordinates, including `SetBrushOrgEx`, opaque
+background color, and transparent background preservation. `GetObjectA/W`
+serializes stable `LOGPEN`, `LOGBRUSH`, `BITMAP`, and `LOGFONT` structures.
+Pattern-dependent ROP3 operations and flood fill still need the common
+per-pixel brush sampler; they currently accept only a constant solid pattern.
 
 `Polyline` and `PolylineTo` reuse the WAT line kernel after an atomic
 all-segment preflight. Cosmetic style phase continues across segment

@@ -114,6 +114,29 @@ async function main() {
     assert.deepStrictEqual(bytes.slice(dib.bits, dib.bits + dib.stride * dib.height), before);
   });
 
+  check('hatched brushes honor origin, background mode, and shape coverage', () => {
+    const hatch = wat.test_call_CreateHatchBrush(4, 0x000000FF) >>> 0; // HS_CROSS red
+    assert(hatch);
+    wat.test_call_SelectObject(dib.hdc, 0x30018); // NULL_PEN
+    wat.test_call_SelectObject(dib.hdc, hatch);
+    wat.test_gdi_dc_set_field(dib.hdc, 24, 0x0000FF00, 0xFFFFFF); // green background
+    wat.test_gdi_dc_set_field(dib.hdc, 28, 2, 2); // OPAQUE
+    assert.strictEqual(wat.test_call_SetBrushOrgEx(dib.hdc, 2, 3, 0), 1);
+    clear(dib);
+    assert.strictEqual(wat.test_call_Rectangle(dib.hdc, 0, 0, 12, 10), 1);
+    assert.strictEqual(pixel(dib, 2, 3), 0xFF0000, 'hatch crossing uses foreground');
+    assert.strictEqual(pixel(dib, 3, 4), 0x00FF00, 'opaque gap uses DC background');
+    wat.test_gdi_dc_set_field(dib.hdc, 28, 1, 2); // TRANSPARENT
+    clear(dib, 0x33);
+    assert.strictEqual(wat.test_call_Ellipse(dib.hdc, 0, 0, 12, 10), 1);
+    assert.strictEqual(pixel(dib, 6, 3), 0xFF0000, 'hatch origin applies to ellipse fill');
+    assert.strictEqual(pixel(dib, 6, 4), 0x333333, 'transparent gap preserves destination');
+    wat.test_call_SelectObject(dib.hdc, greenBrush);
+    wat.test_call_SelectObject(dib.hdc, redPen);
+    wat.test_call_SetBrushOrgEx(dib.hdc, 0, 0, 0);
+    assert.strictEqual(wat.test_call_DeleteObject(hatch), 1);
+  });
+
   check('Polygon and Polyline handlers rasterize guest POINT arrays', () => {
     clear(dib);
     assert.strictEqual(wat.test_call_Polygon(

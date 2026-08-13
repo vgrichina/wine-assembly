@@ -36,6 +36,55 @@ async function main() {
   assert.strictEqual(wat.test_gdi_object_type(0x30021), 4);
   assert.strictEqual(wat.test_gdi_object_type(0x30010), 2);
 
+  const hatched = wat.test_call_CreateHatchBrush(4, 0x000000FF) >>> 0;
+  assert(hatched, 'CreateHatchBrush should allocate a WAT brush');
+  assert.strictEqual(wat.test_gdi_object_style(hatched), 2);
+  assert.strictEqual(wat.test_gdi_object_param(hatched), 4,
+    'brush record width slot preserves the hatch selector');
+  assert.strictEqual(wat.test_gdi_object_color(hatched), 0x000000FF);
+  assert.strictEqual(wat.test_call_CreateHatchBrush(6, 0), 0,
+    'invalid hatch selectors must be rejected');
+
+  const logbrush = wat.guest_alloc(12) >>> 0;
+  wat.guest_write32(logbrush, 2);
+  wat.guest_write32(logbrush + 4, 0x0000FF00);
+  wat.guest_write32(logbrush + 8, 1);
+  const indirectHatch = wat.test_call_CreateBrushIndirect(logbrush) >>> 0;
+  assert(indirectHatch);
+  assert.strictEqual(wat.test_gdi_object_style(indirectHatch), 2);
+  assert.strictEqual(wat.test_gdi_object_param(indirectHatch), 1);
+
+  const extPen = wat.test_call_ExtCreatePen(0x00010200, 5, logbrush, 0, 0) >>> 0;
+  assert(extPen, 'ExtCreatePen should preserve geometric style and LOGBRUSH color');
+  assert.strictEqual(wat.test_gdi_object_style(extPen), 0);
+  assert.strictEqual(wat.test_gdi_object_param(extPen), 5);
+  assert.strictEqual(wat.test_gdi_object_color(extPen), 0x0000FF00);
+
+  const objectStruct = wat.guest_alloc(16) >>> 0;
+  assert.strictEqual(wat.test_call_GetObjectA(pen, 16, objectStruct), 16);
+  assert.strictEqual(wat.guest_read32(objectStruct), 2);
+  assert.strictEqual(wat.guest_read32(objectStruct + 4), 3);
+  assert.strictEqual(wat.guest_read32(objectStruct + 8), 0);
+  assert.strictEqual(wat.guest_read32(objectStruct + 12), 0x123456);
+  assert.strictEqual(wat.test_call_GetObjectA(hatched, 12, objectStruct), 12);
+  assert.strictEqual(wat.guest_read32(objectStruct), 2);
+  assert.strictEqual(wat.guest_read32(objectStruct + 4), 0x000000FF);
+  assert.strictEqual(wat.guest_read32(objectStruct + 8), 4);
+
+  const wideFace = wat.guest_alloc(32) >>> 0;
+  'Arial'.split('').forEach((ch, i) => wat.guest_write16(wideFace + i * 2, ch.charCodeAt(0)));
+  wat.guest_write16(wideFace + 10, 0);
+  const wideFont = wat.test_call_CreateFontW(-17, 700, 1, wideFace) >>> 0;
+  assert(wideFont, 'CreateFontW should allocate through the text-only host boundary');
+  assert.strictEqual(wat.test_gdi_object_type(wideFont), 4);
+  const wideLogfont = wat.guest_alloc(92) >>> 0;
+  assert.strictEqual(wat.test_call_GetObjectW(wideFont, 92, wideLogfont), 92);
+  assert.strictEqual(wat.guest_read32(wideLogfont), -17);
+  assert.strictEqual(wat.guest_read32(wideLogfont + 16), 700);
+  const wideDc = wat.test_call_CreateDCW() >>> 0;
+  assert(wideDc, 'CreateDCW should allocate a usable screen/printer DC');
+  assert.strictEqual(wat.test_call_GetObjectType(wideDc), 3);
+
   const hdcA = wat.test_call_CreateCompatibleDC(0) >>> 0;
   const hdcB = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 4, 0x30017), 0x30017);
@@ -103,6 +152,10 @@ async function main() {
     'stock objects remain valid process-owned handles');
   assert.strictEqual(wat.test_gdi_object_type(0x30017), 1);
   assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(hatched), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(indirectHatch), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(extPen), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(wideFont), 1);
   assert.strictEqual(wat.test_call_DeleteObject(bitmap), 1);
   assert(!base.gdi.surfacePresentations.has(bitmap), 'bitmap deletion should discard its Canvas cache');
   assert.strictEqual(wat.test_call_DeleteDC(hdcA), 1);

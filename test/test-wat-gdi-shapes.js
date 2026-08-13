@@ -214,15 +214,22 @@ async function main() {
     ]);
   });
 
-  check('invalid mapping and patterned brush fail without memory changes', () => {
+  check('hatch brush renders exact rows and invalid mapping fails atomically', () => {
     const t = target(6, 4);
     const hatch = object(2, 2, 0, 0x0000FF00);
     assert.strictEqual(wat.test_gdi_rectangle_desc(
-      t.hdc, t.desc, 1, 1, 5, 3, 0x30018, hatch, 13), 0);
+      t.hdc, t.desc, 1, 0, 5, 3, 0x30018, hatch, 13), 1);
+    assert.deepStrictEqual(rows(t), [
+      '.GGGG.',
+      '.WWWW.',
+      '.WWWW.',
+      '......',
+    ]);
+    const before = bytes.slice(t.bits, t.bits + t.stride * t.height);
     dv.setInt32(t.desc + 40, 0, true);
     assert.strictEqual(wat.test_gdi_ellipse_desc(
       t.hdc, t.desc, 0, 0, 6, 4, 0x30018, 0x30010, 13), 0);
-    assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
+    assert.deepStrictEqual(bytes.slice(t.bits, t.bits + t.stride * t.height), before);
   });
 
   check('FillRect accepts COLOR_BTNFACE+1 and FrameRect keeps its interior', () => {

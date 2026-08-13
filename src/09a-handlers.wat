@@ -5477,9 +5477,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 372: CreateDCW — STUB: unimplemented
+  ;; 372: CreateDCW — wide printer/display DC follows the canonical screen-DC path.
   (func $handle_CreateDCW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $printer_hdc (call $host_alloc_screen_dc))
+    (global.set $eax (global.get $printer_hdc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 373: PtVisible(hdc, x, y) — query the WAT-owned explicit clip.
@@ -8468,14 +8470,30 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 559: CreateHatchBrush — STUB: unimplemented
+  ;; 559: CreateHatchBrush(fnStyle, color) — preserve hatch style in WAT.
   (func $handle_CreateHatchBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.gt_u (local.get $arg0) (i32.const 5))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $gdi_object_alloc (i32.const 2)
+        (i32.const 2) (local.get $arg0) (local.get $arg1) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 560: ExtCreatePen — STUB: unimplemented
+  ;; 560: ExtCreatePen(style, width, LOGBRUSH*, styleCount, styleEntries).
   (func $handle_ExtCreatePen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $brush i32) (local $style i32) (local $color i32) (local $flags i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $brush (call $g2w (local.get $arg2)))
+        (local.set $style (i32.and (local.get $arg0) (i32.const 0xF)))
+        (local.set $color (i32.load offset=4 (local.get $brush)))
+        (local.set $flags (i32.or
+          (select (i32.const 1) (i32.const 0) (i32.eq (local.get $style) (i32.const 5)))
+          (i32.and (local.get $arg0) (i32.const 0x000F0F00))))
+        (global.set $eax (call $gdi_object_alloc (i32.const 1)
+          (local.get $style) (local.get $arg1) (local.get $color) (local.get $flags)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 561: EnumMetaFile — STUB: unimplemented
@@ -8943,9 +8961,23 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 602: CreateFontW — STUB: unimplemented
+  ;; 602: CreateFontW — convert the face name, then share the Canvas text font policy.
   (func $handle_CreateFontW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $face i32) (local $weight i32) (local $italic i32) (local $handle i32)
+    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (local.set $face (call $heap_alloc (i32.const 64)))
+    (if (local.get $face)
+      (then (drop (call $wide_to_ansi
+        (call $gl32 (i32.add (global.get $esp) (i32.const 52)))
+        (local.get $face) (i32.const 64)))))
+    (local.set $handle (call $host_create_font
+      (local.get $arg0) (local.get $weight) (local.get $italic) (local.get $face)))
+    (if (local.get $face) (then (call $heap_free (local.get $face))))
+    (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
+      (local.get $arg0) (local.get $weight) (local.get $italic) (i32.const 0)))
+    (global.set $eax (local.get $handle))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
   )
 
   ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.

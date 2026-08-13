@@ -79,17 +79,26 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; CreateBrushIndirect(LOGBRUSH*) — read color from struct, delegate to solid brush
+  ;; CreateBrushIndirect(LOGBRUSH*) — preserve solid, null, and hatch styles.
   ;; LOGBRUSH = { UINT lbStyle; COLORREF lbColor; ULONG lbHatch; }
   (func $handle_CreateBrushIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $color i32)
+    (local $handle i32) (local $wa i32) (local $style i32)
+    (local $color i32) (local $hatch i32)
     (if (i32.eqz (local.get $arg0))
       (then (global.set $eax (i32.const 0)))
       (else
-        (local.set $color (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-        (local.set $handle (call $gdi_object_alloc (i32.const 2)
-          (i32.const 0) (i32.const 0) (local.get $color) (i32.const 0)))
-        (global.set $eax (local.get $handle))))
+        (local.set $wa (call $g2w (local.get $arg0)))
+        (local.set $style (i32.load (local.get $wa)))
+        (local.set $color (i32.load offset=4 (local.get $wa)))
+        (local.set $hatch (i32.load offset=8 (local.get $wa)))
+        (if (i32.or (i32.gt_u (local.get $style) (i32.const 2))
+              (i32.and (i32.eq (local.get $style) (i32.const 2))
+                (i32.gt_u (local.get $hatch) (i32.const 5))))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (local.set $handle (call $gdi_object_alloc (i32.const 2)
+              (local.get $style) (local.get $hatch) (local.get $color) (i32.const 0)))
+            (global.set $eax (local.get $handle))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -357,17 +366,20 @@
 
   ;; 163: GetObjectA
   (func $handle_GetObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $record i32)
+    (local $record i32) (local $type i32) (local $dest i32)
     (local.set $record (call $gdi_object_record (local.get $arg0)))
-    (if (i32.eq (call $gdi_object_type (local.get $arg0)) (i32.const 4))
+    (local.set $type (call $gdi_object_type (local.get $arg0)))
+    (if (local.get $arg2) (then (local.set $dest (call $g2w (local.get $arg2)))))
+    (if (i32.eq (local.get $type) (i32.const 4))
       (then (global.set $eax (call $gdi_font_write_logfont (local.get $arg0)
-        (if (result i32) (local.get $arg2)
-          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $dest)
         (local.get $arg1) (i32.const 0))))
-      (else (global.set $eax (call $gdi_bitmap_write_object (local.get $record)
-        (if (result i32) (local.get $arg2)
-          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-        (local.get $arg1)))))
+      (else (if (i32.or (i32.eq (local.get $type) (i32.const 1))
+            (i32.eq (local.get $type) (i32.const 2)))
+        (then (global.set $eax (call $gdi_object_write_pen_brush
+          (local.get $arg0) (local.get $dest) (local.get $arg1))))
+        (else (global.set $eax (call $gdi_bitmap_write_object
+          (local.get $record) (local.get $dest) (local.get $arg1)))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
