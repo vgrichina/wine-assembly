@@ -7,6 +7,10 @@ installers, and other Win9x-era apps.
 
 ## Remaining work snapshot
 
+The ordered repository work that can proceed without waiting for software-GDI
+changes is tracked in the [non-GDI work plan](non-gdi-work-plan.md). That plan
+separates state/protocol completion from the retained visual rejoin tests.
+
 The bounded non-OLE program is implemented. Advanced RTF, printing/preview,
 layout stress, secondary WordPad UI, representative international text, and
 RichEdit-version probes all have focused coverage. Remaining work is:

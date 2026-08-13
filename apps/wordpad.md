@@ -43,7 +43,11 @@ objects and non-DIB OLE servers remain outside this bounded static-image slice.
 
 ## Remaining Work
 
-The everyday non-OLE WordPad target is complete. Remaining work is narrower:
+The everyday non-OLE WordPad target is complete. Remaining work is narrower.
+The ordered implementation program that can proceed independently of the
+software-GDI rewrite is in the
+[non-GDI work plan](../docs/non-gdi-work-plan.md); visual revalidation is kept
+as a separate GDI rejoin gate there.
 
 1. **Current-tip static-image revalidation.** Make the fresh-process half of
    `test/test-wordpad-ole-roundtrip.js` finish within a bounded emulator
