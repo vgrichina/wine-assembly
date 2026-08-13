@@ -30,7 +30,10 @@ async function main() {
   assert(pen && brush, 'WAT handlers should allocate dynamic objects');
   assert.strictEqual(wat.test_gdi_object_type(pen), 1);
   assert.strictEqual(wat.test_gdi_object_type(brush), 2);
+  assert.strictEqual(wat.test_gdi_object_type(0x30007), 3);
+  assert.strictEqual(wat.test_gdi_object_type(0x30001), 3);
   assert.strictEqual(wat.test_gdi_object_type(0x30017), 1);
+  assert.strictEqual(wat.test_gdi_object_type(0x30021), 4);
   assert.strictEqual(wat.test_gdi_object_type(0x30010), 2);
 
   const hdcA = wat.test_call_CreateCompatibleDC(0) >>> 0;
@@ -62,6 +65,18 @@ async function main() {
   assert.strictEqual(wat.test_gdi_object_type(bitmap), 3);
   assert(base.gdi.surfacePresentations.has(bitmap), 'JS should own only its derived presentation');
   assert.strictEqual(wat.test_call_SelectObject(hdcA, bitmap), 0x30007);
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, 0x30007), bitmap,
+    'restoring the stock bitmap must return the selected DDB');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, bitmap), 0x30007,
+    'a DDB must remain selectable after restoring the stock bitmap');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, 0x30021), 0x3001D);
+  assert.strictEqual(wat.test_call_GetCurrentObject(hdcA, 6), 0x30021);
+  const logfont = wat.guest_alloc(92) >>> 0;
+  assert.strictEqual(wat.test_call_GetObjectA(0x30021, 60, logfont), 60);
+  assert.strictEqual(wat.guest_read32(logfont), 11);
+  assert.strictEqual(wat.guest_read32(logfont + 16), 400);
+  assert.strictEqual(wat.test_call_GetObjectW(0x30021, 92, logfont), 92);
+  assert.strictEqual(wat.guest_read32(logfont), 11);
   const bitmapStruct = wat.guest_alloc(24) >>> 0;
   assert.strictEqual(wat.test_call_GetObjectA(bitmap, 24, bitmapStruct), 24);
   assert.strictEqual(wat.guest_read32(bitmapStruct + 4), 17);

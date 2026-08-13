@@ -4776,17 +4776,21 @@
 
   ;; 315: CreateFontIndirectW — LOGFONTW at arg0
   (func $handle_CreateFontIndirectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lf i32) (local $face i32)
+    (local $lf i32) (local $face i32) (local $handle i32)
     (local.set $lf (call $g2w (local.get $arg0)))
     (local.set $face (call $heap_alloc (i32.const 64)))
     ;; LOGFONTW: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28 wchar[32])
     (drop (call $wide_to_ansi (i32.add (local.get $arg0) (i32.const 28)) (local.get $face) (i32.const 64)))
-    (global.set $eax (call $host_create_font
+    (local.set $handle (call $host_create_font
       (i32.load (local.get $lf))                              ;; height
       (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (local.get $face)                                      ;; faceName WASM ptr
     ))
+    (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
+      (i32.load (local.get $lf)) (i32.load offset=16 (local.get $lf))
+      (i32.load8_u offset=20 (local.get $lf)) (i32.const 0)))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -5337,13 +5341,16 @@
 
   ;; 362: GetObjectW — same object layout as GetObjectA for bitmaps
   (func $handle_GetObjectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_GetObjectA
-      (local.get $arg0)
-      (local.get $arg1)
-      (local.get $arg2)
-      (local.get $arg3)
-      (local.get $arg4)
-      (local.get $name_ptr))
+    (if (i32.eq (call $gdi_object_type (local.get $arg0)) (i32.const 4))
+      (then
+        (global.set $eax (call $gdi_font_write_logfont (local.get $arg0)
+          (if (result i32) (local.get $arg2)
+            (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+          (local.get $arg1) (i32.const 1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+      (else (call $handle_GetObjectA
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (local.get $arg3) (local.get $arg4) (local.get $name_ptr))))
   )
 
   ;; SetTextAlign(hdc, fMode) — store alignment on the DC and return the previous value.
@@ -8457,6 +8464,7 @@
   ;; but common handles have stable ranges/sentinels. Report enough type data
   ;; for code that distinguishes DC/metafile/font/brush/bitmap paths.
   (func $handle_GetObjectType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wat_type i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (global.set $eax (i32.const 0))
@@ -8465,6 +8473,16 @@
     (if (call $gdi_rgn_record (local.get $arg0))
       (then
         (global.set $eax (i32.const 8)) ;; OBJ_REGION
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $wat_type (call $gdi_object_type (local.get $arg0)))
+    (if (local.get $wat_type)
+      (then
+        (global.set $eax
+          (if (result i32) (i32.eq (local.get $wat_type) (i32.const 3))
+            (then (i32.const 7))
+            (else (if (result i32) (i32.eq (local.get $wat_type) (i32.const 4))
+              (then (i32.const 6)) (else (local.get $wat_type))))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Palette handles from CreatePalette: 0x000A0001+

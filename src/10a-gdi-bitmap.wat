@@ -82,10 +82,11 @@
       (then (i32.store offset=20 (local.get $buffer) (call $w2g (local.get $bits)))))
     (i32.const 24))
 
-  ;; Parsed DIB metadata is a 40-byte plan:
+  ;; Parsed DIB metadata is a 48-byte plan:
   ;; +0 width, +4 height(abs), +8 bpp, +12 flags(bit1 top-down), +16 stride,
   ;; +20 palette WA, +24 palette count, +28 pixel WA, +32 pixel byte count,
-  ;; +36 header size. It contains no semantic GDI handle or surface id.
+  ;; +36 header size, +40 compression, +44 encoded byte count. It contains no
+  ;; semantic GDI handle or surface id.
   (func $gdi_bitmap_parse_dib (param $data i32) (param $size i32)
         (param $plan i32) (result i32)
     (local $header_size i32) (local $width i32) (local $height i32)
@@ -112,10 +113,22 @@
                 (i32.and (i32.ne (local.get $bpp) (i32.const 24))
                   (i32.ne (local.get $bpp) (i32.const 32)))))))
       (then (return (i32.const 0))))
-    ;; Foundation accepts only BI_RGB. RLE/bitfields remain explicit gaps.
-    (if (i32.ne (local.get $compression) (i32.const 0))
+    ;; BI_RLE8 is valid only for 8-bpp and BI_RLE4 only for 4-bpp. Compressed
+    ;; top-down DIBs are not defined by Win32.
+    (if (i32.and (i32.ne (local.get $compression) (i32.const 0))
+          (i32.and
+            (i32.ne (local.get $compression) (i32.const 1))
+            (i32.ne (local.get $compression) (i32.const 2))))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.and (i32.eq (local.get $compression) (i32.const 1))
+            (i32.ne (local.get $bpp) (i32.const 8)))
+          (i32.and (i32.eq (local.get $compression) (i32.const 2))
+            (i32.ne (local.get $bpp) (i32.const 4))))
       (then (return (i32.const 0))))
     (local.set $top_down (i32.lt_s (local.get $height) (i32.const 0)))
+    (if (i32.and (local.get $top_down) (i32.ne (local.get $compression) (i32.const 0)))
+      (then (return (i32.const 0))))
     (if (local.get $top_down)
       (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
     (if (i32.le_u (local.get $bpp) (i32.const 8))
@@ -134,10 +147,12 @@
         (i32.const 5)) (i32.const 2)))
     (local.set $image_size (i64.mul (i64.extend_i32_u (local.get $stride))
       (i64.extend_i32_u (local.get $height))))
-    (if (i64.gt_u (local.get $image_size)
-          (i64.extend_i32_u (i32.sub (local.get $size) (local.get $bits_offset))))
-      (then (return (i32.const 0))))
-    (memory.fill (local.get $plan) (i32.const 0) (i32.const 40))
+    (if (i32.eqz (local.get $compression))
+      (then
+        (if (i64.gt_u (local.get $image_size)
+              (i64.extend_i32_u (i32.sub (local.get $size) (local.get $bits_offset))))
+          (then (return (i32.const 0))))))
+    (memory.fill (local.get $plan) (i32.const 0) (i32.const 48))
     (i32.store (local.get $plan) (local.get $width))
     (i32.store offset=4 (local.get $plan) (local.get $height))
     (i32.store offset=8 (local.get $plan) (local.get $bpp))
@@ -149,6 +164,16 @@
     (i32.store offset=28 (local.get $plan) (i32.add (local.get $data) (local.get $bits_offset)))
     (i32.store offset=32 (local.get $plan) (i32.wrap_i64 (local.get $image_size)))
     (i32.store offset=36 (local.get $plan) (local.get $header_size))
+    (i32.store offset=40 (local.get $plan) (local.get $compression))
+    (if (local.get $compression)
+      (then
+        (local.set $palette_bytes (i32.load offset=20 (local.get $data)))
+        (if (i32.or (i32.eqz (local.get $palette_bytes))
+              (i32.gt_u (local.get $palette_bytes)
+                (i32.sub (local.get $size) (local.get $bits_offset))))
+          (then (local.set $palette_bytes
+            (i32.sub (local.get $size) (local.get $bits_offset)))))
+        (i32.store offset=44 (local.get $plan) (local.get $palette_bytes))))
     (i32.const 1))
 
   ;; CreateBitmap layout planner. Input scanlines use WORD alignment as Win32
@@ -172,7 +197,7 @@
       (i64.extend_i32_u (local.get $height))))
     (if (i64.gt_u (local.get $size) (i64.const 0xFFFFFFFF))
       (then (return (i32.const 0))))
-    (memory.fill (local.get $plan) (i32.const 0) (i32.const 40))
+    (memory.fill (local.get $plan) (i32.const 0) (i32.const 48))
     (i32.store (local.get $plan) (local.get $width))
     (i32.store offset=4 (local.get $plan) (local.get $height))
     (i32.store offset=8 (local.get $plan) (local.get $bpp))
@@ -224,7 +249,7 @@
       (i64.extend_i32_u (local.get $height))))
     (if (i64.gt_u (local.get $image_size) (i64.const 0xFFFFFFFF))
       (then (return (i32.const 0))))
-    (memory.fill (local.get $plan) (i32.const 0) (i32.const 40))
+    (memory.fill (local.get $plan) (i32.const 0) (i32.const 48))
     (i32.store (local.get $plan) (local.get $width))
     (i32.store offset=4 (local.get $plan) (local.get $height))
     (i32.store offset=8 (local.get $plan) (local.get $bpp))
@@ -238,6 +263,120 @@
     (i32.store offset=36 (local.get $plan) (local.get $header_size))
     (i32.const 1))
 
+  ;; Store one palette index into canonical packed DIB storage. RLE streams
+  ;; enumerate scanlines from the bottom, which is also row zero in a
+  ;; bottom-up DIB allocation.
+  (func $gdi_bitmap_store_index (param $dst i32) (param $stride i32)
+        (param $x i32) (param $y i32) (param $bpp i32) (param $index i32)
+    (local $p i32) (local $old i32)
+    (local.set $p (i32.add (local.get $dst)
+      (i32.add (i32.mul (local.get $y) (local.get $stride))
+        (select (local.get $x) (i32.shr_u (local.get $x) (i32.const 1))
+          (i32.eq (local.get $bpp) (i32.const 8))))))
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then (i32.store8 (local.get $p) (local.get $index)))
+      (else
+        (local.set $old (i32.load8_u (local.get $p)))
+        (if (i32.eqz (i32.and (local.get $x) (i32.const 1)))
+          (then (i32.store8 (local.get $p)
+            (i32.or (i32.and (local.get $old) (i32.const 0x0F))
+              (i32.shl (i32.and (local.get $index) (i32.const 0x0F)) (i32.const 4)))))
+          (else (i32.store8 (local.get $p)
+            (i32.or (i32.and (local.get $old) (i32.const 0xF0))
+              (i32.and (local.get $index) (i32.const 0x0F)))))))))
+
+  ;; Decode bounded BI_RLE8/BI_RLE4 data into packed bottom-up scanlines.
+  ;; Every command is validated before it changes destination memory.
+  (func $gdi_bitmap_decode_rle (param $src i32) (param $src_size i32)
+        (param $dst i32) (param $width i32) (param $height i32)
+        (param $stride i32) (param $bpp i32) (result i32)
+    (local $p i32) (local $end i32) (local $x i32) (local $y i32)
+    (local $count i32) (local $value i32) (local $i i32)
+    (local $bytes i32) (local $index i32) (local $dx i32) (local $dy i32)
+    (if (i32.or (i32.eqz (local.get $src))
+          (i32.or (i32.eqz (local.get $src_size))
+            (i32.and (i32.ne (local.get $bpp) (i32.const 4))
+              (i32.ne (local.get $bpp) (i32.const 8)))))
+      (then (return (i32.const 0))))
+    (local.set $p (local.get $src))
+    (local.set $end (i32.add (local.get $src) (local.get $src_size)))
+    (block $failed (loop $commands
+      (br_if $failed (i32.gt_u (i32.add (local.get $p) (i32.const 2)) (local.get $end)))
+      (local.set $count (i32.load8_u (local.get $p)))
+      (local.set $value (i32.load8_u offset=1 (local.get $p)))
+      (local.set $p (i32.add (local.get $p) (i32.const 2)))
+      (if (local.get $count)
+        (then
+          (br_if $failed (i32.or (i32.ge_u (local.get $y) (local.get $height))
+            (i32.gt_u (i32.add (local.get $x) (local.get $count)) (local.get $width))))
+          (local.set $i (i32.const 0))
+          (block $run_done (loop $run
+            (br_if $run_done (i32.ge_u (local.get $i) (local.get $count)))
+            (local.set $index
+              (if (result i32) (i32.eq (local.get $bpp) (i32.const 8))
+                (then (local.get $value))
+                (else (select (i32.and (local.get $value) (i32.const 0x0F))
+                  (i32.shr_u (local.get $value) (i32.const 4))
+                  (i32.and (local.get $i) (i32.const 1))))))
+            (call $gdi_bitmap_store_index (local.get $dst) (local.get $stride)
+              (i32.add (local.get $x) (local.get $i)) (local.get $y)
+              (local.get $bpp) (local.get $index))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $run)))
+          (local.set $x (i32.add (local.get $x) (local.get $count))))
+        (else
+          (if (i32.eqz (local.get $value))
+            (then
+              (local.set $x (i32.const 0))
+              (local.set $y (i32.add (local.get $y) (i32.const 1))))
+            (else (if (i32.eq (local.get $value) (i32.const 1))
+              (then (return (i32.const 1)))
+              (else (if (i32.eq (local.get $value) (i32.const 2))
+                (then
+                  (br_if $failed (i32.gt_u (i32.add (local.get $p) (i32.const 2)) (local.get $end)))
+                  (local.set $dx (i32.load8_u (local.get $p)))
+                  (local.set $dy (i32.load8_u offset=1 (local.get $p)))
+                  (local.set $p (i32.add (local.get $p) (i32.const 2)))
+                  (br_if $failed (i32.or
+                    (i32.gt_u (i32.add (local.get $x) (local.get $dx)) (local.get $width))
+                    (i32.ge_u (i32.add (local.get $y) (local.get $dy)) (local.get $height))))
+                  (local.set $x (i32.add (local.get $x) (local.get $dx)))
+                  (local.set $y (i32.add (local.get $y) (local.get $dy))))
+                (else
+                  (local.set $count (local.get $value))
+                  (local.set $bytes
+                    (if (result i32) (i32.eq (local.get $bpp) (i32.const 8))
+                      (then (local.get $count))
+                      (else (i32.shr_u (i32.add (local.get $count) (i32.const 1)) (i32.const 1)))))
+                  (br_if $failed (i32.or
+                    (i32.or (i32.ge_u (local.get $y) (local.get $height))
+                      (i32.gt_u (i32.add (local.get $x) (local.get $count)) (local.get $width)))
+                    (i32.gt_u (i32.add (local.get $p)
+                      (i32.add (local.get $bytes) (i32.and (local.get $bytes) (i32.const 1))))
+                      (local.get $end))))
+                  (local.set $i (i32.const 0))
+                  (block $absolute_done (loop $absolute
+                    (br_if $absolute_done (i32.ge_u (local.get $i) (local.get $count)))
+                    (local.set $value (i32.load8_u (i32.add (local.get $p)
+                      (select (local.get $i) (i32.shr_u (local.get $i) (i32.const 1))
+                        (i32.eq (local.get $bpp) (i32.const 8))))))
+                    (local.set $index
+                      (if (result i32) (i32.eq (local.get $bpp) (i32.const 8))
+                        (then (local.get $value))
+                        (else (select (i32.and (local.get $value) (i32.const 0x0F))
+                          (i32.shr_u (local.get $value) (i32.const 4))
+                          (i32.and (local.get $i) (i32.const 1))))))
+                    (call $gdi_bitmap_store_index (local.get $dst) (local.get $stride)
+                      (i32.add (local.get $x) (local.get $i)) (local.get $y)
+                      (local.get $bpp) (local.get $index))
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                    (br $absolute)))
+                  (local.set $p (i32.add (local.get $p)
+                    (i32.add (local.get $bytes) (i32.and (local.get $bytes) (i32.const 1)))))
+                  (local.set $x (i32.add (local.get $x) (local.get $count)))))))))))
+      (br $commands)))
+    (i32.const 0))
+
   ;; Materialize a parsed bitmap as an owned DDB. Pixel and palette bytes are
   ;; copied into one DIB-arena allocation; JavaScript receives only the final
   ;; presentation descriptor through gdi_surface_create/upload.
@@ -246,6 +385,7 @@
     (local $width i32) (local $height i32) (local $bpp i32) (local $flags i32)
     (local $stride i32) (local $image_size i32) (local $palette_src i32)
     (local $palette_count i32) (local $palette_size i32) (local $total i64)
+    (local $compression i32) (local $encoded_size i32)
     (local $storage_ga i32) (local $storage i32) (local $palette i32) (local $handle i32)
     (if (i32.eqz (local.get $plan)) (then (return (i32.const 0))))
     (local.set $width (i32.load (local.get $plan)))
@@ -256,6 +396,8 @@
     (local.set $palette_src (i32.load offset=20 (local.get $plan)))
     (local.set $palette_count (i32.load offset=24 (local.get $plan)))
     (local.set $image_size (i32.load offset=32 (local.get $plan)))
+    (local.set $compression (i32.load offset=40 (local.get $plan)))
+    (local.set $encoded_size (i32.load offset=44 (local.get $plan)))
     (if (i32.or (i32.eqz (local.get $image_size))
           (i32.or (i32.eqz (local.get $stride))
             (i32.and (local.get $copy_pixels) (i32.eqz (local.get $pixels)))))
@@ -270,7 +412,16 @@
     (if (i32.eqz (local.get $storage_ga)) (then (return (i32.const 0))))
     (local.set $storage (call $g2w (local.get $storage_ga)))
     (if (local.get $copy_pixels)
-      (then (memory.copy (local.get $storage) (local.get $pixels) (local.get $image_size))))
+      (then
+        (if (local.get $compression)
+          (then
+            (if (i32.eqz (call $gdi_bitmap_decode_rle
+                  (local.get $pixels) (local.get $encoded_size) (local.get $storage)
+                  (local.get $width) (local.get $height) (local.get $stride) (local.get $bpp)))
+              (then
+                (call $dib_free_wasm (local.get $storage))
+                (return (i32.const 0)))))
+          (else (memory.copy (local.get $storage) (local.get $pixels) (local.get $image_size))))))
     (if (i32.and (i32.ne (local.get $copy_palette) (i32.const 0))
           (i32.and (i32.ne (local.get $palette_count) (i32.const 0))
             (i32.ne (local.get $palette_src) (i32.const 0))))

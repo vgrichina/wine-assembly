@@ -162,6 +162,37 @@ function readBitmapObject(wat, handle, wide = false) {
     rbytes.fill(0xEE, payload + 40, payload + 56);
     assert.deepStrictEqual([...rbytes.subarray(storage, storage + 8)], resourcePixels);
     assert.deepStrictEqual(readBitmapObject(rw, bitmap), [0, 2, 2, 4, 1 | (8 << 16), 0]);
+
+    const srcDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
+    assert.strictEqual(rw.test_call_SelectObject(srcDc, bitmap) >>> 0, 0x30007);
+    const srcDesc = 0x07EF1000;
+    assert.strictEqual(rw.test_gdi_surface_descriptor(srcDc, srcDesc), 1);
+    assert.strictEqual(rdv.getUint32(srcDesc + 68, true), bitmap,
+      'surface descriptor must retain the selected bitmap handle');
+    assert.strictEqual(rw.test_gdi_bitmap_palette(bitmap) >>> 0, storage + 8);
+    assert.strictEqual(rw.test_gdi_bitmap_palette_count(bitmap), 2);
+    assert.strictEqual(rw.test_gdi_raster_palette_color(srcDesc, 1) >>> 0, 0x102030,
+      'WAT raster palette lookup must resolve the selected bitmap RGBQUAD');
+    const bmi = rw.guest_alloc(40) >>> 0;
+    const bitsOut = rw.guest_alloc(4) >>> 0;
+    rw.guest_write32(bmi, 40);
+    rw.guest_write32(bmi + 4, 2);
+    rw.guest_write32(bmi + 8, -2);
+    rw.guest_write32(bmi + 12, 1 | (32 << 16));
+    const dstBitmap = rw.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+    const dstDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(dstBitmap && dstDc);
+    assert.strictEqual(rw.test_call_SelectObject(dstDc, dstBitmap) >>> 0, 0x30007);
+    assert.strictEqual(rw.test_call_BitBlt(
+      dstDc, 0, 0, 2, 2, srcDc, 0, 0, 0x00CC0020), 1);
+    const dstStorage = rw.test_gdi_bitmap_storage(dstBitmap) >>> 0;
+    const pixel = offset => rbytes[offset] | (rbytes[offset + 1] << 8) |
+      (rbytes[offset + 2] << 16);
+    assert.deepStrictEqual([
+      pixel(dstStorage), pixel(dstStorage + 4),
+      pixel(dstStorage + 8), pixel(dstStorage + 12),
+    ], [0, 0x102030, 0x102030, 0],
+    'indexed source pixels must expand through their owned RGBQUAD palette');
   });
 
   check('LoadBitmapW handles integer and named resources; misses return NULL', () => {

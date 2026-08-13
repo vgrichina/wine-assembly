@@ -41,6 +41,16 @@ Canvas text rasterizer receives an opaque WAT surface ID and canonical DC state,
 then copies its bounded output back into canonical native storage before
 returning. Deletion returns the private pages to the arena.
 
+`LoadBitmapA/W` now materialize uncompressed and bounded `BI_RLE4`/`BI_RLE8`
+RT_BITMAP resources entirely in WAT. Encoded, absolute, end-of-line,
+end-of-bitmap, and delta commands decode into canonical packed scanlines with
+strict source/destination bounds. The raster core reads and writes 1-, 4-,
+8-, 16-, 24-, and 32-bpp surfaces, resolves indexed colors from each bitmap's
+owned RGBQUAD table, and performs cross-format ROP blits before uploading the
+result. This is sufficient for Paint's compressed tool strip and SkiFree's
+indexed sprite-atlas construction. `BITMAPCOREHEADER`, `BI_BITFIELDS`, and
+palette-object (`DIB_PAL_COLORS`) realization remain follow-up work.
+
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
 24- and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
 canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
@@ -172,7 +182,8 @@ HDC or crossing the JS boundary.
 
 Bitmap construction uses a separate pure parsing layer in
 `src/10a-gdi-bitmap.wat`. It validates raw `BITMAPINFO`/RT_BITMAP bytes,
-computes bounded palette and pixel spans, plans WORD-aligned `CreateBitmap`
+computes bounded palette and pixel spans, decodes bounded RLE4/RLE8 streams,
+plans WORD-aligned `CreateBitmap`
 storage, initializes the canonical 48-byte bitmap record, and writes Win32
 `BITMAP` query structures. The parser never allocates a handle or asks
 JavaScript to create a GDI object. Registry binding supplies canonical storage

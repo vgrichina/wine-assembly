@@ -1132,7 +1132,9 @@
     (i32.const 0))
 
   ;; ---- WAT-owned GDI objects and DC state ------------------------------
-  ;; Object records use 48 bytes. Types are 1=pen, 2=solid brush, 3=bitmap.
+  ;; Object records use 48 bytes. Types are 1=pen, 2=solid brush, 3=bitmap,
+  ;; 4=font. Font records keep height@8, weight@12, italic@16; glyph data and
+  ;; face resolution remain in the Canvas text policy.
   ;; Bitmap fields are width@8, height@12, bpp@16, flags@20 (DIB/top-down),
   ;; bitsWa@24, stride@28, paletteWa@32, paletteCount@36, surfaceId@40.
   (func $gdi_object_record (param $handle i32) (result i32)
@@ -1153,7 +1155,7 @@
     (local $i i32) (local $p i32) (local $empty i32)
     (if (i32.or (i32.eqz (local.get $handle))
           (i32.or (i32.lt_u (local.get $type) (i32.const 1))
-            (i32.gt_u (local.get $type) (i32.const 3))))
+            (i32.gt_u (local.get $type) (i32.const 4))))
       (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
@@ -1209,12 +1211,24 @@
 
   (func $gdi_object_type (param $handle i32) (result i32)
     (local $p i32)
+    ;; Compatible memory DCs start with a stock 1x1 monochrome bitmap.  MFC
+    ;; selects it back after using a temporary DDB, so it must participate in
+    ;; the same selection round trip even though it has no allocated record.
+    (if (i32.or (i32.eq (local.get $handle) (i32.const 0x30007))
+          (i32.eq (local.get $handle) (i32.const 0x30001)))
+      (then (return (i32.const 3))))
     (if (i32.and (i32.ge_u (local.get $handle) (i32.const 0x30010))
           (i32.le_u (local.get $handle) (i32.const 0x30015)))
       (then (return (i32.const 2))))
     (if (i32.and (i32.ge_u (local.get $handle) (i32.const 0x30016))
           (i32.le_u (local.get $handle) (i32.const 0x30018)))
       (then (return (i32.const 1))))
+    (if (i32.and (i32.ge_u (local.get $handle) (i32.const 0x3001A))
+          (i32.le_u (local.get $handle) (i32.const 0x30022)))
+      (then
+        (if (i32.eq (local.get $handle) (i32.const 0x3001F))
+          (then (return (i32.const 0))))
+        (return (i32.const 4))))
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (local.get $p) (then (return (i32.load offset=4 (local.get $p)))))
     (i32.const 0))
@@ -1416,7 +1430,70 @@
     (if (i32.eq (local.get $type) (i32.const 3))
       (then (return (call $gdi_dc_set_field
         (local.get $hdc) (i32.const 84) (local.get $handle) (i32.const 0x30007)))))
+    (if (i32.eq (local.get $type) (i32.const 4))
+      (then (return (call $gdi_dc_set_field
+        (local.get $hdc) (i32.const 88) (local.get $handle) (i32.const 0x3001D)))))
     (i32.const -1))
+
+  (func $gdi_font_height (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (local.get $p) (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.load offset=8 (local.get $p)))))
+    (if (i32.or (i32.eq (local.get $handle) (i32.const 0x3001A))
+          (i32.or (i32.eq (local.get $handle) (i32.const 0x3001B))
+            (i32.eq (local.get $handle) (i32.const 0x30020))))
+      (then (return (i32.const 16))))
+    (if (i32.or (i32.eq (local.get $handle) (i32.const 0x30021))
+          (i32.eq (local.get $handle) (i32.const 0x30022)))
+      (then (return (i32.const 11))))
+    (i32.const 12))
+
+  (func $gdi_font_weight (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (local.get $p) (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.load offset=12 (local.get $p)))))
+    (select (i32.const 700) (i32.const 400)
+      (i32.eq (local.get $handle) (i32.const 0x30022))))
+
+  (func $gdi_font_italic (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (local.get $p) (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.and (i32.load offset=16 (local.get $p)) (i32.const 1)))))
+    (i32.const 0))
+
+  ;; Serialize a stable Win98-compatible LOGFONT. The Canvas text boundary may
+  ;; resolve a more specific face for rasterization, but GDI layout callers
+  ;; receive deterministic metrics and "MS Sans Serif" here.
+  (func $gdi_font_write_logfont (param $handle i32) (param $dest i32)
+        (param $size i32) (param $wide i32) (result i32)
+    (local $required i32) (local $i i32) (local $ch i32)
+    (if (i32.ne (call $gdi_object_type (local.get $handle)) (i32.const 4))
+      (then (return (i32.const 0))))
+    (local.set $required (select (i32.const 92) (i32.const 60) (local.get $wide)))
+    (if (i32.eqz (local.get $dest)) (then (return (local.get $required))))
+    (if (i32.lt_u (local.get $size) (local.get $required)) (then (return (i32.const 0))))
+    (memory.fill (local.get $dest) (i32.const 0) (local.get $required))
+    (i32.store (local.get $dest) (call $gdi_font_height (local.get $handle)))
+    (i32.store offset=16 (local.get $dest) (call $gdi_font_weight (local.get $handle)))
+    (i32.store8 offset=20 (local.get $dest) (call $gdi_font_italic (local.get $handle)))
+    (i32.store8 offset=27 (local.get $dest) (i32.const 0x22))
+    ;; "MS Sans Serif" including its terminator.
+    (local.set $i (i32.const 0))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 14)))
+      (local.set $ch
+        (i32.load8_u (i32.add (i32.const 0x3288) (local.get $i))))
+      (if (local.get $wide)
+        (then (i32.store16 (i32.add (local.get $dest)
+          (i32.add (i32.const 28) (i32.shl (local.get $i) (i32.const 1)))) (local.get $ch)))
+        (else (i32.store8 (i32.add (local.get $dest)
+          (i32.add (i32.const 28) (local.get $i))) (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $required))
 
   (func $gdi_dc_alloc (result i32)
     (local $handle i32)
@@ -3068,19 +3145,24 @@
   ;; ---- WAT software pixel/blit kernels --------------------------------
   ;; These consume the canonical 80-byte surface descriptor emitted by
   ;; $gdi_surface_descriptor. Only offsets 0..20 are required here:
-  ;; {bits, width, height, stride, bpp, topDown}. Supported pixels are BGR24
-  ;; and BGRX32. Handle lookup and allocation stay outside the raster core.
+  ;; {bits, width, height, stride, bpp, topDown}. Indexed palette metadata is
+  ;; resolved from the canonical bitmap record named by surfaceId at +68.
   (func $gdi_raster_surface_valid (param $desc i32) (result i32)
     (i32.and (i32.ne (local.get $desc) (i32.const 0))
       (i32.and (i32.ne (i32.load (local.get $desc)) (i32.const 0))
         (i32.and
           (i32.and (i32.gt_s (i32.load offset=4 (local.get $desc)) (i32.const 0))
             (i32.gt_s (i32.load offset=8 (local.get $desc)) (i32.const 0)))
-          (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))
-            (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32)))))))
+          (i32.or
+            (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 1))
+              (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 4)))
+            (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 8))
+              (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 16))
+                (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))
+                  (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32))))))))))
 
   (func $gdi_raster_pixel_ptr (param $desc i32) (param $x i32) (param $y i32) (result i32)
-    (local $row i32) (local $bytes i32)
+    (local $row i32) (local $bpp i32) (local $offset i32)
     (if (i32.eqz (call $gdi_raster_surface_valid (local.get $desc)))
       (then (return (i32.const 0))))
     (if (i32.or
@@ -3092,11 +3174,91 @@
     (local.set $row (select (local.get $y)
       (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
       (i32.ne (i32.load offset=20 (local.get $desc)) (i32.const 0))))
-    (local.set $bytes (select (i32.const 3) (i32.const 4)
-      (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))))
+    (local.set $bpp (i32.load offset=16 (local.get $desc)))
+    (local.set $offset
+      (if (result i32) (i32.eq (local.get $bpp) (i32.const 1))
+        (then (i32.shr_u (local.get $x) (i32.const 3)))
+        (else (if (result i32) (i32.eq (local.get $bpp) (i32.const 4))
+          (then (i32.shr_u (local.get $x) (i32.const 1)))
+          (else (i32.mul (local.get $x)
+            (i32.shr_u (local.get $bpp) (i32.const 3))))))))
     (i32.add (i32.load (local.get $desc))
       (i32.add (i32.mul (local.get $row) (i32.load offset=12 (local.get $desc)))
-        (i32.mul (local.get $x) (local.get $bytes)))))
+        (local.get $offset))))
+
+  (func $gdi_raster_default_palette (param $bpp i32) (param $index i32) (result i32)
+    (if (i32.eq (local.get $bpp) (i32.const 1))
+      (then (return (select (i32.const 0xFFFFFF) (i32.const 0) (local.get $index)))))
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then (return (i32.mul (i32.and (local.get $index) (i32.const 0xFF))
+        (i32.const 0x010101)))))
+    (local.set $index (i32.and (local.get $index) (i32.const 15)))
+    (if (i32.eq (local.get $index) (i32.const 0)) (then (return (i32.const 0x000000))))
+    (if (i32.eq (local.get $index) (i32.const 1)) (then (return (i32.const 0x800000))))
+    (if (i32.eq (local.get $index) (i32.const 2)) (then (return (i32.const 0x008000))))
+    (if (i32.eq (local.get $index) (i32.const 3)) (then (return (i32.const 0x808000))))
+    (if (i32.eq (local.get $index) (i32.const 4)) (then (return (i32.const 0x000080))))
+    (if (i32.eq (local.get $index) (i32.const 5)) (then (return (i32.const 0x800080))))
+    (if (i32.eq (local.get $index) (i32.const 6)) (then (return (i32.const 0x008080))))
+    (if (i32.eq (local.get $index) (i32.const 7)) (then (return (i32.const 0xC0C0C0))))
+    (if (i32.eq (local.get $index) (i32.const 8)) (then (return (i32.const 0x808080))))
+    (if (i32.eq (local.get $index) (i32.const 9)) (then (return (i32.const 0xFF0000))))
+    (if (i32.eq (local.get $index) (i32.const 10)) (then (return (i32.const 0x00FF00))))
+    (if (i32.eq (local.get $index) (i32.const 11)) (then (return (i32.const 0xFFFF00))))
+    (if (i32.eq (local.get $index) (i32.const 12)) (then (return (i32.const 0x0000FF))))
+    (if (i32.eq (local.get $index) (i32.const 13)) (then (return (i32.const 0xFF00FF))))
+    (if (i32.eq (local.get $index) (i32.const 14)) (then (return (i32.const 0x00FFFF))))
+    (i32.const 0xFFFFFF))
+
+  (func $gdi_raster_palette_color (param $desc i32) (param $index i32) (result i32)
+    (local $record i32) (local $palette i32) (local $count i32) (local $p i32)
+    (local.set $record (call $gdi_object_record (i32.load offset=68 (local.get $desc))))
+    (if (local.get $record)
+      (then
+        (local.set $palette (i32.load offset=32 (local.get $record)))
+        (local.set $count (i32.load offset=36 (local.get $record)))
+        (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
+              (i32.lt_u (local.get $index) (local.get $count)))
+          (then
+            (local.set $p (i32.add (local.get $palette) (i32.shl (local.get $index) (i32.const 2))))
+            (return (i32.or (i32.load8_u (local.get $p))
+              (i32.or (i32.shl (i32.load8_u offset=1 (local.get $p)) (i32.const 8))
+                (i32.shl (i32.load8_u offset=2 (local.get $p)) (i32.const 16)))))))))
+    (call $gdi_raster_default_palette (i32.load offset=16 (local.get $desc)) (local.get $index)))
+
+  (func (export "test_gdi_raster_palette_color") (param i32 i32) (result i32)
+    (call $gdi_raster_palette_color (local.get 0) (local.get 1)))
+
+  (func $gdi_raster_nearest_index (param $desc i32) (param $color i32) (result i32)
+    (local $bpp i32) (local $count i32) (local $i i32) (local $candidate i32)
+    (local $dr i64) (local $dg i64) (local $db i64) (local $distance i64)
+    (local $best_distance i64) (local $best i32)
+    (local.set $bpp (i32.load offset=16 (local.get $desc)))
+    (local.set $count (i32.shl (i32.const 1) (local.get $bpp)))
+    (local.set $best_distance (i64.const 0x7FFFFFFFFFFFFFFF))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $candidate (call $gdi_raster_palette_color (local.get $desc) (local.get $i)))
+      (local.set $dr (i64.extend_i32_s (i32.sub
+        (i32.and (i32.shr_u (local.get $color) (i32.const 16)) (i32.const 0xFF))
+        (i32.and (i32.shr_u (local.get $candidate) (i32.const 16)) (i32.const 0xFF)))))
+      (local.set $dg (i64.extend_i32_s (i32.sub
+        (i32.and (i32.shr_u (local.get $color) (i32.const 8)) (i32.const 0xFF))
+        (i32.and (i32.shr_u (local.get $candidate) (i32.const 8)) (i32.const 0xFF)))))
+      (local.set $db (i64.extend_i32_s (i32.sub
+        (i32.and (local.get $color) (i32.const 0xFF))
+        (i32.and (local.get $candidate) (i32.const 0xFF)))))
+      (local.set $distance (i64.add (i64.mul (local.get $dr) (local.get $dr))
+        (i64.add (i64.mul (local.get $dg) (local.get $dg))
+          (i64.mul (local.get $db) (local.get $db)))))
+      (if (i64.lt_u (local.get $distance) (local.get $best_distance))
+        (then
+          (local.set $best_distance (local.get $distance))
+          (local.set $best (local.get $i))
+          (if (i64.eqz (local.get $distance)) (then (return (local.get $i))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
 
   ;; Packed raster colors are 0x00RRGGBB; COLORREF is 0x00BBGGRR.
   (func $gdi_raster_swap_rb (param $color i32) (result i32)
@@ -3106,18 +3268,78 @@
       (i32.and (i32.shr_u (local.get $color) (i32.const 16)) (i32.const 0xFF))))
 
   (func $gdi_raster_read (param $desc i32) (param $x i32) (param $y i32) (result i32)
-    (local $p i32)
+    (local $p i32) (local $bpp i32) (local $value i32)
     (local.set $p (call $gdi_raster_pixel_ptr (local.get $desc) (local.get $x) (local.get $y)))
     (if (i32.eqz (local.get $p)) (then (return (i32.const -1))))
+    (local.set $bpp (i32.load offset=16 (local.get $desc)))
+    (if (i32.eq (local.get $bpp) (i32.const 1))
+      (then (return (call $gdi_raster_palette_color (local.get $desc)
+        (i32.and (i32.shr_u (i32.load8_u (local.get $p))
+          (i32.sub (i32.const 7) (i32.and (local.get $x) (i32.const 7)))) (i32.const 1))))))
+    (if (i32.eq (local.get $bpp) (i32.const 4))
+      (then
+        (local.set $value (i32.load8_u (local.get $p)))
+        (return (call $gdi_raster_palette_color (local.get $desc)
+          (select (i32.and (local.get $value) (i32.const 15))
+            (i32.shr_u (local.get $value) (i32.const 4))
+            (i32.and (local.get $x) (i32.const 1)))))))
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then (return (call $gdi_raster_palette_color
+        (local.get $desc) (i32.load8_u (local.get $p))))))
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then
+        (local.set $value (i32.load16_u (local.get $p)))
+        (return (i32.or
+          (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $value) (i32.const 11))
+            (i32.const 31)) (i32.const 255)) (i32.const 31)) (i32.const 16))
+          (i32.or
+            (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $value) (i32.const 5))
+              (i32.const 63)) (i32.const 255)) (i32.const 63)) (i32.const 8))
+            (i32.div_u (i32.mul (i32.and (local.get $value) (i32.const 31))
+              (i32.const 255)) (i32.const 31)))))))
     (i32.or (i32.load8_u (local.get $p))
       (i32.or (i32.shl (i32.load8_u offset=1 (local.get $p)) (i32.const 8))
         (i32.shl (i32.load8_u offset=2 (local.get $p)) (i32.const 16)))))
 
   (func $gdi_raster_write (param $desc i32) (param $x i32) (param $y i32)
         (param $color i32) (result i32)
-    (local $p i32)
+    (local $p i32) (local $bpp i32) (local $index i32) (local $old i32)
     (local.set $p (call $gdi_raster_pixel_ptr (local.get $desc) (local.get $x) (local.get $y)))
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $bpp (i32.load offset=16 (local.get $desc)))
+    (if (i32.le_u (local.get $bpp) (i32.const 8))
+      (then
+        (local.set $index (call $gdi_raster_nearest_index (local.get $desc) (local.get $color)))
+        (if (i32.eq (local.get $bpp) (i32.const 1))
+          (then
+            (local.set $old (i32.load8_u (local.get $p)))
+            (local.set $index (i32.shl (i32.const 1)
+              (i32.sub (i32.const 7) (i32.and (local.get $x) (i32.const 7)))))
+            (i32.store8 (local.get $p) (select
+              (i32.or (local.get $old) (local.get $index))
+              (i32.and (local.get $old) (i32.xor (local.get $index) (i32.const 0xFF)))
+              (call $gdi_raster_nearest_index (local.get $desc) (local.get $color)))))
+          (else (if (i32.eq (local.get $bpp) (i32.const 4))
+            (then
+              (local.set $old (i32.load8_u (local.get $p)))
+              (i32.store8 (local.get $p)
+                (select (i32.or (i32.and (local.get $old) (i32.const 0xF0)) (local.get $index))
+                  (i32.or (i32.and (local.get $old) (i32.const 0x0F))
+                    (i32.shl (local.get $index) (i32.const 4)))
+                  (i32.and (local.get $x) (i32.const 1)))))
+            (else (i32.store8 (local.get $p) (local.get $index))))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then
+        (i32.store16 (local.get $p) (i32.or
+          (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $color) (i32.const 16))
+            (i32.const 0xFF)) (i32.const 31)) (i32.const 255)) (i32.const 11))
+          (i32.or
+            (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $color) (i32.const 8))
+              (i32.const 0xFF)) (i32.const 63)) (i32.const 255)) (i32.const 5))
+            (i32.div_u (i32.mul (i32.and (local.get $color) (i32.const 0xFF))
+              (i32.const 31)) (i32.const 255)))))
+        (return (i32.const 1))))
     (i32.store8 (local.get $p) (local.get $color))
     (i32.store8 offset=1 (local.get $p) (i32.shr_u (local.get $color) (i32.const 8)))
     (i32.store8 offset=2 (local.get $p) (i32.shr_u (local.get $color) (i32.const 16)))

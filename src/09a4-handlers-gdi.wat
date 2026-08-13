@@ -5,14 +5,8 @@
   ;; 856: GetCurrentObject(hdc, uObjectType) → HGDIOBJ
   ;; OBJ_PEN=1, OBJ_BRUSH=2, OBJ_PAL=5, OBJ_FONT=6, OBJ_BITMAP=7
   (func $handle_GetCurrentObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (local.get $arg1) (i32.const 1))
-      (then (global.set $eax (call $gdi_dc_get_field
-        (local.get $arg0) (i32.const 4) (i32.const 0x30017))))
-      (else (if (i32.eq (local.get $arg1) (i32.const 2))
-        (then (global.set $eax (call $gdi_dc_get_field
-          (local.get $arg0) (i32.const 8) (i32.const 0x30010))))
-        (else (global.set $eax
-          (call $host_gdi_get_current_object (local.get $arg0) (local.get $arg1)))))))
+    (global.set $eax
+      (call $host_gdi_get_current_object (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 145: SelectObject(hdc, hObject) — canonical selection is WAT-owned.
@@ -357,10 +351,15 @@
   (func $handle_GetObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $record i32)
     (local.set $record (call $gdi_object_record (local.get $arg0)))
-    (global.set $eax (call $gdi_bitmap_write_object (local.get $record)
-      (if (result i32) (local.get $arg2)
-        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg1)))
+    (if (i32.eq (call $gdi_object_type (local.get $arg0)) (i32.const 4))
+      (then (global.set $eax (call $gdi_font_write_logfont (local.get $arg0)
+        (if (result i32) (local.get $arg2)
+          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $arg1) (i32.const 0))))
+      (else (global.set $eax (call $gdi_bitmap_write_object (local.get $record)
+        (if (result i32) (local.get $arg2)
+          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $arg1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
@@ -492,27 +491,37 @@
 
   ;; 167: CreateFontIndirectA — LOGFONT at arg0
   (func $handle_CreateFontIndirectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lf i32)
+    (local $lf i32) (local $handle i32)
     (local.set $lf (call $g2w (local.get $arg0)))
     ;; LOGFONT: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28)
-    (global.set $eax (call $host_create_font
+    (local.set $handle (call $host_create_font
       (i32.load (local.get $lf))                              ;; height
       (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (i32.add (local.get $lf) (i32.const 28))               ;; faceName WASM ptr
     ))
+    (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
+      (i32.load (local.get $lf)) (i32.load offset=16 (local.get $lf))
+      (i32.load8_u offset=20 (local.get $lf)) (i32.const 0)))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 168: CreateFontA — 14 params on stack
   (func $handle_CreateFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $handle i32) (local $weight i32) (local $italic i32)
     ;; arg0=nHeight, esp+16=fnWeight, esp+20=bItalic, esp+52=lpszFace
-    (global.set $eax (call $host_create_font
+    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
+    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (local.set $handle (call $host_create_font
       (local.get $arg0)                                              ;; height
-      (call $gl32 (i32.add (global.get $esp) (i32.const 16)))       ;; weight
-      (call $gl32 (i32.add (global.get $esp) (i32.const 20)))       ;; italic
+      (local.get $weight)                                            ;; weight
+      (local.get $italic)                                            ;; italic
       (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 52)))) ;; faceName
     ))
+    (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
+      (local.get $arg0) (local.get $weight) (local.get $italic) (i32.const 0)))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
   )
 

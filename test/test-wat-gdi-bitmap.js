@@ -131,17 +131,64 @@ const SRC = path.join(ROOT, 'src');
     ], [2, 8, 2, 4, data + 40, 4, data + 56, 8]);
   });
 
-  check('DIB parser rejects compressed, invalid palette, and unsupported formats', () => {
+  check('DIB parser accepts matching bounded RLE and rejects invalid formats', () => {
     const data = alloc();
     const plan = alloc();
     writeInfoHeader(data, { width: 2, height: 2, bpp: 8, compression: 1 });
-    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
+    dv.setUint32(data + 20, 4, true);
+    bytes.set([0, 1, 0, 0], data + 40 + 256 * 4);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 40 + 256 * 4 + 4, plan), 1);
+    assert.strictEqual(dv.getUint32(plan + 40, true), 1);
+    assert.strictEqual(dv.getUint32(plan + 44, true), 4);
+    writeInfoHeader(data, { width: 2, height: 2, bpp: 4, compression: 1 });
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0,
+      'BI_RLE8 must reject non-8bpp input');
+    writeInfoHeader(data, { width: 2, height: 2, bpp: 8, compression: 2 });
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0,
+      'BI_RLE4 must reject non-4bpp input');
     writeInfoHeader(data, { width: 2, height: 2, bpp: 8, clrUsed: 257 });
     assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
     writeInfoHeader(data, { width: 2, height: 2, bpp: 16 });
     assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
     writeInfoHeader(data, { width: -2, height: 2, bpp: 24 });
     assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
+  });
+
+  check('BI_RLE4 resource decoding produces exact packed bottom-up rows', () => {
+    const data = alloc();
+    writeInfoHeader(data, { width: 4, height: 2, bpp: 4, compression: 2, clrUsed: 7 });
+    const palette = [
+      [0, 0, 0, 0], [0, 0, 0x11, 0], [0, 0, 0x22, 0],
+      [0, 0, 0x33, 0], [0, 0, 0x44, 0], [0, 0, 0x55, 0], [0, 0, 0x66, 0],
+    ];
+    palette.flat().forEach((value, index) => { bytes[data + 40 + index] = value; });
+    const stream = [4, 0x12, 0, 0, 0, 4, 0x34, 0x56, 0, 1];
+    dv.setUint32(data + 20, stream.length, true);
+    bytes.set(stream, data + 40 + palette.length * 4);
+    const bitmap = wat.test_gdi_bitmap_create_resource(
+      data, 40 + palette.length * 4 + stream.length) >>> 0;
+    assert(bitmap, 'valid RLE4 resource should materialize a DDB');
+    const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
+    assert.deepStrictEqual([...bytes.subarray(storage, storage + 8)],
+      [0x12, 0x12, 0, 0, 0x34, 0x56, 0, 0]);
+  });
+
+  check('BI_RLE8 absolute runs decode and present palette colors', () => {
+    const data = alloc();
+    writeInfoHeader(data, { width: 4, height: 2, bpp: 8, compression: 1, clrUsed: 6 });
+    const palette = Array.from({ length: 6 }, (_, index) => [0, index * 10, index * 20, 0]);
+    palette.flat().forEach((value, index) => { bytes[data + 40 + index] = value; });
+    const stream = [4, 1, 0, 0, 0, 4, 2, 3, 4, 5, 0, 1];
+    dv.setUint32(data + 20, stream.length, true);
+    bytes.set(stream, data + 40 + palette.length * 4);
+    const bitmap = wat.test_gdi_bitmap_create_resource(
+      data, 40 + palette.length * 4 + stream.length) >>> 0;
+    assert(bitmap, 'valid RLE8 resource should materialize a DDB');
+    const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
+    assert.deepStrictEqual([...bytes.subarray(storage, storage + 8)], [1, 1, 1, 1, 2, 3, 4, 5]);
+    const canvas = imports.gdi.surfacePresentations.get(bitmap).canvas.getContext('2d');
+    assert.deepStrictEqual([...canvas.getImageData(0, 0, 1, 1).data], [40, 20, 0, 255]);
+    assert.deepStrictEqual([...canvas.getImageData(0, 1, 1, 1).data], [20, 10, 0, 255]);
   });
 
   check('CreateBitmap planner uses Win32 WORD-aligned scanline sizes', () => {

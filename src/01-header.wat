@@ -353,7 +353,17 @@
     (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_surface_delete" (func $host_gdi_surface_delete (param i32) (result i32)))
   (import "host" "gdi_surface_attach" (func $host_gdi_surface_attach (param i32 i32) (result i32)))
-  (func $host_gdi_get_current_object (param i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_current_object (param $hdc i32) (param $type i32) (result i32)
+    (if (i32.eq (local.get $type) (i32.const 1))
+      (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 4) (i32.const 0x30017)))))
+    (if (i32.eq (local.get $type) (i32.const 2))
+      (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010)))))
+    (if (i32.eq (local.get $type) (i32.const 5)) (then (return (i32.const 0x3001F))))
+    (if (i32.eq (local.get $type) (i32.const 6))
+      (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 88) (i32.const 0x3001D)))))
+    (if (i32.eq (local.get $type) (i32.const 7))
+      (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 84) (i32.const 0x30007)))))
+    (i32.const 0))
   ;; gdi_get_current_object(hdc, objectType) → handle
   (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
@@ -778,6 +788,7 @@
   (data (i32.const 0x3244) "SetRenderTimeout\00")
   (data (i32.const 0x3260) "msctls_statusbar32\00")
   (data (i32.const 0x3274) "ToolbarWindow32\00")
+  (data (i32.const 0x3288) "MS Sans Serif\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -830,7 +841,7 @@
   ;; 0x07EF0800 2KB      GDI_DC_RASTER_TABLE (256 x {HDC, ROP2})
   ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
   ;; 0x07EF1100 160B     GDI_BLIT_DESC scratch
-  ;; 0x07EF11A0 296B     GDI_BITMAP_PLAN/name scratch
+  ;; 0x07EF11A0 304B     GDI_BITMAP_PLAN/name scratch
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
@@ -1017,8 +1028,8 @@
   ;; Bitmap creation handlers are synchronous. They share a parsed metadata
   ;; plan and an ANSI conversion buffer for LoadBitmapW resource names.
   (global $GDI_BITMAP_PLAN i32 (i32.const 0x07EF11A0))
-  (global $GDI_BITMAP_PLAN_SIZE i32 (i32.const 0x00000028))
-  (global $GDI_BITMAP_NAME i32 (i32.const 0x07EF11C8))
+  (global $GDI_BITMAP_PLAN_SIZE i32 (i32.const 0x00000030))
+  (global $GDI_BITMAP_NAME i32 (i32.const 0x07EF11D0))
   (global $GDI_BITMAP_NAME_SIZE i32 (i32.const 0x00000100))
   ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
   ;; presentation and GDI operations that have not moved to WAT yet.
