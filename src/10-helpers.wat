@@ -1529,6 +1529,22 @@
       (i32.load offset=28 (local.get $record))
       (local.get $x) (local.get $y)))
 
+  (func $gdi_shape_unmap_x (param $desc i32) (param $x i32) (result i32)
+    (i32.add (i32.load offset=32 (local.get $desc))
+      (call $gdi_round_ratio
+        (i64.mul
+          (i64.extend_i32_s (i32.sub (local.get $x) (i32.load offset=48 (local.get $desc))))
+          (i64.extend_i32_s (i32.load offset=40 (local.get $desc))))
+        (i64.extend_i32_s (i32.load offset=56 (local.get $desc))))))
+
+  (func $gdi_shape_unmap_y (param $desc i32) (param $y i32) (result i32)
+    (i32.add (i32.load offset=36 (local.get $desc))
+      (call $gdi_round_ratio
+        (i64.mul
+          (i64.extend_i32_s (i32.sub (local.get $y) (i32.load offset=52 (local.get $desc))))
+          (i64.extend_i32_s (i32.load offset=44 (local.get $desc))))
+        (i64.extend_i32_s (i32.load offset=60 (local.get $desc))))))
+
   (func $gdi_shape_put_pixel (param $hdc i32) (param $desc i32)
         (param $x i32) (param $y i32) (param $color i32) (param $rop2 i32) (result i32)
     (local $row i32) (local $pixel i32) (local $dst i32) (local $value i32)
@@ -1541,10 +1557,8 @@
       (then (return (i32.const 0))))
     (if (i32.eqz (call $gdi_shape_clip_visible
           (local.get $hdc)
-          (i32.add (i32.sub (local.get $x) (i32.load offset=48 (local.get $desc)))
-            (i32.load offset=32 (local.get $desc)))
-          (i32.add (i32.sub (local.get $y) (i32.load offset=52 (local.get $desc)))
-            (i32.load offset=36 (local.get $desc)))))
+          (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
+          (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
       (then (return (i32.const 0))))
     (local.set $row (select
       (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
@@ -1577,8 +1591,11 @@
         (i32.and (i32.ne (i32.load (local.get $desc)) (i32.const 0))
           (i32.and (i32.gt_s (i32.load offset=4 (local.get $desc)) (i32.const 0))
             (i32.gt_s (i32.load offset=8 (local.get $desc)) (i32.const 0))))
-        (i32.and (i32.ne (i32.load offset=40 (local.get $desc)) (i32.const 0))
-          (i32.ne (i32.load offset=44 (local.get $desc)) (i32.const 0))))
+        (i32.and
+          (i32.and (i32.ne (i32.load offset=40 (local.get $desc)) (i32.const 0))
+            (i32.ne (i32.load offset=44 (local.get $desc)) (i32.const 0)))
+          (i32.and (i32.ne (i32.load offset=56 (local.get $desc)) (i32.const 0))
+            (i32.ne (i32.load offset=60 (local.get $desc)) (i32.const 0)))))
       (i32.and
         (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))
           (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32)))
@@ -1741,6 +1758,116 @@
         (param i32) (param i32) (param i32) (result i32)
     (global.set $gdi_line_style_phase (i32.const 0))
     (call $gdi_line_desc (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (local.get 5) (local.get 6) (local.get 7)))
+
+  ;; Closed polygon fill reuses the canonical integer region scan converter.
+  ;; The temporary mapped points live in the WAT heap and the resulting
+  ;; canonical bands are consumed directly; no host polygon representation
+  ;; participates in coverage.
+  (func $gdi_polygon_desc (param $hdc i32) (param $desc i32)
+        (param $points i32) (param $count i32) (param $pen i32) (param $brush i32)
+        (param $rop2 i32) (param $fill_mode i32) (result i32)
+    (local $guest_temp i32) (local $mapped i32) (local $src i32) (local $dst i32)
+    (local $i i32) (local $j i32) (local $region i32) (local $record i32)
+    (local $bands i32) (local $band i32) (local $band_count i32)
+    (local $y i32) (local $wrote i32) (local $brush_color i32)
+    (if (i32.or (i32.eqz (call $gdi_shape_desc_valid (local.get $desc)))
+          (i32.or (i32.eqz (local.get $points))
+            (i32.or (i32.lt_u (local.get $count) (i32.const 3))
+              (i32.gt_u (local.get $count) (global.get $GDI_REGION_MAX_RECTS)))))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $fill_mode) (i32.const 1))
+          (i32.ne (local.get $fill_mode) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $pen) (i32.const 0x30018))
+          (i32.ne (call $gdi_object_type (local.get $pen)) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $brush) (i32.const 0x30015))
+          (i32.or (i32.ne (call $gdi_object_type (local.get $brush)) (i32.const 2))
+            (i32.ne (call $gdi_object_style (local.get $brush)) (i32.const 0))))
+      (then (return (i32.const 0))))
+    ;; Preflight the complete closed outline before fill changes any byte.
+    (if (i32.ne (local.get $pen) (i32.const 0x30018))
+      (then
+        (block $preflight_done (loop $preflight
+          (br_if $preflight_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $j (i32.add (local.get $i) (i32.const 1)))
+          (if (i32.eq (local.get $j) (local.get $count)) (then (local.set $j (i32.const 0))))
+          (local.set $src (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3))))
+          (local.set $dst (i32.add (local.get $points) (i32.shl (local.get $j) (i32.const 3))))
+          (if (i32.eqz (call $gdi_line_desc_can_raster (local.get $desc)
+                (i32.load (local.get $src)) (i32.load offset=4 (local.get $src))
+                (i32.load (local.get $dst)) (i32.load offset=4 (local.get $dst))
+                (local.get $pen) (local.get $rop2)))
+            (then (return (i32.const 0))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $preflight)))))
+    (if (i32.ne (local.get $brush) (i32.const 0x30015))
+      (then
+        (local.set $guest_temp (call $heap_alloc (i32.shl (local.get $count) (i32.const 3))))
+        (if (i32.eqz (local.get $guest_temp)) (then (return (i32.const 0))))
+        (local.set $mapped (call $g2w (local.get $guest_temp)))
+        (local.set $i (i32.const 0))
+        (block $map_done (loop $map
+          (br_if $map_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $src (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3))))
+          (local.set $dst (i32.add (local.get $mapped) (i32.shl (local.get $i) (i32.const 3))))
+          (i32.store (local.get $dst)
+            (call $gdi_line_map_x (local.get $desc) (i32.load (local.get $src))))
+          (i32.store offset=4 (local.get $dst)
+            (call $gdi_line_map_y (local.get $desc) (i32.load offset=4 (local.get $src))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $map)))
+        (local.set $region (call $gdi_rgn_alloc_polygon
+          (local.get $mapped) (local.get $count) (local.get $fill_mode)))
+        (call $heap_free (local.get $guest_temp))
+        (if (i32.eqz (local.get $region)) (then (return (i32.const 0))))
+        (local.set $record (call $gdi_rgn_record (local.get $region)))
+        (local.set $bands (call $gdi_rgn_bands (local.get $record)))
+        (local.set $band_count (i32.load offset=28 (local.get $record)))
+        (local.set $brush_color (call $gdi_object_color (local.get $brush)))
+        (local.set $i (i32.const 0))
+        (block $bands_done (loop $draw_bands
+          (br_if $bands_done (i32.ge_u (local.get $i) (local.get $band_count)))
+          (local.set $band (i32.add (local.get $bands) (i32.shl (local.get $i) (i32.const 4))))
+          (local.set $y (i32.load offset=4 (local.get $band)))
+          (block $band_rows_done (loop $band_rows
+            (br_if $band_rows_done (i32.ge_s (local.get $y) (i32.load offset=12 (local.get $band))))
+            (local.set $wrote (i32.or (local.get $wrote)
+              (call $gdi_shape_fill_span (local.get $hdc) (local.get $desc)
+                (local.get $y) (i32.load (local.get $band)) (i32.load offset=8 (local.get $band))
+                (local.get $brush_color) (i32.const 13))))
+            (local.set $y (i32.add (local.get $y) (i32.const 1)))
+            (br $band_rows)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $draw_bands)))
+        (if (local.get $wrote)
+          (then (drop (call $host_gdi_present_dib_rect (local.get $hdc)
+            (i32.load offset=8 (local.get $record)) (i32.load offset=12 (local.get $record))
+            (i32.load offset=16 (local.get $record)) (i32.load offset=20 (local.get $record))))))
+        (drop (call $gdi_rgn_delete (local.get $region)))))
+    (if (i32.ne (local.get $pen) (i32.const 0x30018))
+      (then
+        (global.set $gdi_line_style_phase (i32.const 0))
+        (local.set $i (i32.const 0))
+        (block $outline_done (loop $outline
+          (br_if $outline_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $j (i32.add (local.get $i) (i32.const 1)))
+          (if (i32.eq (local.get $j) (local.get $count)) (then (local.set $j (i32.const 0))))
+          (local.set $src (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3))))
+          (local.set $dst (i32.add (local.get $points) (i32.shl (local.get $j) (i32.const 3))))
+          (drop (call $gdi_line_desc (local.get $hdc) (local.get $desc)
+            (i32.load (local.get $src)) (i32.load offset=4 (local.get $src))
+            (i32.load (local.get $dst)) (i32.load offset=4 (local.get $dst))
+            (local.get $pen) (local.get $rop2)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $outline)))))
+    (i32.const 1))
+
+  (func (export "test_gdi_polygon_desc")
+        (param i32) (param i32) (param i32) (param i32)
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_polygon_desc (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (local.get 4) (local.get 5) (local.get 6) (local.get 7)))
 
   ;; Rectangle's lower/right edges are excluded by Win32. The brush fills the

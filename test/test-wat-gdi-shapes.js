@@ -30,6 +30,7 @@ async function main() {
   let nextDesc = 0x00100000;
   let nextHandle = 0x00410000;
   let nextHdc = 0x00310000;
+  let nextPoints = 0x00180000;
   let passed = 0;
 
   function check(name, fn) {
@@ -76,6 +77,16 @@ async function main() {
     return handle;
   }
 
+  function points(values) {
+    const address = nextPoints;
+    nextPoints += values.length * 8 + 0x20;
+    values.forEach(([x, y], index) => {
+      dv.setInt32(address + index * 8, x, true);
+      dv.setInt32(address + index * 8 + 4, y, true);
+    });
+    return address;
+  }
+
   check('rectangle fills half-open bounds and replaces the edge with its pen', () => {
     const t = target(9, 7, 32, true);
     const redPen = object(1, 0, 1, 0x000000FF);
@@ -107,6 +118,29 @@ async function main() {
       '...GGGG..',
       '.........',
       '.........',
+    ]);
+  });
+
+  check('scaled targets inverse-map device pixels for logical clipping', () => {
+    const t = target(10, 8);
+    const green = object(2, 0, 0, 0x0000FF00);
+    dv.setInt32(t.desc + 40, 5, true);
+    dv.setInt32(t.desc + 44, 4, true);
+    dv.setInt32(t.desc + 56, 10, true);
+    dv.setInt32(t.desc + 60, 8, true);
+    const clip = wat.test_gdi_rgn_alloc_rect(1, 1, 4, 3);
+    assert.strictEqual(wat.test_gdi_dc_clip_select(t.hdc, clip), 2);
+    assert.strictEqual(wat.test_gdi_rectangle_desc(
+      t.hdc, t.desc, 0, 0, 5, 4, 0x30018, green, 13), 1);
+    assert.deepStrictEqual(rows(t), [
+      '..........',
+      '.GGGGGG...',
+      '.GGGGGG...',
+      '.GGGGGG...',
+      '.GGGGGG...',
+      '..........',
+      '..........',
+      '..........',
     ]);
   });
 
@@ -219,6 +253,41 @@ async function main() {
     const wide = object(1, 0, 3, 0x00FFFFFF);
     assert.strictEqual(wat.test_gdi_line_desc(t.hdc, t.desc, 1, 2, 7, 2, wide, 7), 0);
     assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
+  });
+
+  check('polygon fills canonical bands and closes its integer outline', () => {
+    const t = target(9, 7);
+    const red = object(1, 0, 1, 0x000000FF);
+    const green = object(2, 0, 0, 0x0000FF00);
+    const square = points([[1, 1], [7, 1], [7, 5], [1, 5]]);
+    assert.strictEqual(wat.test_gdi_polygon_desc(
+      t.hdc, t.desc, square, 4, red, green, 13, 1), 1);
+    assert.deepStrictEqual(rows(t), [
+      '.........',
+      '.RRRRRRR.',
+      '.RGGGGGR.',
+      '.RGGGGGR.',
+      '.RGGGGGR.',
+      '.RRRRRRR.',
+      '.........',
+    ]);
+  });
+
+  check('polygon brush-only triangle has deterministic scanline coverage', () => {
+    const t = target(9, 7, 24, false);
+    const green = object(2, 0, 0, 0x0000FF00);
+    const triangle = points([[1, 1], [8, 1], [4, 6]]);
+    assert.strictEqual(wat.test_gdi_polygon_desc(
+      t.hdc, t.desc, triangle, 3, 0x30018, green, 13, 2), 1);
+    assert.deepStrictEqual(rows(t), [
+      '.........',
+      '.GGGGGGG.',
+      '..GGGGG..',
+      '..GGGG...',
+      '...GG....',
+      '.........',
+      '.........',
+    ]);
   });
 
   check('ellipse uses deterministic pixel-center fill and one-pixel outline', () => {
