@@ -17062,5 +17062,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1473038309
+  },
+  {
+    "id": 2229,
+    "name": "ImmNotifyIME",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2264215400
   }
 ]

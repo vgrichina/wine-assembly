@@ -9519,7 +9519,7 @@
   (func $edit_ctrl_down (result i32)
     (i32.and (call $host_get_async_key_state (i32.const 0x11)) (i32.const 0x8000)))
 
-  (func $edit_notify_change (param $hwnd i32)
+  (func $edit_notify (param $hwnd i32) (param $code i32)
     (local $parent i32) (local $id i32)
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (local.get $parent)
@@ -9529,8 +9529,15 @@
           (local.get $parent)
           (i32.const 0x0111)  ;; WM_COMMAND
           (i32.or (i32.and (local.get $id) (i32.const 0xFFFF))
-                  (i32.const 0x03000000))  ;; EN_CHANGE << 16
+                  (i32.shl (local.get $code) (i32.const 16)))
           (local.get $hwnd))))))
+
+  (func $edit_notify_change (param $hwnd i32)
+    ;; A standard multiline EDIT sends EN_UPDATE immediately before repaint,
+    ;; followed by EN_CHANGE once its text has changed. Paint consumes the
+    ;; update notification to refresh the text object that is later committed.
+    (call $edit_notify (local.get $hwnd) (i32.const 0x0400)) ;; EN_UPDATE
+    (call $edit_notify (local.get $hwnd) (i32.const 0x0300))) ;; EN_CHANGE
 
   (func $edit_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
@@ -9724,6 +9731,7 @@
             (i32.store offset=24 (local.get $state_w)
               (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))))
+        (call $edit_notify (local.get $hwnd) (i32.const 0x0100)) ;; EN_SETFOCUS
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -9738,6 +9746,7 @@
             (call $edit_stop_caret_timer (local.get $hwnd) (local.get $state_w))
             (i32.store offset=24 (local.get $state_w)
               (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFF7)))))
+        (call $edit_notify (local.get $hwnd) (i32.const 0x0200)) ;; EN_KILLFOCUS
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -10305,11 +10314,21 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        ;; Paint commits a text object by asking its EDIT to render into the
+        ;; picture memory DC via SendMessage(WM_PAINT, hdc, 0). Honor that
+        ;; Win9x control convention; ordinary paints still use the window DC.
+        (local.set $hdc
+          (select (local.get $wParam)
+                  (i32.add (local.get $hwnd) (i32.const 0x40000))
+                  (i32.ne (local.get $wParam) (i32.const 0))))
         ;; Native control paints don't call BeginPaint, so establish the
         ;; child-client clip explicitly before drawing wrapped/scrolling text.
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
-        (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))
+        ;; Preserve an explicitly supplied DC's clip and viewport: its caller
+        ;; owns both and may have translated them into a backing bitmap.
+        (if (i32.eqz (local.get $wParam))
+          (then
+            (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+            (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))))
         ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
         ;; that have no JS-side window record).
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
@@ -10330,9 +10349,11 @@
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x30010)))
         ;; 2) Sunken edge: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A; BF_RECT = 0x0F
-        (drop (call $host_gdi_draw_edge (local.get $hdc)
-                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
-                (i32.const 0x0A) (i32.const 0x0F)))
+        (if (i32.eqz (local.get $wParam))
+          (then
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+                    (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                    (i32.const 0x0A) (i32.const 0x0F)))))
         ;; 3) Text — draw line by line, splitting on \n. Each line is split
         ;; into up to three segments (pre-sel / sel / post-sel) so selected
         ;; text renders white-on-blue while unselected text stays black.
@@ -10760,6 +10781,14 @@
         ;; wParam = start, lParam = end (-1 = end of text)
         (local.set $lo (local.get $wParam))
         (local.set $hi (local.get $lParam))
+        ;; EM_SETSEL(-1, 0) removes the current selection. Paint uses this
+        ;; immediately before rendering the edit into its backing bitmap.
+        (if (i32.eq (local.get $lo) (i32.const -1))
+          (then
+            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
+            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (return (i32.const 0))))
         (if (i32.eq (local.get $hi) (i32.const -1))
           (then (local.set $hi (local.get $text_len))))
         (if (i32.gt_u (local.get $lo) (local.get $text_len))
@@ -11001,13 +11030,11 @@
                  (i32.eq (local.get $msg) (i32.const 0x000F)))
       (then (return (call $control_wndproc_dispatch
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
-    ;; RichEdit-backed installer controls are painted by the WAT edit control
-    ;; path once mapped to class=2, so route synchronous input/query messages
-    ;; there too. Otherwise the DLL wndproc updates its own state while our
-    ;; renderer keeps drawing the old WAT EditState.
-    (if (i32.eq (local.get $ctrl_class) (i32.const 2))
-      (then (return (call $edit_wndproc
-        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Do not bypass an app-installed EDIT subclass here. In particular,
+    ;; Paint's CEdit wrapper consumes WM_CHAR before chaining to the native
+    ;; control proc; skipping that wrapper leaves its text object empty even
+    ;; though the WAT edit visibly contains the typed characters. Unsubclassed
+    ;; EDIT and RichEdit controls continue through the WAT-native branch below.
     ;; Standard Edit menu/command ids should act on the focused edit control
     ;; before app frameworks forward them into native RichEdit's rich/OLE
     ;; clipboard path. Non-edit command ids fall through to the app wndproc.

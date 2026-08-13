@@ -153,6 +153,7 @@ const extra = [
   { name: 'CharLowerA', nargs: 1 },
   { name: 'CharLowerBuffA', nargs: 2 },
   { name: 'ImmAssociateContext', nargs: 2 },
+  { name: 'ImmNotifyIME', nargs: 4 },
   { name: 'ImmGetContext', nargs: 1 },
   { name: 'ImmReleaseContext', nargs: 2 },
   { name: 'VkKeyScanW', nargs: 1 },

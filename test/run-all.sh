@@ -114,6 +114,7 @@ E2E=(
   test/test-gdi-stock-select.js
   test/test-mspaint-draw.js
   test/test-mspaint-tools.js
+  test/test-mspaint-tool-repaint.js
   test/test-mspaint-options.js
   test/test-mspaint-file-roundtrip.js
   test/test-mspaint-dirty-new.js

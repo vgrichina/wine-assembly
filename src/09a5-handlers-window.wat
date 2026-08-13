@@ -739,10 +739,15 @@
             ;; own WM_SIZEPARENT and chain TB_* messages to this default proc.
             (i32.or
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 21))
-              ;; MFC CComboBox wrappers also attach their m_hWnd through the
-              ;; WH_CBT/HCBT_CREATEWND hook. Without this, toolbar-hosted
-              ;; WordPad font/size combo setup calls SendMessageA(hwnd=0).
-              (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 5)))))
+              (i32.or
+                ;; MFC CComboBox wrappers also attach their m_hWnd through the
+                ;; WH_CBT/HCBT_CREATEWND hook. Without this, toolbar-hosted
+                ;; WordPad font/size combo setup calls SendMessageA(hwnd=0).
+                (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 5))
+                ;; Paint creates its text editor as a native EDIT through a
+                ;; CEdit wrapper. It likewise needs the hook to attach m_hWnd;
+                ;; otherwise Paint later calls ShowWindow/SetFocus with NULL.
+                (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 2))))))
     (then
     ;; Save state for CACA0026 continuation, clean CreateWindowExA frame (52 bytes).
     (global.set $child_cbt_saved_hwnd (local.get $hwnd))

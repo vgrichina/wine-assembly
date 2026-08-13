@@ -33,9 +33,14 @@ brush-options and non-antialiased line regressions before rasterizer migration.
 
 Current validation:
 
+The short repaint regression also exercises the Text tool end to end: Paint's
+top-level Fonts palette remains floating, keyboard focus stays in the native
+EDIT, and clicking the canvas renders the text into the picture bitmap.
+
 ```sh
 node test/test-mspaint-draw.js
 node test/test-mspaint-tools.js
+node test/test-mspaint-tool-repaint.js
 node test/test-mspaint-options.js
 node test/test-mspaint-dirty-new.js
 node test/test-mspaint-clipboard.js
