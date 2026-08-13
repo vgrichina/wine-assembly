@@ -218,7 +218,7 @@ storage layer before adding more OLE object types.
 
 - [x] Implement `IStream::Clone` with shared backing bytes and an independent seek
   cursor.
-- [ ] Complete copy, set-size, sparse extension/zero fill, seek overflow, stat,
+- [x] Complete copy, set-size, sparse extension/zero fill, seek overflow, stat,
   lock/unlock-region, commit, and revert semantics used by Win9x OLE clients.
 - [x] Make lifetime ownership explicit: a stream keeps its backing store alive;
   releasing a storage handle does not invalidate an independently retained
@@ -229,8 +229,13 @@ mutable data/size/capacity, and keep their own positions. Write and SetSize are
 visible across interfaces, shrink/grow zero-fills exposed bytes, HGLOBAL clones
 return the same handle, and a clone remains readable after the original caller
 and owning storage are released. `test/test-ole-storage.js` passes 27/27 after
-the first storage-tree slice. The
-unchecked line above remains open for full CopyTo/locking/transaction breadth.
+the first storage-tree slice.
+
+2026-08-12 stream-completion result: buffered `CopyTo` handles exact and partial
+64-bit counts plus safe self-copy; shared-root checkpoints restore bytes/size
+through any clone; root-visible region locks distinguish write/exclusive access,
+enforce exact-owner unlock, gate resize, and disappear with their owner. The
+combined storage/stream suite passes 64/64.
 
 ### P2.2 Storage tree
 

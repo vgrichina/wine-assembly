@@ -26,6 +26,9 @@ identity-preserving `MoveElementTo` are now covered too. `EnumElements` returns 
 `IEnumSTATSTG` with stable names/types/sizes/CLSIDs and complete cursor methods;
 deep transactional `Commit`/`Revert` checkpoints now restore mixed trees while
 detaching retained pre-revert interfaces safely.
+`IStream` now also has shared commit/revert checkpoints, owner-scoped region
+locks across clones, lock-aware sizing, and buffered `CopyTo` with exact
+partial-count and self-copy behavior.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports

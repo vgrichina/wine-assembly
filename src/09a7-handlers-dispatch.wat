@@ -714,10 +714,12 @@
   ;;   +0 vtable, +4 refcount, +8 kind=2, +12 lockbytes, +16 first stream,
   ;;   +20 CLSID (16 bytes), +36 first child storage, +40 name, +44 parent,
   ;;   +48 next sibling storage, +52 committed snapshot storage
-  ;; IStream (52 bytes):
+  ;; IStream (60 bytes):
   ;;   +0 vtable, +4 refcount, +8 kind=3, +12 data, +16 size, +20 capacity,
   ;;   +24 position, +28 name, +32 owns-data, +36 owner storage, +40 next stream,
-  ;;   +44 canonical root stream (clones only; retained, shared backing bytes)
+  ;;   +44 canonical root stream (clones only; retained, shared backing bytes),
+  ;;   +48 committed byte snapshot, +52 snapshot size, +56 region lock list.
+  ;; Stream lock (20 bytes): offset, length, flags, owner interface, next.
   ;; IEnumSTATSTG (28 bytes, kind=7):
   ;;   +0 vtable, +4 refcount, +8 kind, +12 snapshot entries, +16 count,
   ;;   +20 cursor, +24 owns snapshot. Entry (32 bytes): object, name, type,
@@ -844,9 +846,9 @@
 
   (func $ole_create_stream (param $owner i32) (param $name i32) (result i32)
     (local $obj i32)
-    (local.set $obj (call $heap_alloc (i32.const 52)))
+    (local.set $obj (call $heap_alloc (i32.const 60)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 52))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 60))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_STREAM))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 3))
@@ -865,6 +867,151 @@
     (call $gs32 (i32.add (local.get $clone) (i32.const 44)) (local.get $root))
     (drop (call $ole_obj_addref (local.get $root)))
     (local.get $clone))
+
+  (func $ole_stream_ranges_overlap (param $offset_a i32) (param $length_a i32) (param $offset_b i32) (param $length_b i32) (result i32)
+    (local $end_a i64) (local $end_b i64)
+    (if (i32.or (i32.eqz (local.get $length_a)) (i32.eqz (local.get $length_b)))
+      (then (return (i32.const 0))))
+    (local.set $end_a (i64.add (i64.extend_i32_u (local.get $offset_a)) (i64.extend_i32_u (local.get $length_a))))
+    (local.set $end_b (i64.add (i64.extend_i32_u (local.get $offset_b)) (i64.extend_i32_u (local.get $length_b))))
+    (i32.and
+      (i64.lt_u (i64.extend_i32_u (local.get $offset_a)) (local.get $end_b))
+      (i64.lt_u (i64.extend_i32_u (local.get $offset_b)) (local.get $end_a))))
+
+  (func $ole_stream_lock_conflict (param $obj i32) (param $offset i32) (param $length i32) (param $write i32) (result i32)
+    (local $root i32) (local $lock i32) (local $flags i32)
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (local.set $lock (call $gl32 (i32.add (local.get $root) (i32.const 56))))
+    (block $done (loop $locks
+      (br_if $done (i32.eqz (local.get $lock)))
+      (if (i32.and
+            (i32.ne (call $gl32 (i32.add (local.get $lock) (i32.const 12))) (local.get $obj))
+            (call $ole_stream_ranges_overlap
+              (local.get $offset) (local.get $length)
+              (call $gl32 (local.get $lock))
+              (call $gl32 (i32.add (local.get $lock) (i32.const 4)))))
+        (then
+          (local.set $flags (call $gl32 (i32.add (local.get $lock) (i32.const 8))))
+          ;; LOCK_WRITE blocks writes; LOCK_EXCLUSIVE blocks reads and writes.
+          (if (i32.or
+                (i32.and (local.get $flags) (i32.const 2))
+                (i32.and (local.get $write) (i32.and (local.get $flags) (i32.const 1))))
+            (then (return (i32.const 1))))))
+      (local.set $lock (call $gl32 (i32.add (local.get $lock) (i32.const 16))))
+      (br $locks)))
+    (i32.const 0))
+
+  (func $ole_stream_lock_region (param $obj i32) (param $offset i32) (param $length i32) (param $flags i32) (result i32)
+    (local $root i32) (local $lock i32)
+    (if (i32.or
+          (i32.eqz (local.get $obj))
+          (i32.or (i32.eqz (local.get $length)) (i32.eqz (i32.and (local.get $flags) (i32.const 3)))))
+      (then (return (i32.const 0x80030001))))
+    (if (call $ole_stream_lock_conflict (local.get $obj) (local.get $offset) (local.get $length) (i32.const 1))
+      (then (return (i32.const 0x80030021))))
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (local.set $lock (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $lock)) (then (return (i32.const 0x8007000E))))
+    (call $gs32 (local.get $lock) (local.get $offset))
+    (call $gs32 (i32.add (local.get $lock) (i32.const 4)) (local.get $length))
+    (call $gs32 (i32.add (local.get $lock) (i32.const 8)) (local.get $flags))
+    (call $gs32 (i32.add (local.get $lock) (i32.const 12)) (local.get $obj))
+    (call $gs32 (i32.add (local.get $lock) (i32.const 16))
+      (call $gl32 (i32.add (local.get $root) (i32.const 56))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 56)) (local.get $lock))
+    (i32.const 0))
+
+  (func $ole_stream_unlock_region (param $obj i32) (param $offset i32) (param $length i32) (param $flags i32) (result i32)
+    (local $root i32) (local $lock i32) (local $previous i32) (local $next i32)
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (local.set $lock (call $gl32 (i32.add (local.get $root) (i32.const 56))))
+    (block $done (loop $locks
+      (br_if $done (i32.eqz (local.get $lock)))
+      (local.set $next (call $gl32 (i32.add (local.get $lock) (i32.const 16))))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $lock) (i32.const 12))) (local.get $obj))
+            (i32.and
+              (i32.eq (call $gl32 (local.get $lock)) (local.get $offset))
+              (i32.and
+                (i32.eq (call $gl32 (i32.add (local.get $lock) (i32.const 4))) (local.get $length))
+                (i32.eq (call $gl32 (i32.add (local.get $lock) (i32.const 8))) (local.get $flags)))))
+        (then
+          (if (local.get $previous)
+            (then (call $gs32 (i32.add (local.get $previous) (i32.const 16)) (local.get $next)))
+            (else (call $gs32 (i32.add (local.get $root) (i32.const 56)) (local.get $next))))
+          (call $heap_free (local.get $lock))
+          (return (i32.const 0))))
+      (local.set $previous (local.get $lock))
+      (local.set $lock (local.get $next))
+      (br $locks)))
+    (i32.const 0x80030001))
+
+  (func $ole_stream_remove_owner_locks (param $obj i32)
+    (local $root i32) (local $lock i32) (local $previous i32) (local $next i32)
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (local.set $lock (call $gl32 (i32.add (local.get $root) (i32.const 56))))
+    (block $done (loop $locks
+      (br_if $done (i32.eqz (local.get $lock)))
+      (local.set $next (call $gl32 (i32.add (local.get $lock) (i32.const 16))))
+      (if (i32.eq (call $gl32 (i32.add (local.get $lock) (i32.const 12))) (local.get $obj))
+        (then
+          (if (local.get $previous)
+            (then (call $gs32 (i32.add (local.get $previous) (i32.const 16)) (local.get $next)))
+            (else (call $gs32 (i32.add (local.get $root) (i32.const 56)) (local.get $next))))
+          (call $heap_free (local.get $lock)))
+        (else (local.set $previous (local.get $lock))))
+      (local.set $lock (local.get $next))
+      (br $locks))))
+
+  (func $ole_stream_commit (param $obj i32) (result i32)
+    (local $root i32) (local $snapshot i32) (local $old i32) (local $size i32)
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (if (i32.eqz (local.get $root)) (then (return (i32.const 0x80004003))))
+    (local.set $size (call $gl32 (i32.add (local.get $root) (i32.const 16))))
+    (local.set $snapshot (call $heap_alloc (select (local.get $size) (i32.const 1) (local.get $size))))
+    (if (i32.eqz (local.get $snapshot)) (then (return (i32.const 0x8007000E))))
+    (if (local.get $size)
+      (then
+        (memory.copy
+          (call $g2w (local.get $snapshot))
+          (call $g2w (call $gl32 (i32.add (local.get $root) (i32.const 12))))
+          (local.get $size))))
+    (local.set $old (call $gl32 (i32.add (local.get $root) (i32.const 48))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (local.get $snapshot))
+    (call $gs32 (i32.add (local.get $root) (i32.const 52)) (local.get $size))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (i32.const 0))
+
+  (func $ole_stream_revert (param $obj i32) (result i32)
+    (local $root i32) (local $snapshot i32) (local $size i32) (local $hr i32)
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (if (i32.eqz (local.get $root)) (then (return (i32.const 0x80004003))))
+    (local.set $snapshot (call $gl32 (i32.add (local.get $root) (i32.const 48))))
+    (local.set $size (call $gl32 (i32.add (local.get $root) (i32.const 52))))
+    (if (i32.and (i32.eqz (local.get $snapshot)) (i32.eqz (local.get $size)))
+      (then (return (i32.const 0x80030102))))
+    (local.set $hr (call $ole_resize_buffer (local.get $root) (local.get $size)))
+    (if (local.get $hr) (then (return (local.get $hr))))
+    (if (local.get $size)
+      (then (memory.copy
+        (call $g2w (call $gl32 (i32.add (local.get $root) (i32.const 12))))
+        (call $g2w (local.get $snapshot))
+        (local.get $size))))
+    (i32.const 0))
+
+  (func $ole_stream_set_size (param $obj i32) (param $size i32) (result i32)
+    (local $root i32) (local $old_size i32) (local $offset i32) (local $length i32)
+    (local.set $root (call $ole_stream_root (local.get $obj)))
+    (if (i32.eqz (local.get $root)) (then (return (i32.const 0x80004003))))
+    (local.set $old_size (call $gl32 (i32.add (local.get $root) (i32.const 16))))
+    (local.set $offset (select (local.get $size) (local.get $old_size) (i32.lt_u (local.get $size) (local.get $old_size))))
+    (local.set $length (select
+      (i32.sub (local.get $old_size) (local.get $size))
+      (i32.sub (local.get $size) (local.get $old_size))
+      (i32.lt_u (local.get $size) (local.get $old_size))))
+    (if (call $ole_stream_lock_conflict (local.get $obj) (local.get $offset) (local.get $length) (i32.const 1))
+      (then (return (i32.const 0x80030021))))
+    (call $ole_resize_buffer (local.get $obj) (local.get $size)))
 
   (func $ole_create_hglobal_stream (param $hglobal i32) (param $delete_on_release i32) (result i32)
     (local $obj i32) (local $capacity i32)
@@ -1449,6 +1596,7 @@
         (if (local.get $data) (then (drop (call $ole_obj_release (local.get $data)))))))
     (if (i32.eq (local.get $kind) (i32.const 3))
       (then
+        (call $ole_stream_remove_owner_locks (local.get $obj))
         (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 44))))
         (if (local.get $child)
           (then (drop (call $ole_obj_release (local.get $child))))
@@ -1457,7 +1605,16 @@
             (if (i32.and
                   (i32.ne (local.get $data) (i32.const 0))
                   (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0)))
-              (then (call $heap_free (local.get $data))))))))
+              (then (call $heap_free (local.get $data))))
+            (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 48))))
+            (if (local.get $data) (then (call $heap_free (local.get $data))))
+            (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 56))))
+            (block $locks_done (loop $locks
+              (br_if $locks_done (i32.eqz (local.get $data)))
+              (local.set $next (call $gl32 (i32.add (local.get $data) (i32.const 16))))
+              (call $heap_free (local.get $data))
+              (local.set $data (local.get $next))
+              (br $locks)))))))
     (if (i32.eq (local.get $kind) (i32.const 4))
       (then
         (if (call $gl32 (i32.add (local.get $obj) (i32.const 44)))
@@ -1514,6 +1671,8 @@
     (local.set $size (call $gl32 (i32.add (local.get $root) (i32.const 16))))
     (local.set $available (select (i32.sub (local.get $size) (local.get $pos)) (i32.const 0) (i32.lt_u (local.get $pos) (local.get $size))))
     (local.set $take (select (local.get $count) (local.get $available) (i32.lt_u (local.get $count) (local.get $available))))
+    (if (call $ole_stream_lock_conflict (local.get $obj) (local.get $pos) (local.get $take) (i32.const 0))
+      (then (return (i32.const 0x80030021))))
     (if (local.get $take)
       (then (memory.copy
         (call $g2w (local.get $buf))
@@ -1534,6 +1693,8 @@
     (local.set $root (call $ole_stream_root (local.get $obj)))
     (local.set $end (i32.add (local.get $pos) (local.get $count)))
     (if (i32.lt_u (local.get $end) (local.get $pos)) (then (return (i32.const 0x8007000E))))
+    (if (call $ole_stream_lock_conflict (local.get $obj) (local.get $pos) (local.get $count) (i32.const 1))
+      (then (return (i32.const 0x80030021))))
     (local.set $hr (call $ole_resize_buffer (local.get $obj)
       (select (local.get $end) (call $gl32 (i32.add (local.get $root) (i32.const 16)))
         (i32.gt_u (local.get $end) (call $gl32 (i32.add (local.get $root) (i32.const 16)))))))
@@ -1546,6 +1707,57 @@
     (call $ole_set_data_position (local.get $obj) (local.get $end))
     (if (local.get $written_out) (then (call $gs32 (local.get $written_out) (local.get $count))))
     (i32.const 0))
+
+  (func $ole_stream_copy_to (param $source i32) (param $dest i32) (param $count_low i32) (param $count_high i32) (param $read_out i32) (param $written_out i32) (result i32)
+    (local $root i32) (local $position i32) (local $available i32) (local $take i32) (local $buffer i32) (local $actual_read i32) (local $actual_written i32) (local $hr i32)
+    (if (local.get $read_out)
+      (then (call $gs32 (local.get $read_out) (i32.const 0)) (call $gs32 (i32.add (local.get $read_out) (i32.const 4)) (i32.const 0))))
+    (if (local.get $written_out)
+      (then (call $gs32 (local.get $written_out) (i32.const 0)) (call $gs32 (i32.add (local.get $written_out) (i32.const 4)) (i32.const 0))))
+    (if (i32.or
+          (i32.eqz (local.get $source))
+          (i32.or (i32.eqz (local.get $dest))
+            (i32.ne (call $gl32 (i32.add (local.get $dest) (i32.const 8))) (i32.const 3))))
+      (then (return (i32.const 0x80004003))))
+    (local.set $root (call $ole_stream_root (local.get $source)))
+    (local.set $position (call $ole_data_position (local.get $source)))
+    (local.set $available (select
+      (i32.sub (call $gl32 (i32.add (local.get $root) (i32.const 16))) (local.get $position))
+      (i32.const 0)
+      (i32.lt_u (local.get $position) (call $gl32 (i32.add (local.get $root) (i32.const 16))))))
+    (local.set $take (select
+      (local.get $count_low) (local.get $available)
+      (i32.and (i32.eqz (local.get $count_high)) (i32.lt_u (local.get $count_low) (local.get $available)))))
+    (if (local.get $take)
+      (then
+        (local.set $buffer (call $heap_alloc (local.get $take)))
+        (if (i32.eqz (local.get $buffer)) (then (return (i32.const 0x8007000E))))))
+    (local.set $actual_read (call $heap_alloc (i32.const 4)))
+    (local.set $actual_written (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $actual_read)) (i32.eqz (local.get $actual_written)))
+      (then
+        (if (local.get $buffer) (then (call $heap_free (local.get $buffer))))
+        (if (local.get $actual_read) (then (call $heap_free (local.get $actual_read))))
+        (if (local.get $actual_written) (then (call $heap_free (local.get $actual_written))))
+        (return (i32.const 0x8007000E))))
+    (local.set $hr (call $ole_stream_read (local.get $source) (local.get $buffer) (local.get $take) (local.get $actual_read)))
+    (local.set $take (call $gl32 (local.get $actual_read)))
+    (if (local.get $read_out) (then (call $gs32 (local.get $read_out) (local.get $take))))
+    (if (i32.and (local.get $hr) (i32.ne (local.get $hr) (i32.const 1)))
+      (then
+        (if (local.get $buffer) (then (call $heap_free (local.get $buffer))))
+        (call $heap_free (local.get $actual_read))
+        (call $heap_free (local.get $actual_written))
+        (return (local.get $hr))))
+    (local.set $hr (call $ole_stream_write (local.get $dest) (local.get $buffer) (local.get $take) (local.get $actual_written)))
+    (if (local.get $written_out) (then (call $gs32 (local.get $written_out) (call $gl32 (local.get $actual_written)))))
+    (if (local.get $buffer) (then (call $heap_free (local.get $buffer))))
+    (call $heap_free (local.get $actual_read))
+    (call $heap_free (local.get $actual_written))
+    (if (local.get $hr) (then (return (local.get $hr))))
+    (select
+      (i32.const 0) (i32.const 1)
+      (i32.and (i32.eqz (local.get $count_high)) (i32.eq (local.get $take) (local.get $count_low)))))
 
   ;; ILockBytes
   (func $handle_ILockBytes_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1634,31 +1846,33 @@
         (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IStream_SetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (select (call $ole_resize_buffer (local.get $arg0) (local.get $arg1)) (i32.const 0x80030019) (i32.eqz (local.get $arg2))))
+    (global.set $eax (select (call $ole_stream_set_size (local.get $arg0) (local.get $arg1)) (i32.const 0x80030019) (i32.eqz (local.get $arg2))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IStream_CopyTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $root i32) (local $written_out i32) (local $count i32) (local $available i32) (local $pos i32)
-    (local.set $written_out (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (local.set $pos (call $gl32 (i32.add (local.get $arg0) (i32.const 24))))
-    (local.set $root (call $ole_stream_root (local.get $arg0)))
-    (local.set $available (select (i32.sub (call $gl32 (i32.add (local.get $root) (i32.const 16))) (local.get $pos)) (i32.const 0) (i32.lt_u (local.get $pos) (call $gl32 (i32.add (local.get $root) (i32.const 16))))))
-    (local.set $count (select (local.get $arg2) (local.get $available) (i32.lt_u (local.get $arg2) (local.get $available))))
-    (if (i32.or (local.get $arg3) (i32.ne (call $gl32 (i32.add (local.get $arg1) (i32.const 8))) (i32.const 3)))
-      (then (global.set $eax (i32.const 0x80004001)))
-      (else
-        (global.set $eax (call $ole_stream_write (local.get $arg1)
-          (i32.add (call $gl32 (i32.add (local.get $root) (i32.const 12))) (local.get $pos)) (local.get $count) (local.get $written_out)))
-        (if (i32.eqz (global.get $eax)) (then (call $gs32 (i32.add (local.get $arg0) (i32.const 24)) (i32.add (local.get $pos) (local.get $count)))))
-        (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (local.get $count)) (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 0))))))
+    (global.set $eax (call $ole_stream_copy_to
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $arg4) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
   (func $handle_IStream_Commit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $eax (call $ole_stream_commit (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IStream_Revert (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80030102)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $eax (call $ole_stream_revert (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IStream_LockRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $eax (select
+      (call $ole_stream_lock_region (local.get $arg0) (local.get $arg1) (local.get $arg3)
+        (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+      (i32.const 0x80030019)
+      (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg4)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
   (func $handle_IStream_UnlockRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $eax (select
+      (call $ole_stream_unlock_region (local.get $arg0) (local.get $arg1) (local.get $arg3)
+        (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+      (i32.const 0x80030019)
+      (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg4)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
   (func $handle_IStream_Stat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $root i32)
     (local.set $root (call $ole_stream_root (local.get $arg0)))

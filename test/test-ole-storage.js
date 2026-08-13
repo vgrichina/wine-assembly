@@ -111,6 +111,84 @@ async function main() {
         Array.from(u8.slice(wa(zeros), wa(zeros) + 5)).every(byte => byte === 0);
     })());
 
+  check('IStream Revert without a checkpoint reports STG_E_REVERTED',
+    (e.test_ole_stream_revert(stream) >>> 0) === 0x80030102);
+  e.test_ole_stream_seek(stream, 0);
+  e.test_ole_stream_write(stream, writeBytes(Uint8Array.from([4, 5, 6, 7])), 4, count);
+  e.test_ole_stream_set_size(stream, 4);
+  check('IStream Commit captures shared backing bytes', e.test_ole_stream_commit(clone) === 0);
+  e.test_ole_stream_seek(clone, 1);
+  e.test_ole_stream_write(clone, writeBytes(Uint8Array.from([0xee, 0xff])), 2, count);
+  e.test_ole_stream_set_size(clone, 6);
+  check('IStream Revert through a clone restores shared bytes and size',
+    e.test_ole_stream_revert(stream) === 0 && e.test_ole_stream_size(stream) === 4 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 0);
+      const restored = alloc(4);
+      return e.test_ole_stream_read(clone, restored, 4, count) === 0 &&
+        Array.from(u8.slice(wa(restored), wa(restored) + 4)).join(',') === '4,5,6,7';
+    })());
+
+  e.test_ole_stream_seek(stream, 0);
+  check('exclusive region locks block clone reads and writes',
+    e.test_ole_stream_lock(stream, 1, 2, 2) === 0 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 1);
+      const readBlocked = (e.test_ole_stream_read(clone, alloc(1), 1, count) >>> 0) === 0x80030021;
+      e.test_ole_stream_seek(clone, 1);
+      const writeBlocked = (e.test_ole_stream_write(clone, writeBytes(Uint8Array.from([9])), 1, count) >>> 0) === 0x80030021;
+      return readBlocked && writeBlocked;
+    })());
+  check('lock owners can access their own locked range',
+    (() => {
+      e.test_ole_stream_seek(stream, 1);
+      return e.test_ole_stream_read(stream, alloc(1), 1, count) === 0;
+    })());
+  check('UnlockRegion requires the exact owner, range and flags',
+    (e.test_ole_stream_unlock(clone, 1, 2, 2) >>> 0) === 0x80030001 &&
+    e.test_ole_stream_unlock(stream, 1, 2, 2) === 0);
+  check('write locks allow clone reads but block clone writes and resize',
+    e.test_ole_stream_lock(stream, 3, 3, 1) === 0 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 3);
+      const readable = e.test_ole_stream_read(clone, alloc(1), 1, count) === 0;
+      e.test_ole_stream_seek(clone, 3);
+      const writeBlocked = (e.test_ole_stream_write(clone, writeBytes(Uint8Array.from([1])), 1, count) >>> 0) === 0x80030021;
+      const resizeBlocked = (e.test_ole_stream_set_size(clone, 6) >>> 0) === 0x80030021;
+      return readable && writeBlocked && resizeBlocked;
+    })());
+  e.test_ole_stream_unlock(stream, 3, 3, 1);
+  const lockOwnerClone = e.test_ole_stream_clone(stream) >>> 0;
+  e.test_ole_stream_lock(lockOwnerClone, 0, 1, 2);
+  e.test_ole_release(lockOwnerClone);
+  e.test_ole_stream_seek(stream, 0);
+  check('releasing a clone automatically removes its region locks',
+    e.test_ole_stream_write(stream, writeBytes(Uint8Array.from([4])), 1, count) === 0);
+
+  const copyTarget = e.test_ole_create_hglobal_stream(0, 0) >>> 0;
+  const copyWritten = alloc(8);
+  e.test_ole_stream_seek(stream, 0);
+  check('IStream CopyTo returns S_FALSE with exact partial 64-bit counts at EOF',
+    e.test_ole_stream_copy_to(stream, copyTarget, 10, 0, count, copyWritten) === 1 &&
+    dv.getUint32(wa(count), true) === 4 && dv.getUint32(wa(copyWritten), true) === 4 &&
+    e.test_ole_stream_position(stream) === 4 && e.test_ole_stream_position(copyTarget) === 4);
+  e.test_ole_stream_seek(stream, 0);
+  e.test_ole_stream_seek(copyTarget, 0);
+  check('IStream CopyTo returns S_OK for an exact requested byte count',
+    e.test_ole_stream_copy_to(stream, copyTarget, 2, 0, count, copyWritten) === 0 &&
+    dv.getUint32(wa(count), true) === 2 && dv.getUint32(wa(copyWritten), true) === 2);
+  e.test_ole_stream_seek(stream, 0);
+  check('IStream CopyTo supports self-copy using a stable temporary buffer',
+    e.test_ole_stream_copy_to(stream, stream, 2, 0, count, copyWritten) === 0 &&
+    e.test_ole_stream_position(stream) === 4);
+  e.test_ole_release(copyTarget);
+
+  // Restore the original ownership/lifetime fixture used by the checks below.
+  e.test_ole_stream_set_size(stream, 3);
+  e.test_ole_stream_seek(stream, 0);
+  e.test_ole_stream_write(stream, input, 3, count);
+  e.test_ole_stream_set_size(stream, payload.length);
+
   const lookupName = writeWide('objectdata');
   const opened = e.test_ole_find_stream(storage, lookupName) >>> 0;
   check('IStorage opens named streams case-insensitively', opened === stream);
