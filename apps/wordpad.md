@@ -40,14 +40,17 @@ and small/large stream payloads. `IStorage::Commit` emits the associated
 tree. The deterministic/malformed-container suite passes 22/22.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
-The next transfer layer is also present: a bounded `IDataObject` supports
-`FORMATETC` matching, `GetData`/`QueryGetData`/`SetData`, single-format
-enumeration, and eagerly owned `STGMEDIUM` payloads. `TYMED_HGLOBAL` data such
+The next transfer layer is also present: a bounded multi-format `IDataObject`
+supports `FORMATETC` matching, `GetData`/`QueryGetData`/`SetData`, stable
+snapshot enumeration with complete cursor/clone methods, and eagerly owned
+`STGMEDIUM` payloads. `TYMED_HGLOBAL` data such
 as `CF_DIB` is copied byte-for-byte, stream/storage media retain COM ownership,
 `ReleaseStgMedium` releases supported payloads, and the OLE clipboard keeps a
 reference-counted current object. WordPad/RichEdit insertion and static DIB
 presentation are integrated. WordPad can copy, cut, and paste an existing
 inline static DIB without retaining a source-control-owned RichEdit object.
+The focused data-object suite passes 21/21; `GetDataHere`, text/RTF conversion,
+and advisory connections remain broader transfer work.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
 `CoDisconnectObject`, HGLOBAL-backed `IStream` helpers,

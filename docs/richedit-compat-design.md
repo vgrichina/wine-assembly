@@ -30,7 +30,7 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 12/12 and 68/68.
+storage suites remain green at 21/21 and 68/68.
 
 ## ASCII TLDR
 
@@ -721,9 +721,11 @@ open.
 
 ### 2026-08-12 OLE data-transfer foundation
 
-A bounded, single-format `IDataObject` now owns a `FORMATETC` plus copied
-`STGMEDIUM`. It supports `QueryGetData`, `GetData`, `SetData`, and one-entry
-`IEnumFORMATETC`; advisory connections remain explicitly unsupported.
+A bounded multi-format `IDataObject` now owns a growable collection of
+deep-copied `FORMATETC` plus `STGMEDIUM` entries. It supports `QueryGetData`,
+`GetData`, append/replace `SetData`, `fRelease`, independent target-device data,
+and stable multi-entry `IEnumFORMATETC` snapshots with complete cursor and
+clone methods. Advisory connections remain explicitly unsupported.
 `TYMED_HGLOBAL` payloads, including opaque `CF_DIB` bytes, are duplicated for
 each receiver. `TYMED_ISTREAM`/`TYMED_ISTORAGE` retain COM references, and
 `ReleaseStgMedium` now releases supported media and clears the structure.

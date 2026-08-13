@@ -315,25 +315,35 @@ live root is associated.
 
 ## P3 — General `IDataObject` and clipboard transfer
 
-The current object is intentionally single-format. General OLE clipboard and
-drag/drop need a real collection of formats and media.
+The core object now owns multiple formats/media and exposes stable snapshot
+enumerators. General clipboard conversion and drag/drop need the remaining
+transfer breadth below.
 
 ### Work
 
-- Replace the single `FORMATETC`/`STGMEDIUM` slot with an owned collection.
+- [x] Replace the single `FORMATETC`/`STGMEDIUM` slot with an owned collection.
 - Implement matching across clipboard format, aspect, lindex, and compatible
   `tymed` masks with accurate `DV_E_*` errors.
 - Support `TYMED_HGLOBAL`, `TYMED_ISTREAM`, and `TYMED_ISTORAGE` ownership,
   duplication, `pUnkForRelease`, and `ReleaseStgMedium` behavior.
 - Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
-- Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
+- [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
 - Preserve stable format enumeration and media lifetime after clipboard owner
   changes, `OleSetClipboard`, `OleGetClipboard`, and `OleFlushClipboard`.
 - Add `CF_UNICODETEXT` alongside ANSI/OEM text and registered RTF; preserve
   CRLF and terminating-null conventions exactly.
 - Add advisory plumbing only after a traced consumer requires it:
   `DAdvise`, `DUnadvise`, `EnumDAdvise`, and change notification.
+
+2026-08-12 collection result: `IDataObject` owns a growable collection of
+deep-copied `FORMATETC`/`STGMEDIUM` entries. `SetData` appends or replaces
+matching formats, honors `fRelease`, and retains stream/storage media with COM
+ownership; `DVTARGETDEVICE` data is copied independently. `IEnumFORMATETC`
+captures stable deep snapshots and implements exact multi-entry
+`Next`/`Skip`/`Reset`/`Clone` behavior. The focused suite passes 21/21, while
+the existing static handler, storage, CFB, and timed WordPad clipboard suites
+remain green.
 
 ### Acceptance
 
