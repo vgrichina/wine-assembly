@@ -1,0 +1,346 @@
+# Software GDI rasterizer design
+
+## Status
+
+Proposed architecture, 2026-08-12. This document describes an incremental
+migration from Canvas 2D vector drawing to deterministic software rasterization.
+It does not propose replacing Canvas as the desktop compositor or presentation
+API.
+
+The immediate drivers are visible in Win98 Paint:
+
+- Canvas vector paths antialias lines, curves, ellipses, and rounded corners.
+  `imageSmoothingEnabled = false` affects scaled images, not `stroke()` or
+  `fill()` rasterization, so output differs from classic integer GDI and can
+  differ between browser engines.
+- A `CreateDIBSection` currently has guest-visible bytes plus a Canvas shadow.
+  Guest stores, host GDI operations, and presentation must keep the two copies
+  synchronized. Dirty-page tracking improved this path, but the two-copy model
+  remains more complex than necessary.
+- Paint's brush-options panel is still visually incorrect. Its small bitmap and
+  mask operations need exact pixel tests as part of this migration; software
+  line rasterization alone will not necessarily fix it.
+
+## Decision
+
+GDI surfaces will use one authoritative pixel store. GDI primitives will read
+and write that store through a software rasterizer. Canvas will receive dirty
+rectangles from the authoritative store and will remain responsible for final
+window composition, scaling, and display.
+
+Canvas vector paths must not be used for operations whose Win32 result is
+defined as raster pixels. Canvas may remain an implementation detail for
+presentation and for explicitly documented compatibility fallbacks during the
+migration.
+
+This is a staged replacement, not a flag-day rewrite.
+
+## Invariants
+
+1. Every bitmap or window surface has exactly one authoritative pixel store.
+2. A DIB section's guest-visible bytes are its authoritative store. There is no
+   second authoritative RGBA copy.
+3. Canvas content is a derived presentation cache. Code never reads Canvas to
+   discover the current value of a software-backed GDI surface.
+4. Every write marks a bounded dirty area. Guest CPU writes to DIB memory may
+   initially provide page-level dirtiness; GDI operations provide rectangles.
+5. GDI read/modify/write operations run against the authoritative store,
+   including raster operations, flood fill, `GetPixel`, and source blits.
+6. Rasterization uses integer coordinates and deterministic coverage rules.
+   The same input must produce the same pixels in Safari, Chromium, and Node.
+7. HDC state remains separate from surface storage. Multiple DCs may select the
+   same bitmap and must observe each other's writes immediately.
+
+## Surface model
+
+Introduce a `GdiSurface` layer below DC resolution. It should expose bulk
+operations rather than a polymorphic JavaScript call for every pixel.
+
+```js
+{
+  id,
+  width,
+  height,
+  format,             // bgra32, bgr24, rgb565, indexed8, mono1, ...
+  stride,
+  topDown,
+  storage,            // guest memory view or host-owned typed array
+  storageOffset,
+  palette,
+  dirty,
+  presentation        // optional Canvas cache; never authoritative
+}
+```
+
+There are two storage classes:
+
+- **DIB surface.** References bytes in WASM linear memory allocated by
+  `CreateDIBSection`. It preserves the DIB's native bit depth, stride, palette,
+  channel order, and top-down/bottom-up orientation.
+- **Host surface.** Owns a packed typed-array buffer for compatible bitmaps,
+  window backing stores, printer pages, and other non-guest-visible targets.
+  BGRA32 or RGBA32 is acceptable initially, provided conversions are explicit
+  at the presentation boundary.
+
+A memory DC has no pixels of its own. Its selected bitmap resolves to a
+surface. A window DC resolves to the window backing surface plus an origin and
+clip. DirectDraw surface DCs should eventually resolve through the same
+interface, while preserving the DirectDraw surface's native storage.
+
+Recommended resolution API:
+
+```js
+resolveGdiTarget(hdc) -> {
+  surface,
+  originX,
+  originY,
+  clipRegion,
+  dcState
+}
+```
+
+The rasterizer receives this resolved target once per GDI call. Hot loops then
+operate on typed arrays and spans without repeatedly looking up the HDC.
+
+## DIB ownership and synchronization
+
+For a DIB section, guest memory becomes the only pixel truth:
+
+- Guest x86 stores write the DIB bytes directly.
+- Host GDI primitives selected into the DIB write those same bytes.
+- GDI reads consume those same bytes.
+- Presentation converts changed native-format rows into a Canvas upload.
+
+This removes:
+
+- Canvas-to-DIB reconciliation;
+- full-surface hashes used to detect which copy changed;
+- ambiguity about whether a guest store or a host draw wins;
+- full-bitmap conversion before a GDI read.
+
+It does **not** remove dirty tracking. Guest stores still need to notify the
+presentation cache that DIB bytes changed. The existing 4 KB DIB page states
+can serve as the first implementation:
+
+- `0`: free page;
+- `1`: allocated and presentation-clean;
+- `2`: guest-dirty.
+
+When presenting a DIB, map dirty pages to affected row ranges, convert only
+those rows, upload the resulting rectangles, and return the pages to clean.
+GDI writes can mark exact dirty rectangles as well as the overlapping pages.
+Later, a per-surface row/tile bitset can reduce overdraw for wide DIBs without
+changing CPU-store instrumentation.
+
+The Canvas cache may be discarded and rebuilt at any time. Deleting the DIB
+reclaims its arena pages and its presentation cache together.
+
+## Rasterizer organization
+
+Implement the rasterizer as format-neutral coverage generation plus
+format-specific pixel/span operations.
+
+### Coverage and geometry
+
+- Integer line walker with Win32-compatible endpoint rules.
+- Rectangle edges and fills using half-open bounds.
+- Polygon edge table with `ALTERNATE` and `WINDING` fill modes.
+- Integer ellipse and arc rasterization with explicit bounding-box semantics.
+- Rounded rectangles composed from spans and integer ellipse quadrants.
+- Cubic Bezier flattening with a deterministic integer error bound, followed by
+  the line walker.
+- Cosmetic pen widths, styles, joins, caps, and brush patterns added in stages.
+
+Do not assume textbook Bresenham output automatically matches GDI. Endpoint
+exclusion, ellipse bounds, wide-pen centering, dash phase, and polygon edge
+ownership must be locked with reference fixtures.
+
+### Pixel and span operations
+
+Each supported format supplies optimized operations such as:
+
+```js
+readPixel(x, y)
+writePixel(x, y, color, rop2)
+writeSolidSpan(y, x0, x1, color, rop2)
+copySpan(dst, src, count, rop3)
+expandMonoSpan(...)
+```
+
+The first implementation may specialize common Paint paths:
+
+- 1, 4, 8, 24, and 32 bpp DIB access;
+- solid cosmetic pens;
+- solid brushes;
+- `R2_COPYPEN`;
+- `SRCCOPY`, `SRCAND`, `SRCPAINT`, `SRCINVERT`, `PATCOPY`, `BLACKNESS`,
+  `WHITENESS`, and `DSTINVERT`.
+
+Unsupported combinations must use a named, instrumented compatibility fallback
+or fail visibly in tests. They must not silently draw with different semantics.
+
+### Clipping
+
+Convert the active DC clip and window visibility clip to sorted horizontal
+spans or rectangle bands before rasterization. Intersect generated spans with
+the clip bands. This avoids Canvas clip-path behavior and supports exact dirty
+bounds.
+
+The existing region representation can remain initially if it can enumerate
+rectangles deterministically. A banded region representation is the preferred
+long-term form because fills, blits, and dirty tracking all consume spans.
+
+## Presentation
+
+Each surface maintains an optional Canvas presentation cache. Flushing a dirty
+surface performs:
+
+1. Coalesce dirty pages, rows, tiles, or rectangles.
+2. Convert native pixels and palettes to RGBA for only those areas.
+3. Upload without interpolation using `putImageData`, `ImageBitmap`, or an
+   unscaled `drawImage` from a staging canvas.
+4. Mark the uploaded areas clean.
+
+The renderer then composes window caches onto the desktop Canvas as it does
+today. Browser zoom or CSS scaling may affect display size but cannot change the
+underlying GDI pixels.
+
+Avoid reading the presentation Canvas in GDI code. Screen capture and desktop
+composition may read the composed desktop, but bitmap/DC semantics must remain
+surface-backed.
+
+## Text
+
+Canvas text is a separate fidelity problem. The surface architecture should
+accept a glyph coverage mask so text can migrate without changing DC or storage
+ownership.
+
+Stages:
+
+1. Keep current Canvas text only as an explicit hybrid fallback, compositing
+   its result into the authoritative surface before returning from the GDI
+   call.
+2. Use monochrome or grayscale glyph masks with GDI background-mode, text
+   color, clipping, and raster-operation handling in software.
+3. Add period-correct bitmap fonts and font-smoothing policy where available.
+
+No Canvas-only draw may leave the authoritative surface stale.
+
+## Migration plan
+
+### Phase 0: lock current behavior
+
+- Add a Paint test for the brush and airbrush options panel. Verify the number,
+  placement, selected border, and masks of all option glyphs.
+- Add a diagonal-line assertion that permits only foreground and background
+  colors. It must fail on intermediate antialiasing colors.
+- Capture fixtures for rectangles, ellipses, curves, polygons, wide lines, and
+  representative ROPs in Node and the browser harness.
+- Preserve the existing all-tools, file round-trip, dirty-New, large-scroll,
+  flood-fill, and airbrush-position tests.
+
+### Phase 1: surface abstraction
+
+- Add `GdiSurface` and make compatible bitmaps and DIB sections register one.
+- Route `GetPixel`, `SetPixel`, solid fill, and clear operations through it.
+- Retain the current Canvas as a presentation cache and compare pixels after
+  every migrated operation in a debug dual-run mode.
+
+Exit gate: migrated reads never call `CanvasRenderingContext2D.getImageData`
+for authoritative bitmap content.
+
+### Phase 2: blits and raster operations
+
+- Move `BitBlt`, `StretchBlt`, `PatBlt`, mono expansion, and Paint's mask paths
+  to surface-to-surface operations.
+- Support overlap-safe self-blits and all currently exercised ROPs.
+- Diagnose the Paint brush-options panel with exact source/destination surface
+  dumps; fix it before declaring this phase complete.
+
+Exit gate: Paint tool icons, option glyphs, palette, and selection masks pass
+pixel fixtures in Node and browser tests.
+
+### Phase 3: integer drawing primitives
+
+- Migrate `MoveToEx`/`LineTo`, polyline, rectangle, polygon, ellipse,
+  round-rectangle, arc, and Bezier calls.
+- Add pen width/style and brush fill incrementally, driven by executable tests.
+- Move flood fill to direct surface access and remove its Canvas readback.
+
+Exit gate: Paint drawing contains no unintended intermediate colors, and the
+same operation fixtures hash identically in Safari, Chromium, and Node.
+
+### Phase 4: window and DirectDraw surfaces
+
+- Make window backing stores authoritative software surfaces.
+- Resolve transient, synthesized, and allocated HDCs through the same target
+  model.
+- Integrate DirectDraw `GetDC` without DIB-to-Canvas-to-DIB round trips.
+
+Exit gate: GDI code reads no window or bitmap Canvas for state.
+
+### Phase 5: remove shadow synchronization
+
+- Delete DIB hashes and Canvas-to-DIB conversion.
+- Delete compatibility paths whose callers have migrated.
+- Retain DIB page dirtiness and presentation uploads.
+- Make Canvas vector GDI fallbacks opt-in diagnostics, then remove them as
+  coverage reaches the supported API set.
+
+## Testing strategy
+
+Use three layers:
+
+- **Rasterizer unit tests:** small buffers with exact expected byte arrays for
+  endpoints, clipping, orientation, stride, palette lookup, and ROP truth
+  tables.
+- **GDI API tests:** create/select surfaces through host imports and verify DC
+  state, aliasing, deletion, overlapping blits, and dirty rectangles.
+- **Executable tests:** Paint and other real binaries exercise operation
+  sequences, resource masks, window invalidation, and presentation.
+
+Cross-engine browser tests should compare logical surface pixels or PNG hashes,
+not screenshots after CSS scaling. Safari must be included before removing a
+Canvas fallback because it is the engine that exposed the current presentation
+and coordinate issues.
+
+Reference fixtures should record their source and environment. Prefer captures
+from an actual Win98 system or a documented compatible GDI implementation. Do
+not encode Canvas output as the expected result for operations being migrated.
+
+## Performance constraints
+
+- Use typed-array loops over contiguous spans, not per-pixel object allocation.
+- Specialize solid fills and common ROPs; bulk operations should dominate Paint
+  workloads.
+- Coalesce dirty rectangles and cap their count before falling back to a full
+  surface upload.
+- Keep the current direct guest-memory translation fast path. DIB store
+  instrumentation remains one range check plus page-state writes.
+- Profile before moving code into WASM. JavaScript typed arrays may be adequate
+  for normal Win98 resolutions; the surface contract should permit a later
+  WASM rasterizer without changing callers.
+
+## Risks
+
+- Exact GDI semantics are broader than Paint. Metafiles, world transforms,
+  geometric pens, palette realization, printer DCs, and uncommon ROPs cannot be
+  treated as incidental variants.
+- Native-format DIB writes complicate every primitive. A temporary RGBA
+  authoritative buffer would be simpler but would recreate synchronization for
+  guest-visible DIBs, so format adapters are required.
+- Window-surface conversion changes invalidation and child-window clipping. It
+  should follow bitmap migration, not lead it.
+- Text fidelity remains incomplete until glyph rasterization moves off Canvas.
+- A software rasterizer can regress performance if it uploads whole canvases or
+  uses generic per-pixel dispatch in hot loops.
+
+## Non-goals
+
+- Replacing the desktop/window compositor with a software framebuffer in the
+  first migration.
+- Implementing the entire documented Win32 GDI API before landing useful
+  phases.
+- Treating antialiasing removal alone as proof of GDI compatibility.
+- Removing dirty tracking. The redesign removes competing pixel owners, not
+  the need to know what changed.

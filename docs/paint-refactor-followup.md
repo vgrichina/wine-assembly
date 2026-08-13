@@ -1,5 +1,10 @@
 # Paint refactor — remaining work
 
+The longer-term pixel-storage and rasterization architecture is tracked in
+`docs/software-gdi-design.md`. That design incorporates the HDC cleanup below
+into a single surface-resolution model; do not create a second competing DC
+abstraction while implementing either plan.
+
 Phase B steps 1–4 landed (commits `c522119`, `a0d4fcf`, `d014c0d`, `d8b3810`).
 Region-driven WM_PAINT pump is live; mspaint baseline holds. The items
 below are intentionally deferred — they form a coherent follow-up rather

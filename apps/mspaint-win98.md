@@ -1,5 +1,43 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
+## Current status (2026-08-12)
+
+The Win98 ANSI build launches reliably in the CLI and browser harness. The
+focused suite selects all 16 tools and verifies representative output from each
+drawing tool. It also covers BMP Save As/Open/Save, New with
+Yes/No/Cancel protection, a 900x700 image with both scrollbars, the 17-item
+File menu, wide browser layout, flood fill, and browser airbrush position and
+latency.
+
+This is broad regression coverage, not complete feature coverage. The current
+known Paint-specific gaps are:
+
+- The lower tool-options panel renders the brush and airbrush size/shape glyphs
+  incorrectly. Current tests verify brush/airbrush drawing output but do not
+  yet verify the option glyph grid or selecting every option.
+- Canvas 2D antialiases vector paths. Pencil/line/curve and shape edges can
+  contain intermediate colors that classic Win98 GDI would not produce.
+- Tool sub-options, every menu command, printing, wallpaper commands, clipboard
+  image workflows, arbitrary BMP encodings, and exhaustive selection/text
+  editing are not yet covered end to end.
+- The Unicode NT Paint build is tracked separately in `apps/mspaint-nt.md` and
+  is not at parity with this build.
+
+The proposed structural fix for deterministic pixels and simpler DIB ownership
+is documented in `docs/software-gdi-design.md`. Its Phase 0 explicitly adds
+brush-options and non-antialiased line regressions before rasterizer migration.
+
+Current validation:
+
+```sh
+node test/test-mspaint-draw.js
+node test/test-mspaint-tools.js
+node test/test-mspaint-dirty-new.js
+node test/test-mspaint-file-roundtrip.js
+node test/test-mspaint-large-scroll.js
+node test/test-mspaint-web.js
+```
+
 ## Status (2026-08-11): large documents scroll correctly
 
 `test/test-mspaint-large-scroll.js` generates and opens a 900x700 BMP, checks
@@ -38,13 +76,15 @@ node test/test-mspaint-dirty-new.js
 Artifacts are written to `scratch/mspaint-file-roundtrip/` and
 `scratch/mspaint-dirty-new/`.
 
-## Status (2026-08-11): 9/9 focused tool/menu regression
+## Status (2026-08-12): 21/21 focused tool/menu regression
 
-`test/test-mspaint-tools.js` now passes all 9 checks. It exercises the Win98
-Paint toolbar end-to-end by selecting line, rectangle, ellipse, red foreground
-color, and pencil tools, then verifies the expected canvas-region pixel deltas.
+`test/test-mspaint-tools.js` passes all 21 checks. It selects all 16 Win98 Paint
+tools and verifies representative output or UI state for rectangle, fill,
+eraser, eyedropper plus pencil, brush, airbrush, line, curve, polygon, ellipse,
+rounded rectangle, free-form and rectangular selection, text, and magnifier.
 It also opens the File menu and confirms the 17-item MENUEX menu exposes the
-expected New/Open/Save/Print/Wallpaper/Exit entries.
+expected New/Open/Save/Print/Wallpaper/Exit entries. It does not yet validate
+the lower tool-options glyphs or every selectable brush/airbrush variant.
 
 Key fixes:
 
@@ -60,7 +100,7 @@ Validation:
 
 ```sh
 node test/test-gdi-stock-select.js   # passes stock pen/brush selection checks
-node test/test-mspaint-tools.js      # passes 9/9, screenshots in scratch/mspaint-tools/
+node test/test-mspaint-tools.js      # passes 21/21, screenshots in scratch/mspaint-tools/
 ```
 
 ## Status (2026-06-14): promoted all-EXE smoke + 9/9 focused drawing regression
@@ -73,6 +113,11 @@ in `apps/mspaint-nt.md`.
 budget (`140 x 50000`, raised stuck threshold) and no longer marks it as a
 known-bad render. The general smoke reaches the toolbar, canvas, and color
 palette instead of stopping at the early gray MFC frame.
+
+## Historical debugging log
+
+The dated sections below preserve investigation history. Their open/remaining
+labels are superseded by the current status above.
 
 ## Status (2026-04-26 later²): 8/9 — Tools glyphs render again, tool-click still wipes them
 

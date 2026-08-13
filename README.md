@@ -16,7 +16,7 @@ Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssem
 - **Solitaire, FreeCell** — card games with full GDI rendering
 - **Minesweeper** — both Win98 and XP versions
 - **SkiFree** — sprite animation, timer-driven gameplay
-- **Paint** — basic drawing (NT version via MFC42/MSVCRT DLL loading)
+- **Paint** — Win98 build supports all 16 tools, BMP save/open, dirty-document prompts, and large-image scrolling; NT build remains partial
 - **Entertainment Pack** — Golf, Reversi, Pegged, Taipei, TicTactics, Rattler Race
 - **Space Cadet Pinball** — playable, table renders and physics run
 - **Winamp 2.95** — skinned UI, MP3 decode in flight (multi-thread)

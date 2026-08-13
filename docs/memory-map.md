@@ -1,80 +1,46 @@
 # Memory Map — wine-assembly vs Windows 98
 
-## WASM Linear Memory Layout (128 MB)
+## WASM Linear Memory Layout (512 MB)
+
+The shared memory is fixed at 8192 WebAssembly pages. This diagram shows the
+current major regions; the memory-map comment and sized globals in
+`src/01-header.wat` are authoritative for the smaller WAT-private tables.
 
 ```
-0x07FFE000 ┌────────────────────────┐
-           │  COM_WRAPPERS_AUX (16K)│  2048 x 8-byte QI-aux dispatch slots
-0x07FFA000 ├────────────────────────┤
-           │  COM_WRAPPERS (8KB)    │  1024 x 8-byte COM dispatch slots
-0x07FF8000 ├────────────────────────┤
-           │  DX_OBJECTS (32KB)     │  1024 x 32-byte DirectX object records
-0x07FF0000 ├────────────────────────┤
-           │  D3DIM_MATRICES (16KB) │  256 x 64-byte D3D immediate-mode matrix
-0x07FEC000 ├────────────────────────┤  handle table (handle = slot_idx+1)
-           │                        │  (high memory — outside g2w bounds)
-           ├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-           │       ...gap...        │
-0x04462200 ├────────────────────────┤
-           │  File mapping zone     │  MapViewOfFile allocations (high region)
-0x04462000 ├────────────────────────┤
-           │  DLL table (512B)      │  16 DLL slots x 32 bytes
-0x04262000 ├────────────────────────┤
-           │  PE staging (2MB)      │  Temp buffer for PE/DLL loading
-0x04252000 ├────────────────────────┤
-           │  Cache index (64KB)    │  4096 decoded-block lookup slots
-0x03E52000 ├────────────────────────┤
-           │  Thread cache (4MB)    │  Decoded x86 -> threaded code pairs
-0x03E12000 ├────────────────────────┤
-           │  Thunk zone (256KB)    │  API import trampolines (8 bytes each)
+0x20000000 ┌────────────────────────┐  End of shared linear memory
+           │  DIB pixel arena (64MB)│  Fixed CreateDIBSection backing
+0x1C000000 ├────────────────────────┤
+           │                        │
+           │  VirtualAlloc backing │  320MB for sparse high guest maps
+           │  pool (320MB)          │
+           │                        │
+0x08000000 ├────────────────────────┤  End of direct g2w window
+           │  High private tables   │  API hashes, regions, COM/DX state
+0x07E00000 ├────────────────────────┤
+           │  File mapping zone     │  MapViewOfFile allocations
+0x07392400 ├────────────────────────┤
+           │  DLL metadata          │  DLL and resource tables
+0x07392000 ├────────────────────────┤
+           │  PE staging (2MB)      │  Temporary PE/DLL load buffer
+0x07192000 ├────────────────────────┤
+           │  Cache indexes (256KB) │  8 x 4096 decoded-block indexes
+0x07152000 ├────────────────────────┤
+           │  IAT thunk zone (256KB)│  API import trampolines
+0x07112000 ├────────────────────────┤
+           │  Main stack (1MB)      │  Guest ESP starts at 0x07112000
+0x07012000 ├────────────────────────┤
+           │  Thread cache (32MB)   │  8 x 4MB decoded-thread arenas
+0x05000000 ├────────────────────────┤
+           │  Heap (1MB initial)    │  Reusing HeapAlloc/malloc arena
 0x03D12000 ├────────────────────────┤
-           │  Heap (1MB)            │  HeapAlloc / malloc bump allocator
-0x03C12000 ├────────────────────────┤
-           │  Stack (1MB, grows ↓)  │  Single guest ESP
-           ├────────────────────────┤
-           │                        │
-           │  Guest address space   │  PE .text/.data/.rsrc/.rdata + DLLs
-           │  (60MB)                │  g2w(addr) = addr - ImageBase + 0x12000
-           │                        │
-0x00012000 ├────────────────────────┤  <- GUEST_BASE
-           │  TEXT_SCRATCH (1KB)    │  Unicode conversion buffer
-0x00011B00 ├────────────────────────┤
-           │  HIT_COUNT_BASE        │  Block execution frequency counters
-0x00011F00 ├────────────────────────┤
-           │  SYNC_TABLE            │  Critical section / event objects
-0x0000F000 ├────────────────────────┤
-           │  SCROLL_TABLE (6KB)    │  256 x 24-byte scroll state
-           │  FLASH_TABLE (256B)    │  Per-window flash state
-0x0000D170 ├────────────────────────┤
-           │  WAVE_OUT_STATE (16B)  │  Cross-thread waveOut callback info
-0x0000D160 ├────────────────────────┤
-           │  WND_DLG_RECORDS (8KB) │  256 x 32-byte dialog header state
-0x0000B160 ├────────────────────────┤
-           │  PAINT_QUEUE, PROPS    │  Paint queue, window property table
-0x0000B000 ├────────────────────────┤
-           │  MENU_DATA_TABLE (1KB) │  256 x 4-byte heap ptrs to menu blobs
-0x0000AD60 ├────────────────────────┤
-           │  PAINT_SCRATCH (16B)   │  One RECT for control WM_PAINT
-0x0000AD40 ├────────────────────────┤
-           │  TIMER_TABLE (320B)    │  16 x 20-byte timer entries
-0x0000AC00 ├────────────────────────┤
-           │  CLASS_RECORDS (3KB)   │  64 x 48-byte window class entries
-0x0000A000 ├────────────────────────┤
-           │  CONTROL_GEOM (2KB)    │  256 x 8-byte control geometry
-0x00009800 ├────────────────────────┤
-           │  CONTROL_TABLE (4KB)   │  256 x 16-byte control entries
-0x00008800 ├────────────────────────┤
-           │  WND_RECORDS (6KB)     │  256 x 24-byte window records
-0x00007000 ├────────────────────────┤
-           │  API hash table (12KB) │  FNV-1a name -> ID dispatch
-0x00004000 ├────────────────────────┤
-           │  Post queue (1KB)      │  64-slot ring of {hwnd,msg,wP,lP}
-0x00000400 ├────────────────────────┤
-           │  String constants      │  win.ini path, exe name buffer
-0x00000100 ├────────────────────────┤
-           │  NULL_SENTINEL (4B)    │  Sink for bad guest pointer access
+           │  Guest address space   │  PE sections and large image data
+           │  (60MB)                │
+0x00012000 ├────────────────────────┤  GUEST_BASE
+           │  WAT-owned state       │  Window, control, and helper tables
+0x00001000 ├────────────────────────┤
+           │  Decoder scratch       │  ModRM result area
 0x000000F0 ├────────────────────────┤
-           │  Reserved              │
+           │  NULL_SENTINEL (4B)    │  Sink for invalid guest pointers
 0x00000000 └────────────────────────┘
 ```
 
@@ -99,25 +65,28 @@
 
 ## Address Translation
 
-All guest (x86) memory access goes through `g2w`:
+All guest (x86) memory access goes through `g2w`. It tries three translation
+classes in order:
 
 ```
-g2w(guest_addr) = guest_addr - image_base + GUEST_BASE
-                = guest_addr - 0x400000   + 0x12000
+1. direct: guest_addr - image_base + GUEST_BASE, when result < 0x08000000
+2. DIB:    0x50000000..0x53FFFFFF -> 0x1C000000..0x1FFFFFFF
+3. sparse: scan VIRTUAL_MAP_TABLE for VirtualAlloc guest reservations
 ```
 
-With bounds checking: rejects results < 0 or >= 0x8000000 (128 MB), returning a `NULL_SENTINEL` sink address instead.
+An address that matches none of these returns the `NULL_SENTINEL` sink. The
+128 MB limit applies only to the hot direct image-relative translation, not to
+the total 512 MB memory or to the DIB/sparse mappings.
 
-This means the guest's reachable WASM range is:
+Important translation classes are:
 
-| Guest address | WASM address | What's there |
+| Guest address | WASM address | Purpose |
 |---|---|---|
-| 0x3EE000 | 0x000000 | Bottom of WASM memory |
-| 0x3F2000 | 0x004000 | API hash table |
-| 0x3F5000 | 0x007000 | WND_RECORDS |
-| 0x400000 | 0x012000 | PE ImageBase (normal territory) |
-| ~0x2000000 | 0x1C12000 | Top of guest space / stack |
-| 0x83DE000 | 0x7FF0000 | DX_OBJECTS (rejected: >= 128MB) |
+| `image_base` | `0x00012000` | PE image start |
+| image-relative direct window | `< 0x08000000` | PE, heap, stack, DLLs, and thunks |
+| `0x50000000..0x53FFFFFF` | `0x1C000000..0x1FFFFFFF` | DIB section pixels |
+| sparse reservation | `0x08000000..0x1BFFFFFF` allocation | VirtualAlloc backing |
+| invalid/uncommitted | `0x000000F0` | zeroed read/write sink |
 
 ## What's Private vs What's Not
 
@@ -132,13 +101,22 @@ This means the guest's reachable WASM range is:
 
 ### wine-assembly: no privilege rings
 
-**Everything below GUEST_BASE (0x0 - 0x12000)** -- emulator tables, API hashes, window records, timer state. The guest *can* reach these by forming pointers below its ImageBase (guest 0x3EE000-0x3FFFFF). Not protected by hardware. Only "safe" because Win32 apps don't normally allocate in that range.
+**Everything below GUEST_BASE (0x0 - 0x12000)** -- emulator window, control,
+timer, and helper state. The guest *can* reach these by forming pointers below
+its ImageBase. This is not protected by hardware and is only safe by convention.
 
-**Guest address space (0x12000 - 0x1C12000)** -- PE sections, stack, heap. Normal guest territory.
+**Guest address space (0x12000 - 0x3C12000)** -- PE sections and large data.
+The main stack, heap, thunks, DLLs, and decoded-thread regions occupy the
+additional direct-window ranges shown above.
 
-**Above guest space (0x1E12000+)** -- thunk zone, thread cache, block cache, PE staging. Guest can reach these too via g2w if it forms high enough addresses.
+**Above guest space** -- thread cache, main stack, thunk zone, block indexes,
+PE staging, DLL metadata, and WAT-private tables. Some are reachable through
+image-relative pointers; this emulator does not implement hardware privilege
+separation.
 
-**DX_OBJECTS at 0x7FF0000** -- the one actually protected region. Guest address 0x83DE000 maps to WASM 0x8000000, which hits the g2w bounds check. But the guest *does* hold pointers to these objects -- they're handed back by COM QueryInterface/CreateSurface. The emulator hands out guest-translated pointers that the guest can read but that happen to be in the valid range (the objects straddle the boundary carefully).
+**High WAT-private tables near 0x07E00000** -- close to the edge of the direct
+window. Guest APIs receive translated wrapper pointers where necessary; these
+tables are emulator state rather than general guest allocations.
 
 ### Comparison
 
@@ -150,8 +128,8 @@ This means the guest's reachable WASM range is:
 | Page protection (R/W/X) | Per-page via page tables | SMC detection in `$gs32` only (invalidates code cache) |
 | Shared system DLLs | 0x80000000+ memory-mapped | DLLs loaded directly into guest space |
 | Per-process isolation | Separate page tables per process | Single flat space, one "process" |
-| Stack guard | Guard pages, auto-grow | Fixed 1MB, no guard |
-| Heap | Demand-paged, growable | Fixed 1MB bump allocator |
+| Stack guard | Guard pages, auto-grow | Fixed 1MB main stack, no guard |
+| Heap | Demand-paged, growable | Reusing direct-arena allocator plus sparse VirtualAlloc mappings |
 
 ## The Thunk Zone as Syscall Boundary
 
@@ -161,7 +139,7 @@ The thunk zone is the closest analogy to a kernel entry point. When the guest ca
 Guest:  CALL [IAT_entry]        ;  IAT points to thunk zone address
         |
         v
-EIP lands in thunk zone (0x1E12000 - 0x1E52000 WASM)
+EIP lands in thunk zone (0x07112000 - 0x07152000 WASM)
         |
         v
 Emulator detects: eip >= thunk_guest_base && eip < thunk_guest_end
@@ -190,4 +168,6 @@ Win32 executables are well-behaved by convention:
 3. They don't write below their ImageBase
 4. Stack access stays within the allocated stack region
 
-A malicious program could easily corrupt emulator state (write to guest addr 0x3F2000 to trash the API hash table). But real Win98 shareware doesn't do that -- and Win98 itself was similarly vulnerable to misbehaving programs poking the upper 2 GB.
+A malicious program could deliberately form translated pointers to reachable
+emulator state and corrupt it. Normal Win98 applications do not do that, and
+Win98 itself relied heavily on similar process conventions.

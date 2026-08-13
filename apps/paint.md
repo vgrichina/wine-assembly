@@ -1,5 +1,9 @@
 # MSPaint Debugging Notes
 
+> This file preserves early debugging history. For current Win98 Paint status,
+> coverage, and open issues, see `apps/mspaint-win98.md`. For the proposed
+> surface-backed software rasterizer, see `docs/software-gdi-design.md`.
+
 ## Follow-up (2026-08-11): renderer-wide `GetWindow` fallback
 
 `GetWindow` now falls back from WAT's per-instance window table to
