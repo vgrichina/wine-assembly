@@ -76,6 +76,71 @@
   (func $zero_memory (param $ptr i32) (param $len i32)
     (if (local.get $len) (then (memory.fill (local.get $ptr) (i32.const 0) (local.get $len)))))
 
+  ;; Page-aligned DIB allocation. The arena is intentionally separate from
+  ;; HeapAlloc/VirtualAlloc so every guest store needs only one range check to
+  ;; decide whether it can dirty a display bitmap.
+  (func $dib_alloc (param $size i32) (result i32)
+    (local $pages i32) (local $page i32) (local $run i32) (local $start i32)
+    (local $i i32)
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (local.set $pages
+      (i32.shr_u (i32.add (local.get $size) (i32.const 0xFFF)) (i32.const 12)))
+    (if (i32.or
+          (i32.eqz (local.get $pages))
+          (i32.gt_u (local.get $pages) (global.get $DIB_PAGE_COUNT)))
+      (then (return (i32.const 0))))
+    (local.set $page (i32.const 0))
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $page) (global.get $DIB_PAGE_COUNT))
+        (then (return (i32.const 0))))
+      (if (i32.eqz (i32.load8_u
+            (i32.add (global.get $DIB_PAGE_STATE) (local.get $page))))
+        (then
+          (if (i32.eqz (local.get $run)) (then (local.set $start (local.get $page))))
+          (local.set $run (i32.add (local.get $run) (i32.const 1)))
+          (br_if $found (i32.eq (local.get $run) (local.get $pages))))
+        (else (local.set $run (i32.const 0))))
+      (local.set $page (i32.add (local.get $page) (i32.const 1)))
+      (br $scan)))
+    (i32.store16
+      (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $start) (i32.const 1)))
+      (local.get $pages))
+    (local.set $i (i32.const 0))
+    (block $marked (loop $mark
+      (br_if $marked (i32.ge_u (local.get $i) (local.get $pages)))
+      (i32.store8
+        (i32.add (global.get $DIB_PAGE_STATE) (i32.add (local.get $start) (local.get $i)))
+        (i32.const 1))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $mark)))
+    (call $zero_memory
+      (i32.add (global.get $DIB_BACKING_BASE) (i32.shl (local.get $start) (i32.const 12)))
+      (i32.shl (local.get $pages) (i32.const 12)))
+    (i32.add (global.get $DIB_GUEST_BASE) (i32.shl (local.get $start) (i32.const 12))))
+
+  (func $dib_free_wasm (param $wa i32)
+    (local $page i32) (local $pages i32) (local $i i32)
+    (if (i32.ge_u
+          (i32.sub (local.get $wa) (global.get $DIB_BACKING_BASE))
+          (global.get $DIB_BACKING_BASE_SIZE))
+      (then (return)))
+    (local.set $page
+      (i32.shr_u (i32.sub (local.get $wa) (global.get $DIB_BACKING_BASE)) (i32.const 12)))
+    (local.set $pages
+      (i32.load16_u
+        (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $page) (i32.const 1)))))
+    (if (i32.eqz (local.get $pages)) (then (return)))
+    (i32.store16
+      (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $page) (i32.const 1)))
+      (i32.const 0))
+    (block $done (loop $clear
+      (br_if $done (i32.ge_u (local.get $i) (local.get $pages)))
+      (i32.store8
+        (i32.add (global.get $DIB_PAGE_STATE) (i32.add (local.get $page) (local.get $i)))
+        (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $clear))))
+
   ;; Fast path for the MSVC CRT small-block heap descriptor scan:
   ;;
   ;;   mov eax,[scan]

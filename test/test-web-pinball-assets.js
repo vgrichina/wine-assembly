@@ -223,10 +223,10 @@ assert(indexHtml.includes('lib/renderer-input.js?v=184'), 'web host should cache
 assert(indexHtml.includes('lib/renderer.js?v=172'), 'web host should cache-bust renderer after status bar surface reconstruction changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
-assert(indexHtml.includes('lib/host-imports.js?v=187'), 'web host should cache-bust host imports after Paint flood fill support');
+assert(indexHtml.includes('lib/host-imports.js?v=189'), 'web host should cache-bust host imports after DIB dirty-page synchronization');
 assert(indexHtml.includes('lib/thread-manager.js?v=169'), 'web host should cache-bust thread manager after wait handling changes');
-assert(indexHtml.includes('host.js?v=188'), 'web host should cache-bust host.js after Paint flood fill dispatch changes');
-assert(hostJs.includes("static SOURCE_VERSION = '188'"), 'web host should cache-bust WAT source compilation');
+assert(indexHtml.includes('host.js?v=189'), 'web host should cache-bust host.js after DIB arena changes');
+assert(hostJs.includes("static SOURCE_VERSION = '189'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');

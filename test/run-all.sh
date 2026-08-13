@@ -33,6 +33,7 @@ UNIT=(
   test/test-wavein-audio.js
   test/test-audio-mixer.js
   test/test-core-no-app-fast-paths.js
+  test/test-dib-dirty-sync.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js
   test/test-web-pwa-metadata.js

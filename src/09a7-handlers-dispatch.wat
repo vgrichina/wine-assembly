@@ -318,6 +318,7 @@
 
   ;; 744: RtlZeroMemory(Destination, Length) — zero fill memory
   (func $handle_RtlZeroMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $note_dib_write (local.get $arg0) (local.get $arg1))
     (call $zero_memory (call $g2w (local.get $arg0)) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )

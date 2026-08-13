@@ -774,6 +774,26 @@
   (func (export "guest_write16") (param $ga i32) (param $val i32)
     (call $gs16 (local.get $ga) (local.get $val)))
 
+  ;; Focused DIB arena hooks used by synchronization and allocator tests.
+  (func (export "test_dib_alloc") (param $size i32) (result i32)
+    (call $dib_alloc (local.get $size)))
+  (func (export "test_dib_free") (param $ga i32)
+    (call $dib_free_wasm (call $g2w (local.get $ga))))
+  (func (export "test_dib_is_dirty") (param $ga i32) (result i32)
+    (if (result i32)
+      (i32.lt_u
+        (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
+        (global.get $DIB_GUEST_CAPACITY))
+      (then
+        (i32.eq
+          (i32.load8_u
+            (i32.add (global.get $DIB_PAGE_STATE)
+              (i32.shr_u
+                (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
+                (i32.const 12))))
+          (i32.const 2)))
+      (else (i32.const 0))))
+
   ;; Set EXE name — copies NUL-terminated string to 0x120 buffer (max 127 chars)
   (func (export "set_exe_name") (param $wa i32) (param $len i32)
     (local $i i32) (local $n i32)

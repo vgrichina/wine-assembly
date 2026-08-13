@@ -160,7 +160,7 @@
   ;; gdi_create_dib_bitmap(lpbmi_wa, lpbInit_wa, fdwInit) → handle
   (import "host" "gdi_create_dib_section" (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
-  ;; lpBits_wa, JS re-reads on every BitBlt source resolution so the guest's in-place draws are visible.
+  ;; lpBits_wa, and JS lazily converts dirty arena pages when GDI reads the bitmap.
   (import "host" "gdi_get_object_bits" (func $host_gdi_get_object_bits (param i32) (result i32)))
   ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
   (import "host" "gdi_get_object_bpp" (func $host_gdi_get_object_bpp (param i32) (result i32)))
@@ -727,7 +727,8 @@
   ;; 0x07392000  512B    DLL table (16 DLLs × 32 bytes)
   ;; 0x07392200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
   ;; 0x07392400  ...     File mapping zone (MapViewOfFile allocations)
-  ;; 0x08000000 384MB    VirtualAlloc backing pool for sparse high guest maps
+  ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
+  ;; 0x1C000000  64MB    Page-aligned CreateDIBSection pixel arena
   ;; Total: 8192 pages = 512MB
 
   ;; Memory region bases. Fixed regions with a companion *_SIZE global are
@@ -1007,9 +1008,21 @@
   (global $VIRTUAL_MAP_TABLE_SIZE i32 (i32.const 0x00008000))
   (global $MAX_VIRTUAL_MAPS i32 (i32.const 2048))
   (global $VIRTUAL_BACKING_BASE i32 (i32.const 0x08000000))
-  (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x18000000))
+  (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x14000000))
   (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))
   (global $VIRTUAL_ALLOC_MIN i32 (i32.const 0x10000000))
+  ;; DIB sections use a dedicated guest range and fixed linear-memory backing.
+  ;; One state byte per 4KB page is 0=free, 1=clean, 2=guest-dirty. The run
+  ;; table stores the allocation length only at each allocation's first page.
+  (global $DIB_GUEST_BASE i32 (i32.const 0x50000000))
+  (global $DIB_GUEST_CAPACITY i32 (i32.const 0x04000000))
+  (global $DIB_BACKING_BASE i32 (i32.const 0x1C000000))
+  (global $DIB_BACKING_BASE_SIZE i32 (i32.const 0x04000000))
+  (global $DIB_PAGE_STATE i32 (i32.const 0x07E10000))
+  (global $DIB_PAGE_STATE_SIZE i32 (i32.const 0x00004000))
+  (global $DIB_PAGE_RUNS i32 (i32.const 0x07E14000))
+  (global $DIB_PAGE_RUNS_SIZE i32 (i32.const 0x00008000))
+  (global $DIB_PAGE_COUNT i32 (i32.const 16384))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries

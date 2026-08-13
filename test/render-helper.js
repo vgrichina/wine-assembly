@@ -49,7 +49,7 @@ async function bootRenderHarness({ extraHostOverrides = {}, width = 640, height 
   ctx.exports = e;
   renderer.wasm = instance;
   renderer.wasmMemory = memory;
-  return { instance, exports: e, renderer, canvas, memory, hostCtx: ctx };
+  return { instance, exports: e, renderer, canvas, memory, hostCtx: ctx, host: base.host, gdi: base.gdi };
 }
 
 // Sample the canvas at every 16x16 grid cell. Returns the count of unique

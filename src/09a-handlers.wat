@@ -648,6 +648,7 @@
 
   ;; 18: RtlMoveMemory
   (func $handle_RtlMoveMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $note_dib_write (local.get $arg0) (local.get $arg2))
     (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -3377,6 +3378,7 @@
 
   ;; 214: memmove
   (func $handle_memmove (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $note_dib_write (local.get $arg0) (local.get $arg2))
     (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
@@ -4071,7 +4073,9 @@
   ;; 278: memset(dest, ch, count) — cdecl
   (func $handle_memset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2)
-      (then (memory.fill (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2))))
+      (then
+        (call $note_dib_write (local.get $arg0) (local.get $arg2))
+        (memory.fill (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2))))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -4079,7 +4083,9 @@
   ;; 279: memcpy(dest, src, count) — cdecl
   (func $handle_memcpy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2)
-      (then (memory.copy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))))
+      (then
+        (call $note_dib_write (local.get $arg0) (local.get $arg2))
+        (memory.copy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -6725,11 +6731,17 @@
             (i32.const 5))
           (i32.const 2))))
     (if (i32.lt_s (local.get $size) (i32.const 4)) (then (local.set $size (i32.const 4))))
-    (local.set $ptr (call $heap_alloc (local.get $size)))
+    (local.set $ptr (call $dib_alloc (local.get $size)))
+    (if (i32.eqz (local.get $ptr))
+      (then
+        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
     (if (local.get $arg3)
       (then (call $gs32 (local.get $arg3) (local.get $ptr))))
-    ;; Register as a live DIB section: JS re-reads pixels from the guest heap buffer on every
-    ;; BitBlt source resolve, so in-place guest draws become visible without explicit sync.
+    ;; Register as a live DIB section. Guest stores mark its arena pages dirty;
+    ;; JS converts the complete bitmap lazily when a GDI operation reads it.
     (global.set $eax (call $host_gdi_create_dib_section
       (local.get $w) (local.get $h) (local.get $bpp)
       (call $g2w (local.get $ptr))

@@ -340,6 +340,75 @@ async function main() {
     }));
   })()`, 13000);
 
+  const airbrushSetup = await evaluate(`(() => {
+    const canvas = document.getElementById('screen');
+    const rect = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext('2d');
+    window.__paintAirbrushBefore = Array.from(ctx.getImageData(205, 265, 65, 35).data);
+    return {
+      left: rect.left,
+      top: rect.top,
+      scaleX: rect.width / canvas.width,
+      scaleY: rect.height / canvas.height,
+    };
+  })()`);
+  const browserPoint = (x, y) => ({
+    x: airbrushSetup.left + x * airbrushSetup.scaleX,
+    y: airbrushSetup.top + y * airbrushSetup.scaleY,
+  });
+  const airbrushButton = browserPoint(39, 171);
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', ...airbrushButton, button: 'left', buttons: 1, clickCount: 1,
+  });
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', ...airbrushButton, button: 'left', buttons: 0, clickCount: 1,
+  });
+  await wait(150);
+  const sprayPath = [[220, 280], [235, 280], [250, 280]];
+  const firstSpray = browserPoint(...sprayPath[0]);
+  const sprayStarted = Date.now();
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', ...firstSpray, button: 'left', buttons: 1, clickCount: 1,
+  });
+  for (const logical of sprayPath.slice(1)) {
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', ...browserPoint(...logical), button: 'left', buttons: 1,
+    });
+  }
+  const lastSpray = browserPoint(...sprayPath[sprayPath.length - 1]);
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', ...lastSpray, button: 'left', buttons: 0, clickCount: 1,
+  });
+  const airbrush = await evaluate(`new Promise((resolve, reject) => {
+    const started = performance.now();
+    const poll = () => {
+      sharedRenderer.repaint();
+      const canvas = document.getElementById('screen');
+      const after = canvas.getContext('2d').getImageData(205, 265, 65, 35).data;
+      const before = window.__paintAirbrushBefore;
+      let red = 0, sumX = 0, sumY = 0;
+      for (let y = 0; y < 35; y++) {
+        for (let x = 0; x < 65; x++) {
+          const i = (y * 65 + x) * 4;
+          const wasRed = before[i] > 180 && before[i + 1] < 100 && before[i + 2] < 100;
+          const isRed = after[i] > 180 && after[i + 1] < 100 && after[i + 2] < 100;
+          if (!wasRed && isRed) { red++; sumX += x + 205; sumY += y + 265; }
+        }
+      }
+      if (red >= 8) {
+        resolve({ red, centroidX: sumX / red, centroidY: sumY / red });
+      } else if (performance.now() - started > 8000) {
+        reject(new Error('Paint browser airbrush did not appear near its DOM drag: ' + JSON.stringify({ red })));
+      } else setTimeout(poll, 50);
+    };
+    poll();
+  })`, 10000);
+  airbrush.elapsedMs = Date.now() - sprayStarted;
+  assert(airbrush.centroidX >= 212 && airbrush.centroidX <= 258,
+    `Paint browser airbrush X is offset: ${JSON.stringify(airbrush)}`);
+  assert(airbrush.centroidY >= 272 && airbrush.centroidY <= 288,
+    `Paint browser airbrush Y is offset: ${JSON.stringify(airbrush)}`);
+
   const screenshot = await evaluate(`(() => {
     sharedRenderer.repaint();
     return document.getElementById('screen').toDataURL('image/png');
@@ -355,6 +424,7 @@ async function main() {
   console.log(`PASS  Paint runs on wide ${viewport.canvasWidth}x${viewport.canvasHeight} browser canvas`);
   console.log(`PASS  Paint accepts wide-layout drawing input (${interaction.changed} changed pixels)`);
   console.log(`PASS  Paint flood fill stays running and paints the closed area (${floodFill.red} red pixels)`);
+  console.log(`PASS  Paint airbrush follows DOM drag (${airbrush.red} pixels at ${airbrush.centroidX.toFixed(1)},${airbrush.centroidY.toFixed(1)} in ${airbrush.elapsedMs}ms)`);
   console.log('PASS  Paint frame, Tools, and Colors windows are visible');
   console.log('PASS  Paint tool-strip mask color is mapped to button face');
   console.log('PASS  screenshot:', PNG);
