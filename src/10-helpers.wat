@@ -931,8 +931,7 @@
   (func $gdi_dc_clip_sync (param $hdc i32) (param $entry i32) (result i32)
     (local $hrgn i32)
     (local.set $hrgn (i32.load offset=4 (local.get $entry)))
-    (call $host_gdi_select_clip_rgn
-      (local.get $hdc) (call $gdi_rgn_host_handle (local.get $hrgn))))
+    (call $gdi_rgn_get_box (local.get $hrgn) (i32.const 0)))
 
   (func $gdi_dc_clip_clear (param $hdc i32) (result i32)
     (local $entry i32) (local $hrgn i32)
@@ -943,7 +942,7 @@
         (if (local.get $hrgn) (then (drop (call $gdi_rgn_delete (local.get $hrgn)))))
         (i32.store (local.get $entry) (i32.const 0))
         (i32.store offset=4 (local.get $entry) (i32.const 0))))
-    (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+    (i32.const 1))
 
   (func $gdi_dc_clip_release (param $hdc i32)
     (local $entry i32) (local $hrgn i32)
@@ -3233,9 +3232,7 @@
   (func $gdi_rgn_set_rect (param $hrgn i32) (param $left_in i32) (param $top_in i32) (param $right_in i32) (param $bottom_in i32) (result i32)
     (local $record i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
-    (if (i32.eqz (local.get $record))
-      (then (return (call $host_gdi_set_rect_rgn
-        (local.get $hrgn) (local.get $left_in) (local.get $top_in) (local.get $right_in) (local.get $bottom_in)))))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     (local.set $left (local.get $left_in)) (local.set $top (local.get $top_in))
     (local.set $right (local.get $right_in)) (local.set $bottom (local.get $bottom_in))
     (if (i32.gt_s (local.get $left) (local.get $right))
@@ -3250,8 +3247,7 @@
   (func $gdi_rgn_get_box (param $hrgn i32) (param $rect i32) (result i32)
     (local $record i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
-    (if (i32.eqz (local.get $record))
-      (then (return (call $host_gdi_get_rgn_box (local.get $hrgn) (local.get $rect)))))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     (if (local.get $rect)
       (then
         (i32.store (local.get $rect) (i32.load offset=8 (local.get $record)))
@@ -3261,20 +3257,9 @@
     (call $gdi_rgn_complexity_record (local.get $record)))
 
   (func $gdi_rgn_offset (param $hrgn i32) (param $dx i32) (param $dy i32) (result i32)
-    (local $record i32) (local $result i32) (local $base i32) (local $count i32) (local $i i32) (local $p i32)
+    (local $record i32) (local $base i32) (local $count i32) (local $i i32) (local $p i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
-    (if (i32.eqz (local.get $record))
-      (then (return (call $host_gdi_offset_rgn (local.get $hrgn) (local.get $dx) (local.get $dy)))))
-    (if (i32.eq (i32.load (local.get $record)) (i32.const 3))
-      (then
-        (local.set $result (call $host_gdi_offset_rgn
-          (i32.load offset=24 (local.get $record)) (local.get $dx) (local.get $dy)))
-        (if (i32.eqz (local.get $result)) (then (return (i32.const 0))))
-        (i32.store offset=8 (local.get $record) (i32.add (i32.load offset=8 (local.get $record)) (local.get $dx)))
-        (i32.store offset=12 (local.get $record) (i32.add (i32.load offset=12 (local.get $record)) (local.get $dy)))
-        (i32.store offset=16 (local.get $record) (i32.add (i32.load offset=16 (local.get $record)) (local.get $dx)))
-        (i32.store offset=20 (local.get $record) (i32.add (i32.load offset=20 (local.get $record)) (local.get $dy)))
-        (return (call $gdi_rgn_complexity_record (local.get $record)))))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     (local.set $base (call $gdi_rgn_bands (local.get $record)))
     (local.set $count (i32.load offset=28 (local.get $record)))
     (block $done (loop $move
@@ -3489,7 +3474,7 @@
     (local.get $out_count))
 
   (func $gdi_rgn_combine (param $dst i32) (param $src1 i32) (param $src2 i32) (param $mode i32) (result i32)
-    (local $dst_record i32) (local $a i32) (local $b i32) (local $result i32) (local $count i32)
+    (local $dst_record i32) (local $a i32) (local $b i32) (local $count i32)
     (local.set $dst_record (call $gdi_rgn_record (local.get $dst)))
     (local.set $a (call $gdi_rgn_record (local.get $src1)))
     (local.set $b (call $gdi_rgn_record (local.get $src2)))
@@ -3521,35 +3506,15 @@
         ;; canonical arena cannot represent the result; never invoke JS region
         ;; algebra or corrupt a partially written destination.
         (return (i32.const 0))))
-    ;; Non-WAT polygon/ellipse regions preserve compatibility through the
-    ;; legacy host mirror until their WAT scan conversion lands.
-    (local.set $result (call $host_gdi_combine_rgn
-      (call $gdi_rgn_host_handle (local.get $dst))
-      (call $gdi_rgn_host_handle (local.get $src1))
-      (call $gdi_rgn_host_handle (local.get $src2))
-      (local.get $mode)))
-    (if (i32.and
-          (i32.ne (local.get $dst_record) (i32.const 0))
-          (i32.ne (local.get $result) (i32.const 0)))
-      (then
-        (drop (call $host_gdi_get_rgn_box
-          (i32.load offset=24 (local.get $dst_record)) (global.get $PAINT_SCRATCH)))
-        (i32.store offset=8 (local.get $dst_record) (i32.load (global.get $PAINT_SCRATCH)))
-        (i32.store offset=12 (local.get $dst_record) (i32.load offset=4 (global.get $PAINT_SCRATCH)))
-        (i32.store offset=16 (local.get $dst_record) (i32.load offset=8 (global.get $PAINT_SCRATCH)))
-        (i32.store offset=20 (local.get $dst_record) (i32.load offset=12 (global.get $PAINT_SCRATCH)))
-        (i32.store (local.get $dst_record)
-          (select (i32.const 1) (i32.const 3) (i32.eq (local.get $result) (i32.const 1))))
-        (i32.store offset=28 (local.get $dst_record) (i32.const 0))
-        (return (call $gdi_rgn_complexity_record (local.get $dst_record)))))
-    (local.get $result))
+    (i32.const 0))
 
   (func $gdi_rgn_delete (param $hrgn i32) (result i32)
-    (local $record i32) (local $result i32)
+    (local $record i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     (if (i32.load offset=24 (local.get $record))
-      (then (drop (call $host_gdi_delete_object (i32.load offset=24 (local.get $record))))))
+      (then (drop (call $host_gdi_set_region_bands
+        (i32.load offset=24 (local.get $record)) (i32.const 0) (i32.const -1)))))
     (i32.store (local.get $record) (i32.const 0))
     (i32.store offset=24 (local.get $record) (i32.const 0))
     (i32.store offset=28 (local.get $record) (i32.const 0))

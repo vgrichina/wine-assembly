@@ -202,15 +202,21 @@
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
   (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
-  (func $host_gdi_create_rect_rgn (param i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_rect_rgn (param i32 i32 i32 i32) (result i32)
+    (call $gdi_rgn_alloc_rect (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_create_rect_rgn(l, t, r, b) -> hrgn
-  (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_rgn_set_rect
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_set_rect_rgn(hrgn, l, t, r, b) -> bool
   (import "host" "gdi_set_region_bands" (func $host_gdi_set_region_bands (param i32 i32 i32) (result i32)))
-  ;; gdi_set_region_bands(hrgn, rects_wa, count) rebuilds derived Canvas data.
-  (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32) (i32.const 0))
+  ;; gdi_set_region_bands(hrgn, rects_wa, count) rebuilds derived Canvas data;
+  ;; count=-1 discards that presentation cache.
+  (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32)
+    (call $gdi_rgn_combine (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_combine_rgn(dst, src1, src2, mode) -> complexity
-  (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32)
+    (call $gdi_rgn_offset (local.get 0) (local.get 1) (local.get 2)))
   ;; gdi_offset_rgn(hrgn, dx, dy) -> region complexity
   (func $host_gdi_fill_rgn (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_fill_rgn(hdc, hrgn, hbrush) — hbrush=0 uses DC's current brush (for PaintRgn)
@@ -218,15 +224,22 @@
   ;; gdi_frame_rgn(hdc, hrgn, hbrush, width, height) -> bool
   (import "host" "gdi_set_window_rgn" (func $host_gdi_set_window_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_set_window_rgn(hwnd, hrgn, redraw) -> bool
-  (func $host_gdi_select_clip_rgn (param i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_select_clip_rgn (param i32 i32) (result i32)
+    (call $gdi_dc_clip_select (local.get 0) (local.get 1)))
   ;; gdi_select_clip_rgn(hdc, hrgn) -> complexity
-  (func $host_gdi_ext_select_clip_rgn (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_ext_select_clip_rgn (param i32 i32 i32) (result i32)
+    (call $gdi_dc_clip_ext_select (local.get 0) (local.get 1) (local.get 2)))
   ;; gdi_ext_select_clip_rgn(hdc, hrgn, fnMode) -> complexity
-  (func $host_gdi_exclude_clip_rect (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_exclude_clip_rect (param i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_dc_clip_exclude_rect
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_exclude_clip_rect(hdc, l, t, r, b) -> complexity
-  (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_dc_clip_intersect_rect
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_intersect_clip_rect(hdc, l, t, r, b) -> complexity
-  (func $host_gdi_get_rgn_box (param i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_rgn_box (param i32 i32) (result i32)
+    (call $gdi_rgn_get_box (local.get 0) (local.get 1)))
   ;; gdi_get_rgn_box(hrgn, lprect_wa) -> complexity
   (func $host_gdi_polygon (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)

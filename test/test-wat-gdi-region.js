@@ -79,6 +79,15 @@ async function main() {
     rect.forEach((value, i) => dv.setInt32(RECT_SCRATCH + i * 4, value, true));
   }
 
+  function finiteDc() {
+    const hdc = wat.test_call_CreateCompatibleDC(0);
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 640, 480);
+    assert.notStrictEqual(hdc, 0);
+    assert.notStrictEqual(bitmap, 0);
+    assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap), 0x30007);
+    return hdc;
+  }
+
   check('allocates normalized generation-tagged rectangle handles in WAT', () => {
     const handle = wat.test_gdi_rgn_alloc_rect(8, 9, 2, 3);
     assert.strictEqual(handle & 0xFFFF0000, 0x00500000);
@@ -93,13 +102,12 @@ async function main() {
     assert.deepStrictEqual(box(handle), { complexity: 2, rect: [2, 4, 12, 14] });
   });
 
-  check('WAT geometry remains authoritative over its JS presentation mirror', () => {
+  check('the JS presentation mirror follows WAT-owned geometry', () => {
     const handle = wat.test_gdi_rgn_alloc_rect(1, 2, 7, 8);
     const record = recordFor(handle);
     const mirror = dv.getUint32(record + 24, true);
-    assert(mirror >= 0x400001);
-    assert.strictEqual(base.host.gdi_set_rect_rgn(mirror, 90, 91, 99, 100), 1);
-    assert.deepStrictEqual(box(handle), { complexity: 2, rect: [1, 2, 7, 8] });
+    assert.strictEqual(mirror, handle);
+    assert.deepStrictEqual(base.gdi._gdiObjects[mirror].bbox, { l: 1, t: 2, r: 7, b: 8 });
 
     assert.strictEqual(wat.test_gdi_rgn_set_rect(handle, -4, -3, 5, 6), 1);
     assert.deepStrictEqual(box(handle), { complexity: 2, rect: [-4, -3, 5, 6] });
@@ -240,7 +248,9 @@ async function main() {
 
   check('delete invalidates stale generations before reusing a slot', () => {
     const oldHandle = wat.test_gdi_rgn_alloc_rect(1, 1, 2, 2);
+    assert(base.gdi._gdiObjects[oldHandle]);
     assert.strictEqual(wat.test_gdi_rgn_delete(oldHandle), 1);
+    assert.strictEqual(base.gdi._gdiObjects[oldHandle], undefined);
     const newHandle = wat.test_gdi_rgn_alloc_rect(4, 4, 9, 9);
     assert.strictEqual(newHandle & 0xFF, oldHandle & 0xFF);
     assert.notStrictEqual(newHandle, oldHandle);
@@ -248,13 +258,10 @@ async function main() {
     assert.deepStrictEqual(box(newHandle), { complexity: 2, rect: [4, 4, 9, 9] });
   });
 
-  check('DC clip owns an independent WAT copy and publishes a JS mirror', () => {
-    const hdc = base.host.gdi_create_compat_dc(0);
+  check('DC clip owns an independent WAT copy', () => {
+    const hdc = wat.test_call_CreateCompatibleDC(0);
     const source = wat.test_gdi_rgn_alloc_rect(10, 20, 40, 50);
     assert.strictEqual(wat.test_gdi_dc_clip_select(hdc, source), 2);
-    const dc = base.gdi._dcState[hdc];
-    assert.deepStrictEqual(dc.clipRgn.rects, [{ x: 10, y: 20, w: 30, h: 30 }]);
-
     assert.strictEqual(wat.test_gdi_rgn_delete(source), 1);
     const copy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
     assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, copy), 1);
@@ -263,7 +270,7 @@ async function main() {
   });
 
   check('DC clip intersection, subtraction, offset, and visibility use exact bands', () => {
-    const hdc = base.host.gdi_create_compat_dc(0);
+    const hdc = wat.test_call_CreateCompatibleDC(0);
     const source = wat.test_gdi_rgn_alloc_rect(10, 20, 40, 50);
     assert.strictEqual(wat.test_gdi_dc_clip_select(hdc, source), 2);
     assert.strictEqual(wat.test_gdi_dc_clip_intersect_rect(hdc, 20, 0, 50, 35), 2);
@@ -290,7 +297,7 @@ async function main() {
   });
 
   check('clip API rejects invalid inputs without replacing current state', () => {
-    const hdc = base.host.gdi_create_compat_dc(0);
+    const hdc = wat.test_call_CreateCompatibleDC(0);
     const source = wat.test_gdi_rgn_alloc_rect(1, 2, 8, 9);
     assert.strictEqual(wat.test_gdi_dc_clip_select(hdc, source), 2);
     assert.strictEqual(wat.test_gdi_dc_clip_ext_select(hdc, 0, 1), 0);
@@ -305,18 +312,18 @@ async function main() {
     const source = wat.test_gdi_rgn_alloc_rect(10, 20, 40, 50);
     const copy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
 
-    const andHdc = base.host.alloc_screen_dc();
+    const andHdc = finiteDc();
     assert.strictEqual(wat.test_gdi_dc_clip_ext_select(andHdc, source, 1), 2);
     assert.strictEqual(wat.test_gdi_dc_clip_get(andHdc, copy), 1);
     assert.deepStrictEqual(bands(copy), [[10, 20, 40, 50]]);
 
-    const diffHdc = base.host.alloc_screen_dc();
+    const diffHdc = finiteDc();
     assert.strictEqual(wat.test_gdi_dc_clip_exclude_rect(diffHdc, 10, 20, 40, 50), 3);
     assert.strictEqual(wat.test_gdi_dc_clip_get_box(diffHdc, RECT_SCRATCH), 3);
     assert.deepStrictEqual([0, 4, 8, 12].map(offset =>
       dv.getInt32(RECT_SCRATCH + offset, true)), [0, 0, 640, 480]);
 
-    const offsetHdc = base.host.alloc_screen_dc();
+    const offsetHdc = finiteDc();
     assert.strictEqual(wat.test_gdi_dc_clip_offset(offsetHdc, 3, -2), 2);
     assert.strictEqual(wat.test_gdi_dc_clip_get_box(offsetHdc, RECT_SCRATCH), 2);
     assert.deepStrictEqual([0, 4, 8, 12].map(offset =>
@@ -324,13 +331,12 @@ async function main() {
   });
 
   check('clearing and releasing a DC destroy the owned clip region', () => {
-    const hdc = base.host.gdi_create_compat_dc(0);
+    const hdc = wat.test_call_CreateCompatibleDC(0);
     const source = wat.test_gdi_rgn_alloc_rect(4, 5, 14, 15);
     const copy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
     assert.strictEqual(wat.test_gdi_dc_clip_select(hdc, source), 2);
     assert.strictEqual(wat.test_gdi_dc_clip_clear(hdc), 1);
     assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, copy), 0);
-    assert.strictEqual(base.gdi._dcState[hdc].clipRgn, null);
 
     assert.strictEqual(wat.test_gdi_dc_clip_select(hdc, source), 2);
     wat.test_gdi_dc_clip_release(hdc);
