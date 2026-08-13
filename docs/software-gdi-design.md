@@ -12,7 +12,10 @@ into the same canonical WAT surface before returning.
 The public compatibility surface is not complete yet. Current high-priority
 gaps are DIB/pattern brushes in pattern-dependent blits, path selection,
 callback APIs such as `LineDDA` and object/font enumeration, and metafile and
-printer compatibility. A machine-checked public-API inventory is required
+printer compatibility. The checked-in PE corpus has a machine-checked public
+API inventory in `gdi-public-api-status.json`; its exact sorted import-set hash
+prevents new application dependencies from silently expanding the
+compatibility surface. All explicit gaps in that inventory must be closed
 before this effort can be declared complete.
 
 Rectangular HRGN ownership and Boolean algebra now run in WAT. WAT allocates

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "scope": "Distinct named GDI32.dll imports in PE files under test/binaries.",
+  "corpus": {
+    "peFileCount": 183,
+    "importCount": 218,
+    "sortedImportSha256": "e12833e9e0e671014fc3eb8a97c7299d53867fe97d3827eef5e4632e80c481a6",
+    "representedInApiTable": 177
+  },
+  "notExposed": [
+    "AddFontResourceA",
+    "AnimatePalette",
+    "ChoosePixelFormat",
+    "CopyEnhMetaFileA",
+    "CreateBitmapIndirect",
+    "CreatePolyPolygonRgn",
+    "CreateRoundRectRgn",
+    "DeleteEnhMetaFile",
+    "DescribePixelFormat",
+    "EnumFontsA",
+    "GdiSetBatchLimit",
+    "GetBitmapBits",
+    "GetBitmapDimensionEx",
+    "GetBrushOrgEx",
+    "GetCharABCWidthsA",
+    "GetEnhMetaFileBits",
+    "GetEnhMetaFileHeader",
+    "GetEnhMetaFilePaletteEntries",
+    "GetFontData",
+    "GetGlyphOutlineA",
+    "GetGraphicsMode",
+    "GetICMProfileA",
+    "GetMetaFileBitsEx",
+    "GetRegionData",
+    "GetSystemPaletteUse",
+    "GetTextExtentExPointA",
+    "GetTextExtentExPointW",
+    "GetWinMetaFileBits",
+    "MaskBlt",
+    "PlayEnhMetaFile",
+    "PtInRegion",
+    "RemoveFontResourceA",
+    "ResetDCA",
+    "SetBitmapBits",
+    "SetDeviceGammaRamp",
+    "SetEnhMetaFileBits",
+    "SetGraphicsMode",
+    "SetMetaFileBitsEx",
+    "SetPixelFormat",
+    "SetWinMetaFileBits",
+    "SwapBuffers"
+  ],
+  "knownPartialOrUnsupported": {
+    "metafile": [
+      "CloseMetaFile",
+      "CopyMetaFileA",
+      "CopyMetaFileW",
+      "CreateMetaFileA",
+      "CreateMetaFileW",
+      "EnumMetaFile",
+      "PlayMetaFile",
+      "PlayMetaFileRecord"
+    ],
+    "printer": [
+      "AbortDoc",
+      "EndDoc",
+      "EndPage",
+      "Escape",
+      "ExtEscape",
+      "SetAbortProc",
+      "StartDocA",
+      "StartDocW",
+      "StartPage"
+    ],
+    "path": [
+      "SelectClipPath"
+    ],
+    "format": [
+      "BI_BITFIELDS and correct 16-bpp BI_RGB 5-5-5 DIB creation"
+    ],
+    "visibility": [
+      "Derived system/window visibility clipping is not part of the explicit app clip"
+    ]
+  }
+}
