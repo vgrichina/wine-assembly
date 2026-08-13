@@ -155,7 +155,7 @@ three matched full-app pairs before considering default enablement.
 The production-shaped follow-up stores one eligibility bit per decoded-cache
 slot in a parallel 512-byte bitmap for each emulator thread. Classification
 runs at `cache_store`, after the decoder has emitted the final packet, and
-accepts both generic handler IDs and the four existing AoE exact-form aliases.
+accepts both generic handler IDs and the existing AoE/RCT exact-form aliases.
 The main loop performs its ordinary cache lookup once, checks the bit, and:
 
 - calls the generated `br_table` packet executor for a hot packet;
@@ -176,8 +176,8 @@ env BLOCKS=2000000 WARMUP_BLOCKS=2000000 TRIALS=31 \
 
 | Variant | Median ms | Paired vs x86 |
 |---|---:|---:|
-| x86 `call_indirect` | 164.62 | 1.000x |
-| production cached subset | 91.72 | 1.855x |
+| x86 `call_indirect` | 147.31 | 1.000x |
+| production cached subset | 73.59 | 1.998x |
 
 This still uses the four-block all-hot kernel. Its purpose is to verify that
 real cache insertion, exact-form decoding, the main `run` entry point, and
@@ -188,26 +188,48 @@ gameplay, muted audio, `HANDLER_HIST=0`, and `HOTFORM_SPECIALIZE=1`:
 
 | Metric | Baseline | Cached subset | Delta |
 |---|---:|---:|---:|
-| `main.runSlice` total | 19820.7 ms | 19422.6 ms | -2.01% |
-| guest/unwrapped total | 17094.0 ms | 16574.0 ms | -3.04% |
-| completed slices | 1998 | 2076 | +3.90% |
-| present FPS | 16.285 | 17.141 | +5.26% |
-| repaint FPS | 58.652 | 58.690 | +0.06% |
-| hot block entries | - | 60,405,257 | - |
-| cold block entries | - | 147,184,770 | - |
+| `main.runSlice` total | 19820.7 ms | 19238.7 ms | -2.94% |
+| guest/unwrapped total | 17094.0 ms | 16428.8 ms | -3.89% |
+| completed slices | 1998 | 2112 | +5.71% |
+| present FPS | 16.285 | 17.355 | +6.57% |
+| repaint FPS | 58.652 | 59.415 | +1.30% |
+| hot block entries | - | 61,479,047 | - |
+| cold block entries | - | 149,711,927 | - |
 | hot coverage | - | 29.1% | - |
 
 The candidate screenshot shows valid campaign gameplay. This is one positive
 full-app pair, not sufficient evidence to enable the feature by default.
 
-RCT remains the cold-path control. Its deterministic runtime loop classified
-one packet cold and executed 500,000 cold entries with zero hot entries. The
-nominal ten-second samples contain only five or six multi-second slices and are
-too noisy for a precise percentage, but the cached-selector candidates were
-directionally slower. Therefore the prototype should remain disabled globally
-and may only be enabled for an explicitly profiled app such as AoE. A generic
-default requires a cheaper cold selector or substantially broader corpus
-coverage.
+The RCT census identified seven generic handler families to add: absolute/SIB
+32-bit memory ALU, `CMPSB`, base-plus-displacement 32-bit and 8-bit memory ALU,
+SIB effective-address calculation, and `POP EDX`/`POP EBX`. Its three dominant
+byte-ADD forms already decode to exact-form IDs when specialization is enabled.
+The stable RCT packet contains more than the interpreter's per-slice limit, so
+both classification and generated execution accept and execute exactly 999
+non-terminal handlers. This preserves the existing scheduler cutoff instead of
+running ahead to an eventual branch.
+
+A matched 30-second warmup plus 10-second measured RCT browser pair then routed
+100% of the measured loop through generated dispatch:
+
+| Metric | Baseline | Expanded subset | Delta |
+|---|---:|---:|---:|
+| median `main.runSlice` | 2134.0 ms | 745.0 ms | -65.1% / 2.864x |
+| average `main.runSlice` | 2153.1 ms | 742.6 ms | -65.5% / 2.899x |
+| completed slices | 5 | 14 | 2.80x throughput |
+| hot block entries | - | 1,400,000 | - |
+| fallback entries | - | 0 | - |
+
+This is a real full-browser RCT run with a visible RCT window, but the harness
+parks in a stable instruction-heavy loop at `EIP=0x00850000`; it is not yet
+interactive park gameplay. Treat the magnitude as evidence for this loop and
+for the dispatch mechanism, not as an end-user RCT frame-rate claim. A
+differential test covers every observed handler family, the three exact forms,
+memory/register/flag state, SIB addressing, and the 999-handler cutoff.
+
+The feature remains disabled globally pending repeated full-app trials and a
+rendered, interactive RCT gameplay harness. It now has measured hot coverage in
+both profiled applications rather than requiring AoE-only gating.
 
 The machine-readable summary is in
 `docs/x86-hot-subset-benchmark-results.json`. Original browser profiles were

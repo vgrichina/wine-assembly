@@ -2509,8 +2509,8 @@ flowchart LR
     G --> A
 ```
 
-The real `run` entry point retained a 1.855x paired speedup in the 31-trial,
-two-million-block all-hot fixture (164.62 ms x86 median versus 91.72 ms cached
+The real `run` entry point retained a 1.998x paired speedup in the 31-trial,
+two-million-block all-hot fixture (147.31 ms x86 median versus 73.59 ms cached
 subset). This measures the real cache and selector integration, but remains a
 focused kernel result.
 
@@ -2518,27 +2518,69 @@ One matched 30-second full-browser AoE gameplay pair was also positive:
 
 ```text
 metric                    baseline     cached subset       delta
-main.runSlice total      19820.7 ms      19422.6 ms        -2.01%
-guest/unwrapped          17094.0 ms      16574.0 ms        -3.04%
-completed slices          1998           2076              +3.90%
-present FPS                 16.285          17.141          +5.26%
-repaint FPS                 58.652          58.690          +0.06%
+main.runSlice total      19820.7 ms      19238.7 ms        -2.94%
+guest/unwrapped          17094.0 ms      16428.8 ms        -3.89%
+completed slices          1998           2112              +5.71%
+present FPS                 16.285          17.355          +6.57%
+repaint FPS                 58.652          59.415          +1.30%
 hot block coverage                           29.1%
 ```
 
-The candidate completed real campaign gameplay and recorded 60.4M hot entries
-and 147.2M cold entries. RCT's current stable runtime loop remained a 0%-hot
-control (500,000 cold entries). Its five-to-six-slice samples were noisy but
-directionally slower with the selector, so this path stays disabled by default.
-Use it only for an explicitly profiled application until cold selection becomes
-cheaper or the generic subset covers much more of the corpus.
+The candidate completed real campaign gameplay and recorded 61.5M hot entries
+and 149.7M cold entries.
+
+#### RCT Corpus Expansion
+
+RCT's stable runtime loop was initially a 0%-hot control. Its handler census
+showed that a small generic expansion could cover it without encoding any RCT
+algorithm: 32-bit absolute/SIB memory ALU, `CMPSB`, base-plus-displacement
+32-bit and 8-bit memory ALU, SIB effective-address calculation, and `POP EDX` /
+`POP EBX`. Existing exact-form specialization already converts the loop's three
+dominant byte-ADD forms into direct handler IDs.
+
+The packet is longer than one interpreter slice. The ordinary `$next` loop
+starts with a budget of 1000 and stops after 999 non-terminal handlers, so the
+generated classifier and executor use that same boundary. Classifying only a
+fully terminated packet, or executing through its eventual branch, would leave
+RCT cold or change guest scheduling respectively.
+
+```mermaid
+flowchart LR
+    A[decoded RCT packet] --> B{first 999 handlers supported?}
+    B -->|no| C[ordinary call_indirect fallback]
+    B -->|yes| D[cache hot bit]
+    D --> E[generated br_table executor]
+    E --> F[execute at most 999 handlers]
+    F --> G[return at normal slice boundary]
+```
+
+With 30 seconds of warmup and a matched 10-second measurement, the expanded
+subset covered every measured block entry:
+
+```text
+metric                    baseline     expanded subset       delta
+median runSlice            2134.0 ms       745.0 ms          -65.1% / 2.864x
+average runSlice           2153.1 ms       742.6 ms          -65.5% / 2.899x
+completed slices                 5              14            2.80x throughput
+hot block entries                              1,400,000      100% coverage
+fallback entries                                      0
+```
+
+This browser run displays an RCT window, but it remains a deterministic,
+instruction-heavy loop at `EIP=0x00850000`, not interactive rendered park
+gameplay. The result establishes the benefit for that loop and motivates a
+proper park-state harness; it is not an RCT frame-rate claim. A differential
+test exercises all observed families, exact forms, memory/register/flag state,
+SIB addressing, and the 999-handler cutoff. Keep the feature disabled by
+default pending repeated full-app pairs and interactive RCT validation.
 
 Artifacts:
 
 ```text
 /private/tmp/aoe-prod-subset-baseline-30s.json
-/private/tmp/aoe-prod-inline-candidate-30s.json
-/private/tmp/aoe-prod-inline-candidate-30s.png
-/private/tmp/rct-prod-cache-baseline-10s.json
-/private/tmp/rct-prod-inline-candidate-10s.json
+/private/tmp/aoe-expanded-rct-subset-candidate-30s.json
+/private/tmp/aoe-expanded-rct-subset-candidate-30s.png
+/private/tmp/rct-expanded-subset-baseline-10s.json
+/private/tmp/rct-expanded-subset-candidate-fixed-10s.json
+/private/tmp/rct-expanded-subset-candidate-fixed-10s.png
 ```

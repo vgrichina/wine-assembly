@@ -10,14 +10,20 @@ const fs = require('fs');
 const path = require('path');
 const OUT = path.join(__dirname, '..', 'src', '05a-aoe-localregs-bench.generated.wat');
 const HANDLERS = [7, 11, 12, 18, 20, 21, 28, 43, 48, 53, 64, 65, 128, 312, 319, 355];
-// Production exact-form handler IDs emitted by $te for AoE forms already in
-// the generic subset. RCT's 382-384 forms remain cold until their generic
-// handler families are implemented in this dispatcher.
-const SPECIALIZED_HANDLERS = [368, 373, 374, 378];
+// Production exact-form handler IDs emitted by $te for corpus-selected AoE
+// and RCT forms. The RCT generic families below cover the stable runtime loop
+// observed at 0x00850000 through the ordinary 999-handler step cutoff.
+const RCT_HANDLERS = [47, 94, 127, 129, 149, 333, 334];
+const SPECIALIZED_HANDLERS = [368, 373, 374, 378, 382, 383, 384];
 const DISPATCH_HANDLERS = [...HANDLERS, ...SPECIALIZED_HANDLERS];
+for (const id of RCT_HANDLERS) {
+  if (!DISPATCH_HANDLERS.includes(id)) DISPATCH_HANDLERS.push(id);
+}
+DISPATCH_HANDLERS.sort((a, b) => a - b);
 const RAW_WORDS = new Map([
   [7, 1], [20, 1], [21, 1], [28, 1], [43, 1], [48, 1], [128, 1],
-  [312, 2], [319, 2], [355, 1],
+  [47, 1], [127, 1], [129, 1], [149, 2], [312, 2], [319, 2], [355, 1],
+  [382, 1], [383, 1],
 ]);
 const TERMINAL_HANDLERS = new Set([43, 312, 319, 355]);
 const EXACT_OPERANDS = new Map([
@@ -154,6 +160,53 @@ function rawRead(target, globalIp) {
 function bodyGeneric(id, globalIp) {
   const read = target => rawRead(target, globalIp);
   switch (id) {
+    case 47: return [
+      ...read('addr'),
+      '(if (i32.eq (local.get $addr) (global.get $SIB_SENTINEL)) (then (local.set $addr (global.get $ea_temp))))',
+      '(local.set $a (i32.shr_u (local.get $op) (i32.const 4)))',
+      '(local.set $b (i32.and (local.get $op) (i32.const 15)))',
+      '(local.set $r (call $do_alu32 (local.get $a) (call $gl32 (local.get $addr)) (call $get_reg (local.get $b))))',
+      '(if (i32.ne (local.get $a) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $r))))',
+    ];
+    case 94: return [
+      '(local.set $a (call $gl8 (global.get $esi)))',
+      '(local.set $b (call $gl8 (global.get $edi)))',
+      '(local.set $r (i32.sub (local.get $a) (local.get $b)))',
+      '(call $set_flags_sub (local.get $a) (local.get $b) (local.get $r))',
+      '(if (global.get $df)',
+      '  (then (global.set $esi (i32.sub (global.get $esi) (i32.const 1))) (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))',
+      '  (else (global.set $esi (i32.add (global.get $esi) (i32.const 1))) (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))',
+    ];
+    case 127: return [
+      ...read('addr'), '(local.set $addr (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr)))',
+      '(local.set $a (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)))',
+      '(local.set $b (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15)))',
+      '(local.set $r (call $do_alu32 (local.get $a) (call $gl32 (local.get $addr)) (call $get_reg (local.get $b))))',
+      '(if (i32.ne (local.get $a) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $r))))',
+    ];
+    case 129: return [
+      ...read('addr'), '(local.set $addr (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr)))',
+      '(local.set $a (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)))',
+      '(local.set $b (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15)))',
+      '(local.set $r (call $do_alu32 (local.get $a) (call $gl8 (local.get $addr)) (call $get_reg8 (local.get $b))))',
+      '(global.set $flag_sign_shift (i32.const 7))',
+      '(if (i32.ne (local.get $a) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $r))))',
+    ];
+    case 149: return [
+      ...read('a'), ...read('b'), '(local.set $addr (i32.const 0))', '(local.set $r (i32.const 0))',
+      '(if (i32.ne (i32.and (local.get $a) (i32.const 15)) (i32.const 15)) (then (local.set $addr (call $get_reg (i32.and (local.get $a) (i32.const 15))))))',
+      '(if (i32.ne (i32.and (i32.shr_u (local.get $a) (i32.const 4)) (i32.const 15)) (i32.const 15))',
+      '  (then (local.set $r (i32.shl (call $get_reg (i32.and (i32.shr_u (local.get $a) (i32.const 4)) (i32.const 15))) (i32.and (i32.shr_u (local.get $a) (i32.const 8)) (i32.const 3))))))',
+      '(global.set $ea_temp (i32.add (i32.add (local.get $addr) (local.get $r)) (local.get $b)))',
+    ];
+    case 333: return [
+      '(global.set $edx (call $gl32 (global.get $esp)))',
+      '(global.set $esp (i32.add (global.get $esp) (i32.const 4)))',
+    ];
+    case 334: return [
+      '(global.set $ebx (call $gl32 (global.get $esp)))',
+      '(global.set $esp (i32.add (global.get $esp) (i32.const 4)))',
+    ];
     case 368: return ['(global.set $ecx (global.get $eax))'];
     case 373: return ['(global.set $edx (global.get $edi))'];
     case 374: return [
@@ -167,6 +220,24 @@ function bodyGeneric(id, globalIp) {
       '(local.set $r (i32.add (local.get $a) (local.get $b)))',
       '(global.set $edi (local.get $r))',
       '(call $set_flags_add (local.get $a) (local.get $b) (local.get $r))',
+    ];
+    case 382:
+    case 383: return [
+      ...read('addr'), `(local.set $addr (i32.add (global.get $${id === 382 ? 'eax' : 'ecx'}) (local.get $addr)))`,
+      '(local.set $a (call $gl8 (local.get $addr)))',
+      '(local.set $b (i32.and (global.get $eax) (i32.const 255)))',
+      '(local.set $r (i32.add (local.get $a) (local.get $b)))',
+      '(call $set_flags_add (local.get $a) (local.get $b) (local.get $r))',
+      '(global.set $flag_sign_shift (i32.const 7))',
+      '(call $gs8 (local.get $addr) (local.get $r))',
+    ];
+    case 384: return [
+      '(local.set $a (i32.and (global.get $edx) (i32.const 255)))',
+      '(local.set $b (i32.and (i32.shr_u (global.get $edx) (i32.const 8)) (i32.const 255)))',
+      '(local.set $r (i32.and (i32.add (local.get $a) (local.get $b)) (i32.const 255)))',
+      '(global.set $edx (i32.or (i32.and (global.get $edx) (i32.const 0xffffff00)) (local.get $r)))',
+      '(call $set_flags_add (local.get $a) (local.get $b) (local.get $r))',
+      '(global.set $flag_sign_shift (i32.const 7))',
     ];
     case 7: return [
       ...read('b'), '(local.set $a (call $get_reg (local.get $op)))',
@@ -495,7 +566,7 @@ function emitClassifier() {
   const p = (s = '') => out.push(s);
   p('  ;; Classify the final emitted x86 packet once at cache-store time.');
   p('  (func $x86_hot_subset_classify_packet (param $start i32) (param $end i32) (result i32)');
-  p('    (local $ptr i32) (local $fn i32)');
+  p('    (local $ptr i32) (local $fn i32) (local $count i32)');
   p('    (local.set $ptr (local.get $start))');
   p('    (block $cold (loop $scan');
   p('      (br_if $cold (i32.ge_u (local.get $ptr) (local.get $end)))');
@@ -511,7 +582,14 @@ function emitClassifier() {
     const rawBytes = (RAW_WORDS.get(id) || 0) * 4;
     if (rawBytes) p(`        (local.set $ptr (i32.add (local.get $ptr) (i32.const ${rawBytes})))`);
     if (TERMINAL_HANDLERS.has(id)) p('        (return (i32.const 1))');
-    else p('        (br $scan)');
+    else {
+      p('        (local.set $count (i32.add (local.get $count) (i32.const 1)))');
+      p('        ;; $next executes at most 999 handlers after steps=1000. A');
+      p('        ;; longer straight-line packet is eligible when that prefix');
+      p('        ;; is supported, even if its eventual terminal is not reached.');
+      p('        (if (i32.ge_u (local.get $count) (i32.const 999)) (then (return (i32.const 1))))');
+      p('        (br $scan)');
+    }
   }
   p('      ) ;; fallback');
   p('      (br $cold)');
@@ -525,9 +603,10 @@ function emitPacketFunction(name) {
   const out = [];
   const p = (s = '') => out.push(s);
   p(`  (func $${name} (param $thread i32)`);
-  p('    (local $ip_v i32) (local $fn i32) (local $op i32)');
+  p('    (local $ip_v i32) (local $fn i32) (local $op i32) (local $budget i32)');
   p('    (local $addr i32) (local $a i32) (local $b i32) (local $r i32)');
   p('    (local.set $ip_v (local.get $thread))');
+  p('    (local.set $budget (i32.const 999))');
   p('    (block $block_done (loop $dispatch');
   p('      (local.set $fn (i32.load (local.get $ip_v)))');
   p('      (local.set $op (i32.load offset=4 (local.get $ip_v)))');
@@ -543,6 +622,8 @@ function emitPacketFunction(name) {
   for (const id of DISPATCH_HANDLERS) {
     p(`        ) ;; case ${id}`);
     for (const row of bodyGeneric(id, false)) p(`        ${row}`);
+    p('        (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))');
+    p('        (br_if $block_done (i32.eqz (local.get $budget)))');
     p('        (br $dispatch)');
   }
   p('      ) ;; fallback');
