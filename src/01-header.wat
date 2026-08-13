@@ -45,12 +45,6 @@
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
   ;; invalidate(hwnd)
-  (import "host" "alloc_window_dc" (func $host_alloc_window_dc_raw (param i32 i32) (result i32)))
-  ;; alloc_window_dc(hwnd, whole) → hdc — Phase B DC table allocator
-  (import "host" "alloc_screen_dc" (func $host_alloc_screen_dc (result i32)))
-  ;; alloc_screen_dc() → hdc — GetDC(NULL) record
-  (import "host" "release_dc" (func $host_release_dc_raw (param i32) (result i32)))
-  ;; release_dc(hdc) → 1 — frees a DC record allocated via alloc_*_dc
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
   (import "host" "sync_window_client" (func $host_sync_window_client (param i32 i32 i32 i32 i32)))
   ;; move_window(hwnd, x, y, w, h, flags)  flags: SWP_NOSIZE=1, SWP_NOMOVE=2
@@ -482,7 +476,8 @@
     (call $gdi_dc_get_field (local.get 0) (i32.const 48) (i32.const 1)))
   (func $host_gdi_get_window_ext_y (param i32) (result i32)
     (call $gdi_dc_get_field (local.get 0) (i32.const 52) (i32.const 1)))
-  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw
+    (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
@@ -541,12 +536,6 @@
   ;; DirectX tracing hook — WAT calls this from Lock/Unlock/Blt/Flip/SetEntries/dx_present
   ;; JS formats and logs iff --trace-dx is set. kind: 1=Lock 2=Unlock 3=Blt 4=SetEntries 5=Present 6=Flip
   (import "host" "dx_trace" (func $host_dx_trace (param i32 i32 i32 i32 i32)))
-
-  ;; Surface DC ↔ canvas sync hooks. Called at GetDC/ReleaseDC time so the
-  ;; per-slot offscreen canvas used by GDI (_getDrawTarget) round-trips with
-  ;; the surface's native-bpp DIB. dir=0: DIB→canvas (make canvas fresh at
-  ;; GetDC). dir=1: canvas→DIB (commit GDI output on ReleaseDC).
-  (import "host" "dx_surface_sync" (func $host_dx_surface_sync (param i32 i32)))
 
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
@@ -1186,6 +1175,12 @@
   (global $gdi_menu_overlay_bitmap (mut i32) (i32.const 0))
   (global $gdi_menu_overlay_width (mut i32) (i32.const 0))
   (global $gdi_menu_overlay_height (mut i32) (i32.const 0))
+  ;; GetDC(NULL) selects this persistent WAT bitmap. The renderer composites
+  ;; its Canvas presentation as the desktop base layer; Canvas never owns or
+  ;; writes back screen-DC pixels.
+  (global $gdi_screen_bitmap (mut i32) (i32.const 0))
+  (global $gdi_screen_width (mut i32) (i32.const 0))
+  (global $gdi_screen_height (mut i32) (i32.const 0))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

@@ -1,5 +1,11 @@
 # Paint refactor — remaining work
 
+> Historical note: the HDC cleanup described in sections 1, 2, and 4 is now
+> complete. WAT allocates semantic DC handles and state; legacy synthetic
+> paint HDCs are adopted into canonical WAT state on use; JavaScript has no DC
+> table, HDC decoder, or draw-target fallback. Those sections remain below as
+> implementation history, not active tasks.
+
 The longer-term pixel-storage and rasterization architecture is tracked in
 `docs/software-gdi-design.md`. That design incorporates the HDC cleanup below
 into a single surface-resolution model; do not create a second competing DC

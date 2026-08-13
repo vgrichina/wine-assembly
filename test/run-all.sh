@@ -47,6 +47,8 @@ UNIT=(
   test/test-wat-gdi-text.js
   test/test-wat-gdi-callback-state.js
   test/test-wat-gdi-window-surface.js
+  test/test-wat-gdi-directdraw-surface.js
+  test/test-wat-gdi-screen-surface.js
   test/test-wat-gdi-shapes.js
   test/test-wat-gdi-geometry-handlers.js
   test/test-dib-dirty-sync.js
@@ -114,6 +116,7 @@ E2E=(
   test/test-mspaint-tools.js
   test/test-mspaint-file-roundtrip.js
   test/test-mspaint-dirty-new.js
+  test/test-mspaint-clipboard.js
   test/test-mspaint-large-scroll.js
   test/test-mplay32-dual-mode.js
   test/test-statusbar-surface.js

@@ -60,6 +60,21 @@ assert.deepStrictEqual(imported, expectedImports,
   'only presentation bridges and Canvas text policy may be imported from JS');
 assert.deepStrictEqual(jsMethods, expectedImports,
   'lib/host-imports.js must not retain non-text semantic GDI methods');
+for (const obsolete of [
+  'dx_surface_sync', '_legacyGetDrawTarget', '_resolveDcRecord',
+  '_getSurfaceCanvas', '_surfaceCanvasToDib', '_dibToSurfaceCanvas',
+  '_screenCanvasState', '_getScreenDcTarget',
+]) {
+  assert(!header.includes(obsolete) && !hostImports.includes(obsolete),
+    `${obsolete} must not restore a Canvas-owned or split-brain GDI path`);
+}
+const drawTargetBody = hostImports.match(
+  /const _getDrawTarget = \(hdc\) => \{([\s\S]*?)\n  \};/);
+assert(drawTargetBody, 'text draw-target resolver must remain explicit');
+assert(!drawTargetBody[1].includes('_dcTable') &&
+       !drawTargetBody[1].includes('_gdiObjects') &&
+       !drawTargetBody[1].includes('renderer.windows'),
+  'Canvas text may resolve only canonical surface presentations, not semantic HDC state');
 assert.deepStrictEqual(sorted(status.eliminatedNonTextSemantics), internalStubs,
   'every eliminated semantic import must remain an explicit WAT unsupported stub');
 assert.deepStrictEqual(sorted(status.watUnsupportedStubs), internalStubs,

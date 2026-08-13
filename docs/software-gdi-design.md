@@ -260,11 +260,11 @@ gdi_surface_delete     discard the derived Canvas cache
 
 Canvas text-policy imports are `gdi_text_bind`, `gdi_text_out`,
 `gdi_ext_text_out`, and `gdi_draw_text`. Text colors, background mode,
-alignment, mapping state, font selection, DC identity, and bitmap selection
-remain WAT-owned. `gdi_text_bind` exposes a canonical DC record and opaque
-surface token without constructing a semantic JavaScript DC mirror. Canvas
-output for memory and window DCs is synchronized back into authoritative native pixels.
-There is no
+alignment, mapping state, font selection, DC identity, bitmap selection, and
+clip bands remain WAT-owned. `gdi_text_bind` exposes a canonical DC record,
+clip-band snapshot, and opaque surface token without constructing a semantic
+JavaScript DC mirror. Canvas output for memory, window, DirectDraw, and screen
+DCs is copied synchronously into authoritative native pixels. There is no
 current `gdi_*` resource exception. `LoadBitmapA/W` resolve raw RT_BITMAP bytes
 through the WAT PE-resource walker, validate and copy pixels and RGBQUADs into
 owned canonical storage, then publish only a derived surface presentation.
@@ -385,6 +385,18 @@ uploads schedule normal renderer composition. Releasing an HDC drops its DC
 record but keeps the window pixels, while destroying the owning HWND releases
 both canonical pages and the presentation cache.
 
+DirectDraw `GetDC` binds the synthetic HDC directly to the existing native
+surface bytes in `DX_OBJECTS`. WAT GDI reads and writes that native format;
+`ReleaseDC` deletes only the transient Canvas presentation and DC state. The
+old DIB-to-Canvas-to-DIB round trip no longer exists, so stale Canvas pixels
+cannot overwrite a DirectDraw surface.
+
+`GetDC(NULL)` and `GetDC(GetDesktopWindow())` select a persistent screen-sized
+32-bpp WAT bitmap. Its Canvas is attached as the renderer's desktop base layer.
+The final z-order desktop image remains a derived compositor result; capturing
+other windows through the screen DC is not yet implemented and must not be
+emulated by reading the compositor Canvas back into GDI storage.
+
 Popup menus use the same surface model rather than a semantic renderer
 fallback. WAT owns a screen-sized bitmap selected into a persistent memory DC,
 paints menu chrome in desktop coordinates, and calls `gdi_surface_attach` with
@@ -397,9 +409,10 @@ The renderer then composes window caches onto the desktop Canvas as it does
 today. Browser zoom or CSS scaling may affect display size but cannot change the
 underlying GDI pixels.
 
-Avoid reading the presentation Canvas in GDI code. Screen capture and desktop
-composition may read the composed desktop, but bitmap/DC semantics must remain
-surface-backed.
+Avoid reading the presentation Canvas in GDI code. The only readback is the
+bounded rectangle produced by the Canvas text rasterizer itself, immediately
+copied into the bound canonical surface. Desktop composition is one-way and
+never becomes a GDI pixel source.
 
 ## Text
 

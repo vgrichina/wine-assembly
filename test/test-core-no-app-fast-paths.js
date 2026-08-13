@@ -51,13 +51,13 @@ for (const helper of [
   assert(handlersWat.includes(`(call $${helper}`),
     `public clipping APIs must route through WAT helper ${helper}`);
 }
-assert(gdiHandlersWat.includes('(call $gdi_line_try'),
-  'LineTo must try the WAT raster kernel before the Canvas compatibility path');
-assert(gdiHandlersWat.includes('(call $host_gdi_line_to'),
-  'LineTo must retain an explicit compatibility fallback for unsupported targets');
+assert(gdiHandlersWat.includes('(call $gdi_line_desc'),
+  'LineTo must route its canonical surface descriptor through the WAT raster kernel');
+assert(!gdiHandlersWat.includes('(call $host_gdi_line_to'),
+  'LineTo must not retain a Canvas geometry fallback');
 assert(handlersWat.includes('(call $gdi_polyline_try'),
   'Polyline APIs must try the atomic WAT path raster kernel first');
-assert(handlersWat.includes('(call $host_gdi_polyline'),
-  'Polyline must retain a named non-mutating compatibility fallback');
+assert(!handlersWat.includes('(call $host_gdi_polyline'),
+  'Polyline must not retain a Canvas geometry fallback');
 
 console.log('PASS  core has no app-specific run-loop fast paths');

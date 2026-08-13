@@ -89,8 +89,9 @@ assert(!/Pinball sound fallback/.test(exportsWat), 'run loop should not contain 
 assert(!/0x01009895/.test(exportsWat), 'run loop should not trap Pinball sound-request EIP');
 assert(!/Pinball flag poke/.test(windowHandlersWat), 'window handlers should not contain Pinball-specific gameplay flag pokes');
 assert(!/0x1024fe0|0x1024ff8|0x01007264/.test(windowHandlersWat), 'window handlers should not poke Pinball-specific guest addresses');
-assert(/_menuPaintDropdownJs/.test(rendererJs) && /menu_subchild_label_ptr/.test(rendererJs),
-  'renderer should paint worker popup cascading menus with a JS fallback');
+assert(/menu_prepare_overlay/.test(rendererJs) && /menu_paint_dropdown/.test(rendererJs) &&
+  /_dropdownOverlay/.test(rendererJs) && !/_menuPaintDropdownJs/.test(rendererJs),
+  'renderer should composite the WAT-painted canonical popup-menu overlay');
 assert(!/menu_hittest_bar|\.menu_open\(/.test(rendererInputJs), 'renderer input should not fall back to JS-driven menu hit-test/open logic');
 assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');

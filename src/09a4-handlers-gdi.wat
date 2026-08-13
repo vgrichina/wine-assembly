@@ -693,8 +693,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 181: EndPaint(hwnd, lpPaintStruct) — validate rcPaint range, return TRUE.
-  ;; Phase B: also release the BeginPaint hdc back to _dcTable.
+  ;; 181: EndPaint(hwnd, lpPaintStruct) — validate rcPaint and release its WAT DC.
   (func $handle_EndPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $hdc i32)
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg0) (i32.const 0)))

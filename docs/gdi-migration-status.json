@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "scope": "The complete JavaScript GDI bridge after the flag-day non-text semantic purge.",
+  "scope": "The JavaScript GDI boundary after canonical WAT window, memory, DirectDraw, screen, DC-state, clipping, and raster migration.",
   "policy": {
     "permanentNonTextBridge": [
       {
@@ -13,7 +13,7 @@
       },
       { "name": "gdi_surface_create", "boundary": "Allocate a derived Canvas cache for an opaque WAT-owned surface and byte layout." },
       { "name": "gdi_surface_delete", "boundary": "Discard the derived Canvas cache for an opaque surface ID." },
-      { "name": "gdi_surface_attach", "boundary": "Attach an opaque WAT-owned window or popup-overlay surface to its compositor Canvas." },
+      { "name": "gdi_surface_attach", "boundary": "Attach an opaque WAT-owned window, desktop-base, or popup-overlay surface to its compositor Canvas." },
       { "name": "gdi_surface_upload", "boundary": "Upload a bounded dirty rectangle from authoritative WAT pixels to Canvas." }
     ],
     "canvasTextPolicy": [

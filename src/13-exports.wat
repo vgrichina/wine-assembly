@@ -458,6 +458,18 @@
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (local.get 4) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_ExtTextOutA")
+        (param i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get 5))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 28)) (local.get 6))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 32)) (i32.const 0))
+    (call $handle_ExtTextOutA
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_GetTabbedTextExtentA")
         (param i32 i32 i32 i32 i32) (result i32)
     (local $saved_esp i32)
@@ -820,6 +832,8 @@
     (global.get $gdi_menu_overlay_bitmap))
   (func (export "test_gdi_object_record") (param i32) (result i32)
     (call $gdi_object_record (local.get 0)))
+  (func (export "test_dx_set_primary_palette_wa") (param i32)
+    (global.set $dx_primary_pal_wa (local.get 0)))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)

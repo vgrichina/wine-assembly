@@ -1954,9 +1954,7 @@
     (global.set $eax (global.get $focus_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
-  ;; 100: ReleaseDC(hwnd, hdc) — release window DC, return 1.
-  ;; Phase B: free the DcRecord. Legacy hdcs (hwnd+0x40000) are still
-  ;; valid — _dcFree returns 0 for unknown handles, harmless.
+  ;; 100: ReleaseDC(hwnd, hdc) — release the WAT-owned DC, return 1.
   (func $handle_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $gdi_dc_clip_release (local.get $arg1))
     (call $gdi_dc_raster_release (local.get $arg1))
