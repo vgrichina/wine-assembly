@@ -42,6 +42,7 @@ async function main() {
   const writeWide = text => {
     const gp = alloc((text.length + 1) * 2);
     for (let i = 0; i < text.length; i++) dv.setUint16(wa(gp) + i * 2, text.charCodeAt(i), true);
+    dv.setUint16(wa(gp) + text.length * 2, 0, true);
     return gp;
   };
   const writeBytes = bytes => {
@@ -142,13 +143,17 @@ async function main() {
     visit(first);
     return ids;
   };
-  const rootChildren = collectTree(directories[0].child).map(id => directories[id].name).sort();
+  const cfbNameCompare = (left, right) => left.length - right.length ||
+    left.toUpperCase().localeCompare(right.toUpperCase(), 'en', { usage: 'sort' });
+  const rootChildIds = collectTree(directories[0].child);
+  const rootChildren = rootChildIds.map(id => directories[id].name);
   const folderId = directories.findIndex(entry => entry.name === 'Folder');
   const folderChildren = collectTree(directories[folderId].child).map(id => directories[id].name);
   const zedId = directories.findIndex(entry => entry.name === 'Zed');
   const zedChildren = collectTree(directories[zedId].child).map(id => directories[id].name);
   check('CFB directory sibling trees retain root and nested parentage',
-    rootChildren.join(',') === 'Folder,Large,Small,Zed' && folderChildren.join(',') === 'Nested' &&
+    rootChildren.join(',') === [...rootChildren].sort(cfbNameCompare).join(',') &&
+    rootChildren.slice().sort().join(',') === 'Folder,Large,Small,Zed' && folderChildren.join(',') === 'Nested' &&
     zedChildren.join(',') === 'RedStream');
   const validateRedBlack = first => {
     const walk = id => {
@@ -190,6 +195,99 @@ async function main() {
     Array.from(readPayload(byName('RedStream'))).every((value, i) => value === redBytes[i]));
   check('CFB FAT round-trips a multi-sector regular stream chain',
     Array.from(readPayload(byName('Large'))).every((value, i) => value === largeBytes[i]));
+
+  const firstSerialization = bytes.slice();
+  check('CFB writer is byte-deterministic for an unchanged tree',
+    e.test_ole_cfb_serialize(storage, lockbytes) === 0 &&
+    Array.from(u8.slice(wa(data), wa(data) + size)).every((value, i) => value === firstSerialization[i]));
+  u8[wa(data)] ^= 0xff;
+  check('IStorage Commit emits the current tree into its associated ILockBytes',
+    e.test_ole_storage_commit(storage) === 0 &&
+    Array.from(u8.slice(wa(data), wa(data) + size)).every((value, i) => value === firstSerialization[i]));
+
+  const freshBacking = writeBytes(firstSerialization);
+  const freshLockbytes = e.test_ole_create_lockbytes(freshBacking, 0) >>> 0;
+  e.test_ole_lockbytes_set_size(freshLockbytes, firstSerialization.length);
+  const reopenedOut = alloc(4);
+  const reopenHr = e.test_ole_cfb_deserialize(freshLockbytes, reopenedOut) >>> 0;
+  const reopened = dv.getUint32(wa(reopenedOut), true) >>> 0;
+  const readStorageStream = (owner, name, expected) => {
+    const stream = e.test_ole_find_stream(owner, writeWide(name)) >>> 0;
+    if (!stream) return false;
+    const output = alloc(expected.length || 1);
+    const count = alloc(4);
+    e.test_ole_stream_seek(stream, 0);
+    const hr = e.test_ole_stream_read(stream, output, expected.length, count) >>> 0;
+    const ok = hr === 0 && dv.getUint32(wa(count), true) === expected.length &&
+      Array.from(u8.slice(wa(output), wa(output) + expected.length)).every((value, i) => value === expected[i]);
+    e.test_ole_release(stream);
+    return ok;
+  };
+  const reopenedFolder = reopened ? e.test_ole_find_storage(reopened, writeWide('folder')) >>> 0 : 0;
+  const reopenedZed = reopened ? e.test_ole_find_storage(reopened, writeWide('zed')) >>> 0 : 0;
+  check('CFB reader reconstructs a distinct nested storage tree',
+    reopenHr === 0 && reopened !== 0 && reopened !== storage &&
+    reopenedFolder !== 0 && reopenedZed !== 0 &&
+    e.test_ole_storage_parent(reopenedFolder) === reopened && e.test_ole_storage_parent(reopenedZed) === reopened,
+    `hr=0x${reopenHr.toString(16)} storage=0x${reopened.toString(16)}`);
+  const reopenedStat = alloc(72);
+  e.test_ole_fill_stat(reopened, reopenedStat, 1);
+  check('CFB reader restores root CLSID and state bits',
+    Array.from(u8.slice(wa(reopenedStat) + 48, wa(reopenedStat) + 64)).every((value, i) => value === clsid[i]) &&
+    dv.getUint32(wa(reopenedStat) + 64, true) === 0x10203040);
+  check('CFB reader restores a root mini-stream payload', readStorageStream(reopened, 'small', smallBytes));
+  check('CFB reader restores a root regular-stream payload', readStorageStream(reopened, 'large', largeBytes));
+  check('CFB reader restores a nested mini-stream payload',
+    readStorageStream(reopenedFolder, 'nested', nestedBytes));
+  check('CFB reader restores a red-tree nested mini-stream payload',
+    readStorageStream(reopenedZed, 'redstream', redBytes));
+
+  const expectInvalidMutation = (name, mutate) => {
+    const freshData = e.test_ole_lockbytes_data(freshLockbytes) >>> 0;
+    const saved = u8.slice(wa(freshData), wa(freshData) + size);
+    mutate(u8.subarray(wa(freshData), wa(freshData) + size), new DataView(memory.buffer, wa(freshData), size));
+    dv.setUint32(wa(reopenedOut), 0xdeadbeef, true);
+    const invalidHr = e.test_ole_cfb_deserialize(freshLockbytes, reopenedOut) >>> 0;
+    check(name, (invalidHr === 0x800300fb || invalidHr === 0x80030070) &&
+      dv.getUint32(wa(reopenedOut), true) === 0,
+      `hr=0x${invalidHr.toString(16)} out=0x${dv.getUint32(wa(reopenedOut), true).toString(16)}`);
+    u8.set(saved, wa(freshData));
+  };
+  expectInvalidMutation('CFB reader rejects a bad signature atomically', dataBytes => { dataBytes[0] ^= 0xff; });
+  expectInvalidMutation('CFB reader rejects a cyclic directory FAT chain', (_dataBytes, view) => {
+    const fatSid = view.getUint32(76, true);
+    const dirSid = view.getUint32(48, true);
+    view.setUint32(512 + fatSid * 512 + dirSid * 4, dirSid, true);
+  });
+  expectInvalidMutation('CFB reader rejects a cyclic directory sibling tree', (_dataBytes, view) => {
+    const dirSid = view.getUint32(48, true);
+    const rootOffset = 512 + dirSid * 512;
+    const childId = view.getUint32(rootOffset + 76, true);
+    view.setUint32(rootOffset + childId * 128 + 68, childId, true);
+  });
+  expectInvalidMutation('CFB reader rejects unsupported high stream sizes', (_dataBytes, view) => {
+    const dirSid = view.getUint32(48, true);
+    const dirOffset = 512 + dirSid * 512;
+    const largeId = directories.findIndex(entry => entry.name === 'Large');
+    view.setUint32(dirOffset + largeId * 128 + 124, 1, true);
+  });
+  expectInvalidMutation('CFB reader rejects illegal directory names', (_dataBytes, view) => {
+    const dirSid = view.getUint32(48, true);
+    const dirOffset = 512 + dirSid * 512;
+    const largeId = directories.findIndex(entry => entry.name === 'Large');
+    view.setUint16(dirOffset + largeId * 128, 0x2f, true);
+  });
+  expectInvalidMutation('CFB reader rejects invalid directory color flags', (_dataBytes, view) => {
+    const dirSid = view.getUint32(48, true);
+    const dirOffset = 512 + dirSid * 512;
+    const largeId = directories.findIndex(entry => entry.name === 'Large');
+    view.setUint8(dirOffset + largeId * 128 + 67, 2);
+  });
+
+  if (reopenedFolder) e.test_ole_release(reopenedFolder);
+  if (reopenedZed) e.test_ole_release(reopenedZed);
+  if (reopened) e.test_ole_release(reopened);
+  e.test_ole_release(freshLockbytes);
 
   e.test_ole_release(nested);
   e.test_ole_release(redStream);
