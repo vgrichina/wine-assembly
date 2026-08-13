@@ -1,0 +1,32 @@
+{
+  "date": "2026-08-12",
+  "fixedWork": {
+    "blocks": 2000000,
+    "warmupBlocks": 2000000,
+    "trials": 9,
+    "variants": {
+      "x86-threaded": { "medianMs": 147.39, "pairedSpeedup": 1.000 },
+      "brtable-generic-local-ip": { "medianMs": 63.33, "pairedSpeedup": 2.254 },
+      "brtable-subset-generic": { "medianMs": 123.61, "pairedSpeedup": 1.166 },
+      "brtable-direct-generic-alu": { "medianMs": 40.69, "pairedSpeedup": 3.585 },
+      "brtable-subset-direct": { "medianMs": 129.28, "pairedSpeedup": 1.103 }
+    }
+  },
+  "fullBrowser": {
+    "aoe": [
+      {
+        "baseline": { "runSliceAvgMs": 11.709, "slices": 593, "guestMs": 6065.3, "presentFps": 12.349, "repaintFps": 55.613 },
+        "candidate": { "runSliceAvgMs": 9.587, "slices": 679, "guestMs": 5764.3, "presentFps": 14.411, "repaintFps": 59.008, "hotBlocks": 17747664, "fallbackBlocks": 50148641 }
+      },
+      {
+        "baseline": { "runSliceAvgMs": 9.264, "slices": 695, "guestMs": 5673.0, "presentFps": 14.622, "repaintFps": 59.438 },
+        "candidate": { "runSliceAvgMs": 9.506, "slices": 685, "guestMs": 5777.7, "presentFps": 14.446, "repaintFps": 58.897, "hotBlocks": 17775701, "fallbackBlocks": 50720678 }
+      }
+    ],
+    "rct": {
+      "baseline": { "runSliceAvgMs": 2249.54, "slices": 5, "guestMs": 11247.7 },
+      "candidate": { "runSliceAvgMs": 2244.22, "slices": 5, "guestMs": 11221.1, "hotBlocks": 0, "fallbackBlocks": 500000 }
+    }
+  },
+  "decision": "disabled-by-default; cache block eligibility before further full-app evaluation"
+}
