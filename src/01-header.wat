@@ -710,6 +710,8 @@
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07EF0800 2KB      GDI_DC_RASTER_TABLE (256 x {HDC, ROP2})
   ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
+  ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
+  ;; 0x07EF7800 6KB      GDI_OBJECT_TABLE (256 x 24-byte pen/brush records)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -884,6 +886,18 @@
   (global $GDI_DC_RASTER_COUNT i32 (i32.const 256))
   (global $GDI_LINE_DESC i32 (i32.const 0x07EF1000))
   (global $GDI_LINE_DESC_SIZE i32 (i32.const 0x00000050))
+  ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
+  ;; presentation and GDI operations that have not moved to WAT yet.
+  (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))
+  (global $GDI_DC_STATE_TABLE_SIZE i32 (i32.const 0x00006000))
+  (global $GDI_DC_STATE_COUNT i32 (i32.const 256))
+  (global $GDI_DC_STATE_STRIDE i32 (i32.const 96))
+  ;; Dynamic WAT-owned pen/solid-brush records. Public handles are allocated
+  ;; by the host handle namespace, then adopted here as semantic objects.
+  (global $GDI_OBJECT_TABLE i32 (i32.const 0x07EF7800))
+  (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00001800))
+  (global $GDI_OBJECT_COUNT i32 (i32.const 256))
+  (global $GDI_OBJECT_STRIDE i32 (i32.const 24))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
@@ -1610,10 +1624,8 @@
   (global $palette_counter (mut i32) (i32.const 0))   ;; Next palette index
   (global $selected_palette (mut i32) (i32.const 0))  ;; Currently selected HPALETTE
 
-  ;; GDI current-position shadow for MoveToEx/LineTo/GetCurrentPositionEx.
-  (global $gdi_current_pos_hdc (mut i32) (i32.const 0))
-  (global $gdi_current_pos_x (mut i32) (i32.const 0))
-  (global $gdi_current_pos_y (mut i32) (i32.const 0))
+  ;; Cosmetic line style phase is reset per LineTo/path and shared across the
+  ;; segments of one WAT-rasterized polyline.
   (global $gdi_line_style_phase (mut i32) (i32.const 0))
 
   ;; Menu loader scratch — used by $menu_load (09c5-menu.wat) while
