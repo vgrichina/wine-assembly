@@ -5,7 +5,8 @@
     "objects_and_dcs": [
       "gdi_create_pen", "gdi_create_solid_brush", "gdi_create_compat_dc",
       "gdi_create_compat_bitmap", "gdi_create_bitmap", "gdi_create_dib_bitmap",
-      "gdi_create_dib_section", "gdi_get_object_bits", "gdi_get_object_bpp",
+      "gdi_create_dib_section", "gdi_get_object_bits", "gdi_get_object_storage",
+      "gdi_get_object_bpp",
       "gdi_select_object", "gdi_delete_object", "gdi_delete_dc",
       "gdi_get_current_object", "gdi_load_bitmap", "gdi_get_object_w", "gdi_get_object_h"
     ],
@@ -53,10 +54,10 @@
       "gdi_offset_rgn", "gdi_select_clip_rgn", "gdi_ext_select_clip_rgn",
       "gdi_exclude_clip_rect", "gdi_intersect_clip_rect", "gdi_get_rgn_box",
       "gdi_get_clip_box", "gdi_move_to", "gdi_line_to", "gdi_polyline",
-      "gdi_polyline_to"
+      "gdi_polyline_to", "gdi_create_compat_bitmap"
     ],
     "host_read_only_descriptor": [
-      "gdi_get_line_descriptor"
+      "gdi_get_line_descriptor", "gdi_get_object_storage"
     ],
     "canvas_text_policy": [
       "gdi_set_text_color", "gdi_get_bk_color", "gdi_get_text_color",
@@ -66,7 +67,7 @@
     ],
     "host_owned": [
       "gdi_create_pen", "gdi_create_solid_brush", "gdi_create_compat_dc",
-      "gdi_create_compat_bitmap", "gdi_create_bitmap", "gdi_create_dib_bitmap",
+      "gdi_create_bitmap", "gdi_create_dib_bitmap",
       "gdi_create_dib_section", "gdi_get_object_bits", "gdi_get_object_bpp",
       "gdi_select_object", "gdi_delete_object", "gdi_delete_dc",
       "gdi_rectangle", "gdi_round_rect", "gdi_fill_rect", "gdi_draw_edge",
