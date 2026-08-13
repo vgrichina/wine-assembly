@@ -903,6 +903,11 @@
     (call $ole_storage_destroy_element (local.get $storage) (local.get $name)))
   (func (export "test_ole_rename_element") (param $storage i32) (param $old_name i32) (param $new_name i32) (result i32)
     (call $ole_storage_rename_element (local.get $storage) (local.get $old_name) (local.get $new_name)))
+  (func (export "test_ole_copy_storage") (param $source i32) (param $dest i32) (result i32)
+    (call $ole_storage_copy_contents (local.get $source) (local.get $dest)))
+  (func (export "test_ole_move_element") (param $source i32) (param $name i32) (param $dest i32) (param $new_name i32) (param $flags i32) (result i32)
+    (call $ole_storage_move_element
+      (local.get $source) (local.get $name) (local.get $dest) (local.get $new_name) (local.get $flags)))
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (if (i32.or

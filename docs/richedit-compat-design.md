@@ -30,7 +30,7 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 12/12 and 33/33.
+storage suites remain green at 12/12 and 41/41.
 
 ## ASCII TLDR
 
@@ -691,7 +691,9 @@ create/open with distinct child/sibling links, case-insensitive lookup, a shared
 stream/storage element namespace, and retained-subtree lifetime. Rename and
 delete cover both element types, cross-type collisions, missing-element errors,
 and retained-interface validity after unlinking. The focused suite now passes
-33/33.
+33/33. Deep mixed-tree `CopyTo`, identity-preserving `MoveElementTo`, cycle and
+collision rejection, independent copied bytes, and `STGMOVE_COPY` raise it to
+41/41.
 At this foundation stage it did not serialize a Compound File Binary container,
 expose an `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server.
 Later sections document the completed bounded `IDataObject` and static-DIB

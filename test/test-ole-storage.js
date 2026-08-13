@@ -186,6 +186,82 @@ async function main() {
     })());
   e.test_ole_release(detachedStream);
   e.test_ole_release(detachedStorage);
+
+  const copyStreamName = writeWide('CopyBytes');
+  const copySourceStream = e.test_ole_create_stream(childStorage, copyStreamName) >>> 0;
+  const copyPayload = writeBytes(Uint8Array.from([1, 2, 3, 4]));
+  e.test_ole_stream_write(copySourceStream, copyPayload, 4, count);
+  const nestedCopyStreamName = writeWide('NestedBytes');
+  const nestedCopySource = e.test_ole_create_stream(grandchildStorage, nestedCopyStreamName) >>> 0;
+  e.test_ole_stream_write(nestedCopySource, writeBytes(Uint8Array.from([8, 9])), 2, count);
+  const copyDestination = e.test_ole_create_storage(0) >>> 0;
+  check('IStorage CopyTo deep-copies mixed stream/storage trees',
+    e.test_ole_copy_storage(childStorage, copyDestination) === 0 &&
+    (() => {
+      const copiedStream = e.test_ole_find_stream(copyDestination, writeWide('copybytes')) >>> 0;
+      const copiedNested = e.test_ole_find_storage(copyDestination, writeWide('nested')) >>> 0;
+      const copiedNestedStream = copiedNested
+        ? e.test_ole_find_stream(copiedNested, writeWide('nestedbytes')) >>> 0 : 0;
+      const ok = copiedStream !== 0 && copiedStream !== copySourceStream &&
+        copiedNested !== 0 && copiedNested !== grandchildStorage && copiedNestedStream !== 0;
+      if (copiedNestedStream) e.test_ole_release(copiedNestedStream);
+      if (copiedNested) e.test_ole_release(copiedNested);
+      if (copiedStream) e.test_ole_release(copiedStream);
+      return ok;
+    })());
+  e.test_ole_stream_seek(copySourceStream, 0);
+  e.test_ole_stream_write(copySourceStream, writeBytes(Uint8Array.from([0xee])), 1, count);
+  const independentCopy = e.test_ole_find_stream(copyDestination, copyStreamName) >>> 0;
+  e.test_ole_stream_seek(independentCopy, 0);
+  const independentOut = alloc(1);
+  check('IStorage CopyTo stream bytes are independent after the copy',
+    e.test_ole_stream_read(independentCopy, independentOut, 1, count) === 0 &&
+    u8[wa(independentOut)] === 1);
+  e.test_ole_release(independentCopy);
+  check('IStorage CopyTo rejects copying a tree into its own descendant',
+    (e.test_ole_copy_storage(childStorage, grandchildStorage) >>> 0) === 0x80030005);
+  e.test_ole_release(copySourceStream);
+  e.test_ole_release(nestedCopySource);
+  e.test_ole_release(copyDestination);
+
+  const moveSource = e.test_ole_create_storage(0) >>> 0;
+  const moveDestination = e.test_ole_create_storage(0) >>> 0;
+  const moveStreamName = writeWide('MoveStream');
+  const movedStreamName = writeWide('MovedStream');
+  const moveStream = e.test_ole_create_stream(moveSource, moveStreamName) >>> 0;
+  check('MoveElementTo transfers a stream without changing interface identity',
+    e.test_ole_move_element(moveSource, moveStreamName, moveDestination, movedStreamName, 0) === 0 &&
+    e.test_ole_find_stream(moveSource, moveStreamName) === 0 &&
+    (() => {
+      const moved = e.test_ole_find_stream(moveDestination, writeWide('movedstream')) >>> 0;
+      const same = moved === moveStream;
+      if (moved) e.test_ole_release(moved);
+      return same;
+    })());
+  const moveFolderName = writeWide('MoveFolder');
+  const movedFolderName = writeWide('MovedFolder');
+  const moveFolder = e.test_ole_create_child_storage(moveSource, moveFolderName) >>> 0;
+  check('MoveElementTo transfers a storage subtree without changing identity',
+    e.test_ole_move_element(moveSource, moveFolderName, moveDestination, movedFolderName, 0) === 0 &&
+    e.test_ole_storage_parent(moveFolder) === moveDestination &&
+    e.test_ole_find_storage(moveSource, moveFolderName) === 0);
+  check('MoveElementTo rejects cycles without unlinking the source storage',
+    (e.test_ole_move_element(moveDestination, movedFolderName, moveFolder, writeWide('Cycle'), 0) >>> 0) === 0x80030005 &&
+    e.test_ole_storage_parent(moveFolder) === moveDestination);
+  const collisionStream = e.test_ole_create_stream(moveSource, writeWide('Occupied')) >>> 0;
+  check('MoveElementTo rejects destination collisions without losing the source',
+    (e.test_ole_move_element(moveSource, writeWide('Occupied'), moveDestination, movedFolderName, 0) >>> 0) === 0x80030050 &&
+    e.test_ole_find_stream(moveSource, writeWide('occupied')) !== 0);
+  const copiedMoveName = writeWide('CopiedMove');
+  check('STGMOVE_COPY copies a stream while retaining the source element',
+    e.test_ole_move_element(moveSource, writeWide('Occupied'), moveDestination, copiedMoveName, 1) === 0 &&
+    e.test_ole_find_stream(moveSource, writeWide('occupied')) !== 0 &&
+    e.test_ole_find_stream(moveDestination, writeWide('copiedmove')) !== 0);
+  e.test_ole_release(collisionStream);
+  e.test_ole_release(moveStream);
+  e.test_ole_release(moveFolder);
+  e.test_ole_release(moveSource);
+  e.test_ole_release(moveDestination);
   e.test_ole_release(grandchildStorage);
 
   check('COM reference counts include storage and clone ownership',

@@ -129,7 +129,7 @@ an earlier ownership/persistence contract is still ambiguous.
 2. **Stream core:** complete on 2026-08-12. `IStream::Clone`, independent
    cursors, shared backing lifetime, and edge-case coverage pass 23/23.
 3. **Storage tree:** in progress. Nested create/open and lifetime pass; next are
-   enumeration, copy/move, and commit/revert tests. Rename/delete pass.
+   enumeration and commit/revert tests. Rename/delete/copy/move pass.
 4. **CFB persistence:** deterministic writer, defensive reader, and
    fresh-process tree comparison.
 5. **Multi-format transfer:** format collection, full enumerator, Unicode text,
@@ -235,7 +235,7 @@ unchecked line above remains open for full CopyTo/locking/transaction breadth.
 
 - [x] Add nested `CreateStorage`/`OpenStorage` and case-insensitive child lookup.
 - [x] Add stream/storage deletion and rename with collision/error behavior.
-- Add `CopyTo` and `MoveElementTo` for mixed stream/storage subtrees.
+- [x] Add `CopyTo` and `MoveElementTo` for mixed stream/storage subtrees.
 - Implement `EnumElements` with a real `IEnumSTATSTG`, including `Next` counts,
   `Skip`, `Reset`, `Clone`, and stable enumeration while referenced.
 - Return correct `STATSTG` names, types, sizes, CLSIDs, and supported metadata.
@@ -250,6 +250,9 @@ public CreateStorage/OpenStorage handlers use the same helpers as the 27/27
 focused storage suite. Rename/delete then raise it to 33/33: both element types
 rename without identity changes, cross-type collisions fail, unlinking removes
 lookup visibility, and retained streams/subtrees stay valid after deletion.
+Deep `CopyTo` and identity-preserving `MoveElementTo` raise the suite to 41/41.
+Copies own independent stream bytes and nested storage nodes; moves reject
+cycles and collisions before unlinking, and `STGMOVE_COPY` retains the source.
 
 ### P2.3 Compound File Binary persistence
 
