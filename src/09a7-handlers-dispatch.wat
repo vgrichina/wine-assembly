@@ -1227,9 +1227,7 @@
                 (i32.ne (local.get $data) (global.get $clipboard_ptr))
                 (i32.and
                   (i32.ne (local.get $data) (global.get $clipboard_rtf_ptr))
-                  (i32.and
-                    (i32.ne (local.get $data) (global.get $clipboard_binary_ptr))
-                    (i32.eqz (call $clipboard_binary_is_retained (local.get $data)))))))
+                  (i32.ne (local.get $data) (global.get $clipboard_binary_ptr)))))
           (then (call $heap_free (local.get $data))))
         (if (i32.and (i32.ne (local.get $data) (i32.const 0))
               (i32.or (i32.eq (local.get $tymed) (i32.const 4)) (i32.eq (local.get $tymed) (i32.const 8))))

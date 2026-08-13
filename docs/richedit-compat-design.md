@@ -701,9 +701,8 @@ copies/pastes it into a second inline object, saves/exports two complete native
 verifies both restored `U+FFFC` positions plus red/blue pixels within each
 presentation independently (17/17 checks). USER `GetClipboardData` handles are
 borrowed, and RichEdit retains a static object's presentation after a later
-clipboard change, so CF_DIB snapshots actually handed to native Paste remain
-valid for the WASM instance lifetime rather than entering the reusable heap
-free list. Replaced images that were never pasted are reclaimed normally. This does not claim
+clipboard change, so CF_DIB snapshots remain valid for the WASM instance
+lifetime rather than entering the reusable heap free list. This does not claim
 linked objects, executable OLE
 servers, in-place activation, drag/drop, or arbitrary compound-file fidelity.
 
