@@ -72,9 +72,17 @@ check('round-trips RGB565 and RGBA32 storage', () => {
 });
 
 check('clips fills and coalesces dirty rectangles', () => {
-  const surface = new GdiSurface({ width: 4, height: 3, bpp: 32, storage: new Uint8Array(48) });
+  let dirtyCalls = 0;
+  const surface = new GdiSurface({
+    width: 4,
+    height: 3,
+    bpp: 32,
+    storage: new Uint8Array(48),
+    onDirty: () => dirtyCalls++,
+  });
   assert.strictEqual(surface.fillRect(-1, 1, 4, 3, 0x00112233), true);
   assert.deepStrictEqual(surface.takeDirtyRect(), { x: 0, y: 1, w: 3, h: 2 });
+  assert.strictEqual(dirtyCalls, 1);
   assert.strictEqual(surface.readPixel(2, 2), 0x00112233);
   assert.strictEqual(surface.readPixel(3, 2), 0);
 });
@@ -108,6 +116,70 @@ check('host GetPixel and SetPixel use canonical DIB bytes', () => {
 
   const canvasPixel = gdi._gdiObjects[bitmap].canvas.getContext('2d').getImageData(1, 0, 1, 1).data;
   assert.deepStrictEqual(Array.from(canvasPixel), [0x11, 0x22, 0x33, 0xFF]);
+});
+
+check('host solid fills update canonical DIB bytes with rectangular clipping', () => {
+  const memory = new ArrayBuffer(64 * 1024);
+  const bytes = new Uint8Array(memory);
+  const view = new DataView(memory);
+  const bmi = 0x100;
+  const bits = 0x1000;
+  view.setUint32(bmi, 40, true);
+  view.setInt32(bmi + 4, 4, true);
+  view.setInt32(bmi + 8, 3, true);
+  view.setUint16(bmi + 12, 1, true);
+  view.setUint16(bmi + 14, 24, true);
+
+  const { host, gdi } = createHostImports({ getMemory: () => memory, exports: {} });
+  const bitmap = host.gdi_create_dib_section(4, 3, 24, bits, bmi);
+  const dc = host.gdi_create_compat_dc(0);
+  host.gdi_select_object(dc, bitmap);
+  const red = host.gdi_create_solid_brush(0x000000FF);
+  const clip = host.gdi_create_rect_rgn(1, 1, 3, 3);
+  host.gdi_select_clip_rgn(dc, clip);
+
+  assert.strictEqual(host.gdi_fill_rect(dc, -1, 0, 4, 3, red), 1);
+  assert.strictEqual(host.gdi_get_pixel(dc, 0, 1), 0);
+  assert.strictEqual(host.gdi_get_pixel(dc, 1, 1), 0x000000FF);
+  assert.strictEqual(host.gdi_get_pixel(dc, 2, 2), 0x000000FF);
+  assert.strictEqual(host.gdi_get_pixel(dc, 3, 2), 0);
+  assert.deepStrictEqual(Array.from(bytes.slice(bits + 3, bits + 6)), [0, 0, 0xFF]);
+
+  const canvas = gdi._gdiObjects[bitmap].canvas.getContext('2d');
+  assert.deepStrictEqual(Array.from(canvas.getImageData(1, 1, 1, 1).data), [0xFF, 0, 0, 0xFF]);
+  assert.deepStrictEqual(Array.from(canvas.getImageData(0, 1, 1, 1).data), [0, 0, 0, 0xFF]);
+});
+
+check('host source-less blits use canonical software fills', () => {
+  const memory = new ArrayBuffer(64 * 1024);
+  const view = new DataView(memory);
+  const bmi = 0x100;
+  const bits = 0x1000;
+  view.setUint32(bmi, 40, true);
+  view.setInt32(bmi + 4, 3, true);
+  view.setInt32(bmi + 8, -2, true); // top-down
+  view.setUint16(bmi + 12, 1, true);
+  view.setUint16(bmi + 14, 24, true);
+
+  const { host, gdi } = createHostImports({ getMemory: () => memory, exports: {} });
+  const bitmap = host.gdi_create_dib_section(3, 2, 24, bits, bmi);
+  const dc = host.gdi_create_compat_dc(0);
+  host.gdi_select_object(dc, bitmap);
+
+  assert.strictEqual(host.gdi_bitblt(dc, 0, 0, 3, 2, 0, 0, 0, 0x00FF0062), 1); // WHITENESS
+  assert.strictEqual(host.gdi_get_pixel(dc, 2, 1), 0x00FFFFFF);
+  assert.strictEqual(host.gdi_bitblt(dc, 1, 0, 2, 1, 0, 0, 0, 0x00000042), 1); // BLACKNESS
+  assert.strictEqual(host.gdi_get_pixel(dc, 0, 0), 0x00FFFFFF);
+  assert.strictEqual(host.gdi_get_pixel(dc, 1, 0), 0);
+
+  const green = host.gdi_create_solid_brush(0x0000FF00);
+  host.gdi_select_object(dc, green);
+  assert.strictEqual(host.gdi_bitblt(dc, 0, 1, 2, 1, 0, 0, 0, 0x00F00021), 1); // PATCOPY
+  assert.strictEqual(host.gdi_get_pixel(dc, 0, 1), 0x0000FF00);
+  assert.strictEqual(host.gdi_get_pixel(dc, 2, 1), 0x00FFFFFF);
+
+  const canvasPixel = gdi._gdiObjects[bitmap].canvas.getContext('2d').getImageData(0, 1, 1, 1).data;
+  assert.deepStrictEqual(Array.from(canvasPixel), [0, 0xFF, 0, 0xFF]);
 });
 
 console.log(`\n${passed}/${passed} checks passed`);

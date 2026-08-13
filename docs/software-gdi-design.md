@@ -5,9 +5,12 @@
 Implementation started 2026-08-12. `lib/gdi-surface.js` provides native-format
 canonical pixel access, palette handling, orientation/stride handling, solid
 rectangles, RGBA extraction, and dirty-rectangle coalescing. DIB-backed memory
-DCs use it for `GetPixel` and unclipped `SetPixel`; all geometric primitives,
-blits, window surfaces, and text still use the existing Canvas paths. Canvas
-text remains intentional policy, as described below.
+DCs use it for `GetPixel`, unclipped `SetPixel`, `FillRect`, and source-less
+solid `BitBlt` operations (`BLACKNESS`, `WHITENESS`, and `PATCOPY`). Rectangle
+clip regions are intersected in integer surface coordinates. Complex regions,
+all geometric primitives, source blits, window surfaces, and text still use
+the existing Canvas paths. Canvas text remains intentional policy, as
+described below.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization. It does not propose replacing
@@ -196,6 +199,12 @@ bounds.
 The existing region representation can remain initially if it can enumerate
 rectangles deterministically. A banded region representation is the preferred
 long-term form because fills, blits, and dirty tracking all consume spans.
+
+The first migration slice handles unclipped and rectangularly clipped DIB
+fills exactly. The next clipping milestone will add a canonical band/span
+representation for rectangle combinations and rasterized polygon/ellipse
+regions. Until then, complex regions remain on the named Canvas compatibility
+path and are not treated as canonical software output.
 
 ## Presentation
 
