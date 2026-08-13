@@ -4802,13 +4802,30 @@
 
   ;; 317: GetPixel(hdc, x, y) → COLORREF
   (func $handle_GetPixel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_get_pixel (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_BLIT_DST_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_raster_get_pixel
+        (local.get $desc) (local.get $arg1) (local.get $arg2))))
+      (else (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
   ;; 318: SetPixel(hdc, x, y, color) → prev color
   (func $handle_SetPixel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_set_pixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (local $desc i32) (local $result i32)
+    (local.set $desc (global.get $GDI_BLIT_DST_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then
+        (local.set $result (call $gdi_raster_set_pixel
+          (local.get $desc) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (if (i32.ne (local.get $result) (i32.const -1))
+          (then (call $gdi_geometry_present (local.get $arg0) (local.get $desc)
+            (local.get $arg1) (local.get $arg2)
+            (i32.add (local.get $arg1) (i32.const 1))
+            (i32.add (local.get $arg2) (i32.const 1))))))
+      (else (local.set $result (i32.const -1))))
+    (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
@@ -6801,15 +6818,60 @@
 
   ;; 450: StretchBlt(hdcDest, xDest, yDest, wDest, hDest, hdcSrc, xSrc, ySrc, wSrc, hSrc, dwRop)
   (func $handle_StretchBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_stretch_blt
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))   ;; hdcSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))   ;; xSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))   ;; ySrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36)))   ;; wSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 40)))   ;; hSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 44)))   ;; dwRop
-    ))
+    (local $dst i32) (local $src i32) (local $src_hdc i32)
+    (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
+    (local $rop i32) (local $rop3 i32) (local $brush_color i32)
+    (local $pattern i32) (local $ok i32)
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
+    (local.set $src_hdc (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $sx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $sy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $sw (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    (local.set $sh (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
+    (local.set $rop (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
+    (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $dst))
+      (then
+        (if (local.get $src_hdc)
+          (then
+            (if (i32.eqz (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src)))
+              (then (local.set $src (i32.const 0)))))
+          (else (local.set $src (i32.const 0))))
+        (if (i32.and
+              (i32.ne (i32.and
+                (i32.xor (local.get $rop3) (i32.shr_u (local.get $rop3) (i32.const 2)))
+                (i32.const 0x33)) (i32.const 0))
+              (i32.eqz (local.get $src)))
+          (then (local.set $ok (i32.const 0)))
+          (else
+            (if (i32.ne (i32.and
+                  (i32.xor (local.get $rop3) (i32.shr_u (local.get $rop3) (i32.const 4)))
+                  (i32.const 0x0F)) (i32.const 0))
+              (then
+                (local.set $brush_color (call $gdi_brush_color
+                  (call $gdi_dc_get_field (local.get $arg0) (i32.const 8) (i32.const 0x30010))))
+                (if (i32.le_u (local.get $brush_color) (i32.const 0xFFFFFF))
+                  (then
+                    (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
+                    (local.set $ok (call $gdi_raster_stretch_blt
+                      (local.get $dst) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg3) (local.get $arg4) (local.get $src)
+                      (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
+                      (local.get $pattern) (local.get $rop))))))
+              (else
+                (local.set $ok (call $gdi_raster_stretch_blt
+                  (local.get $dst) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg3) (local.get $arg4) (local.get $src)
+                  (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
+                  (i32.const 0) (local.get $rop)))))))
+        (if (local.get $ok)
+          (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
+            (local.get $arg1) (local.get $arg2)
+            (i32.add (local.get $arg1) (local.get $arg3))
+            (i32.add (local.get $arg2) (local.get $arg4))))))
+      (else (local.set $ok (i32.const 0))))
+    (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 48)))  ;; stdcall, 11 args
   )
 
