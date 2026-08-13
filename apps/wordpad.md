@@ -8,7 +8,9 @@ reopen.
 Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
 advanced ruler/dialog commands, international UTF-16/IME commit input, and
-real suspended-thread resume semantics now have passing app-level regressions.
+representative complex-script behavior now have focused app-level regressions.
+Suspended-thread behavior has scheduler coverage; a dedicated trace proving
+WordPad's real startup uses that path is still missing.
 Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences
 are covered as well. The reusable OLE persistence foundation provides binary
 `ILockBytes`, named `IStorage`/`IStream` children, and storage class identity.
@@ -31,8 +33,41 @@ identity plus `IOleCache` and `IViewObject2` presentation contracts. A native
 WordPad; `WM_GETTEXT` preserves the surrounding document and exposes that
 position as a space. `test/test-wordpad-ole-roundtrip.js` saves the object to
 RTF, starts a fresh WordPad, reopens it, and asserts the restored object slot
-and visible red/blue checker pixels. Linked/activated objects and non-DIB OLE
-servers remain outside this bounded static-image slice.
+and visible red/blue checker pixels. It has passed 17/17, but current-tip
+revalidation is pending after the recent GDI/DIB changes: saving again emits
+two complete presentations (5,097 bytes), while the slower fresh-process child
+reaches its bounded timeout before the final state/screenshot actions. The
+single-process object clipboard probe remains green at 13/13. Linked/activated
+objects and non-DIB OLE servers remain outside this bounded static-image slice.
+
+## Remaining Work
+
+The everyday non-OLE WordPad target is complete. Remaining work is narrower:
+
+1. **Current-tip static-image revalidation.** Make the fresh-process half of
+   `test/test-wordpad-ole-roundtrip.js` finish within a bounded emulator
+   timeout, then reconfirm both reopened `U+FFFC` slots and independent
+   red/blue presentation pixels. Also rerun delete/save/reopen after the
+   GDI/DIB work settles. Do not weaken these to unbounded tests.
+2. **General OLE objects.** Add linked and activated server objects, non-DIB
+   presentation formats, general object clipboard interoperability, arbitrary
+   compound-storage serialization/reopen, object verbs, in-place activation,
+   and drag/drop. Static DIB presentations are the intentional current limit.
+3. **High-fidelity RichEdit/RTF breadth.** Expand beyond the bounded fixtures
+   to arbitrary nested styles/tables, overlapping edits, fields, picture/object
+   combinations, exact printer layout, and undocumented RichEdit DLL quirks.
+4. **UI polish.** Implement true disabled/hot toolbar image-list remapping and
+   broader uncommon toolbar/menu/ruler state. Current fallback dimming and
+   focused command coverage are functional, not exact common-controls parity.
+5. **International breadth.** Add more scripts, font-fallback combinations,
+   composition UI, bidi editing, and complex-cluster editing. Current tests
+   cover representative input, readback, and visible shaping.
+6. **WordPad thread-path proof.** Add a bounded app-level trace showing the
+   real WordPad startup `CREATE_SUSPENDED`/`ResumeThread` sequence. Scheduler
+   tests already cover suspend counts, invalid handles, and runnable state.
+7. **Shared-code regressions.** After USER/GDI/RichEdit changes, rerun WordPad,
+   Notepad, and installer license panes with visual clipping, caret, selection,
+   scrolling, and toolbar assertions.
 
 Focused inline-image clipboard probe:
 
@@ -364,8 +399,9 @@ result:      PASS for WordPad paragraph center alignment dispatch,
              native RichEdit PARAFORMAT state, visible centered rendering,
              saved centered RTF, and reopening the saved file as text.
 scope:       The bounded test no longer waits for an extra post-open
-             paragraph-state probe; indents, tabs, numbering, and more complex
-             paragraph RTF remain follow-up work.
+             paragraph-state probe. Indents, tabs, numbering, and representative
+             multi-paragraph RTF now have separate focused coverage; arbitrary
+             paragraph-format breadth remains follow-up work.
 ```
 
 Focused paragraph field RTF round-trip probe:
@@ -379,8 +415,9 @@ RichEdit:    EM_GETPARAFORMAT reports numbering=1, dxStartIndent=720,
 RTF:         the saved stream contains bullet paragraph controls, `\fi240`,
              `\li480`, `\ri360`, and `\tx1440`
 result:      PASS for basic paragraph numbering/indent/tab RTF round-trip.
-scope:       Advanced paragraph layout, multiple paragraph runs, tables, and
-             embedded objects remain follow-up work.
+scope:       This is the basic paragraph-field path. Representative multiple
+             runs and simple tables now have separate advanced-RTF coverage;
+             arbitrary nested RTF and general embedded objects remain open.
 ```
 
 Focused Font dialog probe:
@@ -524,9 +561,9 @@ Current evidence from the 2026-08-11 follow-up probe:
   `CreateILockBytesOnHGlobal`, `StgCreateDocfileOnILockBytes`,
   `WriteClassStg`, `WriteFmtUserTypeStg`). This is compatibility scaffolding,
   The original placeholders have since become functional memory-backed
-  `ILockBytes`/`IStorage` objects with named `IStream` children. RichEdit object
-  transfer, rendering, and compound-file byte serialization are still later
-  layers; this is not yet full embedded-object clipboard support.
+  `ILockBytes`/`IStorage` objects with named `IStream` children. Static DIB
+  transfer/rendering is now implemented; compound-file byte serialization and
+  general linked/activated objects remain later layers.
 - WordPad Save As now reaches the common dialog, accepts a picked filename,
   creates/writes/closes the target file, updates the top-level title, and
   returns focus to the native RichEdit child. The MFC/OLE save bookkeeping path
@@ -804,10 +841,14 @@ focused app-level trace of WordPad's real startup thread remains to be added.
 
 ## Follow-Up
 
-1. The bounded non-OLE program and static `CF_DIB` object path are complete.
-   Remaining OLE work is centered on linked/activated server objects,
+The authoritative current list is in **Remaining Work** near the top. In
+short, the bounded non-OLE program and static `CF_DIB` implementation are
+present; current-tip fresh-process image revalidation and general OLE server
+fidelity remain open.
+
+1. Remaining OLE work is centered on linked/activated server objects,
    non-DIB presentation formats, arbitrary compound-storage persistence,
-   object copy/cut back to the clipboard, drag/drop, and in-place activation.
+   general object clipboard interoperability, drag/drop, and in-place activation.
    Covered areas now include mixed-run size reporting, caret blink/XOR cadence,
    Font dialog
    face/style/point-size handoff, concrete latest-size `EM_GETCHARFORMAT`
@@ -829,9 +870,11 @@ focused app-level trace of WordPad's real startup thread remains to be added.
 2. Add richer native RichEdit state dumps if deeper assertions are needed
    (caret/selection/scroll). Current coverage reads plain text through
    `WM_GETTEXT`.
-3. Keep the static-image boundary explicit: advanced RTF (including document
-   tables), printing, layout stress, ruler/secondary UI, international text,
-   and DIB save/reopen are complete; arbitrary OLE servers remain postponed.
+3. Keep the static-image boundary explicit: representative advanced RTF
+   (including document tables), printing, layout stress, ruler/secondary UI,
+   and international text have focused coverage. Static DIB save/reopen is
+   implemented but needs the current-tip bounded revalidation described above;
+   arbitrary OLE servers remain postponed.
 
 Advanced RTF status (2026-08-12): WordPad now has focused Open -> Save -> Open
 coverage for inherited stylesheets, multiple font/color/format runs, centered

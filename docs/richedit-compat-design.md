@@ -5,6 +5,29 @@ Last updated: 2026-08-12.
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
 
+## Remaining work snapshot
+
+The bounded non-OLE program is implemented. Advanced RTF, printing/preview,
+layout stress, secondary WordPad UI, representative international text, and
+RichEdit-version probes all have focused coverage. Remaining work is:
+
+- finish bounded current-tip revalidation of the two-static-DIB fresh-process
+  reopen path after recent GDI/DIB changes; save output again contains two
+  complete presentations (5,097 bytes), but the latest reopen child times out
+  before its final Unicode/pixel assertions;
+- arbitrary OLE server fidelity: linked/activated objects, non-DIB
+  presentations, compound-file serialization, object verbs, in-place
+  activation, general object clipboard transfer, and drag/drop;
+- breadth beyond representative fixtures: arbitrary nested/overlapping RTF,
+  exact printer layout, more scripts/fonts/IME cases, uncommon toolbar/ruler
+  state, and exhaustive undocumented RichEdit quirks;
+- a bounded WordPad startup trace for its real
+  `CREATE_SUSPENDED`/`ResumeThread` path. Scheduler behavior is covered by
+  `test/test-thread-manager.js`; no WordPad-specific trace test exists.
+
+Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
+storage suites remain green at 12/12 and 13/13.
+
 ## ASCII TLDR
 
 ```text
@@ -632,7 +655,7 @@ screenshot where the result is visual.
    [x] SuspendThread/ResumeThread return previous nested suspend counts
    [x] only the final ResumeThread makes a worker runnable
    [x] invalid/exited handles return 0xFFFFFFFF
-   [x] app-level WordPad startup regression covers the real ResumeThread path
+   [ ] app-level WordPad startup regression covers the real ResumeThread path
 ```
 
 Still postponed because it is OLE/object work: embedded objects, in-place
@@ -655,9 +678,11 @@ live in-memory root.
 `test/test-ole-storage.js` provides direct coverage for object creation,
 binary round-trip including compound-file-signature bytes, EOF semantics,
 case-insensitive stream lookup, CLSID persistence, and COM lifetime ownership.
-This does not yet serialize a Compound File Binary container, expose an
-`IDataObject`, insert a `REOBJECT`, or render/activate an OLE server. Those are
-the next WordPad layers.
+At this foundation stage it did not serialize a Compound File Binary container,
+expose an `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server.
+Later sections document the completed bounded `IDataObject` and static-DIB
+integration; compound-file serialization and general server activation remain
+open.
 
 ### 2026-08-12 OLE data-transfer foundation
 
@@ -672,10 +697,10 @@ each receiver. `TYMED_ISTREAM`/`TYMED_ISTORAGE` retain COM references, and
 
 `test/test-ole-data-object.js` covers format acceptance/rejection, independent
 HGLOBAL copies, binary DIB preservation, medium release, OLE clipboard
-lifetime, and stream-medium AddRef/Release behavior. The next integration step
-is a WordPad-visible static object representation: bridge DIB clipboard data
-into a RichEdit object slot, paint it inline, and then persist that object
-through RTF/storage save and reopen.
+lifetime, and stream-medium AddRef/Release behavior. The following sections
+document the now-implemented WordPad-visible static object representation:
+bridge DIB clipboard data into a RichEdit object slot, paint it inline, and
+persist that object through RTF/storage save and reopen.
 
 The first native integration probe now publishes a valid 32x24 24-bpp `CF_DIB`
 and delivers `WM_PASTE` to Win98 RichEdit. This exposed and then closed dynamic
@@ -1138,6 +1163,8 @@ Acceptance:
 [x] Static CF_DIB object Copy/Cut/Paste preserves object count and presentation
 [x] Multiple static CF_DIB objects save and reopen with independent complete
     presentations after clipboard replacement
+[ ] Current-tip bounded fresh-process revalidation completes after recent
+    GDI/DIB changes (save output is complete; reopen assertions time out)
 [x] Deleting one of multiple static CF_DIB objects preserves the survivor
     through RTF save and fresh-process reopen
 [ ] Linked/activated and arbitrary non-DIB OLE objects preserve full fidelity
