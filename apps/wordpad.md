@@ -96,6 +96,11 @@ with complete format, ADVF, sink, and connection fields plus deep target-device
 ownership and independent clone cursors. Runtime-owned objects also convert
 the entire cache to a detached `IDataObject` and atomically rebuild it through
 `InitFromData`; DLL-private data objects still await the guest callback bridge.
+The same handler now owns host-name metadata, validates and dirties content
+extents, exposes static user/misc identity, and tracks close, running, nested
+run-lock, last-unlock-close, and contained state. The expanded focused suite
+passes 52/52. DLL-private client-site and advisory AddRef/Release callbacks are
+still intentionally deferred.
 
 ## Remaining Work
 

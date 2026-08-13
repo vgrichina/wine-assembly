@@ -431,9 +431,11 @@ cursor semantics. The expanded focused suite passes 38/38.
 
 ### P4.2 Object lifecycle contracts
 
-- Complete client-site ownership, host names, close/dirty transitions,
-  extents, user class/type, misc-status, advisory connection, and running-state
+- [x] Complete owned host names, close/running transitions, run locks,
+  contained state, validated dirty extents, static user type, and misc-status
   bookkeeping.
+- Complete client-site ownership and advisory connections after the guest COM
+  callback bridge can safely AddRef/Release DLL-private interfaces.
 - [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
   generalized P3 object rather than DIB-only branches for runtime-owned
   `IDataObject` instances.
@@ -451,6 +453,17 @@ replacement/removal cannot mutate an earlier clipboard result. DLL-private
 data objects still require the deferred guest COM callback bridge. The focused
 static-handler suite passes 42/42, and native WordPad object clipboard
 regression remains a separate acceptance gate.
+
+2026-08-13 lifecycle-metadata result: the bounded handler now deep-copies and
+atomically replaces both host names, validates content aspect for extent
+queries, marks successful extent changes dirty, returns caller-owned `Static
+Object` user-type text, and advertises `OLEMISC_RECOMPOSEONRESIZE |
+OLEMISC_STATIC`. It records validated close options, maintains running and
+nested run-lock state, honors last-unlock-close, and tracks whether the object
+is contained. Owned host strings are released with the handler. Close requests
+do not yet invoke a DLL-private client site's `SaveObject`; client-site and
+advisory ownership remain explicitly deferred to the callback bridge. The
+focused static-handler suite passes 52/52.
 
 ### Acceptance
 

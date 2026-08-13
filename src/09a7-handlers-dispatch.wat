@@ -600,23 +600,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; OleRun(pUnknown) — transition a linked/embedded OLE object to running.
-  ;; Our DirectAnimation placeholders are already in-memory dispatch objects,
-  ;; so there is no server process to start.
+  ;; OleRun/OleIsRunning/OleLockRunning maintain real lifecycle state for the
+  ;; bounded static handler. Other non-null placeholders keep their historical
+  ;; no-server success behavior.
   (func $handle_OleRun (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; S_OK
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0x80070057)))
+      (else
+        (if (call $ole_static_from_interface (local.get $arg0))
+          (then (call $ole_static_run (call $ole_static_from_interface (local.get $arg0)))))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; OleIsRunning(pObject) — report true for non-null placeholders.
   (func $handle_OleIsRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $arg0)))
+    (local $root i32)
+    (local.set $root (call $ole_static_from_interface (local.get $arg0)))
+    (global.set $eax
+      (if (result i32) (local.get $root)
+        (then (call $gl32 (i32.add (local.get $root) (i32.const 128))))
+        (else (select (i32.const 1) (i32.const 0) (local.get $arg0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; OleLockRunning(pUnknown, fLock, fLastUnlockCloses) — no-op lifetime hint.
   (func $handle_OleLockRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; S_OK
+    (local $root i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0x80070057)))
+      (else
+        (local.set $root (call $ole_static_from_interface (local.get $arg0)))
+        (if (local.get $root)
+          (then (call $ole_static_lock_running (local.get $root) (local.get $arg1) (local.get $arg2))))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -2544,6 +2559,10 @@
             (then (call $ole_release_medium (i32.add (local.get $next) (i32.const 28)))))
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $cache_entries)))
+        (if (local.get $data) (then (call $heap_free (local.get $data))))
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 116))))
+        (if (local.get $data) (then (call $heap_free (local.get $data))))
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 120))))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
     (if (i32.eq (local.get $kind) (i32.const 7))
       (then
@@ -3874,13 +3893,14 @@
 
   ;; Bounded in-process static presentation object. The secondary
   ;; IPersistStorage interface is embedded at root+12 and shares root refcount.
-  ;; Layout (116 bytes): IOleObject vtbl/ref/kind=6, IPersistStorage vtbl,
+  ;; Layout (144 bytes): IOleObject vtbl/ref/kind=6, IPersistStorage vtbl,
   ;; client site, storage, CLSID[16], extent.cx/cy, dirty, IOleCache and
   ;; IViewObject2 interface slots, cached STGMEDIUM/FORMATETC, valid flag,
   ;; persistence state (0 uninitialized, 1 normal, 2 no-scribble,
   ;; 3 hands-off-from-normal, 4 hands-off-after-save), cache entries/count/
-  ;; capacity/next connection. Cache entry (40 bytes): connection, ADVF,
-  ;; FORMATETC[20], STGMEDIUM[12].
+  ;; capacity/next connection, owned host application/object names, close
+  ;; option+1, running flag, run-lock count, misc flags, and contained flag.
+  ;; Cache entry (40 bytes): connection, ADVF, FORMATETC[20], STGMEDIUM[12].
   (func $ole_static_root (param $iface i32) (result i32)
     (if (result i32)
       (i32.eq (call $gl32 (local.get $iface)) (global.get $DX_VTBL_OLE_PERSISTSTORAGE))
@@ -3896,6 +3916,124 @@
                 (i32.eq (call $gl32 (local.get $iface)) (global.get $DX_VTBL_OLE_VIEWOBJECT2)))
               (then (i32.sub (local.get $iface) (i32.const 56)))
               (else (local.get $iface))))))))
+
+  (func $ole_static_from_interface (param $iface i32) (result i32)
+    (local $vtbl i32) (local $root i32)
+    (if (i32.eqz (local.get $iface)) (then (return (i32.const 0))))
+    (local.set $vtbl (call $gl32 (local.get $iface)))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_OBJECT))
+      (then (local.set $root (local.get $iface))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_PERSISTSTORAGE))
+      (then (local.set $root (i32.sub (local.get $iface) (i32.const 12)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_CACHE))
+      (then (local.set $root (i32.sub (local.get $iface) (i32.const 52)))))
+    (if (i32.or
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT))
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2)))
+      (then (local.set $root (i32.sub (local.get $iface) (i32.const 56)))))
+    (if (i32.and (local.get $root)
+          (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 8))) (i32.const 6)))
+      (then (return (local.get $root))))
+    (i32.const 0)
+  )
+
+  (func $ole_static_set_host_names (param $root i32) (param $app i32) (param $object i32) (result i32)
+    (local $app_copy i32) (local $object_copy i32) (local $old i32)
+    (if (local.get $app)
+      (then
+        (local.set $app_copy (call $ole_wide_dup (local.get $app)))
+        (if (i32.eqz (local.get $app_copy)) (then (return (i32.const 0x8007000E))))))
+    (if (local.get $object)
+      (then
+        (local.set $object_copy (call $ole_wide_dup (local.get $object)))
+        (if (i32.eqz (local.get $object_copy))
+          (then
+            (if (local.get $app_copy) (then (call $heap_free (local.get $app_copy))))
+            (return (i32.const 0x8007000E))))))
+    (local.set $old (call $gl32 (i32.add (local.get $root) (i32.const 116))))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (local.set $old (call $gl32 (i32.add (local.get $root) (i32.const 120))))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 116)) (local.get $app_copy))
+    (call $gs32 (i32.add (local.get $root) (i32.const 120)) (local.get $object_copy))
+    (i32.const 0)
+  )
+
+  (func $ole_static_close (param $root i32) (param $option i32) (result i32)
+    (if (i32.gt_u (local.get $option) (i32.const 2))
+      (then (return (i32.const 0x80070057))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 124)) (i32.add (local.get $option) (i32.const 1)))
+    (call $gs32 (i32.add (local.get $root) (i32.const 128)) (i32.const 0))
+    (i32.const 0)
+  )
+
+  (func $ole_static_run (param $root i32)
+    (call $gs32 (i32.add (local.get $root) (i32.const 124)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $root) (i32.const 128)) (i32.const 1))
+  )
+
+  (func $ole_static_lock_running (param $root i32) (param $lock i32) (param $last_unlock_closes i32)
+    (local $count i32)
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 132))))
+    (if (local.get $lock)
+      (then
+        (call $gs32 (i32.add (local.get $root) (i32.const 132)) (i32.add (local.get $count) (i32.const 1)))
+        (call $ole_static_run (local.get $root)))
+      (else
+        (if (local.get $count)
+          (then
+            (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+            (call $gs32 (i32.add (local.get $root) (i32.const 132)) (local.get $count))))
+        (if (i32.and (i32.eqz (local.get $count)) (local.get $last_unlock_closes))
+          (then (drop (call $ole_static_close (local.get $root) (i32.const 1)))))))
+  )
+
+  (func $ole_static_set_contained (param $root i32) (param $contained i32)
+    (call $gs32 (i32.add (local.get $root) (i32.const 140))
+      (select (i32.const 1) (i32.const 0) (local.get $contained)))
+  )
+
+  (func $ole_static_set_extent (param $root i32) (param $aspect i32) (param $size i32) (result i32)
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0x80004003))))
+    (if (i32.ne (local.get $aspect) (i32.const 1)) (then (return (i32.const 0x8004006B))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 40)) (call $gl32 (local.get $size)))
+    (call $gs32 (i32.add (local.get $root) (i32.const 44)) (call $gl32 (i32.add (local.get $size) (i32.const 4))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1))
+    (i32.const 0)
+  )
+
+  (func $ole_static_get_extent (param $root i32) (param $aspect i32) (param $size i32) (result i32)
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0x80004003))))
+    (if (i32.ne (local.get $aspect) (i32.const 1)) (then (return (i32.const 0x8004006B))))
+    (call $gs32 (local.get $size) (call $gl32 (i32.add (local.get $root) (i32.const 40))))
+    (call $gs32 (i32.add (local.get $size) (i32.const 4)) (call $gl32 (i32.add (local.get $root) (i32.const 44))))
+    (i32.const 0)
+  )
+
+  (func $ole_static_get_user_type (param $form i32) (param $out i32) (result i32)
+    (local $value i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.gt_u (local.get $form) (i32.const 2)) (then (return (i32.const 0x80070057))))
+    (local.set $value (call $heap_alloc (i32.const 28)))
+    (if (i32.eqz (local.get $value)) (then (return (i32.const 0x8007000E))))
+    (call $zero_memory (call $g2w (local.get $value)) (i32.const 28))
+    (call $gs16 (local.get $value) (i32.const 83))
+    (call $gs16 (i32.add (local.get $value) (i32.const 2)) (i32.const 116))
+    (call $gs16 (i32.add (local.get $value) (i32.const 4)) (i32.const 97))
+    (call $gs16 (i32.add (local.get $value) (i32.const 6)) (i32.const 116))
+    (call $gs16 (i32.add (local.get $value) (i32.const 8)) (i32.const 105))
+    (call $gs16 (i32.add (local.get $value) (i32.const 10)) (i32.const 99))
+    (call $gs16 (i32.add (local.get $value) (i32.const 12)) (i32.const 32))
+    (call $gs16 (i32.add (local.get $value) (i32.const 14)) (i32.const 79))
+    (call $gs16 (i32.add (local.get $value) (i32.const 16)) (i32.const 98))
+    (call $gs16 (i32.add (local.get $value) (i32.const 18)) (i32.const 106))
+    (call $gs16 (i32.add (local.get $value) (i32.const 20)) (i32.const 101))
+    (call $gs16 (i32.add (local.get $value) (i32.const 22)) (i32.const 99))
+    (call $gs16 (i32.add (local.get $value) (i32.const 24)) (i32.const 116))
+    (call $gs32 (local.get $out) (local.get $value))
+    (i32.const 0)
+  )
 
   (func $ole_static_query_interface (param $root i32) (param $iid i32) (param $out i32) (result i32)
     (local $data1 i32) (local $iface i32)
@@ -3922,9 +4060,9 @@
 
   (func $ole_create_static_handler (param $clsid i32) (result i32)
     (local $obj i32)
-    (local.set $obj (call $heap_alloc (i32.const 116)))
+    (local.set $obj (call $heap_alloc (i32.const 144)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 116))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 144))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_OBJECT))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 6))
@@ -3932,6 +4070,7 @@
     (call $gs32 (i32.add (local.get $obj) (i32.const 52)) (global.get $DX_VTBL_OLE_CACHE))
     (call $gs32 (i32.add (local.get $obj) (i32.const 56)) (global.get $DX_VTBL_OLE_VIEWOBJECT2))
     (call $gs32 (i32.add (local.get $obj) (i32.const 112)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 136)) (i32.const 9)) ;; RECOMPOSEONRESIZE | STATIC
     (if (local.get $clsid)
       (then (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 24))) (call $g2w (local.get $clsid)) (i32.const 16))))
     (local.get $obj))
@@ -3951,9 +4090,11 @@
     (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleObject_SetHostNames (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $eax (call $ole_static_set_host_names (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_Close (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $eax (call $ole_static_close (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleObject_SetMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004001)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_GetMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3987,19 +4128,13 @@
     (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleObject_GetUserType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (global.set $eax (i32.const 0x80040154)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $eax (call $ole_static_get_user_type (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_SetExtent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then
-      (call $gs32 (i32.add (local.get $arg0) (i32.const 40)) (call $gl32 (local.get $arg2)))
-      (call $gs32 (i32.add (local.get $arg0) (i32.const 44)) (call $gl32 (i32.add (local.get $arg2) (i32.const 4))))))
-    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg2)))
+    (global.set $eax (call $ole_static_set_extent (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_GetExtent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then
-      (call $gs32 (local.get $arg2) (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))
-      (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (call $gl32 (i32.add (local.get $arg0) (i32.const 44))))))
-    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg2)))
+    (global.set $eax (call $ole_static_get_extent (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_Advise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
@@ -4010,8 +4145,14 @@
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
     (global.set $eax (i32.const 0x80004001)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleObject_GetMiscStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0x00000001)))) ;; OLEMISC_RECOMPOSEONRESIZE
-    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg2)))
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (if (i32.ne (local.get $arg1) (i32.const 1))
+          (then (global.set $eax (i32.const 0x8004006B)))
+          (else
+            (call $gs32 (local.get $arg2) (call $gl32 (i32.add (local.get $arg0) (i32.const 136))))
+            (global.set $eax (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_SetColorScheme (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
@@ -4951,9 +5092,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   (func $handle_OleSetContainedObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Process-local static handlers have no external server visibility or
-    ;; running-object-table registration to alter.
-    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg0)))
+    (local $root i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (local.set $root (call $ole_static_from_interface (local.get $arg0)))
+        (if (local.get $root)
+          (then (call $ole_static_set_contained (local.get $root) (local.get $arg1))))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; OleRegGetUserType(rclsid, dwFormOfType, lplpszUserType)

@@ -55,6 +55,14 @@ local `IDataObject`, while `InitFromData` stages and atomically imports all of
 that object's presentations before refreshing the CF_DIB render choice. The
 focused suite passes 42/42.
 
+The static handler also has nonvisual lifecycle metadata rather than placeholder
+success returns: independently owned host application/object names, validated
+content extents with persistent dirty tracking, caller-owned user-type text,
+static misc flags, close state, running state, nested run locks,
+last-unlock-close, and contained state. The expanded focused suite passes
+52/52. Client-site and advisory ownership still need the guest COM callback
+bridge because RichEdit supplies DLL-private interfaces.
+
 ## ASCII TLDR
 
 ```text

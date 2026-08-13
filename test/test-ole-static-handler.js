@@ -77,6 +77,69 @@ async function main() {
     dv.setUint16(wa(value) + text.length * 2, 0, true);
     return value;
   };
+  const readWide = value => {
+    let text = '';
+    for (let i = 0; ; i++) {
+      const ch = dv.getUint16(wa(value) + i * 2, true);
+      if (!ch) return text;
+      text += String.fromCharCode(ch);
+    }
+  };
+
+  const hostApp = writeWide('WordPad Host');
+  const hostObject = writeWide('Document One');
+  check('SetHostNames retains independent application and object names',
+    e.test_ole_static_set_host_names(object, hostApp, hostObject) === 0 &&
+    dv.getUint32(wa(object) + 116, true) !== hostApp &&
+    dv.getUint32(wa(object) + 120, true) !== hostObject &&
+    readWide(dv.getUint32(wa(object) + 116, true)) === 'WordPad Host' &&
+    readWide(dv.getUint32(wa(object) + 120, true)) === 'Document One');
+  dv.setUint16(wa(hostApp), 'X'.charCodeAt(0), true);
+  dv.setUint16(wa(hostObject), 'Y'.charCodeAt(0), true);
+  check('stored host names do not alias later caller mutation',
+    readWide(dv.getUint32(wa(object) + 116, true)) === 'WordPad Host' &&
+    readWide(dv.getUint32(wa(object) + 120, true)) === 'Document One');
+
+  const extent = alloc(8);
+  dv.setUint32(wa(extent), 640, true);
+  dv.setUint32(wa(extent) + 4, 480, true);
+  check('SetExtent rejects unsupported aspects without changing object state',
+    (e.test_ole_static_set_extent(object, 2, extent) >>> 0) === 0x8004006b &&
+    dv.getUint32(wa(object) + 40, true) === 0 &&
+    e.test_ole_persist_dirty(object) === 0);
+  const extentOut = alloc(8);
+  check('content extent round-trips exactly and marks persistent state dirty',
+    e.test_ole_static_set_extent(object, 1, extent) === 0 &&
+    e.test_ole_static_get_extent(object, 1, extentOut) === 0 &&
+    dv.getUint32(wa(extentOut), true) === 640 &&
+    dv.getUint32(wa(extentOut) + 4, true) === 480 &&
+    e.test_ole_persist_dirty(object) === 1);
+
+  const userTypeOut = alloc(4);
+  check('GetUserType returns caller-owned static-object text',
+    e.test_ole_static_get_user_type(0, userTypeOut) === 0 &&
+    readWide(dv.getUint32(wa(userTypeOut), true)) === 'Static Object');
+  check('static-object misc status advertises recomposition and static identity',
+    dv.getUint32(wa(object) + 136, true) === 9);
+
+  check('Close rejects invalid save options without changing lifecycle state',
+    (e.test_ole_static_close(object, 3) >>> 0) === 0x80070057 &&
+    dv.getUint32(wa(object) + 124, true) === 0);
+  e.test_ole_static_run(object);
+  e.test_ole_static_lock_running(object, 1, 0);
+  e.test_ole_static_lock_running(object, 1, 0);
+  e.test_ole_static_lock_running(object, 0, 0);
+  check('running locks retain a started object until the final unlock',
+    dv.getUint32(wa(object) + 128, true) === 1 &&
+    dv.getUint32(wa(object) + 132, true) === 1);
+  e.test_ole_static_lock_running(object, 0, 1);
+  check('last-unlock-close records NOSAVE and stops the static object',
+    dv.getUint32(wa(object) + 124, true) === 2 &&
+    dv.getUint32(wa(object) + 128, true) === 0 &&
+    dv.getUint32(wa(object) + 132, true) === 0);
+  e.test_ole_static_set_contained(object, 1);
+  check('contained-object state toggles independently of close and persistence',
+    dv.getUint32(wa(object) + 140, true) === 1 && e.test_ole_persist_dirty(object) === 1);
 
   const makeFormat = (id, aspect = 1, tymed = 1) => {
     const value = alloc(20);
