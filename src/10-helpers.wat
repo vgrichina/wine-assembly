@@ -1256,6 +1256,27 @@
       (then (return (i32.or (local.get $pen) (local.get $dst)))))
     (i32.const 0x00FFFFFF))
 
+  ;; Default cosmetic-pen patterns use device-pixel major-axis steps. Values
+  ;; match the Windows-compatible tables: dash {6,2}, dot {1,1}, dash-dot
+  ;; {3,2,1,2}, and dash-dot-dot {3,1,1,1,1,1}.
+  (func $gdi_pen_style_draw (param $style i32) (param $phase i32) (result i32)
+    (if (i32.eq (local.get $style) (i32.const 1))
+      (then (return (i32.lt_u (i32.rem_u (local.get $phase) (i32.const 8)) (i32.const 6)))))
+    (if (i32.eq (local.get $style) (i32.const 2))
+      (then (return (i32.eqz (i32.and (local.get $phase) (i32.const 1))))))
+    (if (i32.eq (local.get $style) (i32.const 3))
+      (then
+        (local.set $phase (i32.rem_u (local.get $phase) (i32.const 8)))
+        (return (i32.or (i32.lt_u (local.get $phase) (i32.const 3))
+          (i32.eq (local.get $phase) (i32.const 5))))))
+    (if (i32.eq (local.get $style) (i32.const 4))
+      (then
+        (local.set $phase (i32.rem_u (local.get $phase) (i32.const 8)))
+        (return (i32.or (i32.lt_u (local.get $phase) (i32.const 3))
+          (i32.and (i32.ge_u (local.get $phase) (i32.const 4))
+            (i32.eqz (i32.and (local.get $phase) (i32.const 1))))))))
+    (i32.const 1))
+
   (func $gdi_line_put_pixel (param $hdc i32) (param $desc i32)
         (param $x i32) (param $y i32) (param $rop2 i32) (result i32)
     (local $row i32) (local $pixel i32) (local $dst i32) (local $value i32)
@@ -1311,6 +1332,7 @@
     (local $min_x i32) (local $min_y i32) (local $max_x i32) (local $max_y i32)
     (local $pen_width i32) (local $stamp_x i32) (local $stamp_y i32)
     (local $stamp_left i32) (local $stamp_top i32) (local $pixel_x i32) (local $pixel_y i32)
+    (local $pen_style i32) (local $style_phase i32)
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (i32.eqz (call $host_gdi_get_line_descriptor (local.get $hdc) (local.get $desc)))
       (then (return (i32.const 0))))
@@ -1325,6 +1347,7 @@
     (local.set $max_x (i32.const 0x80000000)) (local.set $max_y (i32.const 0x80000000))
     (local.set $rop2 (call $gdi_dc_get_rop2 (local.get $hdc)))
     (local.set $pen_width (i32.load offset=28 (local.get $desc)))
+    (local.set $pen_style (i32.load offset=64 (local.get $desc)))
     ;; Repeated square stamps are exact for COPYPEN because the operation is
     ;; idempotent. Other ROP2 modes need a coverage mask before wide strokes
     ;; can safely avoid applying the Boolean operation twice.
@@ -1358,34 +1381,37 @@
     (block $done (loop $pixels
       (br_if $done (i32.and (i32.eq (local.get $x0) (local.get $x1))
         (i32.eq (local.get $y0) (local.get $y1))))
-      (local.set $stamp_left (i32.sub (local.get $x0)
-        (i32.shr_u (local.get $pen_width) (i32.const 1))))
-      (local.set $stamp_top (i32.sub (local.get $y0)
-        (i32.shr_u (local.get $pen_width) (i32.const 1))))
-      (local.set $stamp_y (i32.const 0))
-      (block $stamp_rows_done (loop $stamp_rows
-        (br_if $stamp_rows_done (i32.ge_u (local.get $stamp_y) (local.get $pen_width)))
-        (local.set $pixel_y (i32.add (local.get $stamp_top) (local.get $stamp_y)))
-        (local.set $stamp_x (i32.const 0))
-        (block $stamp_cols_done (loop $stamp_cols
-          (br_if $stamp_cols_done (i32.ge_u (local.get $stamp_x) (local.get $pen_width)))
-          (local.set $pixel_x (i32.add (local.get $stamp_left) (local.get $stamp_x)))
-          (if (call $gdi_line_put_pixel (local.get $hdc) (local.get $desc)
-                (local.get $pixel_x) (local.get $pixel_y) (local.get $rop2))
-            (then
-              (local.set $wrote (i32.const 1))
-              (if (i32.lt_s (local.get $pixel_x) (local.get $min_x))
-                (then (local.set $min_x (local.get $pixel_x))))
-              (if (i32.lt_s (local.get $pixel_y) (local.get $min_y))
-                (then (local.set $min_y (local.get $pixel_y))))
-              (if (i32.gt_s (local.get $pixel_x) (local.get $max_x))
-                (then (local.set $max_x (local.get $pixel_x))))
-              (if (i32.gt_s (local.get $pixel_y) (local.get $max_y))
-                (then (local.set $max_y (local.get $pixel_y))))))
-          (local.set $stamp_x (i32.add (local.get $stamp_x) (i32.const 1)))
-          (br $stamp_cols)))
-        (local.set $stamp_y (i32.add (local.get $stamp_y) (i32.const 1)))
-        (br $stamp_rows)))
+      (if (call $gdi_pen_style_draw (local.get $pen_style) (local.get $style_phase))
+        (then
+          (local.set $stamp_left (i32.sub (local.get $x0)
+            (i32.shr_u (local.get $pen_width) (i32.const 1))))
+          (local.set $stamp_top (i32.sub (local.get $y0)
+            (i32.shr_u (local.get $pen_width) (i32.const 1))))
+          (local.set $stamp_y (i32.const 0))
+          (block $stamp_rows_done (loop $stamp_rows
+            (br_if $stamp_rows_done (i32.ge_u (local.get $stamp_y) (local.get $pen_width)))
+            (local.set $pixel_y (i32.add (local.get $stamp_top) (local.get $stamp_y)))
+            (local.set $stamp_x (i32.const 0))
+            (block $stamp_cols_done (loop $stamp_cols
+              (br_if $stamp_cols_done (i32.ge_u (local.get $stamp_x) (local.get $pen_width)))
+              (local.set $pixel_x (i32.add (local.get $stamp_left) (local.get $stamp_x)))
+              (if (call $gdi_line_put_pixel (local.get $hdc) (local.get $desc)
+                    (local.get $pixel_x) (local.get $pixel_y) (local.get $rop2))
+                (then
+                  (local.set $wrote (i32.const 1))
+                  (if (i32.lt_s (local.get $pixel_x) (local.get $min_x))
+                    (then (local.set $min_x (local.get $pixel_x))))
+                  (if (i32.lt_s (local.get $pixel_y) (local.get $min_y))
+                    (then (local.set $min_y (local.get $pixel_y))))
+                  (if (i32.gt_s (local.get $pixel_x) (local.get $max_x))
+                    (then (local.set $max_x (local.get $pixel_x))))
+                  (if (i32.gt_s (local.get $pixel_y) (local.get $max_y))
+                    (then (local.set $max_y (local.get $pixel_y))))))
+              (local.set $stamp_x (i32.add (local.get $stamp_x) (i32.const 1)))
+              (br $stamp_cols)))
+            (local.set $stamp_y (i32.add (local.get $stamp_y) (i32.const 1)))
+            (br $stamp_rows)))))
+      (local.set $style_phase (i32.add (local.get $style_phase) (i32.const 1)))
       (local.set $e2 (i32.shl (local.get $err) (i32.const 1)))
       (if (i32.ge_s (local.get $e2) (local.get $dy))
         (then (local.set $err (i32.add (local.get $err) (local.get $dy)))

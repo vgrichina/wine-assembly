@@ -210,11 +210,8 @@ async function main() {
     }
   });
 
-  check('unsupported styled, wide ROP2, huge, and 16bpp lines fall back', () => {
+  check('unsupported wide ROP2, transformed wide, huge, and 16bpp lines fall back', () => {
     const dib = makeDib(6, 4, 24);
-    const styled = base.host.gdi_create_pen(1, 1, 0x000000FF);
-    base.host.gdi_select_object(dib.hdc, styled);
-    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 4, 0), 0);
     const wide = base.host.gdi_create_pen(0, 3, 0x000000FF);
     base.host.gdi_select_object(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 7), 13);
@@ -242,6 +239,42 @@ async function main() {
     base.host.gdi_select_object(dib.hdc, nullPen);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 4, 7, 4), 0);
     assert.strictEqual(pixel(dib, 3, 4), 0);
+  });
+
+  check('thin default styles use fixed device-step coverage tables', () => {
+    const patterns = [
+      [1, [1, 1, 1, 1, 1, 1, 0, 0]],
+      [2, [1, 0, 1, 0, 1, 0, 1, 0]],
+      [3, [1, 1, 1, 0, 0, 1, 0, 0]],
+      [4, [1, 1, 1, 0, 1, 0, 1, 0]],
+    ];
+    for (const [style, pattern] of patterns) {
+      const dib = makeDib(10, 2, 24, true);
+      const pen = base.host.gdi_create_pen(style, 1, 0x00FFFFFF);
+      base.host.gdi_select_object(dib.hdc, pen);
+      assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 8, 0), 1);
+      for (let x = 0; x < 8; x++) {
+        assert.strictEqual(pixel(dib, x, 0), pattern[x] ? 0xFFFFFF : 0,
+          `style ${style}: unexpected coverage at ${x}`);
+      }
+    }
+  });
+
+  check('styled coverage preserves phase through clipping and reverse traversal', () => {
+    const clipped = makeDib(10, 2, 24, true);
+    const dash = base.host.gdi_create_pen(1, 1, 0x00FFFFFF);
+    const clip = wat.test_gdi_rgn_alloc_rect(4, 0, 8, 1);
+    base.host.gdi_select_object(clipped.hdc, dash);
+    assert.strictEqual(wat.test_gdi_dc_clip_select(clipped.hdc, clip), 2);
+    assert.strictEqual(wat.test_gdi_line_try(clipped.hdc, 0, 0, 8, 0), 1);
+    assert.deepStrictEqual(Array.from({ length: 10 }, (_, x) => pixel(clipped, x, 0) !== 0),
+      [false, false, false, false, true, true, false, false, false, false]);
+
+    const reverse = makeDib(10, 2, 24, true);
+    base.host.gdi_select_object(reverse.hdc, dash);
+    assert.strictEqual(wat.test_gdi_line_try(reverse.hdc, 8, 0, 0, 0), 1);
+    assert.deepStrictEqual(Array.from({ length: 10 }, (_, x) => pixel(reverse, x, 0) !== 0),
+      [false, false, false, true, true, true, true, true, true, false]);
   });
 
   console.log(`\n${passed}/${passed} checks passed`);

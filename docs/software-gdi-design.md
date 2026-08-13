@@ -40,10 +40,11 @@ canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
 dirty bounds. JavaScript provides a read-only selected-object descriptor and
 uploads the resulting dirty rectangle to the presentation Canvas. Wide strokes
 currently use an integer square footprint with `R2_COPYPEN` under 1:1 mapping;
-non-copy or transformed wide operations, styled one-pixel pens, and
-non-DIB/window targets still use the named Canvas compatibility path pending
-coverage-mask, geometric-path, and target kernels. `CreatePen` dash/dot styles
-wider than one are normalized to solid as Win32 specifies.
+non-copy or transformed wide operations and non-DIB/window targets still use
+the named Canvas compatibility path pending coverage-mask, geometric-path, and
+target kernels. One-pixel dash, dot, dash-dot, and dash-dot-dot pens use fixed
+device-step WAT coverage tables. `CreatePen` dash/dot styles wider than one are
+normalized to solid as Win32 specifies.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.
