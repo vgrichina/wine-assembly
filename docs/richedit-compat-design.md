@@ -713,6 +713,11 @@ clipboard pointed at an object whose source control has destroyed it.
 restoration, object-position counts, and visible red/blue presentation pixels
 (11/11 checks).
 
+`test/test-wordpad-ole-keyboard-undo.js` covers the renderer's Ctrl+C/X/V
+exports for the same inline object and WordPad's native Ctrl+Z undo path. It
+verifies that Undo restores both the RichEdit object position and visible
+presentation pixels after an object Cut (10/10 checks).
+
 ### 2026-08-12 advanced RTF slice
 
 `test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through

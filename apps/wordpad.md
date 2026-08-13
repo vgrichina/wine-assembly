@@ -48,6 +48,11 @@ pixels:     final screenshot contains the expected red and blue checker cells
 result:     PASS (11/11) for static-image Copy/Cut/Paste and visible rendering
 ```
 
+The browser-style keyboard path has matching coverage. Ctrl+C/Ctrl+V
+duplicates the selected inline image, Ctrl+X removes it, and WordPad's real
+Ctrl+Z accelerator restores the cut object and its red/blue presentation
+pixels (`test/test-wordpad-ole-keyboard-undo.js`, 10/10 checks).
+
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
 ```text
