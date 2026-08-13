@@ -203,7 +203,16 @@
       (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010))
       (call $gdi_dc_get_rop2 (local.get $hdc))))
   ;; gdi_rectangle(hdc, left, top, right, bottom)
-  (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get 0) (local.get $desc)))
+      (then (return (i32.const 0))))
+    (call $gdi_round_rect_desc (local.get 0) (local.get $desc)
+      (local.get 1) (local.get 2) (local.get 3) (local.get 4) (local.get 5) (local.get 6)
+      (call $gdi_dc_get_field (local.get 0) (i32.const 4) (i32.const 0x30017))
+      (call $gdi_dc_get_field (local.get 0) (i32.const 8) (i32.const 0x30010))
+      (call $gdi_dc_get_rop2 (local.get 0))))
   ;; gdi_round_rect(hdc, left, top, right, bottom, ellipseWidth, ellipseHeight)
   (func $host_gdi_fill_rect (param $hdc i32) (param $left i32) (param $top i32)
         (param $right i32) (param $bottom i32) (param $brush i32) (result i32)
@@ -317,7 +326,8 @@
       (call $gdi_dc_get_rop2 (local.get $hdc))
       (call $gdi_dc_get_field (local.get $hdc) (i32.const 76) (i32.const 1))))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
-  (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32)
+    (call $gdi_poly_bezier (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_poly_bezier(hdc, pointsWaPtr, nCount, fromCurrent)
   (func $host_gdi_polyline (param $hdc i32) (param $points i32) (param $count i32) (result i32)
     (call $gdi_polyline_try
@@ -378,7 +388,10 @@
       (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 84) (i32.const 0x30007)))))
     (i32.const 0))
   ;; gdi_get_current_object(hdc, objectType) → handle
-  (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_arc
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8)))
   ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
   (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_hdc_bitblt
@@ -402,7 +415,11 @@
       (local.get 5) (local.get 6) (local.get 7) (local.get 8) (local.get 9)
       (local.get 10)))
   ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop)
-  (func $host_gdi_scroll_window (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_scroll_window (param i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_scroll_window
+      (local.get 0) (local.get 1) (local.get 2)
+      (if (result i32) (local.get 3) (then (call $g2w (local.get 3))) (else (i32.const 0)))
+      (if (result i32) (local.get 4) (then (call $g2w (local.get 4))) (else (i32.const 0)))))
   ;; gdi_scroll_window(hwnd, dx, dy, prcScroll, prcClip)
   (import "host" "show_find_dialog" (func $host_show_find_dialog (param i32 i32 i32) (result i32)))
   ;; show_find_dialog(dlgHwnd, ownerHwnd, findreplace_guest_addr) → hwnd

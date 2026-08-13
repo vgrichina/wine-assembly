@@ -139,6 +139,37 @@ async function main() {
     assert.strictEqual(pixel(dib, 8, 4), 0xFF0000);
   });
 
+  check('RoundRect, PolyBezier, and Arc use canonical integer pixels', () => {
+    clear(dib);
+    assert.strictEqual(wat.test_call_RoundRect(dib.hdc, 1, 1, 11, 9, 6, 6), 1);
+    assert.strictEqual(pixel(dib, 1, 1), 0, 'rounded corner remains outside');
+    assert.strictEqual(pixel(dib, 6, 1), 0xFF0000, 'rounded top edge uses selected pen');
+    assert.strictEqual(pixel(dib, 6, 4), 0x00FF00, 'rounded interior uses selected brush');
+
+    clear(dib);
+    assert.strictEqual(wat.test_call_PolyBezier(
+      dib.hdc, points([[1, 8], [3, 1], [8, 1], [10, 8]]), 4), 1);
+    const curvePixels = Array.from({ length: dib.height }, (_, y) =>
+      Array.from({ length: dib.width }, (_, x) => pixel(dib, x, y)))
+      .flat().filter(Boolean);
+    assert(curvePixels.length >= 8, 'Bezier should rasterize a visible curve');
+    assert(curvePixels.every(color => color === 0xFF0000), 'Bezier must not produce antialias colors');
+
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 1, 8), 1);
+    assert.strictEqual(wat.test_call_PolyBezierTo(
+      dib.hdc, points([[3, 7], [8, 7], [10, 2]]), 3), 1);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, 0), 10);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, 0), 2);
+
+    clear(dib);
+    assert.strictEqual(wat.test_call_Arc(dib.hdc, 1, 1, 11, 9, 11, 5, 6, 1), 1);
+    const arcPixels = Array.from({ length: dib.height }, (_, y) =>
+      Array.from({ length: dib.width }, (_, x) => pixel(dib, x, y)))
+      .flat().filter(Boolean);
+    assert(arcPixels.length >= 6, 'Arc should rasterize a visible segment');
+    assert(arcPixels.every(color => color === 0xFF0000), 'Arc must not produce antialias colors');
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 }
 

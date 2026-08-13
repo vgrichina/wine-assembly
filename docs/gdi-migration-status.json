@@ -26,16 +26,6 @@
     "temporaryNonTextExceptions": [],
     "maximumTemporaryNonTextExceptions": 0
   },
-  "eliminatedNonTextSemantics": [
-    "gdi_round_rect",
-    "gdi_poly_bezier",
-    "gdi_arc",
-    "gdi_scroll_window"
-  ],
-  "watUnsupportedStubs": [
-    "gdi_round_rect",
-    "gdi_poly_bezier",
-    "gdi_arc",
-    "gdi_scroll_window"
-  ]
+  "eliminatedNonTextSemantics": [],
+  "watUnsupportedStubs": []
 }

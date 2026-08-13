@@ -208,6 +208,19 @@ async function main() {
   assert.strictEqual(base.gdi.surfacePresentations.get(surfaceId).canvas, canvas,
     'resized canonical surface presentation must become the renderer back canvas');
 
+  wat.guest_write32(rect, 1);
+  wat.guest_write32(rect + 4, 1);
+  wat.guest_write32(rect + 8, 5);
+  wat.guest_write32(rect + 12, 4);
+  assert.strictEqual(wat.test_call_FillRect(hdc, rect, redBrush), 1);
+  assert.strictEqual(wat.test_gdi_scroll_window(HWND, 2, 0, 0, 0), 1);
+  assert.deepStrictEqual(
+    [...canvas.getContext('2d').getImageData(6, 6, 1, 1).data.subarray(0, 3)],
+    [255, 0, 0], 'ScrollWindow must move canonical client pixels by the requested delta');
+  assert.deepStrictEqual(
+    [...canvas.getContext('2d').getImageData(4, 6, 1, 1).data.subarray(0, 3)],
+    [255, 255, 255], 'ScrollWindow must expose the vacated client strip');
+
   assert.strictEqual(wat.test_call_ReleaseDC(HWND, hdc), 1);
   assert.strictEqual(wat.test_call_ReleaseDC(HWND, whole), 1);
   assert.strictEqual(wat.test_call_DeleteObject(sourceBitmap), 1);

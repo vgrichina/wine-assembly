@@ -159,7 +159,7 @@ const SRC = path.join(ROOT, 'src');
     'overlapping stretch must reject instead of corrupting source pixels');
   });
 
-  check('BITMAPINFO descriptors validate BI_RGB 24/32-bit orientation and stride', () => {
+  check('BITMAPINFO descriptors validate true-color and indexed BI_RGB layouts', () => {
     const bmi = nextDesc;
     nextDesc += 0x100;
     dv.setUint32(bmi, 40, true);
@@ -179,7 +179,11 @@ const SRC = path.join(ROOT, 'src');
     assert.strictEqual(wat.test_gdi_raster_desc_from_bmi(desc, nextBits, bmi), 0);
     dv.setUint32(bmi + 16, 0, true);
     dv.setUint16(bmi + 14, 8, true);
-    assert.strictEqual(wat.test_gdi_raster_desc_from_bmi(desc, nextBits, bmi), 0);
+    assert.strictEqual(wat.test_gdi_raster_desc_from_bmi(desc, nextBits, bmi), 1);
+    assert.deepStrictEqual([
+      dv.getInt32(desc + 16, true), dv.getUint32(desc + 24, true),
+      dv.getInt32(desc + 28, true),
+    ], [8, bmi + 40, 256]);
   });
 
   check('MaskBlt selects foreground/background ROP3 bytes from exact mono mask bits', () => {

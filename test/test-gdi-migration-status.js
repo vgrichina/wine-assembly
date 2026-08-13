@@ -64,8 +64,8 @@ assert.deepStrictEqual(sorted(status.eliminatedNonTextSemantics), internalStubs,
   'every eliminated semantic import must remain an explicit WAT unsupported stub');
 assert.deepStrictEqual(sorted(status.watUnsupportedStubs), internalStubs,
   'stub inventory must exactly match the WAT source');
-assert.strictEqual(internalStubs.length, 4,
-  'the current WAT foundation leaves exactly 4 unsupported semantic stubs');
+assert.strictEqual(internalStubs.length, 0,
+  'all purged non-text semantic calls must have WAT implementations');
 
 // WebAssembly has no short-circuit logical AND. A pointer used directly as an
 // i32.and operand is a bit mask, so aligned addresses can turn a true predicate
@@ -79,7 +79,7 @@ assert.deepStrictEqual([...watSource.matchAll(rawPointerAnd)].map(match => match
   assert(wasm.length > 0, 'WAT must remain linkable after removing JS imports');
   await WebAssembly.compile(wasm);
   console.log(`PASS  JS GDI bridge is restricted to ${PERMANENT_NON_TEXT_BRIDGE.length} presentation imports and ${CANVAS_TEXT_POLICY.length} text imports`);
-  console.log(`PASS  all ${internalStubs.length} eliminated non-text semantic calls are explicit WAT stubs`);
+  console.log('PASS  no eliminated non-text semantic call remains a WAT stub');
   console.log('PASS  temporary non-text exception budget is zero and cannot expand');
   console.log('PASS  pointer operands are normalized before logical i32.and expressions');
   console.log(`PASS  WAT validates after the bridge purge (${wasm.length} bytes)`);

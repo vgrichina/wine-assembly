@@ -400,6 +400,27 @@ async function main() {
     assert.deepStrictEqual(rows(t), before);
   });
 
+  check('round rectangle has integer corner coverage and no fringe colors', () => {
+    const t = target(12, 10);
+    const red = object(1, 0, 1, 0x000000FF);
+    const green = object(2, 0, 0, 0x0000FF00);
+    assert.strictEqual(wat.test_gdi_round_rect_desc(
+      t.hdc, t.desc, 1, 1, 11, 9, 6, 6, red, green, 13), 1);
+    assert.deepStrictEqual(rows(t), [
+      '............',
+      '..RRRRRRRR..',
+      '.RGGGGGGGGR.',
+      '.RGGGGGGGGR.',
+      '.RGGGGGGGGR.',
+      '.RGGGGGGGGR.',
+      '.RGGGGGGGGR.',
+      '.RGGGGGGGGR.',
+      '..RRRRRRRR..',
+      '............',
+    ]);
+    assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.', 'R', 'G']));
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 }
 
