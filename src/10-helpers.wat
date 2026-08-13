@@ -1545,6 +1545,15 @@
           (i64.extend_i32_s (i32.load offset=44 (local.get $desc))))
         (i64.extend_i32_s (i32.load offset=60 (local.get $desc))))))
 
+  ;; Presentation is deliberately the only host boundary used by software
+  ;; geometry. The canonical surface layer can replace this adapter's HDC
+  ;; lookup with its stable surface id without changing raster semantics.
+  (func $gdi_geometry_present (param $hdc i32) (param $desc i32)
+        (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+    (drop (call $host_gdi_present_dib_rect
+      (local.get $hdc) (local.get $left) (local.get $top)
+      (local.get $right) (local.get $bottom))))
+
   (func $gdi_shape_put_pixel (param $hdc i32) (param $desc i32)
         (param $x i32) (param $y i32) (param $color i32) (param $rop2 i32) (result i32)
     (local $row i32) (local $pixel i32) (local $dst i32) (local $value i32)
@@ -1747,10 +1756,10 @@
           (local.set $y0 (i32.add (local.get $y0) (local.get $sy)))))
       (br $pixels)))
     (if (local.get $wrote)
-      (then (drop (call $host_gdi_present_dib_rect
-        (local.get $hdc) (local.get $min_x) (local.get $min_y)
+      (then (call $gdi_geometry_present
+        (local.get $hdc) (local.get $desc) (local.get $min_x) (local.get $min_y)
         (i32.add (local.get $max_x) (i32.const 1))
-        (i32.add (local.get $max_y) (i32.const 1))))))
+        (i32.add (local.get $max_y) (i32.const 1)))))
     (i32.const 1))
 
   (func (export "test_gdi_line_desc")
@@ -1842,9 +1851,9 @@
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $draw_bands)))
         (if (local.get $wrote)
-          (then (drop (call $host_gdi_present_dib_rect (local.get $hdc)
+          (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
             (i32.load offset=8 (local.get $record)) (i32.load offset=12 (local.get $record))
-            (i32.load offset=16 (local.get $record)) (i32.load offset=20 (local.get $record))))))
+            (i32.load offset=16 (local.get $record)) (i32.load offset=20 (local.get $record)))))
         (drop (call $gdi_rgn_delete (local.get $region)))))
     (if (i32.ne (local.get $pen) (i32.const 0x30018))
       (then
@@ -1952,8 +1961,9 @@
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $rows)))
     (if (local.get $wrote)
-      (then (drop (call $host_gdi_present_dib_rect
-        (local.get $hdc) (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)))))
+      (then (call $gdi_geometry_present
+        (local.get $hdc) (local.get $desc)
+        (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1))))
     (i32.const 1))
 
   ;; Pixel-center ellipse coverage. Fill is exact integer membership in the
@@ -2035,8 +2045,9 @@
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $rows)))
     (if (local.get $wrote)
-      (then (drop (call $host_gdi_present_dib_rect
-        (local.get $hdc) (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)))))
+      (then (call $gdi_geometry_present
+        (local.get $hdc) (local.get $desc)
+        (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1))))
     (i32.const 1))
 
   (func (export "test_gdi_rectangle_desc")
