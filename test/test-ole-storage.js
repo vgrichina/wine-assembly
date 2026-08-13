@@ -138,7 +138,54 @@ async function main() {
   const foldedCollisionName = writeWide('eLeMeNt');
   check('streams and child storages share one case-insensitive element namespace',
     childStream !== 0 && e.test_ole_create_child_storage(childStorage, foldedCollisionName) === 0);
+
+  const renamedStreamName = writeWide('Payload');
+  check('RenameElement updates a stream name without changing its identity',
+    e.test_ole_rename_element(childStorage, foldedCollisionName, renamedStreamName) === 0 &&
+    e.test_ole_find_stream(childStorage, foldedCollisionName) === 0 &&
+    (() => {
+      const renamed = e.test_ole_find_stream(childStorage, writeWide('pAyLoAd')) >>> 0;
+      const same = renamed === childStream;
+      if (renamed) e.test_ole_release(renamed);
+      return same;
+    })());
+  check('RenameElement rejects a cross-type name collision',
+    (e.test_ole_rename_element(childStorage, renamedStreamName, grandchildName) >>> 0) === 0x80030050);
+  check('DestroyElement removes lookup ownership but preserves a retained stream',
+    e.test_ole_destroy_element(childStorage, renamedStreamName) === 0 &&
+    e.test_ole_find_stream(childStorage, renamedStreamName) === 0 &&
+    e.test_ole_stream_set_size(childStream, 4) === 0 && e.test_ole_stream_size(childStream) === 4);
+  check('DestroyElement reports a missing element',
+    (e.test_ole_destroy_element(childStorage, renamedStreamName) >>> 0) === 0x80030002);
   e.test_ole_release(childStream);
+
+  const renamedGrandchildName = writeWide('Nested');
+  check('RenameElement updates a child storage name case-insensitively',
+    e.test_ole_rename_element(childStorage, writeWide('GRANDCHILD'), renamedGrandchildName) === 0 &&
+    e.test_ole_find_storage(childStorage, grandchildName) === 0 &&
+    (() => {
+      const renamed = e.test_ole_find_storage(childStorage, writeWide('nEsTeD')) >>> 0;
+      const same = renamed === grandchildStorage;
+      if (renamed) e.test_ole_release(renamed);
+      return same;
+    })());
+
+  const detachedName = writeWide('Detached');
+  const detachedStorage = e.test_ole_create_child_storage(childStorage, detachedName) >>> 0;
+  const detachedStream = e.test_ole_create_stream(detachedStorage, writeWide('StillHere')) >>> 0;
+  check('DestroyElement detaches a retained storage with its subtree intact',
+    detachedStorage !== 0 && detachedStream !== 0 &&
+    e.test_ole_destroy_element(childStorage, detachedName) === 0 &&
+    e.test_ole_find_storage(childStorage, detachedName) === 0 &&
+    e.test_ole_storage_parent(detachedStorage) === 0 &&
+    (() => {
+      const retained = e.test_ole_find_stream(detachedStorage, writeWide('stillhere')) >>> 0;
+      const same = retained === detachedStream;
+      if (retained) e.test_ole_release(retained);
+      return same;
+    })());
+  e.test_ole_release(detachedStream);
+  e.test_ole_release(detachedStorage);
   e.test_ole_release(grandchildStorage);
 
   check('COM reference counts include storage and clone ownership',
@@ -162,7 +209,7 @@ async function main() {
     dv.getUint32(wa(count), true) === 8);
   e.test_ole_release(clone);
 
-  const retainedGrandchild = e.test_ole_find_storage(childStorage, writeWide('GRANDCHILD')) >>> 0;
+  const retainedGrandchild = e.test_ole_find_storage(childStorage, writeWide('NESTED')) >>> 0;
   check('a retained child storage survives root release with its subtree intact',
     e.test_ole_storage_parent(childStorage) === 0 && retainedGrandchild === grandchildStorage &&
     e.test_ole_storage_parent(retainedGrandchild) === childStorage);

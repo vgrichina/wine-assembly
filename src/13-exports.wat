@@ -895,6 +895,10 @@
     (local.get $child))
   (func (export "test_ole_storage_parent") (param $storage i32) (result i32)
     (call $gl32 (i32.add (local.get $storage) (i32.const 44))))
+  (func (export "test_ole_destroy_element") (param $storage i32) (param $name i32) (result i32)
+    (call $ole_storage_destroy_element (local.get $storage) (local.get $name)))
+  (func (export "test_ole_rename_element") (param $storage i32) (param $old_name i32) (param $new_name i32) (result i32)
+    (call $ole_storage_rename_element (local.get $storage) (local.get $old_name) (local.get $new_name)))
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (if (i32.or
