@@ -348,6 +348,7 @@ function emitFunction(name, {
   genericAlu = false,
   blockFallback = false,
   exactOperands = false,
+  cachedTag = false,
 } = {}) {
   const out = [];
   const p = (s = '') => out.push(s);
@@ -373,6 +374,17 @@ function emitFunction(name, {
   p(`      (local.set $thread (call $cache_lookup ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))`);
   p('      (if (i32.eqz (local.get $thread))');
   p(`        (then (local.set $thread (call $decode_block ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))))`);
+  if (cachedTag) {
+    p('      ;; Benchmark-only classify-once selector. Bit 0 marks a packet');
+    p('      ;; already proven compatible with this generated handler subset.');
+    p('      (if (i32.eqz (i32.and (local.get $thread) (i32.const 1)))');
+    p('        (then');
+    p('          (global.set $ip (local.get $thread))');
+    p('          (global.set $steps (i32.const 1000))');
+    p('          (call $next)');
+    p('          (br $main)))');
+    p('      (local.set $thread (i32.and (local.get $thread) (i32.const -2)))');
+  }
   if (blockFallback) {
     p('      ;; Production-shaped fallback: validate the complete decoded block');
     p('      ;; before changing guest state. Unsupported blocks restart through $next.');
@@ -452,6 +464,7 @@ const text = [
   emitFunction('run_aoe_brtable_direct_generic_alu', { genericAlu: true }),
   emitFunction('run_aoe_brtable_subset_generic', { generic: true, blockFallback: true }),
   emitFunction('run_aoe_brtable_subset_direct', { genericAlu: true, blockFallback: true, exactOperands: true }),
+  emitFunction('run_aoe_brtable_cached_generic', { generic: true, cachedTag: true }),
   emitFunction('run_aoe_brtable_globals'),
   emitFunction('run_aoe_brtable_locals', { local: true }),
   '',

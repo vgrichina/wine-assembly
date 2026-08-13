@@ -2221,6 +2221,47 @@ variant. Differential coverage runs the complete AoE block corpus through that
 hook, and a dedicated unsupported block verifies exact fallback register, EIP,
 ESP, and memory state.
 
+#### Classify-once pointer-tag follow-up
+
+The least-work follow-up leaves the decoder and production cache unchanged.
+After warmup, the JS benchmark tags known-hot aligned packet pointers with bit
+zero. A benchmark-only runner performs one tag test, masks the pointer, and
+enters the existing generic `br_table` body. Untagged pointers call `$next`
+without executing any hot handler.
+
+In a 31-trial hot-only run of two million blocks, cached classification recovered
+the complete guard-free result:
+
+```text
+variant                              median ms   paired vs x86
+x86 call_indirect                       142.46        1.000x
+guard-free generic br_table              63.67        2.221x
+rescan every block                      109.53        1.301x
+cached HOT tag                           64.93        2.219x
+```
+
+The cached tag path is within measurement noise of the guard-free ceiling. Its
+aggregate median is about 2% slower, while the paired ratio is effectively
+identical. This confirms that the tag test, mask, and branch are cheap; repeated
+classification caused the earlier loss.
+
+A second 51-trial run used shorter 500,000-block samples and tagged only the
+fixture's `0x00535c20` block. Thus one of four block entries was hot and the same
+selector naturally exercised both paths:
+
+```text
+variant                              median ms   paired vs x86
+x86 call_indirect                        36.32        1.000x
+rescan every block                       28.12        1.314x
+cached 25%-hot / 75%-cold                22.52        1.595x
+```
+
+This is a proxy rather than a full-app estimate: `0x00535c20` is the longest of
+the four fixture blocks, so 25% of block entries represents more than 25% of
+the dispatched instructions. Still, it demonstrates that a single selector can
+remain profitable while exercising both hot and cold paths. The next production
+prototype should therefore tag eligibility when the decoded packet is cached.
+
 Full-browser results are not yet repeatable enough to enable this path:
 
 ```text

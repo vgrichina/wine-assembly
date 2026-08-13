@@ -12,6 +12,31 @@
       "brtable-subset-direct": { "medianMs": 129.28, "pairedSpeedup": 1.103 }
     }
   },
+  "classifyOnce": {
+    "hotOnly": {
+      "blocks": 2000000,
+      "warmupBlocks": 2000000,
+      "trials": 31,
+      "variants": {
+        "x86-threaded": { "medianMs": 142.46, "pairedSpeedup": 1.000 },
+        "brtable-generic-local-ip": { "medianMs": 63.67, "pairedSpeedup": 2.221 },
+        "brtable-subset-generic": { "medianMs": 109.53, "pairedSpeedup": 1.301 },
+        "brtable-cached-generic": { "medianMs": 64.93, "pairedSpeedup": 2.219 }
+      }
+    },
+    "mixed": {
+      "blocks": 500000,
+      "warmupBlocks": 2000000,
+      "trials": 51,
+      "hotEntryFraction": 0.25,
+      "taggedGuestBlock": "0x00535c20",
+      "variants": {
+        "x86-threaded": { "medianMs": 36.32, "pairedSpeedup": 1.000 },
+        "brtable-subset-generic": { "medianMs": 28.12, "pairedSpeedup": 1.314 },
+        "brtable-cached-mixed": { "medianMs": 22.52, "pairedSpeedup": 1.595 }
+      }
+    }
+  },
   "fullBrowser": {
     "aoe": [
       {

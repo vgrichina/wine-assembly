@@ -126,6 +126,10 @@ function percentile(values, fraction) {
     if (variant === 'brtable-direct-generic-alu') return e.run_aoe_brtable_direct_generic_alu;
     if (variant === 'brtable-subset-generic') return e.run_aoe_brtable_subset_generic;
     if (variant === 'brtable-subset-direct') return e.run_aoe_brtable_subset_direct;
+    if (variant === 'brtable-cached-generic' || variant === 'brtable-cached-cold' ||
+        variant === 'brtable-cached-mixed') {
+      return e.run_aoe_brtable_cached_generic;
+    }
     if (variant === 'brtable-globals') return e.run_aoe_brtable_globals;
     if (variant === 'brtable-locals') return e.run_aoe_brtable_locals;
     return e.run;
@@ -174,7 +178,10 @@ function percentile(values, fraction) {
       const cacheEntry = cacheBase + (((guestAddress >>> 2) & 0xfff) * 8);
       assert.strictEqual(words[cacheEntry >>> 2] >>> 0, guestAddress,
         `missing decoded cache entry for 0x${guestAddress.toString(16)}`);
-      let cursor = words[(cacheEntry + 4) >>> 2] >>> 0;
+      const pointerIndex = (cacheEntry + 4) >>> 2;
+      const thread = (words[pointerIndex] & 0xfffffffe) >>> 0;
+      words[pointerIndex] = thread;
+      let cursor = thread;
       for (let count = 0; count < 64; count++) {
         const encodedHandler = words[cursor >>> 2] >>> 0;
         const handler = originalHandlerBySpecialized.get(encodedHandler) || encodedHandler;
@@ -184,6 +191,10 @@ function percentile(values, fraction) {
         cursor += 8 + (rawWordsByHandler.get(handler) || 0) * 4;
         if (terminalHandlers.has(handler)) break;
         assert(count !== 63, `unterminated thread stream for 0x${guestAddress.toString(16)}`);
+      }
+      if (variant === 'brtable-cached-generic' ||
+          (variant === 'brtable-cached-mixed' && guestAddress === DISPATCH)) {
+        words[pointerIndex] = (thread | 1) >>> 0;
       }
     }
   }
@@ -208,7 +219,8 @@ function percentile(values, fraction) {
     if (variant === 'wat-optimized') e.set_aoe_recompile_enabled(1);
     seed();
     e.reset_aoe_recompile_counters();
-    if (promotionMap(variant)) {
+    if (promotionMap(variant) || variant === 'brtable-cached-generic' ||
+        variant === 'brtable-cached-mixed') {
       e.run(BLOCKS_PER_CYCLE);
       seed();
       rewriteCachedHandlers(variant);
@@ -256,6 +268,9 @@ function percentile(values, fraction) {
     'brtable-direct-generic-alu',
     'brtable-subset-generic',
     'brtable-subset-direct',
+    'brtable-cached-generic',
+    'brtable-cached-cold',
+    'brtable-cached-mixed',
     'brtable-globals',
     'brtable-locals',
     'wat-threaded',

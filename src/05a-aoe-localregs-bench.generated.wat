@@ -1003,6 +1003,157 @@
         (br $block_done)))
       (br $main)))
   )
+  (func $run_aoe_brtable_cached_generic (export "run_aoe_brtable_cached_generic") (param $max_blocks i32)
+    (local $blocks i32) (local $thread i32) (local $ip_v i32)
+    (local $fn i32) (local $op i32) (local $addr i32) (local $a i32) (local $b i32) (local $r i32)
+    (local.set $blocks (local.get $max_blocks))
+    (block $all_done (loop $main
+      (br_if $all_done (i32.le_s (local.get $blocks) (i32.const 0)))
+      (br_if $all_done (i32.eqz (global.get $eip)))
+      (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
+      (local.set $thread (call $cache_lookup (global.get $eip)))
+      (if (i32.eqz (local.get $thread))
+        (then (local.set $thread (call $decode_block (global.get $eip)))))
+      ;; Benchmark-only classify-once selector. Bit 0 marks a packet
+      ;; already proven compatible with this generated handler subset.
+      (if (i32.eqz (i32.and (local.get $thread) (i32.const 1)))
+        (then
+          (global.set $ip (local.get $thread))
+          (global.set $steps (i32.const 1000))
+          (call $next)
+          (br $main)))
+      (local.set $thread (i32.and (local.get $thread) (i32.const -2)))
+      (local.set $ip_v (local.get $thread))
+      (block $block_done (loop $dispatch
+        (local.set $fn (i32.load (local.get $ip_v)))
+        (local.set $op (i32.load offset=4 (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))
+        (block $fallback
+          (block $case_355
+          (block $case_319
+          (block $case_312
+          (block $case_128
+          (block $case_65
+          (block $case_64
+          (block $case_53
+          (block $case_48
+          (block $case_43
+          (block $case_28
+          (block $case_21
+          (block $case_20
+          (block $case_18
+          (block $case_12
+          (block $case_11
+          (block $case_7
+            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback (local.get $fn))
+          ) ;; case 7
+          (local.set $b (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $a (call $get_reg (local.get $op)))
+          (local.set $r (i32.and (local.get $a) (local.get $b)))
+          (call $set_reg (local.get $op) (local.get $r))
+          (call $set_flags_logic (local.get $r))
+          (br $dispatch)
+          ) ;; case 11
+          (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+          (br $dispatch)
+          ) ;; case 12
+          (local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))
+          (local.set $a (call $get_reg (local.get $addr)))
+          (local.set $b (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (call $set_reg (local.get $addr) (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 18
+          (local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))
+          (local.set $r (i32.xor (call $get_reg (local.get $addr)) (call $get_reg (i32.and (local.get $op) (i32.const 15)))))
+          (call $set_reg (local.get $addr) (local.get $r))
+          (call $set_flags_logic (local.get $r))
+          (br $dispatch)
+          ) ;; case 20
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (call $set_reg (local.get $op) (call $gl32 (local.get $addr)))
+          (br $dispatch)
+          ) ;; case 21
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (call $gs32 (local.get $addr) (call $get_reg (local.get $op)))
+          (br $dispatch)
+          ) ;; case 28
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (call $gl8 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))
+          (br $dispatch)
+          ) ;; case 43
+          (local.set $a (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (local.get $a))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 48
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $a (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+          (local.set $b (call $gl32 (local.get $addr)))
+          (local.set $r (call $do_alu32 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $a) (local.get $b)))
+          (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)) (then (call $set_reg (i32.and (local.get $op) (i32.const 15)) (local.get $r))))
+          (br $dispatch)
+          ) ;; case 53
+          (local.set $addr (i32.and (local.get $op) (i32.const 255)))
+          (local.set $a (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 255)))
+          (if (i32.eq (local.get $a) (i32.const 255)) (then (local.set $a (i32.and (global.get $ecx) (i32.const 31)))))
+          (call $set_reg (local.get $addr) (call $do_shift32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 255)) (call $get_reg (local.get $addr)) (local.get $a)))
+          (br $dispatch)
+          ) ;; case 64
+          (local.set $a (call $get_reg (local.get $op)))
+          (local.set $r (i32.add (local.get $a) (i32.const 1)))
+          (call $set_reg (local.get $op) (local.get $r))
+          (call $set_flags_inc (local.get $a) (local.get $r))
+          (br $dispatch)
+          ) ;; case 65
+          (local.set $a (call $get_reg (local.get $op)))
+          (local.set $r (i32.sub (local.get $a) (i32.const 1)))
+          (call $set_reg (local.get $op) (local.get $r))
+          (call $set_flags_dec (local.get $a) (local.get $r))
+          (br $dispatch)
+          ) ;; case 128
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $a (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15))))
+          (local.set $b (call $gl32 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))
+          (local.set $r (call $do_alu32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (local.get $a) (local.get $b)))
+          (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (i32.const 7)) (then (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15)) (local.get $r))))
+          (br $dispatch)
+          ) ;; case 312
+          (local.set $a (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $b (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (if (result i32) (call $eval_cc (i32.const 5)) (then (local.get $b)) (else (local.get $a))))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 319
+          (local.set $a (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $b (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (if (result i32) (call $eval_cc (i32.const 12)) (then (local.get $b)) (else (local.get $a))))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 355
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
+          (br $block_done)
+          (br $dispatch)
+        ) ;; fallback
+        (call $host_log_i32 (i32.const 0x10CA1BAD))
+        (global.set $eip (i32.const 0))
+        (br $block_done)))
+      (br $main)))
+  )
   (func $run_aoe_brtable_globals (export "run_aoe_brtable_globals") (param $max_blocks i32)
     (local $blocks i32) (local $thread i32) (local $ip_v i32)
     (local $fn i32) (local $op i32) (local $addr i32) (local $a i32) (local $b i32) (local $r i32)

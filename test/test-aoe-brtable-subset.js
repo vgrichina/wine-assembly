@@ -64,6 +64,10 @@ function snapshot(e) {
   assert.deepStrictEqual(snapshot(e), expected, 'direct subset fallback state');
 
   seed(e);
+  e.run_aoe_brtable_cached_generic(1);
+  assert.deepStrictEqual(snapshot(e), expected, 'untagged cached subset fallback state');
+
+  seed(e);
   e.set_x86_hot_subset_enabled(1);
   e.run(1);
   assert.deepStrictEqual(snapshot(e), expected, 'main-loop subset fallback state');

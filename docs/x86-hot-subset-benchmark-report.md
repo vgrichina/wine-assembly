@@ -60,6 +60,53 @@ Results:
 The production-shaped generic subset retained a 16.6% paired speedup, but
 repeated packet scanning consumed most of the guard-free upper bound.
 
+## Classify-once pointer-tag follow-up
+
+The follow-up does not change the decoder or production cache. The benchmark
+harness tags already-decoded aligned packet pointers with bit zero. A
+benchmark-only selector pays one tag test, pointer mask, and branch; untagged
+packets fall directly into `$next`.
+
+Hot-only command:
+
+```sh
+env BLOCKS=2000000 WARMUP_BLOCKS=2000000 TRIALS=31 WARM_ONCE=1 \
+  VARIANTS=x86-threaded,brtable-generic-local-ip,brtable-subset-generic,brtable-cached-generic \
+  node tools/bench-aoe-recompile-loop.js
+```
+
+| Variant | Median ms | Paired vs x86 |
+|---|---:|---:|
+| x86 `call_indirect` | 142.46 | 1.000x |
+| guard-free generic `br_table` | 63.67 | 2.221x |
+| rescan every block | 109.53 | 1.301x |
+| cached HOT tag | 64.93 | 2.219x |
+
+Cached-HOT is effectively identical to the guard-free ceiling. The aggregate
+median is about 2% slower, while the paired ratios differ by only 0.1%.
+
+Mixed-path command:
+
+```sh
+env BLOCKS=500000 WARMUP_BLOCKS=2000000 TRIALS=51 WARM_ONCE=1 \
+  VARIANTS=x86-threaded,brtable-subset-generic,brtable-cached-mixed \
+  node tools/bench-aoe-recompile-loop.js
+```
+
+Only `0x00535c20` was tagged, so one of four block entries was hot and each
+cycle exercised both branches of the selector.
+
+| Variant | Median ms | Paired vs x86 |
+|---|---:|---:|
+| x86 `call_indirect` | 36.32 | 1.000x |
+| rescan every block | 28.12 | 1.314x |
+| cached 25%-hot / 75%-cold | 22.52 | 1.595x |
+
+The tagged block is longer than the other three fixture blocks, so this is a
+selector-cost proxy rather than an estimate of a 25%-covered application. It
+does show that the same selector remains profitable while naturally executing
+both hot and cold paths.
+
 ## Full-browser profiles
 
 All runs used headless Chrome, muted audio, `HANDLER_HIST=0`,
