@@ -57,9 +57,11 @@ device/tymed matching returns the corresponding `DV_E_*` error and keeps
 distinct presentations separate. With that coverage the focused suite passes
 45/45. HGLOBAL text now produces coexisting ANSI, OEM, and UTF-16 values with
 canonical CRLF and exact terminating NULs, while registered RTF remains opaque
-and independent. The replacement is failure-atomic. Durable
-`OleFlushClipboard` snapshots, custom medium releasers, and advisory connections
-remain broader transfer work.
+and independent. The replacement is failure-atomic. `OleFlushClipboard` now
+detaches the clipboard from its former owner with deep HGLOBAL, IStream, and
+recursive IStorage snapshots plus stable format enumeration. The focused suite
+passes 50/50. Custom medium releasers and advisory connections remain broader
+transfer work.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
 `CoDisconnectObject`, HGLOBAL-backed `IStream` helpers,
@@ -763,13 +765,14 @@ Current evidence from the 2026-08-11 follow-up probe:
   13/13; it covers stable ANSI/Unicode `"Rich Text Format"` registration,
   distinct ids for unrelated registered formats, RTF availability/count/handle
   queries, byte round-trip, and `EmptyClipboard` clearing.
-- Direct WAT regression test: `node test/test-ole-data-object.js` passes 45/45;
+- Direct WAT regression test: `node test/test-ole-data-object.js` passes 50/50;
   it covers owned multi-format media, stable cloned enumeration, `SetData`
   transfer semantics, independent `GetData`, and caller-owned `GetDataHere`
   transfers for HGLOBAL, IStream, and recursively copied IStorage trees. It
   also verifies exact format/aspect/lindex/target-device/tymed negotiation and
   concrete-medium enumeration, plus ANSI/OEM/Unicode/RTF coexistence and exact
-  CRLF/NUL text conventions.
+  CRLF/NUL text conventions. `OleFlushClipboard` coverage proves deep HGLOBAL,
+  IStream, and recursive IStorage independence from later owner mutations.
 - Regression test: `node test/test-wordpad-selection-highlight.js` passes 8/8
   and writes `test/output/wordpad-richedit/selection-highlight-plain.png` plus
   `test/output/wordpad-richedit/selection-highlight.png`; it verifies Ctrl+A

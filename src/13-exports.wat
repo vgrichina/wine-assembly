@@ -1647,6 +1647,8 @@
     (if (global.get $clipboard_ole_data_object)
       (then (drop (call $ole_obj_addref (global.get $clipboard_ole_data_object)))))
     (global.get $clipboard_ole_data_object))
+  (func (export "test_ole_flush_clipboard") (result i32)
+    (call $ole_flush_clipboard_value))
   (func (export "test_call_OpenMutexA") (param $name i32) (result i32)
     (call $handle_OpenMutexA (i32.const 0x001f0001) (i32.const 0) (local.get $name)
       (i32.const 0) (i32.const 0) (i32.const 0))

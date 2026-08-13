@@ -330,7 +330,7 @@ transfer breadth below.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
-- Preserve stable format enumeration and media lifetime after clipboard owner
+- [x] Preserve stable format enumeration and media lifetime after clipboard owner
   changes, `OleSetClipboard`, `OleGetClipboard`, and `OleFlushClipboard`.
 - [x] Add `CF_UNICODETEXT` alongside ANSI/OEM text and registered RTF; preserve
   CRLF and terminating-null conventions exactly.
@@ -365,6 +365,13 @@ code units while the bounded ANSI/OEM fallback maps unrepresentable units to
 collection. The focused suite passes 45/45. The WordPad rich clipboard test
 passes 21/21 and the Paint clipboard test passes 9/9 after restricting Paint's
 delayed bitmap materialization to `mspaint.exe`.
+
+2026-08-13 clipboard-snapshot result: `OleFlushClipboard` now replaces a local
+owner with a distinct data-object value snapshot. HGLOBAL bytes, IStream
+backing, recursive IStorage trees, target-device metadata, and format
+enumeration remain independent if the former owner mutates or adds data. The
+bounded external Paint path wraps its already rendered CF_DIB in a local data
+object. The focused suite passes 50/50.
 
 ### Acceptance
 

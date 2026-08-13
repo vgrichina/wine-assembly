@@ -375,6 +375,82 @@ async function main() {
   e.test_ole_release_medium(fallbackAnsi);
   e.test_ole_release(unicodeTextObject);
 
+  const flushFormat = makeFormat(0xc301);
+  const flushPayload = makeHglobalMedium(Uint8Array.from([1, 2, 3, 0]));
+  const flushObject = e.test_ole_create_data_object(flushFormat, flushPayload.value) >>> 0;
+  const flushStreamFormat = makeFormat(0xc302, 4);
+  const flushStream = e.test_ole_create_stream(0, 0) >>> 0;
+  const flushStreamBytes = alloc(3);
+  u8.set(Uint8Array.from([4, 5, 6]), wa(flushStreamBytes));
+  const flushCount = alloc(4);
+  e.test_ole_stream_write(flushStream, flushStreamBytes, 3, flushCount);
+  const flushStreamMedium = alloc(12);
+  u8.fill(0, wa(flushStreamMedium), wa(flushStreamMedium) + 12);
+  dv.setUint32(wa(flushStreamMedium), 4, true);
+  dv.setUint32(wa(flushStreamMedium) + 4, flushStream, true);
+  e.test_ole_data_set(flushObject, flushStreamFormat, flushStreamMedium, 0);
+  const flushStorageFormat = makeFormat(0xc304, 8);
+  const flushStorage = e.test_ole_create_storage(0) >>> 0;
+  const flushStorageName = writeWide('Durable');
+  const flushStorageStream = e.test_ole_create_stream(flushStorage, flushStorageName) >>> 0;
+  const flushStorageBytes = alloc(2);
+  u8.set(Uint8Array.from([7, 8]), wa(flushStorageBytes));
+  e.test_ole_stream_write(flushStorageStream, flushStorageBytes, 2, flushCount);
+  const flushStorageMedium = alloc(12);
+  u8.fill(0, wa(flushStorageMedium), wa(flushStorageMedium) + 12);
+  dv.setUint32(wa(flushStorageMedium), 8, true);
+  dv.setUint32(wa(flushStorageMedium) + 4, flushStorage, true);
+  e.test_ole_data_set(flushObject, flushStorageFormat, flushStorageMedium, 0);
+  e.test_ole_set_clipboard(flushObject);
+  check('OleFlushClipboard replaces the owner with a distinct durable data object',
+    e.test_ole_flush_clipboard() === 0 && e.clipboard_ole_data_object() !== flushObject);
+  const flushedObject = e.test_ole_get_clipboard() >>> 0;
+  const changedPayload = makeHglobalMedium(Uint8Array.from([9, 9, 9, 0]));
+  e.test_ole_data_set(flushObject, flushFormat, changedPayload.value, 0);
+  e.test_ole_stream_seek(flushStream, 0);
+  u8.set(Uint8Array.from([9, 9, 9]), wa(flushStreamBytes));
+  e.test_ole_stream_write(flushStream, flushStreamBytes, 3, flushCount);
+  e.test_ole_stream_seek(flushStorageStream, 0);
+  u8.set(Uint8Array.from([9, 9]), wa(flushStorageBytes));
+  e.test_ole_stream_write(flushStorageStream, flushStorageBytes, 2, flushCount);
+  const addedAfterFlushFormat = makeFormat(0xc303);
+  e.test_ole_data_set(flushObject, addedAfterFlushFormat, changedPayload.value, 0);
+  const flushedPayloadOut = alloc(12);
+  check('flushed HGLOBAL data remains independent after owner replacement and mutation',
+    e.test_ole_data_get(flushedObject, flushFormat, flushedPayloadOut) === 0 &&
+    readAnsiHandle(dv.getUint32(wa(flushedPayloadOut) + 4, true)).join(',') === '1,2,3,0');
+  e.test_ole_release_medium(flushedPayloadOut);
+  const flushedStreamOut = alloc(12);
+  e.test_ole_data_get(flushedObject, flushStreamFormat, flushedStreamOut);
+  const durableStream = dv.getUint32(wa(flushedStreamOut) + 4, true) >>> 0;
+  const durableStreamBytes = alloc(3);
+  e.test_ole_stream_seek(durableStream, 0);
+  check('flushed IStream data is a deep value snapshot rather than a shared reference',
+    e.test_ole_stream_read(durableStream, durableStreamBytes, 3, flushCount) === 0 &&
+    Array.from(u8.slice(wa(durableStreamBytes), wa(durableStreamBytes) + 3)).join(',') === '4,5,6');
+  e.test_ole_release_medium(flushedStreamOut);
+  const flushedStorageOut = alloc(12);
+  e.test_ole_data_get(flushedObject, flushStorageFormat, flushedStorageOut);
+  const durableStorage = dv.getUint32(wa(flushedStorageOut) + 4, true) >>> 0;
+  const durableStorageStream = e.test_ole_find_stream(durableStorage, flushStorageName) >>> 0;
+  const durableStorageBytes = alloc(2);
+  e.test_ole_stream_seek(durableStorageStream, 0);
+  check('flushed IStorage trees retain independent nested stream values',
+    durableStorageStream !== 0 &&
+    e.test_ole_stream_read(durableStorageStream, durableStorageBytes, 2, flushCount) === 0 &&
+    Array.from(u8.slice(wa(durableStorageBytes), wa(durableStorageBytes) + 2)).join(',') === '7,8');
+  e.test_ole_release(durableStorageStream);
+  e.test_ole_release_medium(flushedStorageOut);
+  check('flushed format enumeration is stable after the former owner adds data',
+    e.test_ole_data_count(flushedObject) === 3 &&
+    (e.test_ole_data_query(flushedObject, addedAfterFlushFormat) >>> 0) === 0x80040064);
+  e.test_ole_release(flushedObject);
+  e.test_ole_set_clipboard(0);
+  e.test_ole_release(flushObject);
+  e.test_ole_release(flushStream);
+  e.test_ole_release(flushStorageStream);
+  e.test_ole_release(flushStorage);
+
   // GetDataHere fills media owned by the caller. It must not replace handles
   // or interface pointers, and partial HGLOBAL writes are forbidden.
   const hereObject = e.test_ole_create_data_object(format, medium) >>> 0;
