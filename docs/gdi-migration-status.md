@@ -23,7 +23,9 @@ deleted and their callers resolve to explicit zero-return WAT stubs until real
 WAT implementations replace them. Pen, solid-brush, memory-DC,
 compatible-bitmap, DIB-section, window-surface, region painting, line, basic
 shape, chrome, pixel, core blit, transparent image, disabled image, and DC
-mapping semantics are now WAT-owned. This intentionally
+mapping semantics are now WAT-owned. This includes `GetDIBits`, `SetDIBits`,
+`GetDIBColorTable`, and `StretchDIBits` conversion across canonical indexed
+and true-color bitmap descriptors. This intentionally
 breaks unsupported application paths rather than retaining JavaScript GDI
 semantics.
 

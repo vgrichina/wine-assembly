@@ -362,6 +362,24 @@
           (i32.eq (call $host_gdi_get_viewport_org_y (local.get 0)) (i32.const 8)))
         (i32.and (i32.eq (call $host_gdi_get_viewport_ext_x (local.get 0)) (i32.const 9))
           (i32.eq (call $host_gdi_get_viewport_ext_y (local.get 0)) (i32.const 10))))))
+  (func (export "test_gdi_get_dibits")
+        (param i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_get_dibits
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4) (local.get 5)))
+  (func (export "test_gdi_set_dibits")
+        (param i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_set_dibits
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4) (local.get 5)))
+  (func (export "test_gdi_get_dib_color_table")
+        (param i32 i32 i32 i32) (result i32)
+    (call $gdi_get_dib_color_table
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  (func (export "test_gdi_stretch_dibits")
+        (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_stretch_dibits
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8)
+      (local.get 9) (local.get 10) (local.get 11) (local.get 12)))
   (func (export "test_call_DeleteObject") (param i32) (result i32)
     (call $handle_DeleteObject
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)

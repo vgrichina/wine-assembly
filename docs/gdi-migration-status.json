@@ -30,20 +30,12 @@
     "gdi_round_rect",
     "gdi_poly_bezier",
     "gdi_arc",
-    "gdi_scroll_window",
-    "gdi_get_di_bits",
-    "gdi_set_dib_bits",
-    "gdi_get_dib_color_table",
-    "gdi_stretch_dib_bits"
+    "gdi_scroll_window"
   ],
   "watUnsupportedStubs": [
     "gdi_round_rect",
     "gdi_poly_bezier",
     "gdi_arc",
-    "gdi_scroll_window",
-    "gdi_get_di_bits",
-    "gdi_set_dib_bits",
-    "gdi_get_dib_color_table",
-    "gdi_stretch_dib_bits"
+    "gdi_scroll_window"
   ]
 }

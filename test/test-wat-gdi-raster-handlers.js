@@ -207,6 +207,75 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(surface, 3, 3), 0xFF0000);
   });
 
+  check('GetDIBits and SetDIBits convert canonical scanline slices', () => {
+    const surface = makeDib(3, 3);
+    wat.test_call_SetPixel(surface.hdc, 0, 0, 0x000000FF); // red top
+    wat.test_call_SetPixel(surface.hdc, 1, 1, 0x0000FF00); // green middle
+    wat.test_call_SetPixel(surface.hdc, 2, 2, 0x00FF0000); // blue bottom
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const outGa = wat.guest_alloc(36) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const outWa = 0x12000 + (outGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 8, 3);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    assert.strictEqual(wat.test_gdi_get_dibits(surface.bitmap, 0, 3, outWa, bmiWa, 0), 3);
+    // Bottom-up output begins with the blue bottom scanline (DWORD stride 12).
+    assert.deepStrictEqual([...bytes.slice(outWa + 6, outWa + 9)], [0xFF, 0x00, 0x00]);
+    const copy = makeDib(3, 3);
+    assert.strictEqual(wat.test_gdi_set_dibits(copy.bitmap, 0, 3, outWa, bmiWa, 0), 3);
+    assert.strictEqual(packed(copy, 0, 0), 0xFF0000);
+    assert.strictEqual(packed(copy, 1, 1), 0x00FF00);
+    assert.strictEqual(packed(copy, 2, 2), 0x0000FF);
+  });
+
+  check('GetDIBColorTable returns the selected indexed bitmap RGBQUADs', () => {
+    const bmiGa = wat.guest_alloc(48) >>> 0;
+    const outGa = wat.guest_alloc(4) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -1);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 1);
+    wat.guest_write32(bmiGa + 32, 2);
+    bytes.set([0x00, 0x00, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0x00], bmiWa + 40);
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, outGa) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    wat.test_call_SelectObject(hdc, bitmap);
+    const colorsGa = wat.guest_alloc(8) >>> 0;
+    const colorsWa = 0x12000 + (colorsGa - imageBase);
+    assert.strictEqual(wat.test_gdi_get_dib_color_table(hdc, 0, 2, colorsWa), 2);
+    assert.deepStrictEqual([...bytes.slice(colorsWa, colorsWa + 8)],
+      [0x00, 0x00, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0x00]);
+  });
+
+  check('StretchDIBits converts and scales application-owned pixels', () => {
+    const surface = makeDib(4, 4);
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(16) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -2);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    // top-down: red, green / blue, white with 8-byte stride
+    bytes.set([0, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0], bitsWa);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 0, 4, 4, 0, 0, 2, 2, bitsWa, bmiWa, 0, 0x00CC0020), 2);
+    assert.strictEqual(packed(surface, 0, 0), 0xFF0000);
+    assert.strictEqual(packed(surface, 3, 0), 0x00FF00);
+    assert.strictEqual(packed(surface, 0, 3), 0x0000FF);
+    assert.strictEqual(packed(surface, 3, 3), 0xFFFFFF);
+    assert.strictEqual(canvasRgb(surface, 3, 3), 0xFFFFFF);
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 })().catch(error => {
   console.error(error.stack || error);

@@ -491,11 +491,20 @@
     (call $gdi_hdc_ext_flood_fill
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_ext_flood_fill(hdc, x, y, color, fillType) → BOOL
-  (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_get_dibits
+      (local.get 1) (local.get 2) (local.get 3)
+      (if (result i32) (local.get 4) (then (call $g2w (local.get 4))) (else (i32.const 0)))
+      (local.get 5) (local.get 6)))
   ;; gdi_get_di_bits(hdc, hBitmap, startScan, numScans, bitsGA, bmiWA, colorUse) → numScans
-  (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_set_dibits
+      (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (local.get 5) (local.get 6)))
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
-  (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32)
+    (call $gdi_get_dib_color_table
+      (local.get 0) (local.get 1) (local.get 2) (call $g2w (local.get 3))))
   ;; gdi_get_dib_color_table(hdc, startIdx, numEntries, colorsGA) → count
   (func $host_gdi_set_dib_to_device
         (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
@@ -504,7 +513,11 @@
       (local.get 4) (local.get 5) (local.get 6) (local.get 7)
       (local.get 8) (local.get 9) (local.get 10) (local.get 11)))
   ;; gdi_set_dib_to_device(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, cLines, bitsWA, bmiWA, colorUse) → cLines
-  (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_stretch_dibits
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8)
+      (local.get 9) (local.get 10) (local.get 11) (local.get 12)))
   ;; gdi_stretch_dib_bits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, bitsWA, bmiWA, usage, rop)
 
   ;; DirectX tracing hook — WAT calls this from Lock/Unlock/Blt/Flip/SetEntries/dx_present
