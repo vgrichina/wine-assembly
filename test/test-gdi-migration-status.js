@@ -59,8 +59,8 @@ assert.deepStrictEqual(sorted(status.eliminatedNonTextSemantics), internalStubs,
   'every eliminated semantic import must remain an explicit WAT unsupported stub');
 assert.deepStrictEqual(sorted(status.watUnsupportedStubs), internalStubs,
   'stub inventory must exactly match the WAT source');
-assert.strictEqual(internalStubs.length, 50,
-  'the WAT foundation leaves exactly 50 unsupported semantic stubs');
+assert.strictEqual(internalStubs.length, 47,
+  'the WAT foundation leaves exactly 47 unsupported semantic stubs');
 
 (async () => {
   const wasm = await compileWat(file => fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));

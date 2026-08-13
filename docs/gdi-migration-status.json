@@ -26,8 +26,6 @@
     "maximumTemporaryNonTextExceptions": 0
   },
   "eliminatedNonTextSemantics": [
-    "gdi_create_bitmap",
-    "gdi_create_dib_bitmap",
     "gdi_rectangle",
     "gdi_round_rect",
     "gdi_fill_rect",
@@ -52,7 +50,6 @@
     "gdi_stretch_blt",
     "gdi_scroll_window",
     "gdi_get_clip_box",
-    "gdi_load_bitmap",
     "gdi_get_object_w",
     "gdi_get_object_h",
     "gdi_set_viewport_org",
@@ -78,8 +75,6 @@
     "gdi_stretch_dib_bits"
   ],
   "watUnsupportedStubs": [
-    "gdi_create_bitmap",
-    "gdi_create_dib_bitmap",
     "gdi_rectangle",
     "gdi_round_rect",
     "gdi_fill_rect",
@@ -104,7 +99,6 @@
     "gdi_stretch_blt",
     "gdi_scroll_window",
     "gdi_get_clip_box",
-    "gdi_load_bitmap",
     "gdi_get_object_w",
     "gdi_get_object_h",
     "gdi_set_viewport_org",

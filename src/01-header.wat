@@ -162,9 +162,13 @@
   ;; gdi_create_compat_bitmap(hdc, width, height, backingWa) registers a DDB
   ;; whose private canonical pixels live at backingWa. The address is not
   ;; exposed through BITMAP.bmBits.
-  (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32)
+    (call $gdi_bitmap_create_bitmap (local.get 0) (local.get 1) (i32.const 1)
+      (local.get 2) (local.get 3)))
   ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
-  (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32)
+    (call $gdi_bitmap_create_dibitmap (local.get 0) (local.get 1)
+      (i32.ne (i32.and (local.get 2) (i32.const 4)) (i32.const 0)) (i32.const 0)))
   ;; gdi_create_dib_bitmap(lpbmi_wa, lpbInit_wa, fdwInit) → handle
   (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)
     (call $gdi_create_dib_section_internal
@@ -281,7 +285,8 @@
 
   (func $host_gdi_get_clip_box (param i32) (result i32) (i32.const 0))
   ;; gdi_get_clip_box(hdc) → packed w | (h << 16)
-  (func $host_gdi_load_bitmap (param i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_load_bitmap (param i32 i32) (result i32)
+    (call $gdi_bitmap_load_resource (local.get 0) (local.get 1) (i32.const 0)))
   (func $host_gdi_get_object_w (param i32) (result i32) (i32.const 0))
   (func $host_gdi_get_object_h (param i32) (result i32) (i32.const 0))
   (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32) (i32.const 0))
@@ -734,6 +739,8 @@
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07EF0800 2KB      GDI_DC_RASTER_TABLE (256 x {HDC, ROP2})
   ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
+  ;; 0x07EF1100 160B     GDI_BLIT_DESC scratch
+  ;; 0x07EF11A0 296B     GDI_BITMAP_PLAN/name scratch
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
@@ -916,6 +923,12 @@
   (global $GDI_BLIT_DST_DESC i32 (i32.const 0x07EF1100))
   (global $GDI_BLIT_SRC_DESC i32 (i32.const 0x07EF1150))
   (global $GDI_BLIT_DESC_SIZE i32 (i32.const 0x000000A0))
+  ;; Bitmap creation handlers are synchronous. They share a parsed metadata
+  ;; plan and an ANSI conversion buffer for LoadBitmapW resource names.
+  (global $GDI_BITMAP_PLAN i32 (i32.const 0x07EF11A0))
+  (global $GDI_BITMAP_PLAN_SIZE i32 (i32.const 0x00000028))
+  (global $GDI_BITMAP_NAME i32 (i32.const 0x07EF11C8))
+  (global $GDI_BITMAP_NAME_SIZE i32 (i32.const 0x00000100))
   ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
   ;; presentation and GDI operations that have not moved to WAT yet.
   (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))

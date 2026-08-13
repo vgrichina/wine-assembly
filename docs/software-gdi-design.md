@@ -226,9 +226,9 @@ remain WAT-owned. `gdi_text_bind` exposes a canonical DC record and opaque
 surface token without constructing a semantic JavaScript DC mirror. Canvas
 output for memory DCs is synchronized back into authoritative native pixels.
 There is no
-current `gdi_*` resource exception: `gdi_load_bitmap` created GDI objects and
-therefore was semantic, not a raw resource-byte boundary. A future resource
-bridge must return immutable bytes/metadata and must be separately allowlisted.
+current `gdi_*` resource exception. `LoadBitmapA/W` resolve raw RT_BITMAP bytes
+through the WAT PE-resource walker, validate and copy pixels and RGBQUADs into
+owned canonical storage, then publish only a derived surface presentation.
 
 `test/test-gdi-migration-status.js` hard-codes this allowlist, verifies that
 JavaScript exports no other `gdi_*` methods, checks the zero temporary-exception

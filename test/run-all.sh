@@ -37,6 +37,7 @@ UNIT=(
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
   test/test-wat-gdi-bitmap.js
+  test/test-wat-gdi-bitmap-handlers.js
   test/test-gdi-migration-status.js
   test/test-compatible-bitmap-wat.js
   test/test-gdi-surface.js

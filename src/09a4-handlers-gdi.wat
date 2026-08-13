@@ -259,16 +259,10 @@
 
   ;; 160: CreateBitmap — nWidth(arg0), nHeight(arg1), nPlanes(arg2), nBitCount(arg3), lpBits(arg4)
   (func $handle_CreateBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (local.get $arg4))
-      (then
-        ;; NULL lpBits — create blank bitmap, pass bpp so host can mark monochrome
-        (global.set $eax (call $host_gdi_create_bitmap
-          (local.get $arg0) (local.get $arg1) (local.get $arg3) (i32.const 0))))
-      (else
-        ;; Has pixel data — convert via host
-        (global.set $eax (call $host_gdi_create_bitmap
-          (local.get $arg0) (local.get $arg1) (local.get $arg3)
-          (call $g2w (local.get $arg4))))))
+    (global.set $eax (call $gdi_bitmap_create_bitmap
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (if (result i32) (local.get $arg4)
+        (then (call $g2w (local.get $arg4))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
@@ -288,40 +282,12 @@
 
   ;; 163: GetObjectA
   (func $handle_GetObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $record i32) (local $bits_wa i32) (local $out_wa i32)
+    (local $record i32)
     (local.set $record (call $gdi_object_record (local.get $arg0)))
-    (if (i32.or (i32.eqz (local.get $record))
-          (i32.ne (i32.load offset=4 (local.get $record)) (i32.const 3)))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (if (i32.and (i32.gt_u (local.get $arg1) (i32.const 0))
-          (i32.ne (local.get $arg2) (i32.const 0)))
-      (then
-        (local.set $out_wa (call $g2w (local.get $arg2)))
-        (call $zero_memory (local.get $out_wa) (local.get $arg1))))
-    ;; BITMAP: bmType, bmWidth, bmHeight, bmWidthBytes, bmPlanes,
-    ;; bmBitsPixel, bmBits. DDB-compatible bitmaps intentionally report a null
-    ;; bmBits pointer; only DIB sections expose their canonical guest storage.
-    (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 24))
-          (i32.ne (local.get $arg2) (i32.const 0)))
-      (then
-        (call $gs32 (i32.add (local.get $arg2) (i32.const 4))
-          (i32.load offset=8 (local.get $record)))
-        (call $gs32 (i32.add (local.get $arg2) (i32.const 8))
-          (i32.load offset=12 (local.get $record)))
-        (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
-          (i32.load offset=28 (local.get $record)))
-        (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 1))
-        (call $gs16 (i32.add (local.get $arg2) (i32.const 18))
-          (i32.load offset=16 (local.get $record)))
-        (local.set $bits_wa (call $gdi_bitmap_public_bits (local.get $arg0)))
-        (if (local.get $bits_wa)
-          (then
-            (call $gs32 (i32.add (local.get $arg2) (i32.const 20))
-              (call $w2g (local.get $bits_wa)))))))
-    (global.set $eax (local.get $arg1))
+    (global.set $eax (call $gdi_bitmap_write_object (local.get $record)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 

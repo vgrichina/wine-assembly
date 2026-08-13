@@ -2431,17 +2431,8 @@
 
   ;; 118: LoadBitmapA
   (func $handle_LoadBitmapA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    ;; arg1 = resource ID (MAKEINTRESOURCE if <= 0xFFFF, else string pointer)
-    (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
-      (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
-        (then (local.get $arg1))
-        (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
-    ;; If host couldn't find it, return a fake 32x32 bitmap
-    (if (i32.eqz (local.get $tmp))
-    (then (local.set $tmp (call $host_gdi_create_compat_bitmap
-      (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
-    (global.set $eax (local.get $tmp))
+    (global.set $eax (call $gdi_bitmap_load_resource
+      (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -5969,16 +5960,8 @@
 
   ;; 392: LoadBitmapW
   (func $handle_LoadBitmapW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    ;; arg1 = resource ID (MAKEINTRESOURCE if <= 0xFFFF, else string pointer)
-    (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
-      (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
-        (then (local.get $arg1))
-        (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
-    (if (i32.eqz (local.get $tmp))
-      (then (local.set $tmp (call $host_gdi_create_compat_bitmap
-        (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
-    (global.set $eax (local.get $tmp))
+    (global.set $eax (call $gdi_bitmap_load_resource
+      (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -6804,12 +6787,15 @@
 
   ;; 449: CreateDIBitmap(hdc, lpbmih, fdwInit, lpbInit, lpbmi, fuUsage) — 6 args
   (func $handle_CreateDIBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; arg0=hdc, arg1=lpbmih, arg2=fdwInit, arg3=lpbInit, arg4=lpbmi
-    ;; fuUsage at [ESP+24]
-    (global.set $eax (call $host_gdi_create_dib_bitmap
-      (call $g2w (local.get $arg4))   ;; lpbmi (BITMAPINFO: header + color table)
-      (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))  ;; lpbInit
-      (local.get $arg2)))             ;; fdwInit
+    ;; CBM_INIT=4. lpbmi carries the RGBQUAD table; lpbmih is sufficient for
+    ;; true-color callers that omit the duplicate BITMAPINFO pointer.
+    (global.set $eax (call $gdi_bitmap_create_dibitmap
+      (call $g2w (select (local.get $arg4) (local.get $arg1)
+        (i32.ne (local.get $arg4) (i32.const 0))))
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+      (i32.ne (i32.and (local.get $arg2) (i32.const 4)) (i32.const 0))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) ;; 6 args + ret
   )
 
