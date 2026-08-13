@@ -30,7 +30,7 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 12/12 and 13/13.
+storage suites remain green at 12/12 and 23/23.
 
 ## ASCII TLDR
 
@@ -682,6 +682,11 @@ live in-memory root.
 `test/test-ole-storage.js` provides direct coverage for object creation,
 binary round-trip including compound-file-signature bytes, EOF semantics,
 case-insensitive stream lookup, CLSID persistence, and COM lifetime ownership.
+The stream-core follow-up adds `IStream::Clone`: clones share mutable backing
+bytes and size, retain independent cursors, propagate SetSize/write changes,
+zero-fill data exposed after truncation, and retain the canonical root after
+the original interface and owning storage are released. HGLOBAL-backed clones
+also preserve the same backing handle. The focused suite now passes 23/23.
 At this foundation stage it did not serialize a Compound File Binary container,
 expose an `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server.
 Later sections document the completed bounded `IDataObject` and static-DIB

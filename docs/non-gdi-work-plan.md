@@ -126,8 +126,8 @@ Use these as commit-sized milestones. Do not begin a later OLE milestone while
 an earlier ownership/persistence contract is still ambiguous.
 
 1. **Thread trace:** generic event log plus bounded WordPad startup test.
-2. **Stream core:** `IStream::Clone`, independent cursors, shared backing
-   lifetime, and edge-case unit coverage.
+2. **Stream core:** complete on 2026-08-12. `IStream::Clone`, independent
+   cursors, shared backing lifetime, and edge-case coverage pass 23/23.
 3. **Storage tree:** nested storage, enumeration, rename/delete/copy/move, and
    commit/revert tests.
 4. **CFB persistence:** deterministic writer, defensive reader, and
@@ -215,13 +215,20 @@ storage layer before adding more OLE object types.
 
 ### P2.1 Stream semantics
 
-- Implement `IStream::Clone` with shared backing bytes and an independent seek
+- [x] Implement `IStream::Clone` with shared backing bytes and an independent seek
   cursor.
-- Complete copy, set-size, sparse extension/zero fill, seek overflow, stat,
+- [ ] Complete copy, set-size, sparse extension/zero fill, seek overflow, stat,
   lock/unlock-region, commit, and revert semantics used by Win9x OLE clients.
-- Make lifetime ownership explicit: a stream keeps its backing store alive;
+- [x] Make lifetime ownership explicit: a stream keeps its backing store alive;
   releasing a storage handle does not invalidate an independently retained
   stream.
+
+2026-08-12 stream-core result: clones retain a canonical root stream, share its
+mutable data/size/capacity, and keep their own positions. Write and SetSize are
+visible across interfaces, shrink/grow zero-fills exposed bytes, HGLOBAL clones
+return the same handle, and a clone remains readable after the original caller
+and owning storage are released. `test/test-ole-storage.js` passes 23/23. The
+unchecked line above remains open for full CopyTo/locking/transaction breadth.
 
 ### P2.2 Storage tree
 

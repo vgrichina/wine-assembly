@@ -15,6 +15,10 @@ now proves WordPad's real startup uses that path.
 Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences
 are covered as well. The reusable OLE persistence foundation provides binary
 `ILockBytes`, named `IStorage`/`IStream` children, and storage class identity.
+`IStream::Clone` now shares backing bytes and size while retaining an
+independent seek cursor; the clone keeps its root alive after the original
+interface and owning storage are released. Truncation followed by growth
+zero-fills newly exposed bytes.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports

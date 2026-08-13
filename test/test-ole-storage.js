@@ -71,6 +71,37 @@ async function main() {
   check('IStream read returns S_FALSE at EOF with exact byte count', readHr === 1 && dv.getUint32(wa(count), true) === payload.length);
   check('IStream bytes round-trip without text transcoding', roundTrip.every((v, i) => v === payload[i]));
 
+  e.test_ole_stream_seek(stream, 3);
+  const clone = e.test_ole_stream_clone(stream) >>> 0;
+  check('IStream Clone returns a distinct interface at the source cursor',
+    clone !== 0 && clone !== stream && e.test_ole_stream_position(clone) === 3);
+  e.test_ole_stream_seek(stream, 0);
+  check('cloned streams keep independent seek cursors',
+    e.test_ole_stream_position(stream) === 0 && e.test_ole_stream_position(clone) === 3);
+
+  const clonePatch = writeBytes(Uint8Array.from([0xaa, 0xbb]));
+  check('writing through a clone updates the shared backing bytes',
+    e.test_ole_stream_write(clone, clonePatch, 2, count) === 0 &&
+    e.test_ole_stream_position(clone) === 5 && e.test_ole_stream_position(stream) === 0);
+  const sharedOut = alloc(payload.length);
+  check('the original stream observes clone writes without sharing its cursor',
+    e.test_ole_stream_read(stream, sharedOut, payload.length, count) === 0 &&
+    u8[wa(sharedOut) + 3] === 0xaa && u8[wa(sharedOut) + 4] === 0xbb);
+
+  check('SetSize through a clone updates shared size',
+    e.test_ole_stream_set_size(clone, 3) === 0 &&
+    e.test_ole_stream_size(stream) === 3 && e.test_ole_stream_size(clone) === 3);
+  check('shrinking does not clamp independent cursors',
+    e.test_ole_stream_position(stream) === payload.length && e.test_ole_stream_position(clone) === 5);
+  check('growing a previously shrunk stream zero-fills the exposed range',
+    e.test_ole_stream_set_size(stream, 8) === 0 && e.test_ole_stream_size(clone) === 8 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 3);
+      const zeros = alloc(5);
+      return e.test_ole_stream_read(clone, zeros, 5, count) === 0 &&
+        Array.from(u8.slice(wa(zeros), wa(zeros) + 5)).every(byte => byte === 0);
+    })());
+
   const lookupName = writeWide('objectdata');
   const opened = e.test_ole_find_stream(storage, lookupName) >>> 0;
   check('IStorage opens named streams case-insensitively', opened === stream);
@@ -83,16 +114,26 @@ async function main() {
   check('IStorage persists the 16-byte class identifier',
     Array.from(u8.slice(wa(clsidOut), wa(clsidOut) + 16)).every((v, i) => v === u8[wa(clsid) + i]));
 
-  check('COM reference counts are tracked', e.test_ole_addref(stream) === 3 && e.test_ole_release(stream) === 2);
-  check('caller stream release preserves the storage-owned stream', e.test_ole_release(stream) === 1);
+  check('COM reference counts include storage and clone ownership',
+    e.test_ole_addref(stream) === 4 && e.test_ole_release(stream) === 3);
+  check('caller stream release preserves storage and clone ownership', e.test_ole_release(stream) === 2);
 
   const reopened = e.test_ole_find_stream(storage, name) >>> 0;
   e.test_ole_stream_seek(reopened, 0);
   const reread = alloc(payload.length);
   check('storage-owned stream remains readable after caller release',
     e.test_ole_stream_read(reopened, reread, payload.length, count) === 0 &&
-    Array.from(u8.slice(wa(reread), wa(reread) + payload.length)).every((v, i) => v === payload[i]));
+    Array.from(u8.slice(wa(reread), wa(reread) + 3)).every((v, i) => v === payload[i]) &&
+    Array.from(u8.slice(wa(reread) + 3, wa(reread) + payload.length)).every(v => v === 0));
   e.test_ole_release(reopened);
+
+  e.test_ole_release(storage);
+  e.test_ole_stream_seek(clone, 0);
+  const cloneAfterOriginalRelease = alloc(8);
+  check('a clone keeps the shared backing alive after original and storage release',
+    e.test_ole_stream_read(clone, cloneAfterOriginalRelease, 8, count) === 0 &&
+    dv.getUint32(wa(count), true) === 8);
+  e.test_ole_release(clone);
 
   const globalPayload = writeBytes(Uint8Array.from([9, 8, 7, 6]));
   const globalStream = e.test_ole_create_hglobal_stream(globalPayload, 0) >>> 0;
@@ -113,7 +154,16 @@ async function main() {
     createdGlobalStream !== 0 && (e.test_ole_get_hglobal(createdGlobalStream) >>> 0) !== 0 && e.test_ole_stream_size(createdGlobalStream) === 0);
   e.test_ole_release(createdGlobalStream);
 
-  e.test_ole_release(storage);
+  const owningGlobalStream = e.test_ole_create_hglobal_stream(0, 0) >>> 0;
+  const owningGlobalClone = e.test_ole_stream_clone(owningGlobalStream) >>> 0;
+  const ownedHandle = e.test_ole_get_hglobal(owningGlobalStream) >>> 0;
+  check('HGLOBAL stream clones expose the same backing handle',
+    owningGlobalClone !== 0 && (e.test_ole_get_hglobal(owningGlobalClone) >>> 0) === ownedHandle);
+  e.test_ole_release(owningGlobalStream);
+  check('an HGLOBAL clone retains its root after original interface release',
+    (e.test_ole_get_hglobal(owningGlobalClone) >>> 0) === ownedHandle);
+  e.test_ole_release(owningGlobalClone);
+
   e.test_ole_release(lockbytes);
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
