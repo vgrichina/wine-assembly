@@ -262,12 +262,12 @@
                   (else
                     (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
                     (local.set $ok (call $gdi_raster_bitblt
-                      (local.get $dst) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
                       (local.get $arg3) (local.get $arg4) (local.get $src)
                       (local.get $sx) (local.get $sy) (local.get $pattern) (local.get $rop))))))
               (else
                 (local.set $ok (call $gdi_raster_bitblt
-                  (local.get $dst) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
                   (local.get $arg3) (local.get $arg4) (local.get $src)
                   (local.get $sx) (local.get $sy) (i32.const 0) (local.get $rop)))))))
         (if (local.get $ok)
@@ -306,12 +306,12 @@
                   (then
                     (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
                     (local.set $ok (call $gdi_raster_bitblt
-                      (local.get $desc) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg0) (local.get $desc) (local.get $arg1) (local.get $arg2)
                       (local.get $w) (local.get $h) (i32.const 0)
                       (i32.const 0) (i32.const 0) (local.get $pattern) (local.get $rop))))))
               (else
                 (local.set $ok (call $gdi_raster_bitblt
-                  (local.get $desc) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg0) (local.get $desc) (local.get $arg1) (local.get $arg2)
                   (local.get $w) (local.get $h) (i32.const 0)
                   (i32.const 0) (i32.const 0) (i32.const 0) (local.get $rop)))))))
         (if (local.get $ok)

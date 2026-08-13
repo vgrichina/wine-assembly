@@ -73,6 +73,18 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(canvasRgb(dst, 5, 2), 0x112233);
   });
 
+  check('BitBlt preserves destination pixels outside the WAT DC clip region', () => {
+    const clipped = makeDib(4, 4);
+    const clip = wat.test_gdi_rgn_alloc_rect(1, 1, 3, 3) >>> 0;
+    assert(clip);
+    assert.strictEqual(wat.test_gdi_dc_clip_select(clipped.hdc, clip), 2);
+    assert.strictEqual(wat.test_call_BitBlt(
+      clipped.hdc, 0, 0, 4, 4, src.hdc, 0, 0, 0x00CC0020), 1);
+    assert.strictEqual(packed(clipped, 1, 2), 0x112233);
+    assert.strictEqual(packed(clipped, 0, 2), 0);
+    assert.strictEqual(canvasRgb(clipped, 0, 2), 0);
+  });
+
   check('StretchBlt expands pixels with deterministic nearest-neighbor sampling', () => {
     assert.strictEqual(wat.test_call_StretchBlt(
       dst.hdc, 0, 3, 4, 2, src.hdc, 0, 2, 2, 1, 0x00CC0020), 1);

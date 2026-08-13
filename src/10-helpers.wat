@@ -2115,6 +2115,13 @@
           (i64.extend_i32_s (i32.load offset=44 (local.get $desc))))
         (i64.extend_i32_s (i32.load offset=60 (local.get $desc))))))
 
+  (func $gdi_raster_clip_visible (param $hdc i32) (param $desc i32)
+        (param $x i32) (param $y i32) (result i32)
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 1))))
+    (call $gdi_shape_clip_visible (local.get $hdc)
+      (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
+      (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
+
   ;; Presentation is deliberately the only host boundary used by software
   ;; geometry. The canonical surface layer can replace this adapter's HDC
   ;; lookup with its stable surface id without changing raster semantics.
@@ -3390,7 +3397,7 @@
   ;; source descriptor may be zero for pattern/destination-only ROPs. Scaling
   ;; an overlapping surface is rejected until a WAT scratch-row allocator is
   ;; connected; equal-size self copies are handled by $gdi_raster_bitblt.
-  (func $gdi_raster_stretch_blt (param $dst i32) (param $dx i32) (param $dy i32)
+  (func $gdi_raster_stretch_blt (param $hdc i32) (param $dst i32) (param $dx i32) (param $dy i32)
         (param $dw i32) (param $dh i32) (param $src i32) (param $sx i32) (param $sy i32)
         (param $sw i32) (param $sh i32) (param $pattern i32) (param $rop i32) (result i32)
     (local $x i32) (local $y i32) (local $tx i32) (local $ty i32)
@@ -3415,7 +3422,11 @@
         (br_if $cols_done (i32.ge_u (local.get $x) (local.get $dw)))
         (local.set $tx (i32.add (local.get $dx) (local.get $x)))
         (local.set $ty (i32.add (local.get $dy) (local.get $y)))
-        (if (call $gdi_raster_pixel_ptr (local.get $dst) (local.get $tx) (local.get $ty))
+        (if (i32.and
+              (i32.ne (call $gdi_raster_pixel_ptr
+                (local.get $dst) (local.get $tx) (local.get $ty)) (i32.const 0))
+              (call $gdi_raster_clip_visible
+                (local.get $hdc) (local.get $dst) (local.get $tx) (local.get $ty)))
           (then
             (local.set $d (call $gdi_raster_read (local.get $dst) (local.get $tx) (local.get $ty)))
             (local.set $s (i32.const 0))
@@ -3437,7 +3448,7 @@
     (i32.const 1))
 
   ;; Equal-size copy with memmove traversal for overlapping canonical bytes.
-  (func $gdi_raster_bitblt (param $dst i32) (param $dx i32) (param $dy i32)
+  (func $gdi_raster_bitblt (param $hdc i32) (param $dst i32) (param $dx i32) (param $dy i32)
         (param $w i32) (param $h i32) (param $src i32) (param $sx i32) (param $sy i32)
         (param $pattern i32) (param $rop i32) (result i32)
     (local $x i32) (local $y i32) (local $step i32) (local $start i32)
@@ -3463,8 +3474,13 @@
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.or (i32.lt_s (local.get $x) (i32.const 0))
           (i32.ge_s (local.get $x) (local.get $w))))
-        (if (call $gdi_raster_pixel_ptr (local.get $dst)
-              (i32.add (local.get $dx) (local.get $x)) (i32.add (local.get $dy) (local.get $y)))
+        (if (i32.and
+              (i32.ne (call $gdi_raster_pixel_ptr (local.get $dst)
+                (i32.add (local.get $dx) (local.get $x))
+                (i32.add (local.get $dy) (local.get $y))) (i32.const 0))
+              (call $gdi_raster_clip_visible (local.get $hdc) (local.get $dst)
+                (i32.add (local.get $dx) (local.get $x))
+                (i32.add (local.get $dy) (local.get $y))))
           (then
             (local.set $d (call $gdi_raster_read (local.get $dst)
               (i32.add (local.get $dx) (local.get $x)) (i32.add (local.get $dy) (local.get $y))))
@@ -3491,12 +3507,12 @@
     (call $gdi_apply_rop3 (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   (func (export "test_gdi_raster_bitblt")
         (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
-    (call $gdi_raster_bitblt (local.get 0) (local.get 1) (local.get 2)
+    (call $gdi_raster_bitblt (i32.const 0) (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4) (local.get 5) (local.get 6) (local.get 7)
       (local.get 8) (local.get 9)))
   (func (export "test_gdi_raster_stretch_blt")
         (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
-    (call $gdi_raster_stretch_blt (local.get 0) (local.get 1) (local.get 2)
+    (call $gdi_raster_stretch_blt (i32.const 0) (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4) (local.get 5) (local.get 6) (local.get 7)
       (local.get 8) (local.get 9) (local.get 10) (local.get 11)))
 

@@ -6862,13 +6862,13 @@
                   (then
                     (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
                     (local.set $ok (call $gdi_raster_stretch_blt
-                      (local.get $dst) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
                       (local.get $arg3) (local.get $arg4) (local.get $src)
                       (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
                       (local.get $pattern) (local.get $rop))))))
               (else
                 (local.set $ok (call $gdi_raster_stretch_blt
-                  (local.get $dst) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
                   (local.get $arg3) (local.get $arg4) (local.get $src)
                   (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
                   (i32.const 0) (local.get $rop)))))))
