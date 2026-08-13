@@ -5281,56 +5281,28 @@
 
   ;; 358: GetPaletteEntries(hPalette, iStart, nEntries, lppe) — 4 args stdcall
   (func $handle_GetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_idx i32) (local $src i32) (local $dst_wa i32) (local $count i32) (local $total i32)
-    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
-    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
-      (then
-        (local.set $total (i32.load (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
-        ;; If lppe is NULL, return total count
-        (if (i32.eqz (local.get $arg3))
-          (then
-            (global.set $eax (local.get $total))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-            (return)))
-        ;; Clamp nEntries to available
-        (local.set $count (local.get $arg2))
-        (if (i32.gt_u (i32.add (local.get $arg1) (local.get $count)) (local.get $total))
-          (then (local.set $count (i32.sub (local.get $total) (local.get $arg1)))))
-        ;; Copy entries
-        (local.set $src (i32.add (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.const 0x40)) (i32.mul (local.get $pal_idx) (i32.const 1024)))
-          (i32.mul (local.get $arg1) (i32.const 4))))
-        (local.set $dst_wa (call $g2w (local.get $arg3)))
-        (call $memcpy (local.get $dst_wa) (local.get $src) (i32.mul (local.get $count) (i32.const 4)))
-        (global.set $eax (local.get $count)))
-      (else (global.set $eax (i32.const 0))))
+    (global.set $eax (call $gdi_palette_get_entries
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; 4 args stdcall
   )
 
   ;; 359: SelectPalette(hdc, hPalette, bForceBackground) — 3 args stdcall
-  ;; Store selected palette handle for this DC; return previous palette.
-  ;; Also mirror the resolved palette index (0-3) in GDI_PALETTE_TABLE so the JS
-  ;; StretchDIBits handler can resolve DIB_PAL_COLORS against the right table.
+  ;; Store the logical palette in canonical per-DC WAT state.
   (func $handle_SelectPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $prev i32) (local $idx i32)
-    (local.set $prev (global.get $selected_palette))
-    (global.set $selected_palette (local.get $arg1))
-    (local.set $idx (i32.sub (local.get $arg1) (i32.const 0x000A0001)))
-    (if (i32.and (i32.ge_s (local.get $idx) (i32.const 0)) (i32.lt_u (local.get $idx) (i32.const 4)))
-      (then (i32.store (i32.add (global.get $GDI_PALETTE_TABLE) (i32.const 0x20)) (local.get $idx))))
-    (global.set $eax (local.get $prev))
+    (local $prev i32)
+    (local.set $prev (call $gdi_dc_select_palette (local.get $arg0) (local.get $arg1)))
+    (global.set $eax (select (local.get $prev) (i32.const 0)
+      (i32.ne (local.get $prev) (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
   )
 
   ;; 360: RealizePalette(hdc) — 1 arg stdcall
   ;; In true-color mode this is mostly a no-op; return number of entries mapped
   (func $handle_RealizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_idx i32)
-    ;; Look up selected palette entry count
-    (local.set $pal_idx (i32.sub (global.get $selected_palette) (i32.const 0x000A0001)))
-    (if (result i32) (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
-      (then (i32.load (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
-      (else (i32.const 0)))
-    global.set $eax
+    (global.set $eax (call $gdi_palette_count
+      (call $gdi_dc_selected_palette (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
@@ -5392,29 +5364,18 @@
 
   ;; 366: CreatePalette(lpLogPalette) — 1 arg stdcall
   ;; LOGPALETTE: palVersion(u16, +0), palNumEntries(u16, +2), palPalEntry[](+4, each 4 bytes RGBX)
-  ;; Store palette entries in GDI_PALETTE_TABLE + 0x40 + palette_idx * 1024
-  ;; Palette handles: 0x000A0001+
   (func $handle_CreatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src_wa i32) (local $num_entries i32) (local $pal_idx i32) (local $dst i32) (local $copy_bytes i32)
+    (local $src_wa i32) (local $num_entries i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (local.set $src_wa (call $g2w (local.get $arg0)))
     (local.set $num_entries (i32.load16_u (i32.add (local.get $src_wa) (i32.const 2))))
-    ;; Cap at 256 entries
-    (if (i32.gt_u (local.get $num_entries) (i32.const 256))
-      (then (local.set $num_entries (i32.const 256))))
-    ;; Allocate palette index (0-3)
-    (local.set $pal_idx (i32.and (global.get $palette_counter) (i32.const 3)))
-    (global.set $palette_counter (i32.add (global.get $palette_counter) (i32.const 1)))
-    ;; Store entry count at GDI_PALETTE_TABLE + idx * 8
-    (i32.store (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8)))
-      (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))  ;; handle
-    (i32.store (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
-      (local.get $num_entries))  ;; count
-    ;; Copy palette entries (4 bytes each: R, G, B, flags)
-    (local.set $dst (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.const 0x40)) (i32.mul (local.get $pal_idx) (i32.const 1024))))
-    (local.set $copy_bytes (i32.mul (local.get $num_entries) (i32.const 4)))
-    (call $memcpy (local.get $dst) (i32.add (local.get $src_wa) (i32.const 4)) (local.get $copy_bytes))
-    ;; Return handle
-    (global.set $eax (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
+    (global.set $eax (call $gdi_palette_alloc
+      (i32.add (local.get $src_wa) (i32.const 4)) (local.get $num_entries)
+      (i32.load16_u (local.get $src_wa))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
@@ -6633,75 +6594,32 @@
 
   ;; 440: SetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
   (func $handle_SetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg2))
+    (global.set $eax (call $gdi_set_dib_color_table
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 441: ResizePalette(hPalette, nEntries) — 2 args stdcall
   (func $handle_ResizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_idx i32) (local $new_count i32)
-    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
-    (local.set $new_count (local.get $arg1))
-    (if (i32.gt_u (local.get $new_count) (i32.const 256))
-      (then (local.set $new_count (i32.const 256))))
-    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
-      (then
-        (i32.store (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
-          (local.get $new_count))
-        (global.set $eax (i32.const 1)))
-      (else (global.set $eax (i32.const 0))))
+    (global.set $eax (call $gdi_palette_resize (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args stdcall
   )
 
   ;; 442: GetNearestPaletteIndex(hPalette, crColor) — 2 args stdcall
-  ;; Find closest palette entry by color distance
+  ;; Find the closest PALETTEENTRY in canonical WAT storage.
   (func $handle_GetNearestPaletteIndex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_idx i32) (local $base i32) (local $count i32)
-    (local $i i32) (local $best_i i32) (local $best_dist i32) (local $entry i32)
-    (local $dr i32) (local $dg i32) (local $db i32) (local $dist i32)
-    (local $tr i32) (local $tg i32) (local $tb i32)
-    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
-    (local.set $best_dist (i32.const 0x7FFFFFFF))
-    ;; Target color components
-    (local.set $tr (i32.and (local.get $arg1) (i32.const 0xFF)))
-    (local.set $tg (i32.and (i32.shr_u (local.get $arg1) (i32.const 8)) (i32.const 0xFF)))
-    (local.set $tb (i32.and (i32.shr_u (local.get $arg1) (i32.const 16)) (i32.const 0xFF)))
-    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
-      (then
-        (local.set $base (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.const 0x40)) (i32.mul (local.get $pal_idx) (i32.const 1024))))
-        (local.set $count (i32.load (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
-        (block $done (loop $scan
-          (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-          (local.set $entry (i32.load (i32.add (local.get $base) (i32.mul (local.get $i) (i32.const 4)))))
-          ;; PALETTEENTRY is R,G,B,flags (byte order)
-          (local.set $dr (i32.sub (i32.and (local.get $entry) (i32.const 0xFF)) (local.get $tr)))
-          (local.set $dg (i32.sub (i32.and (i32.shr_u (local.get $entry) (i32.const 8)) (i32.const 0xFF)) (local.get $tg)))
-          (local.set $db (i32.sub (i32.and (i32.shr_u (local.get $entry) (i32.const 16)) (i32.const 0xFF)) (local.get $tb)))
-          (local.set $dist (i32.add (i32.add (i32.mul (local.get $dr) (local.get $dr))
-            (i32.mul (local.get $dg) (local.get $dg))) (i32.mul (local.get $db) (local.get $db))))
-          (if (i32.lt_u (local.get $dist) (local.get $best_dist))
-            (then (local.set $best_dist (local.get $dist)) (local.set $best_i (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan)))))
-    (global.set $eax (local.get $best_i))
+    (global.set $eax (call $gdi_palette_nearest_index
+      (local.get $arg0) (i32.and (local.get $arg1) (i32.const 0x00FFFFFF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args stdcall
   )
 
   ;; 443: SetPaletteEntries(hPalette, iStart, nEntries, lppe) — 4 args stdcall
   (func $handle_SetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_idx i32) (local $dst i32) (local $src_wa i32) (local $count i32) (local $total i32)
-    (local.set $pal_idx (i32.sub (local.get $arg0) (i32.const 0x000A0001)))
-    (if (i32.and (i32.ge_s (local.get $pal_idx) (i32.const 0)) (i32.lt_u (local.get $pal_idx) (i32.const 4)))
-      (then
-        (local.set $total (i32.load (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))))
-        (local.set $count (local.get $arg2))
-        (if (i32.gt_u (i32.add (local.get $arg1) (local.get $count)) (local.get $total))
-          (then (local.set $count (i32.sub (local.get $total) (local.get $arg1)))))
-        (local.set $dst (i32.add (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.const 0x40)) (i32.mul (local.get $pal_idx) (i32.const 1024)))
-          (i32.mul (local.get $arg1) (i32.const 4))))
-        (local.set $src_wa (call $g2w (local.get $arg3)))
-        (call $memcpy (local.get $dst) (local.get $src_wa) (i32.mul (local.get $count) (i32.const 4)))
-        (global.set $eax (local.get $count)))
-      (else (global.set $eax (i32.const 0))))
+    (global.set $eax (call $gdi_palette_set_entries
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; 4 args stdcall
   )
 
@@ -6770,52 +6688,21 @@
   )
 
   ;; 447: CreateDIBSection(hdc, pbmi, usage, ppvBits, hSection, offset)
-  ;; Allocates pixel buffer, creates bitmap handle, stores data pointer at ppvBits
+  ;; Own the pixels and RGBQUAD color table in one canonical WAT allocation.
   (func $handle_CreateDIBSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $w i32) (local $h i32) (local $bpp i32) (local $size i32) (local $ptr i32)
-    (local $bmi i32) (local $stride i32) (local $flags i32)
-    (local $palette i32) (local $palette_count i32) (local $clr_used i32)
-    (local $handle i32)
-    (local.set $bmi (call $g2w (local.get $arg1)))
-    (local.set $w (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
-    (local.set $h (call $gl32 (i32.add (local.get $arg1) (i32.const 8))))
-    (if (i32.lt_s (local.get $h) (i32.const 0))
-      (then
-        (local.set $flags (i32.const 2))
-        (local.set $h (i32.sub (i32.const 0) (local.get $h)))))
-    (local.set $bpp (i32.and (i32.shr_u (call $gl32 (i32.add (local.get $arg1) (i32.const 12))) (i32.const 16)) (i32.const 0xFFFF)))
-    ;; DIB scanlines are padded to a 32-bit boundary.  Using width * bytes-per-pixel
-    ;; under-allocates 1/4/24-bpp images at many widths and lets the final scanlines
-    ;; overwrite the next guest heap object.
-    (local.set $stride (i32.shl
-      (i32.shr_u (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.const 31))
-        (i32.const 5)) (i32.const 2)))
-    (local.set $size (i32.mul (local.get $h) (local.get $stride)))
-    (if (i32.lt_s (local.get $size) (i32.const 4)) (then (local.set $size (i32.const 4))))
-    (local.set $ptr (call $dib_alloc (local.get $size)))
-    (if (i32.eqz (local.get $ptr))
-      (then
-        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-        (return)))
+    (local $handle i32) (local $record i32)
+    (local.set $handle (call $gdi_bitmap_create_dib_section
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg2)))
     (if (local.get $arg3)
-      (then (call $gs32 (local.get $arg3) (local.get $ptr))))
-    (if (i32.le_u (local.get $bpp) (i32.const 8))
       (then
-        (local.set $clr_used (i32.load offset=32 (local.get $bmi)))
-        (local.set $palette_count (select (local.get $clr_used)
-          (i32.shl (i32.const 1) (local.get $bpp)) (i32.ne (local.get $clr_used) (i32.const 0))))
-        (local.set $palette (i32.add (local.get $bmi) (i32.load (local.get $bmi))))))
-    (local.set $flags (i32.or (local.get $flags) (i32.const 5)))
-    (local.set $handle (call $gdi_bitmap_alloc
-      (local.get $w) (local.get $h) (local.get $bpp) (local.get $flags)
-      (call $g2w (local.get $ptr)) (local.get $stride)
-      (local.get $palette) (local.get $palette_count)))
-    (if (i32.eqz (local.get $handle))
-      (then
-        (call $dib_free_wasm (call $g2w (local.get $ptr)))
-        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))))
+        (local.set $record (call $gdi_object_record (local.get $handle)))
+        (call $gs32 (local.get $arg3)
+          (if (result i32) (local.get $record)
+            (then (call $w2g (i32.load offset=24 (local.get $record))))
+            (else (i32.const 0))))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
@@ -6841,6 +6728,7 @@
     ;; CBM_INIT=4. lpbmi carries the RGBQUAD table; lpbmih is sufficient for
     ;; true-color callers that omit the duplicate BITMAPINFO pointer.
     (global.set $eax (call $gdi_bitmap_create_dibitmap
+      (local.get $arg0)
       (call $g2w (select (local.get $arg4) (local.get $arg1)
         (i32.ne (local.get $arg4) (i32.const 0))))
       (if (result i32) (local.get $arg3)
@@ -6886,7 +6774,7 @@
           (then (local.set $ok (i32.const 0)))
           (else
             (local.set $ok (call $gdi_raster_stretch_blt
-              (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
+              (local.get $arg0) (local.get $src_hdc) (local.get $dst) (local.get $dx) (local.get $dy)
               (local.get $arg3) (local.get $arg4) (local.get $src)
               (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
               (local.get $pattern) (local.get $rop)))))
@@ -6969,16 +6857,18 @@
   ;; 457: CreateHalftonePalette(hdc) — 1 arg stdcall
   ;; Return a palette handle for a standard 256-color halftone palette
   (func $handle_CreateHalftonePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_idx i32) (local $dst i32) (local $i i32) (local $r i32) (local $g i32) (local $b i32)
-    (local.set $pal_idx (i32.and (global.get $palette_counter) (i32.const 3)))
-    (global.set $palette_counter (i32.add (global.get $palette_counter) (i32.const 1)))
-    ;; Store as 256-entry palette
-    (i32.store (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8)))
-      (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
-    (i32.store (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.mul (local.get $pal_idx) (i32.const 8))) (i32.const 4))
-      (i32.const 256))
+    (local $handle i32) (local $record i32) (local $dst i32)
+    (local $i i32) (local $r i32) (local $g i32) (local $b i32)
+    (local.set $handle (call $gdi_palette_alloc
+      (i32.const 0) (i32.const 256) (i32.const 0x300)))
+    (if (i32.eqz (local.get $handle))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $record (call $gdi_palette_record (local.get $handle)))
     ;; Fill with 6x6x6 color cube + grays
-    (local.set $dst (i32.add (i32.add (global.get $GDI_PALETTE_TABLE) (i32.const 0x40)) (i32.mul (local.get $pal_idx) (i32.const 1024))))
+    (local.set $dst (i32.load offset=24 (local.get $record)))
     (local.set $i (i32.const 0))
     (block $done (loop $fill
       (br_if $done (i32.ge_u (local.get $i) (i32.const 216)))
@@ -6999,7 +6889,7 @@
           (i32.shl (local.get $r) (i32.const 16))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $gray)))
-    (global.set $eax (i32.add (i32.const 0x000A0001) (local.get $pal_idx)))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
@@ -8527,14 +8417,6 @@
             (then (i32.const 7))
             (else (if (result i32) (i32.eq (local.get $wat_type) (i32.const 4))
               (then (i32.const 6)) (else (local.get $wat_type))))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Palette handles from CreatePalette: 0x000A0001+
-    (if (i32.and
-          (i32.ge_u (local.get $arg0) (i32.const 0x000A0001))
-          (i32.lt_u (local.get $arg0) (i32.const 0x000A0100)))
-      (then
-        (global.set $eax (i32.const 5)) ;; OBJ_PAL
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Explicit/surface DC handles.

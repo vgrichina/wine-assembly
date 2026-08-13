@@ -176,6 +176,35 @@ const { bootRenderHarness } = require('./render-helper');
     assert.deepStrictEqual([packed(dst, 0, 1), packed(dst, 1, 1)], [0xFF0000, 0x00FF00]);
   });
 
+  check('color-to-mono BitBlt keys masks against the source background color', () => {
+    const sprite = makeDib(2, 1);
+    const target = makeDib(2, 1);
+    wat.test_call_SetPixel(sprite.hdc, 0, 0, 0x000000FF); // red key color
+    wat.test_call_SetPixel(sprite.hdc, 1, 0, 0x0000FF00); // green glyph
+    wat.test_call_SetPixel(target.hdc, 0, 0, 0x00C0C0C0);
+    wat.test_call_SetPixel(target.hdc, 1, 0, 0x00C0C0C0);
+    wat.test_gdi_dc_set_field(sprite.hdc, 24, 0x000000FF, 0xFFFFFF);
+
+    const maskBitmap = wat.test_call_CreateBitmap(2, 1, 1, 1, 0) >>> 0;
+    const mask = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(maskBitmap && mask);
+    wat.test_call_SelectObject(mask, maskBitmap);
+
+    // Paint's classic transparent-icon sequence: create an inverted mono
+    // mask, XOR the color image, clear the glyph, then XOR it into place.
+    assert.strictEqual(wat.test_call_BitBlt(
+      mask, 0, 0, 2, 1, sprite.hdc, 0, 0, 0x00330008), 1); // NOTSRCCOPY
+    assert.strictEqual(wat.test_call_BitBlt(
+      target.hdc, 0, 0, 2, 1, sprite.hdc, 0, 0, 0x00660046), 1); // SRCINVERT
+    assert.strictEqual(wat.test_call_BitBlt(
+      target.hdc, 0, 0, 2, 1, mask, 0, 0, 0x00220326), 1); // DSna
+    assert.strictEqual(wat.test_call_BitBlt(
+      target.hdc, 0, 0, 2, 1, sprite.hdc, 0, 0, 0x00660046), 1); // SRCINVERT
+    assert.deepStrictEqual([packed(target, 0, 0), packed(target, 1, 0)], [
+      0xC0C0C0, 0x00FF00,
+    ]);
+  });
+
   check('SetDIBitsToDevice decodes indexed RGBQUAD sprites in WAT', () => {
     const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
     const bitsGa = wat.guest_alloc(8) >>> 0;

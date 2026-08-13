@@ -9,6 +9,8 @@ covers BMP Save As/Open/Save, New with
 Yes/No/Cancel protection, a 900x700 image with both scrollbars, the 17-item
 File menu, image Cut/Paste through the OLE/CF_DIB clipboard bridge, wide
 browser layout, flood fill, and browser airbrush position and latency.
+Tool icons now use the native Win32 color-to-monochrome mask path, so their
+red bitmap key remains transparent instead of appearing around each glyph.
 
 This is broad regression coverage, not complete feature coverage. The current
 known Paint-specific gaps are:

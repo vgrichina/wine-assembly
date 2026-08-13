@@ -276,7 +276,7 @@
           (then (local.set $ok (i32.const 0)))
           (else
             (local.set $ok (call $gdi_raster_bitblt
-              (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
+              (local.get $arg0) (local.get $src_hdc) (local.get $dst) (local.get $dx) (local.get $dy)
               (local.get $arg3) (local.get $arg4) (local.get $src)
               (local.get $sx) (local.get $sy) (local.get $pattern) (local.get $rop)))))
         (if (local.get $ok)
@@ -308,7 +308,7 @@
           (then (local.set $ok (i32.const 0)))
           (else
             (local.set $ok (call $gdi_raster_bitblt
-              (local.get $arg0) (local.get $desc) (local.get $dx) (local.get $dy)
+              (local.get $arg0) (i32.const 0) (local.get $desc) (local.get $dx) (local.get $dy)
               (local.get $w) (local.get $h) (i32.const 0)
               (i32.const 0) (i32.const 0) (local.get $pattern) (local.get $rop)))))
         (if (local.get $ok)
