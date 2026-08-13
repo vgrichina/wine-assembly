@@ -174,6 +174,53 @@ async function main() {
     assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
   });
 
+  check('line uses integer Bresenham coverage and excludes its endpoint', () => {
+    const t = target(9, 7);
+    const red = object(1, 0, 1, 0x000000FF);
+    assert.strictEqual(wat.test_gdi_line_desc(t.hdc, t.desc, 1, 1, 7, 5, red, 13), 1);
+    assert.deepStrictEqual(rows(t), [
+      '.........',
+      '.R.......',
+      '..RR.....',
+      '....R....',
+      '.....RR..',
+      '.........',
+      '.........',
+    ]);
+  });
+
+  check('thick and dashed lines have exact non-antialiased masks', () => {
+    const thickTarget = target(10, 7);
+    const thick = object(1, 0, 3, 0x000000FF);
+    assert.strictEqual(wat.test_gdi_line_desc(
+      thickTarget.hdc, thickTarget.desc, 2, 3, 7, 3, thick, 13), 1);
+    assert.deepStrictEqual(rows(thickTarget), [
+      '..........',
+      '..........',
+      '.RRRRRRR..',
+      '.RRRRRRR..',
+      '.RRRRRRR..',
+      '..........',
+      '..........',
+    ]);
+
+    const dashTarget = target(11, 2);
+    const dash = object(1, 1, 1, 0x000000FF);
+    assert.strictEqual(wat.test_gdi_line_desc(
+      dashTarget.hdc, dashTarget.desc, 0, 0, 10, 0, dash, 13), 1);
+    assert.deepStrictEqual(rows(dashTarget), [
+      'RRRRRR..RR.',
+      '...........',
+    ]);
+  });
+
+  check('unsupported wide Boolean line fails atomically', () => {
+    const t = target(8, 5);
+    const wide = object(1, 0, 3, 0x00FFFFFF);
+    assert.strictEqual(wat.test_gdi_line_desc(t.hdc, t.desc, 1, 2, 7, 2, wide, 7), 0);
+    assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
+  });
+
   check('ellipse uses deterministic pixel-center fill and one-pixel outline', () => {
     const t = target(9, 7);
     const redPen = object(1, 0, 1, 0x000000FF);
