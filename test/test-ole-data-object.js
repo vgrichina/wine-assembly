@@ -64,6 +64,21 @@ async function main() {
   check('ReleaseStgMedium clears released medium fields',
     dv.getUint32(wa(out), true) === 0 && dv.getUint32(wa(out) + 4, true) === 0 && dv.getUint32(wa(out) + 8, true) === 0);
 
+  // GetClipboardData handles are borrowed from USER. RichEdit may place one
+  // in an fRelease STGMEDIUM while constructing a static object, then retain
+  // that presentation after EmptyClipboard. Releasing the wrapper must not
+  // free or reuse the clipboard snapshot out from under the document object.
+  const clipboardHandle = e.clipboard_store_binary_data(8, dib) >>> 0;
+  const borrowed = alloc(12);
+  dv.setUint32(wa(borrowed), 1, true);
+  dv.setUint32(wa(borrowed) + 4, clipboardHandle, true);
+  e.test_ole_release_medium(borrowed);
+  check('ReleaseStgMedium preserves a borrowed CF_DIB clipboard handle',
+    e.clipboard_get_data_handle(8) === clipboardHandle && u8[wa(clipboardHandle)] === 0xee);
+  e.clipboard_clear_all_data();
+  check('clearing clipboard metadata preserves a retained RichEdit DIB presentation',
+    e.clipboard_get_data_handle(8) === 0 && u8[wa(clipboardHandle)] === 0xee);
+
   e.test_ole_set_clipboard(object);
   check('Ole clipboard holds a reference after the caller releases', e.test_ole_release(object) === 1);
   const current = e.test_ole_get_clipboard() >>> 0;

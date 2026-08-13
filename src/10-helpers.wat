@@ -2562,8 +2562,11 @@
       (then (call $gs8 (global.get $clipboard_rtf_ptr) (i32.const 0)))))
 
   (func $clipboard_clear_binary_data
-    (if (global.get $clipboard_binary_ptr)
-      (then (call $heap_free (global.get $clipboard_binary_ptr))))
+    ;; RichEdit static objects can retain a CF_DIB HGLOBAL after the clipboard
+    ;; changes. Keep binary snapshots alive for the WASM instance lifetime;
+    ;; otherwise a later Copy/EmptyClipboard turns an existing inline image's
+    ;; presentation into a dangling heap pointer. Instance teardown reclaims
+    ;; the small bounded snapshots together with the rest of linear memory.
     (global.set $clipboard_binary_format (i32.const 0))
     (global.set $clipboard_binary_ptr (i32.const 0))
     (global.set $clipboard_binary_len (i32.const 0)))
@@ -2585,7 +2588,6 @@
     (local.set $dst (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
     (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $src_g)) (local.get $size))
-    (if (global.get $clipboard_binary_ptr) (then (call $heap_free (global.get $clipboard_binary_ptr))))
     (global.set $clipboard_binary_format (local.get $fmt))
     (global.set $clipboard_binary_ptr (local.get $dst))
     (global.set $clipboard_binary_len (local.get $size))

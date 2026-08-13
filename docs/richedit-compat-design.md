@@ -696,9 +696,14 @@ for extent negotiation, and `OleDraw` to paint it; the bounded handler now owns
 the copied `STGMEDIUM` and exposes those contracts. `OleUIUpdateLinksA` returns
 the successful no-links result for static pictures. The focused
 `test/test-wordpad-ole-roundtrip.js` regression pastes a 32x24 checker DIB,
-saves/exports the native `\pict\dibitmap0` RTF, imports it into a fresh WordPad,
-and verifies both the restored inline-object position and rendered red/blue
-pixels (14/14 checks). This does not claim linked objects, executable OLE
+copies/pastes it into a second inline object, saves/exports two complete native
+`\pict\dibitmap0` RTF presentations, imports them into a fresh WordPad, and
+verifies both restored `U+FFFC` positions plus red/blue pixels within each
+presentation independently (17/17 checks). USER `GetClipboardData` handles are
+borrowed, and RichEdit retains a static object's presentation after a later
+clipboard change, so CF_DIB snapshots remain valid for the WASM instance
+lifetime rather than entering the reusable heap free list. This does not claim
+linked objects, executable OLE
 servers, in-place activation, drag/drop, or arbitrary compound-file fidelity.
 
 The static-image clipboard follow-up is also complete. WordPad Edit Copy and
@@ -1124,6 +1129,8 @@ Acceptance:
 [x] Static CF_DIB clipboard insertion, rendering, RTF save, and fresh reopen
     preserve the inline object and presentation
 [x] Static CF_DIB object Copy/Cut/Paste preserves object count and presentation
+[x] Multiple static CF_DIB objects save and reopen with independent complete
+    presentations after clipboard replacement
 [ ] Linked/activated and arbitrary non-DIB OLE objects preserve full fidelity
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad

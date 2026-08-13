@@ -20,5 +20,8 @@
   "dependencies": {
     "skia-canvas": "^3.0.8",
     "wabt": "^1.0.39"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0"
   }
 }

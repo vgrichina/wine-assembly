@@ -1202,8 +1202,19 @@
     (if (local.get $unk)
       (then (drop (call $ole_obj_release (local.get $unk))))
       (else
-        (if (i32.and (local.get $data)
-              (i32.or (i32.eq (local.get $tymed) (i32.const 1)) (i32.eq (local.get $tymed) (i32.const 2))))
+        ;; GetClipboardData returns borrowed system-owned handles. RichEdit can
+        ;; wrap one in an fRelease STGMEDIUM while creating a static object;
+        ;; consume the medium, but keep the clipboard's durable value alive.
+        ;; Clipboard replacement only clears its public slot; static RichEdit
+        ;; objects may retain the backing snapshot for the instance lifetime.
+        (if (i32.and
+              (i32.and (local.get $data)
+                (i32.or (i32.eq (local.get $tymed) (i32.const 1)) (i32.eq (local.get $tymed) (i32.const 2))))
+              (i32.and
+                (i32.ne (local.get $data) (global.get $clipboard_ptr))
+                (i32.and
+                  (i32.ne (local.get $data) (global.get $clipboard_rtf_ptr))
+                  (i32.ne (local.get $data) (global.get $clipboard_binary_ptr)))))
           (then (call $heap_free (local.get $data))))
         (if (i32.and (local.get $data)
               (i32.or (i32.eq (local.get $tymed) (i32.const 4)) (i32.eq (local.get $tymed) (i32.const 8))))
