@@ -168,6 +168,14 @@ The WAT rasterizer resolves this target once per GDI call. Hot loops then
 operate directly on linear memory and spans without repeatedly looking up the
 HDC or crossing the JS boundary.
 
+Bitmap construction uses a separate pure parsing layer in
+`src/10a-gdi-bitmap.wat`. It validates raw `BITMAPINFO`/RT_BITMAP bytes,
+computes bounded palette and pixel spans, plans WORD-aligned `CreateBitmap`
+storage, initializes the canonical 48-byte bitmap record, and writes Win32
+`BITMAP` query structures. The parser never allocates a handle or asks
+JavaScript to create a GDI object. Registry binding supplies canonical storage
+and copies the validated spans in a later step.
+
 ## Implementation boundary
 
 The end-state ownership is:
