@@ -25,8 +25,8 @@ async function main() {
   const { instance } = await WebAssembly.instantiate(wasm, base);
   const wat = instance.exports;
 
-  const pen = base.host.gdi_create_pen(2, 3, 0x123456);
-  const brush = base.host.gdi_create_solid_brush(0xABCDEF);
+  const pen = 0x301001;
+  const brush = 0x301002;
   assert.strictEqual(wat.test_gdi_object_adopt(pen, 1, 2, 3, 0x123456, 0), pen);
   assert.strictEqual(wat.test_gdi_object_adopt(brush, 2, 0, 0, 0xABCDEF, 0), brush);
   assert.strictEqual(wat.test_gdi_object_type(pen), 1);
@@ -51,6 +51,12 @@ async function main() {
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 16, 0), 29);
   assert.strictEqual(wat.test_gdi_dc_set_rop2(hdcA, 7), 13);
   assert.strictEqual(wat.test_gdi_dc_get_rop2(hdcA), 7);
+
+  assert.strictEqual(wat.test_gdi_map_coordinate(10, 0, 10, 5, 20), 25);
+  assert.strictEqual(wat.test_gdi_map_coordinate(-3, -5, 4, 7, 6), 10,
+    'mapping must preserve signed coordinates and round consistently');
+  assert.strictEqual(wat.test_gdi_map_coordinate(3, 1, -4, 20, 8), 16,
+    'negative extents must invert an axis');
 
   assert.strictEqual(wat.test_gdi_object_delete(pen), 1);
   assert.strictEqual(wat.test_gdi_object_type(pen), 0);

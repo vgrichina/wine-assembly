@@ -3827,10 +3827,15 @@
     (if (local.get $arg3)
       (then
         (call $gs32 (local.get $arg3)
-          (call $host_gdi_get_viewport_ext_x (local.get $arg0)))
+          (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
         (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-          (call $host_gdi_get_viewport_ext_y (local.get $arg0)))))
-    (global.set $eax (call $host_gdi_set_viewport_ext (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+          (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))))
+    (if (i32.and (local.get $arg1) (local.get $arg2))
+      (then
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64) (local.get $arg1) (i32.const 1)))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68) (local.get $arg2) (i32.const 1)))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -4793,7 +4798,11 @@
 
   ;; 316: SetStretchBltMode(hdc, mode) → previous mode — 2 args stdcall
   (func $handle_SetStretchBltMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; return BLACKONWHITE (previous mode)
+    (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 1))
+          (i32.le_u (local.get $arg1) (i32.const 4)))
+      (then (global.set $eax (call $gdi_dc_set_field
+        (local.get $arg0) (i32.const 80) (local.get $arg1) (i32.const 1))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8301,8 +8310,36 @@
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL. Mapping is currently identity.
+  ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL.
   (func $handle_DPtoLP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $p i32)
+    (local $wx i32) (local $wy i32) (local $wex i32) (local $wey i32)
+    (local $vx i32) (local $vy i32) (local $vex i32) (local $vey i32)
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.lt_s (local.get $arg2) (i32.const 0)))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $wx (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
+    (local.set $wy (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
+    (local.set $wex (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
+    (local.set $wey (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))
+    (local.set $vx (call $gdi_dc_get_field (local.get $arg0) (i32.const 56) (i32.const 0)))
+    (local.set $vy (call $gdi_dc_get_field (local.get $arg0) (i32.const 60) (i32.const 0)))
+    (local.set $vex (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
+    (local.set $vey (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))
+    (if (i32.or (i32.eqz (local.get $vex)) (i32.eqz (local.get $vey)))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (block $done (loop $points
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $p (i32.add (local.get $arg1) (i32.shl (local.get $i) (i32.const 3))))
+      (call $gs32 (local.get $p)
+        (call $gdi_map_coordinate (call $gl32 (local.get $p))
+          (local.get $vx) (local.get $vex) (local.get $wx) (local.get $wex)))
+      (call $gs32 (i32.add (local.get $p) (i32.const 4))
+        (call $gdi_map_coordinate (call $gl32 (i32.add (local.get $p) (i32.const 4)))
+          (local.get $vy) (local.get $vey) (local.get $wy) (local.get $wey)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $points)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -8543,23 +8580,27 @@
   ;; 580: OffsetWindowOrgEx(hdc, dx, dy, lpPoint) → BOOL
   (func $handle_OffsetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $px i32) (local $py i32)
-    (local.set $px (call $host_gdi_get_window_org_x (local.get $arg0)))
-    (local.set $py (call $host_gdi_get_window_org_y (local.get $arg0)))
+    (local.set $px (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
+    (local.set $py (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
     (if (local.get $arg3) (then
       (call $gs32 (local.get $arg3) (local.get $px))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $py))
     ))
-    (drop (call $host_gdi_set_window_org (local.get $arg0)
-      (i32.add (local.get $px) (local.get $arg1))
-      (i32.add (local.get $py) (local.get $arg2))))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 40)
+      (i32.add (local.get $px) (local.get $arg1)) (i32.const 0)))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 44)
+      (i32.add (local.get $py) (local.get $arg2)) (i32.const 0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 581: SetPolyFillMode(hdc, mode) — canvas fill accepts either rule;
-  ;; return the previous default (ALTERNATE) as Win32 requires.
+  ;; 581: SetPolyFillMode(hdc, mode) → previous mode.
   (func $handle_SetPolyFillMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (if (i32.or (i32.eq (local.get $arg1) (i32.const 1))
+          (i32.eq (local.get $arg1) (i32.const 2)))
+      (then (global.set $eax (call $gdi_dc_set_field
+        (local.get $arg0) (i32.const 76) (local.get $arg1) (i32.const 1))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8594,9 +8635,9 @@
   (func $handle_GetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg1) (then
       (call $gs32 (local.get $arg1)
-        (call $host_gdi_get_window_org_x (local.get $arg0)))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
       (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-        (call $host_gdi_get_window_org_y (local.get $arg0)))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
     ))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -8607,11 +8648,12 @@
   (func $handle_SetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg3) (then
       (call $gs32 (local.get $arg3)
-        (call $host_gdi_get_window_org_x (local.get $arg0)))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-        (call $host_gdi_get_window_org_y (local.get $arg0)))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
     ))
-    (drop (call $host_gdi_set_window_org (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 40) (local.get $arg1) (i32.const 0)))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 44) (local.get $arg2) (i32.const 0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -8634,8 +8676,8 @@
   ;; 589: ScaleWindowExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
   (func $handle_ScaleWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $old_x i32) (local $old_y i32) (local $lp_size i32)
-    (local.set $old_x (call $host_gdi_get_window_ext_x (local.get $arg0)))
-    (local.set $old_y (call $host_gdi_get_window_ext_y (local.get $arg0)))
+    (local.set $old_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
+    (local.set $old_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))
     (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (if (local.get $lp_size)
       (then
@@ -8643,10 +8685,12 @@
         (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
     (if (i32.and (local.get $arg2) (local.get $arg4))
       (then
-        (drop (call $host_gdi_set_window_ext
-          (local.get $arg0)
-          (i32.div_s (i32.mul (local.get $old_x) (local.get $arg1)) (local.get $arg2))
-          (i32.div_s (i32.mul (local.get $old_y) (local.get $arg3)) (local.get $arg4))))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 48)
+          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_x))
+            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))) (i32.const 1)))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 52)
+          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_y))
+            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))) (i32.const 1)))
         (global.set $eax (i32.const 1)))
       (else
         (global.set $eax (i32.const 0))))
@@ -8656,8 +8700,8 @@
   ;; 590: ScaleViewportExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
   (func $handle_ScaleViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $old_x i32) (local $old_y i32) (local $lp_size i32)
-    (local.set $old_x (call $host_gdi_get_viewport_ext_x (local.get $arg0)))
-    (local.set $old_y (call $host_gdi_get_viewport_ext_y (local.get $arg0)))
+    (local.set $old_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
+    (local.set $old_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))
     (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (if (local.get $lp_size)
       (then
@@ -8665,10 +8709,12 @@
         (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
     (if (i32.and (local.get $arg2) (local.get $arg4))
       (then
-        (drop (call $host_gdi_set_viewport_ext
-          (local.get $arg0)
-          (i32.div_s (i32.mul (local.get $old_x) (local.get $arg1)) (local.get $arg2))
-          (i32.div_s (i32.mul (local.get $old_y) (local.get $arg3)) (local.get $arg4))))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64)
+          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_x))
+            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))) (i32.const 1)))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68)
+          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_y))
+            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))) (i32.const 1)))
         (global.set $eax (i32.const 1)))
       (else
         (global.set $eax (i32.const 0))))
@@ -8678,15 +8724,16 @@
   ;; 591: OffsetViewportOrgEx(hdc, dx, dy, lpPoint) → BOOL
   (func $handle_OffsetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $px i32) (local $py i32)
-    (local.set $px (call $host_gdi_get_viewport_org_x (local.get $arg0)))
-    (local.set $py (call $host_gdi_get_viewport_org_y (local.get $arg0)))
+    (local.set $px (call $gdi_dc_get_field (local.get $arg0) (i32.const 56) (i32.const 0)))
+    (local.set $py (call $gdi_dc_get_field (local.get $arg0) (i32.const 60) (i32.const 0)))
     (if (local.get $arg3) (then
       (call $gs32 (local.get $arg3) (local.get $px))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $py))
     ))
-    (drop (call $host_gdi_set_viewport_org (local.get $arg0)
-      (i32.add (local.get $px) (local.get $arg1))
-      (i32.add (local.get $py) (local.get $arg2))))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 56)
+      (i32.add (local.get $px) (local.get $arg1)) (i32.const 0)))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 60)
+      (i32.add (local.get $py) (local.get $arg2)) (i32.const 0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -8695,11 +8742,12 @@
   (func $handle_SetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg3) (then
       (call $gs32 (local.get $arg3)
-        (call $host_gdi_get_viewport_org_x (local.get $arg0)))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 56) (i32.const 0)))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-        (call $host_gdi_get_viewport_org_y (local.get $arg0)))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 60) (i32.const 0)))
     ))
-    (drop (call $host_gdi_set_viewport_org (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 56) (local.get $arg1) (i32.const 0)))
+    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 60) (local.get $arg2) (i32.const 0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -8709,9 +8757,9 @@
     (if (local.get $arg1)
       (then
         (call $gs32 (local.get $arg1)
-          (call $host_gdi_get_viewport_ext_x (local.get $arg0)))
+          (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-          (call $host_gdi_get_viewport_ext_y (local.get $arg0)))))
+          (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -8727,9 +8775,9 @@
     (if (local.get $arg1)
       (then
         (call $gs32 (local.get $arg1)
-          (call $host_gdi_get_window_ext_x (local.get $arg0)))
+          (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-          (call $host_gdi_get_window_ext_y (local.get $arg0)))))
+          (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -8740,9 +8788,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 597: GetPolyFillMode(hdc) — default ALTERNATE winding rule
+  ;; 597: GetPolyFillMode(hdc) → current polygon fill mode.
   (func $handle_GetPolyFillMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $gdi_dc_get_field (local.get $arg0) (i32.const 76) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

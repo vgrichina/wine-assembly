@@ -1339,6 +1339,23 @@
       (i64.add (i64.shl (local.get $numerator) (i64.const 1)) (local.get $denominator))
       (i64.shl (local.get $denominator) (i64.const 1)))))
 
+  ;; Map one coordinate between logical/device spaces with Win32-style signed
+  ;; rounding. Callers validate the non-zero source extent.
+  (func $gdi_map_coordinate (param $value i32) (param $source_origin i32)
+        (param $source_extent i32) (param $dest_origin i32) (param $dest_extent i32)
+        (result i32)
+    (i32.add (local.get $dest_origin)
+      (call $gdi_round_ratio
+        (i64.mul
+          (i64.extend_i32_s (i32.sub (local.get $value) (local.get $source_origin)))
+          (i64.extend_i32_s (local.get $dest_extent)))
+        (i64.extend_i32_s (local.get $source_extent)))))
+
+  (func (export "test_gdi_map_coordinate") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $gdi_map_coordinate
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
+
   (func $gdi_line_map_x (param $desc i32) (param $x i32) (result i32)
     (i32.add (i32.load offset=48 (local.get $desc))
       (call $gdi_round_ratio
