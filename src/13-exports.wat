@@ -231,6 +231,38 @@
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_CreatePen")
+        (param i32) (param i32) (param i32) (result i32)
+    (call $handle_CreatePen
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CreateSolidBrush") (param i32) (result i32)
+    (call $handle_CreateSolidBrush
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CreateCompatibleDC") (param i32) (result i32)
+    (call $handle_CreateCompatibleDC
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_SelectObject") (param i32) (param i32) (result i32)
+    (call $handle_SelectObject
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_DeleteDC") (param i32) (result i32)
+    (call $handle_DeleteDC
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CreateDIBSection")
+        (param i32) (param i32) (param i32) (result i32)
+    (call $handle_CreateDIBSection
+      (local.get 0) (local.get 1) (i32.const 0) (local.get 2)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_CreateCompatibleBitmap")
         (param i32) (param i32) (param i32) (result i32)
     (call $handle_CreateCompatibleBitmap
@@ -247,6 +279,12 @@
     (call $handle_DeleteObject
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_TextOutA")
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_TextOutA
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
     (global.get $eax))
   (func (export "test_call_MoveToEx")
         (param i32) (param i32) (param i32) (result i32)

@@ -25,21 +25,20 @@ async function main() {
   const { instance } = await WebAssembly.instantiate(wasm, base);
   const wat = instance.exports;
 
-  const pen = 0x301001;
-  const brush = 0x301002;
-  assert.strictEqual(wat.test_gdi_object_adopt(pen, 1, 2, 3, 0x123456, 0), pen);
-  assert.strictEqual(wat.test_gdi_object_adopt(brush, 2, 0, 0, 0xABCDEF, 0), brush);
+  const pen = wat.test_call_CreatePen(2, 3, 0x123456) >>> 0;
+  const brush = wat.test_call_CreateSolidBrush(0xABCDEF) >>> 0;
+  assert(pen && brush, 'WAT handlers should allocate dynamic objects');
   assert.strictEqual(wat.test_gdi_object_type(pen), 1);
   assert.strictEqual(wat.test_gdi_object_type(brush), 2);
   assert.strictEqual(wat.test_gdi_object_type(0x30017), 1);
   assert.strictEqual(wat.test_gdi_object_type(0x30010), 2);
 
-  const hdcA = 0x300001;
-  const hdcB = 0x300002;
+  const hdcA = wat.test_call_CreateCompatibleDC(0) >>> 0;
+  const hdcB = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 4, 0x30017), 0x30017);
-  assert.strictEqual(wat.test_gdi_dc_select_owned_object(hdcA, pen), 0x30017);
-  assert.strictEqual(wat.test_gdi_dc_select_owned_object(hdcA, 0x30018), pen);
-  assert.strictEqual(wat.test_gdi_dc_select_owned_object(hdcA, brush), 0x30010);
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, pen), 0x30017);
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, 0x30018), pen);
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, brush), 0x30010);
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 4, 0), 0x30018);
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 8, 0), brush);
   assert.strictEqual(wat.test_gdi_dc_get_field(hdcB, 4, 0x30017), 0x30017,
@@ -58,11 +57,41 @@ async function main() {
   assert.strictEqual(wat.test_gdi_map_coordinate(3, 1, -4, 20, 8), 16,
     'negative extents must invert an axis');
 
-  assert.strictEqual(wat.test_gdi_object_delete(pen), 1);
+  const bitmap = wat.test_call_CreateCompatibleBitmap(hdcA, 17, 9) >>> 0;
+  assert(bitmap, 'WAT should allocate compatible bitmap storage');
+  assert.strictEqual(wat.test_gdi_object_type(bitmap), 3);
+  assert(base.gdi.surfacePresentations.has(bitmap), 'JS should own only its derived presentation');
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, bitmap), 0x30007);
+  const bitmapStruct = wat.guest_alloc(24) >>> 0;
+  assert.strictEqual(wat.test_call_GetObjectA(bitmap, 24, bitmapStruct), 24);
+  assert.strictEqual(wat.guest_read32(bitmapStruct + 4), 17);
+  assert.strictEqual(wat.guest_read32(bitmapStruct + 8), 9);
+  assert.strictEqual(wat.guest_read32(bitmapStruct + 12), 68);
+  assert.strictEqual(wat.guest_read32(bitmapStruct + 16), 1 | (32 << 16));
+  assert.strictEqual(wat.guest_read32(bitmapStruct + 20), 0,
+    'DDB-compatible bitmap storage must remain private through GetObject');
+
+  const text = wat.guest_alloc(2) >>> 0;
+  wat.guest_write16(text, 0x58); // "X\0"
+  assert.strictEqual(wat.test_call_TextOutA(hdcA, 1, 1, text, 1), 1);
+  const descriptor = 0x07EF1000;
+  assert.strictEqual(wat.test_gdi_surface_descriptor(hdcA, descriptor), 1);
+  const bits = new Uint8Array(memory.buffer);
+  const bitsWa = new DataView(memory.buffer).getUint32(descriptor, true);
+  const byteLength = new DataView(memory.buffer).getUint32(descriptor + 12, true) * 9;
+  assert(bits.subarray(bitsWa, bitsWa + byteLength).some(value => value !== 0),
+    'Canvas text must synchronize rendered pixels into canonical WAT storage');
+
+  assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
   assert.strictEqual(wat.test_gdi_object_type(pen), 0);
   assert.strictEqual(wat.test_gdi_object_delete(0x30017), 1,
     'stock objects remain valid process-owned handles');
   assert.strictEqual(wat.test_gdi_object_type(0x30017), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  assert.strictEqual(wat.test_call_DeleteObject(bitmap), 1);
+  assert(!base.gdi.surfacePresentations.has(bitmap), 'bitmap deletion should discard its Canvas cache');
+  assert.strictEqual(wat.test_call_DeleteDC(hdcA), 1);
+  assert.strictEqual(wat.test_call_DeleteDC(hdcB), 1);
 
   console.log('PASS  WAT owns pen/brush records and independent per-DC state');
 }

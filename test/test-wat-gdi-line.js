@@ -32,8 +32,10 @@ async function main() {
   const bytes = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
   let nextBmi = 0x00100000;
-  let nextBits = 0x02000000;
   let passed = 0;
+
+  const createPen = (style, width, color) => wat.test_call_CreatePen(style, width, color) >>> 0;
+  const selectObject = (hdc, object) => wat.test_call_SelectObject(hdc, object) >>> 0;
 
   function check(name, fn) {
     fn();
@@ -42,19 +44,20 @@ async function main() {
   }
 
   function makeDib(width, height, bpp, topDown = false) {
-    const bmi = nextBmi;
-    const bits = nextBits;
     const stride = ((width * bpp + 31) >> 5) << 2;
-    nextBmi += 0x1000;
-    nextBits += stride * height + 0x1000;
-    dv.setUint32(bmi, 40, true);
-    dv.setInt32(bmi + 4, width, true);
-    dv.setInt32(bmi + 8, topDown ? -height : height, true);
-    dv.setUint16(bmi + 12, 1, true);
-    dv.setUint16(bmi + 14, bpp, true);
-    const bitmap = base.host.gdi_create_dib_section(width, height, bpp, bits, bmi);
-    const hdc = base.host.gdi_create_compat_dc(0);
-    base.host.gdi_select_object(hdc, bitmap);
+    const bmi = wat.guest_alloc(0x1000) >>> 0;
+    const out = wat.guest_alloc(4) >>> 0;
+    wat.guest_write32(bmi, 40);
+    wat.guest_write32(bmi + 4, width);
+    wat.guest_write32(bmi + 8, topDown ? -height : height);
+    wat.guest_write16(bmi + 12, 1);
+    wat.guest_write16(bmi + 14, bpp);
+    const bitmap = wat.test_call_CreateDIBSection(0, bmi, out) >>> 0;
+    const bitsGa = wat.guest_read32(out) >>> 0;
+    const bits = 0x1C000000 + (bitsGa - 0x50000000);
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap && hdc, `failed to create ${width}x${height}x${bpp} DIB/DC`);
+    assert.strictEqual(selectObject(hdc, bitmap), 0x30007);
     return { hdc, bitmap, bits, stride, width, height, bpp, topDown };
   }
 
@@ -131,8 +134,13 @@ async function main() {
 
   check('Bresenham writes exact bottom-up 24bpp pixels and excludes endpoint', () => {
     const dib = makeDib(8, 6, 24);
-    const pen = base.host.gdi_create_pen(0, 1, 0x00332211);
-    base.host.gdi_select_object(dib.hdc, pen);
+    const pen = createPen(0, 1, 0x00332211);
+    selectObject(dib.hdc, pen);
+    assert.strictEqual(wat.test_gdi_object_type(dib.bitmap), 3);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 84, 0) >>> 0, dib.bitmap);
+    assert.strictEqual(wat.test_gdi_surface_descriptor(dib.hdc, 0x07EF1000), 1);
+    assert.strictEqual(dv.getUint32(0x07EF1000, true), dib.bits >>> 0);
+    assert.strictEqual(dv.getUint32(0x07EF1000 + 24, true), 0x00332211);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 1, 1, 6, 4), 1);
     const expected = new Set(['1,1', '2,2', '3,2', '4,3', '5,3']);
     for (let y = 0; y < dib.height; y++) {
@@ -142,15 +150,15 @@ async function main() {
       }
     }
     assert.strictEqual(pixel(dib, 6, 4), 0);
-    const canvas = base.gdi._gdiObjects[dib.bitmap].canvas.getContext('2d');
+    const canvas = base.gdi.surfacePresentations.get(dib.bitmap).canvas.getContext('2d');
     assert.deepStrictEqual(Array.from(canvas.getImageData(1, 1, 1, 1).data), [0x11, 0x22, 0x33, 0xFF]);
   });
 
   check('top-down 32bpp lines respect WAT clip bands', () => {
     const dib = makeDib(8, 4, 32, true);
-    const pen = base.host.gdi_create_pen(0, 1, 0x000000FF);
+    const pen = createPen(0, 1, 0x000000FF);
     const clip = wat.test_gdi_rgn_alloc_rect(2, 1, 6, 3);
-    base.host.gdi_select_object(dib.hdc, pen);
+    selectObject(dib.hdc, pen);
     assert.strictEqual(wat.test_gdi_dc_clip_select(dib.hdc, clip), 2);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 1, 8, 1), 1);
     for (let x = 0; x < 8; x++) {
@@ -165,8 +173,8 @@ async function main() {
     ];
     for (const [x0, y0, x1, y1] of cases) {
       const dib = makeDib(9, 9, 24, true);
-      const pen = base.host.gdi_create_pen(0, 1, 0x00FFFFFF);
-      base.host.gdi_select_object(dib.hdc, pen);
+      const pen = createPen(0, 1, 0x00FFFFFF);
+      selectObject(dib.hdc, pen);
       assert.strictEqual(wat.test_gdi_line_try(dib.hdc, x0, y0, x1, y1), 1);
       const expected = new Set(referenceLine(x0, y0, x1, y1));
       for (let y = 0; y < dib.height; y++) {
@@ -180,12 +188,16 @@ async function main() {
 
   check('viewport/window mapping and XOR operate before byte presentation', () => {
     const dib = makeDib(10, 5, 24);
-    const pen = base.host.gdi_create_pen(0, 1, 0x000000FF);
-    base.host.gdi_select_object(dib.hdc, pen);
-    base.host.gdi_set_window_org(dib.hdc, 1, 0);
-    base.host.gdi_set_window_ext(dib.hdc, 2, 1);
-    base.host.gdi_set_viewport_org(dib.hdc, 2, 0);
-    base.host.gdi_set_viewport_ext(dib.hdc, 4, 1);
+    const pen = createPen(0, 1, 0x000000FF);
+    selectObject(dib.hdc, pen);
+    wat.test_gdi_dc_set_field(dib.hdc, 40, 1, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 44, 0, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 48, 2, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 52, 1, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 56, 2, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 60, 0, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 64, 4, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 68, 1, 1);
     for (let x = 4; x < 8; x++) setPixel(dib, x, 2, 0x00FF00);
     assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 7), 13);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 2, 2, 4, 2), 1);
@@ -196,8 +208,8 @@ async function main() {
 
   check('wide solid COPYPEN strokes use exact square integer footprints', () => {
     const dib = makeDib(10, 8, 24, true);
-    const wide = base.host.gdi_create_pen(0, 3, 0x000000FF);
-    base.host.gdi_select_object(dib.hdc, wide);
+    const wide = createPen(0, 3, 0x000000FF);
+    selectObject(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 2, 3, 7, 3), 1);
     for (let y = 0; y < dib.height; y++) {
       for (let x = 0; x < dib.width; x++) {
@@ -210,8 +222,8 @@ async function main() {
 
   check('even-width strokes use a stable top-left bias and clip at DIB edges', () => {
     const dib = makeDib(7, 6, 32, true);
-    const wide = base.host.gdi_create_pen(0, 4, 0x0000FF00);
-    base.host.gdi_select_object(dib.hdc, wide);
+    const wide = createPen(0, 4, 0x0000FF00);
+    selectObject(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 1, 4, 1), 1);
     for (let y = 0; y < dib.height; y++) {
       for (let x = 0; x < dib.width; x++) {
@@ -234,8 +246,8 @@ async function main() {
       assert.strictEqual(fixture.pixels.length, height, `${fixture.name}: fixture height`);
       assert(fixture.pixels.every(row => row.length === width), `${fixture.name}: fixture width`);
       const dib = makeDib(width, height, 24, true);
-      const pen = base.host.gdi_create_pen(0, fixture.width, colorRef);
-      base.host.gdi_select_object(dib.hdc, pen);
+      const pen = createPen(0, fixture.width, colorRef);
+      selectObject(dib.hdc, pen);
       assert.strictEqual(wat.test_gdi_line_try(dib.hdc, x0, y0, x1, y1), 1,
         `${fixture.name}: WAT must own the supported DIB stroke`);
       const colors = new Set();
@@ -255,31 +267,33 @@ async function main() {
 
   check('unsupported wide ROP2, transformed wide, huge, and 16bpp lines fall back', () => {
     const dib = makeDib(6, 4, 24);
-    const wide = base.host.gdi_create_pen(0, 3, 0x000000FF);
-    base.host.gdi_select_object(dib.hdc, wide);
+    const wide = createPen(0, 3, 0x000000FF);
+    selectObject(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 7), 13);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 4, 0), 0);
     assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 13), 7);
-    base.host.gdi_set_window_ext(dib.hdc, 1, 1);
-    base.host.gdi_set_viewport_ext(dib.hdc, 2, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 48, 1, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 52, 1, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 64, 2, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 68, 1, 1);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 2, 0), 0);
-    base.host.gdi_set_viewport_ext(dib.hdc, 1, 1);
-    const thin = base.host.gdi_create_pen(0, 1, 0x000000FF);
-    base.host.gdi_select_object(dib.hdc, thin);
+    wat.test_gdi_dc_set_field(dib.hdc, 64, 1, 1);
+    const thin = createPen(0, 1, 0x000000FF);
+    selectObject(dib.hdc, thin);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 70000, 0), 0);
     const dib16 = makeDib(6, 4, 16);
-    base.host.gdi_select_object(dib16.hdc, thin);
+    selectObject(dib16.hdc, thin);
     assert.strictEqual(wat.test_gdi_line_try(dib16.hdc, 0, 0, 4, 0), 0);
   });
 
   check('wide dash requests normalize to solid and PS_NULL never draws', () => {
     const dib = makeDib(8, 5, 24, true);
-    const wideDash = base.host.gdi_create_pen(1, 3, 0x000000FF);
-    base.host.gdi_select_object(dib.hdc, wideDash);
+    const wideDash = createPen(1, 3, 0x000000FF);
+    selectObject(dib.hdc, wideDash);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 2, 2, 6, 2), 1);
     assert.strictEqual(pixel(dib, 3, 2), 0xFF0000);
-    const nullPen = base.host.gdi_create_pen(5, 1, 0x0000FF00);
-    base.host.gdi_select_object(dib.hdc, nullPen);
+    const nullPen = createPen(5, 1, 0x0000FF00);
+    selectObject(dib.hdc, nullPen);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 4, 7, 4), 0);
     assert.strictEqual(pixel(dib, 3, 4), 0);
   });
@@ -293,8 +307,8 @@ async function main() {
     ];
     for (const [style, pattern] of patterns) {
       const dib = makeDib(10, 2, 24, true);
-      const pen = base.host.gdi_create_pen(style, 1, 0x00FFFFFF);
-      base.host.gdi_select_object(dib.hdc, pen);
+      const pen = createPen(style, 1, 0x00FFFFFF);
+      selectObject(dib.hdc, pen);
       assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 8, 0), 1);
       for (let x = 0; x < 8; x++) {
         assert.strictEqual(pixel(dib, x, 0), pattern[x] ? 0xFFFFFF : 0,
@@ -305,16 +319,16 @@ async function main() {
 
   check('styled coverage preserves phase through clipping and reverse traversal', () => {
     const clipped = makeDib(10, 2, 24, true);
-    const dash = base.host.gdi_create_pen(1, 1, 0x00FFFFFF);
+    const dash = createPen(1, 1, 0x00FFFFFF);
     const clip = wat.test_gdi_rgn_alloc_rect(4, 0, 8, 1);
-    base.host.gdi_select_object(clipped.hdc, dash);
+    selectObject(clipped.hdc, dash);
     assert.strictEqual(wat.test_gdi_dc_clip_select(clipped.hdc, clip), 2);
     assert.strictEqual(wat.test_gdi_line_try(clipped.hdc, 0, 0, 8, 0), 1);
     assert.deepStrictEqual(Array.from({ length: 10 }, (_, x) => pixel(clipped, x, 0) !== 0),
       [false, false, false, false, true, true, false, false, false, false]);
 
     const reverse = makeDib(10, 2, 24, true);
-    base.host.gdi_select_object(reverse.hdc, dash);
+    selectObject(reverse.hdc, dash);
     assert.strictEqual(wat.test_gdi_line_try(reverse.hdc, 8, 0, 0, 0), 1);
     assert.deepStrictEqual(Array.from({ length: 10 }, (_, x) => pixel(reverse, x, 0) !== 0),
       [false, false, false, true, true, true, true, true, true, false]);
@@ -322,9 +336,9 @@ async function main() {
 
   check('Polyline shares styled phase across segment boundaries', () => {
     const dib = makeDib(8, 8, 24, true);
-    const dash = base.host.gdi_create_pen(1, 1, 0x00FFFFFF);
+    const dash = createPen(1, 1, 0x00FFFFFF);
     const points = pointsBuffer([[0, 0], [5, 0], [5, 5]]);
-    base.host.gdi_select_object(dib.hdc, dash);
+    selectObject(dib.hdc, dash);
     assert.strictEqual(wat.test_gdi_polyline_try(dib.hdc, points, 3, 0), 1);
     for (let x = 0; x < 5; x++) assert.strictEqual(pixel(dib, x, 0), 0xFFFFFF);
     assert.strictEqual(pixel(dib, 5, 0), 0xFFFFFF);
@@ -336,18 +350,18 @@ async function main() {
 
   check('Polyline preflight rejects atomically before any segment writes', () => {
     const dib = makeDib(8, 3, 24, true);
-    const pen = base.host.gdi_create_pen(0, 1, 0x000000FF);
+    const pen = createPen(0, 1, 0x000000FF);
     const points = pointsBuffer([[0, 1], [4, 1], [70000, 1]]);
-    base.host.gdi_select_object(dib.hdc, pen);
+    selectObject(dib.hdc, pen);
     assert.strictEqual(wat.test_gdi_polyline_try(dib.hdc, points, 3, 0), 0);
     for (let x = 0; x < dib.width; x++) assert.strictEqual(pixel(dib, x, 1), 0);
   });
 
   check('PolylineTo begins at the WAT-owned current position', () => {
     const dib = makeDib(8, 5, 24, true);
-    const pen = base.host.gdi_create_pen(0, 1, 0x000000FF);
+    const pen = createPen(0, 1, 0x000000FF);
     const points = pointsBuffer([[5, 2], [5, 4]]);
-    base.host.gdi_select_object(dib.hdc, pen);
+    selectObject(dib.hdc, pen);
     wat.test_gdi_current_pos_set(dib.hdc, 1, 2);
     assert.strictEqual(wat.test_gdi_polyline_try(dib.hdc, points, 2, 1), 1);
     for (let x = 1; x < 5; x++) assert.strictEqual(pixel(dib, x, 2), 0xFF0000);

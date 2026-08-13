@@ -17,14 +17,14 @@ const status = JSON.parse(fs.readFileSync(
 // inventory. Expanding the document alone must never expand JavaScript's GDI
 // authority.
 const PERMANENT_NON_TEXT_BRIDGE = [
-  'gdi_present_dib_rect',
   'gdi_set_region_bands',
   'gdi_set_window_rgn',
+  'gdi_surface_create',
+  'gdi_surface_delete',
+  'gdi_surface_upload',
 ];
 const CANVAS_TEXT_POLICY = [
-  'gdi_draw_text', 'gdi_ext_text_out', 'gdi_get_bk_color', 'gdi_get_bk_mode',
-  'gdi_get_text_align', 'gdi_get_text_color', 'gdi_set_bk_color',
-  'gdi_set_bk_mode', 'gdi_set_text_align', 'gdi_set_text_color', 'gdi_text_out',
+  'gdi_draw_text', 'gdi_ext_text_out', 'gdi_text_bind', 'gdi_text_out',
 ].sort();
 const MAX_TEMPORARY_NON_TEXT_EXCEPTIONS = 0;
 const sorted = values => [...values].sort();
@@ -59,8 +59,8 @@ assert.deepStrictEqual(sorted(status.eliminatedNonTextSemantics), internalStubs,
   'every eliminated semantic import must remain an explicit WAT unsupported stub');
 assert.deepStrictEqual(sorted(status.watUnsupportedStubs), internalStubs,
   'stub inventory must exactly match the WAT source');
-assert.strictEqual(internalStubs.length, 70,
-  'the flag-day baseline has exactly 70 eliminated semantic imports');
+assert.strictEqual(internalStubs.length, 59,
+  'the WAT foundation leaves exactly 59 unsupported semantic stubs');
 
 (async () => {
   const wasm = await compileWat(file => fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));

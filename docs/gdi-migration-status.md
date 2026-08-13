@@ -4,16 +4,24 @@ The machine-readable source is
 [`gdi-migration-status.json`](gdi-migration-status.json). It contains the exact
 keep/delete API lists for the JavaScript GDI bridge.
 
-The permanent non-text bridge has three presentation-only calls:
+The permanent non-text bridge has five presentation-only calls:
 
 - `gdi_set_region_bands`
 - `gdi_set_window_rgn`
-- `gdi_present_dib_rect`
+- `gdi_surface_create`
+- `gdi_surface_upload`
+- `gdi_surface_delete`
 
-Eleven `gdi_*` calls remain under the explicit Canvas text policy. The other 70
+Four `gdi_*` calls remain under the explicit Canvas text policy. Text color,
+background mode, alignment, mapping, and selected font state are owned by the
+canonical WAT DC record; `gdi_text_bind` exposes that record to the retained
+Canvas text rasterizer and writes memory-DC text pixels back to canonical
+surface storage. The other 59
 former imports are listed under `eliminatedNonTextSemantics`; their JavaScript
 methods are deleted and their callers resolve to explicit zero-return WAT stubs
-until real WAT implementations replace them. This intentionally breaks
+until real WAT implementations replace them. Pen, solid-brush, memory-DC,
+compatible-bitmap, and DIB-section creation, selection, and lifetime are now
+WAT-owned. This intentionally breaks
 unsupported application paths rather than retaining JavaScript GDI semantics.
 
 There are no resource-byte exceptions and the temporary non-text exception

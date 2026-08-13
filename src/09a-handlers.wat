@@ -6735,21 +6735,24 @@
   ;; Allocates pixel buffer, creates bitmap handle, stores data pointer at ppvBits
   (func $handle_CreateDIBSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $size i32) (local $ptr i32)
+    (local $bmi i32) (local $stride i32) (local $flags i32)
+    (local $palette i32) (local $palette_count i32) (local $clr_used i32)
+    (local $handle i32)
+    (local.set $bmi (call $g2w (local.get $arg1)))
     (local.set $w (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
     (local.set $h (call $gl32 (i32.add (local.get $arg1) (i32.const 8))))
     (if (i32.lt_s (local.get $h) (i32.const 0))
-      (then (local.set $h (i32.sub (i32.const 0) (local.get $h)))))
+      (then
+        (local.set $flags (i32.const 2))
+        (local.set $h (i32.sub (i32.const 0) (local.get $h)))))
     (local.set $bpp (i32.and (i32.shr_u (call $gl32 (i32.add (local.get $arg1) (i32.const 12))) (i32.const 16)) (i32.const 0xFFFF)))
     ;; DIB scanlines are padded to a 32-bit boundary.  Using width * bytes-per-pixel
     ;; under-allocates 1/4/24-bpp images at many widths and lets the final scanlines
     ;; overwrite the next guest heap object.
-    (local.set $size
-      (i32.mul (local.get $h)
-        (i32.shl
-          (i32.shr_u
-            (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.const 31))
-            (i32.const 5))
-          (i32.const 2))))
+    (local.set $stride (i32.shl
+      (i32.shr_u (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.const 31))
+        (i32.const 5)) (i32.const 2)))
+    (local.set $size (i32.mul (local.get $h) (local.get $stride)))
     (if (i32.lt_s (local.get $size) (i32.const 4)) (then (local.set $size (i32.const 4))))
     (local.set $ptr (call $dib_alloc (local.get $size)))
     (if (i32.eqz (local.get $ptr))
@@ -6760,12 +6763,22 @@
         (return)))
     (if (local.get $arg3)
       (then (call $gs32 (local.get $arg3) (local.get $ptr))))
-    ;; Register as a live DIB section. Guest stores mark its arena pages dirty;
-    ;; JS converts the complete bitmap lazily when a GDI operation reads it.
-    (global.set $eax (call $host_gdi_create_dib_section
-      (local.get $w) (local.get $h) (local.get $bpp)
-      (call $g2w (local.get $ptr))
-      (call $g2w (local.get $arg1))))
+    (if (i32.le_u (local.get $bpp) (i32.const 8))
+      (then
+        (local.set $clr_used (i32.load offset=32 (local.get $bmi)))
+        (local.set $palette_count (select (local.get $clr_used)
+          (i32.shl (i32.const 1) (local.get $bpp)) (i32.ne (local.get $clr_used) (i32.const 0))))
+        (local.set $palette (i32.add (local.get $bmi) (i32.load (local.get $bmi))))))
+    (local.set $flags (i32.or (local.get $flags) (i32.const 5)))
+    (local.set $handle (call $gdi_bitmap_alloc
+      (local.get $w) (local.get $h) (local.get $bpp) (local.get $flags)
+      (call $g2w (local.get $ptr)) (local.get $stride)
+      (local.get $palette) (local.get $palette_count)))
+    (if (i32.eqz (local.get $handle))
+      (then
+        (call $dib_free_wasm (call $g2w (local.get $ptr)))
+        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   ;; 448: GetDIBits(hdc, hbmp, uStartScan, cScanLines, lpvBits, lpbmi, uUsage) — 7 args stdcall

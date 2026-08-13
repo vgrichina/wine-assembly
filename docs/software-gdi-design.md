@@ -9,8 +9,8 @@ DCs use it for `GetPixel`, unclipped `SetPixel`, `FillRect`, and source-less
 solid `BitBlt` operations (`BLACKNESS`, `WHITENESS`, and `PATCOPY`). Rectangle
 clip regions are intersected in integer surface coordinates. Complex regions,
 geometric primitives outside the initial solid-pen `LineTo` slice, source
-blits, window surfaces, and text still use the existing Canvas paths. Canvas
-text remains intentional policy, as described below.
+blits, and window surfaces remain follow-up WAT work. Canvas text remains the
+intentional rasterizer policy, as described below.
 
 Rectangular HRGN ownership and Boolean algebra now run in WAT. WAT allocates
 generation-tagged handles and owns normalization, mutation, offset, bounding
@@ -36,19 +36,21 @@ release destroy the private region. The system/window visibility region and
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
-a derived cache: WAT raster writes upload bounded rectangles, and legacy Canvas
-fallback writes mirror their dirty rectangles back into canonical storage.
-Deletion returns the private pages to the arena.
+a derived cache: WAT raster writes upload bounded rectangles. The retained
+Canvas text rasterizer receives an opaque WAT surface ID and canonical DC state,
+then copies its bounded output back into canonical native storage before
+returning. Deletion returns the private pages to the arena.
 
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
 24- and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
 canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
-dirty bounds. JavaScript provides a read-only selected-object descriptor and
-uploads the resulting dirty rectangle to the presentation Canvas. Wide strokes
+dirty bounds. WAT resolves selected objects and DC state into a canonical
+descriptor; JavaScript only uploads the resulting dirty rectangle to the
+presentation Canvas. Wide strokes
 currently use an integer square footprint with `R2_COPYPEN` under 1:1 mapping;
-non-copy or transformed wide operations and window/legacy bitmap targets still use
-the named Canvas compatibility path pending coverage-mask, geometric-path, and
-target kernels. One-pixel dash, dot, dash-dot, and dash-dot-dot pens use fixed
+non-copy or transformed wide operations fail explicitly pending coverage-mask
+and geometric-path kernels. Window targets still require canonical surface
+backing. One-pixel dash, dot, dash-dot, and dash-dot-dot pens use fixed
 device-step WAT coverage tables. `CreatePen` dash/dot styles wider than one are
 normalized to solid as Win32 specifies.
 
@@ -199,15 +201,23 @@ implementation fail through explicit WAT stubs; they do not regain behavior by
 crossing into JavaScript. Temporary application regressions are preferable to
 silently preserving two semantic implementations.
 
-The only permanent non-text `gdi_*` JavaScript imports are:
+The permanent presentation-only `gdi_*` JavaScript imports are:
 
 ```text
 gdi_set_region_bands   upload canonical WAT bands to a derived clip mirror
 gdi_set_window_rgn     apply that mirror during browser window composition
-gdi_present_dib_rect   upload dirty authoritative pixels to Canvas
+gdi_surface_create     allocate a derived Canvas cache for WAT surface metadata
+gdi_surface_upload     upload dirty authoritative pixels to Canvas
+gdi_surface_delete     discard the derived Canvas cache
 ```
 
-Canvas text-policy imports remain until the font plan is replaced. There is no
+Canvas text-policy imports are `gdi_text_bind`, `gdi_text_out`,
+`gdi_ext_text_out`, and `gdi_draw_text`. Text colors, background mode,
+alignment, mapping state, font selection, DC identity, and bitmap selection
+remain WAT-owned. `gdi_text_bind` exposes a canonical DC record and opaque
+surface token without constructing a semantic JavaScript DC mirror. Canvas
+output for memory DCs is synchronized back into authoritative native pixels.
+There is no
 current `gdi_*` resource exception: `gdi_load_bitmap` created GDI objects and
 therefore was semantic, not a raw resource-byte boundary. A future resource
 bridge must return immutable bytes/metadata and must be separately allowlisted.

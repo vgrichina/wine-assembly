@@ -15,65 +15,43 @@
           (call $host_gdi_get_current_object (local.get $arg0) (local.get $arg1)))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 145: SelectObject(hdc, hObject) — delegate to host GDI
+  ;; 145: SelectObject(hdc, hObject) — canonical selection is WAT-owned.
   (func $handle_SelectObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $previous i32)
     (local.set $previous (call $gdi_dc_select_owned_object (local.get $arg0) (local.get $arg1)))
-    (if (i32.ne (local.get $previous) (i32.const -1))
-      (then
-        ;; Publish the WAT-owned selection for Canvas/text and geometry that
-        ;; still consumes the compatibility mirror.
-        (drop (call $host_gdi_select_object (local.get $arg0) (local.get $arg1)))
-        (global.set $eax (local.get $previous)))
-      (else
-        ;; Bitmap/font resources remain host-owned until their own migration.
-        (global.set $eax (call $host_gdi_select_object (local.get $arg0) (local.get $arg1)))))
+    (global.set $eax
+      (if (result i32) (i32.ne (local.get $previous) (i32.const -1))
+        (then (local.get $previous)) (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 146: DeleteObject(hObject) — delegate to host GDI
+  ;; 146: DeleteObject(hObject) — destroy WAT state and derived presentation.
   (func $handle_DeleteObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bits_wa i32)
-    (local $wat_owned i32)
     (if (call $gdi_rgn_record (local.get $arg0))
       (then
         (global.set $eax (call $gdi_rgn_delete (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
-    (local.set $bits_wa (call $host_gdi_get_object_storage (local.get $arg0)))
-    (local.set $wat_owned (call $gdi_object_type (local.get $arg0)))
-    (global.set $eax (call $host_gdi_delete_object (local.get $arg0)))
-    (if (i32.and (i32.ne (global.get $eax) (i32.const 0))
-          (i32.ne (local.get $wat_owned) (i32.const 0)))
-      (then (drop (call $gdi_object_delete (local.get $arg0)))))
-    (if (i32.and (i32.ne (global.get $eax) (i32.const 0))
-          (i32.ne (local.get $bits_wa) (i32.const 0)))
-      (then (call $dib_free_wasm (local.get $bits_wa))))
+    (global.set $eax (call $gdi_object_delete_full (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 147: DeleteDC(hdc) — delegate to host GDI
+  ;; 147: DeleteDC(hdc) — release canonical WAT DC records.
   (func $handle_DeleteDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eq (local.get $arg0) (global.get $printer_hdc))
       (then
         (global.set $printer_hdc (i32.const 0))
         (global.set $printer_doc_state (i32.const 0))))
-    (call $gdi_dc_clip_release (local.get $arg0))
-    (call $gdi_dc_raster_release (local.get $arg0))
-    (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
+    (global.set $eax (call $gdi_dc_delete (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 148: CreatePen(style, width, color) — WAT owns semantics; host mirrors it.
+  ;; 148: CreatePen(style, width, color)
   (func $handle_CreatePen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $handle i32)
-    (local.set $handle (call $host_gdi_create_pen (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (if (i32.eqz (call $gdi_object_adopt (local.get $handle) (i32.const 1)
-          (local.get $arg0) (local.get $arg1) (local.get $arg2)
-          (i32.eq (local.get $arg0) (i32.const 5))))
-      (then
-        (drop (call $host_gdi_delete_object (local.get $handle)))
-        (local.set $handle (i32.const 0))))
+    (local.set $handle (call $gdi_object_alloc (i32.const 1)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.eq (local.get $arg0) (i32.const 5))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -91,27 +69,18 @@
         (local.set $style (i32.load (local.get $wa)))
         (local.set $width (i32.load offset=4 (local.get $wa)))
         (local.set $color (i32.load offset=12 (local.get $wa)))
-        (local.set $wa (call $host_gdi_create_pen
-          (local.get $style) (local.get $width) (local.get $color)))
-        (if (i32.eqz (call $gdi_object_adopt (local.get $wa) (i32.const 1)
-              (local.get $style) (local.get $width) (local.get $color)
-              (i32.eq (local.get $style) (i32.const 5))))
-          (then
-            (drop (call $host_gdi_delete_object (local.get $wa)))
-            (local.set $wa (i32.const 0))))
+        (local.set $wa (call $gdi_object_alloc (i32.const 1)
+          (local.get $style) (local.get $width) (local.get $color)
+          (i32.eq (local.get $style) (i32.const 5))))
         (global.set $eax (local.get $wa))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 149: CreateSolidBrush(color) — WAT owns semantics; host mirrors it.
+  ;; 149: CreateSolidBrush(color)
   (func $handle_CreateSolidBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $handle i32)
-    (local.set $handle (call $host_gdi_create_solid_brush (local.get $arg0)))
-    (if (i32.eqz (call $gdi_object_adopt (local.get $handle) (i32.const 2)
-          (i32.const 0) (i32.const 0) (local.get $arg0) (i32.const 0)))
-      (then
-        (drop (call $host_gdi_delete_object (local.get $handle)))
-        (local.set $handle (i32.const 0))))
+    (local.set $handle (call $gdi_object_alloc (i32.const 2)
+      (i32.const 0) (i32.const 0) (local.get $arg0) (i32.const 0)))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -124,21 +93,15 @@
       (then (global.set $eax (i32.const 0)))
       (else
         (local.set $color (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-        (local.set $handle (call $host_gdi_create_solid_brush (local.get $color)))
-        (if (i32.eqz (call $gdi_object_adopt (local.get $handle) (i32.const 2)
-              (i32.const 0) (i32.const 0) (local.get $color) (i32.const 0)))
-          (then
-            (drop (call $host_gdi_delete_object (local.get $handle)))
-            (local.set $handle (i32.const 0))))
+        (local.set $handle (call $gdi_object_alloc (i32.const 2)
+          (i32.const 0) (i32.const 0) (local.get $color) (i32.const 0)))
         (global.set $eax (local.get $handle))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 150: CreateCompatibleDC(hdc) — delegate to host GDI
+  ;; 150: CreateCompatibleDC(hdc)
   (func $handle_CreateCompatibleDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_compat_dc (local.get $arg0)))
-    (if (global.get $eax)
-      (then (drop (call $gdi_dc_state_entry (global.get $eax) (i32.const 1)))))
+    (global.set $eax (call $gdi_dc_alloc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -166,8 +129,10 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (local.set $handle (call $host_gdi_create_compat_bitmap
-      (local.get $arg0) (local.get $w) (local.get $h) (call $g2w (local.get $bits_ga))))
+    (local.set $handle (call $gdi_bitmap_alloc
+      (local.get $w) (local.get $h) (i32.const 32) (i32.const 6)
+      (call $g2w (local.get $bits_ga)) (i32.mul (local.get $w) (i32.const 4))
+      (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $handle))
       (then (call $dib_free_wasm (call $g2w (local.get $bits_ga)))))
     (global.set $eax (local.get $handle))
@@ -312,36 +277,39 @@
 
   ;; 163: GetObjectA
   (func $handle_GetObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $bits_wa i32) (local $bpp i32)
-    (if (i32.gt_u (local.get $arg1) (i32.const 0))
-      (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $arg1))))
-    ;; Try to fill BITMAP struct if it's a bitmap object
-    (local.set $tmp (call $host_gdi_get_object_w (local.get $arg0)))
-    (if (i32.ne (local.get $tmp) (i32.const 0))
+    (local $record i32) (local $bits_wa i32) (local $out_wa i32)
+    (local.set $record (call $gdi_object_record (local.get $arg0)))
+    (if (i32.or (i32.eqz (local.get $record))
+          (i32.ne (i32.load offset=4 (local.get $record)) (i32.const 3)))
       (then
-        ;; BITMAP: bmType(0,4), bmWidth(+4,4), bmHeight(+8,4),
-        ;; bmWidthBytes(+12,4), bmPlanes(+16,2), bmBitsPixel(+18,2), bmBits(+20,4)
-        (if (i32.ge_u (local.get $arg1) (i32.const 24))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.and (i32.gt_u (local.get $arg1) (i32.const 0))
+          (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        (local.set $out_wa (call $g2w (local.get $arg2)))
+        (call $zero_memory (local.get $out_wa) (local.get $arg1))))
+    ;; BITMAP: bmType, bmWidth, bmHeight, bmWidthBytes, bmPlanes,
+    ;; bmBitsPixel, bmBits. DDB-compatible bitmaps intentionally report a null
+    ;; bmBits pointer; only DIB sections expose their canonical guest storage.
+    (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 24))
+          (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 4))
+          (i32.load offset=8 (local.get $record)))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 8))
+          (i32.load offset=12 (local.get $record)))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
+          (i32.load offset=28 (local.get $record)))
+        (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 1))
+        (call $gs16 (i32.add (local.get $arg2) (i32.const 18))
+          (i32.load offset=16 (local.get $record)))
+        (local.set $bits_wa (call $gdi_bitmap_public_bits (local.get $arg0)))
+        (if (local.get $bits_wa)
           (then
-            (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $tmp))
-            (call $gs32 (i32.add (local.get $arg2) (i32.const 8))
-              (call $host_gdi_get_object_h (local.get $arg0)))
-            (local.set $bpp (call $host_gdi_get_object_bpp (local.get $arg0)))
-            (if (i32.eqz (local.get $bpp))
-              (then (local.set $bpp (i32.const 32))))
-            (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
-              (i32.shl
-                (i32.shr_u
-                  (i32.add (i32.mul (local.get $tmp) (local.get $bpp)) (i32.const 31))
-                  (i32.const 5))
-                (i32.const 2)))
-            (call $gs16 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 1))
-            (call $gs16 (i32.add (local.get $arg2) (i32.const 18)) (local.get $bpp))
-            (local.set $bits_wa (call $host_gdi_get_object_bits (local.get $arg0)))
-            (if (local.get $bits_wa)
-              (then
-                (call $gs32 (i32.add (local.get $arg2) (i32.const 20))
-                  (call $w2g (local.get $bits_wa)))))))))
+            (call $gs32 (i32.add (local.get $arg2) (i32.const 20))
+              (call $w2g (local.get $bits_wa)))))))
     (global.set $eax (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )

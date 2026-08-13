@@ -150,10 +150,15 @@
   (import "host" "get_text_metrics" (func $host_get_text_metrics (param i32) (result i32)))
   ;; get_text_metrics(hdc) → (height | (aveCharWidth << 16))
   ;; GDI host imports
-  (func $host_gdi_create_pen (param i32 i32 i32) (result i32) (i32.const 0))
-  (func $host_gdi_create_solid_brush (param i32) (result i32) (i32.const 0))
-  (func $host_gdi_create_compat_dc (param i32) (result i32) (i32.const 0))
-  (func $host_gdi_create_compat_bitmap (param i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_pen (param i32 i32 i32) (result i32)
+    (call $gdi_object_alloc (i32.const 1) (local.get 0) (local.get 1) (local.get 2)
+      (i32.eq (local.get 0) (i32.const 5))))
+  (func $host_gdi_create_solid_brush (param i32) (result i32)
+    (call $gdi_object_alloc (i32.const 2) (i32.const 0) (i32.const 0)
+      (local.get 0) (i32.const 0)))
+  (func $host_gdi_create_compat_dc (param i32) (result i32) (call $gdi_dc_alloc))
+  (func $host_gdi_create_compat_bitmap (param i32 i32 i32 i32) (result i32)
+    (call $gdi_create_compat_bitmap_internal (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_create_compat_bitmap(hdc, width, height, backingWa) registers a DDB
   ;; whose private canonical pixels live at backingWa. The address is not
   ;; exposed through BITMAP.bmBits.
@@ -161,18 +166,28 @@
   ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
   (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_create_dib_bitmap(lpbmi_wa, lpbInit_wa, fdwInit) → handle
-  (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_create_dib_section_internal
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
   ;; lpBits_wa, and JS lazily converts dirty arena pages when GDI reads the bitmap.
-  (func $host_gdi_get_object_bits (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_object_bits (param i32) (result i32)
+    (call $gdi_bitmap_public_bits (local.get 0)))
   ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
-  (func $host_gdi_get_object_storage (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_object_storage (param i32) (result i32)
+    (call $gdi_bitmap_storage (local.get 0)))
   ;; gdi_get_object_storage(hBitmap) → private WAT backing address, or 0.
-  (func $host_gdi_get_object_bpp (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_object_bpp (param i32) (result i32)
+    (call $gdi_bitmap_bpp (local.get 0)))
   ;; gdi_get_object_bpp(hBitmap) → bitmap bits-per-pixel, or 0 if unknown.
-  (func $host_gdi_select_object (param i32 i32) (result i32) (i32.const 0))
-  (func $host_gdi_delete_object (param i32) (result i32) (i32.const 0))
-  (func $host_gdi_delete_dc (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_select_object (param i32 i32) (result i32)
+    (local $old i32)
+    (local.set $old (call $gdi_dc_select_owned_object (local.get 0) (local.get 1)))
+    (select (local.get $old) (i32.const 0) (i32.ne (local.get $old) (i32.const -1))))
+  (func $host_gdi_delete_object (param i32) (result i32)
+    (call $gdi_object_delete_full (local.get 0)))
+  (func $host_gdi_delete_dc (param i32) (result i32)
+    (call $gdi_dc_delete (local.get 0)))
   (func $host_gdi_rectangle (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_rectangle(hdc, left, top, right, bottom)
   (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
@@ -226,8 +241,11 @@
   ;; gdi_line_to(hdc, x, y)
   (func $host_gdi_get_line_descriptor (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_line_descriptor(hdc, desc_wa) -> 1 for a supported DIB/solid-pen target.
-  (import "host" "gdi_present_dib_rect" (func $host_gdi_present_dib_rect (param i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_present_dib_rect(hdc, l, t, r, b) uploads WAT-written pixels only.
+  (import "host" "gdi_surface_create" (func $host_gdi_surface_create
+    (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_surface_upload" (func $host_gdi_surface_upload
+    (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_surface_delete" (func $host_gdi_surface_delete (param i32) (result i32)))
   (func $host_gdi_get_current_object (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_current_object(hdc, objectType) → handle
   (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
@@ -253,14 +271,6 @@
   (func $host_gdi_load_bitmap (param i32 i32) (result i32) (i32.const 0))
   (func $host_gdi_get_object_w (param i32) (result i32) (i32.const 0))
   (func $host_gdi_get_object_h (param i32) (result i32) (i32.const 0))
-  (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
-  (import "host" "gdi_get_bk_color" (func $host_gdi_get_bk_color (param i32) (result i32)))
-  (import "host" "gdi_get_text_color" (func $host_gdi_get_text_color (param i32) (result i32)))
-  (import "host" "gdi_get_bk_mode" (func $host_gdi_get_bk_mode (param i32) (result i32)))
-  (import "host" "gdi_set_bk_color" (func $host_gdi_set_bk_color (param i32 i32) (result i32)))
-  (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
-  (import "host" "gdi_set_text_align" (func $host_gdi_set_text_align (param i32 i32) (result i32)))
-  (import "host" "gdi_get_text_align" (func $host_gdi_get_text_align (param i32) (result i32)))
   (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32) (i32.const 0))
   (func $host_gdi_get_viewport_org_x (param i32) (result i32) (i32.const 0))
   (func $host_gdi_get_viewport_org_y (param i32) (result i32) (i32.const 0))
@@ -273,13 +283,14 @@
   (func $host_gdi_set_window_ext (param i32 i32 i32) (result i32) (i32.const 0))
   (func $host_gdi_get_window_ext_x (param i32) (result i32) (i32.const 0))
   (func $host_gdi_get_window_ext_y (param i32) (result i32) (i32.const 0))
-  (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw (param i32 i32) (result i32)))
+  (import "host" "gdi_text_out" (func $host_gdi_text_out_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
-  (import "host" "gdi_ext_text_out" (func $host_gdi_ext_text_out (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_ext_text_out" (func $host_gdi_ext_text_out_raw (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ext_text_out(hdc, x, y, options, rectWasmAddr, textWasmAddr, nCount, isWide) → 1
   ;; Honors ExtTextOut's ETO_OPAQUE/ETO_CLIPPED rectangle while lpDx remains ignored.
-  (import "host" "gdi_draw_text" (func $host_gdi_draw_text (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_draw_text" (func $host_gdi_draw_text_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_draw_text(hdc, textWA, nCount, rectWA, uFormat, isWide) → height
   (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
@@ -711,7 +722,7 @@
   ;; 0x07EF0800 2KB      GDI_DC_RASTER_TABLE (256 x {HDC, ROP2})
   ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
-  ;; 0x07EF7800 6KB      GDI_OBJECT_TABLE (256 x 24-byte pen/brush records)
+  ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -901,9 +912,13 @@
   ;; Dynamic WAT-owned pen/solid-brush records. Public handles are allocated
   ;; by the host handle namespace, then adopted here as semantic objects.
   (global $GDI_OBJECT_TABLE i32 (i32.const 0x07EF7800))
-  (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00001800))
+  (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
-  (global $GDI_OBJECT_STRIDE i32 (i32.const 24))
+  (global $GDI_OBJECT_STRIDE i32 (i32.const 48))
+  ;; Keep WAT-owned namespaces disjoint from the retained Canvas font and
+  ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
+  (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
+  (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

@@ -11,20 +11,12 @@
         "name": "gdi_set_window_rgn",
         "boundary": "Apply an already-derived region mirror to browser window composition."
       },
-      {
-        "name": "gdi_present_dib_rect",
-        "boundary": "Upload a bounded dirty rectangle from authoritative WAT pixels to Canvas."
-      }
+      { "name": "gdi_surface_create", "boundary": "Allocate a derived Canvas cache for an opaque WAT-owned surface and byte layout." },
+      { "name": "gdi_surface_delete", "boundary": "Discard the derived Canvas cache for an opaque surface ID." },
+      { "name": "gdi_surface_upload", "boundary": "Upload a bounded dirty rectangle from authoritative WAT pixels to Canvas." }
     ],
     "canvasTextPolicy": [
-      "gdi_set_text_color",
-      "gdi_get_bk_color",
-      "gdi_get_text_color",
-      "gdi_get_bk_mode",
-      "gdi_set_bk_color",
-      "gdi_set_bk_mode",
-      "gdi_set_text_align",
-      "gdi_get_text_align",
+      "gdi_text_bind",
       "gdi_text_out",
       "gdi_ext_text_out",
       "gdi_draw_text"
@@ -34,19 +26,8 @@
     "maximumTemporaryNonTextExceptions": 0
   },
   "eliminatedNonTextSemantics": [
-    "gdi_create_pen",
-    "gdi_create_solid_brush",
-    "gdi_create_compat_dc",
-    "gdi_create_compat_bitmap",
     "gdi_create_bitmap",
     "gdi_create_dib_bitmap",
-    "gdi_create_dib_section",
-    "gdi_get_object_bits",
-    "gdi_get_object_storage",
-    "gdi_get_object_bpp",
-    "gdi_select_object",
-    "gdi_delete_object",
-    "gdi_delete_dc",
     "gdi_rectangle",
     "gdi_round_rect",
     "gdi_fill_rect",
@@ -106,19 +87,8 @@
     "gdi_stretch_dib_bits"
   ],
   "watUnsupportedStubs": [
-    "gdi_create_pen",
-    "gdi_create_solid_brush",
-    "gdi_create_compat_dc",
-    "gdi_create_compat_bitmap",
     "gdi_create_bitmap",
     "gdi_create_dib_bitmap",
-    "gdi_create_dib_section",
-    "gdi_get_object_bits",
-    "gdi_get_object_storage",
-    "gdi_get_object_bpp",
-    "gdi_select_object",
-    "gdi_delete_object",
-    "gdi_delete_dc",
     "gdi_rectangle",
     "gdi_round_rect",
     "gdi_fill_rect",
