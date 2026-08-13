@@ -60,8 +60,12 @@ canonical CRLF and exact terminating NULs, while registered RTF remains opaque
 and independent. The replacement is failure-atomic. `OleFlushClipboard` now
 detaches the clipboard from its former owner with deep HGLOBAL, IStream, and
 recursive IStorage snapshots plus stable format enumeration. The focused suite
-passes 50/50. Custom medium releasers and advisory connections remain broader
-transfer work.
+passes 55/55. Runtime-owned custom medium releasers now follow Windows
+`ReleaseStgMedium` rules: delegated HGLOBAL payloads are not freed directly,
+while stream/storage media release their interface and a distinct
+`pUnkForRelease`. DLL-private releasers still require a suspended guest-callback
+bridge; advisory connections remain deferred until a traced consumer needs
+them.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
 `CoDisconnectObject`, HGLOBAL-backed `IStream` helpers,
@@ -765,14 +769,16 @@ Current evidence from the 2026-08-11 follow-up probe:
   13/13; it covers stable ANSI/Unicode `"Rich Text Format"` registration,
   distinct ids for unrelated registered formats, RTF availability/count/handle
   queries, byte round-trip, and `EmptyClipboard` clearing.
-- Direct WAT regression test: `node test/test-ole-data-object.js` passes 50/50;
+- Direct WAT regression test: `node test/test-ole-data-object.js` passes 55/55;
   it covers owned multi-format media, stable cloned enumeration, `SetData`
   transfer semantics, independent `GetData`, and caller-owned `GetDataHere`
   transfers for HGLOBAL, IStream, and recursively copied IStorage trees. It
   also verifies exact format/aspect/lindex/target-device/tymed negotiation and
   concrete-medium enumeration, plus ANSI/OEM/Unicode/RTF coexistence and exact
   CRLF/NUL text conventions. `OleFlushClipboard` coverage proves deep HGLOBAL,
-  IStream, and recursive IStorage independence from later owner mutations.
+  IStream, and recursive IStorage independence from later owner mutations. It
+  also covers `pUnkForRelease` transfer and dual stream/storage-plus-releaser
+  release behavior.
 - Regression test: `node test/test-wordpad-selection-highlight.js` passes 8/8
   and writes `test/output/wordpad-richedit/selection-highlight-plain.png` plus
   `test/output/wordpad-richedit/selection-highlight.png`; it verifies Ctrl+A

@@ -325,8 +325,11 @@ transfer breadth below.
 - [x] Replace the single `FORMATETC`/`STGMEDIUM` slot with an owned collection.
 - [x] Implement matching across clipboard format, aspect, lindex, and compatible
   `tymed` masks with accurate `DV_E_*` errors.
-- Support `TYMED_HGLOBAL`, `TYMED_ISTREAM`, and `TYMED_ISTORAGE` ownership,
-  duplication, `pUnkForRelease`, and `ReleaseStgMedium` behavior.
+- [x] Support `TYMED_HGLOBAL`, `TYMED_ISTREAM`, and `TYMED_ISTORAGE` ownership,
+  duplication, local `pUnkForRelease`, and `ReleaseStgMedium` behavior.
+- Add suspended guest-callback completion for a DLL-private
+  `pUnkForRelease` only after a traced consumer requires it; runtime-owned OLE
+  releasers are complete without that callback bridge.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -372,6 +375,14 @@ backing, recursive IStorage trees, target-device metadata, and format
 enumeration remain independent if the former owner mutates or adds data. The
 bounded external Paint path wraps its already rendered CF_DIB in a local data
 object. The focused suite passes 50/50.
+
+2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
+`pUnkForRelease` without freeing the delegated payload, while stream/storage
+media release both their interface reference and a distinct custom releaser.
+`GetData` still returns independent caller-owned copies, and successful
+`SetData(..., TRUE)` clears all caller medium fields only after ownership has
+transferred. The focused suite passes 55/55. DLL-private releasers need a
+suspended guest callback and remain deferred until a real consumer is traced.
 
 ### Acceptance
 

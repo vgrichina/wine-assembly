@@ -375,6 +375,66 @@ async function main() {
   e.test_ole_release_medium(fallbackAnsi);
   e.test_ole_release(unicodeTextObject);
 
+  // A transferred medium may delegate its payload lifetime to a separate
+  // IUnknown. HGLOBAL is then left to that releaser, while stream/storage
+  // interface references are released in addition to the custom IUnknown.
+  const releaserFormat = makeFormat(0xc2f0);
+  const releaserPayload = makeHglobalMedium(Uint8Array.from([0x41, 0x42, 0]));
+  const globalReleaser = e.test_ole_create_stream(0, 0) >>> 0;
+  e.test_ole_addref(globalReleaser); // caller reference plus medium-owned reference
+  dv.setUint32(wa(releaserPayload.value) + 8, globalReleaser, true);
+  const releaserObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  check('SetData fRelease transfers a custom medium releaser atomically',
+    e.test_ole_data_set(releaserObject, releaserFormat, releaserPayload.value, 1) === 0 &&
+    dv.getUint32(wa(releaserPayload.value), true) === 0 &&
+    dv.getUint32(wa(releaserPayload.value) + 4, true) === 0 &&
+    dv.getUint32(wa(releaserPayload.value) + 8, true) === 0 &&
+    dv.getUint32(wa(globalReleaser) + 4, true) === 2);
+  const releaserCopy = alloc(12);
+  check('GetData duplicates custom-released HGLOBAL data for independent ownership',
+    e.test_ole_data_get(releaserObject, releaserFormat, releaserCopy) === 0 &&
+    dv.getUint32(wa(releaserCopy) + 4, true) !== releaserPayload.handle &&
+    dv.getUint32(wa(releaserCopy) + 8, true) === 0 &&
+    readAnsiHandle(dv.getUint32(wa(releaserCopy) + 4, true)).join(',') === '65,66,0');
+  e.test_ole_release_medium(releaserCopy);
+  e.test_ole_release(releaserObject);
+  check('releasing a custom-released HGLOBAL calls only its releaser',
+    dv.getUint32(wa(globalReleaser) + 4, true) === 1 &&
+    u8[wa(releaserPayload.handle)] === 0x41);
+  e.test_ole_release(globalReleaser);
+
+  const releasedStream = e.test_ole_create_stream(0, 0) >>> 0;
+  const streamReleaser = e.test_ole_create_stream(0, 0) >>> 0;
+  e.test_ole_addref(releasedStream);
+  e.test_ole_addref(streamReleaser);
+  const customStreamMedium = alloc(12);
+  dv.setUint32(wa(customStreamMedium), 4, true);
+  dv.setUint32(wa(customStreamMedium) + 4, releasedStream, true);
+  dv.setUint32(wa(customStreamMedium) + 8, streamReleaser, true);
+  e.test_ole_release_medium(customStreamMedium);
+  check('ReleaseStgMedium releases both IStream and pUnkForRelease references',
+    dv.getUint32(wa(releasedStream) + 4, true) === 1 &&
+    dv.getUint32(wa(streamReleaser) + 4, true) === 1 &&
+    dv.getUint32(wa(customStreamMedium), true) === 0);
+  e.test_ole_release(releasedStream);
+  e.test_ole_release(streamReleaser);
+
+  const releasedStorage = e.test_ole_create_storage(0) >>> 0;
+  const storageReleaser = e.test_ole_create_stream(0, 0) >>> 0;
+  e.test_ole_addref(releasedStorage);
+  e.test_ole_addref(storageReleaser);
+  const customStorageMedium = alloc(12);
+  dv.setUint32(wa(customStorageMedium), 8, true);
+  dv.setUint32(wa(customStorageMedium) + 4, releasedStorage, true);
+  dv.setUint32(wa(customStorageMedium) + 8, storageReleaser, true);
+  e.test_ole_release_medium(customStorageMedium);
+  check('ReleaseStgMedium releases both IStorage and pUnkForRelease references',
+    dv.getUint32(wa(releasedStorage) + 4, true) === 1 &&
+    dv.getUint32(wa(storageReleaser) + 4, true) === 1 &&
+    dv.getUint32(wa(customStorageMedium), true) === 0);
+  e.test_ole_release(releasedStorage);
+  e.test_ole_release(storageReleaser);
+
   const flushFormat = makeFormat(0xc301);
   const flushPayload = makeHglobalMedium(Uint8Array.from([1, 2, 3, 0]));
   const flushObject = e.test_ole_create_data_object(flushFormat, flushPayload.value) >>> 0;

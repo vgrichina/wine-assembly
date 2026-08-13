@@ -30,11 +30,14 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 50/50 and 68/68. The data-object suite now
+storage suites remain green at 55/55 and 68/68. The data-object suite now
 includes caller-owned HGLOBAL, IStream, and recursive IStorage `GetDataHere`
 transfers, exact `FORMATETC` negotiation errors, and coexisting canonical
 ANSI/OEM/Unicode text beside opaque RTF. Clipboard flush creates deep durable
-value snapshots independent of subsequent owner mutation.
+value snapshots independent of subsequent owner mutation. Runtime-owned
+`pUnkForRelease` media also follow the HGLOBAL delegation and dual
+stream/storage-plus-releaser lifetime rules; DLL-private releasers remain a
+guest-callback follow-up only if traced.
 
 ## ASCII TLDR
 

@@ -2994,14 +2994,66 @@
   ;; FORMATETC[20], STGMEDIUM[12]. FORMATETC::ptd is independently owned.
   ;; IEnumFORMATETC layout (28 bytes): +0 vtable, +4 refcount, +8 kind=5,
   ;; +12 owned FORMATETC snapshot, +16 count, +20 cursor, +24 owns snapshot.
+  ;; Release an interface only when it is one of this runtime's bounded OLE
+  ;; objects. DLL-private COM implementations require a guest callback, which
+  ;; cannot be completed synchronously from this helper without suspending the
+  ;; current API frame.
+  (func $ole_release_local_interface (param $iface i32) (result i32)
+    (local $vtbl i32) (local $root i32)
+    (if (i32.eqz (local.get $iface)) (then (return (i32.const 0))))
+    (local.set $vtbl (call $gl32 (local.get $iface)))
+    (local.set $root (local.get $iface))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_PERSISTSTORAGE))
+      (then (local.set $root (i32.sub (local.get $iface) (i32.const 12)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_CACHE))
+      (then (local.set $root (i32.sub (local.get $iface) (i32.const 52)))))
+    (if (i32.or
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT))
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2)))
+      (then (local.set $root (i32.sub (local.get $iface) (i32.const 56)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_LOCKBYTES))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_STREAM))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_STORAGE))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_DATAOBJECT))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMFORMATETC))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMSTATSTG))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_OBJECT))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_PERSISTSTORAGE))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_CACHE))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2))
+      (then (return (call $ole_obj_release (local.get $root)))))
+    (i32.const 0))
+
   (func $ole_release_medium (param $medium i32)
     (local $tymed i32) (local $data i32) (local $unk i32)
     (if (i32.eqz (local.get $medium)) (then (return)))
     (local.set $tymed (call $gl32 (local.get $medium)))
     (local.set $data (call $gl32 (i32.add (local.get $medium) (i32.const 4))))
     (local.set $unk (call $gl32 (i32.add (local.get $medium) (i32.const 8))))
+    ;; TYMED_FILE always releases the allocated filename. The native contract
+    ;; also deletes the named file when pUnkForRelease is NULL; filesystem-
+    ;; backed file media remain outside this in-memory transfer layer.
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+          (i32.eq (local.get $tymed) (i32.const 2)))
+      (then (call $heap_free (local.get $data))))
+    ;; Stream and storage media own an interface reference independently of a
+    ;; custom releaser, so both references are released when both are present.
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+          (i32.or (i32.eq (local.get $tymed) (i32.const 4)) (i32.eq (local.get $tymed) (i32.const 8))))
+      (then (drop (call $ole_release_local_interface (local.get $data)))))
     (if (local.get $unk)
-      (then (drop (call $ole_obj_release (local.get $unk))))
+      (then (drop (call $ole_release_local_interface (local.get $unk))))
       (else
         ;; GetClipboardData returns borrowed system-owned handles. RichEdit can
         ;; wrap one in an fRelease STGMEDIUM while creating a static object;
@@ -3010,16 +3062,13 @@
         ;; objects may retain the backing snapshot for the instance lifetime.
         (if (i32.and
               (i32.and (i32.ne (local.get $data) (i32.const 0))
-                (i32.or (i32.eq (local.get $tymed) (i32.const 1)) (i32.eq (local.get $tymed) (i32.const 2))))
+                (i32.eq (local.get $tymed) (i32.const 1)))
               (i32.and
                 (i32.ne (local.get $data) (global.get $clipboard_ptr))
                 (i32.and
                   (i32.ne (local.get $data) (global.get $clipboard_rtf_ptr))
                   (i32.ne (local.get $data) (global.get $clipboard_binary_ptr)))))
-          (then (call $heap_free (local.get $data))))
-        (if (i32.and (i32.ne (local.get $data) (i32.const 0))
-              (i32.or (i32.eq (local.get $tymed) (i32.const 4)) (i32.eq (local.get $tymed) (i32.const 8))))
-          (then (drop (call $ole_obj_release (local.get $data)))))))
+          (then (call $heap_free (local.get $data))))))
     (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12)))
 
   (func $ole_copy_hglobal (param $src i32) (result i32)
