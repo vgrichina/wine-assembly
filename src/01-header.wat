@@ -952,6 +952,7 @@
   ;; 0x07EF1100 160B     GDI_BLIT_DESC scratch
   ;; 0x07EF11A0 304B     GDI_BITMAP_PLAN/name scratch
   ;; 0x07EF12D0  16B     WINDOW_RECT_SCRATCH (window geometry queries)
+  ;; 0x07EF12E0  80B     GDI_BRUSH_DESC scratch
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
@@ -1147,6 +1148,10 @@
   ;; binding cannot overwrite the caller's RECT.
   (global $WINDOW_RECT_SCRATCH i32 (i32.const 0x07EF12D0))
   (global $WINDOW_RECT_SCRATCH_SIZE i32 (i32.const 0x00000010))
+  ;; Pattern-brush sampling is synchronous and uses a private bitmap
+  ;; descriptor so it cannot clobber active line/blit descriptors.
+  (global $GDI_BRUSH_DESC i32 (i32.const 0x07EF12E0))
+  (global $GDI_BRUSH_DESC_SIZE i32 (i32.const 0x00000050))
   ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
   ;; presentation and GDI operations that have not moved to WAT yet.
   (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))

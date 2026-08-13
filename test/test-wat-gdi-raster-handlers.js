@@ -84,6 +84,53 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(canvasRgb(surface, 2, 1), 0xFF0000);
   });
 
+  check('CreatePatternBrush snapshots and repeats canonical bitmap pixels', () => {
+    const pattern = makeDib(2, 2);
+    wat.test_call_SetPixel(pattern.hdc, 0, 0, 0x000000FF); // red COLORREF
+    wat.test_call_SetPixel(pattern.hdc, 1, 0, 0x0000FF00); // green
+    wat.test_call_SetPixel(pattern.hdc, 0, 1, 0x00FF0000); // blue
+    wat.test_call_SetPixel(pattern.hdc, 1, 1, 0x00FFFFFF); // white
+    const brush = wat.test_call_CreatePatternBrush(pattern.bitmap) >>> 0;
+    assert(brush);
+    assert.strictEqual(wat.test_call_DeleteObject(pattern.bitmap), 1,
+      'brush must own a snapshot independent of the source bitmap');
+    wat.test_call_SelectObject(dst.hdc, brush);
+    wat.test_call_SetBrushOrgEx(dst.hdc, 1, 0, 0);
+    assert.strictEqual(wat.test_call_PatBlt(dst.hdc, 0, 0, 4, 2, 0x00F00021), 1);
+    assert.strictEqual(packed(dst, 0, 0), 0x00FF00);
+    assert.strictEqual(packed(dst, 1, 0), 0xFF0000);
+    assert.strictEqual(packed(dst, 0, 1), 0xFFFFFF);
+    assert.strictEqual(packed(dst, 1, 1), 0x0000FF);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  });
+
+  check('CreateDIBPatternBrushPt copies indexed packed DIB pixels', () => {
+    const dib = wat.guest_alloc(40 + 8 + 8) >>> 0;
+    wat.guest_write32(dib, 40);
+    wat.guest_write32(dib + 4, 2);
+    wat.guest_write32(dib + 8, -2);
+    wat.guest_write16(dib + 12, 1);
+    wat.guest_write16(dib + 14, 8);
+    wat.guest_write32(dib + 32, 2);
+    const imageBase = wat.get_image_base() >>> 0;
+    const wa = 0x12000 + (dib - imageBase);
+    bytes = new Uint8Array(memory.buffer);
+    bytes.set([0x00, 0x00, 0xFF, 0, 0xFF, 0x00, 0x00, 0], wa + 40);
+    bytes.set([0, 1, 0, 0, 1, 0, 0, 0], wa + 48);
+    const brush = wat.test_call_CreateDIBPatternBrushPt(dib, 0) >>> 0;
+    assert(brush);
+    wat.test_call_SelectObject(dst.hdc, brush);
+    wat.test_call_SetBrushOrgEx(dst.hdc, 0, 0, 0);
+    assert.strictEqual(wat.test_call_PatBlt(dst.hdc, 0, 0, 2, 2, 0x00F00021), 1);
+    assert.strictEqual(packed(dst, 0, 0), 0xFF0000);
+    assert.strictEqual(packed(dst, 1, 0), 0x0000FF);
+    assert.strictEqual(packed(dst, 0, 1), 0x0000FF);
+    assert.strictEqual(packed(dst, 1, 1), 0xFF0000);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+    assert.strictEqual(wat.test_call_CreateDIBPatternBrushPt(dib, 1), 0,
+      'DIB_PAL_COLORS must fail until selected palette realization is owned');
+  });
+
   check('BitBlt applies SRCCOPY between canonical WAT surfaces', () => {
     assert.strictEqual(wat.test_call_BitBlt(
       dst.hdc, 4, 1, 2, 3, src.hdc, 0, 1, 0x00CC0020), 1);

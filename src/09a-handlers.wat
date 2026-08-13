@@ -5276,7 +5276,8 @@
 
   ;; 357: CreatePatternBrush(hBitmap) — 1 arg stdcall
   (func $handle_CreatePatternBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_solid_brush (i32.const 0x00C0C0C0)))
+    (global.set $eax (call $gdi_bitmap_create_pattern_brush
+      (local.get $arg0) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8465,9 +8466,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 558: CreateDIBPatternBrushPt — STUB: unimplemented
+  ;; 558: CreateDIBPatternBrushPt — copy packed DIB bytes into an owned WAT pattern.
   (func $handle_CreateDIBPatternBrushPt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_bitmap_create_dib_pattern_brush
+      (if (result i32) (local.get $arg0)
+        (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 559: CreateHatchBrush(fnStyle, color) — preserve hatch style in WAT.

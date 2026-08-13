@@ -77,8 +77,12 @@ sample hatch masks in device coordinates, including `SetBrushOrgEx`, opaque
 background color, and transparent background preservation. `GetObjectA/W`
 serializes stable `LOGPEN`, `LOGBRUSH`, `BITMAP`, and `LOGFONT` structures.
 Pattern-dependent `PatBlt`, `BitBlt`, `StretchBlt`, `StretchDIBits`, and flood
-fill operations use the same coordinate-aware sampler. DIB pattern brushes are
-still pending owned bitmap-pattern records and repeat sampling.
+fill operations use the same coordinate-aware sampler. `CreatePatternBrush`
+snapshots any canonical bitmap into brush-owned storage, and
+`CreateDIBPatternBrushPt` copies packed `DIB_RGB_COLORS` data into the same
+native-format bitmap records. Pattern pixels repeat in device coordinates with
+the canonical brush origin and are sampled by every brush-dependent WAT path.
+Indexed `DIB_PAL_COLORS` patterns remain pending selected-palette realization.
 
 Tabbed text now uses the same canonical DC-to-text binding as ordinary text.
 WAT parses ANSI or UTF-16 tab characters, measures individual runs, expands

@@ -1303,6 +1303,7 @@
 
   (func $gdi_object_delete_full (param $handle i32) (result i32)
     (local $p i32) (local $bits i32) (local $flags i32) (local $surface i32)
+    (local $owned_bitmap i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.eqz (local.get $p))
       (then (return (select (i32.const 1) (i32.const 0)
@@ -1313,7 +1314,13 @@
         (local.set $flags (i32.load offset=20 (local.get $p)))
         (local.set $surface (i32.load offset=40 (local.get $p)))
         (drop (call $host_gdi_surface_delete (local.get $surface)))))
+    (if (i32.and (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 2))
+          (i32.or (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 3))
+            (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 6))))
+      (then (local.set $owned_bitmap (i32.load offset=24 (local.get $p)))))
     (drop (call $gdi_object_delete (local.get $handle)))
+    (if (local.get $owned_bitmap)
+      (then (drop (call $gdi_object_delete_full (local.get $owned_bitmap)))))
     (if (i32.and (i32.ne (local.get $bits) (i32.const 0))
           (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0)))
       (then (call $dib_free_wasm (local.get $bits))))
@@ -2544,7 +2551,7 @@
   ;; Validate brushes independently from sampling them. 0x30015 is the stock
   ;; NULL_BRUSH and therefore valid even though it never produces a pixel.
   (func $gdi_brush_valid (param $brush i32) (result i32)
-    (local $style i32)
+    (local $style i32) (local $record i32)
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 1))
           (i32.le_u (local.get $brush) (i32.const 23)))
       (then (return (i32.const 1))))
@@ -2553,10 +2560,16 @@
       (then (return (i32.const 1))))
     (if (i32.ne (call $gdi_object_type (local.get $brush)) (i32.const 2))
       (then (return (i32.const 0))))
+    (local.set $record (call $gdi_object_record (local.get $brush)))
     (local.set $style (call $gdi_object_style (local.get $brush)))
     (i32.or (i32.eqz (local.get $style))
       (i32.or (i32.eq (local.get $style) (i32.const 1))
-        (i32.eq (local.get $style) (i32.const 2)))))
+        (i32.or (i32.eq (local.get $style) (i32.const 2))
+          (i32.and
+            (i32.or (i32.eq (local.get $style) (i32.const 3))
+              (i32.eq (local.get $style) (i32.const 6)))
+            (i32.eq (call $gdi_object_type (i32.load offset=24 (local.get $record)))
+              (i32.const 3)))))))
 
   ;; Resolve one brush pixel in device coordinates. Values above COLORREF are
   ;; control sentinels: 0x01000000 is invalid and 0x01000001 is transparent.
@@ -2564,6 +2577,7 @@
         (param $x i32) (param $y i32) (result i32)
     (local $record i32) (local $style i32) (local $hatch i32)
     (local $px i32) (local $py i32) (local $foreground i32)
+    (local $bitmap i32) (local $desc i32) (local $color i32)
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 1))
           (i32.le_u (local.get $brush) (i32.const 23)))
       (then (return (call $gdi_chrome_sys_color
@@ -2582,6 +2596,29 @@
       (then (return (i32.load offset=16 (local.get $record)))))
     (if (i32.eq (local.get $style) (i32.const 1))
       (then (return (i32.const 0x01000001))))
+    (if (i32.or (i32.eq (local.get $style) (i32.const 3))
+          (i32.eq (local.get $style) (i32.const 6)))
+      (then
+        (local.set $bitmap (i32.load offset=24 (local.get $record)))
+        (local.set $desc (global.get $GDI_BRUSH_DESC))
+        (if (i32.eqz (call $gdi_raster_desc_from_bitmap
+              (local.get $bitmap) (local.get $desc)))
+          (then (return (i32.const 0x01000000))))
+        (local.set $px (i32.rem_s (i32.sub (local.get $x)
+          (call $gdi_dc_aux_get (local.get $hdc) (i32.const 8) (i32.const 0)))
+          (i32.load offset=4 (local.get $desc))))
+        (local.set $py (i32.rem_s (i32.sub (local.get $y)
+          (call $gdi_dc_aux_get (local.get $hdc) (i32.const 12) (i32.const 0)))
+          (i32.load offset=8 (local.get $desc))))
+        (if (i32.lt_s (local.get $px) (i32.const 0))
+          (then (local.set $px (i32.add (local.get $px) (i32.load offset=4 (local.get $desc))))))
+        (if (i32.lt_s (local.get $py) (i32.const 0))
+          (then (local.set $py (i32.add (local.get $py) (i32.load offset=8 (local.get $desc))))))
+        (local.set $color (call $gdi_raster_read
+          (local.get $desc) (local.get $px) (local.get $py)))
+        (if (i32.eq (local.get $color) (i32.const -1))
+          (then (return (i32.const 0x01000000))))
+        (return (call $gdi_raster_swap_rb (local.get $color)))))
     (if (i32.ne (local.get $style) (i32.const 2))
       (then (return (i32.const 0x01000000))))
     (local.set $hatch (i32.load offset=12 (local.get $record)))

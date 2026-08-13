@@ -247,6 +247,22 @@
       (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_CreatePatternBrush") (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreatePatternBrush
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateDIBPatternBrushPt") (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateDIBPatternBrushPt
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_CreateBrushIndirect") (param i32) (result i32)
     (call $handle_CreateBrushIndirect
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)

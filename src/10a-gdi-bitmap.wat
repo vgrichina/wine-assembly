@@ -522,6 +522,71 @@
         (i32.ne (local.get $pixels) (i32.const 0)))
       (i32.const 1)))
 
+  (func $gdi_bitmap_clone_owned (param $bitmap i32) (result i32)
+    (local $record i32) (local $plan i32)
+    (local.set $record (call $gdi_object_record (local.get $bitmap)))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $record)))
+      (then (return (i32.const 0))))
+    (local.set $plan (global.get $GDI_BITMAP_PLAN))
+    (memory.fill (local.get $plan) (i32.const 0) (i32.const 48))
+    (i32.store (local.get $plan) (i32.load offset=8 (local.get $record)))
+    (i32.store offset=4 (local.get $plan) (i32.load offset=12 (local.get $record)))
+    (i32.store offset=8 (local.get $plan) (i32.load offset=16 (local.get $record)))
+    (i32.store offset=12 (local.get $plan)
+      (i32.and (i32.load offset=20 (local.get $record)) (i32.const 2)))
+    (i32.store offset=16 (local.get $plan) (i32.load offset=28 (local.get $record)))
+    (i32.store offset=20 (local.get $plan) (i32.load offset=32 (local.get $record)))
+    (i32.store offset=24 (local.get $plan) (i32.load offset=36 (local.get $record)))
+    (i32.store offset=32 (local.get $plan)
+      (i32.mul (i32.load offset=28 (local.get $record))
+        (i32.load offset=12 (local.get $record))))
+    (call $gdi_bitmap_create_owned (local.get $plan)
+      (i32.load offset=24 (local.get $record)) (i32.const 1) (i32.const 1)))
+
+  (func $gdi_bitmap_wrap_pattern_brush (param $bitmap i32) (param $style i32) (result i32)
+    (local $brush i32) (local $record i32)
+    (if (i32.ne (call $gdi_object_type (local.get $bitmap)) (i32.const 3))
+      (then (return (i32.const 0))))
+    (local.set $brush (call $gdi_object_alloc (i32.const 2)
+      (local.get $style) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $brush))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $bitmap)))
+        (return (i32.const 0))))
+    (local.set $record (call $gdi_object_record (local.get $brush)))
+    (i32.store offset=24 (local.get $record) (local.get $bitmap))
+    (local.get $brush))
+
+  ;; Pattern brushes own a snapshot. Deleting or changing the caller's bitmap
+  ;; after CreatePatternBrush therefore cannot mutate the brush.
+  (func $gdi_bitmap_create_pattern_brush (param $bitmap i32) (param $copy i32) (result i32)
+    (local $owned i32)
+    (drop (local.get $copy))
+    (local.set $owned (call $gdi_bitmap_clone_owned (local.get $bitmap)))
+    (if (i32.eqz (local.get $owned)) (then (return (i32.const 0))))
+    (call $gdi_bitmap_wrap_pattern_brush (local.get $owned) (i32.const 3)))
+
+  ;; packedDib points at BITMAPINFO immediately followed by its RGBQUAD table
+  ;; and native pixels. DIB_PAL_COLORS requires selected-palette realization,
+  ;; so indexed requests fail atomically until that state is canonical.
+  (func $gdi_bitmap_create_dib_pattern_brush (param $packed_dib i32)
+        (param $usage i32) (result i32)
+    (local $plan i32) (local $pixels i32) (local $bitmap i32)
+    (if (i32.eqz (local.get $packed_dib)) (then (return (i32.const 0))))
+    (local.set $plan (global.get $GDI_BITMAP_PLAN))
+    (if (i32.eqz (call $gdi_bitmap_plan_info (local.get $packed_dib) (local.get $plan)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $usage) (i32.const 0))
+          (i32.le_u (i32.load offset=8 (local.get $plan)) (i32.const 8)))
+      (then (return (i32.const 0))))
+    (local.set $pixels (i32.add (local.get $packed_dib)
+      (i32.add (i32.load offset=36 (local.get $plan))
+        (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 2)))))
+    (local.set $bitmap (call $gdi_bitmap_create_owned
+      (local.get $plan) (local.get $pixels) (i32.const 1) (i32.const 1)))
+    (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
+    (call $gdi_bitmap_wrap_pattern_brush (local.get $bitmap) (i32.const 6)))
+
   (func $gdi_bitmap_create_resource (param $data i32) (param $size i32) (result i32)
     (if (i32.eqz (call $gdi_bitmap_parse_dib
           (local.get $data) (local.get $size) (global.get $GDI_BITMAP_PLAN)))

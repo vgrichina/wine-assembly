@@ -91,14 +91,23 @@
         (local.set $style (i32.load (local.get $wa)))
         (local.set $color (i32.load offset=4 (local.get $wa)))
         (local.set $hatch (i32.load offset=8 (local.get $wa)))
-        (if (i32.or (i32.gt_u (local.get $style) (i32.const 2))
+        (if (i32.or (i32.gt_u (local.get $style) (i32.const 6))
               (i32.and (i32.eq (local.get $style) (i32.const 2))
                 (i32.gt_u (local.get $hatch) (i32.const 5))))
           (then (global.set $eax (i32.const 0)))
+          (else (if (i32.eq (local.get $style) (i32.const 3))
+            (then (global.set $eax (call $gdi_bitmap_create_pattern_brush
+              (local.get $hatch) (i32.const 1))))
+          (else (if (i32.eq (local.get $style) (i32.const 6))
+            (then (global.set $eax (call $gdi_bitmap_create_dib_pattern_brush
+              (call $g2w (local.get $hatch)) (local.get $color))))
+          (else (if (i32.or (i32.eq (local.get $style) (i32.const 4))
+                (i32.eq (local.get $style) (i32.const 5)))
+            (then (global.set $eax (i32.const 0)))
           (else
             (local.set $handle (call $gdi_object_alloc (i32.const 2)
               (local.get $style) (local.get $hatch) (local.get $color) (i32.const 0)))
-            (global.set $eax (local.get $handle))))))
+            (global.set $eax (local.get $handle))))))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
