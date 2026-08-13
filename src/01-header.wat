@@ -150,109 +150,109 @@
   (import "host" "get_text_metrics" (func $host_get_text_metrics (param i32) (result i32)))
   ;; get_text_metrics(hdc) → (height | (aveCharWidth << 16))
   ;; GDI host imports
-  (import "host" "gdi_create_pen" (func $host_gdi_create_pen (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_create_solid_brush" (func $host_gdi_create_solid_brush (param i32) (result i32)))
-  (import "host" "gdi_create_compat_dc" (func $host_gdi_create_compat_dc (param i32) (result i32)))
-  (import "host" "gdi_create_compat_bitmap" (func $host_gdi_create_compat_bitmap (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_create_pen (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_solid_brush (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_compat_dc (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_create_compat_bitmap (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_create_compat_bitmap(hdc, width, height, backingWa) registers a DDB
   ;; whose private canonical pixels live at backingWa. The address is not
   ;; exposed through BITMAP.bmBits.
-  (import "host" "gdi_create_bitmap" (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
-  (import "host" "gdi_create_dib_bitmap" (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32)))
+  (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_create_dib_bitmap(lpbmi_wa, lpbInit_wa, fdwInit) → handle
-  (import "host" "gdi_create_dib_section" (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
   ;; lpBits_wa, and JS lazily converts dirty arena pages when GDI reads the bitmap.
-  (import "host" "gdi_get_object_bits" (func $host_gdi_get_object_bits (param i32) (result i32)))
+  (func $host_gdi_get_object_bits (param i32) (result i32) (i32.const 0))
   ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
-  (import "host" "gdi_get_object_storage" (func $host_gdi_get_object_storage (param i32) (result i32)))
+  (func $host_gdi_get_object_storage (param i32) (result i32) (i32.const 0))
   ;; gdi_get_object_storage(hBitmap) → private WAT backing address, or 0.
-  (import "host" "gdi_get_object_bpp" (func $host_gdi_get_object_bpp (param i32) (result i32)))
+  (func $host_gdi_get_object_bpp (param i32) (result i32) (i32.const 0))
   ;; gdi_get_object_bpp(hBitmap) → bitmap bits-per-pixel, or 0 if unknown.
-  (import "host" "gdi_select_object" (func $host_gdi_select_object (param i32 i32) (result i32)))
-  (import "host" "gdi_delete_object" (func $host_gdi_delete_object (param i32) (result i32)))
-  (import "host" "gdi_delete_dc" (func $host_gdi_delete_dc (param i32) (result i32)))
-  (import "host" "gdi_rectangle" (func $host_gdi_rectangle (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_select_object (param i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_delete_object (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_delete_dc (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_rectangle (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_rectangle(hdc, left, top, right, bottom)
-  (import "host" "gdi_round_rect" (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_round_rect(hdc, left, top, right, bottom, ellipseWidth, ellipseHeight)
-  (import "host" "gdi_fill_rect" (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32)))
-  (import "host" "gdi_draw_edge" (func $host_gdi_draw_edge (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_fill_rect (param i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_draw_edge (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_draw_focus_rect(hdc, left, top, right, bottom) — 1px dotted black rect.
-  (import "host" "gdi_draw_focus_rect" (func $host_gdi_draw_focus_rect (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_draw_focus_rect (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_gradient_fill_h(hdc, l, t, r, b, colorL, colorR) — horizontal linear gradient.
   ;; Win32 equivalent: GdiGradientFill(GRADIENT_FILL_RECT_H). Used by defwndproc_ncpaint.
-  (import "host" "gdi_gradient_fill_h" (func $host_gdi_gradient_fill_h (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_gradient_fill_h (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
-  (import "host" "gdi_ellipse" (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_ellipse (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
-  (import "host" "gdi_create_rect_rgn" (func $host_gdi_create_rect_rgn (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_create_rect_rgn (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_create_rect_rgn(l, t, r, b) -> hrgn
-  (import "host" "gdi_set_rect_rgn" (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_set_rect_rgn(hrgn, l, t, r, b) -> bool
   (import "host" "gdi_set_region_bands" (func $host_gdi_set_region_bands (param i32 i32 i32) (result i32)))
   ;; gdi_set_region_bands(hrgn, rects_wa, count) rebuilds derived Canvas data.
-  (import "host" "gdi_combine_rgn" (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_combine_rgn(dst, src1, src2, mode) -> complexity
-  (import "host" "gdi_offset_rgn" (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32)))
+  (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_offset_rgn(hrgn, dx, dy) -> region complexity
-  (import "host" "gdi_fill_rgn" (func $host_gdi_fill_rgn (param i32 i32 i32) (result i32)))
+  (func $host_gdi_fill_rgn (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_fill_rgn(hdc, hrgn, hbrush) — hbrush=0 uses DC's current brush (for PaintRgn)
-  (import "host" "gdi_frame_rgn" (func $host_gdi_frame_rgn (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_frame_rgn (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_frame_rgn(hdc, hrgn, hbrush, width, height) -> bool
   (import "host" "gdi_set_window_rgn" (func $host_gdi_set_window_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_set_window_rgn(hwnd, hrgn, redraw) -> bool
-  (import "host" "gdi_select_clip_rgn" (func $host_gdi_select_clip_rgn (param i32 i32) (result i32)))
+  (func $host_gdi_select_clip_rgn (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_select_clip_rgn(hdc, hrgn) -> complexity
-  (import "host" "gdi_ext_select_clip_rgn" (func $host_gdi_ext_select_clip_rgn (param i32 i32 i32) (result i32)))
+  (func $host_gdi_ext_select_clip_rgn (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_ext_select_clip_rgn(hdc, hrgn, fnMode) -> complexity
-  (import "host" "gdi_exclude_clip_rect" (func $host_gdi_exclude_clip_rect (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_exclude_clip_rect (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_exclude_clip_rect(hdc, l, t, r, b) -> complexity
-  (import "host" "gdi_intersect_clip_rect" (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_intersect_clip_rect(hdc, l, t, r, b) -> complexity
-  (import "host" "gdi_get_rgn_box" (func $host_gdi_get_rgn_box (param i32 i32) (result i32)))
+  (func $host_gdi_get_rgn_box (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_rgn_box(hrgn, lprect_wa) -> complexity
-  (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
+  (func $host_gdi_polygon (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
-  (import "host" "gdi_poly_bezier" (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_poly_bezier(hdc, pointsWaPtr, nCount, fromCurrent)
-  (import "host" "gdi_polyline" (func $host_gdi_polyline (param i32 i32 i32) (result i32)))
+  (func $host_gdi_polyline (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_polyline(hdc, pointsWaPtr, nCount) preserves the current position.
-  (import "host" "gdi_polyline_to" (func $host_gdi_polyline_to (param i32 i32 i32) (result i32)))
+  (func $host_gdi_polyline_to (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_polyline_to(hdc, pointsWaPtr, nCount)
-  (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32) (result i32)))
+  (func $host_gdi_move_to (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_line_to (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_line_to(hdc, x, y)
-  (import "host" "gdi_get_line_descriptor" (func $host_gdi_get_line_descriptor (param i32 i32) (result i32)))
+  (func $host_gdi_get_line_descriptor (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_line_descriptor(hdc, desc_wa) -> 1 for a supported DIB/solid-pen target.
   (import "host" "gdi_present_dib_rect" (func $host_gdi_present_dib_rect (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_present_dib_rect(hdc, l, t, r, b) uploads WAT-written pixels only.
-  (import "host" "gdi_get_current_object" (func $host_gdi_get_current_object (param i32 i32) (result i32)))
+  (func $host_gdi_get_current_object (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_current_object(hdc, objectType) → handle
-  (import "host" "gdi_arc" (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
-  (import "host" "gdi_bitblt" (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_bitblt(dstDC, dx, dy, w, h, srcDC, sx, sy, rop)
-  (import "host" "gdi_transparent_blt" (func $host_gdi_transparent_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_transparent_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_transparent_blt(dstDC, dx, dy, w, h, srcDC, sx, sy, colorKey)
-  (import "host" "gdi_disabled_blt" (func $host_gdi_disabled_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_disabled_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_disabled_blt(dstDC, dx, dy, w, h, srcDC, sx, sy, colorKey)
 
-  (import "host" "gdi_stretch_blt" (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_stretch_blt (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_stretch_blt(dstDC, dx, dy, dw, dh, srcDC, sx, sy, sw, sh, rop)
-  (import "host" "gdi_scroll_window" (func $host_gdi_scroll_window (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_scroll_window (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_scroll_window(hwnd, dx, dy, prcScroll, prcClip)
   (import "host" "show_find_dialog" (func $host_show_find_dialog (param i32 i32 i32) (result i32)))
   ;; show_find_dialog(dlgHwnd, ownerHwnd, findreplace_guest_addr) → hwnd
 
 
 
-  (import "host" "gdi_get_clip_box" (func $host_gdi_get_clip_box (param i32) (result i32)))
+  (func $host_gdi_get_clip_box (param i32) (result i32) (i32.const 0))
   ;; gdi_get_clip_box(hdc) → packed w | (h << 16)
-  (import "host" "gdi_load_bitmap" (func $host_gdi_load_bitmap (param i32 i32) (result i32)))
-  (import "host" "gdi_get_object_w" (func $host_gdi_get_object_w (param i32) (result i32)))
-  (import "host" "gdi_get_object_h" (func $host_gdi_get_object_h (param i32) (result i32)))
+  (func $host_gdi_load_bitmap (param i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_object_w (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_object_h (param i32) (result i32) (i32.const 0))
   (import "host" "gdi_set_text_color" (func $host_gdi_set_text_color (param i32 i32) (result i32)))
   (import "host" "gdi_get_bk_color" (func $host_gdi_get_bk_color (param i32) (result i32)))
   (import "host" "gdi_get_text_color" (func $host_gdi_get_text_color (param i32) (result i32)))
@@ -261,18 +261,18 @@
   (import "host" "gdi_set_bk_mode" (func $host_gdi_set_bk_mode (param i32 i32) (result i32)))
   (import "host" "gdi_set_text_align" (func $host_gdi_set_text_align (param i32 i32) (result i32)))
   (import "host" "gdi_get_text_align" (func $host_gdi_get_text_align (param i32) (result i32)))
-  (import "host" "gdi_set_viewport_org" (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_get_viewport_org_x" (func $host_gdi_get_viewport_org_x (param i32) (result i32)))
-  (import "host" "gdi_get_viewport_org_y" (func $host_gdi_get_viewport_org_y (param i32) (result i32)))
-  (import "host" "gdi_set_viewport_ext" (func $host_gdi_set_viewport_ext (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_get_viewport_ext_x" (func $host_gdi_get_viewport_ext_x (param i32) (result i32)))
-  (import "host" "gdi_get_viewport_ext_y" (func $host_gdi_get_viewport_ext_y (param i32) (result i32)))
-  (import "host" "gdi_set_window_org" (func $host_gdi_set_window_org (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_get_window_org_x" (func $host_gdi_get_window_org_x (param i32) (result i32)))
-  (import "host" "gdi_get_window_org_y" (func $host_gdi_get_window_org_y (param i32) (result i32)))
-  (import "host" "gdi_set_window_ext" (func $host_gdi_set_window_ext (param i32 i32 i32) (result i32)))
-  (import "host" "gdi_get_window_ext_x" (func $host_gdi_get_window_ext_x (param i32) (result i32)))
-  (import "host" "gdi_get_window_ext_y" (func $host_gdi_get_window_ext_y (param i32) (result i32)))
+  (func $host_gdi_set_viewport_org (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_viewport_org_x (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_viewport_org_y (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_set_viewport_ext (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_viewport_ext_x (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_viewport_ext_y (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_set_window_org (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_window_org_x (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_window_org_y (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_set_window_ext (param i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_window_ext_x (param i32) (result i32) (i32.const 0))
+  (func $host_gdi_get_window_ext_y (param i32) (result i32) (i32.const 0))
   (import "host" "gdi_text_out" (func $host_gdi_text_out (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
@@ -281,23 +281,23 @@
   ;; Honors ExtTextOut's ETO_OPAQUE/ETO_CLIPPED rectangle while lpDx remains ignored.
   (import "host" "gdi_draw_text" (func $host_gdi_draw_text (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_draw_text(hdc, textWA, nCount, rectWA, uFormat, isWide) → height
-  (import "host" "gdi_set_pixel" (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
-  (import "host" "gdi_frame_rect" (func $host_gdi_frame_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_frame_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_frame_rect(hdc, left, top, right, bottom, hbrush, hwnd) → 1
-  (import "host" "gdi_get_pixel" (func $host_gdi_get_pixel (param i32 i32 i32) (result i32)))
+  (func $host_gdi_get_pixel (param i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_pixel(hdc, x, y) → COLORREF
-  (import "host" "gdi_ext_flood_fill" (func $host_gdi_ext_flood_fill (param i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_ext_flood_fill (param i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_ext_flood_fill(hdc, x, y, color, fillType) → BOOL
-  (import "host" "gdi_get_di_bits" (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_di_bits(hdc, hBitmap, startScan, numScans, bitsGA, bmiWA, colorUse) → numScans
-  (import "host" "gdi_set_dib_bits" (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
-  (import "host" "gdi_get_dib_color_table" (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_dib_color_table(hdc, startIdx, numEntries, colorsGA) → count
-  (import "host" "gdi_set_dib_to_device" (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_set_dib_to_device(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, cLines, bitsWA, bmiWA, colorUse) → cLines
-  (import "host" "gdi_stretch_dib_bits" (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_stretch_dib_bits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, bitsWA, bmiWA, usage, rop)
 
   ;; DirectX tracing hook — WAT calls this from Lock/Unlock/Blt/Flip/SetEntries/dx_present

@@ -1,23 +1,21 @@
 # GDI migration status
 
-The machine-readable inventory is
-[`gdi-migration-status.json`](gdi-migration-status.json). It classifies every
-`gdi_*` import in `src/01-header.wat` by functional area and current ownership.
-`test/test-gdi-migration-status.js` rejects missing, duplicate, or stale entries.
+The machine-readable source is
+[`gdi-migration-status.json`](gdi-migration-status.json). It contains the exact
+keep/delete API lists for the JavaScript GDI bridge.
 
-Ownership labels mean:
+The permanent non-text bridge has three presentation-only calls:
 
-- `wat_owned_presentation_bridge`: WAT owns semantics; JavaScript only rebuilds
-  or uploads derived browser presentation data.
-- `wat_semantics_with_host_mirror_or_fallback`: WAT owns the supported path,
-  but a JavaScript mirror or compatibility path is still reachable.
-- `host_read_only_descriptor`: JavaScript exposes state or storage to a WAT
-  rasterizer. Ownership has not fully moved because the descriptor source is
-  still JavaScript.
-- `host_owned`: the operation or state remains implemented in JavaScript.
-- `canvas_text_policy`: retained JavaScript/Canvas font policy, outside the
-  non-text migration target.
+- `gdi_set_region_bands`
+- `gdi_set_window_rgn`
+- `gdi_present_dib_rect`
 
-This records implementation ownership, not Win98 pixel fidelity. Wide-line
-pixel masks under `test/fixtures` are deterministic migration regressions until
-they are replaced or supplemented by independently captured Win98 references.
+Eleven `gdi_*` calls remain under the explicit Canvas text policy. The other 70
+former imports are listed under `eliminatedNonTextSemantics`; their JavaScript
+methods are deleted and their callers resolve to explicit zero-return WAT stubs
+until real WAT implementations replace them. This intentionally breaks
+unsupported application paths rather than retaining JavaScript GDI semantics.
+
+There are no resource-byte exceptions and the temporary non-text exception
+budget is zero. `test/test-gdi-migration-status.js` owns a separate hard-coded
+allowlist, verifies the exact JS exports and WAT stubs, and compiles the module.

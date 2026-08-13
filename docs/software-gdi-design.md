@@ -191,6 +191,32 @@ The migration may temporarily mirror existing JS GDI handles into WAT tables,
 but each milestone must move ownership toward WAT. A JS helper that implements
 new region, clipping, geometry, pixel, or ROP semantics is out of scope.
 
+### Enforced JavaScript bridge
+
+The flag-day bridge purge makes the end-state boundary executable now, even
+before every WAT replacement exists. Non-text GDI calls without a WAT
+implementation fail through explicit WAT stubs; they do not regain behavior by
+crossing into JavaScript. Temporary application regressions are preferable to
+silently preserving two semantic implementations.
+
+The only permanent non-text `gdi_*` JavaScript imports are:
+
+```text
+gdi_set_region_bands   upload canonical WAT bands to a derived clip mirror
+gdi_set_window_rgn     apply that mirror during browser window composition
+gdi_present_dib_rect   upload dirty authoritative pixels to Canvas
+```
+
+Canvas text-policy imports remain until the font plan is replaced. There is no
+current `gdi_*` resource exception: `gdi_load_bitmap` created GDI objects and
+therefore was semantic, not a raw resource-byte boundary. A future resource
+bridge must return immutable bytes/metadata and must be separately allowlisted.
+
+`test/test-gdi-migration-status.js` hard-codes this allowlist, verifies that
+JavaScript exports no other `gdi_*` methods, checks the zero temporary-exception
+budget, inventories each WAT unsupported stub, and compiles the module. The
+exception ceiling may decrease but must never increase.
+
 ## DIB ownership and synchronization
 
 For a DIB section, guest memory becomes the only pixel truth:
