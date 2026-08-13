@@ -323,7 +323,7 @@ transfer breadth below.
 ### Work
 
 - [x] Replace the single `FORMATETC`/`STGMEDIUM` slot with an owned collection.
-- Implement matching across clipboard format, aspect, lindex, and compatible
+- [x] Implement matching across clipboard format, aspect, lindex, and compatible
   `tymed` masks with accurate `DV_E_*` errors.
 - Support `TYMED_HGLOBAL`, `TYMED_ISTREAM`, and `TYMED_ISTORAGE` ownership,
   duplication, `pUnkForRelease`, and `ReleaseStgMedium` behavior.
@@ -348,6 +348,13 @@ rewrites caller streams exactly, and atomically replaces caller storage trees
 through a detached staging copy. The focused suite passes 28/28, while the
 existing static-handler, storage, and CFB suites remain green at 13/13, 68/68,
 and 22/22.
+
+2026-08-13 negotiation result: format lookup now narrows clipboard format,
+aspect, lindex, target-device bytes, and compatible media masks in a stable
+order and returns `DV_E_FORMATETC`, `DV_E_DVASPECT`, `DV_E_LINDEX`,
+`DV_E_DVTARGETDEVICE`, or `DV_E_TYMED` as appropriate. Distinct presentations
+no longer overwrite each other, and enumeration advertises the concrete medium
+each entry can actually return. The expanded focused suite passes 39/39.
 
 ### Acceptance
 

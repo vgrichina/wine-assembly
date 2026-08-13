@@ -3053,12 +3053,47 @@
     (call $gs32 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0))
     (i32.const 0))
 
+  (func $ole_target_device_matches (param $stored i32) (param $requested i32) (result i32)
+    (local $stored_ptd i32) (local $requested_ptd i32) (local $size i32) (local $i i32)
+    (local.set $stored_ptd (call $gl32 (i32.add (local.get $stored) (i32.const 4))))
+    (local.set $requested_ptd (call $gl32 (i32.add (local.get $requested) (i32.const 4))))
+    (if (i32.eq (local.get $stored_ptd) (local.get $requested_ptd))
+      (then (return (i32.const 1))))
+    (if (i32.or (i32.eqz (local.get $stored_ptd)) (i32.eqz (local.get $requested_ptd)))
+      (then (return (i32.const 0))))
+    (local.set $size (call $gl32 (local.get $stored_ptd)))
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $size) (i32.const 4)) (i32.gt_u (local.get $size) (i32.const 0x10000)))
+          (i32.ne (local.get $size) (call $gl32 (local.get $requested_ptd))))
+      (then (return (i32.const 0))))
+    (block $equal (loop $compare
+      (br_if $equal (i32.ge_u (local.get $i) (local.get $size)))
+      (if (i32.ne
+            (call $gl8 (i32.add (local.get $stored_ptd) (local.get $i)))
+            (call $gl8 (i32.add (local.get $requested_ptd) (local.get $i))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $compare)))
+    (i32.const 1))
+
   (func $ole_format_matches (param $stored i32) (param $requested i32) (result i32)
-    (if (i32.eqz (local.get $requested)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl16 (local.get $stored)) (call $gl16 (local.get $requested))) (then (return (i32.const 0))))
-    (if (i32.and
-          (i32.ne (call $gl32 (i32.add (local.get $requested) (i32.const 16))) (i32.const 0))
-          (i32.eqz (i32.and (call $gl32 (i32.add (local.get $stored) (i32.const 16))) (call $gl32 (i32.add (local.get $requested) (i32.const 16))))))
+    (if (i32.or (i32.eqz (local.get $stored)) (i32.eqz (local.get $requested)))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (local.get $stored)) (call $gl16 (local.get $requested)))
+      (then (return (i32.const 0))))
+    (if (i32.ne
+          (call $gl32 (i32.add (local.get $stored) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $requested) (i32.const 8))))
+      (then (return (i32.const 0))))
+    (if (i32.ne
+          (call $gl32 (i32.add (local.get $stored) (i32.const 12)))
+          (call $gl32 (i32.add (local.get $requested) (i32.const 12))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $ole_target_device_matches (local.get $stored) (local.get $requested)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (i32.and
+          (call $gl32 (i32.add (local.get $stored) (i32.const 16)))
+          (call $gl32 (i32.add (local.get $requested) (i32.const 16)))))
       (then (return (i32.const 0))))
     (i32.const 1))
 
@@ -3079,7 +3114,7 @@
     (if (local.get $ptd)
       (then
         (local.set $size (call $gl32 (local.get $ptd)))
-        (if (i32.lt_u (local.get $size) (i32.const 4))
+        (if (i32.or (i32.lt_u (local.get $size) (i32.const 4)) (i32.gt_u (local.get $size) (i32.const 0x10000)))
           (then (call $zero_memory (call $g2w (local.get $dst)) (i32.const 20)) (return (i32.const 0x80040064))))
         (local.set $copy (call $heap_alloc (local.get $size)))
         (if (i32.eqz (local.get $copy))
@@ -3101,17 +3136,64 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Narrow candidates one FORMATETC field at a time so callers receive the
+  ;; specific clipboard error instead of a generic DV_E_FORMATETC.
+  (func $ole_data_query_error (param $obj i32) (param $formatetc i32) (result i32)
+    (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
+    (local $has_format i32) (local $has_aspect i32) (local $has_lindex i32) (local $has_target i32)
+    (if (i32.or (i32.eqz (local.get $obj)) (i32.eqz (local.get $formatetc)))
+      (then (return (i32.const 0x80040064))))
+    (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
+      (if (i32.eq (call $gl16 (local.get $entry)) (call $gl16 (local.get $formatetc)))
+        (then
+          (local.set $has_format (i32.const 1))
+          (if (i32.eq
+                (call $gl32 (i32.add (local.get $entry) (i32.const 8)))
+                (call $gl32 (i32.add (local.get $formatetc) (i32.const 8))))
+            (then
+              (local.set $has_aspect (i32.const 1))
+              (if (i32.eq
+                    (call $gl32 (i32.add (local.get $entry) (i32.const 12)))
+                    (call $gl32 (i32.add (local.get $formatetc) (i32.const 12))))
+                (then
+                  (local.set $has_lindex (i32.const 1))
+                  (if (call $ole_target_device_matches (local.get $entry) (local.get $formatetc))
+                    (then
+                      (local.set $has_target (i32.const 1))
+                      (if (i32.and
+                            (call $gl32 (i32.add (local.get $entry) (i32.const 16)))
+                            (call $gl32 (i32.add (local.get $formatetc) (i32.const 16))))
+                        (then (return (i32.const 0))))))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $has_format)) (then (return (i32.const 0x80040064)))) ;; DV_E_FORMATETC
+    (if (i32.eqz (local.get $has_aspect)) (then (return (i32.const 0x8004006B)))) ;; DV_E_DVASPECT
+    (if (i32.eqz (local.get $has_lindex)) (then (return (i32.const 0x80040068)))) ;; DV_E_LINDEX
+    (if (i32.eqz (local.get $has_target)) (then (return (i32.const 0x80040065)))) ;; DV_E_DVTARGETDEVICE
+    (i32.const 0x80040069)) ;; DV_E_TYMED
+
   (func $ole_data_set_entry (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
     (local $entries i32) (local $count i32) (local $capacity i32) (local $entry i32)
     (local $new_entries i32) (local $new_capacity i32) (local $hr i32) (local $staged i32) (local $is_new i32)
     (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
       (then (return (i32.const 0x80004003))))
+    (if (i32.eqz (i32.and
+          (call $gl32 (i32.add (local.get $formatetc) (i32.const 16)))
+          (call $gl32 (local.get $medium))))
+      (then (return (i32.const 0x80040069))))
     (local.set $entry (call $ole_data_find_entry (local.get $obj) (local.get $formatetc)))
     (local.set $staged (call $heap_alloc (i32.const 32)))
     (if (i32.eqz (local.get $staged)) (then (return (i32.const 0x8007000E))))
     (call $zero_memory (call $g2w (local.get $staged)) (i32.const 32))
     (local.set $hr (call $ole_format_copy (local.get $staged) (local.get $formatetc)))
     (if (local.get $hr) (then (call $heap_free (local.get $staged)) (return (local.get $hr))))
+    ;; One owned entry carries one concrete STGMEDIUM. Enumeration and later
+    ;; queries must not advertise alternate media that this entry cannot return.
+    (call $gs32 (i32.add (local.get $staged) (i32.const 16)) (call $gl32 (local.get $medium)))
     (if (local.get $take)
       (then (memory.copy (i32.add (call $g2w (local.get $staged)) (i32.const 20)) (call $g2w (local.get $medium)) (i32.const 12)))
       (else
@@ -3163,8 +3245,9 @@
     (local $source_size i32) (local $dest_size i32) (local $staged i32) (local $hr i32)
     (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
       (then (return (i32.const 0x80004003))))
+    (local.set $hr (call $ole_data_query_error (local.get $obj) (local.get $formatetc)))
+    (if (local.get $hr) (then (return (local.get $hr))))
     (local.set $entry (call $ole_data_find_entry (local.get $obj) (local.get $formatetc)))
-    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0x80040064))))
     (local.set $source_medium (i32.add (local.get $entry) (i32.const 20)))
     (local.set $tymed (call $gl32 (local.get $source_medium)))
     (if (i32.ne (call $gl32 (local.get $medium)) (local.get $tymed))
@@ -3353,17 +3436,24 @@
   (func $handle_IDataObject_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_obj_release (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IDataObject_GetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $ole_data_find_entry (local.get $arg0) (local.get $arg1)))
-    (if (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $entry)))
-      (then (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 12)))) (global.set $eax (i32.const 0x80040064)))
-      (else (global.set $eax (call $ole_copy_medium (local.get $arg2) (i32.add (local.get $entry) (i32.const 20))))))
+    (local $entry i32) (local $hr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 12))
+        (local.set $hr (call $ole_data_query_error (local.get $arg0) (local.get $arg1)))
+        (if (local.get $hr)
+          (then (global.set $eax (local.get $hr)))
+          (else
+            (local.set $entry (call $ole_data_find_entry (local.get $arg0) (local.get $arg1)))
+            (global.set $eax (call $ole_copy_medium
+              (local.get $arg2) (i32.add (local.get $entry) (i32.const 20))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_GetDataHere (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_data_get_here (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_QueryGetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (select (i32.const 0) (i32.const 0x80040064) (call $ole_data_find_entry (local.get $arg0) (local.get $arg1))))
+    (global.set $eax (call $ole_data_query_error (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IDataObject_GetCanonicalFormatEtc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 20))))

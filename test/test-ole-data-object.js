@@ -55,6 +55,37 @@ async function main() {
   u8.set(u8.slice(wa(format), wa(format) + 20), wa(wrong));
   dv.setUint16(wa(wrong), 1, true);
   check('QueryGetData rejects a mismatched clipboard format', (e.test_ole_data_query(object, wrong) >>> 0) === 0x80040064);
+  const wrongAspect = alloc(20);
+  u8.set(u8.slice(wa(format), wa(format) + 20), wa(wrongAspect));
+  dv.setUint32(wa(wrongAspect) + 8, 4, true);
+  check('QueryGetData reports DV_E_DVASPECT for a known format with the wrong aspect',
+    (e.test_ole_data_query(object, wrongAspect) >>> 0) === 0x8004006b);
+  const wrongIndex = alloc(20);
+  u8.set(u8.slice(wa(format), wa(format) + 20), wa(wrongIndex));
+  dv.setInt32(wa(wrongIndex) + 12, 0, true);
+  check('QueryGetData reports DV_E_LINDEX for a known format/aspect with the wrong index',
+    (e.test_ole_data_query(object, wrongIndex) >>> 0) === 0x80040068);
+  const wrongTarget = alloc(20);
+  u8.set(u8.slice(wa(format), wa(format) + 20), wa(wrongTarget));
+  const wrongTargetDevice = alloc(8);
+  dv.setUint32(wa(wrongTargetDevice), 8, true);
+  dv.setUint32(wa(wrongTargetDevice) + 4, 0x12345678, true);
+  dv.setUint32(wa(wrongTarget) + 4, wrongTargetDevice, true);
+  check('QueryGetData reports DV_E_DVTARGETDEVICE for incompatible target metadata',
+    (e.test_ole_data_query(object, wrongTarget) >>> 0) === 0x80040065);
+  const wrongTymed = alloc(20);
+  u8.set(u8.slice(wa(format), wa(format) + 20), wa(wrongTymed));
+  dv.setUint32(wa(wrongTymed) + 16, 4, true);
+  check('QueryGetData reports DV_E_TYMED for otherwise compatible format metadata',
+    (e.test_ole_data_query(object, wrongTymed) >>> 0) === 0x80040069);
+  const compatibleTymedMask = alloc(20);
+  u8.set(u8.slice(wa(format), wa(format) + 20), wa(compatibleTymedMask));
+  dv.setUint32(wa(compatibleTymedMask) + 16, 5, true);
+  check('QueryGetData accepts a requested tymed mask containing the stored medium',
+    e.test_ole_data_query(object, compatibleTymedMask) === 0);
+  dv.setUint32(wa(wrongAspect) + 16, 4, true);
+  check('FORMATETC error precedence narrows aspect before tymed',
+    (e.test_ole_data_query(object, wrongAspect) >>> 0) === 0x8004006b);
 
   const out = alloc(12);
   const getHr = e.test_ole_data_get(object, format, out) >>> 0;
@@ -139,19 +170,26 @@ async function main() {
     e.test_ole_data_count(multi) === 2 && e.test_ole_data_query(multi, unicodeFormat) === 0);
   dv.setUint32(wa(targetDevice) + 4, 0xdeadbeef, true);
   u8[wa(unicode.handle)] = 0xff;
+  check('mutating caller DVTARGETDEVICE metadata does not retarget the stored format',
+    (e.test_ole_data_query(multi, unicodeFormat) >>> 0) === 0x80040065);
+  const storedUnicodeFormat = makeFormat(13);
+  const storedTargetDevice = alloc(8);
+  dv.setUint32(wa(storedTargetDevice), 8, true);
+  dv.setUint32(wa(storedTargetDevice) + 4, 0x11223344, true);
+  dv.setUint32(wa(storedUnicodeFormat) + 4, storedTargetDevice, true);
   const unicodeOut = alloc(12);
   check('multi-format GetData returns the selected independent payload',
-    e.test_ole_data_get(multi, unicodeFormat, unicodeOut) === 0 &&
+    e.test_ole_data_get(multi, storedUnicodeFormat, unicodeOut) === 0 &&
     u8[wa(dv.getUint32(wa(unicodeOut) + 4, true))] === 72);
   e.test_ole_release_medium(unicodeOut);
 
   const replacement = makeHglobalMedium(Uint8Array.from([66, 0, 0, 0]));
   check('SetData replaces a matching format without adding a duplicate',
-    e.test_ole_data_set(multi, unicodeFormat, replacement.value, 0) === 0 &&
+    e.test_ole_data_set(multi, storedUnicodeFormat, replacement.value, 0) === 0 &&
     e.test_ole_data_count(multi) === 2 &&
     (() => {
       const result = alloc(12);
-      const ok = e.test_ole_data_get(multi, unicodeFormat, result) === 0 &&
+      const ok = e.test_ole_data_get(multi, storedUnicodeFormat, result) === 0 &&
         u8[wa(dv.getUint32(wa(result) + 4, true))] === 66;
       e.test_ole_release_medium(result);
       return ok;
@@ -178,11 +216,12 @@ async function main() {
   }
   const enumUnicode = enumerated.find(item => item.id === 13);
   dv.setUint32(wa(targetDevice) + 4, 0xcafebabe, true);
+  dv.setUint32(wa(storedTargetDevice) + 4, 0xcafebabe, true);
   check('IEnumFORMATETC is a stable multi-format snapshot after object mutation',
     enumHr === 1 && enumerated.length === 3 && !enumerated.some(item => item.id === 0xc123));
   check('IEnumFORMATETC snapshot deep-copies DVTARGETDEVICE data',
-    enumUnicode?.ptd && enumUnicode.ptd !== targetDevice &&
-    dv.getUint32(wa(enumUnicode.ptd) + 4, true) === 0xdeadbeef);
+    enumUnicode?.ptd && enumUnicode.ptd !== targetDevice && enumUnicode.ptd !== storedTargetDevice &&
+    dv.getUint32(wa(enumUnicode.ptd) + 4, true) === 0x11223344);
   for (let i = 0; i < enumerated.length; i++) e.test_ole_format_free(formats + i * 20);
 
   e.test_ole_format_enum_reset(formatEnum);
@@ -206,6 +245,44 @@ async function main() {
   e.test_ole_release(enumClone);
   e.test_ole_release(formatEnum);
   e.test_ole_release(multi);
+
+  const negotiated = e.test_ole_create_data_object(format, medium) >>> 0;
+  const aspectVariant = makeFormat(8);
+  dv.setUint32(wa(aspectVariant) + 8, 4, true);
+  const indexVariant = makeFormat(8);
+  dv.setInt32(wa(indexVariant) + 12, 0, true);
+  const targetVariant = makeFormat(8);
+  const variantTargetDevice = alloc(8);
+  dv.setUint32(wa(variantTargetDevice), 8, true);
+  dv.setUint32(wa(variantTargetDevice) + 4, 0x55667788, true);
+  dv.setUint32(wa(targetVariant) + 4, variantTargetDevice, true);
+  const variantPayload = makeHglobalMedium(Uint8Array.from([0x44, 0x55]));
+  check('SetData keeps distinct aspect, lindex, and target-device presentations',
+    e.test_ole_data_set(negotiated, aspectVariant, variantPayload.value, 0) === 0 &&
+    e.test_ole_data_set(negotiated, indexVariant, variantPayload.value, 0) === 0 &&
+    e.test_ole_data_set(negotiated, targetVariant, variantPayload.value, 0) === 0 &&
+    e.test_ole_data_count(negotiated) === 4 &&
+    e.test_ole_data_query(negotiated, aspectVariant) === 0 &&
+    e.test_ole_data_query(negotiated, indexVariant) === 0 &&
+    e.test_ole_data_query(negotiated, targetVariant) === 0);
+  const incompatibleSetFormat = makeFormat(0xc1ff, 4);
+  check('SetData rejects a STGMEDIUM outside the FORMATETC tymed mask atomically',
+    (e.test_ole_data_set(negotiated, incompatibleSetFormat, variantPayload.value, 0) >>> 0) === 0x80040069 &&
+    e.test_ole_data_count(negotiated) === 4);
+  const broadFormat = makeFormat(0xc1fe, 5);
+  check('SetData accepts a concrete medium from a broader compatible tymed mask',
+    e.test_ole_data_set(negotiated, broadFormat, variantPayload.value, 0) === 0 &&
+    e.test_ole_data_count(negotiated) === 5);
+  const negotiatedEnum = e.test_ole_create_format_enum(negotiated) >>> 0;
+  const negotiatedFormats = alloc(20 * 5);
+  const negotiatedFetched = alloc(4);
+  e.test_ole_format_enum_next(negotiatedEnum, 5, negotiatedFormats, negotiatedFetched);
+  check('format enumeration advertises only the concrete medium an entry can return',
+    dv.getUint32(wa(negotiatedFetched), true) === 5 &&
+    dv.getUint32(wa(negotiatedFormats) + 4 * 20 + 16, true) === 1);
+  for (let i = 0; i < 5; i++) e.test_ole_format_free(negotiatedFormats + i * 20);
+  e.test_ole_release(negotiatedEnum);
+  e.test_ole_release(negotiated);
 
   // GetDataHere fills media owned by the caller. It must not replace handles
   // or interface pointers, and partial HGLOBAL writes are forbidden.
