@@ -749,12 +749,16 @@
     (local.set $new_data (call $heap_alloc (local.get $new_capacity)))
     (if (i32.eqz (local.get $new_data)) (then (return (i32.const 0x8007000E))))
     (call $zero_memory (call $g2w (local.get $new_data)) (local.get $new_capacity))
-    (if (i32.and (local.get $data) (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (if (i32.and
+          (i32.ne (local.get $data) (i32.const 0))
+          (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 16))) (i32.const 0)))
       (then (memory.copy
         (call $g2w (local.get $new_data))
         (call $g2w (local.get $data))
         (call $gl32 (i32.add (local.get $obj) (i32.const 16))))))
-    (if (i32.and (local.get $data) (call $gl32 (i32.add (local.get $obj) (i32.const 32))))
+    (if (i32.and
+          (i32.ne (local.get $data) (i32.const 0))
+          (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0)))
       (then (call $heap_free (local.get $data))))
     (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $new_data))
     (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $new_size))
@@ -866,7 +870,7 @@
     (if (i32.eq (local.get $kind) (i32.const 1))
       (then
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
-        (if (i32.and (local.get $data)
+        (if (i32.and (i32.ne (local.get $data) (i32.const 0))
               (i32.or (call $gl32 (i32.add (local.get $obj) (i32.const 24)))
                       (call $gl32 (i32.add (local.get $obj) (i32.const 32)))))
           (then (call $heap_free (local.get $data))))))
@@ -896,7 +900,9 @@
     (if (i32.eq (local.get $kind) (i32.const 3))
       (then
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
-        (if (i32.and (local.get $data) (call $gl32 (i32.add (local.get $obj) (i32.const 32))))
+        (if (i32.and
+              (i32.ne (local.get $data) (i32.const 0))
+              (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0)))
           (then (call $heap_free (local.get $data))))))
     (if (i32.eq (local.get $kind) (i32.const 4))
       (then
@@ -913,7 +919,9 @@
         (if (call $gl32 (i32.add (local.get $obj) (i32.const 92)))
           (then (call $ole_release_medium (i32.add (local.get $obj) (i32.const 60)))))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 28))))
-    (if (i32.and (local.get $data) (i32.eq (local.get $kind) (i32.const 3)))
+    (if (i32.and
+          (i32.ne (local.get $data) (i32.const 0))
+          (i32.eq (local.get $kind) (i32.const 3)))
       (then (call $heap_free (local.get $data))))
     (call $heap_free (local.get $obj))
     (i32.const 0))
@@ -921,7 +929,9 @@
   (func $ole_stream_read (param $obj i32) (param $buf i32) (param $count i32) (param $read_out i32) (result i32)
     (local $pos i32) (local $size i32) (local $available i32) (local $take i32)
     (if (local.get $read_out) (then (call $gs32 (local.get $read_out) (i32.const 0))))
-    (if (i32.or (i32.eqz (local.get $obj)) (i32.and (local.get $count) (i32.eqz (local.get $buf))))
+    (if (i32.or
+          (i32.eqz (local.get $obj))
+          (i32.and (i32.ne (local.get $count) (i32.const 0)) (i32.eqz (local.get $buf))))
       (then (return (i32.const 0x80004003))))
     (local.set $pos (call $ole_data_position (local.get $obj)))
     (local.set $size (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
@@ -939,7 +949,9 @@
   (func $ole_stream_write (param $obj i32) (param $buf i32) (param $count i32) (param $written_out i32) (result i32)
     (local $pos i32) (local $end i32) (local $hr i32)
     (if (local.get $written_out) (then (call $gs32 (local.get $written_out) (i32.const 0))))
-    (if (i32.or (i32.eqz (local.get $obj)) (i32.and (local.get $count) (i32.eqz (local.get $buf))))
+    (if (i32.or
+          (i32.eqz (local.get $obj))
+          (i32.and (i32.ne (local.get $count) (i32.const 0)) (i32.eqz (local.get $buf))))
       (then (return (i32.const 0x80004003))))
     (local.set $pos (call $ole_data_position (local.get $obj)))
     (local.set $end (i32.add (local.get $pos) (local.get $count)))
@@ -1209,15 +1221,17 @@
         ;; Clipboard replacement only clears its public slot; static RichEdit
         ;; objects may retain the backing snapshot for the instance lifetime.
         (if (i32.and
-              (i32.and (local.get $data)
+              (i32.and (i32.ne (local.get $data) (i32.const 0))
                 (i32.or (i32.eq (local.get $tymed) (i32.const 1)) (i32.eq (local.get $tymed) (i32.const 2))))
               (i32.and
                 (i32.ne (local.get $data) (global.get $clipboard_ptr))
                 (i32.and
                   (i32.ne (local.get $data) (global.get $clipboard_rtf_ptr))
-                  (i32.ne (local.get $data) (global.get $clipboard_binary_ptr)))))
+                  (i32.and
+                    (i32.ne (local.get $data) (global.get $clipboard_binary_ptr))
+                    (i32.eqz (call $clipboard_binary_is_retained (local.get $data)))))))
           (then (call $heap_free (local.get $data))))
-        (if (i32.and (local.get $data)
+        (if (i32.and (i32.ne (local.get $data) (i32.const 0))
               (i32.or (i32.eq (local.get $tymed) (i32.const 4)) (i32.eq (local.get $tymed) (i32.const 8))))
           (then (drop (call $ole_obj_release (local.get $data)))))))
     (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12)))
@@ -1241,9 +1255,11 @@
       (then (local.set $data (call $ole_copy_hglobal (local.get $data)))))
     (if (i32.eq (local.get $tymed) (i32.const 2))
       (then (local.set $data (call $ole_wide_dup (local.get $data)))))
-    (if (i32.and (call $gl32 (i32.add (local.get $src) (i32.const 4))) (i32.eqz (local.get $data)))
+    (if (i32.and
+          (i32.ne (call $gl32 (i32.add (local.get $src) (i32.const 4))) (i32.const 0))
+          (i32.eqz (local.get $data)))
       (then (return (i32.const 0x8007000E))))
-    (if (i32.and (local.get $data)
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
           (i32.or (i32.eq (local.get $tymed) (i32.const 4)) (i32.eq (local.get $tymed) (i32.const 8))))
       (then (drop (call $ole_obj_addref (local.get $data)))))
     (call $gs32 (local.get $dst) (local.get $tymed))
@@ -1254,7 +1270,8 @@
   (func $ole_format_matches (param $stored i32) (param $requested i32) (result i32)
     (if (i32.eqz (local.get $requested)) (then (return (i32.const 0))))
     (if (i32.ne (call $gl16 (local.get $stored)) (call $gl16 (local.get $requested))) (then (return (i32.const 0))))
-    (if (i32.and (call $gl32 (i32.add (local.get $requested) (i32.const 16)))
+    (if (i32.and
+          (i32.ne (call $gl32 (i32.add (local.get $requested) (i32.const 16))) (i32.const 0))
           (i32.eqz (i32.and (call $gl32 (i32.add (local.get $stored) (i32.const 16))) (call $gl32 (i32.add (local.get $requested) (i32.const 16))))))
       (then (return (i32.const 0))))
     (i32.const 1))
@@ -1267,7 +1284,9 @@
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_DATAOBJECT))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 4))
-    (if (i32.and (local.get $formatetc) (local.get $medium))
+    (if (i32.and
+          (i32.ne (local.get $formatetc) (i32.const 0))
+          (i32.ne (local.get $medium) (i32.const 0)))
       (then
         (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 12))) (call $g2w (local.get $formatetc)) (i32.const 20))
         (local.set $hr (call $ole_copy_medium (i32.add (local.get $obj) (i32.const 32)) (local.get $medium)))
@@ -1359,7 +1378,11 @@
     (local $data i32)
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (local.set $data (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
-    (if (i32.and (local.get $arg1) (i32.and (local.get $arg2) (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))))
+    (if (i32.and
+          (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.and
+            (i32.ne (local.get $arg2) (i32.const 0))
+            (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))))
       (then
         (memory.copy (call $g2w (local.get $arg2)) (call $g2w (i32.add (local.get $data) (i32.const 12))) (i32.const 20))
         (call $gs32 (i32.add (local.get $arg0) (i32.const 16)) (i32.const 1))
@@ -1789,7 +1812,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $handle_OleIsCurrentClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (select (i32.const 0) (i32.const 1) (i32.and (local.get $arg0) (i32.eq (local.get $arg0) (global.get $clipboard_ole_data_object)))))
+    (global.set $eax
+      (select (i32.const 0) (i32.const 1)
+        (i32.and
+          (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.eq (local.get $arg0) (global.get $clipboard_ole_data_object)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; CoDisconnectObject(pUnk, reserved) — all supported COM objects are

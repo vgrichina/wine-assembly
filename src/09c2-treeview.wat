@@ -612,7 +612,7 @@
     (local $old_sel i32) (local $slot i32) (local $base i32)
     (local $i i32) (local $scan_base i32)
     (if (i32.and
-          (local.get $hItem)
+          (i32.ne (local.get $hItem) (i32.const 0))
           (i32.eq (call $tv_find_slot (local.get $hItem)) (i32.const -1)))
       (then (return (i32.const 0))))
     (local.set $old_sel (global.get $tv_selected_handle))
@@ -730,7 +730,7 @@
     (i32.store offset=20 (local.get $base) (local.get $state))
     (if (i32.and
           (i32.eqz (i32.and (local.get $state) (i32.const 0x20)))
-          (global.get $tv_selected_handle))
+          (i32.ne (global.get $tv_selected_handle) (i32.const 0)))
       (then
         (local.set $sel_slot (call $tv_find_slot (global.get $tv_selected_handle)))
         (if (i32.ne (local.get $sel_slot) (i32.const -1))

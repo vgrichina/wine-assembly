@@ -2626,12 +2626,40 @@
     (if (global.get $clipboard_rtf_ptr)
       (then (call $gs8 (global.get $clipboard_rtf_ptr) (i32.const 0)))))
 
+  (func $clipboard_binary_is_retained (param $ptr i32) (result i32)
+    (local $node i32)
+    (local.set $node (global.get $clipboard_binary_retained_head))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $node)))
+      (if (i32.eq (call $gl32 (local.get $node)) (local.get $ptr))
+        (then (return (i32.const 1))))
+      (local.set $node (call $gl32 (i32.add (local.get $node) (i32.const 4))))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $clipboard_binary_mark_retained (param $ptr i32)
+    (local $node i32)
+    (if (i32.or
+          (i32.eqz (local.get $ptr))
+          (call $clipboard_binary_is_retained (local.get $ptr)))
+      (then (return)))
+    ;; The presentation and this tiny registry node intentionally share the
+    ;; WASM-instance lifetime; native RichEdit can release its wrapper later.
+    (local.set $node (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $node)) (then (return)))
+    (call $gs32 (local.get $node) (local.get $ptr))
+    (call $gs32 (i32.add (local.get $node) (i32.const 4))
+      (global.get $clipboard_binary_retained_head))
+    (global.set $clipboard_binary_retained_head (local.get $node)))
+
   (func $clipboard_clear_binary_data
-    ;; RichEdit static objects can retain a CF_DIB HGLOBAL after the clipboard
-    ;; changes. Keep binary snapshots alive for the WASM instance lifetime;
-    ;; otherwise a later Copy/EmptyClipboard turns an existing inline image's
-    ;; presentation into a dangling heap pointer. Instance teardown reclaims
-    ;; the small bounded snapshots together with the rest of linear memory.
+    ;; RichEdit static objects can retain a pasted CF_DIB HGLOBAL after the
+    ;; clipboard changes. Preserve only snapshots actually handed to native
+    ;; Paste; an unused/replaced binary clipboard value remains reclaimable.
+    (if (i32.and
+          (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0))
+          (i32.eqz (call $clipboard_binary_is_retained (global.get $clipboard_binary_ptr))))
+      (then (call $heap_free (global.get $clipboard_binary_ptr))))
     (global.set $clipboard_binary_format (i32.const 0))
     (global.set $clipboard_binary_ptr (i32.const 0))
     (global.set $clipboard_binary_len (i32.const 0)))
@@ -2641,8 +2669,11 @@
     (if (global.get $clipboard_ptr)
       (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
     (call $clipboard_clear_rtf_data)
-    (call $clipboard_clear_binary_data)
+    ;; Release a native IDataObject while its borrowed USER handles are still
+    ;; identifiable. Clearing the public binary slot first would make its
+    ;; ReleaseStgMedium path mistake a borrowed presentation for owned memory.
     (call $ole_clipboard_release_owner)
+    (call $clipboard_clear_binary_data)
     (call $richedit_clipboard_clear_format))
 
   (func $clipboard_store_binary_data (param $fmt i32) (param $src_g i32) (result i32)
@@ -2653,6 +2684,10 @@
     (local.set $dst (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
     (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $src_g)) (local.get $size))
+    (if (i32.and
+          (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0))
+          (i32.eqz (call $clipboard_binary_is_retained (global.get $clipboard_binary_ptr))))
+      (then (call $heap_free (global.get $clipboard_binary_ptr))))
     (global.set $clipboard_binary_format (local.get $fmt))
     (global.set $clipboard_binary_ptr (local.get $dst))
     (global.set $clipboard_binary_len (local.get $size))
@@ -3072,6 +3107,12 @@
       (then
         (drop (call $wnd_send_message
           (local.get $hwnd) (i32.const 0x0302) (i32.const 0) (i32.const 0))) ;; WM_PASTE
+        ;; RichEdit keeps the borrowed CF_DIB presentation as part of the
+        ;; inline static object, so later clipboard replacement must not
+        ;; recycle any of the handles consumed by successful Paste calls.
+        (if (i32.eq (global.get $clipboard_binary_format) (i32.const 8))
+          (then (call $clipboard_binary_mark_retained
+            (global.get $clipboard_binary_ptr))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
     (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_len)))

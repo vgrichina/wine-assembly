@@ -516,7 +516,9 @@
     (drop (local.get $arg3))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
-    (if (i32.and (local.get $arg1) (i32.gt_u (local.get $arg2) (i32.const 0)))
+    (if (i32.and
+          (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.gt_u (local.get $arg2) (i32.const 0)))
       (then
         (local.set $buf (call $g2w (local.get $arg1)))
         (i32.store8 (local.get $buf) (i32.const 0))
@@ -1451,7 +1453,7 @@
     ;; message against that returned value, so remember it instead of assuming
     ;; this was the process's first registered message (0xC000).
     (if (i32.and
-          (local.get $arg0)
+          (i32.ne (local.get $arg0) (i32.const 0))
           (i32.eq (call $hash_api_name (call $g2w (local.get $arg0)))
                   (i32.const 0x1A9C8FD4)))
       (then
@@ -1546,7 +1548,9 @@
   (func $handle_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $screen i32)
     ;; Letter printer: 8.5x11 inches at 300 DPI, printable 8x10.5 inches.
-    (if (i32.and (global.get $printer_hdc) (i32.eq (local.get $arg0) (global.get $printer_hdc)))
+    (if (i32.and
+          (i32.ne (global.get $printer_hdc) (i32.const 0))
+          (i32.eq (local.get $arg0) (global.get $printer_hdc)))
       (then
         (global.set $eax (i32.const 0))
         (if (i32.eq (local.get $arg1) (i32.const 2)) (then (global.set $eax (i32.const 2))))    ;; DT_RASPRINTER
@@ -2032,7 +2036,7 @@
     ;; keeps the previous document text.
     (if (i32.and
           (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
-          (call $wnd_table_get (local.get $arg0)))
+          (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0)))
       (then
         (call $richedit_format_reset_hwnd (local.get $arg0))
         (call $title_table_set (local.get $arg0) (local.get $wa) (local.get $len))
@@ -4384,7 +4388,7 @@
     ;; controls, but SetWindowText still maps to WM_SETTEXT for them.
     (if (i32.and
           (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
-          (call $wnd_table_get (local.get $arg0)))
+          (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0)))
       (then
         (call $richedit_format_reset_hwnd (local.get $arg0))
         (global.set $eax (call $wnd_send_message

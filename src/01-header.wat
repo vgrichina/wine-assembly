@@ -1315,6 +1315,9 @@
   (global $clipboard_binary_format (mut i32) (i32.const 0))
   (global $clipboard_binary_ptr (mut i32) (i32.const 0))
   (global $clipboard_binary_len (mut i32) (i32.const 0))
+  ;; Linked list of CF_DIB handles consumed by native RichEdit Paste. Controls
+  ;; may keep several borrowed presentations after USER clipboard replacement.
+  (global $clipboard_binary_retained_head (mut i32) (i32.const 0))
   ;; Basic RichEdit formatting captured by WordPad's WAT menu clipboard bridge.
   ;; Text remains in the CF_TEXT-style globals above; these fixed-size snapshots
   ;; preserve selected CHARFORMAT/PARAFORMAT fields for same-session paste.

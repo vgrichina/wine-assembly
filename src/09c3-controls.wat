@@ -6483,7 +6483,7 @@
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
               (if (i32.and
-                    (i32.and (i32.load offset=32 (local.get $sw))
+                    (i32.and (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0))
                       (i32.ne (local.get $rec) (i32.const 0)))
                     (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01)))
                 (then

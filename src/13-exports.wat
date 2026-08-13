@@ -852,7 +852,9 @@
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (local.set $stream (call $ole_create_stream (local.get $storage) (local.get $name)))
-    (if (local.get $stream)
+    (if (i32.and
+          (i32.ne (local.get $stream) (i32.const 0))
+          (i32.ne (local.get $storage) (i32.const 0)))
       (then
         (call $gs32 (i32.add (local.get $stream) (i32.const 40)) (call $gl32 (i32.add (local.get $storage) (i32.const 16))))
         (call $gs32 (i32.add (local.get $storage) (i32.const 16)) (local.get $stream))

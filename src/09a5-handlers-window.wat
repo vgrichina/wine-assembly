@@ -1376,7 +1376,7 @@
     ;; directly through host helpers and never call BeginPaint/EndPaint.
     (if (i32.and
           (i32.ne (local.get $tmp) (global.get $main_hwnd))
-          (call $ctrl_table_get_class (local.get $tmp)))
+          (i32.ne (call $ctrl_table_get_class (local.get $tmp)) (i32.const 0)))
       (then
         (drop (call $update_validate_rect (local.get $tmp)
                 (i32.const 0) (i32.const 0)

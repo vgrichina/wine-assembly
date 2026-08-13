@@ -3136,7 +3136,9 @@
                 (local.set $requested (call $gl32 (local.get $arg3)))
                 (call $gs32 (local.get $arg3) (select (i32.const 1) (i32.const 0)
                   (i32.gt_u (local.get $requested) (i32.const 0))))))
-            (if (i32.and (local.get $arg2) (i32.gt_u (local.get $requested) (i32.const 0)))
+            (if (i32.and
+                  (i32.ne (local.get $arg2) (i32.const 0))
+                  (i32.gt_u (local.get $requested) (i32.const 0)))
               (then
                 ;; DIDEVICEOBJECTDATA (DX5): dwOfs, dwData, dwTimeStamp, dwSequence.
                 (call $gs32 (local.get $arg2) (local.get $ofs))
@@ -3461,7 +3463,9 @@
       (then
         (local.set $obj_guest (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))
         (call $gs32 (local.get $arg2) (local.get $obj_guest))))
-    (if (i32.and (local.get $arg2) (i32.eqz (local.get $obj_guest)))
+    (if (i32.and
+          (i32.ne (local.get $arg2) (i32.const 0))
+          (i32.eqz (local.get $obj_guest)))
       (then (global.set $eax (i32.const 0x80004005)))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))

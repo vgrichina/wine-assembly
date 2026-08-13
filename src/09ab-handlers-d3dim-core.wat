@@ -1099,7 +1099,9 @@
   (func $d3dim_device7_light_enable (param $this i32) (param $idx i32) (param $enable i32)
     (local $state i32) (local $sw i32) (local $mask i32) (local $bit i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
-    (if (i32.and (local.get $state) (i32.lt_u (local.get $idx) (i32.const 32))) (then
+    (if (i32.and
+          (i32.ne (local.get $state) (i32.const 0))
+          (i32.lt_u (local.get $idx) (i32.const 32))) (then
       (local.set $sw (call $g2w (local.get $state)))
       (local.set $mask (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_D3D7_LIGHT_ENABLE))))
       (local.set $bit (i32.shl (i32.const 1) (local.get $idx)))
@@ -1114,7 +1116,9 @@
     (local $state i32) (local $mask i32) (local $val i32)
     (if (i32.eqz (local.get $out)) (then (global.set $eax (i32.const 0)) (return)))
     (local.set $state (call $d3ddev_state (local.get $this)))
-    (if (i32.and (local.get $state) (i32.lt_u (local.get $idx) (i32.const 32))) (then
+    (if (i32.and
+          (i32.ne (local.get $state) (i32.const 0))
+          (i32.lt_u (local.get $idx) (i32.const 32))) (then
       (local.set $mask
         (i32.load
           (i32.add (call $g2w (local.get $state)) (global.get $D3DIM_OFF_D3D7_LIGHT_ENABLE))))

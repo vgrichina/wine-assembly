@@ -65,9 +65,8 @@ async function main() {
     dv.getUint32(wa(out), true) === 0 && dv.getUint32(wa(out) + 4, true) === 0 && dv.getUint32(wa(out) + 8, true) === 0);
 
   // GetClipboardData handles are borrowed from USER. RichEdit may place one
-  // in an fRelease STGMEDIUM while constructing a static object, then retain
-  // that presentation after EmptyClipboard. Releasing the wrapper must not
-  // free or reuse the clipboard snapshot out from under the document object.
+  // in an fRelease STGMEDIUM while constructing a static object. Releasing
+  // that wrapper must not free the still-current USER clipboard value.
   const clipboardHandle = e.clipboard_store_binary_data(8, dib) >>> 0;
   const borrowed = alloc(12);
   dv.setUint32(wa(borrowed), 1, true);
@@ -76,8 +75,16 @@ async function main() {
   check('ReleaseStgMedium preserves a borrowed CF_DIB clipboard handle',
     e.clipboard_get_data_handle(8) === clipboardHandle && u8[wa(clipboardHandle)] === 0xee);
   e.clipboard_clear_all_data();
-  check('clearing clipboard metadata preserves a retained RichEdit DIB presentation',
-    e.clipboard_get_data_handle(8) === 0 && u8[wa(clipboardHandle)] === 0xee);
+  const heapBeforeClipboardCycles = e.get_heap_ptr() >>> 0;
+  for (let i = 0; i < 128; i++) {
+    e.clipboard_store_binary_data(8, dib);
+    e.clipboard_clear_all_data();
+  }
+  const heapAfterClipboardCycles = e.get_heap_ptr() >>> 0;
+  check('clearing an unused binary clipboard snapshot releases its backing',
+    e.clipboard_get_data_handle(8) === 0 &&
+    heapAfterClipboardCycles - heapBeforeClipboardCycles <= 64,
+    `heap growth=${heapAfterClipboardCycles - heapBeforeClipboardCycles}`);
 
   e.test_ole_set_clipboard(object);
   check('Ole clipboard holds a reference after the caller releases', e.test_ole_release(object) === 1);
@@ -95,7 +102,10 @@ async function main() {
   dv.setUint32(wa(streamMedium), 4, true);
   dv.setUint32(wa(streamMedium) + 4, stream, true);
   const streamObject = e.test_ole_create_data_object(streamFormat, streamMedium) >>> 0;
-  check('TYMED_ISTREAM media AddRefs the stream', streamObject !== 0 && e.test_ole_release(stream) === 1);
+  const streamRefBeforeCallerRelease = dv.getUint32(wa(stream) + 4, true);
+  const streamAfterCallerRelease = e.test_ole_release(stream);
+  check('TYMED_ISTREAM media AddRefs the stream', streamObject !== 0 && streamAfterCallerRelease === 1,
+    `stream=0x${stream.toString(16)} object=0x${streamObject.toString(16)} before=${streamRefBeforeCallerRelease} after=${streamAfterCallerRelease}`);
   check('releasing IDataObject releases its owned stream reference', e.test_ole_release(streamObject) === 0);
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
