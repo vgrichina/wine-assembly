@@ -1446,6 +1446,52 @@
     (i32.store (i32.add (local.get $entry) (local.get $offset)) (local.get $value))
     (local.get $old))
 
+  ;; Extended per-DC state that does not fit the stable 96-byte hot record:
+  ;; hdc, arc direction, brush origin x/y, mapper flags, character extra,
+  ;; justification extra, and justification break count.
+  (func $gdi_dc_aux_entry (param $hdc i32) (param $create i32) (result i32)
+    (local $i i32) (local $p i32) (local $empty i32)
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_AUX_COUNT)))
+      (local.set $p (i32.add (global.get $GDI_DC_AUX_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_DC_AUX_STRIDE))))
+      (if (i32.eq (i32.load (local.get $p)) (local.get $hdc))
+        (then (return (local.get $p))))
+      (if (i32.and (i32.eqz (local.get $empty)) (i32.eqz (i32.load (local.get $p))))
+        (then (local.set $empty (local.get $p))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+          (i32.ne (local.get $empty) (i32.const 0)))
+      (then
+        (memory.fill (local.get $empty) (i32.const 0) (global.get $GDI_DC_AUX_STRIDE))
+        (i32.store (local.get $empty) (local.get $hdc))
+        (i32.store offset=4 (local.get $empty) (i32.const 1))
+        (return (local.get $empty))))
+    (i32.const 0))
+
+  (func $gdi_dc_aux_get (param $hdc i32) (param $offset i32) (param $default i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_dc_aux_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $p)) (then (return (local.get $default))))
+    (i32.load (i32.add (local.get $p) (local.get $offset))))
+
+  (func $gdi_dc_aux_set (param $hdc i32) (param $offset i32) (param $value i32)
+        (param $default i32) (result i32)
+    (local $p i32) (local $old i32)
+    (local.set $p (call $gdi_dc_aux_entry (local.get $hdc) (i32.const 1)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $old (i32.load (i32.add (local.get $p) (local.get $offset))))
+    (i32.store (i32.add (local.get $p) (local.get $offset)) (local.get $value))
+    (local.get $old))
+
+  (func $gdi_dc_aux_release (param $hdc i32)
+    (local $p i32)
+    (local.set $p (call $gdi_dc_aux_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $p)
+      (then (memory.fill (local.get $p) (i32.const 0) (global.get $GDI_DC_AUX_STRIDE)))))
+
   (func $gdi_dc_select_owned_object (param $hdc i32) (param $handle i32) (result i32)
     (local $type i32)
     (local.set $type (call $gdi_object_type (local.get $handle)))
@@ -1770,6 +1816,7 @@
     (local.get $hdc))
 
   (func $host_release_dc (param $hdc i32) (result i32)
+    (call $gdi_dc_aux_release (local.get $hdc))
     (call $gdi_dc_state_release (local.get $hdc))
     (call $host_release_dc_raw (local.get $hdc)))
 
@@ -1777,7 +1824,7 @@
   ;; token plus its canonical DC record; JS never creates a semantic DC mirror.
   (func $gdi_text_prepare (param $hdc i32) (result i32)
     (local $dc i32) (local $desc i32) (local $token i32)
-    (local $origin_x i32) (local $origin_y i32)
+    (local $origin_x i32) (local $origin_y i32) (local $aux i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $token (local.get $hdc))
@@ -1787,8 +1834,10 @@
         (local.set $token (i32.load offset=68 (local.get $desc)))
         (local.set $origin_x (i32.load offset=72 (local.get $desc)))
         (local.set $origin_y (i32.load offset=76 (local.get $desc)))))
+    (local.set $aux (call $gdi_dc_aux_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (call $host_gdi_text_bind_raw
-          (local.get $token) (local.get $dc) (local.get $origin_x) (local.get $origin_y)))
+          (local.get $token) (local.get $dc) (local.get $origin_x) (local.get $origin_y)
+          (local.get $aux)))
       (then (return (i32.const 0))))
     (local.get $token))
 
@@ -1962,7 +2011,8 @@
     (local $entry i32)
     (local.set $entry (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (local.get $entry)
-      (then (memory.fill (local.get $entry) (i32.const 0) (global.get $GDI_DC_STATE_STRIDE)))))
+      (then (memory.fill (local.get $entry) (i32.const 0) (global.get $GDI_DC_STATE_STRIDE))))
+    (call $gdi_dc_aux_release (local.get $hdc)))
 
   ;; ---- WAT software line rasterization --------------------------------
   ;; ROP2 is part of the canonical DC record. Descriptor fields are
@@ -2015,6 +2065,10 @@
     (call $gdi_dc_get_field (local.get 0) (local.get 1) (local.get 2)))
   (func (export "test_gdi_dc_set_field") (param i32) (param i32) (param i32) (param i32) (result i32)
     (call $gdi_dc_set_field (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  (func (export "test_gdi_dc_aux_get") (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_dc_aux_get (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "test_gdi_dc_aux_set") (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_dc_aux_set (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   (func (export "test_gdi_dc_select_owned_object") (param i32) (param i32) (result i32)
     (call $gdi_dc_select_owned_object (local.get 0) (local.get 1)))
   (func (export "test_gdi_surface_descriptor") (param i32) (param i32) (result i32)
@@ -3289,9 +3343,75 @@
         (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16) (local.get $p0y) (i32.const 0)))))
     (i32.const 1))
 
+  (func $gdi_poly_draw (param $hdc i32) (param $points i32)
+        (param $types i32) (param $count i32) (result i32)
+    (local $i i32) (local $p i32) (local $kind i32) (local $x i32) (local $y i32)
+    (local $from_x i32) (local $from_y i32) (local $figure_x i32) (local $figure_y i32)
+    (if (i32.or (i32.eqz (local.get $points))
+          (i32.or (i32.eqz (local.get $types)) (i32.le_s (local.get $count) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (local.set $from_x (call $gdi_dc_get_field (local.get $hdc) (i32.const 12) (i32.const 0)))
+    (local.set $from_y (call $gdi_dc_get_field (local.get $hdc) (i32.const 16) (i32.const 0)))
+    (local.set $figure_x (local.get $from_x))
+    (local.set $figure_y (local.get $from_y))
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3))))
+      (local.set $x (i32.load (local.get $p)))
+      (local.set $y (i32.load offset=4 (local.get $p)))
+      (local.set $kind (i32.and (i32.load8_u (i32.add (local.get $types) (local.get $i))) (i32.const 6)))
+      (if (i32.eq (local.get $kind) (i32.const 6))
+        (then
+          (local.set $from_x (local.get $x)) (local.set $from_y (local.get $y))
+          (local.set $figure_x (local.get $x)) (local.set $figure_y (local.get $y)))
+        (else
+          (if (i32.eq (local.get $kind) (i32.const 2))
+            (then
+              (if (i32.eqz (call $gdi_line_try (local.get $hdc)
+                    (local.get $from_x) (local.get $from_y) (local.get $x) (local.get $y)))
+                (then (return (i32.const 0))))
+              (local.set $from_x (local.get $x)) (local.set $from_y (local.get $y)))
+            (else
+              (if (i32.eq (local.get $kind) (i32.const 4))
+                (then
+                  (if (i32.gt_u (i32.add (local.get $i) (i32.const 2))
+                        (i32.sub (local.get $count) (i32.const 1)))
+                    (then (return (i32.const 0))))
+                  (if (i32.or
+                        (i32.ne (i32.and (i32.load8_u (i32.add (local.get $types)
+                          (i32.add (local.get $i) (i32.const 1)))) (i32.const 6)) (i32.const 4))
+                        (i32.ne (i32.and (i32.load8_u (i32.add (local.get $types)
+                          (i32.add (local.get $i) (i32.const 2)))) (i32.const 6)) (i32.const 4)))
+                    (then (return (i32.const 0))))
+                  (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12)
+                    (local.get $from_x) (i32.const 0)))
+                  (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16)
+                    (local.get $from_y) (i32.const 0)))
+                  (if (i32.eqz (call $gdi_poly_bezier
+                        (local.get $hdc) (local.get $p) (i32.const 3) (i32.const 1)))
+                    (then (return (i32.const 0))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 2)))
+                  (local.set $p (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3))))
+                  (local.set $from_x (i32.load (local.get $p)))
+                  (local.set $from_y (i32.load offset=4 (local.get $p))))
+                (else (return (i32.const 0))))))))
+      (if (i32.ne (i32.and (i32.load8_u (i32.add (local.get $types) (local.get $i)))
+            (i32.const 1)) (i32.const 0))
+        (then
+          (if (i32.eqz (call $gdi_line_try (local.get $hdc)
+                (local.get $from_x) (local.get $from_y)
+                (local.get $figure_x) (local.get $figure_y)))
+            (then (return (i32.const 0))))
+          (local.set $from_x (local.get $figure_x)) (local.set $from_y (local.get $figure_y))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12) (local.get $from_x) (i32.const 0)))
+    (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16) (local.get $from_y) (i32.const 0)))
+    (i32.const 1))
+
   (func $gdi_arc (param $hdc i32) (param $left i32) (param $top i32)
         (param $right i32) (param $bottom i32) (param $start_x i32) (param $start_y i32)
-        (param $end_x i32) (param $end_y i32) (result i32)
+        (param $end_x i32) (param $end_y i32) (param $to_mode i32) (result i32)
     (local $cx f64) (local $cy f64) (local $rx f64) (local $ry f64)
     (local $a0 f64) (local $a1 f64) (local $span f64) (local $a f64)
     (local $step i32) (local $x i32) (local $y i32) (local $px i32) (local $py i32)
@@ -3308,12 +3428,24 @@
       (f64.div (f64.sub (f64.convert_i32_s (local.get $end_y)) (local.get $cy)) (local.get $ry))
       (f64.div (f64.sub (f64.convert_i32_s (local.get $end_x)) (local.get $cx)) (local.get $rx))))
     (local.set $span (f64.sub (local.get $a1) (local.get $a0)))
-    (if (f64.le (local.get $span) (f64.const 0))
-      (then (local.set $span (f64.add (local.get $span) (f64.const 6.283185307179586)))))
+    (if (i32.eq (call $gdi_dc_aux_get (local.get $hdc) (i32.const 4) (i32.const 1)) (i32.const 2))
+      (then
+        (if (f64.ge (local.get $span) (f64.const 0))
+          (then (local.set $span (f64.sub (local.get $span) (f64.const 6.283185307179586))))))
+      (else
+        (if (f64.le (local.get $span) (f64.const 0))
+          (then (local.set $span (f64.add (local.get $span) (f64.const 6.283185307179586)))))))
     (local.set $px (i32.trunc_f64_s (f64.nearest (f64.add (local.get $cx)
       (f64.mul (local.get $rx) (call $host_math_sin (f64.add (local.get $a0) (f64.const 1.5707963267948966))))))))
     (local.set $py (i32.trunc_f64_s (f64.nearest (f64.add (local.get $cy)
       (f64.mul (local.get $ry) (call $host_math_sin (local.get $a0)))))))
+    (if (local.get $to_mode)
+      (then
+        (if (i32.eqz (call $gdi_line_try (local.get $hdc)
+              (call $gdi_dc_get_field (local.get $hdc) (i32.const 12) (i32.const 0))
+              (call $gdi_dc_get_field (local.get $hdc) (i32.const 16) (i32.const 0))
+              (local.get $px) (local.get $py)))
+          (then (return (i32.const 0))))))
     (local.set $step (i32.const 1))
     (block $done (loop $segments
       (br_if $done (i32.gt_u (local.get $step) (i32.const 64)))
@@ -3329,6 +3461,10 @@
       (local.set $px (local.get $x)) (local.set $py (local.get $y))
       (local.set $step (i32.add (local.get $step) (i32.const 1)))
       (br $segments)))
+    (if (local.get $to_mode)
+      (then
+        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12) (local.get $px) (i32.const 0)))
+        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16) (local.get $py) (i32.const 0)))))
     (i32.const 1))
 
   (func $gdi_scroll_window (param $hwnd i32) (param $dx i32) (param $dy i32)
@@ -3448,7 +3584,7 @@
         (param i32) (param i32) (param i32) (param i32) (param i32)
         (param i32) (param i32) (param i32) (param i32) (result i32)
     (call $gdi_arc (local.get 0) (local.get 1) (local.get 2) (local.get 3)
-      (local.get 4) (local.get 5) (local.get 6) (local.get 7) (local.get 8)))
+      (local.get 4) (local.get 5) (local.get 6) (local.get 7) (local.get 8) (i32.const 0)))
   (func (export "test_gdi_scroll_window")
         (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
     (call $gdi_scroll_window

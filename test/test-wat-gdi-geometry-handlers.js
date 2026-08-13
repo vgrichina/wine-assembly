@@ -170,6 +170,51 @@ async function main() {
     assert(arcPixels.every(color => color === 0xFF0000), 'Arc must not produce antialias colors');
   });
 
+  check('extended DC state and mixed PolyDraw commands round-trip in WAT', () => {
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 2), 1);
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 1), 2);
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 9), 0);
+    assert.strictEqual(wat.test_call_SetTextCharacterExtra(dib.hdc, 3), 0);
+    assert.strictEqual(wat.test_call_GetTextCharacterExtra(dib.hdc), 3);
+    assert.strictEqual(wat.test_call_SetTextCharacterExtra(dib.hdc, -2), 3);
+    assert.strictEqual(wat.test_call_SetTextJustification(dib.hdc, 7, 2), 1);
+    assert.strictEqual(wat.test_gdi_dc_aux_get(dib.hdc, 24, 0), 7);
+    assert.strictEqual(wat.test_gdi_dc_aux_get(dib.hdc, 28, 0), 2);
+    assert.strictEqual(wat.test_call_SetMapperFlags(dib.hdc, 0x40), 0);
+    assert.strictEqual(wat.test_call_SetMapperFlags(dib.hdc, 0x20), 0x40);
+    const oldOrigin = rect(0, 0, 0, 0);
+    assert.strictEqual(wat.test_call_SetBrushOrgEx(dib.hdc, 4, -3, oldOrigin), 1);
+    assert.deepStrictEqual([wat.guest_read32(oldOrigin), wat.guest_read32(oldOrigin + 4)], [0, 0]);
+    assert.strictEqual(wat.test_call_SetBrushOrgEx(dib.hdc, 7, 8, oldOrigin), 1);
+    assert.deepStrictEqual([wat.guest_read32(oldOrigin), wat.guest_read32(oldOrigin + 4)], [4, -3]);
+
+    clear(dib);
+    const path = points([[1, 7], [1, 2], [5, 2], [8, 2], [10, 7]]);
+    const types = wat.guest_alloc(8) >>> 0;
+    wat.guest_write32(types, 0x04040206);
+    wat.guest_write32(types + 4, 5);
+    assert.strictEqual(wat.test_call_PolyDraw(dib.hdc, path, types, 5), 1);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, 0), 1,
+      'PT_CLOSEFIGURE returns current position to the figure start');
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, 0), 7);
+    const pathPixels = Array.from({ length: dib.height }, (_, y) =>
+      Array.from({ length: dib.width }, (_, x) => pixel(dib, x, y)))
+      .flat().filter(Boolean);
+    assert(pathPixels.length >= 10);
+    assert(pathPixels.every(color => color === 0xFF0000));
+  });
+
+  check('clockwise ArcTo connects and updates the current position', () => {
+    clear(dib);
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 2), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 0, 5), 1);
+    assert.strictEqual(wat.test_call_ArcTo(dib.hdc, 1, 1, 11, 9, 11, 5, 6, 1), 1);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, 0), 6);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, 0), 1);
+    assert.strictEqual(pixel(dib, 0, 5), 0xFF0000,
+      'ArcTo draws the connector from current position');
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 }
 

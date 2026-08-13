@@ -132,6 +132,8 @@ Per-HDC raster state uses `0x07EF0800..0x07EF0FFF` for 256 `{HDC, ROP2}`
 entries. A fixed 80-byte line-descriptor scratch record begins at `0x07EF1000`.
 Two adjacent 80-byte blit descriptors occupy `0x07EF1100..0x07EF119F` for
 destination/source surface resolution without per-pixel host calls.
+Extended per-DC state occupies `0x07EFC800..0x07EFE7FF` as 256 32-byte
+records for arc direction, brush origin, mapper flags, and text spacing.
 
 ### Comparison
 

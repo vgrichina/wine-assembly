@@ -391,7 +391,7 @@
   (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_arc
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
-      (local.get 5) (local.get 6) (local.get 7) (local.get 8)))
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8) (i32.const 0)))
   ;; gdi_arc(hdc, left, top, right, bottom, xStart, yStart, xEnd, yEnd)
   (func $host_gdi_bitblt (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_hdc_bitblt
@@ -481,7 +481,7 @@
     (call $gdi_dc_get_field (local.get 0) (i32.const 48) (i32.const 1)))
   (func $host_gdi_get_window_ext_y (param i32) (result i32)
     (call $gdi_dc_get_field (local.get 0) (i32.const 52) (i32.const 1)))
-  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw (param i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
@@ -954,6 +954,7 @@
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
+  ;; 0x07EFC800 8KB      GDI_DC_AUX_TABLE (256 x 32-byte extended DC state)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -1161,6 +1162,10 @@
   (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $GDI_WINDOW_SURFACE_COUNT i32 (i32.const 256))
   (global $GDI_WINDOW_SURFACE_STRIDE i32 (i32.const 32))
+  (global $GDI_DC_AUX_TABLE i32 (i32.const 0x07EFC800))
+  (global $GDI_DC_AUX_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $GDI_DC_AUX_COUNT i32 (i32.const 256))
+  (global $GDI_DC_AUX_STRIDE i32 (i32.const 32))
   ;; Keep WAT-owned namespaces disjoint from the retained Canvas font and
   ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))

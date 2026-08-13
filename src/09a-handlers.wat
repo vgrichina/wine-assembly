@@ -5451,17 +5451,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 371: SetBrushOrgEx(hdc, x, y, lppt) — stub, set prev origin to (0,0)
+  ;; 371: SetBrushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
   (func $handle_SetBrushOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    ;; If lppt is non-null, store previous origin (0,0)
+    (local $wa i32) (local $old_x i32) (local $old_y i32) (local $aux i32)
+    (local.set $aux (call $gdi_dc_aux_entry (local.get $arg0) (i32.const 1)))
+    (if (i32.eqz (local.get $aux))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $old_x (call $gdi_dc_aux_get (local.get $arg0) (i32.const 8) (i32.const 0)))
+    (local.set $old_y (call $gdi_dc_aux_get (local.get $arg0) (i32.const 12) (i32.const 0)))
     (if (local.get $arg3)
       (then
         (local.set $wa (call $g2w (local.get $arg3)))
-        (i32.store (local.get $wa) (i32.const 0))
-        (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
+        (i32.store (local.get $wa) (local.get $old_x))
+        (i32.store (i32.add (local.get $wa) (i32.const 4)) (local.get $old_y))
       )
     )
+    (drop (call $gdi_dc_aux_set (local.get $arg0) (i32.const 8)
+      (local.get $arg1) (i32.const 0)))
+    (drop (call $gdi_dc_aux_set (local.get $arg0) (i32.const 12)
+      (local.get $arg2) (i32.const 0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
@@ -7661,7 +7672,7 @@
 
   ;; GetTextCharacterExtra(hdc) → int. Inter-character spacing (0 = default).
   (func $handle_GetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $gdi_dc_aux_get (local.get $arg0) (i32.const 20) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -8618,34 +8629,56 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 571: PolyDraw — STUB: unimplemented
+  ;; 571: PolyDraw — WAT-owned PT_MOVETO/PT_LINETO/PT_BEZIERTO path execution.
   (func $handle_PolyDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_poly_draw (local.get $arg0)
+      (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 572: SetArcDirection — STUB: unimplemented
+  ;; 572: SetArcDirection(hdc, direction) -> previous direction.
   (func $handle_SetArcDirection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.or (i32.eq (local.get $arg1) (i32.const 1))
+          (i32.eq (local.get $arg1) (i32.const 2)))
+      (then (global.set $eax (call $gdi_dc_aux_set
+        (local.get $arg0) (i32.const 4) (local.get $arg1) (i32.const 1))))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 573: ArcTo — STUB: unimplemented
+  ;; 573: ArcTo — connect current position to the projected arc start and update it.
   (func $handle_ArcTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_arc
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
   )
 
-  ;; 574: SetMapperFlags — STUB: unimplemented
+  ;; 574: SetMapperFlags — per-DC font mapper flags.
   (func $handle_SetMapperFlags (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_dc_aux_set
+      (local.get $arg0) (i32.const 16) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 575: SetTextCharacterExtra — STUB: unimplemented
+  ;; 575: SetTextCharacterExtra — per-DC spacing consumed by Canvas text only.
   (func $handle_SetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_dc_aux_set
+      (local.get $arg0) (i32.const 20) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 576: SetTextJustification — STUB: unimplemented
+  ;; 576: SetTextJustification — distribute extra pixels across break characters.
   (func $handle_SetTextJustification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (drop (call $gdi_dc_aux_set
+      (local.get $arg0) (i32.const 24) (local.get $arg1) (i32.const 0)))
+    (drop (call $gdi_dc_aux_set
+      (local.get $arg0) (i32.const 28) (local.get $arg2) (i32.const 0)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 577: OffsetClipRgn(hdc, dx, dy) — offset the WAT-owned explicit clip.
@@ -8899,7 +8932,7 @@
 
   ;; 600: GetStretchBltMode(hdc) — BLACKONWHITE default
   (func $handle_GetStretchBltMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $gdi_dc_get_field (local.get $arg0) (i32.const 80) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
