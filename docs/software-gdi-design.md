@@ -2,10 +2,16 @@
 
 ## Status
 
-Proposed architecture, 2026-08-12. This document describes an incremental
-migration from Canvas 2D vector drawing to deterministic software rasterization.
-It does not propose replacing Canvas as the desktop compositor or presentation
-API.
+Implementation started 2026-08-12. `lib/gdi-surface.js` provides native-format
+canonical pixel access, palette handling, orientation/stride handling, solid
+rectangles, RGBA extraction, and dirty-rectangle coalescing. DIB-backed memory
+DCs use it for `GetPixel` and unclipped `SetPixel`; all geometric primitives,
+blits, window surfaces, and text still use the existing Canvas paths. Canvas
+text remains intentional policy, as described below.
+
+This document describes the incremental migration from Canvas 2D vector
+drawing to deterministic software rasterization. It does not propose replacing
+Canvas as the desktop compositor or presentation API.
 
 The immediate drivers are visible in Win98 Paint:
 

@@ -30,17 +30,28 @@ const BMI_WA = 0x11000;
   assert.strictEqual(host.gdi_get_pixel(dc, 0, 0) >>> 0, 0,
     'first read should synchronize the new zeroed DIB');
 
-  // A raw host mutation deliberately bypasses the guest write barrier. A
-  // second read must retain the canvas pixel instead of scanning/hash-syncing.
+  // DIB memory is now the canonical pixel store. A raw host mutation is
+  // visible to GDI immediately even when it deliberately bypasses the guest
+  // write barrier; page dirtiness controls presentation uploads, not reads.
   mem[DIB_BACKING_BASE + 2] = 0xFF;
-  assert.strictEqual(host.gdi_get_pixel(dc, 0, 0) >>> 0, 0,
-    'a clean DIB should not be rescanned on every GDI read');
+  assert.strictEqual(host.gdi_get_pixel(dc, 0, 0) >>> 0, 0x000000FF,
+    'GDI reads should consume canonical DIB bytes without a Canvas readback');
 
   e.guest_write32(bitsGA, 0x00FF0000);
   assert.strictEqual(e.test_dib_is_dirty(bitsGA), 1, 'guest scalar stores should mark the DIB dirty');
   assert.strictEqual(host.gdi_get_pixel(dc, 0, 0) >>> 0, 0x000000FF,
-    'the next GDI read should upload a guest-dirty DIB exactly once');
-  assert.strictEqual(e.test_dib_is_dirty(bitsGA), 0, 'upload should return the DIB page to clean state');
+    'GDI reads should see guest-written canonical DIB bytes');
+  assert.strictEqual(e.test_dib_is_dirty(bitsGA), 1,
+    'reading canonical bytes should leave presentation dirtiness pending');
+
+  // A software SetPixel must preserve other guest writes sharing the DIB,
+  // synchronize pending presentation dirtiness, and then update its own pixel.
+  assert.strictEqual(host.gdi_set_pixel(dc, 1, 0, 0x0000FF00) >>> 0, 0x0000FF00);
+  assert.strictEqual(e.test_dib_is_dirty(bitsGA), 0,
+    'software SetPixel should synchronize pending DIB presentation');
+  const presented = gdi._gdiObjects[bitmap].canvas.getContext('2d').getImageData(0, 0, 2, 1).data;
+  assert.deepStrictEqual(Array.from(presented), [255, 0, 0, 255, 0, 255, 0, 255],
+    'software SetPixel should retain guest pixels and update its Canvas cache pixel');
 
   e.guest_write32(bitsGA + 4094, 0x11223344);
   assert.strictEqual(e.test_dib_is_dirty(bitsGA), 1, 'a crossing store should dirty its first page');
@@ -55,7 +66,7 @@ const BMI_WA = 0x11000;
   e.test_dib_free(reusedGA);
 
   assert(!gdi._gdiObjects[bitmap], 'deleted DIB handle should be removed from the host GDI table');
-  console.log('PASS  DIB arena tracks guest writes and lazily synchronizes whole bitmaps');
+  console.log('PASS  DIB arena is canonical while page dirtiness drives presentation sync');
 })().catch(err => {
   console.error(err && err.stack || err);
   process.exit(1);
