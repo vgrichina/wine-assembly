@@ -231,6 +231,35 @@
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_CreateCompatibleBitmap")
+        (param i32) (param i32) (param i32) (result i32)
+    (call $handle_CreateCompatibleBitmap
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetObjectA")
+        (param i32) (param i32) (param i32) (result i32)
+    (call $handle_GetObjectA
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_DeleteObject") (param i32) (result i32)
+    (call $handle_DeleteObject
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_MoveToEx")
+        (param i32) (param i32) (param i32) (result i32)
+    (call $handle_MoveToEx
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_LineTo")
+        (param i32) (param i32) (param i32) (result i32)
+    (call $handle_LineTo
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)

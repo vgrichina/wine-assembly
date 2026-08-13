@@ -153,7 +153,10 @@
   (import "host" "gdi_create_pen" (func $host_gdi_create_pen (param i32 i32 i32) (result i32)))
   (import "host" "gdi_create_solid_brush" (func $host_gdi_create_solid_brush (param i32) (result i32)))
   (import "host" "gdi_create_compat_dc" (func $host_gdi_create_compat_dc (param i32) (result i32)))
-  (import "host" "gdi_create_compat_bitmap" (func $host_gdi_create_compat_bitmap (param i32 i32 i32) (result i32)))
+  (import "host" "gdi_create_compat_bitmap" (func $host_gdi_create_compat_bitmap (param i32 i32 i32 i32) (result i32)))
+  ;; gdi_create_compat_bitmap(hdc, width, height, backingWa) registers a DDB
+  ;; whose private canonical pixels live at backingWa. The address is not
+  ;; exposed through BITMAP.bmBits.
   (import "host" "gdi_create_bitmap" (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32)))
   ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
   (import "host" "gdi_create_dib_bitmap" (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32)))
@@ -163,6 +166,8 @@
   ;; lpBits_wa, and JS lazily converts dirty arena pages when GDI reads the bitmap.
   (import "host" "gdi_get_object_bits" (func $host_gdi_get_object_bits (param i32) (result i32)))
   ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
+  (import "host" "gdi_get_object_storage" (func $host_gdi_get_object_storage (param i32) (result i32)))
+  ;; gdi_get_object_storage(hBitmap) → private WAT backing address, or 0.
   (import "host" "gdi_get_object_bpp" (func $host_gdi_get_object_bpp (param i32) (result i32)))
   ;; gdi_get_object_bpp(hBitmap) → bitmap bits-per-pixel, or 0 if unknown.
   (import "host" "gdi_select_object" (func $host_gdi_select_object (param i32 i32) (result i32)))

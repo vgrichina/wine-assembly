@@ -34,13 +34,19 @@ receives a rebuilt host-region mirror only for Canvas clipping. DC deletion and
 release destroy the private region. The system/window visibility region and
 `SaveDC`/`RestoreDC` stacks remain separate follow-up work.
 
+`CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
+in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
+a derived cache: WAT raster writes upload bounded rectangles, and legacy Canvas
+fallback writes mirror their dirty rectangles back into canonical storage.
+Deletion returns the private pages to the arena.
+
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
-24- and 32-bpp DIB sections. WAT owns logical-to-device mapping, endpoint exclusion,
+24- and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
 canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
 dirty bounds. JavaScript provides a read-only selected-object descriptor and
 uploads the resulting dirty rectangle to the presentation Canvas. Wide strokes
 currently use an integer square footprint with `R2_COPYPEN` under 1:1 mapping;
-non-copy or transformed wide operations and non-DIB/window targets still use
+non-copy or transformed wide operations and window/legacy bitmap targets still use
 the named Canvas compatibility path pending coverage-mask, geometric-path, and
 target kernels. One-pixel dash, dot, dash-dot, and dash-dot-dot pens use fixed
 device-step WAT coverage tables. `CreatePen` dash/dot styles wider than one are

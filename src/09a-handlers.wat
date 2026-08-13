@@ -2437,7 +2437,8 @@
         (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
     ;; If host couldn't find it, return a fake 32x32 bitmap
     (if (i32.eqz (local.get $tmp))
-    (then (local.set $tmp (call $host_gdi_create_compat_bitmap (i32.const 0) (i32.const 32) (i32.const 32)))))
+    (then (local.set $tmp (call $host_gdi_create_compat_bitmap
+      (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
     (global.set $eax (local.get $tmp))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -5963,7 +5964,8 @@
         (then (local.get $arg1))
         (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
     (if (i32.eqz (local.get $tmp))
-      (then (local.set $tmp (call $host_gdi_create_compat_bitmap (i32.const 0) (i32.const 32) (i32.const 32)))))
+      (then (local.set $tmp (call $host_gdi_create_compat_bitmap
+        (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
     (global.set $eax (local.get $tmp))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -11185,7 +11187,7 @@
       (then
         (local.set $tmp
           (call $host_gdi_create_compat_bitmap
-            (i32.const 0) (i32.const 16) (i32.const 16)))))
+            (i32.const 0) (i32.const 16) (i32.const 16) (i32.const 0)))))
     (global.set $eax (local.get $tmp))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )

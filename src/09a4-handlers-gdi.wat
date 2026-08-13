@@ -22,9 +22,10 @@
         (global.set $eax (call $gdi_rgn_delete (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
-    (local.set $bits_wa (call $host_gdi_get_object_bits (local.get $arg0)))
+    (local.set $bits_wa (call $host_gdi_get_object_storage (local.get $arg0)))
     (global.set $eax (call $host_gdi_delete_object (local.get $arg0)))
-    (if (i32.and (global.get $eax) (local.get $bits_wa))
+    (if (i32.and (i32.ne (global.get $eax) (i32.const 0))
+          (i32.ne (local.get $bits_wa) (i32.const 0)))
       (then (call $dib_free_wasm (local.get $bits_wa))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -87,9 +88,35 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 151: CreateCompatibleBitmap(hdc, w, h) — delegate to host GDI
+  ;; 151: CreateCompatibleBitmap(hdc, w, h) — allocate canonical pixels in
+  ;; the WAT bitmap arena, then let JS create the derived Canvas presentation.
   (func $handle_CreateCompatibleBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_compat_bitmap (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (local $w i32) (local $h i32) (local $size64 i64) (local $bits_ga i32) (local $handle i32)
+    (local.set $w (local.get $arg1))
+    (local.set $h (local.get $arg2))
+    ;; Preserve the emulator's established zero/negative dimension behavior.
+    (if (i32.le_s (local.get $w) (i32.const 0)) (then (local.set $w (i32.const 1))))
+    (if (i32.le_s (local.get $h) (i32.const 0)) (then (local.set $h (i32.const 1))))
+    (local.set $size64
+      (i64.mul
+        (i64.mul (i64.extend_i32_u (local.get $w)) (i64.extend_i32_u (local.get $h)))
+        (i64.const 4)))
+    (if (i64.gt_u (local.get $size64) (i64.extend_i32_u (global.get $DIB_BACKING_BASE_SIZE)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $bits_ga (call $dib_alloc (i32.wrap_i64 (local.get $size64))))
+    (if (i32.eqz (local.get $bits_ga))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $handle (call $host_gdi_create_compat_bitmap
+      (local.get $arg0) (local.get $w) (local.get $h) (call $g2w (local.get $bits_ga))))
+    (if (i32.eqz (local.get $handle))
+      (then (call $dib_free_wasm (call $g2w (local.get $bits_ga)))))
+    (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
