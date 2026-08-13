@@ -96,6 +96,33 @@
       (then (return (i32.const 0))))
     (local.get $sw))
 
+  ;; Validate every HMENU representation used by the compatibility layer:
+  ;; heap-backed popup menus, resource-backed LoadMenu handles, fixed handles
+  ;; returned by GetMenu/GetSystemMenu, encoded submenu handles, and the small
+  ;; host-owned range returned by CreateMenu.
+  (func $menu_handle_is_valid (param $hmenu i32) (result i32)
+    (if (i32.eqz (local.get $hmenu)) (then (return (i32.const 0))))
+    (if (call $dynamic_menu_state_w (local.get $hmenu))
+      (then (return (i32.const 1))))
+    (if (i32.or
+          (i32.eq (local.get $hmenu) (i32.const 0x00080001))
+          (i32.eq (local.get $hmenu) (i32.const 0x00040003)))
+      (then (return (i32.const 1))))
+    (if (i32.eq
+          (i32.and (local.get $hmenu) (i32.const 0x00FF0000))
+          (i32.const 0x00BE0000))
+      (then (return (i32.const 1))))
+    (if (i32.and
+          (i32.ge_u (local.get $hmenu) (i32.const 0x00800001))
+          (i32.lt_u (local.get $hmenu) (i32.const 0x00900000)))
+      (then (return (i32.const 1))))
+    ;; GetSubMenu encodes its zero-based position+1 in the high word.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $hmenu) (i32.const 0xFFFF0000)) (i32.const 0))
+          (i32.ne (i32.and (local.get $hmenu) (i32.const 0x0000FFFF)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (i32.const 0))
+
   (func $dynamic_menu_create (result i32)
     (local $hmenu i32) (local $sw i32)
     ;; 64 entries is enough for Win9x color/font popup menus and keeps every

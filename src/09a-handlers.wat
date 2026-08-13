@@ -7005,9 +7005,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 461: IsMenu — STUB: unimplemented
+  ;; IsMenu(hMenu) → BOOL.
   (func $handle_IsMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $menu_handle_is_valid (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 462: WriteClassStg(pStg, rclsid) — persist the root storage CLSID.
