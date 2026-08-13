@@ -15,12 +15,15 @@ described below.
 Rectangular HRGN ownership and Boolean algebra now run in WAT. WAT allocates
 generation-tagged handles and owns normalization, mutation, offset, bounding
 boxes, object typing, lifetime, and `RGN_AND`/`OR`/`XOR`/`DIFF`/`COPY`. Each
-region has a fixed canonical arena of up to 128 sorted, disjoint half-open band
+region has a fixed canonical arena of up to 208 sorted, disjoint half-open band
 rectangles. Boolean results are constructed in alias-safe WAT scratch buffers.
 JavaScript receives those rectangles only to rebuild derived Canvas clip and
 window-shape presentation data. Ellipse regions use deterministic integer
-pixel-center scan conversion into the same WAT arena. Polygon region scan
-conversion is still a legacy host fallback.
+pixel-center scan conversion into the same WAT arena. Polygon regions use an
+exact-rational WAT scanline with half-open edges and grouped crossings for both
+`ALTERNATE` and `WINDING` fill modes. The current explicit envelope is 208
+vertices, 4,096 rows, and coordinates within +/-1,000,000; calls outside it
+fail instead of delegating geometry to JavaScript.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.

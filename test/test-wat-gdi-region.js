@@ -11,7 +11,10 @@ const { compileWat } = require('../lib/compile-wat');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const RECT_SCRATCH = 0x07E09000;
+const POINT_SCRATCH = 0x07E0A000;
 const GDI_REGION_BANDS = 0x07E1C000;
+const GDI_REGION_MAX_RECTS = 208;
+const GDI_REGION_RECT_STRIDE = GDI_REGION_MAX_RECTS * 16;
 
 async function main() {
   const wasmBytes = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
@@ -56,12 +59,20 @@ async function main() {
     const slot = (handle & 0xFF) - 1;
     const record = recordFor(handle);
     const count = dv.getUint32(record + 28, true);
-    const base = GDI_REGION_BANDS + slot * 128 * 16;
+    const base = GDI_REGION_BANDS + slot * GDI_REGION_RECT_STRIDE;
     const rects = [];
     for (let i = 0; i < count; i++) {
       rects.push([0, 4, 8, 12].map(offset => dv.getInt32(base + i * 16 + offset, true)));
     }
     return rects;
+  }
+
+  function polygon(points, fillMode = 1) {
+    points.forEach(([x, y], i) => {
+      dv.setInt32(POINT_SCRATCH + i * 8, x, true);
+      dv.setInt32(POINT_SCRATCH + i * 8 + 4, y, true);
+    });
+    return wat.test_gdi_rgn_alloc_polygon(POINT_SCRATCH, points.length, fillMode);
   }
 
   check('allocates normalized generation-tagged rectangle handles in WAT', () => {
@@ -160,6 +171,38 @@ async function main() {
     assert.deepStrictEqual(bands(dst), [[2, 1, 8, 7]]);
   });
 
+  check('polygon scan conversion normalizes convex and concave bands', () => {
+    const rectangle = polygon([[0, 0], [8, 0], [8, 6], [0, 6]]);
+    assert.deepStrictEqual(bands(rectangle), [[0, 0, 8, 6]]);
+    assert.deepStrictEqual(box(rectangle), { complexity: 2, rect: [0, 0, 8, 6] });
+
+    const concave = polygon([[0, 0], [6, 0], [6, 2], [2, 2], [2, 6], [0, 6]]);
+    assert.deepStrictEqual(bands(concave), [[0, 0, 6, 2], [0, 2, 2, 6]]);
+
+    const negative = polygon([[-5, -4], [5, -4], [0, 4]]);
+    assert.deepStrictEqual(bands(negative), [
+      [-5, -4, 5, -3], [-4, -3, 4, -2], [-3, -2, 3, 0],
+      [-2, 0, 2, 2], [-1, 2, 1, 3],
+    ]);
+  });
+
+  check('polygon ALTERNATE and WINDING group coincident crossings', () => {
+    const twice = [
+      [0, 0], [6, 0], [6, 4], [0, 4],
+      [0, 0], [6, 0], [6, 4], [0, 4],
+    ];
+    assert.deepStrictEqual(bands(polygon(twice, 1)), []);
+    assert.deepStrictEqual(bands(polygon(twice, 2)), [[0, 0, 6, 4]]);
+  });
+
+  check('tall polygon fits the expanded canonical arena', () => {
+    const triangle = polygon([[0, 0], [400, 0], [200, 200]]);
+    assert.notStrictEqual(triangle, 0);
+    assert.strictEqual(bands(triangle).length, 200);
+    assert.deepStrictEqual(bands(triangle).slice(0, 2), [[0, 0, 399, 1], [1, 1, 398, 2]]);
+    assert.deepStrictEqual(bands(triangle).slice(-1), [[199, 199, 200, 200]]);
+  });
+
   check('Boolean operations are alias-safe and preserve empty results', () => {
     const a = wat.test_gdi_rgn_alloc_rect(0, 0, 8, 8);
     const b = wat.test_gdi_rgn_alloc_rect(3, 2, 10, 6);
@@ -175,13 +218,13 @@ async function main() {
   check('arena overflow returns ERROR and leaves destination unchanged', () => {
     const buildStripes = startY => {
       const result = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
-      for (let i = 0; i < 128; i++) {
+      for (let i = 0; i < GDI_REGION_MAX_RECTS; i++) {
         const stripe = wat.test_gdi_rgn_alloc_rect(0, startY + i * 4, 4, startY + i * 4 + 1);
         assert.notStrictEqual(stripe, 0);
         assert.notStrictEqual(wat.test_gdi_rgn_combine(result, result, stripe, 2), 0);
         assert.strictEqual(wat.test_gdi_rgn_delete(stripe), 1);
       }
-      assert.strictEqual(bands(result).length, 128);
+      assert.strictEqual(bands(result).length, GDI_REGION_MAX_RECTS);
       return result;
     };
     const even = buildStripes(0);

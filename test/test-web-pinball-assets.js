@@ -224,9 +224,9 @@ assert(indexHtml.includes('lib/renderer.js?v=172'), 'web host should cache-bust 
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(indexHtml.includes('lib/gdi-surface.js?v=1'), 'web host should load the canonical GDI surface module');
-assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host-imports.js?v=192'),
+assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host-imports.js?v=193'),
   'web host should load the GDI surface module before host imports');
-assert(indexHtml.includes('lib/host-imports.js?v=192'), 'web host should cache-bust host imports after WAT ellipse-region scan conversion');
+assert(indexHtml.includes('lib/host-imports.js?v=193'), 'web host should cache-bust host imports after WAT polygon-region scan conversion');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('host.js?v=189'), 'web host should cache-bust host.js after DIB arena changes');
 assert(hostJs.includes("static SOURCE_VERSION = '189'"), 'web host should cache-bust WAT source compilation');

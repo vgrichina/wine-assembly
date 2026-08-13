@@ -206,8 +206,6 @@
   ;; gdi_exclude_clip_rect(hdc, l, t, r, b) -> complexity
   (import "host" "gdi_intersect_clip_rect" (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_intersect_clip_rect(hdc, l, t, r, b) -> complexity
-  (import "host" "gdi_create_polygon_rgn" (func $host_gdi_create_polygon_rgn (param i32 i32 i32) (result i32)))
-  ;; gdi_create_polygon_rgn(pts_wa, n, fillMode) -> hrgn
   (import "host" "gdi_get_rgn_box" (func $host_gdi_get_rgn_box (param i32 i32) (result i32)))
   ;; gdi_get_rgn_box(hrgn, lprect_wa) -> complexity
   (import "host" "gdi_polygon" (func $host_gdi_polygon (param i32 i32 i32) (result i32)))
@@ -696,8 +694,8 @@
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
   ;; 0x07E10000 16KB     DIB_PAGE_STATE
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
-  ;; 0x07E1C000 512KB    GDI_REGION_BANDS (256 x 128 RECT slots)
-  ;; 0x07E9C000 8KB      GDI_REGION_WORK (4 x 128 RECT buffers)
+  ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
+  ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -853,14 +851,15 @@
   ;; Handles use 0x0050GGSS where GG is generation and SS is slot + 1.
   (global $GDI_REGION_TABLE i32 (i32.const 0x07F0D000))
   (global $GDI_REGION_TABLE_SIZE i32 (i32.const 0x00002000))
-  ;; Each canonical region owns 128 sorted, disjoint half-open RECTs. Slot 255
-  ;; is reserved so the arena remains power-of-two sized and never gets a
-  ;; public handle. Boolean sweeps use four adjacent alias-safe work buffers.
+  ;; Each canonical region owns 208 sorted, disjoint half-open RECTs. Slot 255
+  ;; remains reserved and never gets a public handle. Boolean and scanline
+  ;; operations use four adjacent alias-safe work buffers.
   (global $GDI_REGION_BANDS i32 (i32.const 0x07E1C000))
-  (global $GDI_REGION_BANDS_SIZE i32 (i32.const 0x00080000))
-  (global $GDI_REGION_WORK i32 (i32.const 0x07E9C000))
-  (global $GDI_REGION_WORK_SIZE i32 (i32.const 0x00002000))
-  (global $GDI_REGION_MAX_RECTS i32 (i32.const 128))
+  (global $GDI_REGION_BANDS_SIZE i32 (i32.const 0x000D0000))
+  (global $GDI_REGION_WORK i32 (i32.const 0x07EEC000))
+  (global $GDI_REGION_WORK_SIZE i32 (i32.const 0x00003400))
+  (global $GDI_REGION_RECT_STRIDE i32 (i32.const 0x00000D00))
+  (global $GDI_REGION_MAX_RECTS i32 (i32.const 208))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

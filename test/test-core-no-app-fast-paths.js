@@ -7,6 +7,8 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const decoderWat = fs.readFileSync(path.join(ROOT, 'src', '07-decoder.wat'), 'utf8');
+const handlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a-handlers.wat'), 'utf8');
+const hostImports = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 
 assert(!/\$?is_winamp\b|winamp_/i.test(exportsWat),
   'main run loop should not contain Winamp-specific helpers');
@@ -29,5 +31,10 @@ for (const marker of ['0xDEC0DE19', '0xDEC0B10C', '0x01009604', '0x010095f0', '0
   assert(!exportsWat.includes(marker), `exports should not contain stale app debug marker ${marker}`);
   assert(!decoderWat.includes(marker), `decoder should not contain stale app debug marker ${marker}`);
 }
+
+assert(handlersWat.includes('(call $gdi_rgn_alloc_polygon'),
+  'CreatePolygonRgn must route geometry into WAT');
+assert(!hostImports.includes('gdi_create_polygon_rgn:'),
+  'JavaScript must not own polygon-region geometry');
 
 console.log('PASS  core has no app-specific run-loop fast paths');
