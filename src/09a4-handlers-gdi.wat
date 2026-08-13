@@ -35,6 +35,7 @@
       (then
         (global.set $printer_hdc (i32.const 0))
         (global.set $printer_doc_state (i32.const 0))))
+    (call $gdi_dc_clip_release (local.get $arg0))
     (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

@@ -1959,6 +1959,7 @@
   ;; Phase B: free the DcRecord. Legacy hdcs (hwnd+0x40000) are still
   ;; valid — _dcFree returns 0 for unknown handles, harmless.
   (func $handle_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gdi_dc_clip_release (local.get $arg1))
     (drop (call $host_release_dc (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -5441,15 +5442,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 373: PtVisible(hdc, x, y) → TRUE (point is in clipping region)
+  ;; 373: PtVisible(hdc, x, y) — query the WAT-owned explicit clip.
   (func $handle_PtVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; TRUE
+    (global.set $eax (call $gdi_dc_clip_point_visible
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; 374: RectVisible(hdc, lprc) — 2 args stdcall, return TRUE (always visible)
+  ;; 374: RectVisible(hdc, lprc) — query the WAT-owned explicit clip.
   (func $handle_RectVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $gdi_dc_clip_rect_visible
+      (local.get $arg0) (call $g2w (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8431,8 +8434,8 @@
 
   ;; 564: ExtSelectClipRgn(hdc, hrgn, fnMode) — 3 args stdcall
   (func $handle_ExtSelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_ext_select_clip_rgn
-      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
+    (global.set $eax (call $gdi_dc_clip_ext_select
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 565: SelectClipPath — STUB: unimplemented
@@ -8450,8 +8453,7 @@
 
   ;; 567: GetClipRgn(hdc, hrgn) — 2 args stdcall. Returns 1 if clip region set, 0 if none, -1 on error.
   (func $handle_GetClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; For now return 0 = no clip region (clip is applied JS-side, not visible as guest HRGN)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $gdi_dc_clip_get (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 568: PolyBezierTo(hdc, lppt, cPoints)
@@ -8503,22 +8505,23 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 577: OffsetClipRgn — STUB: unimplemented
+  ;; 577: OffsetClipRgn(hdc, dx, dy) — offset the WAT-owned explicit clip.
   (func $handle_OffsetClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_dc_clip_offset
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 578: ExcludeClipRect(hdc, l, t, r, b) — 5 args stdcall.
   (func $handle_ExcludeClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_exclude_clip_rect
+    (global.set $eax (call $gdi_dc_clip_exclude_rect
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 579: SelectClipRgn(hdc, hrgn) — 2 args stdcall
   (func $handle_SelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_select_clip_rgn
-      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1))))
+    (global.set $eax (call $gdi_dc_clip_select (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 580: OffsetWindowOrgEx(hdc, dx, dy, lpPoint) → BOOL
@@ -8566,7 +8569,7 @@
 
   ;; 585: IntersectClipRect(hdc, l, t, r, b) — 5 args stdcall.
   (func $handle_IntersectClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_intersect_clip_rect
+    (global.set $eax (call $gdi_dc_clip_intersect_rect
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
@@ -8799,17 +8802,8 @@
 
   ;; 605: GetClipBox(hdc, lpRect) → regionType — 2 args stdcall
   (func $handle_GetClipBox (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $sz i32)
-    (local $wa i32)
-    (local.set $sz (call $host_gdi_get_clip_box (local.get $arg0)))
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (local.get $wa) (i32.const 0))           ;; left
-    (i32.store offset=4 (local.get $wa) (i32.const 0))  ;; top
-    (i32.store offset=8 (local.get $wa)
-      (i32.and (local.get $sz) (i32.const 0xFFFF)))      ;; right = width
-    (i32.store offset=12 (local.get $wa)
-      (i32.shr_u (local.get $sz) (i32.const 16)))        ;; bottom = height
-    (global.set $eax (i32.const 2))  ;; SIMPLEREGION
+    (global.set $eax (call $gdi_dc_clip_get_box
+      (local.get $arg0) (call $g2w (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

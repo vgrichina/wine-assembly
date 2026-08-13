@@ -25,6 +25,15 @@ exact-rational WAT scanline with half-open edges and grouped crossings for both
 vertices, 4,096 rows, and coordinates within +/-1,000,000; calls outside it
 fail instead of delegating geometry to JavaScript.
 
+Application-defined DC clips are also WAT-owned. Each live HDC entry holds a
+private canonical HRGN copy, so deleting or modifying the caller's selected
+region cannot change the DC. `SelectClipRgn`, `ExtSelectClipRgn`,
+`IntersectClipRect`, `ExcludeClipRect`, `OffsetClipRgn`, `GetClipRgn`,
+`GetClipBox`, `PtVisible`, and `RectVisible` operate on that copy. JavaScript
+receives a rebuilt host-region mirror only for Canvas clipping. DC deletion and
+release destroy the private region. The system/window visibility region and
+`SaveDC`/`RestoreDC` stacks remain separate follow-up work.
+
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.
 It does not propose replacing Canvas as the desktop compositor or presentation
@@ -246,10 +255,11 @@ rectangles deterministically. A banded region representation is the preferred
 long-term form because fills, blits, and dirty tracking all consume spans.
 
 The first migration slice handles unclipped and rectangularly clipped DIB
-fills exactly. The next clipping milestone will add a WAT-owned canonical
-band/span representation for rectangle combinations and rasterized
-polygon/ellipse regions. Until then, complex regions remain on the named
-Canvas compatibility path and are not treated as canonical software output.
+fills exactly. WAT now owns canonical band regions for rectangle combinations,
+scan-converted polygons and ellipses, and application-defined HDC clips. The
+next clipping slice separates and combines system/window visibility clips and
+adds `SaveDC`/`RestoreDC` clip snapshots before raster kernels consume the
+canonical intersection directly.
 
 ## Presentation
 

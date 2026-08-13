@@ -91,6 +91,7 @@ const requiredRegions = [
   'GDI_REGION_TABLE',
   'GDI_REGION_BANDS',
   'GDI_REGION_WORK',
+  'GDI_DC_CLIP_TABLE',
   'D3DIM_MATRICES',
   'DX_OBJECTS',
   'COM_WRAPPERS',

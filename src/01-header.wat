@@ -696,6 +696,7 @@
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
+  ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -860,6 +861,11 @@
   (global $GDI_REGION_WORK_SIZE i32 (i32.const 0x00003400))
   (global $GDI_REGION_RECT_STRIDE i32 (i32.const 0x00000D00))
   (global $GDI_REGION_MAX_RECTS i32 (i32.const 208))
+  ;; WAT-owned explicit DC clip registry. Empty HDC slots are zero. Each live
+  ;; entry owns its HRGN and publishes only a derived mirror to the host DC.
+  (global $GDI_DC_CLIP_TABLE i32 (i32.const 0x07EF0000))
+  (global $GDI_DC_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_CLIP_COUNT i32 (i32.const 256))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

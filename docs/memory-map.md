@@ -125,6 +125,9 @@ buffers at `0x07EEC000..0x07EEF3FF`. The preceding
 globals and `test/test-wat-memory-map.js` enforce that these regions do not
 overlap other emulator tables.
 
+Explicit HDC clip ownership uses `0x07EF0000..0x07EF07FF`, a 256-entry table
+mapping synthetic HDC values to private canonical HRGNs.
+
 ### Comparison
 
 | Concept | Win98 | wine-assembly |

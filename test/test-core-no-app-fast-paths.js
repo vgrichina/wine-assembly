@@ -36,5 +36,19 @@ assert(handlersWat.includes('(call $gdi_rgn_alloc_polygon'),
   'CreatePolygonRgn must route geometry into WAT');
 assert(!hostImports.includes('gdi_create_polygon_rgn:'),
   'JavaScript must not own polygon-region geometry');
+for (const helper of [
+  'gdi_dc_clip_select',
+  'gdi_dc_clip_ext_select',
+  'gdi_dc_clip_intersect_rect',
+  'gdi_dc_clip_exclude_rect',
+  'gdi_dc_clip_offset',
+  'gdi_dc_clip_get',
+  'gdi_dc_clip_get_box',
+  'gdi_dc_clip_point_visible',
+  'gdi_dc_clip_rect_visible',
+]) {
+  assert(handlersWat.includes(`(call $${helper}`),
+    `public clipping APIs must route through WAT helper ${helper}`);
+}
 
 console.log('PASS  core has no app-specific run-loop fast paths');
