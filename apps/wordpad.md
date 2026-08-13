@@ -2,8 +2,9 @@
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
 **Status (2026-08-12):** FUNCTIONAL for the bounded non-OLE scope plus static
-`CF_DIB` image paste, Copy/Cut/Paste, rendering, RTF save, and fresh-process
-reopen.
+`CF_DIB` image paste, Copy/Cut/Paste, rendering, and RTF save. Fresh-process
+reopen is implemented and has passed, but needs current-tip bounded
+revalidation after the recent GDI/DIB changes (see **Remaining Work**).
 
 Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
