@@ -650,7 +650,6 @@
 
   ;; 18: RtlMoveMemory
   (func $handle_RtlMoveMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $note_dib_write (local.get $arg0) (local.get $arg2))
     (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -3377,7 +3376,6 @@
 
   ;; 214: memmove
   (func $handle_memmove (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $note_dib_write (local.get $arg0) (local.get $arg2))
     (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
@@ -4080,7 +4078,6 @@
   (func $handle_memset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2)
       (then
-        (call $note_dib_write (local.get $arg0) (local.get $arg2))
         (memory.fill (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2))))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -4090,7 +4087,6 @@
   (func $handle_memcpy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2)
       (then
-        (call $note_dib_write (local.get $arg0) (local.get $arg2))
         (memory.copy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -4810,24 +4806,28 @@
     (local.set $desc (global.get $GDI_BLIT_DST_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_raster_get_pixel
-        (local.get $desc) (local.get $arg1) (local.get $arg2))))
+        (local.get $desc)
+        (call $gdi_line_map_x (local.get $desc) (local.get $arg1))
+        (call $gdi_line_map_y (local.get $desc) (local.get $arg2)))))
       (else (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
   ;; 318: SetPixel(hdc, x, y, color) → prev color
   (func $handle_SetPixel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32) (local $result i32)
+    (local $desc i32) (local $x i32) (local $y i32) (local $result i32)
     (local.set $desc (global.get $GDI_BLIT_DST_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then
+        (local.set $x (call $gdi_line_map_x (local.get $desc) (local.get $arg1)))
+        (local.set $y (call $gdi_line_map_y (local.get $desc) (local.get $arg2)))
         (local.set $result (call $gdi_raster_set_pixel
-          (local.get $desc) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+          (local.get $desc) (local.get $x) (local.get $y) (local.get $arg3)))
         (if (i32.ne (local.get $result) (i32.const -1))
           (then (call $gdi_geometry_present (local.get $arg0) (local.get $desc)
-            (local.get $arg1) (local.get $arg2)
-            (i32.add (local.get $arg1) (i32.const 1))
-            (i32.add (local.get $arg2) (i32.const 1))))))
+            (local.get $x) (local.get $y)
+            (i32.add (local.get $x) (i32.const 1))
+            (i32.add (local.get $y) (i32.const 1))))))
       (else (local.set $result (i32.const -1))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
@@ -6828,7 +6828,7 @@
     (local $dst i32) (local $src i32) (local $src_hdc i32)
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local $rop i32) (local $rop3 i32) (local $brush_color i32)
-    (local $pattern i32) (local $ok i32)
+    (local $dx i32) (local $dy i32) (local $pattern i32) (local $ok i32)
     (local.set $dst (global.get $GDI_BLIT_DST_DESC))
     (local.set $src (global.get $GDI_BLIT_SRC_DESC))
     (local.set $src_hdc (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -6840,10 +6840,16 @@
     (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $dst))
       (then
+        (local.set $dx (call $gdi_line_map_x (local.get $dst) (local.get $arg1)))
+        (local.set $dy (call $gdi_line_map_y (local.get $dst) (local.get $arg2)))
         (if (local.get $src_hdc)
           (then
             (if (i32.eqz (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src)))
-              (then (local.set $src (i32.const 0)))))
+              (then (local.set $src (i32.const 0)))
+            (if (local.get $src)
+              (then
+                (local.set $sx (call $gdi_line_map_x (local.get $src) (local.get $sx)))
+                (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy)))))))
           (else (local.set $src (i32.const 0))))
         (if (i32.and
               (i32.ne (i32.and
@@ -6862,21 +6868,21 @@
                   (then
                     (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
                     (local.set $ok (call $gdi_raster_stretch_blt
-                      (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
                       (local.get $arg3) (local.get $arg4) (local.get $src)
                       (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
                       (local.get $pattern) (local.get $rop))))))
               (else
                 (local.set $ok (call $gdi_raster_stretch_blt
-                  (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
                   (local.get $arg3) (local.get $arg4) (local.get $src)
                   (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
                   (i32.const 0) (local.get $rop)))))))
         (if (local.get $ok)
           (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
-            (local.get $arg1) (local.get $arg2)
-            (i32.add (local.get $arg1) (local.get $arg3))
-            (i32.add (local.get $arg2) (local.get $arg4))))))
+            (local.get $dx) (local.get $dy)
+            (i32.add (local.get $dx) (local.get $arg3))
+            (i32.add (local.get $dy) (local.get $arg4))))))
       (else (local.set $ok (i32.const 0))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 48)))  ;; stdcall, 11 args
@@ -6908,8 +6914,14 @@
 
   ;; 453: ExtFloodFill(hdc, x, y, color, fillType)
   (func $handle_ExtFloodFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_ext_flood_fill
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_BLIT_DST_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_raster_flood_fill
+        (local.get $arg0) (local.get $desc) (local.get $arg1) (local.get $arg2)
+        (local.get $arg3) (local.get $arg4)
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 8) (i32.const 0x30010)))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 

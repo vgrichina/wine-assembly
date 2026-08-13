@@ -319,7 +319,6 @@
 
   ;; 744: RtlZeroMemory(Destination, Length) — zero fill memory
   (func $handle_RtlZeroMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $note_dib_write (local.get $arg0) (local.get $arg1))
     (call $zero_memory (call $g2w (local.get $arg0)) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -2465,7 +2464,8 @@
           (call $ole_format_free (i32.add (local.get $data) (i32.mul (local.get $child) (i32.const 20))))
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $formats)))
-        (if (i32.and (local.get $data) (call $gl32 (i32.add (local.get $obj) (i32.const 24))))
+        (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+              (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 24))) (i32.const 0)))
           (then (call $heap_free (local.get $data))))))
     (if (i32.eq (local.get $kind) (i32.const 6))
       (then
@@ -2587,7 +2587,8 @@
     (local.set $hr (call $ole_stream_read (local.get $source) (local.get $buffer) (local.get $take) (local.get $actual_read)))
     (local.set $take (call $gl32 (local.get $actual_read)))
     (if (local.get $read_out) (then (call $gs32 (local.get $read_out) (local.get $take))))
-    (if (i32.and (local.get $hr) (i32.ne (local.get $hr) (i32.const 1)))
+    (if (i32.and (i32.ne (local.get $hr) (i32.const 0))
+          (i32.ne (local.get $hr) (i32.const 1)))
       (then
         (if (local.get $buffer) (then (call $heap_free (local.get $buffer))))
         (call $heap_free (local.get $actual_read))
@@ -3148,7 +3149,8 @@
   (func $ole_format_enum_next (param $obj i32) (param $requested i32) (param $formats i32) (param $fetched_out i32) (result i32)
     (local $data i32) (local $count i32) (local $cursor i32) (local $fetched i32) (local $hr i32)
     (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (i32.const 0))))
-    (if (i32.or (i32.and (local.get $requested) (i32.eqz (local.get $formats)))
+    (if (i32.or (i32.and (i32.ne (local.get $requested) (i32.const 0))
+          (i32.eqz (local.get $formats)))
           (i32.and (i32.gt_u (local.get $requested) (i32.const 1)) (i32.eqz (local.get $fetched_out))))
       (then (return (i32.const 0x80004003))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))

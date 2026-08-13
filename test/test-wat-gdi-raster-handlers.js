@@ -7,7 +7,7 @@ const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
   const { exports: wat, memory, gdi } = await bootRenderHarness();
-  const bytes = new Uint8Array(memory.buffer);
+  let bytes = new Uint8Array(memory.buffer);
   let passed = 0;
 
   function check(name, fn) {
@@ -90,6 +90,67 @@ const { bootRenderHarness } = require('./render-helper');
       dst.hdc, 0, 3, 4, 2, src.hdc, 0, 2, 2, 1, 0x00CC0020), 1);
     assert.strictEqual(packed(dst, 2, 4), 0x112233);
     assert.strictEqual(canvasRgb(dst, 2, 4), 0x112233);
+  });
+
+  check('SetDIBitsToDevice decodes indexed RGBQUAD sprites in WAT', () => {
+    const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
+    const bitsGa = wat.guest_alloc(8) >>> 0;
+    bytes = new Uint8Array(memory.buffer);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 4);
+    // Winmine advertises a tall sprite sheet but supplies one scanline slice
+    // per call. The source pointer below owns only these two rows.
+    wat.guest_write32(bmiGa + 8, 256);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 4);
+    wat.guest_write32(bmiGa + 32, 16);
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    // RGBQUAD index 1 = red, index 2 = green, index 3 = blue.
+    bytes.set([0x00, 0x00, 0xFF, 0x00], bmiWa + 40 + 4);
+    bytes.set([0x00, 0xFF, 0x00, 0x00], bmiWa + 40 + 8);
+    bytes.set([0xFF, 0x00, 0x00, 0x00], bmiWa + 40 + 12);
+    // Two DWORD-aligned 4-bpp rows: 1,2,3,1 and 3,2,1,3.
+    bytes.set([0x12, 0x31, 0, 0, 0x32, 0x13, 0, 0], bitsWa);
+    assert.strictEqual(wat.test_call_SetDIBitsToDevice(
+      dst.hdc, 1, 0, 4, 2, 0, 0, 0, 2, bitsGa, bmiGa, 0), 2);
+    assert.strictEqual(packed(dst, 1, 0), 0x0000FF);
+    assert.strictEqual(packed(dst, 2, 0), 0x00FF00);
+    assert.strictEqual(packed(dst, 3, 0), 0xFF0000);
+    assert.strictEqual(packed(dst, 1, 1), 0xFF0000);
+    assert.strictEqual(canvasRgb(dst, 2, 1), 0x00FF00);
+  });
+
+  check('ExtFloodFill owns surface and border modes in WAT', () => {
+    const surface = makeDib(6, 6);
+    const red = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
+    wat.test_call_SelectObject(surface.hdc, red);
+    for (let y = 1; y < 5; y++) {
+      for (let x = 1; x < 5; x++) {
+        const p = surface.bits + y * surface.stride + x * 4;
+        bytes[p] = bytes[p + 1] = bytes[p + 2] = 0xFF;
+      }
+    }
+    assert.strictEqual(wat.test_call_ExtFloodFill(
+      surface.hdc, 2, 2, 0x00FFFFFF, 1), 1);
+    assert.strictEqual(packed(surface, 2, 2), 0xFF0000);
+    assert.strictEqual(packed(surface, 0, 0), 0);
+
+    const border = makeDib(6, 6);
+    wat.test_call_SelectObject(border.hdc, red);
+    for (let x = 1; x < 5; x++) {
+      for (const y of [1, 4]) bytes.fill(0xFF, border.bits + y * border.stride + x * 4,
+        border.bits + y * border.stride + x * 4 + 3);
+    }
+    for (let y = 1; y < 5; y++) {
+      for (const x of [1, 4]) bytes.fill(0xFF, border.bits + y * border.stride + x * 4,
+        border.bits + y * border.stride + x * 4 + 3);
+    }
+    assert.strictEqual(wat.test_call_ExtFloodFill(border.hdc, 2, 2, 0x00FFFFFF, 0), 1);
+    assert.strictEqual(packed(border, 2, 2), 0xFF0000);
+    assert.strictEqual(packed(border, 1, 2), 0xFFFFFF);
+    assert.strictEqual(packed(border, 0, 0), 0);
   });
 
   console.log(`\n${passed}/${passed} checks passed`);

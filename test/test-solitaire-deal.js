@@ -1,20 +1,10 @@
 #!/usr/bin/env node
-// Solitaire Deal regression: verify Game > Deal renders cards at correct positions.
+// Solitaire Deal regression: verify CARDS.dll resources, initial window
+// geometry, chrome/status placement, and Game > Deal rendering.
 //
-// Solitaire (debug build) fires assertion dialogs during initial card drawing
-// because card pile positions start at (0,0) until WM_SIZE computes layout.
-// Three emulator fixes make this work:
-//   1. Child WM_SIZE uses saved hwnd instead of cleared pending_child_create
-//   2. Posted messages (WM_COMMAND/Deal) drain before pending WM_SIZE
-//   3. nc_height uses resolved class menu ID, not raw hMenu=0 from CreateWindowExA
-//
-// Test flow:
-//   1. Launch sol.exe
-//   2. Dismiss ~20 assertion dialogs (debug build artifacts)
-//   3. Snapshot → cards should be visible (initial deal)
-//   4. Inject Deal (WM_COMMAND id=1000)
-//   5. Dismiss any new assertions
-//   6. Snapshot → cards should differ (new deal, different arrangement)
+// The card library completes an initial deal by batch 60 with a 20k-instruction
+// slice. Keeping this regression short avoids spending most of the suite in
+// the game's idle message loop.
 //
 // PASS criteria:
 //   - Initial deal shows cards (>= 5000 px diff vs blank green)
@@ -50,23 +40,14 @@ for (const p of [initialPng, dealPng]) {
   try { fs.unlinkSync(p); } catch (_) {}
 }
 
-// Build input sequence: dismiss assertion dialogs (Continue=IDOK=1),
-// then snapshot, then Deal, then dismiss more assertions, then snapshot.
-// The debug build fires ~17 assertions during initial deal.
-// Each assertion dialog processes WM_CREATE for its controls, so space
-// dismissals at 40-batch intervals for headroom.
-const dismiss = (start, count, step) =>
-  Array.from({length: count}, (_, i) => `${start + i * step}:0x111:1`);
-
 const inputSpec = [
-  ...dismiss(50, 20, 40),                // dismiss initial assertions (50..810)
-  `900:png:${initialPng}`,               // snapshot after initial deal
-  '950:0x111:1000',                      // Game > Deal
-  ...dismiss(1000, 20, 40),              // dismiss re-deal assertions (1000..1760)
-  `1850:png:${dealPng}`,                 // snapshot after re-deal
+  `60:png:${initialPng}`,
+  '70:0x111:1000',                       // Game > Deal
+  `125:png:${dealPng}`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=1900`;
+const cmd = `node "${RUN}" --exe="${EXE}" --no-close --quiet-api ` +
+  `--batch-size=20000 --input='${inputSpec}' --max-batches=130`;
 console.log('$', cmd.replace(ROOT, '.'));
 
 let out = '';
@@ -116,10 +97,10 @@ async function diffPngs(aPath, bPath) {
     name: 'CARDS.dll initializes Win98 card size 71x96',
     pass: /Initialized CARDS\.dll cdtInit=1 card=71x96/.test(out),
   });
-  const solRect = out.match(/CreateWindow\] hwnd=0x[0-9a-f]+ title="Solitaire".*size=(\d+)x(\d+)/);
+  const solRect = out.match(/CreateWindow\] hwnd=0x[0-9a-f]+ title="Solitaire".*pos=(-?\d+),(-?\d+) size=(\d+)x(\d+)/);
   checks.push({
     name: 'Solitaire initial window is not tiny',
-    pass: !!solRect && Number(solRect[1]) >= 560 && Number(solRect[2]) >= 400,
+    pass: !!solRect && Number(solRect[3]) >= 560 && Number(solRect[4]) >= 400,
   });
 
   if (sizeOf(initialPng) && sizeOf(dealPng)) {
@@ -151,6 +132,7 @@ async function diffPngs(aPath, bPath) {
     let bottomCaptionBlue = 0;
     let bottomWhite = 0;
     let bottomBlackText = 0;
+    let captionBlue = 0;
     for (let i = 0; i < data.length; i += 4) {
       // Green background is rgb(0, 128, 0) or close
       if (!(data[i] < 20 && data[i+1] > 100 && data[i+2] < 20)) nonGreen++;
@@ -158,8 +140,12 @@ async function diffPngs(aPath, bPath) {
     // Solitaire creates a bordered child status strip at the bottom. It must
     // not get top-level caption chrome; the old bug drew a blue titlebar and
     // close button across this band.
-    for (let y = 435; y < Math.min(450, h); y++) {
-      for (let x = 20; x < Math.min(613, w); x++) {
+    const winX = solRect ? Number(solRect[1]) : 20;
+    const winY = solRect ? Number(solRect[2]) : 0;
+    const winW = solRect ? Number(solRect[3]) : 593;
+    const winH = solRect ? Number(solRect[4]) : 431;
+    for (let y = winY + winH - 18; y < Math.min(winY + winH, h); y++) {
+      for (let x = winX; x < Math.min(winX + winW, w); x++) {
         const i = (y * w + x) * 4;
         const r = data[i], g = data[i + 1], b = data[i + 2];
         if (b > 70 && r < 60 && g < 130) bottomCaptionBlue++;
@@ -167,10 +153,18 @@ async function diffPngs(aPath, bPath) {
         if (r < 40 && g < 40 && b < 40) bottomBlackText++;
       }
     }
+    for (let y = winY + 3; y < Math.min(winY + 21, h); y++) {
+      for (let x = winX + 3; x < Math.min(winX + winW - 3, w); x++) {
+        const i = (y * w + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if (b > 70 && b > r * 1.5 && b > g * 1.15) captionBlue++;
+      }
+    }
     console.log(`  non-green pixels in initial: ${nonGreen}`);
     console.log(`  blue caption pixels in bottom status strip: ${bottomCaptionBlue}`);
     console.log(`  white pixels in bottom status strip: ${bottomWhite}`);
     console.log(`  black text pixels in bottom status strip: ${bottomBlackText}`);
+    console.log(`  blue pixels in top-level caption: ${captionBlue}`);
     checks.push({
       name: 'Initial deal shows cards (>= 5000 non-green px)',
       pass: nonGreen >= 5000,
@@ -186,6 +180,10 @@ async function diffPngs(aPath, bPath) {
     checks.push({
       name: 'Bottom status child draws black status text',
       pass: bottomBlackText >= 50,
+    });
+    checks.push({
+      name: 'Top-level caption paints Win98 blue chrome',
+      pass: captionBlue >= 1000,
     });
   }
 

@@ -134,69 +134,20 @@
                  (i32.lt_u (local.get $ga) (global.get $generated_code_end)))))
     (if (i32.or (local.get $in_code) (local.get $in_generated))
       (then (call $invalidate_page (local.get $ga)))))
-  (func $note_dib_write (param $ga i32) (param $len i32)
-    (local $start i32) (local $end i32) (local $first i32) (local $last i32)
-    (local $page i32) (local $state i32)
-    (if (i32.eqz (local.get $len)) (then (return)))
-    (local.set $start (local.get $ga))
-    (local.set $end (i32.add (local.get $ga) (local.get $len)))
-    ;; Saturate an overflowing end address. Valid DIB writes cannot wrap, but
-    ;; this keeps a malformed bulk count from turning into an unbounded loop.
-    (if (i32.lt_u (local.get $end) (local.get $start))
-      (then (local.set $end (i32.const -1))))
-    (if (i32.ge_u (local.get $start)
-          (i32.add (global.get $DIB_GUEST_BASE) (global.get $DIB_GUEST_CAPACITY)))
-      (then (return)))
-    (if (i32.le_u (local.get $end) (global.get $DIB_GUEST_BASE))
-      (then (return)))
-    (if (i32.lt_u (local.get $start) (global.get $DIB_GUEST_BASE))
-      (then (local.set $start (global.get $DIB_GUEST_BASE))))
-    (if (i32.gt_u (local.get $end)
-          (i32.add (global.get $DIB_GUEST_BASE) (global.get $DIB_GUEST_CAPACITY)))
-      (then (local.set $end
-        (i32.add (global.get $DIB_GUEST_BASE) (global.get $DIB_GUEST_CAPACITY)))))
-    (local.set $first
-      (i32.shr_u (i32.sub (local.get $start) (global.get $DIB_GUEST_BASE)) (i32.const 12)))
-    (local.set $last
-      (i32.shr_u
-        (i32.sub (i32.sub (local.get $end) (i32.const 1)) (global.get $DIB_GUEST_BASE))
-        (i32.const 12)))
-    (local.set $page (local.get $first))
-    (block $done (loop $mark
-      (local.set $state (i32.load8_u (i32.add (global.get $DIB_PAGE_STATE) (local.get $page))))
-      (if (local.get $state)
-        (then (i32.store8
-          (i32.add (global.get $DIB_PAGE_STATE) (local.get $page))
-          (i32.const 2))))
-      (br_if $done (i32.eq (local.get $page) (local.get $last)))
-      (local.set $page (i32.add (local.get $page) (i32.const 1)))
-      (br $mark))))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
     (call $invalidate_code_write (local.get $ga))
-    (if (i32.lt_u
-          (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
-          (global.get $DIB_GUEST_CAPACITY))
-      (then (call $note_dib_write (local.get $ga) (i32.const 4))))
     (i32.store (local.get $wa) (local.get $v)))
   (func $gs16 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
     (call $invalidate_code_write (local.get $ga))
-    (if (i32.lt_u
-          (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
-          (global.get $DIB_GUEST_CAPACITY))
-      (then (call $note_dib_write (local.get $ga) (i32.const 2))))
     (i32.store16 (local.get $wa) (local.get $v)))
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
     (call $invalidate_code_write (local.get $ga))
-    (if (i32.lt_u
-          (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
-          (global.get $DIB_GUEST_CAPACITY))
-      (then (call $note_dib_write (local.get $ga) (i32.const 1))))
     (i32.store8 (local.get $wa) (local.get $v)))
 
   ;; ============================================================

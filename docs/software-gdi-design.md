@@ -41,14 +41,16 @@ Canvas text rasterizer receives an opaque WAT surface ID and canonical DC state,
 then copies its bounded output back into canonical native storage before
 returning. Deletion returns the private pages to the arena.
 
-`LoadBitmapA/W` now materialize uncompressed and bounded `BI_RLE4`/`BI_RLE8`
+`LoadBitmapA/W` now materialize uncompressed `BITMAPCOREHEADER` and
+`BITMAPINFOHEADER` resources plus bounded `BI_RLE4`/`BI_RLE8`
 RT_BITMAP resources entirely in WAT. Encoded, absolute, end-of-line,
 end-of-bitmap, and delta commands decode into canonical packed scanlines with
 strict source/destination bounds. The raster core reads and writes 1-, 4-,
 8-, 16-, 24-, and 32-bpp surfaces, resolves indexed colors from each bitmap's
-owned RGBQUAD table, and performs cross-format ROP blits before uploading the
+owned RGBQUAD table (expanding core RGBTRIPLE palettes), and performs cross-format ROP blits before uploading the
 result. This is sufficient for Paint's compressed tool strip and SkiFree's
-indexed sprite-atlas construction. `BITMAPCOREHEADER`, `BI_BITFIELDS`, and
+indexed sprite-atlas construction, as well as Solitaire's CARDS.dll core
+bitmaps. `BI_BITFIELDS` and
 palette-object (`DIB_PAL_COLORS`) realization remain follow-up work.
 
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
@@ -228,7 +230,7 @@ The permanent presentation-only `gdi_*` JavaScript imports are:
 gdi_set_region_bands   upload canonical WAT bands to a derived clip mirror
 gdi_set_window_rgn     apply that mirror during browser window composition
 gdi_surface_create     allocate a derived Canvas cache for WAT surface metadata
-gdi_surface_attach     attach a WAT window surface to its compositor Canvas
+gdi_surface_attach     attach a WAT window/overlay surface to its compositor Canvas
 gdi_surface_upload     upload dirty authoritative pixels to Canvas
 gdi_surface_delete     discard the derived Canvas cache
 ```
@@ -265,19 +267,17 @@ This removes:
 - ambiguity about whether a guest store or a host draw wins;
 - full-bitmap conversion before a GDI read.
 
-It does **not** remove dirty tracking. Guest stores still need to notify the
-presentation cache that DIB bytes changed. The existing 4 KB DIB page states
-can serve as the first implementation:
+It removes guest-write dirty tracking. A raw store through the pointer returned
+by `CreateDIBSection` changes canonical memory but does not itself display the
+bitmap. A later `BitBlt`, `StretchBlt`, `SetDIBitsToDevice`, text operation, or
+explicit presentation reads the current bytes and supplies the destination
+rectangle to upload. CPU scalar/string/FPU stores therefore need no DIB range
+checks or page notifications.
 
-- `0`: free page;
-- `1`: allocated and presentation-clean;
-- `2`: guest-dirty.
-
-When presenting a DIB, map dirty pages to affected row ranges, convert only
-those rows, upload the resulting rectangles, and return the pages to clean.
-GDI writes can mark exact dirty rectangles as well as the overlapping pages.
-Later, a per-surface row/tile bitset can reduce overdraw for wide DIBs without
-changing CPU-store instrumentation.
+The dedicated DIB arena retains a 4 KB occupancy bitmap and allocation-run
+table solely for allocation and reuse. These are not presentation state. GDI
+operations may provide exact dirty rectangles as upload hints; JS does not
+infer them by watching memory.
 
 The Canvas cache may be discarded and rebuilt at any time. Deleting the DIB
 reclaims its arena pages and its presentation cache together.
@@ -335,7 +335,7 @@ bounds.
 
 The existing region representation can remain initially if it can enumerate
 rectangles deterministically. A banded region representation is the preferred
-long-term form because fills, blits, and dirty tracking all consume spans.
+long-term form because fills, blits, and upload bounds all consume spans.
 
 The first migration slice handles unclipped and rectangularly clipped DIB
 fills exactly. WAT now owns canonical band regions for rectangle combinations,
@@ -361,6 +361,14 @@ geometry changes. `gdi_surface_attach` binds only the derived Canvas; bounded
 uploads schedule normal renderer composition. Releasing an HDC drops its DC
 record but keeps the window pixels, while destroying the owning HWND releases
 both canonical pages and the presentation cache.
+
+Popup menus use the same surface model rather than a semantic renderer
+fallback. WAT owns a screen-sized bitmap selected into a persistent memory DC,
+paints menu chrome in desktop coordinates, and calls `gdi_surface_attach` with
+the compositor-overlay target. The renderer composites only the popup's dirty
+rectangles, so opaque native bitmap storage does not cover unrelated desktop
+pixels. Canvas remains the menu text rasterizer through the normal text-policy
+bridge; no JavaScript menu geometry implementation remains.
 
 The renderer then composes window caches onto the desktop Canvas as it does
 today. Browser zoom or CSS scaling may affect display size but cannot change the
@@ -621,5 +629,5 @@ not encode Canvas output as the expected result for operations being migrated.
 - Replacing Canvas font measurement, shaping, or glyph rasterization during
   this migration.
 - Treating antialiasing removal alone as proof of GDI compatibility.
-- Removing dirty tracking. The redesign removes competing pixel owners, not
-  the need to know what changed.
+- Making raw `CreateDIBSection` stores immediately visible without an explicit
+  GDI transfer or presentation operation.

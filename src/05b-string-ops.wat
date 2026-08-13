@@ -53,7 +53,6 @@
           ;; Backward: src/dst point to highest byte, copy from (addr - n + 1)
           (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
           (local.set $src (i32.sub (global.get $esi) (i32.sub (local.get $n) (i32.const 1))))
-          (call $note_dib_write (local.get $dst) (local.get $n))
           (call $invalidate_code_write (local.get $dst))
           (call $invalidate_code_write (global.get $edi))
           (if (i32.and
@@ -78,7 +77,6 @@
         (else
           (local.set $src (global.get $esi))
           (local.set $dst (global.get $edi))
-          (call $note_dib_write (local.get $dst) (local.get $n))
           (call $invalidate_code_write (global.get $edi))
           (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
           (if (i32.and
@@ -108,7 +106,6 @@
         (then
           (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
           (local.set $src (i32.sub (global.get $esi) (i32.sub (local.get $bytes) (i32.const 4))))
-          (call $note_dib_write (local.get $dst) (local.get $bytes))
           (call $invalidate_code_write (local.get $dst))
           (call $invalidate_code_write (global.get $edi))
           (if (i32.and
@@ -133,7 +130,6 @@
         (else
           (local.set $src (global.get $esi))
           (local.set $dst (global.get $edi))
-          (call $note_dib_write (local.get $dst) (local.get $bytes))
           (call $invalidate_code_write (global.get $edi))
           (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
           (if (i32.and
@@ -161,7 +157,6 @@
       (if (global.get $df)
         (then
           (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
-          (call $note_dib_write (local.get $dst) (local.get $n))
           (call $invalidate_code_write (local.get $dst))
           (call $invalidate_code_write (global.get $edi))
           (memory.fill
@@ -170,7 +165,6 @@
             (local.get $n))
           (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
         (else
-          (call $note_dib_write (global.get $edi) (local.get $n))
           (call $invalidate_code_write (global.get $edi))
           (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
           (memory.fill (call $g2w (global.get $edi)) (i32.and (global.get $eax) (i32.const 0xFF)) (local.get $n))
@@ -191,9 +185,6 @@
         (then
           (if (global.get $df)
             (then
-              (call $note_dib_write
-                (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4)))
-                (local.get $bytes))
               (call $invalidate_code_write (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
               (call $invalidate_code_write (global.get $edi))
               (memory.fill
@@ -201,7 +192,6 @@
                 (local.get $al) (local.get $bytes))
               (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
             (else
-              (call $note_dib_write (global.get $edi) (local.get $bytes))
               (call $invalidate_code_write (global.get $edi))
               (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
               (memory.fill (call $g2w (global.get $edi)) (local.get $al) (local.get $bytes))

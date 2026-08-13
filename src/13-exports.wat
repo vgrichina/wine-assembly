@@ -390,6 +390,15 @@
       (local.get 4) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+  (func (export "test_call_ExtFloodFill")
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ExtFloodFill
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_StretchBlt")
         (param i32) (param i32) (param i32) (param i32) (param i32)
         (param i32) (param i32) (param i32) (param i32) (param i32)
@@ -403,6 +412,24 @@
     (call $gs32 (i32.add (local.get $saved_esp) (i32.const 40)) (local.get 9))
     (call $gs32 (i32.add (local.get $saved_esp) (i32.const 44)) (local.get 10))
     (call $handle_StretchBlt
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetDIBitsToDevice")
+        (param i32) (param i32) (param i32) (param i32) (param i32)
+        (param i32) (param i32) (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get 5))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 28)) (local.get 6))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 32)) (local.get 7))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 36)) (local.get 8))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 40)) (local.get 9))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 44)) (local.get 10))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 48)) (local.get 11))
+    (call $handle_SetDIBitsToDevice
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (local.get 4) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
@@ -476,6 +503,12 @@
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   (func (export "test_gdi_window_surface_record") (param i32) (result i32)
     (call $gdi_window_surface_record (local.get 0) (i32.const 0)))
+  (func (export "test_gdi_menu_overlay_dc") (result i32)
+    (global.get $gdi_menu_overlay_dc))
+  (func (export "test_gdi_menu_overlay_bitmap") (result i32)
+    (global.get $gdi_menu_overlay_bitmap))
+  (func (export "test_gdi_object_record") (param i32) (result i32)
+    (call $gdi_object_record (local.get 0)))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)
@@ -1056,24 +1089,24 @@
   (func (export "guest_write16") (param $ga i32) (param $val i32)
     (call $gs16 (local.get $ga) (local.get $val)))
 
-  ;; Focused DIB arena hooks used by synchronization and allocator tests.
+  ;; Focused DIB arena hooks used by allocator tests.
   (func (export "test_dib_alloc") (param $size i32) (result i32)
     (call $dib_alloc (local.get $size)))
   (func (export "test_dib_free") (param $ga i32)
     (call $dib_free_wasm (call $g2w (local.get $ga))))
-  (func (export "test_dib_is_dirty") (param $ga i32) (result i32)
+  (func (export "test_dib_is_allocated") (param $ga i32) (result i32)
     (if (result i32)
       (i32.lt_u
         (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
         (global.get $DIB_GUEST_CAPACITY))
       (then
-        (i32.eq
+        (i32.ne
           (i32.load8_u
-            (i32.add (global.get $DIB_PAGE_STATE)
+            (i32.add (global.get $DIB_PAGE_USED)
               (i32.shr_u
                 (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
                 (i32.const 12))))
-          (i32.const 2)))
+          (i32.const 0)))
       (else (i32.const 0))))
 
   ;; Set EXE name — copies NUL-terminated string to 0x120 buffer (max 127 chars)
@@ -1587,6 +1620,8 @@
   ;; windows expose their owner via wnd_get_owner instead.
   (func (export "wnd_get_parent") (param $hwnd i32) (result i32)
     (call $wnd_get_parent (local.get $hwnd)))
+  (func (export "test_wnd_set_parent") (param $hwnd i32) (param $parent i32)
+    (call $wnd_set_parent (local.get $hwnd) (local.get $parent)))
   (func (export "wnd_get_owner") (param $hwnd i32) (result i32)
     (call $wnd_get_owner (local.get $hwnd)))
   (func (export "wnd_get_parent_api") (param $hwnd i32) (result i32)

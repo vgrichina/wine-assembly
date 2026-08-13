@@ -170,6 +170,23 @@ async function main() {
     assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
   });
 
+  check('Paint PS_INSIDEFRAME pens rasterize as solid interior outlines', () => {
+    const rectangle = target(7, 6);
+    const ellipse = target(7, 6);
+    const polygon = target(7, 6);
+    const inside = object(1, 6, 1, 0x000000FF);
+    assert.strictEqual(wat.test_gdi_rectangle_desc(
+      rectangle.hdc, rectangle.desc, 1, 1, 6, 5, inside, 0x30015, 13), 1);
+    assert.strictEqual(wat.test_gdi_ellipse_desc(
+      ellipse.hdc, ellipse.desc, 1, 1, 6, 5, inside, 0x30015, 13), 1);
+    assert.strictEqual(wat.test_gdi_polygon_desc(
+      polygon.hdc, polygon.desc, points([[1, 1], [5, 1], [3, 5]]),
+      3, inside, 0x30015, 13, 1), 1);
+    for (const image of [rectangle, ellipse, polygon]) {
+      assert(rows(image).join('').includes('R'));
+    }
+  });
+
   check('rectangle uses descriptor bounds without a host/default clip', () => {
     const t = target(5, 4, 32, true, false);
     const green = object(2, 0, 0, 0x0000FF00);

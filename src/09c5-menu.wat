@@ -345,7 +345,8 @@
           (i32.eq (local.get $hwnd) (global.get $menu_open_hwnd)))
       (then (local.set $open_idx (i32.const -1))))
 
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
     ;; Background fill (menuBg = LTGRAY = 0xC0C0C0 = LTGRAY_BRUSH 0x30011).
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $x) (local.get $y)
@@ -399,6 +400,7 @@
             (i32.add (local.get $x) (local.get $w))
             (i32.add (local.get $y) (i32.const 18))
             (i32.const 0x30012))) ;; GRAY_BRUSH
+    (drop (call $host_release_dc (local.get $hdc)))
     (i32.const 18))
 
   ;; ============================================================
@@ -1151,7 +1153,8 @@
     (local.set $count (i32.load (local.get $hdr)))
     (if (i32.eqz (local.get $count)) (then (return)))
 
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
+    (if (i32.eqz (local.get $hdc)) (then (return)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $dx) (local.get $dy)
@@ -1252,7 +1255,8 @@
     (local.set $count (i32.load (local.get $hdr)))
     (if (i32.eqz (local.get $count)) (then (return)))
 
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $hdc (call $gdi_menu_overlay_ensure))
+    (if (i32.eqz (local.get $hdc)) (then (return)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
     ;; Background + outset border.
     (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -1378,6 +1382,11 @@
           (i32.add (i32.add (local.get $dy) (i32.const 2))
                    (i32.mul (local.get $hover_cidx) (i32.const 20)))
           (global.get $menu_open_sub_hover)))))
+
+  ;; Let the compositor obtain/clear the presentation canvas before invoking
+  ;; menu_paint_dropdown. The returned surface remains an ordinary WAT bitmap.
+  (func (export "menu_prepare_overlay") (result i32)
+    (i32.ne (call $gdi_menu_overlay_ensure) (i32.const 0)))
 
   ;; Dropdown box height for top item $tidx (0 if no children).
   ;; Used by JS to size the dropdown rect for hit-testing.

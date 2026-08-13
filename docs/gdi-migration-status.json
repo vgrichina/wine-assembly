@@ -13,7 +13,7 @@
       },
       { "name": "gdi_surface_create", "boundary": "Allocate a derived Canvas cache for an opaque WAT-owned surface and byte layout." },
       { "name": "gdi_surface_delete", "boundary": "Discard the derived Canvas cache for an opaque surface ID." },
-      { "name": "gdi_surface_attach", "boundary": "Attach an opaque WAT-owned window surface to its compositor Canvas." },
+      { "name": "gdi_surface_attach", "boundary": "Attach an opaque WAT-owned window or popup-overlay surface to its compositor Canvas." },
       { "name": "gdi_surface_upload", "boundary": "Upload a bounded dirty rectangle from authoritative WAT pixels to Canvas." }
     ],
     "canvasTextPolicy": [
@@ -28,7 +28,6 @@
   },
   "eliminatedNonTextSemantics": [
     "gdi_round_rect",
-    "gdi_gradient_fill_h",
     "gdi_fill_rgn",
     "gdi_frame_rgn",
     "gdi_poly_bezier",
@@ -60,12 +59,10 @@
     "gdi_get_di_bits",
     "gdi_set_dib_bits",
     "gdi_get_dib_color_table",
-    "gdi_set_dib_to_device",
     "gdi_stretch_dib_bits"
   ],
   "watUnsupportedStubs": [
     "gdi_round_rect",
-    "gdi_gradient_fill_h",
     "gdi_fill_rgn",
     "gdi_frame_rgn",
     "gdi_poly_bezier",
@@ -97,7 +94,6 @@
     "gdi_get_di_bits",
     "gdi_set_dib_bits",
     "gdi_get_dib_color_table",
-    "gdi_set_dib_to_device",
     "gdi_stretch_dib_bits"
   ]
 }

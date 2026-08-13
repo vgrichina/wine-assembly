@@ -112,6 +112,40 @@ const SRC = path.join(ROOT, 'src');
       'truncated resource pixel bytes must be rejected');
   });
 
+  check('BITMAPCOREHEADER resources normalize RGBTRIPLE palettes', () => {
+    const data = alloc(0x1000);
+    const plan = alloc();
+    dv.setUint32(data, 12, true);
+    dv.setUint16(data + 4, 71, true);
+    dv.setUint16(data + 6, 96, true);
+    dv.setUint16(data + 8, 1, true);
+    dv.setUint16(data + 10, 4, true);
+    for (let i = 0; i < 16; i++) {
+      bytes[data + 12 + i * 3] = i;
+      bytes[data + 13 + i * 3] = i + 1;
+      bytes[data + 14 + i * 3] = i + 2;
+    }
+    const stride = 36;
+    const pixels = data + 12 + 16 * 3;
+    bytes.fill(0xAB, pixels, pixels + stride * 96);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 12 + 48 + stride * 96, plan), 1);
+    assert.deepStrictEqual([
+      dv.getUint32(plan, true), dv.getUint32(plan + 4, true),
+      dv.getUint32(plan + 8, true), dv.getUint32(plan + 12, true),
+      dv.getUint32(plan + 16, true), dv.getUint32(plan + 20, true),
+      dv.getUint32(plan + 24, true), dv.getUint32(plan + 28, true),
+      dv.getUint32(plan + 32, true), dv.getUint32(plan + 36, true),
+    ], [71, 96, 4, 8, stride, data + 12, 16, pixels, stride * 96, 12]);
+    const bitmap = wat.test_gdi_bitmap_create_resource(data, 12 + 48 + stride * 96) >>> 0;
+    assert(bitmap);
+    const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
+    assert.deepStrictEqual([...bytes.subarray(storage, storage + 4)], [0xAB, 0xAB, 0xAB, 0xAB]);
+    assert.deepStrictEqual([...bytes.subarray(storage + stride * 96, storage + stride * 96 + 8)],
+      [0, 1, 2, 0, 1, 2, 3, 0]);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 12 + 48 + stride * 96 - 1, plan), 0,
+      'truncated core bitmap pixels must be rejected');
+  });
+
   check('paletted top-down DIB plans expose exact palette and pixel spans', () => {
     const data = alloc();
     const plan = alloc();

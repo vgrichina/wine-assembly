@@ -304,7 +304,6 @@
     (local $w i32) (local $sign i32) (local $exp i32)
     (local $abs f64) (local $scaled f64)
     (local.set $w (call $g2w (local.get $addr)))
-    (call $note_dib_write (local.get $addr) (i32.const 10))
     (local.set $abs (f64.abs (local.get $val)))
     (if (i64.lt_s (i64.reinterpret_f64 (local.get $val)) (i64.const 0))
       (then (local.set $sign (i32.const 0x8000))))
@@ -380,7 +379,6 @@
   (func $fpu_store_env (param $addr i32)
     (local $w i32)
     (local.set $w (call $g2w (local.get $addr)))
-    (call $note_dib_write (local.get $addr) (i32.const 28))
     (i32.store (local.get $w) (global.get $fpu_cw))
     (i32.store (i32.add (local.get $w) (i32.const 4))
       (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
@@ -459,7 +457,6 @@
     (local $i i32) (local $w i32) (local $sign i32) (local $val f64) (local $vi i64)
     (local $rem i32) (local $tens i32) (local $ones i32)
     (local.set $w (call $g2w (local.get $addr)))
-    (call $note_dib_write (local.get $addr) (i32.const 10))
     (local.set $val (call $fpu_pop))
     (if (f64.lt (local.get $val) (f64.const 0))
       (then (local.set $sign (i32.const 0x80)) (local.set $val (f64.neg (local.get $val)))))
@@ -510,12 +507,10 @@
           (then (call $fpu_push (f64.promote_f32 (f32.load (call $g2w (local.get $addr))))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then
-            (call $note_dib_write (local.get $addr) (i32.const 4))
             (f32.store (call $g2w (local.get $addr)) (f32.demote_f64 (call $fpu_get (i32.const 0))))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then
-            (call $note_dib_write (local.get $addr) (i32.const 4))
             (f32.store (call $g2w (local.get $addr)) (f32.demote_f64 (call $fpu_pop)))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
@@ -538,12 +533,10 @@
           (then (call $fpu_push (f64.load (call $g2w (local.get $addr)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then
-            (call $note_dib_write (local.get $addr) (i32.const 8))
             (f64.store (call $g2w (local.get $addr)) (call $fpu_get (i32.const 0)))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then
-            (call $note_dib_write (local.get $addr) (i32.const 8))
             (f64.store (call $g2w (local.get $addr)) (call $fpu_pop))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
@@ -604,11 +597,9 @@
           (then
             (if (call $fpu_raw_valid (i32.const 0))
               (then
-                (call $note_dib_write (local.get $addr) (i32.const 8))
                 (i64.store (call $g2w (local.get $addr)) (call $fpu_raw_get (i32.const 0)))
                 (drop (call $fpu_pop))
                 (return)))
-            (call $note_dib_write (local.get $addr) (i32.const 8))
             (i64.store (call $g2w (local.get $addr)) (call $fpu_to_i64 (call $fpu_pop)))
             (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))

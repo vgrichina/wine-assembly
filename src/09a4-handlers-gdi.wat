@@ -229,7 +229,7 @@
   (func $handle_BitBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32) (local $src i32) (local $src_hdc i32)
     (local $sx i32) (local $sy i32) (local $rop i32) (local $rop3 i32)
-    (local $brush_color i32) (local $pattern i32) (local $ok i32)
+    (local $dx i32) (local $dy i32) (local $brush_color i32) (local $pattern i32) (local $ok i32)
     (local.set $dst (global.get $GDI_BLIT_DST_DESC))
     (local.set $src (global.get $GDI_BLIT_SRC_DESC))
     (local.set $src_hdc (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -239,10 +239,16 @@
     (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $dst))
       (then
+        (local.set $dx (call $gdi_line_map_x (local.get $dst) (local.get $arg1)))
+        (local.set $dy (call $gdi_line_map_y (local.get $dst) (local.get $arg2)))
         (if (local.get $src_hdc)
           (then
             (if (i32.eqz (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src)))
-              (then (local.set $src (i32.const 0)))))
+              (then (local.set $src (i32.const 0)))
+            (if (local.get $src)
+              (then
+                (local.set $sx (call $gdi_line_map_x (local.get $src) (local.get $sx)))
+                (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy)))))))
           (else (local.set $src (i32.const 0))))
         (if (i32.and
               (i32.ne (i32.and
@@ -262,19 +268,19 @@
                   (else
                     (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
                     (local.set $ok (call $gdi_raster_bitblt
-                      (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
                       (local.get $arg3) (local.get $arg4) (local.get $src)
                       (local.get $sx) (local.get $sy) (local.get $pattern) (local.get $rop))))))
               (else
                 (local.set $ok (call $gdi_raster_bitblt
-                  (local.get $arg0) (local.get $dst) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
                   (local.get $arg3) (local.get $arg4) (local.get $src)
                   (local.get $sx) (local.get $sy) (i32.const 0) (local.get $rop)))))))
         (if (local.get $ok)
           (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
-            (local.get $arg1) (local.get $arg2)
-            (i32.add (local.get $arg1) (local.get $arg3))
-            (i32.add (local.get $arg2) (local.get $arg4))))))
+            (local.get $dx) (local.get $dy)
+            (i32.add (local.get $dx) (local.get $arg3))
+            (i32.add (local.get $dy) (local.get $arg4))))))
       (else (local.set $ok (i32.const 0))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
@@ -283,7 +289,7 @@
   ;; 159: PatBlt — hdc(arg0), x(arg1), y(arg2), w=[esp+16], h=[esp+20], rop=[esp+24]
   (func $handle_PatBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32) (local $w i32) (local $h i32) (local $rop i32)
-    (local $rop3 i32) (local $brush_color i32) (local $pattern i32) (local $ok i32)
+    (local $dx i32) (local $dy i32) (local $rop3 i32) (local $brush_color i32) (local $pattern i32) (local $ok i32)
     (local.set $w (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
     (local.set $h (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $rop (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -291,6 +297,8 @@
     (local.set $desc (global.get $GDI_BLIT_DST_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then
+        (local.set $dx (call $gdi_line_map_x (local.get $desc) (local.get $arg1)))
+        (local.set $dy (call $gdi_line_map_y (local.get $desc) (local.get $arg2)))
         (if (i32.ne (i32.and
               (i32.xor (local.get $rop3) (i32.shr_u (local.get $rop3) (i32.const 2)))
               (i32.const 0x33)) (i32.const 0))
@@ -306,19 +314,19 @@
                   (then
                     (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
                     (local.set $ok (call $gdi_raster_bitblt
-                      (local.get $arg0) (local.get $desc) (local.get $arg1) (local.get $arg2)
+                      (local.get $arg0) (local.get $desc) (local.get $dx) (local.get $dy)
                       (local.get $w) (local.get $h) (i32.const 0)
                       (i32.const 0) (i32.const 0) (local.get $pattern) (local.get $rop))))))
               (else
                 (local.set $ok (call $gdi_raster_bitblt
-                  (local.get $arg0) (local.get $desc) (local.get $arg1) (local.get $arg2)
+                  (local.get $arg0) (local.get $desc) (local.get $dx) (local.get $dy)
                   (local.get $w) (local.get $h) (i32.const 0)
                   (i32.const 0) (i32.const 0) (i32.const 0) (local.get $rop)))))))
         (if (local.get $ok)
           (then (call $gdi_geometry_present (local.get $arg0) (local.get $desc)
-            (local.get $arg1) (local.get $arg2)
-            (i32.add (local.get $arg1) (local.get $w))
-            (i32.add (local.get $arg2) (local.get $h))))))
+            (local.get $dx) (local.get $dy)
+            (i32.add (local.get $dx) (local.get $w))
+            (i32.add (local.get $dy) (local.get $h))))))
       (else (local.set $ok (i32.const 0))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)

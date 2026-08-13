@@ -55,24 +55,35 @@ async function diffPngs(aPath, bPath) {
   const da = ca.getContext('2d').getImageData(0, 0, w, h).data;
   const db = cb.getContext('2d').getImageData(0, 0, w, h).data;
   let diff = 0;
+  let clickedCellDiff = 0;
+  let wrongTopCellDiff = 0;
   for (let i = 0; i < da.length; i += 4) {
-    if (da[i] !== db[i] || da[i + 1] !== db[i + 1] || da[i + 2] !== db[i + 2]) diff++;
+    if (da[i] !== db[i] || da[i + 1] !== db[i + 1] || da[i + 2] !== db[i + 2]) {
+      diff++;
+      const pixel = i >>> 2;
+      const x = pixel % w;
+      const y = Math.floor(pixel / w);
+      if (x >= 93 && x < 109 && y >= 136 && y < 152) clickedCellDiff++;
+      if (x >= 93 && x < 109 && y >= 95 && y < 111) wrongTopCellDiff++;
+    }
   }
-  return diff;
+  return { diff, clickedCellDiff, wrongTopCellDiff };
 }
 
 (async () => {
-  const diff = fs.existsSync(beforePng) && fs.existsSync(afterPng)
+  const changed = fs.existsSync(beforePng) && fs.existsSync(afterPng)
     ? await diffPngs(beforePng, afterPng)
-    : 0;
-  console.log(`  before/after diff: ${diff}px`);
+    : { diff: 0, clickedCellDiff: 0, wrongTopCellDiff: 0 };
+  console.log(`  before/after diff: ${changed.diff}px`);
 
   const checks = [
     { name: 'before snapshot written', pass: fs.existsSync(beforePng) && fs.statSync(beforePng).size > 1000 },
     { name: 'after snapshot written', pass: fs.existsSync(afterPng) && fs.statSync(afterPng).size > 1000 },
     { name: 'single click delivered as WM_LBUTTONDOWN', pass: /\[check_input\] msg=0x201\b/.test(out) },
     { name: 'single click not delivered as WM_LBUTTONDBLCLK', pass: !/\[check_input\] msg=0x203\b/.test(out) },
-    { name: 'cell click changes board pixels', pass: diff >= 100 },
+    { name: 'cell click changes board pixels', pass: changed.diff >= 100 },
+    { name: 'click updates the screen cell under the pointer', pass: changed.clickedCellDiff >= 100 },
+    { name: 'click does not update the old origin-shifted cell', pass: changed.wrongTopCellDiff === 0 },
     { name: 'no crash', pass: !/\*\*\* CRASH|UNIMPLEMENTED API:|LinkError/.test(out) },
   ];
 

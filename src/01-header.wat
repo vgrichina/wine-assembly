@@ -51,8 +51,6 @@
   ;; alloc_screen_dc() → hdc — GetDC(NULL) record
   (import "host" "release_dc" (func $host_release_dc_raw (param i32) (result i32)))
   ;; release_dc(hdc) → 1 — frees a DC record allocated via alloc_*_dc
-  (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
-  ;; erase_background(hwnd, hbrBackground) → 1
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
   (import "host" "sync_window_client" (func $host_sync_window_client (param i32 i32 i32 i32 i32)))
   ;; move_window(hwnd, x, y, w, h, flags)  flags: SWP_NOSIZE=1, SWP_NOMOVE=2
@@ -174,7 +172,8 @@
     (call $gdi_create_dib_section_internal
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
-  ;; lpBits_wa, and JS lazily converts dirty arena pages when GDI reads the bitmap.
+  ;; lpBits_wa. WAT raster operations and presentation read that canonical
+  ;; storage directly; JavaScript does not maintain a DIB shadow copy.
   (func $host_gdi_get_object_bits (param i32) (result i32)
     (call $gdi_bitmap_public_bits (local.get 0)))
   ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
@@ -239,7 +238,18 @@
       (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
   ;; gdi_gradient_fill_h(hdc, l, t, r, b, colorL, colorR) — horizontal linear gradient.
   ;; Win32 equivalent: GdiGradientFill(GRADIENT_FILL_RECT_H). Used by defwndproc_ncpaint.
-  (func $host_gdi_gradient_fill_h (param i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_gradient_fill_h
+        (param $hdc i32) (param $left i32) (param $top i32)
+        (param $right i32) (param $bottom i32)
+        (param $color_left i32) (param $color_right i32) (result i32)
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
+      (then (return (i32.const 0))))
+    (call $gdi_gradient_fill_h_desc
+      (local.get $hdc) (local.get $desc)
+      (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)
+      (local.get $color_left) (local.get $color_right)))
   ;; gdi_fill_rect(hdc, left, top, right, bottom, hbrush)
   (func $host_gdi_ellipse (param $hdc i32) (param $left i32) (param $top i32)
         (param $right i32) (param $bottom i32) (result i32)
@@ -424,7 +434,12 @@
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
   (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_dib_color_table(hdc, startIdx, numEntries, colorsGA) → count
-  (func $host_gdi_set_dib_to_device (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
+  (func $host_gdi_set_dib_to_device
+        (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $gdi_set_dib_to_device
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (local.get 5) (local.get 6) (local.get 7)
+      (local.get 8) (local.get 9) (local.get 10) (local.get 11)))
   ;; gdi_set_dib_to_device(hdc, xDest, yDest, w, h, xSrc, ySrc, startScan, cLines, bitsWA, bmiWA, colorUse) → cLines
   (func $host_gdi_stretch_dib_bits (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
   ;; gdi_stretch_dib_bits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, bitsWA, bmiWA, usage, rop)
@@ -833,7 +848,7 @@
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
-  ;; 0x07E10000 16KB     DIB_PAGE_STATE
+  ;; 0x07E10000 16KB     DIB_PAGE_USED
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
@@ -842,6 +857,7 @@
   ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
   ;; 0x07EF1100 160B     GDI_BLIT_DESC scratch
   ;; 0x07EF11A0 304B     GDI_BITMAP_PLAN/name scratch
+  ;; 0x07EF12D0  16B     WINDOW_RECT_SCRATCH (window geometry queries)
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
@@ -1031,6 +1047,11 @@
   (global $GDI_BITMAP_PLAN_SIZE i32 (i32.const 0x00000030))
   (global $GDI_BITMAP_NAME i32 (i32.const 0x07EF11D0))
   (global $GDI_BITMAP_NAME_SIZE i32 (i32.const 0x00000100))
+  ;; Window-coordinate resolution can run while a painter owns PAINT_SCRATCH.
+  ;; Keep host GetWindowRect results in private high memory so surface/text
+  ;; binding cannot overwrite the caller's RECT.
+  (global $WINDOW_RECT_SCRATCH i32 (i32.const 0x07EF12D0))
+  (global $WINDOW_RECT_SCRATCH_SIZE i32 (i32.const 0x00000010))
   ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
   ;; presentation and GDI operations that have not moved to WAT yet.
   (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))
@@ -1051,6 +1072,13 @@
   ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
+  ;; Screen-coordinate popup menus use an ordinary WAT bitmap selected into
+  ;; this persistent memory DC. JavaScript only attaches its derived Canvas
+  ;; presentation as the compositor overlay; it never rasterizes menu chrome.
+  (global $gdi_menu_overlay_dc (mut i32) (i32.const 0))
+  (global $gdi_menu_overlay_bitmap (mut i32) (i32.const 0))
+  (global $gdi_menu_overlay_width (mut i32) (i32.const 0))
+  (global $gdi_menu_overlay_height (mut i32) (i32.const 0))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
@@ -1222,14 +1250,14 @@
   (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))
   (global $VIRTUAL_ALLOC_MIN i32 (i32.const 0x10000000))
   ;; DIB sections use a dedicated guest range and fixed linear-memory backing.
-  ;; One state byte per 4KB page is 0=free, 1=clean, 2=guest-dirty. The run
-  ;; table stores the allocation length only at each allocation's first page.
+  ;; One occupancy byte per 4KB page is 0=free, 1=allocated. The run table
+  ;; stores the allocation length only at each allocation's first page.
   (global $DIB_GUEST_BASE i32 (i32.const 0x50000000))
   (global $DIB_GUEST_CAPACITY i32 (i32.const 0x04000000))
   (global $DIB_BACKING_BASE i32 (i32.const 0x1C000000))
   (global $DIB_BACKING_BASE_SIZE i32 (i32.const 0x04000000))
-  (global $DIB_PAGE_STATE i32 (i32.const 0x07E10000))
-  (global $DIB_PAGE_STATE_SIZE i32 (i32.const 0x00004000))
+  (global $DIB_PAGE_USED i32 (i32.const 0x07E10000))
+  (global $DIB_PAGE_USED_SIZE i32 (i32.const 0x00004000))
   (global $DIB_PAGE_RUNS i32 (i32.const 0x07E14000))
   (global $DIB_PAGE_RUNS_SIZE i32 (i32.const 0x00008000))
   (global $DIB_PAGE_COUNT i32 (i32.const 16384))

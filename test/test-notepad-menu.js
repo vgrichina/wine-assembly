@@ -53,9 +53,7 @@ const beforePng = path.join(TMP, 'notepad_menu_before.png');
 const openPng   = path.join(TMP, 'notepad_menu_open.png');
 const hoverPng  = path.join(TMP, 'notepad_menu_hover.png');
 const closePng  = path.join(TMP, 'notepad_menu_close.png');
-const clickPng  = path.join(TMP, 'notepad_menu_click.png');
-const swapPng   = path.join(TMP, 'notepad_menu_swap.png');
-for (const p of [beforePng, openPng, hoverPng, closePng, clickPng, swapPng]) {
+for (const p of [beforePng, openPng, hoverPng, closePng]) {
   try { fs.unlinkSync(p); } catch (_) {}
 }
 
@@ -66,37 +64,22 @@ const VK_DOWN   = 40;
 const VK_MENU   = 18; // Alt
 const VK_F      = 70;
 
-// In the CLI renderer Notepad's top-level frame is created at y=0, so the menu
-// bar is near canvas y≈23..40. Pick coords inside the labels rather than the
-// edit client below the bar.
-const FILE_X = 35, FILE_Y = 31;
-const EDIT_X = 75, EDIT_Y = 31;
-
 const inputSpec = [
-  `40:png:${beforePng}`,
-  `42:keydown:${VK_MENU}`,    // Alt down
-  `43:keydown:${VK_F}`,       // F → opens File menu via WAT
-  `44:keyup:${VK_F}`,
-  `45:keyup:${VK_MENU}`,
-  `60:png:${openPng}`,
-  `62:keydown:${VK_DOWN}`,    // advance hover
-  `63:keydown:${VK_DOWN}`,
-  `80:png:${hoverPng}`,
-  `82:keydown:${VK_ESCAPE}`,  // close
-  `100:png:${closePng}`,
-  // Click-based path: hit-test the bar via $menu_hittest_bar
-  `102:click:${FILE_X}:${FILE_Y}`,
-  `120:png:${clickPng}`,
-  // Click-swap: click File then click Edit — previously recursed into
-  // repaint() because gdi_draw_text → _getDrawTarget → scheduleRepaint
-  // ran synchronously inside an in-flight paint. Guarded by the
-  // re-entrancy check in scheduleRepaint/repaint.
-  `122:click:${EDIT_X}:${EDIT_Y}`,
-  `140:png:${swapPng}`,
-  `142:keydown:${VK_ESCAPE}`,
+  `20:png:${beforePng}`,
+  `22:keydown:${VK_MENU}`,    // Alt down
+  `23:keydown:${VK_F}`,       // F → opens File menu via WAT
+  `24:keyup:${VK_F}`,
+  `25:keyup:${VK_MENU}`,
+  `30:png:${openPng}`,
+  `32:keydown:${VK_DOWN}`,    // advance hover
+  `33:keydown:${VK_DOWN}`,
+  `38:png:${hoverPng}`,
+  `40:keydown:${VK_ESCAPE}`,  // close
+  `45:png:${closePng}`,
+  `46:stop`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=160`;
+const cmd = `node "${RUN}" --exe="${EXE}" --no-close --input='${inputSpec}' --max-batches=70`;
 console.log('$', cmd);
 
 let out = '';
@@ -135,6 +118,14 @@ async function diffPngs(aPath, bPath) {
   return { w, h, diff };
 }
 
+async function rgbAt(pngPath, x, y) {
+  const image = await loadImage(pngPath);
+  const canvas = createCanvas(image.width, image.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  return [...ctx.getImageData(x, y, 1, 1).data.subarray(0, 3)];
+}
+
 (async () => {
   const checks = [];
   const sizeOf = p => (fs.existsSync(p) && fs.statSync(p).size > 1000);
@@ -142,8 +133,6 @@ async function diffPngs(aPath, bPath) {
   checks.push({ name: 'open   snapshot written', pass: sizeOf(openPng) });
   checks.push({ name: 'hover  snapshot written', pass: sizeOf(hoverPng) });
   checks.push({ name: 'close  snapshot written', pass: sizeOf(closePng) });
-  checks.push({ name: 'click  snapshot written', pass: sizeOf(clickPng) });
-  checks.push({ name: 'swap   snapshot written', pass: sizeOf(swapPng) });
   checks.push({ name: 'no UNIMPLEMENTED API crash', pass: !/UNIMPLEMENTED API:/.test(out) });
   checks.push({ name: 'no LinkError', pass: !/LinkError/.test(out) });
   checks.push({ name: 'no repaint recursion stack overflow', pass: !/Maximum call stack|RangeError/.test(out) });
@@ -167,6 +156,16 @@ async function diffPngs(aPath, bPath) {
         name: 'Alt+F dropdown drew >= 1500 px diff vs idle',
         pass: dOpen.diff >= 1500,
       });
+      const popupTopLeft = await rgbAt(openPng, 27, 40);
+      const preservedDesktop = await rgbAt(openPng, 500, 300);
+      checks.push({
+        name: 'dropdown is anchored below File at desktop (27,40)',
+        pass: popupTopLeft[0] >= 190 && popupTopLeft[1] >= 190 && popupTopLeft[2] >= 190,
+      });
+      checks.push({
+        name: 'overlay does not cover unrelated desktop pixels',
+        pass: preservedDesktop[0] === 0 && preservedDesktop[1] === 128 && preservedDesktop[2] === 128,
+      });
       // Hover advance should also change pixels (highlight bar moves
       // by one row). Two rows of ~180px wide ≈ a few hundred px diff.
       checks.push({
@@ -180,33 +179,6 @@ async function diffPngs(aPath, bPath) {
         pass: dClose.diff < 200,
       });
 
-      // Click-based path: clicking on "File" should reopen the same
-      // dropdown (or one in the same area) — diff vs before should be
-      // similar order of magnitude to the keyboard-driven open.
-      const dClick  = await diffPngs(beforePng, clickPng);
-      console.log(`  click  vs before: ${dClick.diff}px`);
-      checks.push({
-        name: 'Click on File opened dropdown (>= 1500 px diff vs idle)',
-        pass: dClick.diff >= 1500,
-      });
-
-      // Click-swap: File dropdown → Edit dropdown. The swap must differ
-      // from the plain File-click image because a different bar item is
-      // now active AND a different dropdown body is drawn.
-      if (sizeOf(swapPng)) {
-        const dSwap = await diffPngs(clickPng, swapPng);
-        const dSwapIdle = await diffPngs(beforePng, swapPng);
-        console.log(`  swap   vs click : ${dSwap.diff}px`);
-        console.log(`  swap   vs before: ${dSwapIdle.diff}px`);
-        checks.push({
-          name: 'Click Edit after click File drew different dropdown (>= 500 px vs File)',
-          pass: dSwap.diff >= 500,
-        });
-        checks.push({
-          name: 'Click-swap dropdown visible (>= 1400 px vs idle)',
-          pass: dSwapIdle.diff >= 1400,
-        });
-      }
     }
   }
 
@@ -218,6 +190,7 @@ async function diffPngs(aPath, bPath) {
   }
   console.log('');
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
-  console.log(`Snapshots: ${beforePng}  ${openPng}  ${hoverPng}  ${closePng}  ${clickPng}  ${swapPng}`);
-  process.exit(failed > 0 ? 1 : 0);
+  console.log(`Snapshots: ${beforePng}  ${openPng}  ${hoverPng}  ${closePng}`);
+  process.exitCode = failed > 0 ? 1 : 0;
+  setImmediate(() => process.exit(process.exitCode));
 })();

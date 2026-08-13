@@ -94,7 +94,7 @@
       (if (i32.ge_u (local.get $page) (global.get $DIB_PAGE_COUNT))
         (then (return (i32.const 0))))
       (if (i32.eqz (i32.load8_u
-            (i32.add (global.get $DIB_PAGE_STATE) (local.get $page))))
+            (i32.add (global.get $DIB_PAGE_USED) (local.get $page))))
         (then
           (if (i32.eqz (local.get $run)) (then (local.set $start (local.get $page))))
           (local.set $run (i32.add (local.get $run) (i32.const 1)))
@@ -109,7 +109,7 @@
     (block $marked (loop $mark
       (br_if $marked (i32.ge_u (local.get $i) (local.get $pages)))
       (i32.store8
-        (i32.add (global.get $DIB_PAGE_STATE) (i32.add (local.get $start) (local.get $i)))
+        (i32.add (global.get $DIB_PAGE_USED) (i32.add (local.get $start) (local.get $i)))
         (i32.const 1))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mark)))
@@ -136,7 +136,7 @@
     (block $done (loop $clear
       (br_if $done (i32.ge_u (local.get $i) (local.get $pages)))
       (i32.store8
-        (i32.add (global.get $DIB_PAGE_STATE) (i32.add (local.get $page) (local.get $i)))
+        (i32.add (global.get $DIB_PAGE_USED) (i32.add (local.get $page) (local.get $i)))
         (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $clear))))
@@ -720,7 +720,8 @@
             (i32.and (i32.ne (local.get $fill_mode) (i32.const 1))
               (i32.ne (local.get $fill_mode) (i32.const 2)))))
       (then
-        (if (i32.and (local.get $points) (i32.lt_u (local.get $n) (i32.const 3)))
+        (if (i32.and (i32.ne (local.get $points) (i32.const 0))
+              (i32.lt_u (local.get $n) (i32.const 3)))
           (then (return (call $gdi_rgn_alloc_rect
             (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))))
         (return (i32.const 0))))
@@ -1354,9 +1355,11 @@
       (i32.shr_u (i32.add (i32.mul (local.get $width) (local.get $bpp)) (i32.const 31))
         (i32.const 5)) (i32.const 2)))
     (local.set $flags (i32.const 5))
-    (if (i32.and (local.get $bmi) (i32.lt_s (i32.load offset=8 (local.get $bmi)) (i32.const 0)))
+    (if (i32.and (i32.ne (local.get $bmi) (i32.const 0))
+          (i32.lt_s (i32.load offset=8 (local.get $bmi)) (i32.const 0)))
       (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
-    (if (i32.and (local.get $bmi) (i32.le_u (local.get $bpp) (i32.const 8)))
+    (if (i32.and (i32.ne (local.get $bmi) (i32.const 0))
+          (i32.le_u (local.get $bpp) (i32.const 8)))
       (then
         (local.set $clr_used (i32.load offset=32 (local.get $bmi)))
         (local.set $palette_count (select (local.get $clr_used)
@@ -1371,6 +1374,7 @@
   ;; ROP2, polygon fill mode, stretch mode, bitmap, font, reserved.
   (func $gdi_dc_state_entry (param $hdc i32) (param $create i32) (result i32)
     (local $i i32) (local $p i32) (local $empty i32)
+    (local $hwnd i32) (local $binding i32)
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_STATE_COUNT)))
@@ -1381,7 +1385,24 @@
         (then (local.set $empty (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+    ;; Recognize legacy internal window DC encodings during lookup itself so
+    ;; a geometry operation can be the first consumer; adoption must not
+    ;; depend on an earlier SelectObject/text-state call creating the record.
+    (if (i32.and (i32.ge_u (local.get $hdc) (i32.const 0x00050000))
+          (i32.lt_u (local.get $hdc) (i32.const 0x000D0000)))
+      (then
+        (local.set $hwnd (i32.sub (local.get $hdc) (i32.const 0x00040000)))
+        (if (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+          (then (local.set $binding (local.get $hwnd))))))
+    (if (i32.and (i32.ge_u (local.get $hdc) (i32.const 0x000D0000))
+          (i32.lt_u (local.get $hdc) (i32.const 0x001D0000)))
+      (then
+        (local.set $hwnd (i32.sub (local.get $hdc) (i32.const 0x000C0000)))
+        (if (i32.ne (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+          (then (local.set $binding
+            (i32.or (local.get $hwnd) (i32.const 0x80000000)))))))
+    (if (i32.and (i32.or (i32.ne (local.get $create) (i32.const 0))
+                          (i32.ne (local.get $binding) (i32.const 0)))
           (i32.ne (local.get $empty) (i32.const 0)))
       (then
         (memory.fill (local.get $empty) (i32.const 0) (global.get $GDI_DC_STATE_STRIDE))
@@ -1400,6 +1421,13 @@
         (i32.store offset=80 (local.get $empty) (i32.const 1))
         (i32.store offset=84 (local.get $empty) (i32.const 0x30007))
         (i32.store offset=88 (local.get $empty) (i32.const 0x3001D))
+        ;; WAT-native controls historically used hwnd+0x40000 directly as a
+        ;; client DC, while nonclient painters used hwnd+0xC0000. Adopt those
+        ;; values into the same canonical table as GetDC/BeginPaint handles.
+        ;; The encoding is only accepted when it resolves to a live WAT HWND,
+        ;; so ordinary allocated DC/object namespaces cannot be misclassified.
+        (if (local.get $binding)
+          (then (i32.store offset=92 (local.get $empty) (local.get $binding))))
         (return (local.get $empty))))
     (i32.const 0))
 
@@ -1438,7 +1466,8 @@
   (func $gdi_font_height (param $handle i32) (result i32)
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
-    (if (i32.and (local.get $p) (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
       (then (return (i32.load offset=8 (local.get $p)))))
     (if (i32.or (i32.eq (local.get $handle) (i32.const 0x3001A))
           (i32.or (i32.eq (local.get $handle) (i32.const 0x3001B))
@@ -1452,7 +1481,8 @@
   (func $gdi_font_weight (param $handle i32) (result i32)
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
-    (if (i32.and (local.get $p) (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
       (then (return (i32.load offset=12 (local.get $p)))))
     (select (i32.const 700) (i32.const 400)
       (i32.eq (local.get $handle) (i32.const 0x30022))))
@@ -1460,7 +1490,8 @@
   (func $gdi_font_italic (param $handle i32) (result i32)
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
-    (if (i32.and (local.get $p) (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
       (then (return (i32.and (i32.load offset=16 (local.get $p)) (i32.const 1)))))
     (i32.const 0))
 
@@ -1510,6 +1541,60 @@
     (call $gdi_dc_state_release (local.get $hdc))
     (i32.const 1))
 
+  ;; Ensure a screen-sized canonical bitmap/DC for popup menus. Menu layout
+  ;; and hit testing use desktop coordinates, so painting through an owning
+  ;; window DC would apply its client origin a second time and clip the popup
+  ;; at the window boundary. Attachment target zero is the compositor overlay
+  ;; presentation; the pixels remain owned and rasterized entirely in WAT.
+  (func $gdi_menu_overlay_ensure (result i32)
+    (local $wh i32) (local $width i32) (local $height i32)
+    (local $bitmap i32) (local $dc i32)
+    (local.set $wh (call $host_get_screen_size))
+    (local.set $width (i32.and (local.get $wh) (i32.const 0xFFFF)))
+    (local.set $height (i32.shr_u (local.get $wh) (i32.const 16)))
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
+          (i32.le_s (local.get $height) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $bitmap (global.get $gdi_menu_overlay_bitmap))
+    (if (local.get $bitmap)
+      (then
+        (if (i32.and
+              (i32.ne (call $gdi_object_record (local.get $bitmap)) (i32.const 0))
+              (i32.and
+                (i32.eq (global.get $gdi_menu_overlay_width) (local.get $width))
+                (i32.eq (global.get $gdi_menu_overlay_height) (local.get $height))))
+          (then
+            (drop (call $host_gdi_surface_attach (local.get $bitmap) (i32.const 0)))
+            (return (global.get $gdi_menu_overlay_dc))))
+        (drop (call $gdi_object_delete_full (local.get $bitmap)))
+        (global.set $gdi_menu_overlay_bitmap (i32.const 0))
+        (global.set $gdi_menu_overlay_width (i32.const 0))
+        (global.set $gdi_menu_overlay_height (i32.const 0))))
+    (local.set $bitmap (call $gdi_create_compat_bitmap_internal
+      (local.get $width) (local.get $height) (i32.const 0)))
+    (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
+    (local.set $dc (global.get $gdi_menu_overlay_dc))
+    (if (i32.eqz (local.get $dc))
+      (then
+        (local.set $dc (call $gdi_dc_alloc))
+        (if (i32.eqz (local.get $dc))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $bitmap)))
+            (return (i32.const 0))))
+        (global.set $gdi_menu_overlay_dc (local.get $dc))))
+    (drop (call $gdi_dc_select_owned_object (local.get $dc) (local.get $bitmap)))
+    (global.set $gdi_menu_overlay_bitmap (local.get $bitmap))
+    (global.set $gdi_menu_overlay_width (local.get $width))
+    (global.set $gdi_menu_overlay_height (local.get $height))
+    (if (i32.eqz (call $host_gdi_surface_attach (local.get $bitmap) (i32.const 0)))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $bitmap)))
+        (global.set $gdi_menu_overlay_bitmap (i32.const 0))
+        (global.set $gdi_menu_overlay_width (i32.const 0))
+        (global.set $gdi_menu_overlay_height (i32.const 0))
+        (return (i32.const 0))))
+    (local.get $dc))
+
   (func $gdi_dc_bitmap_record (param $hdc i32) (result i32)
     (local $dc i32) (local $bmp i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
@@ -1522,6 +1607,7 @@
 
   (func $gdi_dc_target_size (param $hdc i32) (result i32)
     (local $bmp i32) (local $dc i32) (local $binding i32) (local $hwnd i32)
+    (local $size i32) (local $surface i32)
     (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
     (if (local.get $bmp)
       (then (return (i32.or (i32.and (i32.load offset=8 (local.get $bmp)) (i32.const 0xFFFF))
@@ -1535,7 +1621,23 @@
         (if (local.get $hwnd)
           (then
             (if (i32.lt_s (local.get $binding) (i32.const 0))
-              (then (return (call $ctrl_get_wh_packed (local.get $hwnd))))
+              (then
+                ;; Child whole-window DCs have CONTROL_GEOM dimensions.
+                ;; Top-level windows do not, so use the canonical owner
+                ;; surface that gdi_window_dc_bind already ensured. Without
+                ;; this fallback their finite default clip is empty and all
+                ;; WAT nonclient geometry is rejected while text still draws.
+                (local.set $size (call $ctrl_get_wh_packed (local.get $hwnd)))
+                (if (local.get $size) (then (return (local.get $size))))
+                (local.set $surface (call $gdi_window_surface_record
+                  (call $wnd_top_level (local.get $hwnd)) (i32.const 0)))
+                (if (local.get $surface)
+                  (then (return (i32.or
+                    (i32.and (i32.load offset=8 (local.get $surface)) (i32.const 0xFFFF))
+                    (i32.shl
+                      (i32.and (i32.load offset=12 (local.get $surface)) (i32.const 0xFFFF))
+                      (i32.const 16))))))
+                (return (i32.const 0)))
               (else (return (i32.or
                 (i32.and (call $wnd_client_w_for_clip (local.get $hwnd)) (i32.const 0xFFFF))
                 (i32.shl (i32.and (call $wnd_client_h_for_clip (local.get $hwnd)) (i32.const 0xFFFF))
@@ -1575,7 +1677,7 @@
     (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
           (i32.gt_s (local.get $h) (i32.const 0)))
       (then (return (local.get $wh))))
-    (local.set $rect (global.get $GDI_LINE_DESC))
+    (local.set $rect (global.get $WINDOW_RECT_SCRATCH))
     (call $host_get_window_rect (local.get $owner) (local.get $rect))
     (local.set $w (i32.sub (i32.load offset=8 (local.get $rect)) (i32.load (local.get $rect))))
     (local.set $h (i32.sub (i32.load offset=12 (local.get $rect)) (i32.load offset=4 (local.get $rect))))
@@ -2267,6 +2369,87 @@
         (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1))))
     (i32.const 1))
 
+  (func $gdi_gradient_channel (param $a i32) (param $b i32)
+        (param $step i32) (param $span i32) (result i32)
+    (if (i32.le_s (local.get $span) (i32.const 1))
+      (then (return (local.get $a))))
+    (i32.add (local.get $a)
+      (i32.div_s
+        (i32.mul (i32.sub (local.get $b) (local.get $a)) (local.get $step))
+        (i32.sub (local.get $span) (i32.const 1)))))
+
+  (func $gdi_gradient_fill_h_desc (param $hdc i32) (param $desc i32)
+        (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+        (param $color_left i32) (param $color_right i32) (result i32)
+    (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
+    (local $x i32) (local $y i32) (local $step i32) (local $span i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $color i32)
+    (local $wrote i32)
+    (if (i32.eqz (call $gdi_shape_desc_valid (local.get $desc)))
+      (then (return (i32.const 0))))
+    (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $left)))
+    (local.set $y0 (call $gdi_line_map_y (local.get $desc) (local.get $top)))
+    (local.set $x1 (call $gdi_line_map_x (local.get $desc) (local.get $right)))
+    (local.set $y1 (call $gdi_line_map_y (local.get $desc) (local.get $bottom)))
+    (if (i32.or (i32.le_s (local.get $x1) (local.get $x0))
+          (i32.le_s (local.get $y1) (local.get $y0)))
+      (then (return (i32.const 1))))
+    (local.set $span (i32.sub (local.get $x1) (local.get $x0)))
+    (local.set $x (local.get $x0))
+    (block $columns_done (loop $columns
+      (br_if $columns_done (i32.ge_s (local.get $x) (local.get $x1)))
+      (local.set $step (i32.sub (local.get $x) (local.get $x0)))
+      (local.set $r (call $gdi_gradient_channel
+        (i32.and (local.get $color_left) (i32.const 0xFF))
+        (i32.and (local.get $color_right) (i32.const 0xFF))
+        (local.get $step) (local.get $span)))
+      (local.set $g (call $gdi_gradient_channel
+        (i32.and (i32.shr_u (local.get $color_left) (i32.const 8)) (i32.const 0xFF))
+        (i32.and (i32.shr_u (local.get $color_right) (i32.const 8)) (i32.const 0xFF))
+        (local.get $step) (local.get $span)))
+      (local.set $b (call $gdi_gradient_channel
+        (i32.and (i32.shr_u (local.get $color_left) (i32.const 16)) (i32.const 0xFF))
+        (i32.and (i32.shr_u (local.get $color_right) (i32.const 16)) (i32.const 0xFF))
+        (local.get $step) (local.get $span)))
+      (local.set $color (i32.or (local.get $r)
+        (i32.or (i32.shl (local.get $g) (i32.const 8))
+          (i32.shl (local.get $b) (i32.const 16)))))
+      (local.set $y (local.get $y0))
+      (block $rows_done (loop $rows
+        (br_if $rows_done (i32.ge_s (local.get $y) (local.get $y1)))
+        (local.set $wrote (i32.or (local.get $wrote)
+          (call $gdi_shape_put_pixel (local.get $hdc) (local.get $desc)
+            (local.get $x) (local.get $y) (local.get $color) (i32.const 13))))
+        (local.set $y (i32.add (local.get $y) (i32.const 1)))
+        (br $rows)))
+      (local.set $x (i32.add (local.get $x) (i32.const 1)))
+      (br $columns)))
+    (if (local.get $wrote)
+      (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+        (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1))))
+    (i32.const 1))
+
+  ;; Default WM_ERASEBKGND over the canonical window surface. Creating the DC
+  ;; before filling guarantees that early dialog erases are not stranded on a
+  ;; renderer canvas which a later WAT surface attachment would replace.
+  (func $host_erase_background (param $hwnd i32) (param $brush i32) (result i32)
+    (local $hdc i32) (local $desc i32) (local $w i32) (local $h i32)
+    (if (i32.eqz (local.get $brush)) (then (return (i32.const 1))))
+    (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 0)))
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (call $dc_apply_client_erase_clip (local.get $hdc) (local.get $hwnd))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
+      (then
+        (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
+        (local.set $h (call $wnd_client_h_for_clip (local.get $hwnd)))
+        (drop (call $gdi_fill_rect_desc
+          (local.get $hdc) (local.get $desc)
+          (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+          (local.get $brush)))))
+    (drop (call $host_release_dc (local.get $hdc)))
+    (i32.const 1))
+
   (func $gdi_frame_rect_desc (param $hdc i32) (param $desc i32)
         (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
         (param $brush i32) (result i32)
@@ -2495,7 +2678,7 @@
     (if (i32.eq (local.get $pen) (i32.const 0x30018)) (then (return (i32.const 1))))
     (if (i32.ne (call $gdi_object_type (local.get $pen)) (i32.const 1))
       (then (return (i32.const 0))))
-    (if (i32.gt_u (call $gdi_object_style (local.get $pen)) (i32.const 5))
+    (if (i32.gt_u (call $gdi_object_style (local.get $pen)) (i32.const 6))
       (then (return (i32.const 0))))
     (local.set $width (call $gdi_object_width (local.get $pen)))
     (if (i32.gt_u (local.get $width) (i32.const 64)) (then (return (i32.const 0))))
@@ -2757,7 +2940,8 @@
             (i32.ne (call $gdi_object_style (local.get $brush)) (i32.const 0))))
       (then (return (i32.const 0))))
     (if (i32.and (i32.ne (local.get $pen) (i32.const 0x30018))
-          (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 0)))
+          (i32.and (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 0))
+            (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 6))))
       (then (return (i32.const 0))))
     (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $left)))
     (local.set $y0 (call $gdi_line_map_y (local.get $desc) (local.get $top)))
@@ -2850,9 +3034,12 @@
           (i32.or (i32.ne (call $gdi_object_type (local.get $brush)) (i32.const 2))
             (i32.ne (call $gdi_object_style (local.get $brush)) (i32.const 0))))
       (then (return (i32.const 0))))
-    ;; Ellipse outline is one-pixel solid in this first slice.
+    ;; PS_INSIDEFRAME is solid coverage constrained to the shape interior;
+    ;; this one-pixel outline already has that coverage.
     (if (i32.and (i32.ne (local.get $pen) (i32.const 0x30018))
-          (i32.or (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 0))
+          (i32.or (i32.and
+              (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 0))
+              (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 6)))
             (i32.ne (call $gdi_object_width (local.get $pen)) (i32.const 1))))
       (then (return (i32.const 0))))
     (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $left)))
@@ -3231,6 +3418,17 @@
             (return (i32.or (i32.load8_u (local.get $p))
               (i32.or (i32.shl (i32.load8_u offset=1 (local.get $p)) (i32.const 8))
                 (i32.shl (i32.load8_u offset=2 (local.get $p)) (i32.const 16)))))))))
+    ;; Transient BITMAPINFO descriptors have no object handle. They carry the
+    ;; RGBQUAD table directly in the otherwise geometry-only +24/+28 fields.
+    (local.set $palette (i32.load offset=24 (local.get $desc)))
+    (local.set $count (i32.load offset=28 (local.get $desc)))
+    (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
+          (i32.lt_u (local.get $index) (local.get $count)))
+      (then
+        (local.set $p (i32.add (local.get $palette) (i32.shl (local.get $index) (i32.const 2))))
+        (return (i32.or (i32.load8_u (local.get $p))
+          (i32.or (i32.shl (i32.load8_u offset=1 (local.get $p)) (i32.const 8))
+            (i32.shl (i32.load8_u offset=2 (local.get $p)) (i32.const 16)))))))
     (call $gdi_raster_default_palette (i32.load offset=16 (local.get $desc)) (local.get $index)))
 
   (func (export "test_gdi_raster_palette_color") (param i32 i32) (result i32)
@@ -3366,6 +3564,128 @@
           (call $gdi_raster_swap_rb (local.get $colorref))))
       (then (return (i32.const -1))))
     (i32.and (local.get $colorref) (i32.const 0xFFFFFF)))
+
+  ;; Bounded four-connected flood fill over authoritative WAT pixels. The
+  ;; visited bitmap makes progress independent of the selected brush color.
+  (func $gdi_raster_flood_fill (param $hdc i32) (param $desc i32)
+        (param $logical_x i32) (param $logical_y i32) (param $colorref i32)
+        (param $fill_type i32) (param $brush i32) (result i32)
+    (local $width i32) (local $height i32) (local $area i32)
+    (local $start_x i32) (local $start_y i32) (local $match i32) (local $fill i32)
+    (local $queue_g i32) (local $queue i32) (local $visited_g i32) (local $visited i32)
+    (local $visited_size i32) (local $head i32) (local $tail i32)
+    (local $x i32) (local $y i32) (local $nx i32) (local $ny i32)
+    (local $index i32) (local $mask i32) (local $value i32)
+    (local $direction i32) (local $eligible i32)
+    (local $min_x i32) (local $min_y i32) (local $max_x i32) (local $max_y i32)
+    (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $desc)))
+          (i32.gt_u (local.get $fill_type) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (local.set $width (i32.load offset=4 (local.get $desc)))
+    (local.set $height (i32.load offset=8 (local.get $desc)))
+    (local.set $area (i32.mul (local.get $width) (local.get $height)))
+    (if (i32.or (i32.eqz (local.get $area))
+          (i32.gt_u (local.get $area) (i32.const 4000000)))
+      (then (return (i32.const 0))))
+    (local.set $start_x (call $gdi_line_map_x (local.get $desc) (local.get $logical_x)))
+    (local.set $start_y (call $gdi_line_map_y (local.get $desc) (local.get $logical_y)))
+    (if (i32.or (i32.eq (call $gdi_raster_read
+            (local.get $desc) (local.get $start_x) (local.get $start_y)) (i32.const -1))
+          (i32.eqz (call $gdi_raster_clip_visible
+            (local.get $hdc) (local.get $desc) (local.get $start_x) (local.get $start_y))))
+      (then (return (i32.const 0))))
+    (local.set $match (call $gdi_raster_swap_rb (local.get $colorref)))
+    (local.set $fill (call $gdi_brush_color (local.get $brush)))
+    (if (i32.gt_u (local.get $fill) (i32.const 0xFFFFFF))
+      (then (return (i32.const 0))))
+    (local.set $fill (call $gdi_raster_swap_rb (local.get $fill)))
+    (local.set $value (call $gdi_raster_read
+      (local.get $desc) (local.get $start_x) (local.get $start_y)))
+    (if (i32.or
+          (i32.and (i32.eqz (local.get $fill_type)) (i32.eq (local.get $value) (local.get $match)))
+          (i32.and (i32.eq (local.get $fill_type) (i32.const 1))
+            (i32.ne (local.get $value) (local.get $match))))
+      (then (return (i32.const 0))))
+    (local.set $visited_size (i32.shr_u (i32.add (local.get $area) (i32.const 7)) (i32.const 3)))
+    (local.set $visited_g (call $heap_alloc (local.get $visited_size)))
+    (if (i32.eqz (local.get $visited_g)) (then (return (i32.const 0))))
+    (local.set $queue_g (call $heap_alloc (i32.shl (local.get $area) (i32.const 3))))
+    (if (i32.eqz (local.get $queue_g))
+      (then (call $heap_free (local.get $visited_g)) (return (i32.const 0))))
+    (local.set $visited (call $g2w (local.get $visited_g)))
+    (local.set $queue (call $g2w (local.get $queue_g)))
+    (memory.fill (local.get $visited) (i32.const 0) (local.get $visited_size))
+    (local.set $index (i32.add (i32.mul (local.get $start_y) (local.get $width)) (local.get $start_x)))
+    (i32.store8 (i32.add (local.get $visited) (i32.shr_u (local.get $index) (i32.const 3)))
+      (i32.shl (i32.const 1) (i32.and (local.get $index) (i32.const 7))))
+    (i32.store (local.get $queue) (local.get $start_x))
+    (i32.store offset=4 (local.get $queue) (local.get $start_y))
+    (local.set $tail (i32.const 1))
+    (local.set $min_x (local.get $start_x))
+    (local.set $min_y (local.get $start_y))
+    (local.set $max_x (local.get $start_x))
+    (local.set $max_y (local.get $start_y))
+    (block $done (loop $work
+      (br_if $done (i32.ge_u (local.get $head) (local.get $tail)))
+      (local.set $x (i32.load (i32.add (local.get $queue) (i32.shl (local.get $head) (i32.const 3)))))
+      (local.set $y (i32.load offset=4 (i32.add (local.get $queue) (i32.shl (local.get $head) (i32.const 3)))))
+      (local.set $head (i32.add (local.get $head) (i32.const 1)))
+      (drop (call $gdi_raster_write
+        (local.get $desc) (local.get $x) (local.get $y) (local.get $fill)))
+      (local.set $min_x (select (local.get $x) (local.get $min_x) (i32.lt_s (local.get $x) (local.get $min_x))))
+      (local.set $min_y (select (local.get $y) (local.get $min_y) (i32.lt_s (local.get $y) (local.get $min_y))))
+      (local.set $max_x (select (local.get $x) (local.get $max_x) (i32.gt_s (local.get $x) (local.get $max_x))))
+      (local.set $max_y (select (local.get $y) (local.get $max_y) (i32.gt_s (local.get $y) (local.get $max_y))))
+      (local.set $direction (i32.const 0))
+      (block $neighbors_done (loop $neighbors
+        (br_if $neighbors_done (i32.ge_u (local.get $direction) (i32.const 4)))
+        (local.set $nx (local.get $x))
+        (local.set $ny (local.get $y))
+        (if (i32.eq (local.get $direction) (i32.const 0)) (then (local.set $nx (i32.sub (local.get $x) (i32.const 1)))))
+        (if (i32.eq (local.get $direction) (i32.const 1)) (then (local.set $nx (i32.add (local.get $x) (i32.const 1)))))
+        (if (i32.eq (local.get $direction) (i32.const 2)) (then (local.set $ny (i32.sub (local.get $y) (i32.const 1)))))
+        (if (i32.eq (local.get $direction) (i32.const 3)) (then (local.set $ny (i32.add (local.get $y) (i32.const 1)))))
+        (if (i32.and
+              (i32.and (i32.ge_s (local.get $nx) (i32.const 0))
+                (i32.lt_s (local.get $nx) (local.get $width)))
+              (i32.and (i32.ge_s (local.get $ny) (i32.const 0))
+                (i32.lt_s (local.get $ny) (local.get $height))))
+          (then
+            (local.set $index (i32.add (i32.mul (local.get $ny) (local.get $width)) (local.get $nx)))
+            (local.set $mask (i32.shl (i32.const 1) (i32.and (local.get $index) (i32.const 7))))
+            (if (i32.eqz (i32.and
+                  (i32.load8_u (i32.add (local.get $visited) (i32.shr_u (local.get $index) (i32.const 3))))
+                  (local.get $mask)))
+              (then
+                (local.set $value (call $gdi_raster_read
+                  (local.get $desc) (local.get $nx) (local.get $ny)))
+                (local.set $eligible (select
+                  (i32.ne (local.get $value) (local.get $match))
+                  (i32.eq (local.get $value) (local.get $match))
+                  (i32.eqz (local.get $fill_type))))
+                (if (i32.and (local.get $eligible)
+                      (call $gdi_raster_clip_visible
+                        (local.get $hdc) (local.get $desc) (local.get $nx) (local.get $ny)))
+                  (then
+                    (i32.store8
+                      (i32.add (local.get $visited) (i32.shr_u (local.get $index) (i32.const 3)))
+                      (i32.or (i32.load8_u
+                        (i32.add (local.get $visited) (i32.shr_u (local.get $index) (i32.const 3))))
+                        (local.get $mask)))
+                    (i32.store (i32.add (local.get $queue) (i32.shl (local.get $tail) (i32.const 3)))
+                      (local.get $nx))
+                    (i32.store offset=4 (i32.add (local.get $queue) (i32.shl (local.get $tail) (i32.const 3)))
+                      (local.get $ny))
+                    (local.set $tail (i32.add (local.get $tail) (i32.const 1)))))))))
+        (local.set $direction (i32.add (local.get $direction) (i32.const 1)))
+        (br $neighbors)))
+      (br $work)))
+    (call $heap_free (local.get $queue_g))
+    (call $heap_free (local.get $visited_g))
+    (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+      (local.get $min_x) (local.get $min_y)
+      (i32.add (local.get $max_x) (i32.const 1)) (i32.add (local.get $max_y) (i32.const 1)))
+    (i32.const 1))
 
   ;; Full ternary raster-operation truth table. Bit index is P:S:D, which
   ;; makes SRCCOPY 0xCC, PATCOPY 0xF0, and DSTINVERT 0x55.
@@ -3517,22 +3837,31 @@
       (local.get 8) (local.get 9) (local.get 10) (local.get 11)))
 
   ;; Build a raster descriptor from BITMAPINFO plus guest-visible pixel bytes.
-  ;; Supports uncompressed BI_RGB 24/32bpp. Negative biHeight is top-down.
+  ;; Supports uncompressed BI_RGB 1/4/8/24/32bpp. Indexed descriptors point
+  ;; directly at their RGBQUAD table in +24/+28; they do not create a GDI
+  ;; object merely to decode application-owned source pixels.
   (func $gdi_raster_desc_from_bmi (param $desc i32) (param $bits i32) (param $bmi i32)
         (result i32)
-    (local $w i32) (local $h i32) (local $bpp i32) (local $top_down i32)
+    (local $header_size i32) (local $w i32) (local $h i32) (local $bpp i32)
+    (local $top_down i32) (local $palette_count i32)
     (if (i32.or (i32.eqz (local.get $desc))
           (i32.or (i32.eqz (local.get $bits)) (i32.eqz (local.get $bmi))))
       (then (return (i32.const 0))))
-    (if (i32.lt_u (i32.load (local.get $bmi)) (i32.const 40))
+    (local.set $header_size (i32.load (local.get $bmi)))
+    (if (i32.or (i32.lt_u (local.get $header_size) (i32.const 40))
+          (i32.gt_u (local.get $header_size) (i32.const 124)))
       (then (return (i32.const 0))))
     (local.set $w (i32.load offset=4 (local.get $bmi)))
     (local.set $h (i32.load offset=8 (local.get $bmi)))
     (local.set $bpp (i32.load16_u offset=14 (local.get $bmi)))
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
           (i32.or (i32.eqz (local.get $h))
-            (i32.and (i32.ne (local.get $bpp) (i32.const 24))
-              (i32.ne (local.get $bpp) (i32.const 32)))))
+            (i32.and
+              (i32.and (i32.ne (local.get $bpp) (i32.const 1))
+                (i32.and (i32.ne (local.get $bpp) (i32.const 4))
+                  (i32.ne (local.get $bpp) (i32.const 8))))
+              (i32.and (i32.ne (local.get $bpp) (i32.const 24))
+                (i32.ne (local.get $bpp) (i32.const 32))))))
       (then (return (i32.const 0))))
     (if (i32.or (i32.ne (i32.load16_u offset=12 (local.get $bmi)) (i32.const 1))
           (i32.ne (i32.load offset=16 (local.get $bmi)) (i32.const 0)))
@@ -3544,11 +3873,72 @@
     (i32.store offset=4 (local.get $desc) (local.get $w))
     (i32.store offset=8 (local.get $desc) (local.get $h))
     (i32.store offset=12 (local.get $desc)
-      (i32.and (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8)))
-        (i32.const 3)) (i32.const -4)))
+      (i32.shl (i32.shr_u
+        (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.const 31))
+        (i32.const 5)) (i32.const 2)))
     (i32.store offset=16 (local.get $desc) (local.get $bpp))
     (i32.store offset=20 (local.get $desc) (local.get $top_down))
+    (if (i32.le_u (local.get $bpp) (i32.const 8))
+      (then
+        (local.set $palette_count (i32.load offset=32 (local.get $bmi)))
+        (if (i32.eqz (local.get $palette_count))
+          (then (local.set $palette_count (i32.shl (i32.const 1) (local.get $bpp)))))
+        (if (i32.gt_u (local.get $palette_count)
+              (i32.shl (i32.const 1) (local.get $bpp)))
+          (then (return (i32.const 0))))
+        (i32.store offset=24 (local.get $desc)
+          (i32.add (local.get $bmi) (local.get $header_size)))
+        (i32.store offset=28 (local.get $desc) (local.get $palette_count))))
     (i32.const 1))
+
+  ;; SetDIBitsToDevice is a source decode plus SRCCOPY into the selected
+  ;; canonical surface. JavaScript only receives the resulting dirty upload.
+  (func $gdi_set_dib_to_device
+        (param $hdc i32) (param $dx i32) (param $dy i32)
+        (param $w i32) (param $h i32) (param $sx i32) (param $sy i32)
+        (param $start_scan i32) (param $line_count i32)
+        (param $bits i32) (param $bmi i32) (param $color_use i32) (result i32)
+    (local $dst i32) (local $src i32) (local $mdx i32) (local $mdy i32)
+    (local $lines i32) (local $ok i32)
+    ;; DIB_PAL_COLORS needs logical-palette realization, which remains a
+    ;; separate WAT palette milestone. RGBQUAD input is fully supported here.
+    (if (i32.or (i32.ne (local.get $color_use) (i32.const 0))
+          (i32.or (i32.le_s (local.get $w) (i32.const 0))
+            (i32.or (i32.le_s (local.get $h) (i32.const 0))
+              (i32.le_s (local.get $line_count) (i32.const 0)))))
+      (then (return (i32.const 0))))
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
+    (if (i32.or (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $dst)))
+          (i32.eqz (call $gdi_raster_desc_from_bmi
+            (local.get $src) (local.get $bits) (local.get $bmi))))
+      (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $start_scan) (i32.load offset=8 (local.get $src)))
+      (then (return (i32.const 0))))
+    (local.set $mdx (call $gdi_line_map_x (local.get $dst) (local.get $dx)))
+    (local.set $mdy (call $gdi_line_map_y (local.get $dst) (local.get $dy)))
+    (local.set $lines (local.get $line_count))
+    (if (i32.gt_u (local.get $lines)
+          (i32.sub (i32.load offset=8 (local.get $src)) (local.get $start_scan)))
+      (then (local.set $lines
+        (i32.sub (i32.load offset=8 (local.get $src)) (local.get $start_scan)))))
+    (if (i32.gt_u (local.get $lines) (local.get $h))
+      (then (local.set $lines (local.get $h))))
+    ;; lpvBits points at the first byte of the scanline slice supplied by this
+    ;; call, not necessarily at the first byte of the full biHeight bitmap.
+    ;; Winmine uses one 16-line pointer into a 256-line sprite sheet per call.
+    (i32.store offset=8 (local.get $src) (local.get $lines))
+    (local.set $ok (call $gdi_raster_bitblt
+      (local.get $hdc) (local.get $dst) (local.get $mdx) (local.get $mdy)
+      (local.get $w) (local.get $lines) (local.get $src)
+      (local.get $sx) (local.get $sy)
+      (i32.const 0) (i32.const 0x00CC0020)))
+    (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
+    (call $gdi_geometry_present (local.get $hdc) (local.get $dst)
+      (local.get $mdx) (local.get $mdy)
+      (i32.add (local.get $mdx) (local.get $w))
+      (i32.add (local.get $mdy) (local.get $lines)))
+    (local.get $lines))
 
   ;; ROP4 combines foreground/background ROP3 bytes using a 1bpp mask. Mask
   ;; scanlines are DWORD aligned and top-down for this kernel fixture API.
@@ -5674,8 +6064,8 @@
           (i32.eqz (local.get $parent))
           (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
       (then
-        (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
-        (return (i32.load (global.get $PAINT_SCRATCH)))))
+        (call $host_get_window_rect (local.get $hwnd) (global.get $WINDOW_RECT_SCRATCH))
+        (return (i32.load (global.get $WINDOW_RECT_SCRATCH)))))
     (i32.add
       (call $wnd_client_screen_x (local.get $parent))
       (call $ctrl_get_x_s (local.get $hwnd))))
@@ -5689,8 +6079,8 @@
           (i32.eqz (local.get $parent))
           (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))
       (then
-        (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
-        (return (i32.load offset=4 (global.get $PAINT_SCRATCH)))))
+        (call $host_get_window_rect (local.get $hwnd) (global.get $WINDOW_RECT_SCRATCH))
+        (return (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH)))))
     (i32.add
       (call $wnd_client_screen_y (local.get $parent))
       (call $ctrl_get_y_s (local.get $hwnd))))
@@ -5719,10 +6109,10 @@
       (then
         (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.and (local.get $wh) (i32.const 0xFFFF)))))
-    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $WINDOW_RECT_SCRATCH))
     (i32.sub
-      (i32.load offset=8 (global.get $PAINT_SCRATCH))
-      (i32.load (global.get $PAINT_SCRATCH))))
+      (i32.load offset=8 (global.get $WINDOW_RECT_SCRATCH))
+      (i32.load (global.get $WINDOW_RECT_SCRATCH))))
 
   (func $wnd_screen_h (param $hwnd i32) (result i32)
     (local $parent i32) (local $wh i32) (local $style i32)
@@ -5735,10 +6125,10 @@
       (then
         (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.shr_u (local.get $wh) (i32.const 16)))))
-    (call $host_get_window_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $WINDOW_RECT_SCRATCH))
     (i32.sub
-      (i32.load offset=12 (global.get $PAINT_SCRATCH))
-      (i32.load offset=4 (global.get $PAINT_SCRATCH))))
+      (i32.load offset=12 (global.get $WINDOW_RECT_SCRATCH))
+      (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH))))
 
   ;; Mouse-message coordinate origin for captured input. Win32 mouse lParams
   ;; are client-relative for normal top-level windows, but child controls and
