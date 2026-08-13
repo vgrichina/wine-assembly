@@ -99,6 +99,9 @@
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
         (then
+          ;; A top-level window owns its canonical software-GDI presentation.
+          ;; Child removal is a no-op because child DCs resolve to that owner.
+          (call $gdi_window_surface_release (local.get $hwnd))
           ;; Free control state if any
           (local.set $state (i32.load offset=20 (local.get $ptr)))
           (if (local.get $state) (then (call $heap_free (local.get $state))))

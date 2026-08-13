@@ -49,8 +49,10 @@ descriptor; JavaScript only uploads the resulting dirty rectangle to the
 presentation Canvas. Wide strokes
 currently use an integer square footprint with `R2_COPYPEN` under 1:1 mapping;
 non-copy or transformed wide operations fail explicitly pending coverage-mask
-and geometric-path kernels. Window targets still require canonical surface
-backing. One-pixel dash, dot, dash-dot, and dash-dot-dot pens use fixed
+and geometric-path kernels. Client and whole-window DCs now resolve to one
+top-level, WAT-owned 32-bpp backing surface with descriptor origins for child,
+client, and non-client coordinates. One-pixel dash, dot, dash-dot, and
+dash-dot-dot pens use fixed
 device-step WAT coverage tables. `CreatePen` dash/dot styles wider than one are
 normalized to solid as Win32 specifies.
 
@@ -215,6 +217,7 @@ The permanent presentation-only `gdi_*` JavaScript imports are:
 gdi_set_region_bands   upload canonical WAT bands to a derived clip mirror
 gdi_set_window_rgn     apply that mirror during browser window composition
 gdi_surface_create     allocate a derived Canvas cache for WAT surface metadata
+gdi_surface_attach     attach a WAT window surface to its compositor Canvas
 gdi_surface_upload     upload dirty authoritative pixels to Canvas
 gdi_surface_delete     discard the derived Canvas cache
 ```
@@ -224,7 +227,7 @@ Canvas text-policy imports are `gdi_text_bind`, `gdi_text_out`,
 alignment, mapping state, font selection, DC identity, and bitmap selection
 remain WAT-owned. `gdi_text_bind` exposes a canonical DC record and opaque
 surface token without constructing a semantic JavaScript DC mirror. Canvas
-output for memory DCs is synchronized back into authoritative native pixels.
+output for memory and window DCs is synchronized back into authoritative native pixels.
 There is no
 current `gdi_*` resource exception. `LoadBitmapA/W` resolve raw RT_BITMAP bytes
 through the WAT PE-resource walker, validate and copy pixels and RGBQUADs into
@@ -340,6 +343,13 @@ surface performs:
 3. Upload without interpolation using `putImageData`, `ImageBitmap`, or an
    unscaled `drawImage` from a staging canvas.
 4. Mark the uploaded areas clean.
+
+Window surfaces use the same rule. WAT owns a persistent surface record keyed
+by the top-level HWND and recreates its linear-memory backing when renderer
+geometry changes. `gdi_surface_attach` binds only the derived Canvas; bounded
+uploads schedule normal renderer composition. Releasing an HDC drops its DC
+record but keeps the window pixels, while destroying the owning HWND releases
+both canonical pages and the presentation cache.
 
 The renderer then composes window caches onto the desktop Canvas as it does
 today. Browser zoom or CSS scaling may affect display size but cannot change the

@@ -45,11 +45,11 @@
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
   ;; invalidate(hwnd)
-  (import "host" "alloc_window_dc" (func $host_alloc_window_dc (param i32 i32) (result i32)))
+  (import "host" "alloc_window_dc" (func $host_alloc_window_dc_raw (param i32 i32) (result i32)))
   ;; alloc_window_dc(hwnd, whole) → hdc — Phase B DC table allocator
   (import "host" "alloc_screen_dc" (func $host_alloc_screen_dc (result i32)))
   ;; alloc_screen_dc() → hdc — GetDC(NULL) record
-  (import "host" "release_dc" (func $host_release_dc (param i32) (result i32)))
+  (import "host" "release_dc" (func $host_release_dc_raw (param i32) (result i32)))
   ;; release_dc(hdc) → 1 — frees a DC record allocated via alloc_*_dc
   (import "host" "erase_background" (func $host_erase_background (param i32 i32) (result i32)))
   ;; erase_background(hwnd, hbrBackground) → 1
@@ -263,6 +263,7 @@
   (import "host" "gdi_surface_upload" (func $host_gdi_surface_upload
     (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_surface_delete" (func $host_gdi_surface_delete (param i32) (result i32)))
+  (import "host" "gdi_surface_attach" (func $host_gdi_surface_attach (param i32 i32) (result i32)))
   (func $host_gdi_get_current_object (param i32 i32) (result i32) (i32.const 0))
   ;; gdi_get_current_object(hdc, objectType) → handle
   (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32) (i32.const 0))
@@ -301,7 +302,7 @@
   (func $host_gdi_set_window_ext (param i32 i32 i32) (result i32) (i32.const 0))
   (func $host_gdi_get_window_ext_x (param i32) (result i32) (i32.const 0))
   (func $host_gdi_get_window_ext_y (param i32) (result i32) (i32.const 0))
-  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw (param i32 i32) (result i32)))
+  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw (param i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
@@ -743,6 +744,7 @@
   ;; 0x07EF11A0 296B     GDI_BITMAP_PLAN/name scratch
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
+  ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -941,6 +943,10 @@
   (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
   (global $GDI_OBJECT_STRIDE i32 (i32.const 48))
+  (global $GDI_WINDOW_SURFACE_TABLE i32 (i32.const 0x07EFA800))
+  (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $GDI_WINDOW_SURFACE_COUNT i32 (i32.const 256))
+  (global $GDI_WINDOW_SURFACE_STRIDE i32 (i32.const 32))
   ;; Keep WAT-owned namespaces disjoint from the retained Canvas font and
   ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))

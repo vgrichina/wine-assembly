@@ -388,6 +388,27 @@
       (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_GetDC") (param i32) (result i32)
+    (call $handle_GetDC
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetWindowDC") (param i32) (result i32)
+    (call $handle_GetWindowDC
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_ReleaseDC") (param i32) (param i32) (result i32)
+    (call $handle_ReleaseDC
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_gdi_client_rect_set")
+        (param i32) (param i32) (param i32) (param i32) (param i32)
+    (call $client_rect_set
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
+  (func (export "test_gdi_window_surface_record") (param i32) (result i32)
+    (call $gdi_window_surface_record (local.get 0) (i32.const 0)))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)

@@ -19,6 +19,7 @@ const status = JSON.parse(fs.readFileSync(
 const PERMANENT_NON_TEXT_BRIDGE = [
   'gdi_set_region_bands',
   'gdi_set_window_rgn',
+  'gdi_surface_attach',
   'gdi_surface_create',
   'gdi_surface_delete',
   'gdi_surface_upload',

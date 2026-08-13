@@ -1444,25 +1444,172 @@
     (i32.const 0))
 
   (func $gdi_dc_target_size (param $hdc i32) (result i32)
-    (local $bmp i32)
+    (local $bmp i32) (local $dc i32) (local $binding i32) (local $hwnd i32)
     (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
     (if (local.get $bmp)
       (then (return (i32.or (i32.and (i32.load offset=8 (local.get $bmp)) (i32.const 0xFFFF))
         (i32.shl (i32.and (i32.load offset=12 (local.get $bmp)) (i32.const 0xFFFF))
           (i32.const 16))))))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $dc)
+      (then
+        (local.set $binding (i32.load offset=92 (local.get $dc)))
+        (local.set $hwnd (i32.and (local.get $binding) (i32.const 0x7FFFFFFF)))
+        (if (local.get $hwnd)
+          (then
+            (if (i32.lt_s (local.get $binding) (i32.const 0))
+              (then (return (call $ctrl_get_wh_packed (local.get $hwnd))))
+              (else (return (i32.or
+                (i32.and (call $wnd_client_w_for_clip (local.get $hwnd)) (i32.const 0xFFFF))
+                (i32.shl (i32.and (call $wnd_client_h_for_clip (local.get $hwnd)) (i32.const 0xFFFF))
+                  (i32.const 16))))))))))
     (i32.const 0))
+
+  ;; Persistent canonical backing for the top-level window composition target.
+  ;; Record: owner hwnd, surface id, width, height, bitsWa, stride, reserved.
+  (func $gdi_window_surface_record (param $owner i32) (param $create i32) (result i32)
+    (local $i i32) (local $p i32) (local $empty i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_WINDOW_SURFACE_COUNT)))
+      (local.set $p (i32.add (global.get $GDI_WINDOW_SURFACE_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_WINDOW_SURFACE_STRIDE))))
+      (if (i32.eq (i32.load (local.get $p)) (local.get $owner))
+        (then (return (local.get $p))))
+      (if (i32.and (i32.eqz (local.get $empty)) (i32.eqz (i32.load (local.get $p))))
+        (then (local.set $empty (local.get $p))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+          (i32.ne (local.get $empty) (i32.const 0)))
+      (then
+        (i32.store (local.get $empty) (local.get $owner))
+        (i32.store offset=4 (local.get $empty)
+          (i32.add (i32.const 0x00610001)
+            (i32.div_u (i32.sub (local.get $empty) (global.get $GDI_WINDOW_SURFACE_TABLE))
+              (global.get $GDI_WINDOW_SURFACE_STRIDE))))
+        (return (local.get $empty))))
+    (i32.const 0))
+
+  (func $gdi_window_surface_dimensions (param $owner i32) (result i32)
+    (local $wh i32) (local $rect i32) (local $w i32) (local $h i32)
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $owner)))
+    (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
+    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+          (i32.gt_s (local.get $h) (i32.const 0)))
+      (then (return (local.get $wh))))
+    (local.set $rect (global.get $GDI_LINE_DESC))
+    (call $host_get_window_rect (local.get $owner) (local.get $rect))
+    (local.set $w (i32.sub (i32.load offset=8 (local.get $rect)) (i32.load (local.get $rect))))
+    (local.set $h (i32.sub (i32.load offset=12 (local.get $rect)) (i32.load offset=4 (local.get $rect))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+          (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (i32.or (i32.and (local.get $w) (i32.const 0xFFFF))
+      (i32.shl (i32.and (local.get $h) (i32.const 0xFFFF)) (i32.const 16))))
+
+  (func $gdi_window_surface_ensure (param $hwnd i32) (result i32)
+    (local $owner i32) (local $p i32) (local $wh i32) (local $w i32) (local $h i32)
+    (local $size64 i64) (local $bits_ga i32) (local $bits i32) (local $id i32)
+    (local.set $owner (call $wnd_top_level (local.get $hwnd)))
+    (if (i32.eqz (local.get $owner)) (then (local.set $owner (local.get $hwnd))))
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (local.set $wh (call $gdi_window_surface_dimensions (local.get $owner)))
+    (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+      (then (return (i32.const 0))))
+    (local.set $p (call $gdi_window_surface_record (local.get $owner) (i32.const 1)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $id (i32.load offset=4 (local.get $p)))
+    (if (i32.and (i32.eq (i32.load offset=8 (local.get $p)) (local.get $w))
+          (i32.eq (i32.load offset=12 (local.get $p)) (local.get $h)))
+      (then
+        (drop (call $host_gdi_surface_attach (local.get $id) (local.get $owner)))
+        (return (local.get $p))))
+    (if (i32.load offset=16 (local.get $p))
+      (then
+        (drop (call $host_gdi_surface_delete (local.get $id)))
+        (call $dib_free_wasm (i32.load offset=16 (local.get $p)))))
+    (local.set $size64 (i64.mul
+      (i64.mul (i64.extend_i32_u (local.get $w)) (i64.extend_i32_u (local.get $h)))
+      (i64.const 4)))
+    (if (i64.gt_u (local.get $size64) (i64.extend_i32_u (global.get $DIB_BACKING_BASE_SIZE)))
+      (then (return (i32.const 0))))
+    (local.set $bits_ga (call $dib_alloc (i32.wrap_i64 (local.get $size64))))
+    (if (i32.eqz (local.get $bits_ga)) (then (return (i32.const 0))))
+    (local.set $bits (call $g2w (local.get $bits_ga)))
+    (i32.store offset=8 (local.get $p) (local.get $w))
+    (i32.store offset=12 (local.get $p) (local.get $h))
+    (i32.store offset=16 (local.get $p) (local.get $bits))
+    (i32.store offset=20 (local.get $p) (i32.mul (local.get $w) (i32.const 4)))
+    (if (i32.eqz (call $host_gdi_surface_create
+          (local.get $id) (local.get $w) (local.get $h) (i32.const 32)
+          (local.get $bits) (i32.load offset=20 (local.get $p)) (i32.const 1)
+          (i32.const 0) (i32.const 0)))
+      (then
+        (call $dib_free_wasm (local.get $bits))
+        (i32.store offset=8 (local.get $p) (i32.const 0))
+        (i32.store offset=12 (local.get $p) (i32.const 0))
+        (i32.store offset=16 (local.get $p) (i32.const 0))
+        (return (i32.const 0))))
+    (if (i32.eqz (call $host_gdi_surface_attach (local.get $id) (local.get $owner)))
+      (then
+        (drop (call $host_gdi_surface_delete (local.get $id)))
+        (call $dib_free_wasm (local.get $bits))
+        (i32.store offset=8 (local.get $p) (i32.const 0))
+        (i32.store offset=12 (local.get $p) (i32.const 0))
+        (i32.store offset=16 (local.get $p) (i32.const 0))
+        (return (i32.const 0))))
+    (local.get $p))
+
+  (func $gdi_window_surface_release (param $hwnd i32)
+    (local $p i32)
+    (local.set $p (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0)))
+    (if (local.get $p)
+      (then
+        (drop (call $host_gdi_surface_delete (i32.load offset=4 (local.get $p))))
+        (if (i32.load offset=16 (local.get $p))
+          (then (call $dib_free_wasm (i32.load offset=16 (local.get $p)))))
+        (memory.fill (local.get $p) (i32.const 0) (global.get $GDI_WINDOW_SURFACE_STRIDE)))))
+
+  (func $gdi_window_dc_bind (param $hdc i32) (param $hwnd i32) (param $whole i32) (result i32)
+    (local $dc i32)
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+    (i32.store offset=92 (local.get $dc)
+      (i32.or (i32.and (local.get $hwnd) (i32.const 0x7FFFFFFF))
+        (select (i32.const 0x80000000) (i32.const 0)
+          (i32.ne (local.get $whole) (i32.const 0)))))
+    (i32.ne (call $gdi_window_surface_ensure (local.get $hwnd)) (i32.const 0)))
+
+  (func $host_alloc_window_dc (param $hwnd i32) (param $whole i32) (result i32)
+    (local $hdc i32)
+    (local.set $hdc (call $host_alloc_window_dc_raw (local.get $hwnd) (local.get $whole)))
+    (if (local.get $hdc)
+      (then (drop (call $gdi_window_dc_bind (local.get $hdc) (local.get $hwnd) (local.get $whole)))))
+    (local.get $hdc))
+
+  (func $host_release_dc (param $hdc i32) (result i32)
+    (call $gdi_dc_state_release (local.get $hdc))
+    (call $host_release_dc_raw (local.get $hdc)))
 
   ;; Canvas remains the text rasterizer. WAT supplies an opaque presentation
   ;; token plus its canonical DC record; JS never creates a semantic DC mirror.
   (func $gdi_text_prepare (param $hdc i32) (result i32)
-    (local $dc i32) (local $bmp i32) (local $token i32)
+    (local $dc i32) (local $desc i32) (local $token i32)
+    (local $origin_x i32) (local $origin_y i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $token (local.get $hdc))
-    (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
-    (if (local.get $bmp)
-      (then (local.set $token (i32.load offset=40 (local.get $bmp)))))
-    (if (i32.eqz (call $host_gdi_text_bind_raw (local.get $token) (local.get $dc)))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
+      (then
+        (local.set $token (i32.load offset=68 (local.get $desc)))
+        (local.set $origin_x (i32.load offset=72 (local.get $desc)))
+        (local.set $origin_y (i32.load offset=76 (local.get $desc)))))
+    (if (i32.eqz (call $host_gdi_text_bind_raw
+          (local.get $token) (local.get $dc) (local.get $origin_x) (local.get $origin_y)))
       (then (return (i32.const 0))))
     (local.get $token))
 
@@ -1513,13 +1660,54 @@
       (local.get $rect) (local.get $format) (local.get $wide)))
 
   (func $gdi_surface_descriptor (param $hdc i32) (param $desc i32) (result i32)
-    (local $dc i32) (local $bmp i32) (local $pen i32) (local $pen_handle i32)
+    (local $dc i32) (local $bmp i32) (local $surface i32) (local $pen i32) (local $pen_handle i32)
     (local $pen_width i32) (local $pen_color i32) (local $pen_style i32)
-    (local $wide i32)
+    (local $wide i32) (local $binding i32) (local $hwnd i32) (local $owner i32)
+    (local $bits i32) (local $width i32) (local $height i32) (local $stride i32)
+    (local $bpp i32) (local $top_down i32) (local $surface_id i32)
+    (local $origin_x i32) (local $origin_y i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
-    (if (i32.or (i32.eqz (local.get $dc)) (i32.eqz (local.get $bmp)))
-      (then (return (i32.const 0))))
+    (if (local.get $bmp)
+      (then
+        (local.set $bits (i32.load offset=24 (local.get $bmp)))
+        (local.set $width (i32.load offset=8 (local.get $bmp)))
+        (local.set $height (i32.load offset=12 (local.get $bmp)))
+        (local.set $stride (i32.load offset=28 (local.get $bmp)))
+        (local.set $bpp (i32.load offset=16 (local.get $bmp)))
+        (local.set $top_down
+          (i32.and (i32.shr_u (i32.load offset=20 (local.get $bmp)) (i32.const 1)) (i32.const 1)))
+        (local.set $surface_id (i32.load offset=40 (local.get $bmp))))
+      (else
+        (local.set $binding (i32.load offset=92 (local.get $dc)))
+        (local.set $hwnd (i32.and (local.get $binding) (i32.const 0x7FFFFFFF)))
+        (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+        (local.set $surface (call $gdi_window_surface_ensure (local.get $hwnd)))
+        (if (i32.eqz (local.get $surface)) (then (return (i32.const 0))))
+        (local.set $owner (i32.load (local.get $surface)))
+        (local.set $bits (i32.load offset=16 (local.get $surface)))
+        (local.set $width (i32.load offset=8 (local.get $surface)))
+        (local.set $height (i32.load offset=12 (local.get $surface)))
+        (local.set $stride (i32.load offset=20 (local.get $surface)))
+        (local.set $bpp (i32.const 32))
+        (local.set $top_down (i32.const 1))
+        (local.set $surface_id (i32.load offset=4 (local.get $surface)))
+        (if (i32.lt_s (local.get $binding) (i32.const 0))
+          (then
+            (local.set $origin_x (i32.sub
+              (call $wnd_window_screen_x (local.get $hwnd))
+              (call $wnd_window_screen_x (local.get $owner))))
+            (local.set $origin_y (i32.sub
+              (call $wnd_window_screen_y (local.get $hwnd))
+              (call $wnd_window_screen_y (local.get $owner)))))
+          (else
+            (local.set $origin_x (i32.sub
+              (call $wnd_client_screen_x (local.get $hwnd))
+              (call $wnd_window_screen_x (local.get $owner))))
+            (local.set $origin_y (i32.sub
+              (call $wnd_client_screen_y (local.get $hwnd))
+              (call $wnd_window_screen_y (local.get $owner))))))))
     (local.set $pen_handle (i32.load offset=4 (local.get $dc)))
     (if (i32.eq (local.get $pen_handle) (i32.const 0x30018))
       (then (local.set $pen_style (i32.const 5))))
@@ -1535,13 +1723,12 @@
     (if (i32.eqz (local.get $pen_width))
       (then (local.set $pen_width (i32.const 1))))
     (local.set $wide (i32.gt_s (local.get $pen_width) (i32.const 1)))
-    (i32.store (local.get $desc) (i32.load offset=24 (local.get $bmp)))
-    (i32.store offset=4 (local.get $desc) (i32.load offset=8 (local.get $bmp)))
-    (i32.store offset=8 (local.get $desc) (i32.load offset=12 (local.get $bmp)))
-    (i32.store offset=12 (local.get $desc) (i32.load offset=28 (local.get $bmp)))
-    (i32.store offset=16 (local.get $desc) (i32.load offset=16 (local.get $bmp)))
-    (i32.store offset=20 (local.get $desc)
-      (i32.and (i32.shr_u (i32.load offset=20 (local.get $bmp)) (i32.const 1)) (i32.const 1)))
+    (i32.store (local.get $desc) (local.get $bits))
+    (i32.store offset=4 (local.get $desc) (local.get $width))
+    (i32.store offset=8 (local.get $desc) (local.get $height))
+    (i32.store offset=12 (local.get $desc) (local.get $stride))
+    (i32.store offset=16 (local.get $desc) (local.get $bpp))
+    (i32.store offset=20 (local.get $desc) (local.get $top_down))
     (i32.store offset=24 (local.get $desc) (local.get $pen_color))
     (i32.store offset=28 (local.get $desc) (local.get $pen_width))
     (i32.store offset=32 (local.get $desc) (i32.load offset=40 (local.get $dc)))
@@ -1556,7 +1743,9 @@
     ;; footprint. Thin cosmetic pens retain their style for WAT dash stepping.
     (i32.store offset=64 (local.get $desc)
       (select (i32.const 0) (local.get $pen_style) (local.get $wide)))
-    (i32.store offset=68 (local.get $desc) (i32.load offset=40 (local.get $bmp)))
+    (i32.store offset=68 (local.get $desc) (local.get $surface_id))
+    (i32.store offset=72 (local.get $desc) (local.get $origin_x))
+    (i32.store offset=76 (local.get $desc) (local.get $origin_y))
     (i32.const 1))
 
   (func $gdi_line_descriptor_supported (param $desc i32) (result i32)
@@ -1691,20 +1880,22 @@
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
 
   (func $gdi_line_map_x (param $desc i32) (param $x i32) (result i32)
-    (i32.add (i32.load offset=48 (local.get $desc))
-      (call $gdi_round_ratio
-        (i64.mul
-          (i64.extend_i32_s (i32.sub (local.get $x) (i32.load offset=32 (local.get $desc))))
-          (i64.extend_i32_s (i32.load offset=56 (local.get $desc))))
-        (i64.extend_i32_s (i32.load offset=40 (local.get $desc))))))
+    (i32.add (i32.load offset=72 (local.get $desc))
+      (i32.add (i32.load offset=48 (local.get $desc))
+        (call $gdi_round_ratio
+          (i64.mul
+            (i64.extend_i32_s (i32.sub (local.get $x) (i32.load offset=32 (local.get $desc))))
+            (i64.extend_i32_s (i32.load offset=56 (local.get $desc))))
+          (i64.extend_i32_s (i32.load offset=40 (local.get $desc)))))))
 
   (func $gdi_line_map_y (param $desc i32) (param $y i32) (result i32)
-    (i32.add (i32.load offset=52 (local.get $desc))
-      (call $gdi_round_ratio
-        (i64.mul
-          (i64.extend_i32_s (i32.sub (local.get $y) (i32.load offset=36 (local.get $desc))))
-          (i64.extend_i32_s (i32.load offset=60 (local.get $desc))))
-        (i64.extend_i32_s (i32.load offset=44 (local.get $desc))))))
+    (i32.add (i32.load offset=76 (local.get $desc))
+      (i32.add (i32.load offset=52 (local.get $desc))
+        (call $gdi_round_ratio
+          (i64.mul
+            (i64.extend_i32_s (i32.sub (local.get $y) (i32.load offset=36 (local.get $desc))))
+            (i64.extend_i32_s (i32.load offset=60 (local.get $desc))))
+          (i64.extend_i32_s (i32.load offset=44 (local.get $desc)))))))
 
   (func $gdi_apply_rop2 (param $rop2 i32) (param $pen i32) (param $dst i32) (result i32)
     (if (i32.eq (local.get $rop2) (i32.const 1))
@@ -1779,10 +1970,8 @@
       (then (return (i32.const 0))))
     (if (i32.eqz (call $gdi_dc_clip_point_visible
           (local.get $hdc)
-          (i32.add (i32.sub (local.get $x) (i32.load offset=48 (local.get $desc)))
-            (i32.load offset=32 (local.get $desc)))
-          (i32.add (i32.sub (local.get $y) (i32.load offset=52 (local.get $desc)))
-            (i32.load offset=36 (local.get $desc)))))
+          (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
+          (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
       (then (return (i32.const 0))))
     (local.set $row (select
       (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
@@ -1833,7 +2022,9 @@
     (i32.add (i32.load offset=32 (local.get $desc))
       (call $gdi_round_ratio
         (i64.mul
-          (i64.extend_i32_s (i32.sub (local.get $x) (i32.load offset=48 (local.get $desc))))
+          (i64.extend_i32_s (i32.sub
+            (i32.sub (local.get $x) (i32.load offset=72 (local.get $desc)))
+            (i32.load offset=48 (local.get $desc))))
           (i64.extend_i32_s (i32.load offset=40 (local.get $desc))))
         (i64.extend_i32_s (i32.load offset=56 (local.get $desc))))))
 
@@ -1841,7 +2032,9 @@
     (i32.add (i32.load offset=36 (local.get $desc))
       (call $gdi_round_ratio
         (i64.mul
-          (i64.extend_i32_s (i32.sub (local.get $y) (i32.load offset=52 (local.get $desc))))
+          (i64.extend_i32_s (i32.sub
+            (i32.sub (local.get $y) (i32.load offset=76 (local.get $desc)))
+            (i32.load offset=52 (local.get $desc))))
           (i64.extend_i32_s (i32.load offset=44 (local.get $desc))))
         (i64.extend_i32_s (i32.load offset=60 (local.get $desc))))))
 
