@@ -886,6 +886,12 @@
   (global $GDI_DC_RASTER_COUNT i32 (i32.const 256))
   (global $GDI_LINE_DESC i32 (i32.const 0x07EF1000))
   (global $GDI_LINE_DESC_SIZE i32 (i32.const 0x00000050))
+  ;; Two 80-byte surface descriptors for raster/blit destination and source.
+  ;; The surface registry owns resolution; pixel kernels consume this scratch.
+  (global $GDI_BLIT_DESC i32 (i32.const 0x07EF1100))
+  (global $GDI_BLIT_DST_DESC i32 (i32.const 0x07EF1100))
+  (global $GDI_BLIT_SRC_DESC i32 (i32.const 0x07EF1150))
+  (global $GDI_BLIT_DESC_SIZE i32 (i32.const 0x000000A0))
   ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
   ;; presentation and GDI operations that have not moved to WAT yet.
   (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))

@@ -35,6 +35,7 @@ UNIT=(
   test/test-core-no-app-fast-paths.js
   test/test-wat-gdi-region.js
   test/test-wat-gdi-line.js
+  test/test-wat-gdi-raster.js
   test/test-gdi-migration-status.js
   test/test-compatible-bitmap-wat.js
   test/test-gdi-surface.js

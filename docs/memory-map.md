@@ -130,6 +130,8 @@ mapping synthetic HDC values to private canonical HRGNs.
 
 Per-HDC raster state uses `0x07EF0800..0x07EF0FFF` for 256 `{HDC, ROP2}`
 entries. A fixed 80-byte line-descriptor scratch record begins at `0x07EF1000`.
+Two adjacent 80-byte blit descriptors occupy `0x07EF1100..0x07EF119F` for
+destination/source surface resolution without per-pixel host calls.
 
 ### Comparison
 
