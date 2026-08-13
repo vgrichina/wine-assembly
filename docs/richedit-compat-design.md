@@ -30,7 +30,7 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 12/12 and 47/47.
+storage suites remain green at 12/12 and 53/53.
 
 ## ASCII TLDR
 
@@ -696,6 +696,9 @@ collision rejection, independent copied bytes, and `STGMOVE_COPY` raise it to
 41/41. A generated seven-method `IEnumSTATSTG` vtable plus stable snapshot
 records, partial `Next` counts, `Skip`, `Reset`, and independent cloned cursors
 raise it to 47/47; the snapshot remains valid after the live tree is released.
+Atomic deep `Commit`/`Revert` checkpoints restore mixed trees, bytes, names, and
+CLSIDs without invalidating retained pre-revert interfaces, raising the suite
+to 53/53.
 At this foundation stage it did not serialize a Compound File Binary container,
 expose an `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server.
 Later sections document the completed bounded `IDataObject` and static-DIB

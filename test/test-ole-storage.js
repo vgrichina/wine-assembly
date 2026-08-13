@@ -338,6 +338,73 @@ async function main() {
   e.guest_free(cloneLastName);
   e.test_ole_release(statEnumClone);
   e.test_ole_release(statEnum);
+
+  const txStorage = e.test_ole_create_storage(0) >>> 0;
+  check('IStorage Revert without a committed snapshot reports STG_E_REVERTED',
+    (e.test_ole_storage_revert(txStorage) >>> 0) === 0x80030102);
+  const txStreamName = writeWide('CommittedStream');
+  const txStream = e.test_ole_create_stream(txStorage, txStreamName) >>> 0;
+  e.test_ole_stream_write(txStream, writeBytes(Uint8Array.from([3, 1, 4])), 3, count);
+  const txFolderName = writeWide('CommittedFolder');
+  const txFolder = e.test_ole_create_child_storage(txStorage, txFolderName) >>> 0;
+  const txNestedName = writeWide('NestedValue');
+  const txNested = e.test_ole_create_stream(txFolder, txNestedName) >>> 0;
+  e.test_ole_stream_write(txNested, writeBytes(Uint8Array.from([2, 7])), 2, count);
+  const txClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0x30 + i));
+  e.test_ole_set_class(txStorage, txClsid);
+  check('IStorage Commit captures a deep transaction checkpoint',
+    e.test_ole_storage_commit(txStorage) === 0);
+
+  e.test_ole_stream_seek(txStream, 0);
+  e.test_ole_stream_write(txStream, writeBytes(Uint8Array.from([0xff])), 1, count);
+  e.test_ole_rename_element(txStorage, txStreamName, writeWide('ChangedStream'));
+  e.test_ole_destroy_element(txFolder, txNestedName);
+  const postCommitName = writeWide('PostCommit');
+  const postCommit = e.test_ole_create_stream(txStorage, postCommitName) >>> 0;
+  e.test_ole_set_class(txStorage, writeBytes(Uint8Array.from({ length: 16 }, () => 0xee)));
+  check('IStorage Revert atomically restores the committed tree',
+    e.test_ole_storage_revert(txStorage) === 0 &&
+    e.test_ole_find_stream(txStorage, writeWide('ChangedStream')) === 0 &&
+    e.test_ole_find_stream(txStorage, postCommitName) === 0 &&
+    e.test_ole_find_storage(txStorage, txFolderName) !== 0);
+  check('IStorage Revert restores committed stream bytes and CLSID',
+    (() => {
+      const restored = e.test_ole_find_stream(txStorage, writeWide('committedstream')) >>> 0;
+      const restoredFolder = e.test_ole_find_storage(txStorage, writeWide('committedfolder')) >>> 0;
+      const restoredNested = restoredFolder
+        ? e.test_ole_find_stream(restoredFolder, writeWide('nestedvalue')) >>> 0 : 0;
+      const restoredClsid = alloc(16);
+      e.test_ole_get_class(txStorage, restoredClsid);
+      e.test_ole_stream_seek(restored, 0);
+      const restoredBytes = alloc(3);
+      const ok = restored !== 0 && restored !== txStream && restoredNested !== 0 &&
+        e.test_ole_stream_read(restored, restoredBytes, 3, count) === 0 &&
+        Array.from(u8.slice(wa(restoredBytes), wa(restoredBytes) + 3)).join(',') === '3,1,4' &&
+        Array.from(u8.slice(wa(restoredClsid), wa(restoredClsid) + 16))
+          .every((v, i) => v === 0x30 + i);
+      if (restoredNested) e.test_ole_release(restoredNested);
+      if (restoredFolder) e.test_ole_release(restoredFolder);
+      if (restored) e.test_ole_release(restored);
+      return ok;
+    })());
+  check('pre-revert retained interfaces detach and remain independently usable',
+    e.test_ole_storage_parent(txFolder) === 0 &&
+    e.test_ole_stream_set_size(txStream, 1) === 0 && e.test_ole_stream_size(txStream) === 1 &&
+    e.test_ole_stream_set_size(postCommit, 2) === 0);
+
+  const latestName = writeWide('LatestCheckpoint');
+  const latestStream = e.test_ole_create_stream(txStorage, latestName) >>> 0;
+  check('a later Commit replaces the previous transaction checkpoint',
+    latestStream !== 0 && e.test_ole_storage_commit(txStorage) === 0 &&
+    e.test_ole_destroy_element(txStorage, latestName) === 0 &&
+    e.test_ole_storage_revert(txStorage) === 0 &&
+    e.test_ole_find_stream(txStorage, writeWide('latestcheckpoint')) !== 0);
+  e.test_ole_release(latestStream);
+  e.test_ole_release(postCommit);
+  e.test_ole_release(txNested);
+  e.test_ole_release(txFolder);
+  e.test_ole_release(txStream);
+  e.test_ole_release(txStorage);
   e.test_ole_release(grandchildStorage);
 
   check('COM reference counts include storage and clone ownership',

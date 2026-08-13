@@ -713,7 +713,7 @@
   ;; IStorage (64 bytes):
   ;;   +0 vtable, +4 refcount, +8 kind=2, +12 lockbytes, +16 first stream,
   ;;   +20 CLSID (16 bytes), +36 first child storage, +40 name, +44 parent,
-  ;;   +48 next sibling storage
+  ;;   +48 next sibling storage, +52 committed snapshot storage
   ;; IStream (52 bytes):
   ;;   +0 vtable, +4 refcount, +8 kind=3, +12 data, +16 size, +20 capacity,
   ;;   +24 position, +28 name, +32 owns-data, +36 owner storage, +40 next stream,
@@ -1071,6 +1071,90 @@
       (br $storages)))
     (i32.const 0))
 
+  (func $ole_storage_release_contents (param $storage i32)
+    (local $element i32) (local $next i32)
+    (local.set $element (call $gl32 (i32.add (local.get $storage) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $storage) (i32.const 16)) (i32.const 0))
+    (block $streams_done (loop $streams
+      (br_if $streams_done (i32.eqz (local.get $element)))
+      (local.set $next (call $gl32 (i32.add (local.get $element) (i32.const 40))))
+      (call $gs32 (i32.add (local.get $element) (i32.const 36)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $element) (i32.const 40)) (i32.const 0))
+      (drop (call $ole_obj_release (local.get $element)))
+      (local.set $element (local.get $next))
+      (br $streams)))
+    (local.set $element (call $gl32 (i32.add (local.get $storage) (i32.const 36))))
+    (call $gs32 (i32.add (local.get $storage) (i32.const 36)) (i32.const 0))
+    (block $storages_done (loop $storages
+      (br_if $storages_done (i32.eqz (local.get $element)))
+      (local.set $next (call $gl32 (i32.add (local.get $element) (i32.const 48))))
+      (call $gs32 (i32.add (local.get $element) (i32.const 44)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $element) (i32.const 48)) (i32.const 0))
+      (drop (call $ole_obj_release (local.get $element)))
+      (local.set $element (local.get $next))
+      (br $storages))))
+
+  (func $ole_storage_adopt_contents (param $storage i32) (param $staged i32)
+    (local $element i32)
+    (call $ole_storage_release_contents (local.get $storage))
+    (memory.copy
+      (call $g2w (i32.add (local.get $storage) (i32.const 20)))
+      (call $g2w (i32.add (local.get $staged) (i32.const 20)))
+      (i32.const 16))
+    (call $gs32 (i32.add (local.get $storage) (i32.const 16))
+      (call $gl32 (i32.add (local.get $staged) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $storage) (i32.const 36))
+      (call $gl32 (i32.add (local.get $staged) (i32.const 36))))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 16)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 36)) (i32.const 0))
+    (local.set $element (call $gl32 (i32.add (local.get $storage) (i32.const 16))))
+    (block $streams_done (loop $streams
+      (br_if $streams_done (i32.eqz (local.get $element)))
+      (call $gs32 (i32.add (local.get $element) (i32.const 36)) (local.get $storage))
+      (local.set $element (call $gl32 (i32.add (local.get $element) (i32.const 40))))
+      (br $streams)))
+    (local.set $element (call $gl32 (i32.add (local.get $storage) (i32.const 36))))
+    (block $storages_done (loop $storages
+      (br_if $storages_done (i32.eqz (local.get $element)))
+      (call $gs32 (i32.add (local.get $element) (i32.const 44)) (local.get $storage))
+      (local.set $element (call $gl32 (i32.add (local.get $element) (i32.const 48))))
+      (br $storages))))
+
+  (func $ole_storage_commit (param $storage i32) (result i32)
+    (local $snapshot i32) (local $old i32) (local $hr i32)
+    (if (i32.eqz (local.get $storage)) (then (return (i32.const 0x80004003))))
+    (local.set $snapshot (call $ole_create_storage (i32.const 0)))
+    (if (i32.eqz (local.get $snapshot)) (then (return (i32.const 0x8007000E))))
+    (memory.copy
+      (call $g2w (i32.add (local.get $snapshot) (i32.const 20)))
+      (call $g2w (i32.add (local.get $storage) (i32.const 20)))
+      (i32.const 16))
+    (local.set $hr (call $ole_storage_copy_contents (local.get $storage) (local.get $snapshot)))
+    (if (local.get $hr)
+      (then (drop (call $ole_obj_release (local.get $snapshot))) (return (local.get $hr))))
+    (local.set $old (call $gl32 (i32.add (local.get $storage) (i32.const 52))))
+    (call $gs32 (i32.add (local.get $storage) (i32.const 52)) (local.get $snapshot))
+    (if (local.get $old) (then (drop (call $ole_obj_release (local.get $old)))))
+    (i32.const 0))
+
+  (func $ole_storage_revert (param $storage i32) (result i32)
+    (local $snapshot i32) (local $staged i32) (local $hr i32)
+    (if (i32.eqz (local.get $storage)) (then (return (i32.const 0x80004003))))
+    (local.set $snapshot (call $gl32 (i32.add (local.get $storage) (i32.const 52))))
+    (if (i32.eqz (local.get $snapshot)) (then (return (i32.const 0x80030102))))
+    (local.set $staged (call $ole_create_storage (i32.const 0)))
+    (if (i32.eqz (local.get $staged)) (then (return (i32.const 0x8007000E))))
+    (memory.copy
+      (call $g2w (i32.add (local.get $staged) (i32.const 20)))
+      (call $g2w (i32.add (local.get $snapshot) (i32.const 20)))
+      (i32.const 16))
+    (local.set $hr (call $ole_storage_copy_contents (local.get $snapshot) (local.get $staged)))
+    (if (local.get $hr)
+      (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+    (call $ole_storage_adopt_contents (local.get $storage) (local.get $staged))
+    (drop (call $ole_obj_release (local.get $staged)))
+    (i32.const 0))
+
   (func $ole_storage_move_element (param $source i32) (param $name i32) (param $dest i32) (param $new_name i32) (param $flags i32) (result i32)
     (local $element i32) (local $is_storage i32) (local $copy i32) (local $copy_name i32) (local $hr i32)
     (if (i32.or
@@ -1360,7 +1444,9 @@
         (if (local.get $data)
           (then
             (call $gs32 (i32.add (local.get $data) (i32.const 28)) (i32.const 0))
-            (drop (call $ole_obj_release (local.get $data)))))))
+            (drop (call $ole_obj_release (local.get $data)))))
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 52))))
+        (if (local.get $data) (then (drop (call $ole_obj_release (local.get $data)))))))
     (if (i32.eq (local.get $kind) (i32.const 3))
       (then
         (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 44))))
@@ -1726,9 +1812,11 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
   (func $handle_IStorage_Commit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $eax (call $ole_storage_commit (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IStorage_Revert (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80030102)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $eax (call $ole_storage_revert (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IStorage_EnumElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
     (if (i32.eqz (local.get $arg4))

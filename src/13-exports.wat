@@ -918,6 +918,10 @@
     (call $ole_stat_enum_reset (local.get $obj)))
   (func (export "test_ole_clone_stat_enum") (param $obj i32) (result i32)
     (call $ole_clone_stat_enum (local.get $obj)))
+  (func (export "test_ole_storage_commit") (param $storage i32) (result i32)
+    (call $ole_storage_commit (local.get $storage)))
+  (func (export "test_ole_storage_revert") (param $storage i32) (result i32)
+    (call $ole_storage_revert (local.get $storage)))
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (if (i32.or

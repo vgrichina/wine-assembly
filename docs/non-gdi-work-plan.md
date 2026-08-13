@@ -128,9 +128,9 @@ an earlier ownership/persistence contract is still ambiguous.
 1. **Thread trace:** generic event log plus bounded WordPad startup test.
 2. **Stream core:** complete on 2026-08-12. `IStream::Clone`, independent
    cursors, shared backing lifetime, and edge-case coverage pass 23/23.
-3. **Storage tree:** in progress. Nested create/open and lifetime pass; next are
-   commit/revert tests and remaining `STATSTG` breadth. Enumeration and tree
-   mutations pass.
+3. **Storage tree:** core complete on 2026-08-12. Nested trees, mutations,
+   enumeration, and transactional checkpoints pass 53/53; remaining metadata
+   breadth stays tracked below.
 4. **CFB persistence:** deterministic writer, defensive reader, and
    fresh-process tree comparison.
 5. **Multi-format transfer:** format collection, full enumerator, Unicode text,
@@ -240,7 +240,7 @@ unchecked line above remains open for full CopyTo/locking/transaction breadth.
 - [x] Implement `EnumElements` with a real `IEnumSTATSTG`, including `Next` counts,
   `Skip`, `Reset`, `Clone`, and stable enumeration while referenced.
 - Return correct `STATSTG` names, types, sizes, CLSIDs, and supported metadata.
-- Implement in-memory commit/revert snapshots rather than leaving successful
+- [x] Implement in-memory commit/revert snapshots rather than leaving successful
   no-ops that claim transactional behavior.
 
 2026-08-12 nested-storage result: storage nodes now keep separate first-child
@@ -259,6 +259,11 @@ counts and caller-owned names; records preserve names, types, stream sizes, and
 storage CLSIDs even after the live tree is renamed, deleted, and released.
 `Skip`, `Reset`, and cloned independent cursors are covered through a generated
 seven-method COM vtable.
+Deep transaction checkpoints raise the suite to 53/53. `Commit` stages an
+independent tree before atomically replacing the prior checkpoint; `Revert`
+stages restoration before swapping live contents. Names, bytes, nested nodes,
+and CLSIDs restore, post-commit additions disappear, old retained interfaces
+detach safely, and later commits replace earlier checkpoints.
 
 ### P2.3 Compound File Binary persistence
 

@@ -24,7 +24,8 @@ retained-child lifetime. Rename/delete now preserve retained interfaces and
 enforce the shared stream/storage namespace. Deep `CopyTo` and
 identity-preserving `MoveElementTo` are now covered too. `EnumElements` returns a real snapshot
 `IEnumSTATSTG` with stable names/types/sizes/CLSIDs and complete cursor methods;
-transactional commit/revert remains open.
+deep transactional `Commit`/`Revert` checkpoints now restore mixed trees while
+detaching retained pre-revert interfaces safely.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports
