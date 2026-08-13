@@ -729,6 +729,13 @@ exports for the same inline object and WordPad's native Ctrl+Z undo path. It
 verifies that Undo restores both the RichEdit object position and visible
 presentation pixels after an object Cut (10/10 checks).
 
+Static-object deletion and survivor persistence are covered as well.
+`test/test-wordpad-ole-delete-roundtrip.js` creates two inline DIB objects,
+deletes only the selected first object through WordPad's Edit Clear command,
+saves exactly one remaining `\pict` group, and opens that file in a fresh
+WordPad process. The remaining native `U+FFFC` position and its red/blue
+presentation survive independently (8/8 checks).
+
 ### 2026-08-12 advanced RTF slice
 
 `test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through
@@ -1131,6 +1138,8 @@ Acceptance:
 [x] Static CF_DIB object Copy/Cut/Paste preserves object count and presentation
 [x] Multiple static CF_DIB objects save and reopen with independent complete
     presentations after clipboard replacement
+[x] Deleting one of multiple static CF_DIB objects preserves the survivor
+    through RTF save and fresh-process reopen
 [ ] Linked/activated and arbitrary non-DIB OLE objects preserve full fidelity
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad
