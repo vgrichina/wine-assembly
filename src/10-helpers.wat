@@ -2832,12 +2832,40 @@
           (local.get $hwnd) (i32.const 0x0447) (i32.const 0)
           (global.get $clipboard_richedit_pf_ptr))))))
 
+  ;; RichEdit's ANSI text surface flattens an inline object to one space. Its
+  ;; UTF-16 selection surface retains the standard U+FFFC object replacement
+  ;; character, allowing a real selected space to stay ordinary text.
+  (func $wordpad_richedit_selection_is_object (param $hwnd i32) (result i32)
+    (local $gt_g i32) (local $text_g i32) (local $n i32) (local $is_object i32)
+    (local.set $gt_g (call $heap_alloc (i32.const 20)))
+    (local.set $text_g (call $heap_alloc (i32.const 8)))
+    (if (i32.or (i32.eqz (local.get $gt_g)) (i32.eqz (local.get $text_g)))
+      (then
+        (if (local.get $gt_g) (then (call $heap_free (local.get $gt_g))))
+        (if (local.get $text_g) (then (call $heap_free (local.get $text_g))))
+        (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $gt_g)) (i32.const 20))
+    (call $zero_memory (call $g2w (local.get $text_g)) (i32.const 8))
+    (call $gs32 (local.get $gt_g) (i32.const 8)) ;; GETTEXTEX.cb, bytes
+    (call $gs32 (i32.add (local.get $gt_g) (i32.const 4)) (i32.const 2)) ;; GT_SELECTION
+    (call $gs32 (i32.add (local.get $gt_g) (i32.const 8)) (i32.const 1200)) ;; UTF-16LE
+    (local.set $n
+      (call $wnd_send_message
+        (local.get $hwnd) (i32.const 0x045E) (local.get $gt_g) (local.get $text_g))) ;; EM_GETTEXTEX
+    (local.set $is_object
+      (i32.and
+        (i32.eq (local.get $n) (i32.const 1))
+        (i32.eq (call $gl16 (local.get $text_g)) (i32.const 0xFFFC))))
+    (call $heap_free (local.get $gt_g))
+    (call $heap_free (local.get $text_g))
+    (local.get $is_object))
+
   (func $native_text_copy_selection_to_clipboard (param $hwnd i32) (result i32)
     (local $text_len i32) (local $cap i32) (local $text_g i32)
     (local $scratch_g i32) (local $lo i32) (local $hi i32) (local $tmp i32)
     (local $a i32) (local $b i32) (local $len i32) (local $need i32)
     (local $new_cap i32)
-    (local $saved_dib i32)
+    (local $saved_dib i32) (local $selected_object i32)
     ;; Let native RichEdit exercise its normal copy path first, then keep the
     ;; durable emulator-owned text/RTF snapshots below. RichEdit's IDataObject
     ;; is DLL-private and tied to the source control, so it must not remain the
@@ -2896,12 +2924,13 @@
     (if (i32.lt_u (local.get $b) (local.get $a))
       (then (local.set $b (local.get $a))))
     (local.set $len (i32.sub (local.get $b) (local.get $a)))
-    (if (i32.eqz
-          (i32.and
-            (i32.ne (local.get $saved_dib) (i32.const 0))
-            (i32.and
-              (i32.eq (local.get $len) (i32.const 1))
-              (i32.eq (call $gl8 (i32.add (local.get $text_g) (local.get $a))) (i32.const 32)))))
+    (if (i32.and
+          (i32.ne (local.get $saved_dib) (i32.const 0))
+          (i32.eq (local.get $len) (i32.const 1)))
+      (then
+        (local.set $selected_object
+          (call $wordpad_richedit_selection_is_object (local.get $hwnd)))))
+    (if (i32.eqz (local.get $saved_dib))
       (then
         (drop (call $wnd_send_message
           (local.get $hwnd) (i32.const 0x0301) (i32.const 0) (i32.const 0))) ;; WM_COPY
@@ -2933,10 +2962,15 @@
             (call $clipboard_build_basic_rtf_from_text_clipboard)))))
     (if (i32.and
           (i32.ne (local.get $saved_dib) (i32.const 0))
-          (i32.and
-            (i32.eq (local.get $len) (i32.const 1))
-            (i32.eq (call $gl8 (i32.add (local.get $text_g) (local.get $a))) (i32.const 32))))
+          (local.get $selected_object))
       (then
+        ;; Do not advertise the ANSI/RTF one-space projection beside CF_DIB.
+        ;; RichEdit prefers RTF and would paste that placeholder as text.
+        (global.set $clipboard_len (i32.const 0))
+        (if (global.get $clipboard_ptr)
+          (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
+        (call $clipboard_clear_rtf_data)
+        (call $richedit_clipboard_clear_format)
         (call $ole_clipboard_release_owner)
         (global.set $clipboard_binary_format (i32.const 8))
         (global.set $clipboard_binary_ptr (local.get $saved_dib))

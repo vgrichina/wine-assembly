@@ -2629,7 +2629,7 @@ async function main() {
           logs.push(`[input] dump-focus-state${tag}: NO FOCUS at batch ${batch}`);
         } else if (we.send_message && we.guest_alloc) {
           const reportedLen = Math.max(0, we.send_message(h, 0x000E, 0, 0) | 0); // WM_GETTEXTLENGTH
-          const cap = Math.min(reportedLen + 1, 1024 * 1024);
+          const cap = Math.min(reportedLen + 1, 64 * 1024);
           const textG = we.guest_alloc(cap);
           const n = we.send_message(h, 0x000D, cap, textG) | 0; // WM_GETTEXT
           const wa = g2w(textG);

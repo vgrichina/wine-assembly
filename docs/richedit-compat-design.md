@@ -710,8 +710,14 @@ storage, but the emulator clears that pointer after capturing durable
 CF_TEXT/RTF/DIB values. This prevents a later Clear/Cut from leaving the
 clipboard pointed at an object whose source control has destroyed it.
 `test/test-wordpad-ole-clipboard.js` covers Copy/Paste duplication, Cut/Paste
-restoration, object-position counts, and visible red/blue presentation pixels
-(11/11 checks).
+restoration, two native `U+FFFC` object positions, and two visible red/blue
+presentations (13/13 checks). Object Copy advertises only `CF_DIB`, because
+including RichEdit's ANSI/RTF one-space projection makes this Win98 build
+prefer placeholder text over the picture during Paste. The selection test uses
+`EM_GETTEXTEX`/`GT_SELECTION`: `U+FFFC` selects the DIB path, while a genuine
+space remains text. `test/test-wordpad-ole-space-copy.js` verifies that ordinary
+one-space Copy clears the stale DIB format and pastes beside the original
+object without converting to a picture (5/5 checks).
 
 `test/test-wordpad-ole-keyboard-undo.js` covers the renderer's Ctrl+C/X/V
 exports for the same inline object and WordPad's native Ctrl+Z undo path. It

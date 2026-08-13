@@ -37,12 +37,14 @@ seq.push('165:dump-clipboard:after-object-copy');
 seq.push('175:set-focus-selection:8:8:append-copy');
 seq.push(`185:menu-edit-command:${ID_EDIT_PASTE}:paste-copy`);
 seq.push('225:dump-focus-state:two-objects');
+seq.push('230:dump-focus-unicode:two-objects-unicode');
 seq.push('235:set-focus-selection:8:9:select-object-cut');
 seq.push(`245:menu-edit-command:${ID_EDIT_CUT}:cut-object`);
 seq.push('275:dump-focus-state:after-cut');
 seq.push('285:set-focus-selection:8:8:append-cut');
 seq.push(`295:menu-edit-command:${ID_EDIT_PASTE}:paste-cut`);
 seq.push('340:dump-focus-state:after-cut-paste');
+seq.push('345:dump-focus-unicode:after-cut-paste-unicode');
 seq.push(`350:png-pixels:${PNG_PATH}`);
 seq.push('370:stop');
 
@@ -90,10 +92,12 @@ console.log(`  bitmap pixels: red=${redPixels} blue=${bluePixels}`);
 const checks = [
   ['initial bitmap inserted one object position', /dump-focus-state one-object: .*len=8 .*text="before  "/.test(output)],
   ['Edit Copy handled the selected object', new RegExp(`menu-edit-command copy-object: id=${ID_EDIT_COPY} ret=1`).test(output)],
-  ['object Copy retained an eager CF_DIB snapshot', /dump-clipboard after-object-copy: .*availDib=1 .*dibHandle=0x[1-9a-f][0-9a-f]*/.test(output)],
+  ['object Copy publishes only the eager CF_DIB value', /dump-clipboard after-object-copy: count=1 .*textLen=0 .*availText=0 .*availRtf=0 .*availDib=1 .*dibHandle=0x[1-9a-f][0-9a-f]*/.test(output)],
   ['Edit Paste duplicated the object position', /dump-focus-state two-objects: .*len=9 .*text="before   "/.test(output)],
+  ['duplicated position remains a native RichEdit object', /dump-focus-unicode two-objects-unicode: .*U\+FFFC,U\+FFFC/.test(output)],
   ['Edit Cut removed the selected object', new RegExp(`menu-edit-command cut-object: id=${ID_EDIT_CUT} ret=1`).test(output) && /dump-focus-state after-cut: .*len=8 .*text="before  "/.test(output)],
   ['Edit Paste restored the cut object position', new RegExp(`menu-edit-command paste-cut: id=${ID_EDIT_PASTE} ret=1`).test(output) && /dump-focus-state after-cut-paste: .*len=9 .*text="before   "/.test(output)],
+  ['restored position remains a native RichEdit object', /dump-focus-unicode after-cut-paste-unicode: .*U\+FFFC,U\+FFFC/.test(output)],
   ['final document renders red bitmap cells', redPixels > 200],
   ['final document renders blue bitmap cells', bluePixels > 200],
   ['screenshot written', fs.existsSync(PNG_PATH) && fs.statSync(PNG_PATH).size > 0],

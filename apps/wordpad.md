@@ -39,13 +39,16 @@ Focused inline-image clipboard probe:
 ```text
 paste a 32x24 checker DIB, select its one-character RichEdit object slot,
 then use WordPad Edit Copy/Paste followed by Edit Cut/Paste
-copy:       duplicates the inline object and retains an eager CF_DIB value
+copy:       publishes only the eager CF_DIB value, avoiding RichEdit's
+            one-space ANSI/RTF projection, and duplicates a real object
 cut:        WM_CLEAR removes only the selected object without corrupting the
             source RichEdit control
 ownership:  DLL-private RichEdit IDataObjects are borrowed only while native
             WM_COPY runs; the durable clipboard owns text/RTF/DIB snapshots
-pixels:     final screenshot contains the expected red and blue checker cells
-result:     PASS (11/11) for static-image Copy/Cut/Paste and visible rendering
+identity:   UTF-16 RichEdit text reports U+FFFC for both object positions;
+            a genuine selected space clears CF_DIB and pastes as text
+pixels:     final screenshot contains two sets of red/blue checker cells
+result:     PASS (13/13 object clipboard, 5/5 space discrimination)
 ```
 
 The browser-style keyboard path has matching coverage. Ctrl+C/Ctrl+V
