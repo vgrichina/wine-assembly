@@ -2175,6 +2175,85 @@ a bundle, not the isolated cost of the Wasm `call_indirect` opcode. A
 production test still needs a generated hot-handler subset plus synchronized
 fallback to the existing interpreter.
 
+### Production-Shaped Hot-Subset Check
+
+The next experiment adds that missing fallback. At each decoded-block entry it
+preflights the complete thread packet before changing guest state:
+
+```text
+decoded block
+    |
+    +-- every handler is in generated subset --> one-function br_table loop
+    |
+    `-- any handler is unsupported -----------> reset IP; existing $next chain
+```
+
+This all-or-nothing block guard is important. Falling out after executing part
+of a block would require synchronizing every architectural local, lazy flags,
+and the thread IP. Preflight makes fallback exact with only an IP reset. The
+main-loop experiment is disabled by default and enabled with
+`X86_HOT_SUBSET=1` or `set_x86_hot_subset_enabled(1)`. Enabling it clears the
+decode cache and disables the existing exact-form handler IDs so packet formats
+cannot mix.
+
+The generated subset currently contains the same 16 generic handler families
+as the AoE fixture. A second benchmark-only variant additionally requires the
+exact operand forms before using direct-register bodies. Unsupported handlers
+and unsupported direct-register operands both use the normal interpreter.
+
+Nine rotated, interleaved trials used two million measured blocks after a two
+million-block warmup. Every trial compares final registers, lazy flags, memory,
+and EIP against the ordinary x86 threaded path.
+
+```text
+variant                                  median ms   paired vs x86
+x86 call_indirect                           147.39        1.000x
+br_table generic, no production guard        63.33        2.254x
+br_table generic + block preflight          123.61        1.166x
+br_table direct, no production guard         40.69        3.585x
+br_table direct + exact-form preflight      129.28        1.103x
+```
+
+The realistic guard retains a repeatable fixed-trace signal, but rescanning a
+packet on every block entry consumes most of the upper-bound gain. Exact-form
+checks consume more still, so the generic-handler subset is the production-hook
+variant. Differential coverage runs the complete AoE block corpus through that
+hook, and a dedicated unsupported block verifies exact fallback register, EIP,
+ESP, and memory state.
+
+Full-browser results are not yet repeatable enough to enable this path:
+
+```text
+                              AoE pair 1       AoE pair 2       RCT cold pair
+runSlice average                 -18.1%            +2.6%             -0.24%
+completed slices                 +14.5%            -1.4%               0.0%
+present FPS                      +16.7%            -1.2%               n/a
+subset coverage                   26.1%            26.0%               0.0%
+```
+
+AoE pair 1 was strongly positive, but the matched repeat was slightly negative.
+RCT sent all 500,000 measured blocks through fallback and remained neutral
+(2249.5 versus 2244.2 ms per fixed 100,000-block slice), which at least shows no
+measurable cold-path regression in that run. These results support further
+engineering, not a production default.
+
+The next version should classify each decoded block once and store a hot/cold
+bit beside its cache entry. That removes repeated preflight from both hot and
+cold blocks. After that, expand the generic subset from corpus histograms and
+require at least three matched AoE and RCT pairs before evaluating the feature
+for default enablement.
+
+Artifacts:
+
+```text
+/private/tmp/aoe-hot-subset-baseline.json
+/private/tmp/aoe-hot-subset-candidate.json
+/private/tmp/aoe-hot-subset-baseline-2.json
+/private/tmp/aoe-hot-subset-candidate-2.json
+/private/tmp/rct-hot-subset-baseline-current.json
+/private/tmp/rct-hot-subset-candidate.json
+```
+
 ### Existing `call_indirect` Specialization Check
 
 A second experiment retains the current global thread IP, one

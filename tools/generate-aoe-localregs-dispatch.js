@@ -10,6 +10,17 @@ const fs = require('fs');
 const path = require('path');
 const OUT = path.join(__dirname, '..', 'src', '05a-aoe-localregs-bench.generated.wat');
 const HANDLERS = [7, 11, 12, 18, 20, 21, 28, 43, 48, 53, 64, 65, 128, 312, 319, 355];
+const RAW_WORDS = new Map([
+  [7, 1], [20, 1], [21, 1], [28, 1], [43, 1], [48, 1], [128, 1],
+  [312, 2], [319, 2], [355, 1],
+]);
+const TERMINAL_HANDLERS = new Set([43, 312, 319, 355]);
+const EXACT_OPERANDS = new Map([
+  [7, [0]], [11, [0x10, 0x27]], [12, [0x21, 0x71]], [18, [0]],
+  [20, [3, 7]], [21, [6, 7]], [28, [6]], [43, null], [48, [87]],
+  [53, [263425]], [64, [6]], [65, [2]], [128, [1827]],
+  [312, [0]], [319, [0]], [355, null],
+]);
 
 const callIndirectBenchHandlers = `
   ;; Focused call_indirect microbenchmarks. The JS harness promotes only the
@@ -330,11 +341,19 @@ function body(id, local, genericAlu) {
   }
 }
 
-function emitFunction(name, { local = false, generic = false, globalIp = false, genericAlu = false } = {}) {
+function emitFunction(name, {
+  local = false,
+  generic = false,
+  globalIp = false,
+  genericAlu = false,
+  blockFallback = false,
+  exactOperands = false,
+} = {}) {
   const out = [];
   const p = (s = '') => out.push(s);
   p(`  (func $${name} (export "${name}") (param $max_blocks i32)`);
   p('    (local $blocks i32) (local $thread i32) (local $ip_v i32)');
+  if (blockFallback) p('    (local $scan i32) (local $scan_fn i32) (local $scan_op i32) (local $scan_supported i32)');
   p('    (local $fn i32) (local $op i32) (local $addr i32) (local $a i32) (local $b i32) (local $r i32)');
   if (local) {
     p('    (local $eax_v i32) (local $ecx_v i32) (local $edx_v i32) (local $ebx_v i32)');
@@ -354,6 +373,47 @@ function emitFunction(name, { local = false, generic = false, globalIp = false, 
   p(`      (local.set $thread (call $cache_lookup ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))`);
   p('      (if (i32.eqz (local.get $thread))');
   p(`        (then (local.set $thread (call $decode_block ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))))`);
+  if (blockFallback) {
+    p('      ;; Production-shaped fallback: validate the complete decoded block');
+    p('      ;; before changing guest state. Unsupported blocks restart through $next.');
+    p('      (local.set $scan (local.get $thread))');
+    p('      (block $hot_ready');
+    p('        (block $use_fallback');
+    p('          (loop $scan_loop');
+    p('            (local.set $scan_fn (i32.load (local.get $scan)))');
+    p('            (local.set $scan_op (i32.load offset=4 (local.get $scan)))');
+    p('            (local.set $scan (i32.add (local.get $scan) (i32.const 8)))');
+    p('            (local.set $scan_supported (i32.const 0))');
+    for (const id of HANDLERS) {
+      const operands = exactOperands ? EXACT_OPERANDS.get(id) : null;
+      const operandCheck = operands && operands.length
+        ? operands.map(op => `(i32.eq (local.get $scan_op) (i32.const ${op}))`)
+          .reduce((a, b) => `(i32.or ${a} ${b})`)
+        : null;
+      const condition = operandCheck
+        ? `(i32.and (i32.eq (local.get $scan_fn) (i32.const ${id})) ${operandCheck})`
+        : `(i32.eq (local.get $scan_fn) (i32.const ${id}))`;
+      p(`            (if ${condition}`);
+      p('              (then');
+      p('                (local.set $scan_supported (i32.const 1))');
+      const rawBytes = (RAW_WORDS.get(id) || 0) * 4;
+      if (rawBytes) p(`                (local.set $scan (i32.add (local.get $scan) (i32.const ${rawBytes})))`);
+      if (TERMINAL_HANDLERS.has(id)) p('                (br $hot_ready)');
+      p('              ))');
+    }
+    p('            (br_if $use_fallback (i32.eqz (local.get $scan_supported)))');
+    p('            (br $scan_loop)))');
+    p('        ;; No hot instruction ran, so only the thread IP needs restoring.');
+    p('        (global.set $x86_hot_subset_fallback_blocks');
+    p('          (i32.add (global.get $x86_hot_subset_fallback_blocks) (i32.const 1)))');
+    p('        (global.set $ip (local.get $thread))');
+    p('        (global.set $steps (i32.const 1000))');
+    p('        (call $next)');
+    p('        (br $main)');
+    p('      ) ;; hot_ready');
+    p('      (global.set $x86_hot_subset_hot_blocks');
+    p('        (i32.add (global.get $x86_hot_subset_hot_blocks) (i32.const 1)))');
+  }
   if (globalIp) p('      (global.set $ip (local.get $thread))');
   else p('      (local.set $ip_v (local.get $thread))');
   p('      (block $block_done (loop $dispatch');
@@ -390,6 +450,8 @@ const text = [
   emitFunction('run_aoe_brtable_generic_global_ip', { generic: true, globalIp: true }),
   emitFunction('run_aoe_brtable_generic_local_ip', { generic: true }),
   emitFunction('run_aoe_brtable_direct_generic_alu', { genericAlu: true }),
+  emitFunction('run_aoe_brtable_subset_generic', { generic: true, blockFallback: true }),
+  emitFunction('run_aoe_brtable_subset_direct', { genericAlu: true, blockFallback: true, exactOperands: true }),
   emitFunction('run_aoe_brtable_globals'),
   emitFunction('run_aoe_brtable_locals', { local: true }),
   '',

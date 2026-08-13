@@ -36,6 +36,7 @@ const STACK_PACKET = process.env.STACK_PACKET === '1';
 const STACK_PACKET_ADDR = parseU32(process.env.STACK_PACKET_ADDR || '0x0049d9d1', 0x0049d9d1);
 const STACK_PACKET_COUNT = process.env.STACK_PACKET_COUNT !== '0';
 const AOE_RECOMPILE = process.env.AOE_RECOMPILE === '1';
+const X86_HOT_SUBSET = process.env.X86_HOT_SUBSET === '1';
 const HOTFORM_SPECIALIZE = process.env.HOTFORM_SPECIALIZE === undefined
   ? null
   : process.env.HOTFORM_SPECIALIZE === '1';
@@ -1415,6 +1416,10 @@ async function main() {
       if (exForHist.reset_aoe_recompile_counters) exForHist.reset_aoe_recompile_counters();
       exForHist.set_aoe_recompile_enabled(1);
     }
+    if (exForHist && exForHist.set_x86_hot_subset_enabled) {
+      exForHist.set_x86_hot_subset_enabled(${X86_HOT_SUBSET ? '1' : '0'});
+      if (exForHist.reset_x86_hot_subset_counters) exForHist.reset_x86_hot_subset_counters();
+    }
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
     const buildSnapshot = () => {
@@ -1466,6 +1471,15 @@ async function main() {
           enabled: e.get_hotform_specialization_enabled() >>> 0,
           decodedEmits: e.get_hotform_specialized_emits
             ? (e.get_hotform_specialized_emits() >>> 0)
+            : 0,
+        } : null,
+        x86HotSubset: e && e.get_x86_hot_subset_enabled ? {
+          enabled: e.get_x86_hot_subset_enabled() >>> 0,
+          hotBlocks: e.get_x86_hot_subset_hot_blocks
+            ? (e.get_x86_hot_subset_hot_blocks() >>> 0)
+            : 0,
+          fallbackBlocks: e.get_x86_hot_subset_fallback_blocks
+            ? (e.get_x86_hot_subset_fallback_blocks() >>> 0)
             : 0,
         } : null,
         stackPacket: e && e.get_stack_packet_enabled ? {

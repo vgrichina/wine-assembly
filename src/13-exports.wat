@@ -110,6 +110,12 @@
         (then (call $hot_block_hist_record (global.get $eip))))
       (if (call $fast_msvc_sbh_scan)
         (then (br $main)))
+      ;; Experimental block-level dispatcher. The generated runner handles
+      ;; exactly one block, including synchronized fallback through $next.
+      (if (global.get $x86_hot_subset_enabled)
+        (then
+          (call $run_aoe_brtable_subset_generic (i32.const 1))
+          (br $main)))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -604,6 +610,25 @@
     (global.get $hotform_specialization_enabled))
   (func (export "get_hotform_specialized_emits") (result i32)
     (global.get $hotform_specialized_emits))
+  (func (export "set_x86_hot_subset_enabled") (param $flag i32)
+    (global.set $x86_hot_subset_enabled (local.get $flag))
+    (global.set $x86_hot_subset_hot_blocks (i32.const 0))
+    (global.set $x86_hot_subset_fallback_blocks (i32.const 0))
+    ;; The generated subset currently dispatches original handler IDs. Avoid
+    ;; mixing it with decoder-selected exact-form IDs until those are mapped.
+    (if (local.get $flag)
+      (then
+        (global.set $hotform_specialization_enabled (i32.const 0))
+        (call $clear_cache))))
+  (func (export "get_x86_hot_subset_enabled") (result i32)
+    (global.get $x86_hot_subset_enabled))
+  (func (export "reset_x86_hot_subset_counters")
+    (global.set $x86_hot_subset_hot_blocks (i32.const 0))
+    (global.set $x86_hot_subset_fallback_blocks (i32.const 0)))
+  (func (export "get_x86_hot_subset_hot_blocks") (result i32)
+    (global.get $x86_hot_subset_hot_blocks))
+  (func (export "get_x86_hot_subset_fallback_blocks") (result i32)
+    (global.get $x86_hot_subset_fallback_blocks))
   (func (export "set_aoe_recompile_count_enabled") (param $flag i32)
     (global.set $aoe_recompile_count_enabled (local.get $flag)))
   (func (export "get_aoe_recompile_count_enabled") (result i32)

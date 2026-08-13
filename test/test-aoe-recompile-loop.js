@@ -114,6 +114,7 @@ async function makeHarness(mode) {
   e.set_wat_stack_packet_enabled(mode === 'stack-packet' ? 1 : 0);
   e.set_wat_slot_packet_allocation_mode(mode === 'slot-reuse' ? 1 : 0);
   e.set_wat_slot_packet_enabled(mode === 'slot-copy' || mode === 'slot-reuse' ? 1 : 0);
+  e.set_x86_hot_subset_enabled(mode === 'hot-subset' ? 1 : 0);
   return { e, mem, wa };
 }
 
@@ -226,6 +227,7 @@ function runCase(backends, name, start, customize = () => {}) {
   const backends = [];
   for (const [name, mode] of [
     ['x86', 'generic'],
+    ['x86 hot subset', 'hot-subset'],
     ['narrow packet', 'packet'],
     ['stack packet', 'stack-packet'],
     ['slot explicit copy', 'slot-copy'],

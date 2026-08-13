@@ -124,6 +124,8 @@ function percentile(values, fraction) {
     if (variant === 'brtable-generic-global-ip') return e.run_aoe_brtable_generic_global_ip;
     if (variant === 'brtable-generic-local-ip') return e.run_aoe_brtable_generic_local_ip;
     if (variant === 'brtable-direct-generic-alu') return e.run_aoe_brtable_direct_generic_alu;
+    if (variant === 'brtable-subset-generic') return e.run_aoe_brtable_subset_generic;
+    if (variant === 'brtable-subset-direct') return e.run_aoe_brtable_subset_direct;
     if (variant === 'brtable-globals') return e.run_aoe_brtable_globals;
     if (variant === 'brtable-locals') return e.run_aoe_brtable_locals;
     return e.run;
@@ -252,6 +254,8 @@ function percentile(values, fraction) {
     'brtable-generic-global-ip',
     'brtable-generic-local-ip',
     'brtable-direct-generic-alu',
+    'brtable-subset-generic',
+    'brtable-subset-direct',
     'brtable-globals',
     'brtable-locals',
     'wat-threaded',

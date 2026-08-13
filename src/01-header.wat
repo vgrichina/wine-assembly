@@ -996,6 +996,12 @@
   ;; call_indirect dispatch and changes only which handler ID is cached.
   (global $hotform_specialization_enabled (mut i32) (i32.const 1))
   (global $hotform_specialized_emits (mut i32) (i32.const 0))
+  ;; Experimental block-level hot-handler dispatcher. It preflights a decoded
+  ;; block and falls back to $next before changing guest state if any handler
+  ;; is outside the generated subset.
+  (global $x86_hot_subset_enabled (mut i32) (i32.const 0))
+  (global $x86_hot_subset_hot_blocks (mut i32) (i32.const 0))
+  (global $x86_hot_subset_fallback_blocks (mut i32) (i32.const 0))
   ;; Disabled-by-default compiled packet prototype. The decoder only emits
   ;; handler 356 for exact AoE block/trace addresses implemented by
   ;; $th_stack_packet.
