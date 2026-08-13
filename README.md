@@ -1,27 +1,31 @@
 # Wine-Assembly
 
-Run real Windows 98 executables in your browser. No emulation layer, no porting — just raw WebAssembly interpreting x86 machine code.
+Run real Windows 98 executables in your browser. No source port, recompilation, or OS image — the WebAssembly interpreter executes their x86 machine code directly.
 
 <a href="https://www.producthunt.com/products/wine-assembly?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-wine-assembly" target="_blank" rel="noopener noreferrer"><img alt="Wine Assembly - Run Windows apps securely in browser using WebAssembly | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1142094&amp;theme=light&amp;t=1778312100355"></a>
 
 **Live demo:** https://wine-assembly.berrry.app  
-**Project story:** [PROJECT_STORY.md](PROJECT_STORY.md) — a retrospective of the first ~810 commits in 34 days.
+**Project story:** [PROJECT_STORY.md](PROJECT_STORY.md) — the history from the first decoder experiment through the current ~1,400-commit platform, reconstructed from Git and the Claude Code/Codex sessions that built it.
 
-Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssembly Text (WAT). It loads unmodified Win32 `.exe` files, decodes x86 instructions into a Forth-style threaded code representation, and executes them while reimplementing the Win32 API surface needed by each application.
+Wine-Assembly is an x86 PE interpreter coded directly in WebAssembly Text (WAT), without compiling the emulator from C or Rust. It loads unmodified Win32 `.exe` files, decodes x86 instructions into a Forth-style threaded code representation, and executes them while reimplementing the Win32 API surface needed by each application. Large parts of the reverse engineering, implementation, testing, and documentation were developed in collaboration with Claude Code and Codex.
 
 ## What Works
 
 - **Notepad** — full text editing, menus, help system
+- **WordPad** — native RichEdit editing, formatting, find/replace, clipboard, RTF and plain-text file workflows, printing compatibility, and bounded static OLE/DIB image support
 - **Calculator** — standard and scientific modes
 - **Solitaire, FreeCell** — card games with full GDI rendering
 - **Minesweeper** — both Win98 and XP versions
 - **SkiFree** — sprite animation, timer-driven gameplay
-- **Paint** — Win98 build supports all 16 tools, BMP save/open, dirty-document prompts, and large-image scrolling; NT build remains partial
+- **Paint** — Win98 build supports all 16 tools, BMP save/open, dirty-document prompts, large-image scrolling, and focused browser coverage; exact brush-option glyphs and non-antialiased GDI edges remain in progress, and the NT build remains partial
 - **Entertainment Pack** — Golf, Reversi, Pegged, Taipei, TicTactics, Rattler Race
 - **Space Cadet Pinball** — playable, table renders and physics run
-- **Winamp 2.95** — skinned UI, MP3 decode in flight (multi-thread)
-- **Plus! 98 screensavers** — Marbles (DirectDraw 8bpp), Organic Art (D3D Retained Mode in progress)
+- **Winamp 2.91** — skinned multi-window UI, MP3 playback, visualization, and preferences/about flows; both 2.91 and 2.95 installers have interactive coverage
+- **Win98 accessories** — RegEdit with TreeView/ListView and registry enumeration; Sound Recorder with browser microphone capture/playback; Volume Control connected to shared Wave/MIDI buses; Task Manager operating on real multi-app desktop windows
+- **DirectDraw / Direct3D** — Marbles, a broad DirectX 5 SDK sample set, nonblank Organic Art screensaver frames, and focused startup/render paths for Age of Empires, RCT, MCM, MW3, and Abe
 - **MFC apps** — via real msvcrt.dll + mfc42u.dll loaded with relocations
+
+The full smoke matrix currently tracks 114 binaries. Its latest recorded complete run reported 81 PASS, 29 WARN/known-limited, 4 expected 16-bit skips, and no unexpected crashes; focused tests go much deeper than that startup/frame gate for the apps called out above.
 
 ## How It Works
 
@@ -31,11 +35,11 @@ Wine-Assembly is an x86 PE interpreter written entirely in hand-crafted WebAssem
 
 3. **Lazy Flags** — Instead of computing CPU flags after every instruction, the operands and operation type are saved. Flags are computed on-demand only when actually read (e.g., by a conditional jump).
 
-4. **Win32 API** — Each imported API function is replaced with a thunk. When execution reaches a thunk, a `br_table` dispatches to the corresponding hand-written WAT handler that reimplements the API behavior.
+4. **Win32 API** — Each imported API function is replaced with a thunk. When execution reaches a thunk, a `br_table` dispatches to the corresponding WAT handler that reimplements the API behavior.
 
-5. **GDI Rendering** — Drawing commands (`TextOut`, `BitBlt`, `FillRect`, etc.) are forwarded to a JS canvas renderer that reproduces the Win98 look and feel, including 3D button borders, window chrome, and menu rendering.
+5. **GDI Rendering** — Window/control state, regions, clipping, and an increasing share of raster behavior live in WAT. JavaScript resolves browser surfaces, uploads pixels, composites windows, and still provides Canvas text and compatibility paths while deterministic software GDI replaces Canvas vector rasterization incrementally.
 
-6. **DLL Support** — Real Win32 DLLs (msvcrt.dll, mfc42u.dll) can be loaded with full relocation and import patching, enabling MFC applications.
+6. **DLL and COM/OLE Support** — Real Win32 DLLs (including msvcrt.dll, MFC, common controls, and RichEdit fixtures) load with relocations and import patching. The WAT compatibility layer also implements bounded COM, OLE data transfer, in-memory structured storage, and static-object persistence.
 
 ## Quick Start
 
@@ -82,14 +86,14 @@ The build checks the handler table, concatenates `src/*.wat` in filename order f
 
 ## Architecture
 
-The entire interpreter is written in WAT (WebAssembly Text Format) — no C, no Rust, no compiler toolchain. The host environment (browser or Node.js) provides:
+The entire interpreter is written directly in WAT (WebAssembly Text Format) — no C/Rust source toolchain. The repository's JavaScript WAT compiler builds the module. The host environment (browser or Node.js) provides:
 
-- Canvas rendering (GDI operations)
+- Canvas presentation, text rendering, and remaining GDI compatibility paths
 - File I/O (reading executables, help files, DLLs)
 - Input handling (keyboard, mouse, touch, and mobile software-keyboard proxy)
 - Timer management
 
-Everything else — x86 decoding, memory management, PE loading, Win32 API implementation, structured exception handling, sprintf — is implemented in ~48,000 lines of hand-written WAT, compiling to a ~230 KB `.wasm` module.
+Everything else — x86 decoding, memory management, PE/DLL loading, Win32 API and COM/OLE implementation, structured exception handling, window/control logic, and software-raster foundations — is implemented in about 80,000 lines of WAT across 32 source parts. The current tail-call and compatibility builds are about 407 KB each. Supporting browser, test, and tooling JavaScript is about 73,000 lines.
 
 ## Project Structure
 
@@ -102,8 +106,8 @@ manifest.webmanifest, icons/
                     PWA/iOS Home Screen metadata and icons
 test/               CLI test runner and test binaries
 tools/              Build scripts, code generators, debug tools
-docs/               Memory map, design notes
-apps/               Per-app reverse-engineering progress (pinball.md, screensavers.md, ...)
+docs/               Memory map, architecture/design notes, performance work
+apps/               Per-app status and reverse-engineering history
 ```
 
 ## License

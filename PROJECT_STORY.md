@@ -1,6 +1,6 @@
 # Wine-Assembly — The Whole Story
 
-*A retrospective from initial commit (2026-03-26) to today (2026-04-28). ~810 commits in 34 days.*
+*A retrospective from the initial commit (2026-03-26) through 2026-08-12: 1,404 commits across 140 calendar days and 83 active commit days.*
 
 ---
 
@@ -8,11 +8,13 @@
 
 > Run real Windows 98 `.exe` files in the browser. No source, no recompilation, no porting layer. Just raw WebAssembly Text interpreting x86 machine code, with the Win32 API reimplemented inside the WASM module itself.
 
-This is the kind of project that "shouldn't" be a 3-week sprint. It started as a single WAT file. It is now 36k lines of WAT + 16k lines of JS that boots Notepad, Calc, Solitaire, Spider, FreeCell, Minesweeper (98 + XP), SkiFree, the Entertainment Pack, MS Paint NT (via real MFC42/MSVCRT), Pinball, Winamp 2.95 (skin + audio in flight), and a fleet of Plus! 98 screensavers — including DirectDraw + 8bpp Marbles.
+This is the kind of project that "shouldn't" be a sprint at all. It started as a single WAT file. It is now about 80k lines of WAT plus 73k lines of browser, test, and tooling JavaScript. The 114-binary smoke matrix spans Win98/XP accessories, MFC applications, games, installers, screensavers, DirectDraw, Direct3D Immediate/Retained Mode, audio, RichEdit, and OLE.
+
+The history is also a record of AI-assisted systems work. The implementation is **coded directly in WAT**—there is no C/Rust-to-WASM emulator build—but it should not be described as solely "hand-written." Large parts of the reverse engineering, code, tests, and design were produced through sustained collaboration with Claude Code and Codex. This retrospective was refreshed from all three available records: Git, the repository's Claude session history/memories, and Codex rollout transcripts.
 
 ---
 
-## 1. The arc, in five acts
+## 1. The arc, in twelve acts
 
 ```
 Act I     Mar 26-28   Decoder, lazy flags, FPU, SEH        →  Notepad runs
@@ -22,6 +24,11 @@ Act IV    Apr 05-09   Controls-as-windows refactor         →  Logic into WAT
 Act V     Apr 10-15   DDraw, audio, dialogs, Winamp        →  Skinned UIs + sound
 Act VI    Apr 16-21   Message-queue routing, perf, dialogs →  AoE/MCM boot; D3DIM rasterizer
 Act VII   Apr 22-28   D3DIM real, TileWorld, comboboxes    →  Plus!98 + DX SDK in flight
+Act VIII  Apr 29-May 06 Paint/DC ownership, Pinball, MIDI   →  Real input/audio + WAT clipping
+Act IX    May 07-29   Web/mobile shell, Winamp, RCT        →  Safari/PWA + installer/audio polish
+Act X     Jun 01-18   AoE profiling, D3D3/D3D7 breadth    →  Broad 3D and app smoke coverage
+Act XI    Jul 06-30   Safari regressions, RichEdit start   →  WordPad becomes a real target
+Act XII   Aug 01-12   WordPad/OLE, Paint, accessories      →  Desktop workflows + software GDI
 ```
 
 ### Commit cadence
@@ -68,6 +75,19 @@ Act VII   Apr 22-28   D3DIM real, TileWorld, comboboxes    →  Plus!98 + DX SDK
 04-27 █████████████████████████████████████████████  45   ◄ combobox state machine, WS_POPUP shell,
                                                               double-translation fix cluster
 04-28 ███████████████████████        23   ◄ maximize/restore, 0x67/GS trap, pinball combo dropdown
+```
+
+The original daily chart ended there. The continuation was burstier rather
+than a single uninterrupted sprint:
+
+```text
+04-29..30   65 commits  Pinball input, RCT, D3DRM, region-driven paint
+May        212 commits  MIDI, installer, mobile/PWA, Winamp, RCT/AoE
+June      118 commits  AoE performance work, D3D3/D3D7, broad smoke promotion
+July       19 commits  Safari fixes and native WordPad/RichEdit bring-up
+08-01..12 152 commits  WordPad/OLE, Paint, RegEdit, audio apps, Task Manager
+
+Peak day remains Apr 26 (56 commits); Aug 11 and Aug 12 each added 49.
 ```
 
 ---
@@ -261,7 +281,7 @@ DirectDraw, audio, full skinned UIs, and a final cleanup pass.
 - Pinball Player 1 label, heap realloc, deferred audio, thread scheduling
 
 **Apr 13: COM hardening**
-- DDraw QueryInterface: must AddRef (slot-0 reuse bug — that's the memory entry today)
+- DDraw QueryInterface: must AddRef (slot-0 reuse bug — that became a durable session-memory rule)
 - InSendMessage / EnumWindows
 - D3DRM design doc
 - PlaySoundA, CreateDIBSection live-mapping, thread-shared GDI
@@ -282,7 +302,7 @@ DirectDraw, audio, full skinned UIs, and a final cleanup pass.
 - EmPipe (Pipe Dream) added
 - Winamp: separate modal pump hwnd from `$dlg_hwnd`
 
-**Apr 15 (today, ongoing): the unification pass**
+**Apr 15 (19 commits): the unification pass**
 - Walk child→parent for DC routing, grow paint queue, extend GDI tracing
 - Per-window WASM for menu ops in multi-app mode
 - **Route child WM_PAINT to parent's back-canvas** + add `--trace-dc`
@@ -412,14 +432,208 @@ Now everything below the main daily-drivers gets its own session: comboboxes, di
 - WAT bool coercion in `i32.and`; CBT hook fires for child CreateWindowEx.
 - Listbox skips WM_PAINT when WS_VISIBLE is off; word-wrap statics; combobox stub.
 
-**Apr 28 (today, 23 commits):**
+**Apr 28 (23 commits):**
 - **Maximize/restore**: post WM_MOVE+WM_SIZE on SC_MAXIMIZE/SC_RESTORE; toggle SC_MAXIMIZE↔SC_RESTORE on second click; redraw chrome after resize-driven back-canvas realloc; suppress edge-resize while maximized; flat (not 3D-bevel) maximize/restore glyphs.
 - **Decoder: centralize segment-override** + trap 0x67/GS — exposes apps that need real fs/gs handling rather than silent reinterpretation.
 - Pinball Player Controls dialog: combobox dropdown — POST notifications + popup zorder + popup-shell click forwarding; keyboard fix populates the dialog correctly.
 - Walk children by parent linkage when seeding paint flags.
 - `tools/find_vtable_calls.js` (scan PE for `call dword [reg+disp]` by slot); `tools/caller_census.js` (per-callsite hit counts via `--count`); `module+0xVA` syntax in `--break`/`--count`/`--trace-at`.
-- Pinball: ball_count theory corrected; the real bug is a Z-only flipper.
+- Pinball: ball_count theory corrected; the then-current bug was a Z-only flipper, resolved in Act VIII.
 - `deploy-berrry`: skip non-desktop binary dirs.
+
+---
+
+## Act VIII — "From demo to daily use" (Apr 29–May 6)
+
+The next 151 commits turned several convincing demos into applications that
+could survive real input, repaint, and audio workflows.
+
+**Apr 29–30:**
+
+- Pinball's apparent physics bug was traced through its real message pump.
+  Posted `WM_USER` traffic could starve hardware input, so Peek/GetMessage now
+  polls host input without the old app-specific state poke. The web build then
+  ran interactively with moving flippers.
+- RCT recovered its first frame and progressed into its runtime path after
+  address-size `LOOP` handling and DirectDraw fixes.
+- Dynamic `LoadLibraryA` began calling guest `DllMain`; that was essential for
+  `d3dxof.dll` template registration and deeper D3DRM parsing.
+- The paint path gained region-driven invalidation and an HDC table. A failed
+  intermediate paint phase was diagnosed, reverted, rebuilt with its missing
+  prerequisites, and landed again—the session history records why “debug the
+  phase, don't discard the architecture” became a project rule.
+- Node rendering moved from node-canvas to skia-canvas so CLI/browser clipping
+  shared a more capable Canvas implementation.
+
+**May 1–6:**
+
+- Generic MIDI arrived through MCI/midiOut behavior and a vendored TinySynth
+  Web Audio backend. Pinball gained real music and sound instead of a
+  Pinball-specific playback shortcut.
+- Fullscreen timing/scaling, message boxes, owner-draw states, mouse capture,
+  Notepad editing/caret/find flows, and modeless dialogs were hardened through
+  browser-visible regressions.
+- The Winamp NSIS installers became genuinely interactive: license RichEdit,
+  scrollbars, common controls, child clipping/order, progress bar, and real
+  click-driven test coverage.
+- DC clipping and paint ownership moved into WAT. Edit caret blinking followed
+  it into WAT timers.
+- The debug toolbar gained active-window video plus audio recording, cropped to
+  the emulated window and captured at 2x nearest-neighbor resolution.
+
+---
+
+## Act IX — "Ship the browser, then tune the hard app" (May 7–29)
+
+The browser shell became a product while Winamp became the long-running
+multithreaded stress test.
+
+**May 7–15:**
+
+- RCT web assets, generated-code invalidation fixes, a 32MB decoded-thread
+  cache, and DirectDraw presentation brought the shareware build to a visible
+  browser path.
+- A Safari-compatible dispatch build, touch input, viewport-aware canvas
+  scaling, PWA metadata, and a hidden mobile keyboard proxy made the desktop
+  usable on iPhone/iPad.
+- Funtris, Pyramid, EmPipe, Winamp, application cursors, wide-string APIs,
+  scrollbar thumbs, common dialog paths, and persistent registry state all got
+  focused interaction tests.
+- Idle `GetMessage` began blocking correctly. Cascading menu state and drawing
+  moved fully into WAT, and app-specific run-loop fast paths were removed.
+- The public launch added the Product Hunt badge and MIT license. Claude
+  session notes explicitly corrected the project's wording from
+  “hand-written” to “coded directly in WAT” so the AI collaboration was not
+  erased.
+
+**May 21–29:**
+
+- Winamp plug-in fixtures, preferences, visualizer menus/restart, popup menus,
+  audio scheduling, skinned moves, and memory-region overlap bugs were worked
+  through as one system.
+- New profiling separated decode/output scheduling, audio gaps, visualizer
+  frame rate, restart behavior, quality modes, and candidate
+  superinstructions. The key result was diagnostic: low visualizer FPS was
+  mostly guest render cost, not Canvas or Web Audio.
+- AoE's menu became visible and clickable after palette-cache invalidation and
+  fullscreen coordinate mapping.
+
+---
+
+## Act X — "Broaden the machine" (Jun 1–18)
+
+June split in two: understand why AoE was slow, and fill enough Direct3D and
+Win32 breadth that many more real binaries could render meaningful frames.
+
+**AoE and the interpreter:**
+
+- Sparse virtual-memory backing and x86-correct overlapping REP behavior got
+  AoE through campaign loading and into an in-game map.
+- Repeatable Chrome and headless profilers measured launch and gameplay
+  separately. Handler histograms, hot-block reports, SIB/branch operand
+  profiles, liveness estimates, block-shape censuses, and compiler-printer
+  tools replaced guesswork with workload data.
+- Specialized hot threaded handlers helped, while several proposed branch
+  fusions did not. The surviving design is a generic block/trace compiler that
+  reduces register and flag traffic without embedding AoE algorithms.
+- A later Codex continuation measured the isolated compiled-block proof of
+  concept at roughly 1.039x less browser guest time and 1.059x more presented
+  frames over a 20-second gameplay window. It remains experimental and was not
+  merged into the main interpreter.
+
+**Compatibility and 3D:**
+
+- D3DIM gained projection state, indexed geometry, eye-plane clipping, depth
+  testing, matrix refresh, render-target binding, D3D3 vertex buffers/FVF
+  paths, and a broad D3D7 device/state/caps surface.
+- DX5 samples, Globe, Organic Art, MCM, MW3, Abe, AoE/AoE2, RCT, Paint,
+  RegEdit, WordPad, Media Player, Sound Recorder, Volume Control, and several
+  screensavers received realistic per-target smoke budgets and documented
+  startup/frame gates.
+- DirectAnimation shims let MFC screensavers advance without pretending the
+  full DirectAnimation runtime existed.
+- Renderer smoothing was disabled for emulated canvases after a FreeCell win
+  exposed bilinear scaling on card art.
+
+---
+
+## Act XI — "Native RichEdit becomes the next platform test" (Jul 6–30)
+
+July had fewer commits, but it changed the next major target.
+
+- Safari compatibility slices were bounded after Private Browsing exposed
+  extreme Wasm slowdown; the measured behavior and user workaround were
+  documented instead of misdiagnosing Spider and EmPipe as emulator hangs.
+- Window/client geometry regressions across Snake, TicTactics, Minesweeper,
+  EmPipe, and Winamp were repaired.
+- WordPad's lazy `riched20.dll` startup, text input diagnostics, and native
+  RichEdit painting were brought up far enough to type and display real text.
+- The RichEdit compatibility design deliberately split a bounded,
+  app-useful subset from later tables/images/OLE, complex scripts, TOM, and
+  exact undocumented version quirks. That boundary let August proceed in
+  testable slices.
+- D3DIM matrix/culling regressions and Winamp About tab rendering were fixed,
+  and the web launcher/recording defaults were refreshed.
+
+---
+
+## Act XII — "Applications become workflows" (Aug 1–12)
+
+August's 152 commits moved the definition of success from “a recognizable
+window” to multi-step user workflows.
+
+**WordPad / RichEdit / OLE:**
+
+- Native RichEdit gained navigation/editing, selection and caret rendering,
+  mouse/wheel/scrollbar behavior, undo/find/replace, plain-text plus RTF
+  clipboard, file New/Open/Save As, formatting accelerators/toolbars/dialogs,
+  mixed sizes, paragraph state, advanced RTF fixtures, large-document layout,
+  international input, and print/preview lifecycle coverage.
+- WordPad's bounded everyday non-OLE target is now functional. Static `CF_DIB`
+  objects can be pasted, rendered, copied/cut/pasted, undone, saved in RTF, and
+  reopened. General activated/linked OLE servers remain outside that boundary.
+- A reusable in-memory OLE layer now includes `ILockBytes`, shared/cloned
+  `IStream`, nested `IStorage`, rename/delete/copy/move, snapshot enumeration,
+  commit/revert transactions, region locks, `STATSTG` metadata, data objects,
+  and clipboard ownership. The focused storage/stream suite reached 68/68 at
+  HEAD; current work continues into deterministic compound-file byte
+  serialization and fresh-process revalidation.
+- Suspended thread creation/resume was implemented and verified against
+  WordPad's real startup path rather than bypassed.
+
+**Paint and deterministic GDI:**
+
+- Win98 Paint now has focused coverage for all 16 tools, menus, BMP
+  save/open/save, dirty-document prompts, 900x700 scrolling, wide Safari
+  layouts, flood fill, and browser airbrush behavior.
+- Direct guest DIB updates gained dirty-page tracking and canonical surface
+  access. Rectangle/ellipse/polygon regions and application DC clipping moved
+  into WAT.
+- Canvas antialiasing and the incorrect brush-options glyph grid exposed the
+  next architectural limit. A staged software-GDI design now makes native
+  pixels authoritative, keeps Canvas for text/composition, and migrates exact
+  integer rasterization into WAT. The current worktree includes the first
+  one-pixel DIB `LineTo`/ROP2 path; wider pens, shapes, blits, and window
+  surfaces still use compatibility paths.
+
+**The Win98 desktop as a system:**
+
+- RegEdit gained registry metadata/value enumeration, hierarchical TreeView,
+  bounded report ListView/header behavior, double-click expansion, and a real
+  status-bar workflow.
+- Sound Recorder gained real browser microphone capture into guest `waveIn`
+  buffers and playback. Volume Control now changes shared master, Wave, and
+  MIDI buses across applications.
+- Task Manager now enumerates independent emulator instances and can Switch
+  To, End Task, minimize, cascade, tile, and arrange the real shared desktop.
+- Media Player was exercised in both native-DLL and compatibility-fallback
+  modes; common controls, mixer state, ListView image lists, toolbars, and
+  cross-app focus all became reusable platform features.
+
+The latest recorded complete smoke run on Aug 12 covered 114 binaries: 81
+PASS, 29 WARN/known-limited, 4 expected 16-bit NE skips, and zero unexpected
+FAIL entries. That remains a startup/frame matrix, not a claim that all 81 are
+feature-complete; the focused workflow suites are the stronger evidence.
 
 ---
 
@@ -433,9 +647,9 @@ Now everything below the main daily-drivers gets its own session: comboboxes, di
 │       ▼                                                    │
 │  ┌────────────┐   GDI / audio / file / registry imports    │
 │  │ JS host    │◄──────────────────────────────┐            │
-│  │ lib/*.js   │   ↑ JS now owns ONLY:         │            │
-│  └─────┬──────┘     • canvas blits            │            │
-│        │ instantiate• audio output            │            │
+│  │ lib/*.js   │   ↑ browser/Node boundary:    │            │
+│  └─────┬──────┘     • canvas/pixel upload     │            │
+│        │ instantiate• audio/input             │            │
 │        ▼            • async I/O bridges       │            │
 │  ┌──────────────────── WASM module ───────────┴────────┐   │
 │  │                                                     │   │
@@ -453,6 +667,7 @@ Now everything below the main daily-drivers gets its own session: comboboxes, di
 │  │       │                                  WAT wndprocs│   │
 │  │       │                                  WAT menus  │   │
 │  │       │                                  WAT dialogs│   │
+│  │       │                                  COM / OLE  │   │
 │  │       └─── thunk EIP → $win32_dispatch ◄────────────┘   │
 │  └─────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────┘
@@ -460,9 +675,9 @@ Now everything below the main daily-drivers gets its own session: comboboxes, di
 
 **Source layout (concatenation order = filename alphabetical):**
 ```
-src/parts/
+src/
 ├─ 01-header.wat               ┐
-├─ 01b-api-hashes.gen.wat      │  PE / CPU plumbing
+├─ 01b-api-hashes.generated.wat│  PE / CPU plumbing
 ├─ 02-thread-table.wat         │
 ├─ 03-registers.wat            │
 ├─ 04-cache.wat                │
@@ -483,7 +698,8 @@ src/parts/
 ├─ 09aa-handlers-d3dim.wat     │
 ├─ 09ab-handlers-d3dim-core.wat┘
 ├─ 09b-dispatch.wat            ┐
-├─ 09b2-dispatch-table.gen.wat │  dispatch + window mgr
+├─ 09b2-dispatch-table.generated.wat
+│                               │  dispatch + window mgr
 ├─ 09c-help.wat                │
 ├─ 09c2-treeview.wat           │
 ├─ 09c3-controls.wat           │
@@ -495,7 +711,7 @@ src/parts/
 └─ 13-exports.wat
 ```
 
-**Rendering surfaces (Apr 15 unification):**
+**Rendering/composition baseline (Apr 15 unification, still active):**
 ```
 guest GDI calls
        │
@@ -516,57 +732,41 @@ guest GDI calls
        screen canvas (composite target only)
 ```
 
+The August software-GDI migration adds a second, transitional layer beneath
+that compositor. DIB-backed memory DCs can resolve to native-format canonical
+pixel storage; WAT-owned regions/clips and selected exact raster operations
+write those pixels, then JavaScript uploads only dirty rectangles. Canvas is
+still the compatibility path for remaining primitives and the intentional
+text backend, while per-window canvases remain the desktop composition target.
+
 ---
 
 ## 3. What runs
 
-```
-Tier               App                              Status
-─────────────────────────────────────────────────────────────────
-Daily-driver       Notepad                          ✅ full edit + Find dialog + help
-                   Calc (std + scientific)          ✅ full
-                   Solitaire                        ✅ full + scoring verified
-                   Spider Solitaire                 ✅ full
-                   FreeCell                         ✅ full
-                   Minesweeper (98 + XP)            ✅ full
-                   SkiFree                          ✅ full
-                   Entertainment Pack (8 games)     ✅ Golf, Reversi, Pegged,
-                                                       Taipei, TicTactics, Rattler,
-                                                       Pyramid, Chess
-Real DLL pipeline  MS Paint NT (MFC42 + MSVCRT)     ✅ basic drawing
-                   Wordpad                          🟡 partial
-                   RegEdit                          ✅ basic
-                   Win98 Tour                       ✅
-DirectDraw / D3D   Marbles screensaver              ✅ rendering (8bpp + palette)
-                   Plus! 98 screensavers            🟡 most boot, render varies
-                   DirectX SDK Samples              🟡 ddex3/ddex5 unblocked;
-                                                       D3DIM rasterizer real
-                   D3DIM screensavers               🟡 Execute opcodes + matrix
-                                                       table land; geometry path
-                                                       still gated for some scenes
-Audio              Winamp 2.95                      ✅ skin + MP3 playback —
-                                                       2000 batches emit ~99.7%
-                                                       of demo.mp3 PCM
-Games / heavy      Tile World                       ✅ boots end-to-end (SDL 1.x)
-                   Space Cadet Pinball              🟡 boots, Player Controls
-                                                       dialog now populates;
-                                                       gameplay gated on Z-only
-                                                       flipper bug
-                   Age of Empires                   🟡 enters main loop; VFS gates
-                   Microsoft Combat Flight Sim       🟡 reaches 3D-gate filter
-                   RollerCoaster Tycoon             🟡 past video-mode probe
-                   Winamp installer (NSIS)          🟡 TreeView OK, zlib stuck
-Notepad dialogs    About / Find / Open / Font /     ✅ all render with chrome,
-                   Color                                title, controls
-Web shell          Multi-app desktop with PE icons  ✅ icons extracted from each
-                                                       exe at load
-```
+| Tier | App/workflow | Current evidence |
+|---|---|---|
+| Core desktop | Notepad, Calculator, Solitaire, Spider, FreeCell, Minesweeper, SkiFree, Entertainment Pack games | Focused editing/gameplay/rendering tests; the mature daily-driver set |
+| Rich document | WordPad | Functional bounded non-OLE editing/formatting/files/printing plus static DIB OLE objects; general activated/linked objects and current-tip two-image revalidation remain |
+| Paint | MS Paint Win98 | All 16 tools, BMP workflows, dirty prompts, large scrolling, and browser regressions; option glyphs and exact non-antialiased pixels remain |
+| Registry/shell | RegEdit and Task Manager | Stateful TreeView/ListView/registry workflows; Task Manager operates on real independent desktop app instances |
+| Audio | Sound Recorder, Volume Control, Winamp 2.91 | Real microphone capture/playback, cross-app Wave/MIDI gain buses, skinned MP3 playback and visualization |
+| Installers | Winamp 2.91/2.95 NSIS | Silent and interactive flows extract expected files, exercise RichEdit/progress controls, and finish cleanly |
+| DirectDraw/D3D | Marbles, DX5 samples, Organic Art | Meaningful 2D/3D frames with real execute buffers, transforms, clipping, depth, and broad D3D3/D3D7 state |
+| Heavy demos | AoE, AoE2, Abe, MCM, MW3, RCT | Promoted startup/frame smokes; AoE also has a scripted route into the map. These are not claimed as complete games |
+| Web shell | Multi-app desktop/PWA | PE icons, touch/mobile keyboard, Safari compatibility build, cross-app focus/audio/window management, and active-window recording |
+| Explicit limits | 16-bit NE, VB6/DX9 targets, DirectAnimation, full IE/Winamp minibrowser | Unsupported or bounded honestly rather than hidden behind silent success |
+
+The latest recorded full matrix is 81 PASS / 29 WARN / 4 expected SKIP / 0
+unexpected FAIL across 114 binaries. “PASS” there means the configured
+startup/frame gate; only focused tests justify the stronger workflow claims in
+the table.
 
 ---
 
 ## 4. Patterns that emerged
 
-The CLAUDE.md memory file captures the lessons. The big ones:
+The repository guidance, Claude memory files, and later Codex sessions capture
+the lessons. The big ones:
 
 ```
 Fail-fast stubs       crash_unimplemented, never silent return-0.
@@ -600,6 +800,15 @@ No silent stubs       (yes, said it twice — that's how important it is)
 Tracing > console.log Add a --trace-X category to host-imports.js, not a
                        console.log to source. Source stays clean between
                        sessions; tracing is a runtime flag.
+
+Bounded evidence       A smoke PASS proves only its configured startup/frame
+                       gate. Claim a workflow only when a focused test drives it.
+
+Preserve live work     Never stash/reset away another session's changes; use
+                       explicit paths and isolated worktrees for experiments.
+
+Direct in WAT          “Coded directly in WAT” describes the implementation.
+                       It does not erase the Claude Code/Codex collaboration.
 ```
 
 ---
@@ -607,8 +816,9 @@ Tracing > console.log Add a --trace-X category to host-imports.js, not a
 ## 5. Tooling that paid off
 
 ```
-tools/build.sh              Concat src/*.wat alphabetically → wat2wasm
-tools/gen_dispatch.js       api_table.json → 09b2-dispatch-table.gen.wat
+tools/build.sh              Validate + concat src/*.wat alphabetically;
+                            compile tail-call and compatibility WASM via watjs
+tools/gen_dispatch.js       api_table.json → 09b2-dispatch-table.generated.wat
 tools/gen_api_table.js      FNV-1a hash table for API name→ID
 tools/disasm.js             x86 disasm (importable; used by tracing too)
 tools/hexdump.js            Memory hexdump
@@ -628,6 +838,8 @@ tools/vtable_dump.js        Dump fn-pointer slots + first instr per slot
 tools/caller_census.js      Per-callsite hit counts via --count
 tools/disasm_fn.js          Disasm at VA(s); warns on mid-instruction starts
 tools/xrefs.js              Find branches/loads/stores referencing a VA
+tools/profile-aoe-web.js    Browser launch/gameplay CPU and frame profiler
+tools/profile-winamp-web.js Decode/audio/visualizer scheduling profiler
 tools/deploy-berrry.js      Ship to berrry.app with sha256-diff incremental
                             uploads (Apr 11)
 test/run.js                 Headless emulator with rich --trace flags +
@@ -643,34 +855,37 @@ The `--trace-*` family in particular pays compounding interest. Every time someo
 ## 6. The numbers
 
 ```
-Lines of WAT            48,320     (32 files in src/)
-Lines of JS support     26,212     (lib/ + test/ + tools/)
-Commits                 ~810
-Days                    34
-Avg commits/day         ~24
-Peak day                56 (Apr 26)
-Test binaries           50+ exes (98 apps, EP, NT, XP, Plus!, screensavers,
-                                   installers, Winamp plugins, DX SDK,
-                                   Tile World, AoE, RCT, MCM)
-Per-app investigations  31 *.md files in apps/
+Lines of WAT            80,127     (32 files in src/)
+Lines of JS support     73,544     (lib/ + test/ + tools/)
+WASM builds             ~407 KB    (tail-call and compatibility variants)
+Commits                 1,404
+Calendar span           140 days   (Mar 26 through Aug 12, inclusive)
+Active commit days      83
+Avg / active day        ~16.9 commits
+Peak day                56 commits (Apr 26)
+Smoke matrix            114 binaries; 81 PASS / 29 WARN / 4 SKIP / 0 FAIL
+Per-app investigations  35 *.md files in apps/
+History sources         Git + Claude project history/memory + 47 repo-tagged
+                        Codex rollout transcripts
 ```
 
 ---
 
 ## 7. What's in flight right now
 
-1. **Plus!98 Organic Art / D3DRM screensavers** — vtable mapped, scene-population path traced; geometry-emit gate at `[entry+0x84]==scene-root` never satisfied for ROCKROLL/ARCHITEC/CA_2001 — bug is upstream in scene-population, not the renderer (`apps/screensavers.md`).
-2. **D3D Immediate Mode** — Execute opcodes (POINT/LINE/MATRIXLOAD/MULT/PROCESSVERTICES/STATETRANSFORM/BRANCHFORWARD), real matrix table, flat triangle rasterizer with back-face cull all land. Next: per-scene texture/light state for non-architecture screensavers (`apps/direct3d-im.md`).
-3. **Pinball gameplay** — Player Controls dialog now populates after combobox dropdown work; gameplay still gated on Z-only flipper bug (root cause: `ball_count` permanently 1 due to demo-resetter) (`apps/pinball.md`).
-4. **MSPaint NT** — chrome complete (title, menu, palettes); CFrameWnd::OnCreate still the blocker for fully driving the document area (`apps/mspaint-nt.md`, `apps/mspaint-win98.md`).
-5. **MCM** — past 3D-gate filter and CD-check; method[23] device-registration is the next bail (`apps/mcm.md`).
-6. **NSIS installer** — TreeView fine, zero file extraction; suspected zlib decompression bug (`apps/winamp-installer.md`).
+1. **Deterministic software GDI** — canonical DIB surfaces, WAT-owned complex regions/DC clips, and the first exact line path exist. Next are wider/styled pens, shapes, source blits, window/DirectDraw surfaces, and removal of shadow synchronization. Canvas text remains intentional ([design](docs/software-gdi-design.md)).
+2. **OLE persistence and WordPad revalidation** — the in-memory storage/stream contract is broad and green. Finish deterministic compound-file serialization/reading, then re-run bounded fresh-process static-image save/delete/reopen pixels on the settled GDI path ([plan](docs/non-gdi-work-plan.md), [status](apps/wordpad.md)).
+3. **General RichEdit/OLE breadth** — linked/activated objects, non-DIB presentations, arbitrary compound documents, drag/drop, exact printer layout, complex scripts, and undocumented version quirks remain beyond the bounded everyday target ([design](docs/richedit-compat-design.md)).
+4. **Generic threaded/block compilation** — AoE profiling identified register/flag/EA reuse opportunities and an isolated proof of concept showed a modest browser win. The next step is a generic compiler design that stays web-buildable and does not bake in AoE algorithms ([performance notes](docs/aoe-performance-optimization.md), [stack-threaded design](docs/wasm-stack-threaded-code.md)).
+5. **Direct3D and heavy-app depth** — the broad frame-level surface is real, but D3DRM ProgressiveMesh/Viewer fidelity, deeper MCM/MW3/RCT gameplay, long AoE simulation/save/load, and complete NT Paint remain separate compatibility programs ([DirectX status](apps/directx.md)).
+6. **Explicit platform boundaries** — 16-bit NE, VB6 without its runtime, DX9, full DirectAnimation, and embedded browser engines are still unsupported. The project records these as limits rather than hiding them behind silent stubs.
 
 ---
 
 ## 8. The narrative arc
 
-This is what 34 days of disciplined "fail-fast, fix-the-real-bug, no-silent-stubs" looks like. Every act made the next one cheaper:
+This is what 140 calendar days of disciplined “fail-fast, fix the real bug,
+prove the bounded claim” looks like. Every act made the next one cheaper:
 
 - Act I built the foundation that made everything else *possible*.
 - Act II proved real DLLs could be loaded, opening the door to MFC apps.
@@ -679,7 +894,22 @@ This is what 34 days of disciplined "fail-fast, fix-the-real-bug, no-silent-stub
 - Act V exploited the Act IV foundation to tackle DirectDraw, audio, skinned windows, and modal-dialog edge cases that would have been unmanageable with the old split.
 - Act VI made the platform plausibly Win32: messages routed through a real queue, the x86 decoder's operand-size matrix audited end-to-end, the memory map relocated to be honest about ranges, and D3DIM grew a real rasterizer.
 - Act VII is "the long tail" — comboboxes with WS_POPUP shells, dialog focus traversal, FPU env ops, MessageBoxA as a real modal, per-thread cache partitions. The hot bugs no longer crash the foundation; they crash the eighth-most-used Win32 feature in someone's screensaver.
+- Act VIII turned Pinball, Notepad, Paint, and the NSIS installer from screenshots into interaction/audio/repaint workflows.
+- Act IX shipped the browser surface—Safari, mobile/PWA, recording—while Winamp became the scheduler and multithreading laboratory.
+- Act X widened both ends of the machine: workload-driven interpreter optimization below and D3D3/D3D7 plus many more applications above.
+- Act XI chose native RichEdit as the next compositional platform test and set an honest bounded target before implementing it.
+- Act XII made that target real, then used the same platform pieces to make Paint, RegEdit, Sound Recorder, Volume Control, and Task Manager behave as a connected Win98 desktop.
 
-The recent commit cadence — combobox state machines, a Z-only-flipper bug rooted out via tooling, a maximize/restore fix that exists *because there was a back-canvas to realloc* — is what a mature codebase looks like. The questions are no longer "does this work" but "why doesn't *this specific scene* render."
+The progression matters more than the raw commit count. Early sessions asked
+whether Notepad could decode. Current sessions argue about CFB directory trees,
+RichEdit object identity, cross-app mixer buses, exact ROP2 pixels, and whether
+a generic block compiler can preserve the project's browser-build constraint.
+Those are platform questions, not demo questions.
 
-The next inflection point is whichever of {full D3DRM scene-graph emission, Winamp end-to-end audio, NSIS zlib path, MFC's CFrameWnd::OnCreate} unlocks the most other binaries when it falls. The tools (`caller_census.js`, `find_vtable_calls.js`, typed `--trace-api`, `module+0xVA`) increasingly let an investigation happen in one session instead of three.
+The next inflection point is likely one of two architectural payoffs: a
+deterministic WAT-owned raster surface that removes Canvas/DIB ambiguity across
+many apps, or a generic compiled threaded/block path that buys enough CPU for
+heavy games and multimedia. In parallel, compound-storage persistence can turn
+the current static-image OLE slice into reusable document compatibility. The
+same tracing, focused tests, and session-to-session written state make each of
+those programs cumulative instead of starting over.
