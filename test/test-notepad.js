@@ -69,6 +69,7 @@ const hasUnimpl       = /UNIMPLEMENTED API:/.test(out);
 const hasCleanExit    = /Exit.*code=0/.test(out) || exitCode === 0;
 const pngWritten      = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 0;
 let caretPixels = false;
+let scrollbarChromePixels = 0;
 if (pngWritten) {
   const img = PNG.sync.read(fs.readFileSync(pngPath));
   for (let x = 35; x < 90 && !caretPixels; x++) {
@@ -78,6 +79,26 @@ if (pngWritten) {
       const black = img.data[i] < 30 && img.data[i + 1] < 30 && img.data[i + 2] < 30;
       run = black ? run + 1 : 0;
       if (run >= 10) { caretPixels = true; break; }
+    }
+  }
+  // The main EDIT has WS_HSCROLL|WS_VSCROLL. Its non-client strips occupy
+  // x=400..416 and y=281..296 in this deterministic test layout. They used
+  // to remain the backing surface's solid black when EDIT swallowed
+  // WM_NCPAINT instead of forwarding standard chrome painting.
+  for (let y = 42; y < 280; y++) {
+    for (let x = 401; x < 416; x++) {
+      const i = (y * img.width + x) * 4;
+      if (img.data[i] >= 128 && img.data[i + 1] >= 128 && img.data[i + 2] >= 128) {
+        scrollbarChromePixels++;
+      }
+    }
+  }
+  for (let y = 282; y < 296; y++) {
+    for (let x = 24; x < 399; x++) {
+      const i = (y * img.width + x) * 4;
+      if (img.data[i] >= 128 && img.data[i + 1] >= 128 && img.data[i + 2] >= 128) {
+        scrollbarChromePixels++;
+      }
     }
   }
 }
@@ -99,6 +120,7 @@ const hasTypedText    = !!stateMatch;
     { name: 'typed text reached Notepad edit',      pass: hasTypedText },
     { name: 'PNG snapshot written',                 pass: pngWritten },
     { name: 'PNG snapshot shows edit caret',         pass: caretPixels },
+    { name: 'PNG snapshot shows scrollbar chrome',   pass: scrollbarChromePixels > 6000 },
     { name: 'typed edit remains focused for caret', pass: (editFlags & 0x08) !== 0 },
     { name: 'WAT caret timer toggles visibility',   pass: (visibleFlags & 0x20) !== 0 && (hiddenFlags & 0x20) === 0 },
     { name: 'clean exit (code=0)',                  pass: hasCleanExit },
