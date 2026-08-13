@@ -217,6 +217,10 @@
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
   (import "host" "gdi_line_to" (func $host_gdi_line_to (param i32 i32 i32) (result i32)))
   ;; gdi_line_to(hdc, x, y)
+  (import "host" "gdi_get_line_descriptor" (func $host_gdi_get_line_descriptor (param i32 i32) (result i32)))
+  ;; gdi_get_line_descriptor(hdc, desc_wa) -> 1 for a supported DIB/solid-pen target.
+  (import "host" "gdi_present_dib_rect" (func $host_gdi_present_dib_rect (param i32 i32 i32 i32 i32) (result i32)))
+  ;; gdi_present_dib_rect(hdc, l, t, r, b) uploads WAT-written pixels only.
   (import "host" "gdi_get_current_object" (func $host_gdi_get_current_object (param i32 i32) (result i32)))
   ;; gdi_get_current_object(hdc, objectType) → handle
   (import "host" "gdi_arc" (func $host_gdi_arc (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -697,6 +701,8 @@
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
+  ;; 0x07EF0800 2KB      GDI_DC_RASTER_TABLE (256 x {HDC, ROP2})
+  ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -866,6 +872,11 @@
   (global $GDI_DC_CLIP_TABLE i32 (i32.const 0x07EF0000))
   (global $GDI_DC_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
   (global $GDI_DC_CLIP_COUNT i32 (i32.const 256))
+  (global $GDI_DC_RASTER_TABLE i32 (i32.const 0x07EF0800))
+  (global $GDI_DC_RASTER_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_RASTER_COUNT i32 (i32.const 256))
+  (global $GDI_LINE_DESC i32 (i32.const 0x07EF1000))
+  (global $GDI_LINE_DESC_SIZE i32 (i32.const 0x00000050))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

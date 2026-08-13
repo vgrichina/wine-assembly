@@ -128,6 +128,9 @@ overlap other emulator tables.
 Explicit HDC clip ownership uses `0x07EF0000..0x07EF07FF`, a 256-entry table
 mapping synthetic HDC values to private canonical HRGNs.
 
+Per-HDC raster state uses `0x07EF0800..0x07EF0FFF` for 256 `{HDC, ROP2}`
+entries. A fixed 80-byte line-descriptor scratch record begins at `0x07EF1000`.
+
 ### Comparison
 
 | Concept | Win98 | wine-assembly |

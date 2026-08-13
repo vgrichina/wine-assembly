@@ -8,6 +8,7 @@ const ROOT = path.join(__dirname, '..');
 const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const decoderWat = fs.readFileSync(path.join(ROOT, 'src', '07-decoder.wat'), 'utf8');
 const handlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a-handlers.wat'), 'utf8');
+const gdiHandlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a4-handlers-gdi.wat'), 'utf8');
 const hostImports = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 
 assert(!/\$?is_winamp\b|winamp_/i.test(exportsWat),
@@ -50,5 +51,9 @@ for (const helper of [
   assert(handlersWat.includes(`(call $${helper}`),
     `public clipping APIs must route through WAT helper ${helper}`);
 }
+assert(gdiHandlersWat.includes('(call $gdi_line_try'),
+  'LineTo must try the WAT raster kernel before the Canvas compatibility path');
+assert(gdiHandlersWat.includes('(call $host_gdi_line_to'),
+  'LineTo must retain an explicit compatibility fallback for unsupported targets');
 
 console.log('PASS  core has no app-specific run-loop fast paths');

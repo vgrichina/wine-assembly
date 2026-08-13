@@ -36,6 +36,7 @@
         (global.set $printer_hdc (i32.const 0))
         (global.set $printer_doc_state (i32.const 0))))
     (call $gdi_dc_clip_release (local.get $arg0))
+    (call $gdi_dc_raster_release (local.get $arg0))
     (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -135,10 +136,27 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 155: LineTo(hdc, x, y) — delegate to host GDI and advance current point.
+  ;; 155: LineTo(hdc, x, y) — WAT rasterizes supported DIB targets exactly.
   (func $handle_LineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ok i32)
-    (local.set $ok (call $host_gdi_line_to (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (local $ok i32) (local $from_x i32) (local $from_y i32)
+    (if (i32.eq (global.get $gdi_current_pos_hdc) (local.get $arg0))
+      (then
+        (local.set $from_x (global.get $gdi_current_pos_x))
+        (local.set $from_y (global.get $gdi_current_pos_y)))
+      (else
+        (local.set $from_x (i32.const 0))
+        (local.set $from_y (i32.const 0))))
+    (local.set $ok (call $gdi_line_try
+      (local.get $arg0) (local.get $from_x) (local.get $from_y)
+      (local.get $arg1) (local.get $arg2)))
+    (if (local.get $ok)
+      (then
+        ;; Canvas remains presentation/compatibility state. Keep its current
+        ;; position mirror coherent after WAT owns the actual rasterization.
+        (drop (call $host_gdi_move_to
+          (local.get $arg0) (local.get $arg1) (local.get $arg2))))
+      (else (local.set $ok (call $host_gdi_line_to
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)))))
     (if (local.get $ok) (then
       (global.set $gdi_current_pos_hdc (local.get $arg0))
       (global.set $gdi_current_pos_x (local.get $arg1))

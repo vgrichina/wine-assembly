@@ -8,9 +8,9 @@ rectangles, RGBA extraction, and dirty-rectangle coalescing. DIB-backed memory
 DCs use it for `GetPixel`, unclipped `SetPixel`, `FillRect`, and source-less
 solid `BitBlt` operations (`BLACKNESS`, `WHITENESS`, and `PATCOPY`). Rectangle
 clip regions are intersected in integer surface coordinates. Complex regions,
-all geometric primitives, source blits, window surfaces, and text still use
-the existing Canvas paths. Canvas text remains intentional policy, as
-described below.
+geometric primitives outside the initial one-pixel `LineTo` slice, source
+blits, window surfaces, and text still use the existing Canvas paths. Canvas
+text remains intentional policy, as described below.
 
 Rectangular HRGN ownership and Boolean algebra now run in WAT. WAT allocates
 generation-tagged handles and owns normalization, mutation, offset, bounding
@@ -33,6 +33,14 @@ region cannot change the DC. `SelectClipRgn`, `ExtSelectClipRgn`,
 receives a rebuilt host-region mirror only for Canvas clipping. DC deletion and
 release destroy the private region. The system/window visibility region and
 `SaveDC`/`RestoreDC` stacks remain separate follow-up work.
+
+`LineTo` now uses a WAT Bresenham kernel for solid one-pixel pens on 24- and
+32-bpp DIB sections. WAT owns logical-to-device mapping, endpoint exclusion,
+canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
+dirty bounds. JavaScript provides a read-only selected-object descriptor and
+uploads the resulting dirty rectangle to the presentation Canvas. Styled or
+wider pens and non-DIB/window targets still use the named Canvas compatibility
+path pending their raster kernels.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.

@@ -1960,6 +1960,7 @@
   ;; valid — _dcFree returns 0 for unknown handles, harmless.
   (func $handle_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $gdi_dc_clip_release (local.get $arg1))
+    (call $gdi_dc_raster_release (local.get $arg1))
     (drop (call $host_release_dc (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -4809,7 +4810,7 @@
 
   ;; 319: SetROP2(hdc, rop2) → previous ROP2 mode
   (func $handle_SetROP2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 13))  ;; R2_COPYPEN (default)
+    (global.set $eax (call $gdi_dc_set_rop2 (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -8703,9 +8704,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 594: GetROP2(hdc) → R2_COPYPEN
+  ;; 594: GetROP2(hdc) → current WAT-owned binary raster mode.
   (func $handle_GetROP2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 13))
+    (global.set $eax (call $gdi_dc_get_rop2 (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
