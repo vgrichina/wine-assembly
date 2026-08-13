@@ -2399,31 +2399,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 116: FillRect(hdc, lprc, hbr) — delegate to host GDI
+  ;; 116: FillRect(hdc, lprc, hbr)
   (func $handle_FillRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; FillRect(hDC, lpRect, hBrush) — arg0=hDC, arg1=lpRect, arg2=hBrush
-    (global.set $eax (call $host_gdi_fill_rect (local.get $arg0)
-      (call $gl32 (local.get $arg1))           ;; left
-      (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))   ;; top
-      (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))   ;; right
-      (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))  ;; bottom
-      (local.get $arg2)))
+    (local $desc i32) (local $rc i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (local.set $rc (call $g2w (local.get $arg1)))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_fill_rect_desc
+        (local.get $arg0) (local.get $desc)
+        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
+        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc))
+        (local.get $arg2))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 117: FrameRect(hdc, lprc, hbr) — draw 1px frame using brush
   (func $handle_FrameRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $desc i32)
     (local.set $wa (call $g2w (local.get $arg1)))
-    (global.set $eax (call $host_gdi_frame_rect
-      (local.get $arg0)
-      (i32.load (local.get $wa))                          ;; left
-      (i32.load (i32.add (local.get $wa) (i32.const 4)))  ;; top
-      (i32.load (i32.add (local.get $wa) (i32.const 8)))  ;; right
-      (i32.load (i32.add (local.get $wa) (i32.const 12))) ;; bottom
-      (local.get $arg2)                                    ;; hbrush
-      (global.get $main_hwnd)
-    ))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_frame_rect_desc
+        (local.get $arg0) (local.get $desc)
+        (i32.load (local.get $wa)) (i32.load offset=4 (local.get $wa))
+        (i32.load offset=8 (local.get $wa)) (i32.load offset=12 (local.get $wa))
+        (local.get $arg2))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
@@ -2914,19 +2916,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
-  ;; 143: DrawEdge — STUB: unimplemented
   ;; DrawEdge(hdc, qrc, edge, grfFlags) — 4 args stdcall
   (func $handle_DrawEdge (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rc i32)
+    (local $rc i32) (local $desc i32)
     (local.set $rc (call $g2w (local.get $arg1)))
-    (global.set $eax (call $host_gdi_draw_edge
-      (local.get $arg0)                      ;; hdc
-      (i32.load (local.get $rc))             ;; left
-      (i32.load offset=4 (local.get $rc))    ;; top
-      (i32.load offset=8 (local.get $rc))    ;; right
-      (i32.load offset=12 (local.get $rc))   ;; bottom
-      (local.get $arg2)                      ;; edge
-      (local.get $arg3)))                    ;; grfFlags
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_draw_edge_desc
+        (local.get $arg0) (local.get $desc)
+        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
+        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc))
+        (local.get $arg2) (local.get $arg3) (local.get $rc))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -3693,7 +3694,7 @@
 
   ;; 243: BeginPaint
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32) (local $brush i32) (local $hdc i32) (local $wa i32) (local $partial i32)
+    (local $cs i32) (local $brush i32) (local $hdc i32) (local $wa i32) (local $partial i32) (local $desc i32)
     ;; Win98: BeginPaint sends WM_ERASEBKGND before returning. The default
     ;; handler fills the client area with this hwnd's registered class
     ;; hbrBackground. A NULL hbrBackground means no default erase; the app owns
@@ -3750,12 +3751,14 @@
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
     (if (local.get $brush)
       (then
-        (drop (call $host_gdi_fill_rect
-          (local.get $hdc)
-          (i32.const 0) (i32.const 0)
-          (i32.and (local.get $cs) (i32.const 0xFFFF))
-          (i32.shr_u (local.get $cs) (i32.const 16))
-          (local.get $brush)))))
+        (local.set $desc (global.get $GDI_LINE_DESC))
+        (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
+          (then (drop (call $gdi_fill_rect_desc
+            (local.get $hdc) (local.get $desc)
+            (i32.const 0) (i32.const 0)
+            (i32.and (local.get $cs) (i32.const 0xFFFF))
+            (i32.shr_u (local.get $cs) (i32.const 16))
+            (local.get $brush)))))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -5984,16 +5987,17 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 121: DrawFocusRect(hdc, lprc) — 1px dotted black rect via host primitive.
+  ;; 121: DrawFocusRect(hdc, lprc)
   (func $handle_DrawFocusRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rc i32)
+    (local $rc i32) (local $desc i32)
     (local.set $rc (call $g2w (local.get $arg1)))
-    (drop (call $host_gdi_draw_focus_rect (local.get $arg0)
-            (i32.load (local.get $rc))
-            (i32.load offset=4 (local.get $rc))
-            (i32.load offset=8 (local.get $rc))
-            (i32.load offset=12 (local.get $rc))))
-    (global.set $eax (i32.const 1))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_focus_rect_desc
+        (local.get $arg0) (local.get $desc)
+        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
+        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc)))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; ret + 2 args
   )
 
@@ -6825,8 +6829,16 @@
 
   ;; 451: Polygon(hdc, lpPoints, nCount) — 3 args stdcall
   (func $handle_Polygon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_polygon
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_polygon_desc
+        (local.get $arg0) (local.get $desc) (call $g2w (local.get $arg1)) (local.get $arg2)
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 4) (i32.const 0x30017))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 8) (i32.const 0x30010))
+        (call $gdi_dc_get_rop2 (local.get $arg0))
+        (call $gdi_dc_get_field (local.get $arg0) (i32.const 76) (i32.const 1)))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args + ret
   )
 
@@ -6871,14 +6883,7 @@
     (local.set $p (call $g2w (local.get $arg1)))
     (local.set $ok (call $gdi_polyline_try
       (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0)))
-    (if (local.get $ok)
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    ;; Named Canvas compatibility path for unsupported target/pen envelopes.
-    (global.set $eax (call $host_gdi_polyline
-      (local.get $arg0) (local.get $p) (local.get $n)))
+    (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -8523,9 +8528,6 @@
     (local.set $p (call $g2w (local.get $arg1)))
     (local.set $ok (call $gdi_polyline_try
       (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1)))
-    (if (i32.eqz (local.get $ok))
-      (then (local.set $ok (call $host_gdi_polyline_to
-        (local.get $arg0) (local.get $p) (local.get $arg2)))))
     (if (i32.and (local.get $ok) (i32.gt_s (local.get $arg2) (i32.const 0)))
       (then
         (local.set $last (i32.add (local.get $p)
@@ -8533,10 +8535,7 @@
         (local.set $x (i32.load (local.get $last)))
         (local.set $y (i32.load offset=4 (local.get $last)))
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 12) (local.get $x) (i32.const 0)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $y) (i32.const 0)))
-        (if (local.get $ok)
-          (then (drop (call $host_gdi_move_to
-            (local.get $arg0) (local.get $x) (local.get $y)))))))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $y) (i32.const 0)))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -11856,17 +11855,16 @@
   ;; 950: DrawFrameControl(hdc, lprc, uType, uState) — 4 args stdcall
   ;; Draw the frame as a raised edge (BDR_RAISEDOUTER|BDR_RAISEDINNER=5, BF_RECT=15)
   (func $handle_DrawFrameControl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rc i32)
+    (local $rc i32) (local $desc i32)
     (local.set $rc (call $g2w (local.get $arg1)))
-    (drop (call $host_gdi_draw_edge
-      (local.get $arg0)
-      (i32.load (local.get $rc))
-      (i32.load offset=4 (local.get $rc))
-      (i32.load offset=8 (local.get $rc))
-      (i32.load offset=12 (local.get $rc))
-      (i32.const 5)    ;; EDGE_RAISED
-      (i32.const 15))) ;; BF_RECT
-    (global.set $eax (i32.const 1))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+      (then (global.set $eax (call $gdi_draw_edge_desc
+        (local.get $arg0) (local.get $desc)
+        (i32.load (local.get $rc)) (i32.load offset=4 (local.get $rc))
+        (i32.load offset=8 (local.get $rc)) (i32.load offset=12 (local.get $rc))
+        (i32.const 5) (i32.const 15) (local.get $rc))))
+      (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

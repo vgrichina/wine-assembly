@@ -298,6 +298,54 @@
       (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_Rectangle")
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_Rectangle
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_Ellipse")
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_Ellipse
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_FillRect") (param i32) (param i32) (param i32) (result i32)
+    (call $handle_FillRect
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_FrameRect") (param i32) (param i32) (param i32) (result i32)
+    (call $handle_FrameRect
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_DrawEdge")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_DrawEdge
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_DrawFocusRect") (param i32) (param i32) (result i32)
+    (call $handle_DrawFocusRect
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_Polygon") (param i32) (param i32) (param i32) (result i32)
+    (call $handle_Polygon
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_Polyline") (param i32) (param i32) (param i32) (result i32)
+    (call $handle_Polyline
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_PolylineTo") (param i32) (param i32) (param i32) (result i32)
+    (call $handle_PolylineTo
+      (local.get 0) (local.get 1) (local.get 2) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)
