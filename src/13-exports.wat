@@ -1620,6 +1620,8 @@
     (call $ole_data_get_here (local.get $obj) (local.get $formatetc) (local.get $medium)))
   (func (export "test_ole_data_set") (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
     (call $ole_data_set_entry (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))
+  (func (export "test_ole_data_set_with_text_conversions") (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
+    (call $ole_data_set_with_text_conversions (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))
   (func (export "test_ole_data_count") (param $obj i32) (result i32)
     (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
   (func (export "test_ole_create_format_enum") (param $obj i32) (result i32)

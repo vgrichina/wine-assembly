@@ -332,7 +332,7 @@ transfer breadth below.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
 - Preserve stable format enumeration and media lifetime after clipboard owner
   changes, `OleSetClipboard`, `OleGetClipboard`, and `OleFlushClipboard`.
-- Add `CF_UNICODETEXT` alongside ANSI/OEM text and registered RTF; preserve
+- [x] Add `CF_UNICODETEXT` alongside ANSI/OEM text and registered RTF; preserve
   CRLF and terminating-null conventions exactly.
 - Add advisory plumbing only after a traced consumer requires it:
   `DAdvise`, `DUnadvise`, `EnumDAdvise`, and change notification.
@@ -355,6 +355,16 @@ order and returns `DV_E_FORMATETC`, `DV_E_DVASPECT`, `DV_E_LINDEX`,
 `DV_E_DVTARGETDEVICE`, or `DV_E_TYMED` as appropriate. Distinct presentations
 no longer overwrite each other, and enumeration advertises the concrete medium
 each entry can actually return. The expanded focused suite passes 39/39.
+
+2026-08-13 text-transfer result: public `SetData` canonicalizes HGLOBAL text
+to Windows CRLF, publishes independently owned `CF_TEXT`, `CF_OEMTEXT`, and
+`CF_UNICODETEXT` values, preserves exactly one terminating NUL, and leaves
+registered RTF as an opaque coexisting format. Unicode input retains UTF-16
+code units while the bounded ANSI/OEM fallback maps unrepresentable units to
+`?`. The three-format replacement is failure-atomic through a detached cloned
+collection. The focused suite passes 45/45. The WordPad rich clipboard test
+passes 21/21 and the Paint clipboard test passes 9/9 after restricting Paint's
+delayed bitmap materialization to `mspaint.exe`.
 
 ### Acceptance
 

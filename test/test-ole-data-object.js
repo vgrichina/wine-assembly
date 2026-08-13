@@ -158,6 +158,24 @@ async function main() {
     dv.setUint16(wa(value) + text.length * 2, 0, true);
     return value;
   };
+  const readAnsiHandle = handle => {
+    const bytes = [];
+    for (let i = 0; i < 1024; i++) {
+      const byte = u8[wa(handle) + i];
+      bytes.push(byte);
+      if (byte === 0) break;
+    }
+    return bytes;
+  };
+  const readUnicodeHandle = handle => {
+    const units = [];
+    for (let i = 0; i < 1024; i++) {
+      const unit = dv.getUint16(wa(handle) + i * 2, true);
+      units.push(unit);
+      if (unit === 0) break;
+    }
+    return units;
+  };
   const multi = e.test_ole_create_data_object(format, medium) >>> 0;
   const unicodeFormat = makeFormat(13);
   const targetDevice = alloc(8);
@@ -283,6 +301,79 @@ async function main() {
   for (let i = 0; i < 5; i++) e.test_ole_format_free(negotiatedFormats + i * 20);
   e.test_ole_release(negotiatedEnum);
   e.test_ole_release(negotiated);
+
+  const textObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const mixedLineText = makeHglobalMedium(Uint8Array.from([
+    65, 10, 66, 13, 67, 13, 10, 0xe9, 0,
+  ]));
+  const convertedTextFormat = makeFormat(1);
+  check('text SetData synthesizes ANSI, OEM, and Unicode formats together',
+    e.test_ole_data_set_with_text_conversions(
+      textObject, convertedTextFormat, mixedLineText.value, 0) === 0 &&
+    e.test_ole_data_count(textObject) === 3 &&
+    e.test_ole_data_query(textObject, makeFormat(1)) === 0 &&
+    e.test_ole_data_query(textObject, makeFormat(7)) === 0 &&
+    e.test_ole_data_query(textObject, makeFormat(13)) === 0);
+  const expectedAnsiText = [65, 13, 10, 66, 13, 10, 67, 13, 10, 0xe9, 0];
+  const expectedUnicodeText = [65, 13, 10, 66, 13, 10, 67, 13, 10, 0xe9, 0];
+  const ansiTextOut = alloc(12);
+  const oemTextOut = alloc(12);
+  const unicodeTextOut = alloc(12);
+  e.test_ole_data_get(textObject, makeFormat(1), ansiTextOut);
+  e.test_ole_data_get(textObject, makeFormat(7), oemTextOut);
+  e.test_ole_data_get(textObject, makeFormat(13), unicodeTextOut);
+  check('ANSI and OEM text normalize lone CR/LF to CRLF with a terminating NUL',
+    readAnsiHandle(dv.getUint32(wa(ansiTextOut) + 4, true)).join(',') === expectedAnsiText.join(',') &&
+    readAnsiHandle(dv.getUint32(wa(oemTextOut) + 4, true)).join(',') === expectedAnsiText.join(','));
+  check('Unicode text preserves high bytes as code points with exact CRLF/NUL structure',
+    readUnicodeHandle(dv.getUint32(wa(unicodeTextOut) + 4, true)).join(',') === expectedUnicodeText.join(','));
+  e.test_ole_release_medium(ansiTextOut);
+  e.test_ole_release_medium(oemTextOut);
+  e.test_ole_release_medium(unicodeTextOut);
+
+  const rtfName = alloc('Rich Text Format'.length + 1);
+  u8.set(Uint8Array.from([...Buffer.from('Rich Text Format', 'latin1'), 0]), wa(rtfName));
+  const rtfFormatId = e.clipboard_register_format_a(rtfName) >>> 0;
+  const rtfFormat = makeFormat(rtfFormatId);
+  const rtfBytes = Uint8Array.from([...Buffer.from('{\\rtf1\\ansi A\\par B}', 'latin1'), 0]);
+  const rtfMedium = makeHglobalMedium(rtfBytes);
+  check('registered RTF remains an independent opaque format beside all text variants',
+    e.test_ole_data_set_with_text_conversions(textObject, rtfFormat, rtfMedium.value, 0) === 0 &&
+    e.test_ole_data_count(textObject) === 4 &&
+    (() => {
+      const result = alloc(12);
+      const ok = e.test_ole_data_get(textObject, rtfFormat, result) === 0 &&
+        readAnsiHandle(dv.getUint32(wa(result) + 4, true)).join(',') === Array.from(rtfBytes).join(',');
+      e.test_ole_release_medium(result);
+      return ok;
+    })());
+  e.test_ole_release(textObject);
+
+  const unicodeSourceFormat = makeFormat(13);
+  const unicodeSourceHandle = alloc(12);
+  [0x03a9, 10, 0x4e2d, 0].forEach((unit, i) => dv.setUint16(wa(unicodeSourceHandle) + i * 2, unit, true));
+  const unicodeSourceMedium = alloc(12);
+  u8.fill(0, wa(unicodeSourceMedium), wa(unicodeSourceMedium) + 12);
+  dv.setUint32(wa(unicodeSourceMedium), 1, true);
+  dv.setUint32(wa(unicodeSourceMedium) + 4, unicodeSourceHandle, true);
+  const unicodeTextObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  check('Unicode text conversion preserves UTF-16 and consumes fRelease input ownership',
+    e.test_ole_data_set_with_text_conversions(
+      unicodeTextObject, unicodeSourceFormat, unicodeSourceMedium, 1) === 0 &&
+    dv.getUint32(wa(unicodeSourceMedium), true) === 0 &&
+    dv.getUint32(wa(unicodeSourceMedium) + 4, true) === 0);
+  const preservedUnicode = alloc(12);
+  const fallbackAnsi = alloc(12);
+  e.test_ole_data_get(unicodeTextObject, makeFormat(13), preservedUnicode);
+  e.test_ole_data_get(unicodeTextObject, makeFormat(1), fallbackAnsi);
+  check('Unicode synthesis keeps non-Latin code units and uses deterministic ANSI fallback',
+    readUnicodeHandle(dv.getUint32(wa(preservedUnicode) + 4, true)).join(',') ===
+      [0x03a9, 13, 10, 0x4e2d, 0].join(',') &&
+    readAnsiHandle(dv.getUint32(wa(fallbackAnsi) + 4, true)).join(',') ===
+      [63, 13, 10, 63, 0].join(','));
+  e.test_ole_release_medium(preservedUnicode);
+  e.test_ole_release_medium(fallbackAnsi);
+  e.test_ole_release(unicodeTextObject);
 
   // GetDataHere fills media owned by the caller. It must not replace handles
   // or interface pointers, and partial HGLOBAL writes are forbidden.

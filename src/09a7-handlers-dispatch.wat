@@ -3179,7 +3179,8 @@
   (func $ole_data_set_entry (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
     (local $entries i32) (local $count i32) (local $capacity i32) (local $entry i32)
     (local $new_entries i32) (local $new_capacity i32) (local $hr i32) (local $staged i32) (local $is_new i32)
-    (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
+    (if (i32.or (i32.eqz (local.get $obj))
+          (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
       (then (return (i32.const 0x80004003))))
     (if (i32.eqz (i32.and
           (call $gl32 (i32.add (local.get $formatetc) (i32.const 16)))
@@ -3234,6 +3235,200 @@
     (memory.copy (call $g2w (local.get $entry)) (call $g2w (local.get $staged)) (i32.const 32))
     (call $heap_free (local.get $staged))
     (if (local.get $take) (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
+    (i32.const 0))
+
+  ;; Convert ANSI/OEM or UTF-16 clipboard text into canonical UTF-16 with
+  ;; Windows CRLF line endings and one terminating NUL code unit.
+  (func $ole_text_to_unicode (param $src i32) (param $source_unicode i32) (result i32)
+    (local $capacity i32) (local $limit i32) (local $i i32) (local $units i32)
+    (local $ch i32) (local $next i32) (local $dst i32) (local $out i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $capacity (i32.sub (call $gl32 (i32.sub (local.get $src) (i32.const 4))) (i32.const 4)))
+    (local.set $limit (select (i32.shr_u (local.get $capacity) (i32.const 1))
+      (local.get $capacity) (local.get $source_unicode)))
+    (block $measured (loop $measure
+      (if (i32.ge_u (local.get $i) (local.get $limit)) (then (return (i32.const 0))))
+      (if (local.get $source_unicode)
+        (then (local.set $ch
+          (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1))))))
+        (else (local.set $ch
+          (call $gl8 (i32.add (local.get $src) (local.get $i))))))
+      (br_if $measured (i32.eqz (local.get $ch)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))
+        (then
+          (local.set $units (i32.add (local.get $units) (i32.const 2)))
+          (if (i32.and (i32.eq (local.get $ch) (i32.const 13))
+                (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $limit)))
+            (then
+              (if (local.get $source_unicode)
+                (then (local.set $next
+                  (call $gl16 (i32.add (local.get $src)
+                    (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 1))))))
+                (else (local.set $next
+                  (call $gl8 (i32.add (local.get $src)
+                    (i32.add (local.get $i) (i32.const 1)))))))
+              (if (i32.eq (local.get $next) (i32.const 10))
+                (then (local.set $i (i32.add (local.get $i) (i32.const 1))))))))
+        (else (local.set $units (i32.add (local.get $units) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $measure)))
+    (if (i32.gt_u (local.get $units) (i32.const 0x3fffffff)) (then (return (i32.const 0))))
+    (local.set $dst (call $heap_alloc (i32.shl (i32.add (local.get $units) (i32.const 1)) (i32.const 1))))
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+    (local.set $i (i32.const 0))
+    (block $written (loop $write
+      (if (local.get $source_unicode)
+        (then (local.set $ch
+          (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1))))))
+        (else (local.set $ch
+          (call $gl8 (i32.add (local.get $src) (local.get $i))))))
+      (br_if $written (i32.eqz (local.get $ch)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 10)) (i32.eq (local.get $ch) (i32.const 13)))
+        (then
+          (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $out) (i32.const 1))) (i32.const 13))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))
+          (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $out) (i32.const 1))) (i32.const 10))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))
+          (if (i32.eq (local.get $ch) (i32.const 13))
+            (then
+              (if (local.get $source_unicode)
+                (then (local.set $next
+                  (call $gl16 (i32.add (local.get $src)
+                    (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 1))))))
+                (else (local.set $next
+                  (call $gl8 (i32.add (local.get $src)
+                    (i32.add (local.get $i) (i32.const 1)))))))
+              (if (i32.eq (local.get $next) (i32.const 10))
+                (then (local.set $i (i32.add (local.get $i) (i32.const 1))))))))
+        (else
+          (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $out) (i32.const 1))) (local.get $ch))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $write)))
+    (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $out) (i32.const 1))) (i32.const 0))
+    (local.get $dst))
+
+  (func $ole_unicode_to_ansi (param $src i32) (result i32)
+    (local $capacity i32) (local $limit i32) (local $chars i32) (local $dst i32) (local $ch i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $capacity (i32.sub (call $gl32 (i32.sub (local.get $src) (i32.const 4))) (i32.const 4)))
+    (local.set $limit (i32.shr_u (local.get $capacity) (i32.const 1)))
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $chars) (local.get $limit)) (then (return (i32.const 0))))
+      (br_if $found (i32.eqz (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $chars) (i32.const 1))))))
+      (local.set $chars (i32.add (local.get $chars) (i32.const 1)))
+      (br $scan)))
+    (local.set $dst (call $heap_alloc (i32.add (local.get $chars) (i32.const 1))))
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+    (local.set $limit (i32.const 0))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $limit) (local.get $chars)))
+      (local.set $ch (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $limit) (i32.const 1)))))
+      (call $gs8 (i32.add (local.get $dst) (local.get $limit))
+        (select (local.get $ch) (i32.const 63) (i32.le_u (local.get $ch) (i32.const 255))))
+      (local.set $limit (i32.add (local.get $limit) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $dst) (local.get $chars)) (i32.const 0))
+    (local.get $dst))
+
+  (func $ole_data_set_with_text_conversions (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
+    (local $format i32) (local $is_text i32) (local $unicode i32) (local $ansi i32)
+    (local $temp_format i32) (local $temp_medium i32) (local $staged i32) (local $entries i32)
+    (local $count i32) (local $i i32) (local $old_entries i32) (local $old_count i32)
+    (local $old_capacity i32) (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $obj))
+          (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
+      (then (return (i32.const 0x80004003))))
+    (local.set $format (call $gl16 (local.get $formatetc)))
+    (local.set $is_text (i32.or
+      (i32.eq (local.get $format) (i32.const 1))
+      (i32.or (i32.eq (local.get $format) (i32.const 7)) (i32.eq (local.get $format) (i32.const 13)))))
+    (if (i32.ne (call $gl32 (local.get $medium)) (i32.const 1))
+      (then (return (call $ole_data_set_entry
+        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+    (if (i32.eqz (local.get $is_text))
+      (then (return (call $ole_data_set_entry
+        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $formatetc) (i32.const 8))) (i32.const 1))
+      (then (return (call $ole_data_set_entry
+        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $formatetc) (i32.const 12))) (i32.const -1))
+      (then (return (call $ole_data_set_entry
+        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $formatetc) (i32.const 4))) (i32.const 0))
+      (then (return (call $ole_data_set_entry
+        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+    (local.set $unicode (call $ole_text_to_unicode
+      (call $gl32 (i32.add (local.get $medium) (i32.const 4)))
+      (i32.eq (local.get $format) (i32.const 13))))
+    (if (i32.eqz (local.get $unicode)) (then (return (i32.const 0x8007000E))))
+    (local.set $ansi (call $ole_unicode_to_ansi (local.get $unicode)))
+    (if (i32.eqz (local.get $ansi))
+      (then (call $heap_free (local.get $unicode)) (return (i32.const 0x8007000E))))
+    (local.set $temp_format (call $heap_alloc (i32.const 20)))
+    (local.set $temp_medium (call $heap_alloc (i32.const 12)))
+    (if (i32.or (i32.eqz (local.get $temp_format)) (i32.eqz (local.get $temp_medium)))
+      (then
+        (if (local.get $temp_format) (then (call $heap_free (local.get $temp_format))))
+        (if (local.get $temp_medium) (then (call $heap_free (local.get $temp_medium))))
+        (call $heap_free (local.get $ansi)) (call $heap_free (local.get $unicode))
+        (return (i32.const 0x8007000E))))
+    (call $zero_memory (call $g2w (local.get $temp_format)) (i32.const 20))
+    (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
+    (call $gs32 (i32.add (local.get $temp_format) (i32.const 8)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $temp_format) (i32.const 12)) (i32.const -1))
+    (call $gs32 (i32.add (local.get $temp_format) (i32.const 16)) (i32.const 1))
+    (call $gs32 (local.get $temp_medium) (i32.const 1))
+    (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $ansi))
+    ;; Clone the entire collection first. Only swap it into the live object
+    ;; after all three synthesized formats have been copied successfully.
+    (local.set $staged (call $ole_create_data_object (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $staged))
+      (then
+        (call $heap_free (local.get $temp_medium)) (call $heap_free (local.get $temp_format))
+        (call $heap_free (local.get $ansi)) (call $heap_free (local.get $unicode))
+        (return (i32.const 0x8007000E))))
+    (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (block $cloned (loop $clone
+      (br_if $cloned (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $old_entries (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
+      (local.set $hr (call $ole_data_set_entry
+        (local.get $staged) (local.get $old_entries) (i32.add (local.get $old_entries) (i32.const 20)) (i32.const 0)))
+      (if (local.get $hr) (then (br $cloned)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $clone)))
+    (call $gs16 (local.get $temp_format) (i32.const 1))
+    (if (i32.eqz (local.get $hr))
+      (then (local.set $hr (call $ole_data_set_entry
+        (local.get $staged) (local.get $temp_format) (local.get $temp_medium) (i32.const 0)))))
+    (if (i32.eqz (local.get $hr))
+      (then
+        (call $gs16 (local.get $temp_format) (i32.const 7))
+        (local.set $hr (call $ole_data_set_entry (local.get $staged) (local.get $temp_format) (local.get $temp_medium) (i32.const 0)))))
+    (if (i32.eqz (local.get $hr))
+      (then
+        (call $gs16 (local.get $temp_format) (i32.const 13))
+        (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $unicode))
+        (local.set $hr (call $ole_data_set_entry (local.get $staged) (local.get $temp_format) (local.get $temp_medium) (i32.const 0)))))
+    (call $heap_free (local.get $temp_medium)) (call $heap_free (local.get $temp_format))
+    (call $heap_free (local.get $ansi)) (call $heap_free (local.get $unicode))
+    (if (local.get $hr)
+      (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+    (local.set $old_entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $old_count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (local.set $old_capacity (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 12))
+      (call $gl32 (i32.add (local.get $staged) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16))
+      (call $gl32 (i32.add (local.get $staged) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 20))
+      (call $gl32 (i32.add (local.get $staged) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 12)) (local.get $old_entries))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 16)) (local.get $old_count))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 20)) (local.get $old_capacity))
+    (drop (call $ole_obj_release (local.get $staged)))
+    (if (local.get $take) (then (call $ole_release_medium (local.get $medium))))
     (i32.const 0))
 
   ;; Fill storage supplied by the caller without transferring its ownership.
@@ -3319,7 +3514,7 @@
           (i32.ne (local.get $formatetc) (i32.const 0))
           (i32.ne (local.get $medium) (i32.const 0)))
       (then
-        (local.set $hr (call $ole_data_set_entry (local.get $obj) (local.get $formatetc) (local.get $medium) (i32.const 0)))
+        (local.set $hr (call $ole_data_set_with_text_conversions (local.get $obj) (local.get $formatetc) (local.get $medium) (i32.const 0)))
         (if (local.get $hr) (then (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0))))
         ))
     (local.get $obj))
@@ -3460,7 +3655,7 @@
     (global.set $eax (i32.const 0x00040130)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_SetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2))) (then (global.set $eax (i32.const 0x80004003)))
-      (else (global.set $eax (call $ole_data_set_entry
+      (else (global.set $eax (call $ole_data_set_with_text_conversions
         (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IDataObject_EnumFormatEtc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3905,6 +4100,26 @@
       (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))
     (global.set $clipboard_ole_data_object (i32.const 0)))
 
+  (func $ole_clipboard_is_mspaint (result i32)
+    ;; exe_name_wa is a WASM-space buffer populated by set_exe_name.
+    (if (i32.ne (global.get $exe_name_len) (i32.const 11))
+      (then (return (i32.const 0))))
+    (i32.and
+      (i32.and
+        (i32.and
+          (i32.eq (i32.load8_u (global.get $exe_name_wa)) (i32.const 109)) ;; m
+          (i32.eq (i32.load8_u offset=1 (global.get $exe_name_wa)) (i32.const 115))) ;; s
+        (i32.and
+          (i32.eq (i32.load8_u offset=2 (global.get $exe_name_wa)) (i32.const 112)) ;; p
+          (i32.eq (i32.load8_u offset=3 (global.get $exe_name_wa)) (i32.const 97)))) ;; a
+      (i32.and
+        (i32.and
+          (i32.eq (i32.load8_u offset=4 (global.get $exe_name_wa)) (i32.const 105)) ;; i
+          (i32.eq (i32.load8_u offset=5 (global.get $exe_name_wa)) (i32.const 110))) ;; n
+        (i32.and
+          (i32.eq (i32.load8_u offset=6 (global.get $exe_name_wa)) (i32.const 116)) ;; t
+          (i32.eq (i32.load (i32.add (global.get $exe_name_wa) (i32.const 7))) (i32.const 0x6578652e)))))) ;; .exe
+
   ;; Snapshot the newest canonical bitmap as a bottom-up 32-bpp CF_DIB. MFC
   ;; image apps such as Paint publish delayed-render IDataObjects, while USER
   ;; clipboard consumers expect OleSetClipboard to expose a rendered format.
@@ -3989,7 +4204,13 @@
     (global.set $clipboard_ole_data_object (local.get $arg0))
     (if (call $ole_clipboard_owner_is_local (local.get $arg0))
       (then (drop (call $ole_obj_addref (local.get $arg0))))
-      (else (drop (call $clipboard_snapshot_latest_bitmap))))
+      (else
+        ;; Paint currently publishes a DLL-private delayed-render object, so
+        ;; materialize its newest bitmap eagerly. Applying that heuristic to
+        ;; WordPad text IDataObjects invents CF_DIB and routes paste as an
+        ;; image, losing the emulator's saved text/paragraph formatting.
+        (if (call $ole_clipboard_is_mspaint)
+          (then (drop (call $clipboard_snapshot_latest_bitmap))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
