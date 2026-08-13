@@ -55,5 +55,9 @@ assert(gdiHandlersWat.includes('(call $gdi_line_try'),
   'LineTo must try the WAT raster kernel before the Canvas compatibility path');
 assert(gdiHandlersWat.includes('(call $host_gdi_line_to'),
   'LineTo must retain an explicit compatibility fallback for unsupported targets');
+assert(handlersWat.includes('(call $gdi_polyline_try'),
+  'Polyline APIs must try the atomic WAT path raster kernel first');
+assert(handlersWat.includes('(call $host_gdi_polyline'),
+  'Polyline must retain a named non-mutating compatibility fallback');
 
 console.log('PASS  core has no app-specific run-loop fast paths');

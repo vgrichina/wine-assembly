@@ -46,6 +46,13 @@ target kernels. One-pixel dash, dot, dash-dot, and dash-dot-dot pens use fixed
 device-step WAT coverage tables. `CreatePen` dash/dot styles wider than one are
 normalized to solid as Win32 specifies.
 
+`Polyline` and `PolylineTo` reuse the WAT line kernel after an atomic
+all-segment preflight. Cosmetic style phase continues across segment
+boundaries and each shared endpoint is covered once. `Polyline` preserves the
+DC current position; `PolylineTo` starts from and advances the WAT-owned
+current position. Unsupported paths use a single named Canvas fallback rather
+than mixing WAT and Canvas segments.
+
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.
 It does not propose replacing Canvas as the desktop compositor or presentation

@@ -146,6 +146,8 @@
       (else
         (local.set $from_x (i32.const 0))
         (local.set $from_y (i32.const 0))))
+    ;; A standalone LineTo starts a fresh cosmetic style run.
+    (global.set $gdi_line_style_phase (i32.const 0))
     (local.set $ok (call $gdi_line_try
       (local.get $arg0) (local.get $from_x) (local.get $from_y)
       (local.get $arg1) (local.get $arg2)))

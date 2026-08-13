@@ -6838,27 +6838,23 @@
 
   ;; 456: Polyline(hdc, lppt, cPoints) — MoveTo first, LineTo rest
   (func $handle_Polyline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $i i32) (local $n i32) (local $x i32) (local $y i32)
+    (local $p i32) (local $n i32) (local $ok i32)
     (local.set $n (local.get $arg2))
     (if (i32.lt_s (local.get $n) (i32.const 1))
       (then
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (local.set $p (call $g2w (local.get $arg1)))
-    (local.set $x (i32.load (local.get $p)))
-    (local.set $y (i32.load offset=4 (local.get $p)))
-    (drop (call $host_gdi_move_to (local.get $arg0) (local.get $x) (local.get $y)))
-    (local.set $i (i32.const 1))
-    (block $done
-      (loop $loop
-        (br_if $done (i32.ge_s (local.get $i) (local.get $n)))
-        (local.set $p (i32.add (local.get $p) (i32.const 8)))
-        (local.set $x (i32.load (local.get $p)))
-        (local.set $y (i32.load offset=4 (local.get $p)))
-        (drop (call $host_gdi_line_to (local.get $arg0) (local.get $x) (local.get $y)))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $loop)))
-    (global.set $eax (i32.const 1))
+    (local.set $ok (call $gdi_polyline_try
+      (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0)))
+    (if (local.get $ok)
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Named Canvas compatibility path for unsupported target/pen envelopes.
+    (global.set $eax (call $host_gdi_polyline
+      (local.get $arg0) (local.get $p) (local.get $n)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -8471,8 +8467,26 @@
 
   ;; 570: PolylineTo(hdc, lppt, cPoints)
   (func $handle_PolylineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_polyline_to
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+    (local $p i32) (local $ok i32) (local $last i32) (local $x i32) (local $y i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $ok (call $gdi_polyline_try
+      (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1)))
+    (if (i32.eqz (local.get $ok))
+      (then (local.set $ok (call $host_gdi_polyline_to
+        (local.get $arg0) (local.get $p) (local.get $arg2)))))
+    (if (i32.and (local.get $ok) (i32.gt_s (local.get $arg2) (i32.const 0)))
+      (then
+        (local.set $last (i32.add (local.get $p)
+          (i32.shl (i32.sub (local.get $arg2) (i32.const 1)) (i32.const 3))))
+        (local.set $x (i32.load (local.get $last)))
+        (local.set $y (i32.load offset=4 (local.get $last)))
+        (global.set $gdi_current_pos_hdc (local.get $arg0))
+        (global.set $gdi_current_pos_x (local.get $x))
+        (global.set $gdi_current_pos_y (local.get $y))
+        (if (local.get $ok)
+          (then (drop (call $host_gdi_move_to
+            (local.get $arg0) (local.get $x) (local.get $y)))))))
+    (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

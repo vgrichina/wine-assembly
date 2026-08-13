@@ -212,6 +212,8 @@
   ;; gdi_polygon(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_poly_bezier" (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32)))
   ;; gdi_poly_bezier(hdc, pointsWaPtr, nCount, fromCurrent)
+  (import "host" "gdi_polyline" (func $host_gdi_polyline (param i32 i32 i32) (result i32)))
+  ;; gdi_polyline(hdc, pointsWaPtr, nCount) preserves the current position.
   (import "host" "gdi_polyline_to" (func $host_gdi_polyline_to (param i32 i32 i32) (result i32)))
   ;; gdi_polyline_to(hdc, pointsWaPtr, nCount)
   (import "host" "gdi_move_to" (func $host_gdi_move_to (param i32 i32 i32) (result i32)))
@@ -1607,6 +1609,7 @@
   (global $gdi_current_pos_hdc (mut i32) (i32.const 0))
   (global $gdi_current_pos_x (mut i32) (i32.const 0))
   (global $gdi_current_pos_y (mut i32) (i32.const 0))
+  (global $gdi_line_style_phase (mut i32) (i32.const 0))
 
   ;; Menu loader scratch — used by $menu_load (09c5-menu.wat) while
   ;; walking PE menu resource bytes (UTF-16 MENUITEMTEMPLATE) in two

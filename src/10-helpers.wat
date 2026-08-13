@@ -1321,6 +1321,38 @@
       (then (i32.store8 offset=3 (local.get $pixel) (i32.const 0))))
     (i32.const 1))
 
+  ;; Side-effect-free admission check used to make multi-segment paths atomic:
+  ;; every segment must be supported before the first pixel is changed.
+  (func $gdi_line_can_raster (param $hdc i32) (param $from_x i32) (param $from_y i32)
+        (param $to_x i32) (param $to_y i32) (result i32)
+    (local $desc i32) (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
+    (local $dx i32) (local $dy i32) (local $span i32) (local $pen_width i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (i32.eqz (call $host_gdi_get_line_descriptor (local.get $hdc) (local.get $desc)))
+      (then (return (i32.const 0))))
+    (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $from_x)))
+    (local.set $y0 (call $gdi_line_map_y (local.get $desc) (local.get $from_y)))
+    (local.set $x1 (call $gdi_line_map_x (local.get $desc) (local.get $to_x)))
+    (local.set $y1 (call $gdi_line_map_y (local.get $desc) (local.get $to_y)))
+    (local.set $dx (select (i32.sub (local.get $x1) (local.get $x0))
+      (i32.sub (local.get $x0) (local.get $x1)) (i32.ge_s (local.get $x1) (local.get $x0))))
+    (local.set $dy (select (i32.sub (local.get $y1) (local.get $y0))
+      (i32.sub (local.get $y0) (local.get $y1)) (i32.ge_s (local.get $y1) (local.get $y0))))
+    (local.set $span (select (local.get $dx) (local.get $dy)
+      (i32.ge_u (local.get $dx) (local.get $dy))))
+    (if (i32.gt_u (local.get $span) (i32.const 65536))
+      (then (return (i32.const 0))))
+    (local.set $pen_width (i32.load offset=28 (local.get $desc)))
+    (if (i32.and (i32.gt_u (local.get $pen_width) (i32.const 1))
+          (i32.ne (call $gdi_dc_get_rop2 (local.get $hdc)) (i32.const 13)))
+      (then (return (i32.const 0))))
+    (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $span))
+          (i64.mul (i64.extend_i32_u (local.get $pen_width))
+            (i64.extend_i32_u (local.get $pen_width))))
+        (i64.const 4000000))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
   ;; Returns 1 when WAT handled the line and 0 when the caller must use the
   ;; named Canvas compatibility path. Like Win32 LineTo, the final endpoint is
   ;; not painted.
@@ -1332,7 +1364,7 @@
     (local $min_x i32) (local $min_y i32) (local $max_x i32) (local $max_y i32)
     (local $pen_width i32) (local $stamp_x i32) (local $stamp_y i32)
     (local $stamp_left i32) (local $stamp_top i32) (local $pixel_x i32) (local $pixel_y i32)
-    (local $pen_style i32) (local $style_phase i32)
+    (local $pen_style i32)
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (i32.eqz (call $host_gdi_get_line_descriptor (local.get $hdc) (local.get $desc)))
       (then (return (i32.const 0))))
@@ -1381,7 +1413,7 @@
     (block $done (loop $pixels
       (br_if $done (i32.and (i32.eq (local.get $x0) (local.get $x1))
         (i32.eq (local.get $y0) (local.get $y1))))
-      (if (call $gdi_pen_style_draw (local.get $pen_style) (local.get $style_phase))
+      (if (call $gdi_pen_style_draw (local.get $pen_style) (global.get $gdi_line_style_phase))
         (then
           (local.set $stamp_left (i32.sub (local.get $x0)
             (i32.shr_u (local.get $pen_width) (i32.const 1))))
@@ -1411,7 +1443,8 @@
               (br $stamp_cols)))
             (local.set $stamp_y (i32.add (local.get $stamp_y) (i32.const 1)))
             (br $stamp_rows)))))
-      (local.set $style_phase (i32.add (local.get $style_phase) (i32.const 1)))
+      (global.set $gdi_line_style_phase
+        (i32.add (global.get $gdi_line_style_phase) (i32.const 1)))
       (local.set $e2 (i32.shl (local.get $err) (i32.const 1)))
       (if (i32.ge_s (local.get $e2) (local.get $dy))
         (then (local.set $err (i32.add (local.get $err) (local.get $dy)))
@@ -1427,12 +1460,81 @@
         (i32.add (local.get $max_y) (i32.const 1))))))
     (i32.const 1))
 
+  ;; Draws an open point path after preflighting every segment. from_current=0
+  ;; implements Polyline; from_current=1 implements PolylineTo.
+  (func $gdi_polyline_try (param $hdc i32) (param $points i32)
+        (param $count i32) (param $from_current i32) (result i32)
+    (local $i i32) (local $from_x i32) (local $from_y i32)
+    (local $to_x i32) (local $to_y i32)
+    (if (i32.or (i32.gt_u (local.get $count) (i32.const 4096))
+          (select (i32.eqz (local.get $count)) (i32.lt_u (local.get $count) (i32.const 2))
+            (local.get $from_current)))
+      (then (return (i32.const 0))))
+    (if (local.get $from_current)
+      (then
+        (if (i32.eq (global.get $gdi_current_pos_hdc) (local.get $hdc))
+          (then
+            (local.set $from_x (global.get $gdi_current_pos_x))
+            (local.set $from_y (global.get $gdi_current_pos_y)))))
+      (else
+        (local.set $from_x (i32.load (local.get $points)))
+        (local.set $from_y (i32.load offset=4 (local.get $points)))
+        (local.set $i (i32.const 1))))
+    ;; Admission pass: no raster memory changes are allowed here.
+    (block $preflight_done (loop $preflight
+      (br_if $preflight_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $to_x (i32.load (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (local.set $to_y (i32.load offset=4
+        (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (if (i32.eqz (call $gdi_line_can_raster (local.get $hdc)
+            (local.get $from_x) (local.get $from_y) (local.get $to_x) (local.get $to_y)))
+        (then (return (i32.const 0))))
+      (local.set $from_x (local.get $to_x)) (local.set $from_y (local.get $to_y))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $preflight)))
+    (global.set $gdi_line_style_phase (i32.const 0))
+    (if (local.get $from_current)
+      (then
+        (if (i32.eq (global.get $gdi_current_pos_hdc) (local.get $hdc))
+          (then
+            (local.set $from_x (global.get $gdi_current_pos_x))
+            (local.set $from_y (global.get $gdi_current_pos_y)))
+          (else
+            (local.set $from_x (i32.const 0)) (local.set $from_y (i32.const 0))))
+        (local.set $i (i32.const 0)))
+      (else
+        (local.set $from_x (i32.load (local.get $points)))
+        (local.set $from_y (i32.load offset=4 (local.get $points)))
+        (local.set $i (i32.const 1))))
+    (block $draw_done (loop $draw
+      (br_if $draw_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $to_x (i32.load (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (local.set $to_y (i32.load offset=4
+        (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (drop (call $gdi_line_try (local.get $hdc)
+        (local.get $from_x) (local.get $from_y) (local.get $to_x) (local.get $to_y)))
+      (local.set $from_x (local.get $to_x)) (local.set $from_y (local.get $to_y))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $draw)))
+    (i32.const 1))
+
   (func (export "test_gdi_line_try")
         (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
     (local $result i32)
+    (global.set $gdi_line_style_phase (i32.const 0))
     (local.set $result (call $gdi_line_try
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
     (local.get $result))
+  (func (export "test_gdi_polyline_try")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (local $result i32)
+    (local.set $result (call $gdi_polyline_try
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+    (local.get $result))
+  (func (export "test_gdi_current_pos_set") (param i32) (param i32) (param i32)
+    (global.set $gdi_current_pos_hdc (local.get 0))
+    (global.set $gdi_current_pos_x (local.get 1))
+    (global.set $gdi_current_pos_y (local.get 2)))
   (func (export "test_gdi_dc_set_rop2") (param i32) (param i32) (result i32)
     (local $result i32)
     (local.set $result (call $gdi_dc_set_rop2 (local.get 0) (local.get 1)))

@@ -92,6 +92,16 @@ async function main() {
     return points;
   }
 
+  function pointsBuffer(points) {
+    const wa = nextBmi;
+    nextBmi += Math.max(0x1000, points.length * 8);
+    points.forEach(([x, y], index) => {
+      dv.setInt32(wa + index * 8, x, true);
+      dv.setInt32(wa + index * 8 + 4, y, true);
+    });
+    return wa;
+  }
+
   check('ROP2 truth table matches all 16 binary raster modes', () => {
     const p = 0x123456;
     const d = 0xA5C33C;
@@ -275,6 +285,42 @@ async function main() {
     assert.strictEqual(wat.test_gdi_line_try(reverse.hdc, 8, 0, 0, 0), 1);
     assert.deepStrictEqual(Array.from({ length: 10 }, (_, x) => pixel(reverse, x, 0) !== 0),
       [false, false, false, true, true, true, true, true, true, false]);
+  });
+
+  check('Polyline shares styled phase across segment boundaries', () => {
+    const dib = makeDib(8, 8, 24, true);
+    const dash = base.host.gdi_create_pen(1, 1, 0x00FFFFFF);
+    const points = pointsBuffer([[0, 0], [5, 0], [5, 5]]);
+    base.host.gdi_select_object(dib.hdc, dash);
+    assert.strictEqual(wat.test_gdi_polyline_try(dib.hdc, points, 3, 0), 1);
+    for (let x = 0; x < 5; x++) assert.strictEqual(pixel(dib, x, 0), 0xFFFFFF);
+    assert.strictEqual(pixel(dib, 5, 0), 0xFFFFFF);
+    assert.strictEqual(pixel(dib, 5, 1), 0);
+    assert.strictEqual(pixel(dib, 5, 2), 0);
+    assert.strictEqual(pixel(dib, 5, 3), 0xFFFFFF);
+    assert.strictEqual(pixel(dib, 5, 4), 0xFFFFFF);
+  });
+
+  check('Polyline preflight rejects atomically before any segment writes', () => {
+    const dib = makeDib(8, 3, 24, true);
+    const pen = base.host.gdi_create_pen(0, 1, 0x000000FF);
+    const points = pointsBuffer([[0, 1], [4, 1], [70000, 1]]);
+    base.host.gdi_select_object(dib.hdc, pen);
+    assert.strictEqual(wat.test_gdi_polyline_try(dib.hdc, points, 3, 0), 0);
+    for (let x = 0; x < dib.width; x++) assert.strictEqual(pixel(dib, x, 1), 0);
+  });
+
+  check('PolylineTo begins at the WAT-owned current position', () => {
+    const dib = makeDib(8, 5, 24, true);
+    const pen = base.host.gdi_create_pen(0, 1, 0x000000FF);
+    const points = pointsBuffer([[5, 2], [5, 4]]);
+    base.host.gdi_select_object(dib.hdc, pen);
+    wat.test_gdi_current_pos_set(dib.hdc, 1, 2);
+    assert.strictEqual(wat.test_gdi_polyline_try(dib.hdc, points, 2, 1), 1);
+    for (let x = 1; x < 5; x++) assert.strictEqual(pixel(dib, x, 2), 0xFF0000);
+    assert.strictEqual(pixel(dib, 5, 2), 0xFF0000);
+    assert.strictEqual(pixel(dib, 5, 3), 0xFF0000);
+    assert.strictEqual(pixel(dib, 5, 4), 0);
   });
 
   console.log(`\n${passed}/${passed} checks passed`);
