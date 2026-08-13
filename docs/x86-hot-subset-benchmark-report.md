@@ -145,10 +145,69 @@ cold-fallback penalty.
 ## Decision
 
 Keep the experiment and tests, but keep it disabled by default. The next
-implementation should classify each decoded block once and cache its hot/cold
-eligibility instead of rescanning the packet on every entry. Then expand the
+implementation below classifies each decoded block once and caches its hot/cold
+eligibility instead of rescanning the packet on every entry. Expand the
 generic handler subset from AoE and RCT corpus histograms and require at least
 three matched full-app pairs before considering default enablement.
+
+## Production cache-metadata prototype
+
+The production-shaped follow-up stores one eligibility bit per decoded-cache
+slot in a parallel 512-byte bitmap for each emulator thread. Classification
+runs at `cache_store`, after the decoder has emitted the final packet, and
+accepts both generic handler IDs and the four existing AoE exact-form aliases.
+The main loop performs its ordinary cache lookup once, checks the bit, and:
+
+- calls the generated `br_table` packet executor for a hot packet;
+- continues through the existing `$next` path for a cold packet.
+
+Cache replacement naturally overwrites the bit. Full cache clears, page
+invalidation, thread initialization, and feature toggles clear the corresponding
+metadata. Tests cover supported exact forms, unsupported fallback with exact
+guest state, colliding cache slots, invalidation, and toggling.
+
+Fixed-work command:
+
+```sh
+env BLOCKS=2000000 WARMUP_BLOCKS=2000000 TRIALS=31 \
+  VARIANTS=x86-threaded,x86-cached-subset-production \
+  node tools/bench-aoe-recompile-loop.js
+```
+
+| Variant | Median ms | Paired vs x86 |
+|---|---:|---:|
+| x86 `call_indirect` | 164.62 | 1.000x |
+| production cached subset | 91.72 | 1.855x |
+
+This still uses the four-block all-hot kernel. Its purpose is to verify that
+real cache insertion, exact-form decoding, the main `run` entry point, and
+cached dispatch retain most of the generated executor's isolated benefit.
+
+The corrected full-browser AoE pair used 30 seconds of scripted campaign
+gameplay, muted audio, `HANDLER_HIST=0`, and `HOTFORM_SPECIALIZE=1`:
+
+| Metric | Baseline | Cached subset | Delta |
+|---|---:|---:|---:|
+| `main.runSlice` total | 19820.7 ms | 19422.6 ms | -2.01% |
+| guest/unwrapped total | 17094.0 ms | 16574.0 ms | -3.04% |
+| completed slices | 1998 | 2076 | +3.90% |
+| present FPS | 16.285 | 17.141 | +5.26% |
+| repaint FPS | 58.652 | 58.690 | +0.06% |
+| hot block entries | - | 60,405,257 | - |
+| cold block entries | - | 147,184,770 | - |
+| hot coverage | - | 29.1% | - |
+
+The candidate screenshot shows valid campaign gameplay. This is one positive
+full-app pair, not sufficient evidence to enable the feature by default.
+
+RCT remains the cold-path control. Its deterministic runtime loop classified
+one packet cold and executed 500,000 cold entries with zero hot entries. The
+nominal ten-second samples contain only five or six multi-second slices and are
+too noisy for a precise percentage, but the cached-selector candidates were
+directionally slower. Therefore the prototype should remain disabled globally
+and may only be enabled for an explicitly profiled app such as AoE. A generic
+default requires a cheaper cold selector or substantially broader corpus
+coverage.
 
 The machine-readable summary is in
 `docs/x86-hot-subset-benchmark-results.json`. Original browser profiles were

@@ -91,6 +91,7 @@ const requiredRegions = [
   'DX_OBJECTS',
   'COM_WRAPPERS',
   'COM_WRAPPERS_AUX',
+  'X86_HOT_CACHE_BITS',
 ];
 
 const regionNames = new Set(regions.map(region => region.name));

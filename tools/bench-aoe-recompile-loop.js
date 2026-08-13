@@ -207,6 +207,7 @@ function percentile(values, fraction) {
     e.set_aoe_wat_threaded_enabled(0);
     e.set_wat_stack_packet_enabled(0);
     e.set_wat_slot_packet_enabled(0);
+    e.set_hotform_specialization_enabled(1);
     e.set_wat_stack_superops_enabled(variant === 'wat-stack-cmp-jcc' ? 1 : 0);
     if (variant === 'wat-threaded') e.set_aoe_wat_threaded_enabled(1);
     if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
@@ -217,8 +218,10 @@ function percentile(values, fraction) {
       e.set_wat_slot_packet_enabled(1);
     }
     if (variant === 'wat-optimized') e.set_aoe_recompile_enabled(1);
+    e.set_x86_hot_subset_enabled(variant === 'x86-cached-subset-production' ? 1 : 0);
     seed();
     e.reset_aoe_recompile_counters();
+    e.reset_x86_hot_subset_counters();
     if (promotionMap(variant) || variant === 'brtable-cached-generic' ||
         variant === 'brtable-cached-mixed') {
       e.run(BLOCKS_PER_CYCLE);
@@ -227,7 +230,14 @@ function percentile(values, fraction) {
       e.reset_aoe_recompile_counters();
     }
     runnerFor(variant)(warmupBlocks);
-    if (variant === 'wat-slot-copy' || variant === 'wat-slot-reuse') {
+    if (variant === 'x86-cached-subset-production') {
+      assert.strictEqual(u32(e.get_x86_hot_subset_hot_blocks()), warmupBlocks,
+        'production cached subset warmup must dispatch every fixture block as hot');
+      assert.strictEqual(u32(e.get_x86_hot_subset_classified_hot()), blockBytes.size,
+        'production cached subset must classify each decoded fixture block once');
+      assert.strictEqual(u32(e.get_x86_hot_subset_fallback_blocks()), 0,
+        'production cached subset fixture must not fall back');
+    } else if (variant === 'wat-slot-copy' || variant === 'wat-slot-reuse') {
       assert.strictEqual(u32(e.get_wat_slot_packet_entries()), warmupBlocks,
         `warmup must reach the ${variant} backend`);
     } else if (variant === 'wat-stack' || variant === 'wat-stack-cmp-jcc') {
@@ -244,12 +254,19 @@ function percentile(values, fraction) {
     else rewriteCachedHandlers(variant);
     seed();
     e.reset_aoe_recompile_counters();
+    e.reset_x86_hot_subset_counters();
     e.set_aoe_recompile_count_enabled(0);
     e.set_wat_stack_packet_count_enabled(0);
     e.set_wat_slot_packet_count_enabled(0);
     const start = performance.now();
     runnerFor(variant)(measuredBlocks);
     const elapsedMs = performance.now() - start;
+    if (variant === 'x86-cached-subset-production') {
+      assert.strictEqual(u32(e.get_x86_hot_subset_hot_blocks()), measuredBlocks,
+        'production cached subset timed run must stay on generated dispatch');
+      assert.strictEqual(u32(e.get_x86_hot_subset_fallback_blocks()), 0,
+        'production cached subset timed run must not fall back');
+    }
     const state = snapshot();
     const expected = expectedState();
     assert.strictEqual(state.eip, expected.eip, 'loop must end at dispatch block');
@@ -260,6 +277,7 @@ function percentile(values, fraction) {
 
   const defaultVariants = [
     'x86-threaded',
+    'x86-cached-subset-production',
     'x86-alu-specialized',
     'x86-register-specialized',
     'x86-register-alu-specialized',
@@ -288,6 +306,8 @@ function percentile(values, fraction) {
   }
   assert(variants.includes('x86-threaded'), 'VARIANTS must include x86-threaded');
   if (WARM_ONCE) {
+    assert(!variants.includes('x86-cached-subset-production'),
+      'WARM_ONCE cannot toggle the production cached subset between variants');
     assert(variants.every(name => name.startsWith('x86-') || name.startsWith('brtable-')),
       'WARM_ONCE is valid only for variants sharing the ordinary x86 thread stream');
     configureAndWarm('x86-threaded');

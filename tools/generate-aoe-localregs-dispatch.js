@@ -10,6 +10,11 @@ const fs = require('fs');
 const path = require('path');
 const OUT = path.join(__dirname, '..', 'src', '05a-aoe-localregs-bench.generated.wat');
 const HANDLERS = [7, 11, 12, 18, 20, 21, 28, 43, 48, 53, 64, 65, 128, 312, 319, 355];
+// Production exact-form handler IDs emitted by $te for AoE forms already in
+// the generic subset. RCT's 382-384 forms remain cold until their generic
+// handler families are implemented in this dispatcher.
+const SPECIALIZED_HANDLERS = [368, 373, 374, 378];
+const DISPATCH_HANDLERS = [...HANDLERS, ...SPECIALIZED_HANDLERS];
 const RAW_WORDS = new Map([
   [7, 1], [20, 1], [21, 1], [28, 1], [43, 1], [48, 1], [128, 1],
   [312, 2], [319, 2], [355, 1],
@@ -149,6 +154,20 @@ function rawRead(target, globalIp) {
 function bodyGeneric(id, globalIp) {
   const read = target => rawRead(target, globalIp);
   switch (id) {
+    case 368: return ['(global.set $ecx (global.get $eax))'];
+    case 373: return ['(global.set $edx (global.get $edi))'];
+    case 374: return [
+      '(local.set $a (global.get $edx))', '(local.set $b (global.get $ecx))',
+      '(local.set $r (i32.add (local.get $a) (local.get $b)))',
+      '(global.set $edx (local.get $r))',
+      '(call $set_flags_add (local.get $a) (local.get $b) (local.get $r))',
+    ];
+    case 378: return [
+      '(local.set $a (global.get $edi))', '(local.set $b (global.get $ecx))',
+      '(local.set $r (i32.add (local.get $a) (local.get $b)))',
+      '(global.set $edi (local.get $r))',
+      '(call $set_flags_add (local.get $a) (local.get $b) (local.get $r))',
+    ];
     case 7: return [
       ...read('b'), '(local.set $a (call $get_reg (local.get $op)))',
       '(local.set $r (i32.and (local.get $a) (local.get $b)))',
@@ -349,9 +368,11 @@ function emitFunction(name, {
   blockFallback = false,
   exactOperands = false,
   cachedTag = false,
+  cachedMetadata = false,
 } = {}) {
   const out = [];
   const p = (s = '') => out.push(s);
+  const dispatchHandlers = generic ? DISPATCH_HANDLERS : HANDLERS;
   p(`  (func $${name} (export "${name}") (param $max_blocks i32)`);
   p('    (local $blocks i32) (local $thread i32) (local $ip_v i32)');
   if (blockFallback) p('    (local $scan i32) (local $scan_fn i32) (local $scan_op i32) (local $scan_supported i32)');
@@ -384,6 +405,18 @@ function emitFunction(name, {
     p('          (call $next)');
     p('          (br $main)))');
     p('      (local.set $thread (i32.and (local.get $thread) (i32.const -2)))');
+  }
+  if (cachedMetadata) {
+    p(`      (if (i32.eqz (call $x86_hot_cache_is_hot ${local ? '(local.get $eip_v)' : '(global.get $eip)'}))`);
+    p('        (then');
+    p('          (global.set $x86_hot_subset_fallback_blocks');
+    p('            (i32.add (global.get $x86_hot_subset_fallback_blocks) (i32.const 1)))');
+    p('          (global.set $ip (local.get $thread))');
+    p('          (global.set $steps (i32.const 1000))');
+    p('          (call $next)');
+    p('          (br $main)))');
+    p('      (global.set $x86_hot_subset_hot_blocks');
+    p('        (i32.add (global.get $x86_hot_subset_hot_blocks) (i32.const 1)))');
   }
   if (blockFallback) {
     p('      ;; Production-shaped fallback: validate the complete decoded block');
@@ -433,10 +466,11 @@ function emitFunction(name, {
   p(`        (local.set $op (i32.load offset=4 ${globalIp ? '(global.get $ip)' : '(local.get $ip_v)'}))`);
   p(`        (${globalIp ? 'global.set $ip' : 'local.set $ip_v'} (i32.add ${globalIp ? '(global.get $ip)' : '(local.get $ip_v)'} (i32.const 8)))`);
   p('        (block $fallback');
-  for (let i = HANDLERS.length - 1; i >= 0; i--) p(`          (block $case_${HANDLERS[i]}`);
-  const target = Array.from({ length: 356 }, (_, id) => HANDLERS.includes(id) ? `$case_${id}` : '$fallback').join(' ');
+  for (let i = dispatchHandlers.length - 1; i >= 0; i--) p(`          (block $case_${dispatchHandlers[i]}`);
+  const maxHandler = Math.max(...dispatchHandlers);
+  const target = Array.from({ length: maxHandler + 1 }, (_, id) => dispatchHandlers.includes(id) ? `$case_${id}` : '$fallback').join(' ');
   p(`            (br_table ${target} $fallback (local.get $fn))`);
-  for (const id of HANDLERS) {
+  for (const id of dispatchHandlers) {
     p(`          ) ;; case ${id}`);
     for (const row of (generic ? bodyGeneric(id, globalIp) : body(id, local, genericAlu))) p(`          ${row}`);
     p('          (br $dispatch)');
@@ -456,15 +490,83 @@ function emitFunction(name, {
   return out.join('\n');
 }
 
+function emitClassifier() {
+  const out = [];
+  const p = (s = '') => out.push(s);
+  p('  ;; Classify the final emitted x86 packet once at cache-store time.');
+  p('  (func $x86_hot_subset_classify_packet (param $start i32) (param $end i32) (result i32)');
+  p('    (local $ptr i32) (local $fn i32)');
+  p('    (local.set $ptr (local.get $start))');
+  p('    (block $cold (loop $scan');
+  p('      (br_if $cold (i32.ge_u (local.get $ptr) (local.get $end)))');
+  p('      (local.set $fn (i32.load (local.get $ptr)))');
+  p('      (local.set $ptr (i32.add (local.get $ptr) (i32.const 8)))');
+  p('      (block $fallback');
+  for (let i = DISPATCH_HANDLERS.length - 1; i >= 0; i--) p(`        (block $class_${DISPATCH_HANDLERS[i]}`);
+  const maxHandler = Math.max(...DISPATCH_HANDLERS);
+  const target = Array.from({ length: maxHandler + 1 }, (_, id) => DISPATCH_HANDLERS.includes(id) ? `$class_${id}` : '$fallback').join(' ');
+  p(`          (br_table ${target} $fallback (local.get $fn))`);
+  for (const id of DISPATCH_HANDLERS) {
+    p(`        ) ;; class ${id}`);
+    const rawBytes = (RAW_WORDS.get(id) || 0) * 4;
+    if (rawBytes) p(`        (local.set $ptr (i32.add (local.get $ptr) (i32.const ${rawBytes})))`);
+    if (TERMINAL_HANDLERS.has(id)) p('        (return (i32.const 1))');
+    else p('        (br $scan)');
+  }
+  p('      ) ;; fallback');
+  p('      (br $cold)');
+  p('    ))');
+  p('    (i32.const 0)');
+  p('  )');
+  return out.join('\n');
+}
+
+function emitPacketFunction(name) {
+  const out = [];
+  const p = (s = '') => out.push(s);
+  p(`  (func $${name} (param $thread i32)`);
+  p('    (local $ip_v i32) (local $fn i32) (local $op i32)');
+  p('    (local $addr i32) (local $a i32) (local $b i32) (local $r i32)');
+  p('    (local.set $ip_v (local.get $thread))');
+  p('    (block $block_done (loop $dispatch');
+  p('      (local.set $fn (i32.load (local.get $ip_v)))');
+  p('      (local.set $op (i32.load offset=4 (local.get $ip_v)))');
+  p('      (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))');
+  p('      (block $fallback');
+  for (let i = DISPATCH_HANDLERS.length - 1; i >= 0; i--) {
+    p(`        (block $case_${DISPATCH_HANDLERS[i]}`);
+  }
+  const maxHandler = Math.max(...DISPATCH_HANDLERS);
+  const target = Array.from({ length: maxHandler + 1 }, (_, id) =>
+    DISPATCH_HANDLERS.includes(id) ? `$case_${id}` : '$fallback').join(' ');
+  p(`          (br_table ${target} $fallback (local.get $fn))`);
+  for (const id of DISPATCH_HANDLERS) {
+    p(`        ) ;; case ${id}`);
+    for (const row of bodyGeneric(id, false)) p(`        ${row}`);
+    p('        (br $dispatch)');
+  }
+  p('      ) ;; fallback');
+  p('      ;; Cache-time classification makes this unreachable unless the');
+  p('      ;; packet or metadata was corrupted after insertion.');
+  p('      (call $host_log_i32 (i32.const 0x10CA1BAD))');
+  p('      (global.set $eip (i32.const 0))');
+  p('      (br $block_done)))');
+  p('  )');
+  return out.join('\n');
+}
+
 const text = [
   '  ;; GENERATED focused benchmark; see tools/generate-aoe-localregs-dispatch.js.',
   callIndirectBenchHandlers,
+  emitClassifier(),
+  emitPacketFunction('run_x86_hot_subset_packet_generic'),
   emitFunction('run_aoe_brtable_generic_global_ip', { generic: true, globalIp: true }),
   emitFunction('run_aoe_brtable_generic_local_ip', { generic: true }),
   emitFunction('run_aoe_brtable_direct_generic_alu', { genericAlu: true }),
   emitFunction('run_aoe_brtable_subset_generic', { generic: true, blockFallback: true }),
   emitFunction('run_aoe_brtable_subset_direct', { genericAlu: true, blockFallback: true, exactOperands: true }),
   emitFunction('run_aoe_brtable_cached_generic', { generic: true, cachedTag: true }),
+  emitFunction('run_x86_hot_subset_cached_generic', { generic: true, cachedMetadata: true }),
   emitFunction('run_aoe_brtable_globals'),
   emitFunction('run_aoe_brtable_locals', { local: true }),
   '',

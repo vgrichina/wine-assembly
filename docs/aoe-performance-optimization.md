@@ -2481,3 +2481,64 @@ default.
 5. Revisit SIB only as shape-specific handlers after operand/addressing histograms identify exact forms.
 6. Revisit stack only as batch prolog/epilog or call/ret forms, not as generic direct stack load/store replacement.
 7. Explore triple histograms once pair-driven wins flatten out.
+
+### Production Cached Hot-Subset Checkpoint
+
+The guarded `br_table` prototype now classifies the final decoded packet at
+cache insertion rather than rescanning it on every execution. Each of the eight
+thread caches has a parallel 4096-bit eligibility map. Cache collision,
+`clear_cache`, generated-code page invalidation, thread initialization, and
+feature toggles keep the bit synchronized with the ordinary cache entry.
+
+The main loop retains its existing cache lookup. A hot bit routes the already
+looked-up packet pointer into the generated generic `br_table` executor; a cold
+bit continues into the ordinary `$next` path. The classifier and executor also
+recognize the four AoE exact-form IDs, so the existing direct-register
+specialization remains enabled.
+
+```mermaid
+flowchart LR
+    A[x86 EIP] --> B[ordinary cache lookup]
+    B -->|miss| C[decode packet]
+    C --> D[classify once at cache_store]
+    D --> E[(packet + hot bit)]
+    B -->|hit| E
+    E -->|HOT| F[generated br_table packet executor]
+    E -->|COLD| G[existing call_indirect / next]
+    F --> A
+    G --> A
+```
+
+The real `run` entry point retained a 1.855x paired speedup in the 31-trial,
+two-million-block all-hot fixture (164.62 ms x86 median versus 91.72 ms cached
+subset). This measures the real cache and selector integration, but remains a
+focused kernel result.
+
+One matched 30-second full-browser AoE gameplay pair was also positive:
+
+```text
+metric                    baseline     cached subset       delta
+main.runSlice total      19820.7 ms      19422.6 ms        -2.01%
+guest/unwrapped          17094.0 ms      16574.0 ms        -3.04%
+completed slices          1998           2076              +3.90%
+present FPS                 16.285          17.141          +5.26%
+repaint FPS                 58.652          58.690          +0.06%
+hot block coverage                           29.1%
+```
+
+The candidate completed real campaign gameplay and recorded 60.4M hot entries
+and 147.2M cold entries. RCT's current stable runtime loop remained a 0%-hot
+control (500,000 cold entries). Its five-to-six-slice samples were noisy but
+directionally slower with the selector, so this path stays disabled by default.
+Use it only for an explicitly profiled application until cold selection becomes
+cheaper or the generic subset covers much more of the corpus.
+
+Artifacts:
+
+```text
+/private/tmp/aoe-prod-subset-baseline-30s.json
+/private/tmp/aoe-prod-inline-candidate-30s.json
+/private/tmp/aoe-prod-inline-candidate-30s.png
+/private/tmp/rct-prod-cache-baseline-10s.json
+/private/tmp/rct-prod-inline-candidate-10s.json
+```

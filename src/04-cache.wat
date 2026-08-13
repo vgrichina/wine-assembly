@@ -8,12 +8,50 @@
     (if (result i32) (i32.eq (i32.load (local.get $idx)) (local.get $ga))
       (then (i32.load offset=4 (local.get $idx)))
       (else (i32.const 0))))
+  (func $x86_hot_cache_is_hot (param $ga i32) (result i32)
+    (local $slot i32)
+    (local.set $slot
+      (i32.and (i32.shr_u (local.get $ga) (i32.const 2)) (global.get $CACHE_MASK)))
+    (i32.and
+      (i32.shr_u
+        (i32.load8_u
+          (i32.add (global.get $x86_hot_cache_base)
+            (i32.shr_u (local.get $slot) (i32.const 3))))
+        (i32.and (local.get $slot) (i32.const 7)))
+      (i32.const 1)))
+  (func $x86_hot_cache_set (param $ga i32) (param $hot i32)
+    (local $slot i32) (local $addr i32) (local $mask i32) (local $old i32)
+    (local.set $slot
+      (i32.and (i32.shr_u (local.get $ga) (i32.const 2)) (global.get $CACHE_MASK)))
+    (local.set $addr
+      (i32.add (global.get $x86_hot_cache_base)
+        (i32.shr_u (local.get $slot) (i32.const 3))))
+    (local.set $mask
+      (i32.shl (i32.const 1) (i32.and (local.get $slot) (i32.const 7))))
+    (local.set $old (i32.load8_u (local.get $addr)))
+    (i32.store8 (local.get $addr)
+      (if (result i32) (local.get $hot)
+        (then (i32.or (local.get $old) (local.get $mask)))
+        (else (i32.and (local.get $old) (i32.xor (local.get $mask) (i32.const 0xFF)))))))
   (func $cache_store (param $ga i32) (param $off i32)
     (local $idx i32) (local $page i32) (local $page_end i32) (local $should_track i32)
+    (local $hot i32)
     (local.set $idx (i32.add (global.get $CACHE_INDEX)
       (i32.mul (i32.and (i32.shr_u (local.get $ga) (i32.const 2)) (global.get $CACHE_MASK)) (i32.const 8))))
     (i32.store (local.get $idx) (local.get $ga))
     (i32.store offset=4 (local.get $idx) (local.get $off))
+    (local.set $hot (i32.const 0))
+    (if (global.get $x86_hot_subset_enabled)
+      (then
+        (local.set $hot
+          (call $x86_hot_subset_classify_packet
+            (local.get $off) (global.get $thread_alloc)))
+        (if (local.get $hot)
+          (then (global.set $x86_hot_subset_classified_hot
+            (i32.add (global.get $x86_hot_subset_classified_hot) (i32.const 1))))
+          (else (global.set $x86_hot_subset_classified_cold
+            (i32.add (global.get $x86_hot_subset_classified_cold) (i32.const 1)))))
+        (call $x86_hot_cache_set (local.get $ga) (local.get $hot))))
     (local.set $should_track
       (i32.and
         (i32.ne (global.get $exe_size_of_image) (i32.const 0))
@@ -34,6 +72,7 @@
           (then (global.set $generated_code_end (local.get $page_end))))))
   (func $clear_cache
     (local $i i32)
+    (memory.fill (global.get $x86_hot_cache_base) (i32.const 0) (i32.const 512))
     (local.set $i (i32.const 0))
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
@@ -49,7 +88,10 @@
       (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
       (local.set $idx (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))))
       (if (i32.eq (i32.and (i32.load (local.get $idx)) (i32.const 0xFFFFF000)) (local.get $page))
-        (then (i32.store (local.get $idx) (i32.const 0)) (i32.store offset=4 (local.get $idx) (i32.const 0))))
+        (then
+          (call $x86_hot_cache_set (i32.load (local.get $idx)) (i32.const 0))
+          (i32.store (local.get $idx) (i32.const 0))
+          (i32.store offset=4 (local.get $idx) (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $s))))
 

@@ -138,6 +138,11 @@ This means the guest's reachable WASM range is:
 
 **Above guest space (0x1E12000+)** -- thunk zone, thread cache, block cache, PE staging. Guest can reach these too via g2w if it forms high enough addresses.
 
+The x86 hot-subset experiment reserves `0x07F0D000-0x07F0DFFF` for eight
+512-byte eligibility bitmaps, one bit for each of the 4096 decoded-cache slots
+per emulator thread. This lies outside normal guest allocations and before the
+handler-histogram region at `0x07F10000`.
+
 **DX_OBJECTS at 0x7FF0000** -- the one actually protected region. Guest address 0x83DE000 maps to WASM 0x8000000, which hits the g2w bounds check. But the guest *does* hold pointers to these objects -- they're handed back by COM QueryInterface/CreateSurface. The emulator hands out guest-translated pointers that the guest can read but that happen to be in the valid range (the objects straddle the boundary carefully).
 
 ### Comparison

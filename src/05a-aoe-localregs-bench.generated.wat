@@ -115,6 +115,250 @@
     (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
     (return_call $next))
 
+  ;; Classify the final emitted x86 packet once at cache-store time.
+  (func $x86_hot_subset_classify_packet (param $start i32) (param $end i32) (result i32)
+    (local $ptr i32) (local $fn i32)
+    (local.set $ptr (local.get $start))
+    (block $cold (loop $scan
+      (br_if $cold (i32.ge_u (local.get $ptr) (local.get $end)))
+      (local.set $fn (i32.load (local.get $ptr)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 8)))
+      (block $fallback
+        (block $class_378
+        (block $class_374
+        (block $class_373
+        (block $class_368
+        (block $class_355
+        (block $class_319
+        (block $class_312
+        (block $class_128
+        (block $class_65
+        (block $class_64
+        (block $class_53
+        (block $class_48
+        (block $class_43
+        (block $class_28
+        (block $class_21
+        (block $class_20
+        (block $class_18
+        (block $class_12
+        (block $class_11
+        (block $class_7
+          (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_7 $fallback $fallback $fallback $class_11 $class_12 $fallback $fallback $fallback $fallback $fallback $class_18 $fallback $class_20 $class_21 $fallback $fallback $fallback $fallback $fallback $fallback $class_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_43 $fallback $fallback $fallback $fallback $class_48 $fallback $fallback $fallback $fallback $class_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_64 $class_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_312 $fallback $fallback $fallback $fallback $fallback $fallback $class_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $class_368 $fallback $fallback $fallback $fallback $class_373 $class_374 $fallback $fallback $fallback $class_378 $fallback (local.get $fn))
+        ) ;; class 7
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (br $scan)
+        ) ;; class 11
+        (br $scan)
+        ) ;; class 12
+        (br $scan)
+        ) ;; class 18
+        (br $scan)
+        ) ;; class 20
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (br $scan)
+        ) ;; class 21
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (br $scan)
+        ) ;; class 28
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (br $scan)
+        ) ;; class 43
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (return (i32.const 1))
+        ) ;; class 48
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (br $scan)
+        ) ;; class 53
+        (br $scan)
+        ) ;; class 64
+        (br $scan)
+        ) ;; class 65
+        (br $scan)
+        ) ;; class 128
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (br $scan)
+        ) ;; class 312
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 8)))
+        (return (i32.const 1))
+        ) ;; class 319
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 8)))
+        (return (i32.const 1))
+        ) ;; class 355
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+        (return (i32.const 1))
+        ) ;; class 368
+        (br $scan)
+        ) ;; class 373
+        (br $scan)
+        ) ;; class 374
+        (br $scan)
+        ) ;; class 378
+        (br $scan)
+      ) ;; fallback
+      (br $cold)
+    ))
+    (i32.const 0)
+  )
+  (func $run_x86_hot_subset_packet_generic (param $thread i32)
+    (local $ip_v i32) (local $fn i32) (local $op i32)
+    (local $addr i32) (local $a i32) (local $b i32) (local $r i32)
+    (local.set $ip_v (local.get $thread))
+    (block $block_done (loop $dispatch
+      (local.set $fn (i32.load (local.get $ip_v)))
+      (local.set $op (i32.load offset=4 (local.get $ip_v)))
+      (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))
+      (block $fallback
+        (block $case_378
+        (block $case_374
+        (block $case_373
+        (block $case_368
+        (block $case_355
+        (block $case_319
+        (block $case_312
+        (block $case_128
+        (block $case_65
+        (block $case_64
+        (block $case_53
+        (block $case_48
+        (block $case_43
+        (block $case_28
+        (block $case_21
+        (block $case_20
+        (block $case_18
+        (block $case_12
+        (block $case_11
+        (block $case_7
+          (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_368 $fallback $fallback $fallback $fallback $case_373 $case_374 $fallback $fallback $fallback $case_378 $fallback (local.get $fn))
+        ) ;; case 7
+        (local.set $b (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (local.set $a (call $get_reg (local.get $op)))
+        (local.set $r (i32.and (local.get $a) (local.get $b)))
+        (call $set_reg (local.get $op) (local.get $r))
+        (call $set_flags_logic (local.get $r))
+        (br $dispatch)
+        ) ;; case 11
+        (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+        (br $dispatch)
+        ) ;; case 12
+        (local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))
+        (local.set $a (call $get_reg (local.get $addr)))
+        (local.set $b (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+        (local.set $r (i32.add (local.get $a) (local.get $b)))
+        (call $set_reg (local.get $addr) (local.get $r))
+        (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+        (br $dispatch)
+        ) ;; case 18
+        (local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))
+        (local.set $r (i32.xor (call $get_reg (local.get $addr)) (call $get_reg (i32.and (local.get $op) (i32.const 15)))))
+        (call $set_reg (local.get $addr) (local.get $r))
+        (call $set_flags_logic (local.get $r))
+        (br $dispatch)
+        ) ;; case 20
+        (local.set $addr (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (call $set_reg (local.get $op) (call $gl32 (local.get $addr)))
+        (br $dispatch)
+        ) ;; case 21
+        (local.set $addr (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (call $gs32 (local.get $addr) (call $get_reg (local.get $op)))
+        (br $dispatch)
+        ) ;; case 28
+        (local.set $addr (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (call $gl8 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))
+        (br $dispatch)
+        ) ;; case 43
+        (local.set $a (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (global.set $eip (local.get $a))
+        (br $block_done)
+        (br $dispatch)
+        ) ;; case 48
+        (local.set $addr (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (local.set $a (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+        (local.set $b (call $gl32 (local.get $addr)))
+        (local.set $r (call $do_alu32 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $a) (local.get $b)))
+        (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)) (then (call $set_reg (i32.and (local.get $op) (i32.const 15)) (local.get $r))))
+        (br $dispatch)
+        ) ;; case 53
+        (local.set $addr (i32.and (local.get $op) (i32.const 255)))
+        (local.set $a (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 255)))
+        (if (i32.eq (local.get $a) (i32.const 255)) (then (local.set $a (i32.and (global.get $ecx) (i32.const 31)))))
+        (call $set_reg (local.get $addr) (call $do_shift32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 255)) (call $get_reg (local.get $addr)) (local.get $a)))
+        (br $dispatch)
+        ) ;; case 64
+        (local.set $a (call $get_reg (local.get $op)))
+        (local.set $r (i32.add (local.get $a) (i32.const 1)))
+        (call $set_reg (local.get $op) (local.get $r))
+        (call $set_flags_inc (local.get $a) (local.get $r))
+        (br $dispatch)
+        ) ;; case 65
+        (local.set $a (call $get_reg (local.get $op)))
+        (local.set $r (i32.sub (local.get $a) (i32.const 1)))
+        (call $set_reg (local.get $op) (local.get $r))
+        (call $set_flags_dec (local.get $a) (local.get $r))
+        (br $dispatch)
+        ) ;; case 128
+        (local.set $addr (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (local.set $a (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15))))
+        (local.set $b (call $gl32 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))
+        (local.set $r (call $do_alu32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (local.get $a) (local.get $b)))
+        (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (i32.const 7)) (then (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15)) (local.get $r))))
+        (br $dispatch)
+        ) ;; case 312
+        (local.set $a (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (local.set $b (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (global.set $eip (if (result i32) (call $eval_cc (i32.const 5)) (then (local.get $b)) (else (local.get $a))))
+        (br $block_done)
+        (br $dispatch)
+        ) ;; case 319
+        (local.set $a (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (local.set $b (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (global.set $eip (if (result i32) (call $eval_cc (i32.const 12)) (then (local.get $b)) (else (local.get $a))))
+        (br $block_done)
+        (br $dispatch)
+        ) ;; case 355
+        (local.set $addr (i32.load (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+        (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
+        (br $block_done)
+        (br $dispatch)
+        ) ;; case 368
+        (global.set $ecx (global.get $eax))
+        (br $dispatch)
+        ) ;; case 373
+        (global.set $edx (global.get $edi))
+        (br $dispatch)
+        ) ;; case 374
+        (local.set $a (global.get $edx))
+        (local.set $b (global.get $ecx))
+        (local.set $r (i32.add (local.get $a) (local.get $b)))
+        (global.set $edx (local.get $r))
+        (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+        (br $dispatch)
+        ) ;; case 378
+        (local.set $a (global.get $edi))
+        (local.set $b (global.get $ecx))
+        (local.set $r (i32.add (local.get $a) (local.get $b)))
+        (global.set $edi (local.get $r))
+        (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+        (br $dispatch)
+      ) ;; fallback
+      ;; Cache-time classification makes this unreachable unless the
+      ;; packet or metadata was corrupted after insertion.
+      (call $host_log_i32 (i32.const 0x10CA1BAD))
+      (global.set $eip (i32.const 0))
+      (br $block_done)))
+  )
   (func $run_aoe_brtable_generic_global_ip (export "run_aoe_brtable_generic_global_ip") (param $max_blocks i32)
     (local $blocks i32) (local $thread i32) (local $ip_v i32)
     (local $fn i32) (local $op i32) (local $addr i32) (local $a i32) (local $b i32) (local $r i32)
@@ -132,6 +376,10 @@
         (local.set $op (i32.load offset=4 (global.get $ip)))
         (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
         (block $fallback
+          (block $case_378
+          (block $case_374
+          (block $case_373
+          (block $case_368
           (block $case_355
           (block $case_319
           (block $case_312
@@ -148,7 +396,7 @@
           (block $case_12
           (block $case_11
           (block $case_7
-            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback (local.get $fn))
+            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_368 $fallback $fallback $fallback $fallback $case_373 $case_374 $fallback $fallback $fallback $case_378 $fallback (local.get $fn))
           ) ;; case 7
           (local.set $b (call $read_thread_word))
           (local.set $a (call $get_reg (local.get $op)))
@@ -238,6 +486,26 @@
           (local.set $addr (call $read_thread_word))
           (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
           (br $block_done)
+          (br $dispatch)
+          ) ;; case 368
+          (global.set $ecx (global.get $eax))
+          (br $dispatch)
+          ) ;; case 373
+          (global.set $edx (global.get $edi))
+          (br $dispatch)
+          ) ;; case 374
+          (local.set $a (global.get $edx))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edx (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 378
+          (local.set $a (global.get $edi))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edi (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
           (br $dispatch)
         ) ;; fallback
         (call $host_log_i32 (i32.const 0x10CA1BAD))
@@ -262,6 +530,10 @@
         (local.set $op (i32.load offset=4 (local.get $ip_v)))
         (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))
         (block $fallback
+          (block $case_378
+          (block $case_374
+          (block $case_373
+          (block $case_368
           (block $case_355
           (block $case_319
           (block $case_312
@@ -278,7 +550,7 @@
           (block $case_12
           (block $case_11
           (block $case_7
-            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback (local.get $fn))
+            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_368 $fallback $fallback $fallback $fallback $case_373 $case_374 $fallback $fallback $fallback $case_378 $fallback (local.get $fn))
           ) ;; case 7
           (local.set $b (i32.load (local.get $ip_v)))
           (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
@@ -380,6 +652,26 @@
           (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
           (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
           (br $block_done)
+          (br $dispatch)
+          ) ;; case 368
+          (global.set $ecx (global.get $eax))
+          (br $dispatch)
+          ) ;; case 373
+          (global.set $edx (global.get $edi))
+          (br $dispatch)
+          ) ;; case 374
+          (local.set $a (global.get $edx))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edx (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 378
+          (local.set $a (global.get $edi))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edi (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
           (br $dispatch)
         ) ;; fallback
         (call $host_log_i32 (i32.const 0x10CA1BAD))
@@ -641,6 +933,10 @@
         (local.set $op (i32.load offset=4 (local.get $ip_v)))
         (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))
         (block $fallback
+          (block $case_378
+          (block $case_374
+          (block $case_373
+          (block $case_368
           (block $case_355
           (block $case_319
           (block $case_312
@@ -657,7 +953,7 @@
           (block $case_12
           (block $case_11
           (block $case_7
-            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback (local.get $fn))
+            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_368 $fallback $fallback $fallback $fallback $case_373 $case_374 $fallback $fallback $fallback $case_378 $fallback (local.get $fn))
           ) ;; case 7
           (local.set $b (i32.load (local.get $ip_v)))
           (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
@@ -759,6 +1055,26 @@
           (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
           (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
           (br $block_done)
+          (br $dispatch)
+          ) ;; case 368
+          (global.set $ecx (global.get $eax))
+          (br $dispatch)
+          ) ;; case 373
+          (global.set $edx (global.get $edi))
+          (br $dispatch)
+          ) ;; case 374
+          (local.set $a (global.get $edx))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edx (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 378
+          (local.set $a (global.get $edi))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edi (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
           (br $dispatch)
         ) ;; fallback
         (call $host_log_i32 (i32.const 0x10CA1BAD))
@@ -1029,6 +1345,10 @@
         (local.set $op (i32.load offset=4 (local.get $ip_v)))
         (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))
         (block $fallback
+          (block $case_378
+          (block $case_374
+          (block $case_373
+          (block $case_368
           (block $case_355
           (block $case_319
           (block $case_312
@@ -1045,7 +1365,7 @@
           (block $case_12
           (block $case_11
           (block $case_7
-            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback (local.get $fn))
+            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_368 $fallback $fallback $fallback $fallback $case_373 $case_374 $fallback $fallback $fallback $case_378 $fallback (local.get $fn))
           ) ;; case 7
           (local.set $b (i32.load (local.get $ip_v)))
           (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
@@ -1147,6 +1467,202 @@
           (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
           (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
           (br $block_done)
+          (br $dispatch)
+          ) ;; case 368
+          (global.set $ecx (global.get $eax))
+          (br $dispatch)
+          ) ;; case 373
+          (global.set $edx (global.get $edi))
+          (br $dispatch)
+          ) ;; case 374
+          (local.set $a (global.get $edx))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edx (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 378
+          (local.set $a (global.get $edi))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edi (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+        ) ;; fallback
+        (call $host_log_i32 (i32.const 0x10CA1BAD))
+        (global.set $eip (i32.const 0))
+        (br $block_done)))
+      (br $main)))
+  )
+  (func $run_x86_hot_subset_cached_generic (export "run_x86_hot_subset_cached_generic") (param $max_blocks i32)
+    (local $blocks i32) (local $thread i32) (local $ip_v i32)
+    (local $fn i32) (local $op i32) (local $addr i32) (local $a i32) (local $b i32) (local $r i32)
+    (local.set $blocks (local.get $max_blocks))
+    (block $all_done (loop $main
+      (br_if $all_done (i32.le_s (local.get $blocks) (i32.const 0)))
+      (br_if $all_done (i32.eqz (global.get $eip)))
+      (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
+      (local.set $thread (call $cache_lookup (global.get $eip)))
+      (if (i32.eqz (local.get $thread))
+        (then (local.set $thread (call $decode_block (global.get $eip)))))
+      (if (i32.eqz (call $x86_hot_cache_is_hot (global.get $eip)))
+        (then
+          (global.set $x86_hot_subset_fallback_blocks
+            (i32.add (global.get $x86_hot_subset_fallback_blocks) (i32.const 1)))
+          (global.set $ip (local.get $thread))
+          (global.set $steps (i32.const 1000))
+          (call $next)
+          (br $main)))
+      (global.set $x86_hot_subset_hot_blocks
+        (i32.add (global.get $x86_hot_subset_hot_blocks) (i32.const 1)))
+      (local.set $ip_v (local.get $thread))
+      (block $block_done (loop $dispatch
+        (local.set $fn (i32.load (local.get $ip_v)))
+        (local.set $op (i32.load offset=4 (local.get $ip_v)))
+        (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 8)))
+        (block $fallback
+          (block $case_378
+          (block $case_374
+          (block $case_373
+          (block $case_368
+          (block $case_355
+          (block $case_319
+          (block $case_312
+          (block $case_128
+          (block $case_65
+          (block $case_64
+          (block $case_53
+          (block $case_48
+          (block $case_43
+          (block $case_28
+          (block $case_21
+          (block $case_20
+          (block $case_18
+          (block $case_12
+          (block $case_11
+          (block $case_7
+            (br_table $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_7 $fallback $fallback $fallback $case_11 $case_12 $fallback $fallback $fallback $fallback $fallback $case_18 $fallback $case_20 $case_21 $fallback $fallback $fallback $fallback $fallback $fallback $case_28 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_43 $fallback $fallback $fallback $fallback $case_48 $fallback $fallback $fallback $fallback $case_53 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_64 $case_65 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_128 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_312 $fallback $fallback $fallback $fallback $fallback $fallback $case_319 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_355 $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $fallback $case_368 $fallback $fallback $fallback $fallback $case_373 $case_374 $fallback $fallback $fallback $case_378 $fallback (local.get $fn))
+          ) ;; case 7
+          (local.set $b (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $a (call $get_reg (local.get $op)))
+          (local.set $r (i32.and (local.get $a) (local.get $b)))
+          (call $set_reg (local.get $op) (local.get $r))
+          (call $set_flags_logic (local.get $r))
+          (br $dispatch)
+          ) ;; case 11
+          (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+          (br $dispatch)
+          ) ;; case 12
+          (local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))
+          (local.set $a (call $get_reg (local.get $addr)))
+          (local.set $b (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (call $set_reg (local.get $addr) (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 18
+          (local.set $addr (i32.shr_u (local.get $op) (i32.const 4)))
+          (local.set $r (i32.xor (call $get_reg (local.get $addr)) (call $get_reg (i32.and (local.get $op) (i32.const 15)))))
+          (call $set_reg (local.get $addr) (local.get $r))
+          (call $set_flags_logic (local.get $r))
+          (br $dispatch)
+          ) ;; case 20
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (call $set_reg (local.get $op) (call $gl32 (local.get $addr)))
+          (br $dispatch)
+          ) ;; case 21
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (call $gs32 (local.get $addr) (call $get_reg (local.get $op)))
+          (br $dispatch)
+          ) ;; case 28
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (call $gl8 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))
+          (br $dispatch)
+          ) ;; case 43
+          (local.set $a (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (local.get $a))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 48
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $a (call $get_reg (i32.and (local.get $op) (i32.const 15))))
+          (local.set $b (call $gl32 (local.get $addr)))
+          (local.set $r (call $do_alu32 (i32.shr_u (local.get $op) (i32.const 4)) (local.get $a) (local.get $b)))
+          (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)) (then (call $set_reg (i32.and (local.get $op) (i32.const 15)) (local.get $r))))
+          (br $dispatch)
+          ) ;; case 53
+          (local.set $addr (i32.and (local.get $op) (i32.const 255)))
+          (local.set $a (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 255)))
+          (if (i32.eq (local.get $a) (i32.const 255)) (then (local.set $a (i32.and (global.get $ecx) (i32.const 31)))))
+          (call $set_reg (local.get $addr) (call $do_shift32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 255)) (call $get_reg (local.get $addr)) (local.get $a)))
+          (br $dispatch)
+          ) ;; case 64
+          (local.set $a (call $get_reg (local.get $op)))
+          (local.set $r (i32.add (local.get $a) (i32.const 1)))
+          (call $set_reg (local.get $op) (local.get $r))
+          (call $set_flags_inc (local.get $a) (local.get $r))
+          (br $dispatch)
+          ) ;; case 65
+          (local.set $a (call $get_reg (local.get $op)))
+          (local.set $r (i32.sub (local.get $a) (i32.const 1)))
+          (call $set_reg (local.get $op) (local.get $r))
+          (call $set_flags_dec (local.get $a) (local.get $r))
+          (br $dispatch)
+          ) ;; case 128
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $a (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15))))
+          (local.set $b (call $gl32 (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 15))) (local.get $addr))))
+          (local.set $r (call $do_alu32 (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (local.get $a) (local.get $b)))
+          (if (i32.ne (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 15)) (i32.const 7)) (then (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 15)) (local.get $r))))
+          (br $dispatch)
+          ) ;; case 312
+          (local.set $a (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $b (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (if (result i32) (call $eval_cc (i32.const 5)) (then (local.get $b)) (else (local.get $a))))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 319
+          (local.set $a (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (local.set $b (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (if (result i32) (call $eval_cc (i32.const 12)) (then (local.get $b)) (else (local.get $a))))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 355
+          (local.set $addr (i32.load (local.get $ip_v)))
+          (local.set $ip_v (i32.add (local.get $ip_v) (i32.const 4)))
+          (global.set $eip (call $gl32 (i32.add (local.get $addr) (i32.shl (global.get $eax) (i32.const 2)))))
+          (br $block_done)
+          (br $dispatch)
+          ) ;; case 368
+          (global.set $ecx (global.get $eax))
+          (br $dispatch)
+          ) ;; case 373
+          (global.set $edx (global.get $edi))
+          (br $dispatch)
+          ) ;; case 374
+          (local.set $a (global.get $edx))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edx (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
+          (br $dispatch)
+          ) ;; case 378
+          (local.set $a (global.get $edi))
+          (local.set $b (global.get $ecx))
+          (local.set $r (i32.add (local.get $a) (local.get $b)))
+          (global.set $edi (local.get $r))
+          (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
           (br $dispatch)
         ) ;; fallback
         (call $host_log_i32 (i32.const 0x10CA1BAD))

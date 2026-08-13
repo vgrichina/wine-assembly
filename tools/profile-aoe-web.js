@@ -1481,6 +1481,12 @@ async function main() {
           fallbackBlocks: e.get_x86_hot_subset_fallback_blocks
             ? (e.get_x86_hot_subset_fallback_blocks() >>> 0)
             : 0,
+          classifiedHot: e.get_x86_hot_subset_classified_hot
+            ? (e.get_x86_hot_subset_classified_hot() >>> 0)
+            : 0,
+          classifiedCold: e.get_x86_hot_subset_classified_cold
+            ? (e.get_x86_hot_subset_classified_cold() >>> 0)
+            : 0,
         } : null,
         stackPacket: e && e.get_stack_packet_enabled ? {
           enabled: e.get_stack_packet_enabled() >>> 0,

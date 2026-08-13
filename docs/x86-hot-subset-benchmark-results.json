@@ -37,6 +37,29 @@
       }
     }
   },
+  "productionCacheMetadata": {
+    "fixedWork": {
+      "blocks": 2000000,
+      "warmupBlocks": 2000000,
+      "trials": 31,
+      "variants": {
+        "x86-threaded": { "medianMs": 164.62, "pairedSpeedup": 1.000 },
+        "x86-cached-subset-production": { "medianMs": 91.72, "pairedSpeedup": 1.855 }
+      }
+    },
+    "fullBrowser": {
+      "aoe30s": {
+        "baseline": { "runSliceTotalMs": 19820.7, "slices": 1998, "guestMs": 17094.0, "presentFps": 16.285, "repaintFps": 58.652 },
+        "candidate": { "runSliceTotalMs": 19422.6, "slices": 2076, "guestMs": 16574.0, "presentFps": 17.141, "repaintFps": 58.690, "hotBlocks": 60405257, "fallbackBlocks": 147184770, "coverage": 0.291 }
+      },
+      "rctColdControl": {
+        "baseline": { "runSliceAvgMs": 1952.05, "slices": 6 },
+        "candidate": { "runSliceAvgMs": 2227.74, "slices": 5, "hotBlocks": 0, "fallbackBlocks": 500000 },
+        "note": "multi-second slices make this directional rather than a precise percentage"
+      }
+    },
+    "decision": "disabled-by-default; app-profile gating only until cold selection or corpus coverage improves"
+  },
   "fullBrowser": {
     "aoe": [
       {

@@ -621,6 +621,7 @@
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
+  ;; 0x07F0D000 4KB      X86_HOT_CACHE_BITS (8 threads × 4096 cache bits)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (358 x 358 i32 counters)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
@@ -761,6 +762,8 @@
   ;;   +0x40  4 slots x 256 PALETTEENTRY bytes
   (global $GDI_PALETTE_TABLE i32 (i32.const 0x07F0B000))
   (global $GDI_PALETTE_TABLE_SIZE i32 (i32.const 0x00001040))
+  (global $X86_HOT_CACHE_BITS i32 (i32.const 0x07F0D000))
+  (global $X86_HOT_CACHE_BITS_SIZE i32 (i32.const 0x00001000))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
@@ -1000,8 +1003,11 @@
   ;; block and falls back to $next before changing guest state if any handler
   ;; is outside the generated subset.
   (global $x86_hot_subset_enabled (mut i32) (i32.const 0))
+  (global $x86_hot_cache_base (mut i32) (i32.const 0x07F0D000))
   (global $x86_hot_subset_hot_blocks (mut i32) (i32.const 0))
   (global $x86_hot_subset_fallback_blocks (mut i32) (i32.const 0))
+  (global $x86_hot_subset_classified_hot (mut i32) (i32.const 0))
+  (global $x86_hot_subset_classified_cold (mut i32) (i32.const 0))
   ;; Disabled-by-default compiled packet prototype. The decoder only emits
   ;; handler 356 for exact AoE block/trace addresses implemented by
   ;; $th_stack_packet.
