@@ -2605,9 +2605,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 131: TabbedTextOutA — STUB: unimplemented
+  ;; 131: TabbedTextOutA — WAT-owned tab parsing and Canvas text runs.
   (func $handle_TabbedTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_tabbed_text
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+      (i32.const 0) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
   ;; 132: WinHelpA(hwnd, lpszHelp, uCommand, dwData) — 4 args stdcall, return TRUE
@@ -3859,7 +3866,8 @@
     (local $packed i32)
     (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
     (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1))
+        (local.get $arg2) (i32.const 0)))
     (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
       (i32.and (local.get $packed) (i32.const 0xFFFF)))
     (global.set $eax (i32.const 1))
@@ -5870,9 +5878,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
-  ;; 387: TabbedTextOutW — STUB: unimplemented
+  ;; 387: TabbedTextOutW — same WAT layout path with UTF-16 runs.
   (func $handle_TabbedTextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_tabbed_text
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+      (i32.const 1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
   ;; 388: DestroyIcon(hIcon) — 1 arg stdcall, return TRUE
@@ -10293,9 +10308,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 659: GetTabbedTextExtentA — STUB: unimplemented
+  ;; 659: GetTabbedTextExtentA — packed width/height for tab-expanded text.
   (func $handle_GetTabbedTextExtentA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_tabbed_text
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 660: CreateDialogIndirectParamW — STUB: unimplemented
@@ -10598,9 +10617,13 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 679: GetTabbedTextExtentW — STUB: unimplemented
+  ;; 679: GetTabbedTextExtentW — packed width/height for UTF-16 text.
   (func $handle_GetTabbedTextExtentW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_tabbed_text
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (i32.const 0) (i32.const 1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 680: UnregisterClassW — STUB: unimplemented

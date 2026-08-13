@@ -80,6 +80,13 @@ Pattern-dependent `PatBlt`, `BitBlt`, `StretchBlt`, `StretchDIBits`, and flood
 fill operations use the same coordinate-aware sampler. DIB pattern brushes are
 still pending owned bitmap-pattern records and repeat sampling.
 
+Tabbed text now uses the same canonical DC-to-text binding as ordinary text.
+WAT parses ANSI or UTF-16 tab characters, measures individual runs, expands
+default, repeating single, or explicit multiple tab stops relative to the tab
+origin, applies `TA_UPDATECP`, and constructs the packed width/height result.
+Canvas remains responsible only for measuring and rasterizing each glyph run,
+with the resulting pixels copied back to the authoritative WAT surface.
+
 `Polyline` and `PolylineTo` reuse the WAT line kernel after an atomic
 all-segment preflight. Cosmetic style phase continues across segment
 boundaries and each shared endpoint is covered once. `Polyline` preserves the

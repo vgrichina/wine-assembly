@@ -1901,6 +1901,136 @@
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_gdi_text_out_raw (local.get $token) (local.get $x) (local.get $y)
       (local.get $text) (local.get $count) (local.get $wide)))
+
+  (func $host_measure_text (param $hdc i32) (param $text i32)
+        (param $count i32) (param $wide i32) (result i32)
+    (local $token i32)
+    (if (i32.le_s (local.get $count) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $token (call $gdi_text_prepare (local.get $hdc)))
+    (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
+    (call $host_measure_text_raw (local.get $token) (local.get $text)
+      (local.get $count) (local.get $wide)))
+
+  (func $host_get_text_metrics (param $hdc i32) (result i32)
+    (local $token i32)
+    (local.set $token (call $gdi_text_prepare (local.get $hdc)))
+    (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
+    (call $host_get_text_metrics_raw (local.get $token)))
+
+  ;; Measure and optionally draw a tabbed string. WAT owns character parsing,
+  ;; explicit/default tab-stop selection and packed SIZE construction; Canvas
+  ;; only measures/rasterizes individual non-tab text runs.
+  (func $gdi_tabbed_text (param $hdc i32) (param $x i32) (param $y i32)
+        (param $text_g i32) (param $count i32) (param $tab_count i32)
+        (param $stops_g i32) (param $origin i32) (param $wide i32)
+        (param $draw i32) (result i32)
+    (local $text i32) (local $stops i32) (local $metrics i32)
+    (local $height i32) (local $average i32) (local $default_tab i32)
+    (local $i i32) (local $run_start i32) (local $run_count i32)
+    (local $cursor i32) (local $run_width i32) (local $ch i32)
+    (local $tab_i i32) (local $next i32) (local $relative i32)
+    (local $align i32)
+    (if (i32.or (i32.lt_s (local.get $count) (i32.const 0))
+          (i32.or (i32.lt_s (local.get $tab_count) (i32.const 0))
+            (i32.and (i32.gt_s (local.get $count) (i32.const 0))
+              (i32.eqz (local.get $text_g)))))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.gt_s (local.get $tab_count) (i32.const 0))
+          (i32.eqz (local.get $stops_g)))
+      (then (return (i32.const 0))))
+    (if (local.get $text_g) (then (local.set $text (call $g2w (local.get $text_g)))))
+    (if (local.get $stops_g) (then (local.set $stops (call $g2w (local.get $stops_g)))))
+    (local.set $metrics (call $host_get_text_metrics (local.get $hdc)))
+    (local.set $height (i32.and (local.get $metrics) (i32.const 0xFFFF)))
+    (local.set $average (i32.shr_u (local.get $metrics) (i32.const 16)))
+    (if (i32.eqz (local.get $height)) (then (local.set $height (i32.const 13))))
+    (if (i32.eqz (local.get $average)) (then (local.set $average (i32.const 8))))
+    (local.set $default_tab (i32.mul (local.get $average) (i32.const 8)))
+    (local.set $align (call $gdi_dc_get_field
+      (local.get $hdc) (i32.const 32) (i32.const 0)))
+    (if (i32.and (local.get $draw) (i32.and (local.get $align) (i32.const 1)))
+      (then
+        (local.set $x (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 12) (i32.const 0)))
+        (local.set $y (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 16) (i32.const 0)))))
+    (local.set $cursor (local.get $x))
+    (local.set $run_start (i32.const 0))
+    (block $done (loop $scan
+      (if (i32.lt_s (local.get $i) (local.get $count))
+        (then
+          (local.set $ch
+            (if (result i32) (local.get $wide)
+              (then (i32.load16_u (i32.add (local.get $text)
+                (i32.shl (local.get $i) (i32.const 1)))))
+              (else (i32.load8_u (i32.add (local.get $text) (local.get $i))))))
+          (if (i32.ne (local.get $ch) (i32.const 9))
+            (then
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $scan)))))
+      (local.set $run_count (i32.sub (local.get $i) (local.get $run_start)))
+      (if (i32.gt_s (local.get $run_count) (i32.const 0))
+        (then
+          (local.set $run_width (call $host_measure_text
+            (local.get $hdc)
+            (i32.add (local.get $text)
+              (select (i32.shl (local.get $run_start) (i32.const 1))
+                (local.get $run_start) (local.get $wide)))
+            (local.get $run_count) (local.get $wide)))
+          (if (local.get $draw)
+            (then (drop (call $host_gdi_text_out
+              (local.get $hdc) (local.get $cursor) (local.get $y)
+              (i32.add (local.get $text)
+                (select (i32.shl (local.get $run_start) (i32.const 1))
+                  (local.get $run_start) (local.get $wide)))
+              (local.get $run_count) (local.get $wide)))))
+          (local.set $cursor (i32.add (local.get $cursor) (local.get $run_width)))))
+      (br_if $done (i32.ge_s (local.get $i) (local.get $count)))
+      ;; A tab advances to the first explicit stop strictly right of the
+      ;; current position. Without usable explicit stops, repeat the Win32
+      ;; default interval of eight average character cells from tab origin.
+      (local.set $relative (i32.sub (local.get $cursor) (local.get $origin)))
+      (local.set $next (i32.const 0x7FFFFFFF))
+      (if (i32.eq (local.get $tab_count) (i32.const 1))
+        (then
+          (local.set $ch (i32.load (local.get $stops)))
+          (if (i32.gt_s (local.get $ch) (i32.const 0))
+            (then (local.set $next (i32.mul
+              (i32.add (i32.div_s (select (local.get $relative) (i32.const 0)
+                  (i32.gt_s (local.get $relative) (i32.const 0)))
+                (local.get $ch)) (i32.const 1))
+              (local.get $ch))))))
+        (else
+          (local.set $tab_i (i32.const 0))
+          (block $stops_done (loop $stops_loop
+            (br_if $stops_done (i32.ge_s (local.get $tab_i) (local.get $tab_count)))
+            (local.set $ch (i32.load (i32.add (local.get $stops)
+              (i32.shl (local.get $tab_i) (i32.const 2)))))
+            (if (i32.and (i32.gt_s (local.get $ch) (local.get $relative))
+                  (i32.lt_s (local.get $ch) (local.get $next)))
+              (then (local.set $next (local.get $ch))))
+            (local.set $tab_i (i32.add (local.get $tab_i) (i32.const 1)))
+            (br $stops_loop)))))
+      (if (i32.eq (local.get $next) (i32.const 0x7FFFFFFF))
+        (then
+          (local.set $next (i32.mul
+            (i32.add (i32.div_s (select (local.get $relative) (i32.const 0)
+                (i32.gt_s (local.get $relative) (i32.const 0)))
+              (local.get $default_tab)) (i32.const 1))
+            (local.get $default_tab)))))
+      (local.set $cursor (i32.add (local.get $origin) (local.get $next)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $run_start (local.get $i))
+      (br $scan)))
+    (if (i32.and (local.get $draw) (i32.and (local.get $align) (i32.const 1)))
+      (then
+        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12)
+          (local.get $cursor) (i32.const 0)))
+        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16)
+          (local.get $y) (i32.const 0)))))
+    (i32.or (i32.and (i32.sub (local.get $cursor) (local.get $x)) (i32.const 0xFFFF))
+      (i32.shl (i32.and (local.get $height) (i32.const 0xFFFF)) (i32.const 16))))
   (func $host_gdi_ext_text_out (param $hdc i32) (param $x i32) (param $y i32)
         (param $options i32) (param $rect i32) (param $text i32) (param $count i32)
         (param $wide i32) (result i32)

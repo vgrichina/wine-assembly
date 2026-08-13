@@ -9286,7 +9286,8 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $line_len)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (local.set $w (call $host_measure_text (local.get $hdc) (local.get $line_w) (local.get $i)))
+      (local.set $w (call $host_measure_text
+        (local.get $hdc) (local.get $line_w) (local.get $i) (i32.const 0)))
       (local.set $mid (i32.shr_s (i32.add (local.get $prev_w) (local.get $w)) (i32.const 1)))
       (if (i32.gt_s (local.get $mid) (local.get $x))
         (then (return (i32.add (local.get $line_start) (i32.sub (local.get $i) (i32.const 1))))))
@@ -9365,7 +9366,7 @@
         (local.set $width (call $host_measure_text
           (local.get $hdc)
           (i32.add (local.get $buf_w) (local.get $line_start))
-          (local.get $candidate_len)))
+          (local.get $candidate_len) (i32.const 0)))
         (if (i32.and (i32.gt_s (local.get $width) (local.get $max_w))
                      (i32.gt_u (local.get $candidate_len) (i32.const 1)))
           (then
@@ -9437,7 +9438,8 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $line_len)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (local.set $w (call $host_measure_text
-        (local.get $hdc) (i32.add (local.get $buf_w) (local.get $line_start)) (local.get $i)))
+        (local.get $hdc) (i32.add (local.get $buf_w) (local.get $line_start))
+        (local.get $i) (i32.const 0)))
       (if (i32.eqz (local.get $w))
         (then (local.set $w (i32.mul (local.get $i) (i32.const 8)))))
       (local.set $mid (i32.shr_s (i32.add (local.get $prev_w) (local.get $w)) (i32.const 1)))
@@ -10391,9 +10393,11 @@
                   (local.set $pre_w (i32.const 0))
                   (if (local.get $a)
                     (then (local.set $pre_w
-                      (call $host_measure_text (local.get $hdc) (local.get $line_buf_w) (local.get $a)))))
+                      (call $host_measure_text (local.get $hdc) (local.get $line_buf_w)
+                        (local.get $a) (i32.const 0)))))
                   (local.set $sel_w (i32.sub
-                    (call $host_measure_text (local.get $hdc) (local.get $line_buf_w) (local.get $b))
+                    (call $host_measure_text (local.get $hdc) (local.get $line_buf_w)
+                      (local.get $b) (i32.const 0))
                     (local.get $pre_w)))
                   (if (i32.eqz (local.get $sel_w))
                     (then (local.set $sel_w (i32.mul (i32.sub (local.get $b) (local.get $a)) (i32.const 8)))))
@@ -10447,7 +10451,8 @@
                     (local.set $px (call $host_measure_text
                       (local.get $hdc)
                       (i32.add (call $g2w (local.get $buf)) (local.get $line_end))
-                      (i32.sub (local.get $cur) (local.get $line_end))))))
+                      (i32.sub (local.get $cur) (local.get $line_end))
+                      (i32.const 0)))))
                 (if (i32.and (i32.eqz (local.get $px)) (i32.gt_u (local.get $cur) (local.get $line_end)))
                   (then
                     (local.set $px
@@ -10502,9 +10507,11 @@
                   (local.set $pre_w (i32.const 0))
                   (if (local.get $a)
                     (then (local.set $pre_w (call $host_measure_text
-                            (local.get $hdc) (local.get $line_buf_w) (local.get $a)))))
+                            (local.get $hdc) (local.get $line_buf_w)
+                            (local.get $a) (i32.const 0)))))
                   (local.set $sel_w (i32.sub
-                    (call $host_measure_text (local.get $hdc) (local.get $line_buf_w) (local.get $b))
+                    (call $host_measure_text (local.get $hdc) (local.get $line_buf_w)
+                      (local.get $b) (i32.const 0))
                     (local.get $pre_w)))
                   ;; If sel extends past the \n (to the next line), pad to right edge.
                   (if (i32.gt_u (local.get $sel_hi) (local.get $line_end))
@@ -10563,7 +10570,8 @@
             (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.gt_u (local.get $cur) (local.get $lo)))
               (then (local.set $px (call $host_measure_text (local.get $hdc)
                                         (i32.add (call $g2w (local.get $buf)) (local.get $lo))
-                                        (i32.sub (local.get $cur) (local.get $lo))))))
+                                        (i32.sub (local.get $cur) (local.get $lo))
+                                        (i32.const 0)))))
             (if (i32.and (i32.eqz (local.get $px)) (i32.gt_u (local.get $cur) (local.get $lo)))
               (then (local.set $px
                 (i32.mul (i32.sub (local.get $cur) (local.get $lo)) (i32.const 8)))))

@@ -143,9 +143,10 @@
   ;; create_font(height, weight, italic, facePtr) → handle
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
-  (import "host" "measure_text" (func $host_measure_text (param i32 i32 i32) (result i32)))
-  ;; measure_text(hdc, textPtr, nCount) → pixel width
-  (import "host" "get_text_metrics" (func $host_get_text_metrics (param i32) (result i32)))
+  (import "host" "measure_text" (func $host_measure_text_raw (param i32 i32 i32 i32) (result i32)))
+  ;; measure_text(token, textPtr, nCount, isWide) → pixel width. WAT binds
+  ;; canonical DC/font state to token before crossing the text-only boundary.
+  (import "host" "get_text_metrics" (func $host_get_text_metrics_raw (param i32) (result i32)))
   ;; get_text_metrics(hdc) → (height | (aveCharWidth << 16))
   ;; GDI host imports
   (func $host_gdi_create_pen (param i32 i32 i32) (result i32)
