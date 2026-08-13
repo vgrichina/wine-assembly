@@ -1,24 +1,26 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Current status (2026-08-12)
+## Current status (2026-08-13)
 
 The Win98 ANSI build launches reliably in the CLI and browser harness. The
 focused suite selects all 16 tools and verifies representative output from each
-drawing tool. It also covers BMP Save As/Open/Save, New with
+drawing tool, including representative brush and airbrush size options. It also
+covers BMP Save As/Open/Save, New with
 Yes/No/Cancel protection, a 900x700 image with both scrollbars, the 17-item
-File menu, wide browser layout, flood fill, and browser airbrush position and
-latency.
+File menu, image Cut/Paste through the OLE/CF_DIB clipboard bridge, wide
+browser layout, flood fill, and browser airbrush position and latency.
 
 This is broad regression coverage, not complete feature coverage. The current
 known Paint-specific gaps are:
 
-- The lower tool-options panel renders the brush and airbrush size/shape glyphs
-  incorrectly. Current tests verify brush/airbrush drawing output but do not
-  yet verify the option glyph grid or selecting every option.
+- The lower tool-options panel renders distinct brush and airbrush size/shape
+  glyphs. Tests cover representative smallest/largest choices, but not every
+  option in the grid.
 - Canvas 2D antialiases vector paths. Pencil/line/curve and shape edges can
   contain intermediate colors that classic Win98 GDI would not produce.
-- Tool sub-options, every menu command, printing, wallpaper commands, clipboard
-  image workflows, arbitrary BMP encodings, and exhaustive selection/text
+- Tool sub-options, every menu command, printing, wallpaper commands,
+  cross-process/browser-system clipboard integration, arbitrary BMP encodings,
+  and exhaustive selection/text
   editing are not yet covered end to end.
 - The Unicode NT Paint build is tracked separately in `apps/mspaint-nt.md` and
   is not at parity with this build.
@@ -32,10 +34,27 @@ Current validation:
 ```sh
 node test/test-mspaint-draw.js
 node test/test-mspaint-tools.js
+node test/test-mspaint-options.js
 node test/test-mspaint-dirty-new.js
+node test/test-mspaint-clipboard.js
 node test/test-mspaint-file-roundtrip.js
 node test/test-mspaint-large-scroll.js
 node test/test-mspaint-web.js
+```
+
+## Status (2026-08-13): native image Cut/Paste
+
+`test/test-mspaint-clipboard.js` draws a line, selects the whole image, cuts
+it, and pastes it back through Paint's native Edit commands. Paint publishes
+its selection as an MFC delayed-render OLE data object. The clipboard bridge
+now snapshots the newest canonical transfer bitmap into a bottom-up 32-bpp
+`CF_DIB`, so `IsClipboardFormatAvailable` and `GetClipboardData` expose the
+same eager image value Win98 USER/OLE would provide. Cut clears the source and
+Paste restores the same drawing pixels without Paint's "Error getting the
+Clipboard Data" dialog.
+
+```sh
+node test/test-mspaint-clipboard.js
 ```
 
 ## Status (2026-08-11): large documents scroll correctly

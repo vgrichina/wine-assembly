@@ -3744,11 +3744,91 @@
       (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))
     (global.set $clipboard_ole_data_object (i32.const 0)))
 
+  ;; Snapshot the newest canonical bitmap as a bottom-up 32-bpp CF_DIB. MFC
+  ;; image apps such as Paint publish delayed-render IDataObjects, while USER
+  ;; clipboard consumers expect OleSetClipboard to expose a rendered format.
+  ;; The source app creates its transfer bitmap immediately before publishing
+  ;; the data object, so the highest live bitmap handle is that exact snapshot.
+  (func $clipboard_snapshot_latest_bitmap (result i32)
+    (local $i i32) (local $p i32) (local $best i32) (local $best_handle i32)
+    (local $width i32) (local $height i32) (local $stride i32)
+    (local $size64 i64) (local $dst_g i32) (local $dst i32) (local $bits i32)
+    (local $desc i32) (local $x i32) (local $y i32) (local $color i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
+      (local.set $p (i32.add (global.get $GDI_OBJECT_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
+      (if (i32.and
+            (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 3))
+            (i32.gt_u (i32.load (local.get $p)) (local.get $best_handle)))
+        (then
+          (local.set $best (local.get $p))
+          (local.set $best_handle (i32.load (local.get $p)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $best)) (then (return (i32.const 0))))
+    (local.set $width (i32.load offset=8 (local.get $best)))
+    (local.set $height (i32.load offset=12 (local.get $best)))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $width) (i32.const 0))
+            (i32.gt_u (local.get $width) (i32.const 4096)))
+          (i32.or (i32.le_s (local.get $height) (i32.const 0))
+            (i32.gt_u (local.get $height) (i32.const 4096))))
+      (then (return (i32.const 0))))
+    (local.set $stride (i32.shl (local.get $width) (i32.const 2)))
+    (local.set $size64 (i64.add (i64.const 40)
+      (i64.mul (i64.extend_i32_u (local.get $stride))
+        (i64.extend_i32_u (local.get $height)))))
+    (if (i64.gt_u (local.get $size64) (i64.const 0x04000000))
+      (then (return (i32.const 0))))
+    (local.set $dst_g (call $heap_alloc (i32.wrap_i64 (local.get $size64))))
+    (if (i32.eqz (local.get $dst_g)) (then (return (i32.const 0))))
+    (local.set $dst (call $g2w (local.get $dst_g)))
+    (memory.fill (local.get $dst) (i32.const 0) (i32.wrap_i64 (local.get $size64)))
+    (i32.store (local.get $dst) (i32.const 40))
+    (i32.store offset=4 (local.get $dst) (local.get $width))
+    (i32.store offset=8 (local.get $dst) (local.get $height))
+    (i32.store16 offset=12 (local.get $dst) (i32.const 1))
+    (i32.store16 offset=14 (local.get $dst) (i32.const 32))
+    (i32.store offset=20 (local.get $dst)
+      (i32.mul (local.get $stride) (local.get $height)))
+    (local.set $bits (i32.add (local.get $dst) (i32.const 40)))
+    (local.set $desc (global.get $GDI_BRUSH_DESC))
+    (if (i32.eqz (call $gdi_raster_desc_from_bitmap
+          (local.get $best_handle) (local.get $desc)))
+      (then (call $heap_free (local.get $dst_g)) (return (i32.const 0))))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $height)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $width)))
+        (local.set $color (call $gdi_raster_read
+          (local.get $desc) (local.get $x) (local.get $y)))
+        (if (i32.eq (local.get $color) (i32.const -1))
+          (then (call $heap_free (local.get $dst_g)) (return (i32.const 0))))
+        (i32.store
+          (i32.add (local.get $bits)
+            (i32.add
+              (i32.mul (i32.sub (i32.sub (local.get $height) (local.get $y))
+                (i32.const 1)) (local.get $stride))
+              (i32.shl (local.get $x) (i32.const 2))))
+          (local.get $color))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (global.set $clipboard_binary_format (i32.const 8)) ;; CF_DIB
+    (global.set $clipboard_binary_ptr (local.get $dst_g))
+    (global.set $clipboard_binary_len (i32.wrap_i64 (local.get $size64)))
+    (local.get $dst_g))
+
   (func $handle_OleSetClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_clipboard_release_owner)
+    (call $clipboard_clear_binary_data)
     (global.set $clipboard_ole_data_object (local.get $arg0))
     (if (call $ole_clipboard_owner_is_local (local.get $arg0))
-      (then (drop (call $ole_obj_addref (local.get $arg0)))))
+      (then (drop (call $ole_obj_addref (local.get $arg0))))
+      (else (drop (call $clipboard_snapshot_latest_bitmap))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
