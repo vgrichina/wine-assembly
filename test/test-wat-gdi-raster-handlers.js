@@ -153,6 +153,60 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(border, 0, 0), 0);
   });
 
+  check('internal bitmap and mapping adapters use canonical WAT records', () => {
+    assert.strictEqual(wat.test_gdi_object_width(src.bitmap), 4);
+    assert.strictEqual(wat.test_gdi_object_height(src.bitmap), 4);
+    assert.strictEqual(wat.test_gdi_mapping_adapters(src.hdc), 1);
+    // Restore identity mapping for the raster adapter checks below.
+    wat.test_gdi_dc_set_field(src.hdc, 40, 0, 0);
+    wat.test_gdi_dc_set_field(src.hdc, 44, 0, 0);
+    wat.test_gdi_dc_set_field(src.hdc, 48, 1, 1);
+    wat.test_gdi_dc_set_field(src.hdc, 52, 1, 1);
+    wat.test_gdi_dc_set_field(src.hdc, 56, 0, 0);
+    wat.test_gdi_dc_set_field(src.hdc, 60, 0, 0);
+    wat.test_gdi_dc_set_field(src.hdc, 64, 1, 1);
+    wat.test_gdi_dc_set_field(src.hdc, 68, 1, 1);
+  });
+
+  check('internal BitBlt adapter shares the public canonical raster path', () => {
+    const target = makeDib(4, 4);
+    assert.strictEqual(wat.test_gdi_hdc_bitblt(
+      target.hdc, 0, 0, 4, 4, src.hdc, 0, 0, 0x00CC0020), 1);
+    assert.strictEqual(packed(target, 1, 2), 0x112233);
+    assert.strictEqual(canvasRgb(target, 1, 2), 0x112233);
+  });
+
+  check('transparent and disabled adapters apply exact color-key masks', () => {
+    const sprite = makeDib(3, 2);
+    const transparent = makeDib(5, 4);
+    const disabled = makeDib(5, 4);
+    // Source storage is BGR: magenta key at (0,0), green glyph at (1,0).
+    bytes.set([0xFF, 0x00, 0xFF, 0x00], sprite.bits);
+    bytes.set([0x00, 0xFF, 0x00, 0x00], sprite.bits + 4);
+    assert.strictEqual(wat.test_gdi_hdc_transparent_blt(
+      transparent.hdc, 1, 1, 2, 1, sprite.hdc, 0, 0, 0x00FF00FF), 1);
+    assert.strictEqual(packed(transparent, 1, 1), 0);
+    assert.strictEqual(packed(transparent, 2, 1), 0x00FF00);
+    assert.strictEqual(wat.test_gdi_hdc_disabled_blt(
+      disabled.hdc, 1, 1, 2, 1, sprite.hdc, 0, 0, 0x00FF00FF), 1);
+    assert.strictEqual(packed(disabled, 1, 1), 0);
+    assert.strictEqual(packed(disabled, 2, 1), 0x808080);
+    assert.strictEqual(packed(disabled, 3, 2), 0xFFFFFF);
+  });
+
+  check('FillRgn and FrameRgn consume WAT region bands', () => {
+    const surface = makeDib(8, 7);
+    const red = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
+    const green = wat.test_call_CreateSolidBrush(0x0000FF00) >>> 0;
+    const region = wat.test_gdi_rgn_alloc_rect(2, 1, 7, 6) >>> 0;
+    assert.strictEqual(wat.test_gdi_hdc_fill_rgn(surface.hdc, region, red), 1);
+    assert.strictEqual(packed(surface, 3, 3), 0xFF0000);
+    assert.strictEqual(packed(surface, 1, 3), 0);
+    assert.strictEqual(wat.test_gdi_hdc_frame_rgn(surface.hdc, region, green, 1, 1), 1);
+    assert.strictEqual(packed(surface, 2, 3), 0x00FF00);
+    assert.strictEqual(packed(surface, 3, 3), 0xFF0000);
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 })().catch(error => {
   console.error(error.stack || error);

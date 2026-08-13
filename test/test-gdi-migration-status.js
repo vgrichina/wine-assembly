@@ -64,8 +64,8 @@ assert.deepStrictEqual(sorted(status.eliminatedNonTextSemantics), internalStubs,
   'every eliminated semantic import must remain an explicit WAT unsupported stub');
 assert.deepStrictEqual(sorted(status.watUnsupportedStubs), internalStubs,
   'stub inventory must exactly match the WAT source');
-assert.strictEqual(internalStubs.length, 33,
-  'the WAT foundation leaves exactly 33 unsupported semantic stubs');
+assert.strictEqual(internalStubs.length, 8,
+  'the current WAT foundation leaves exactly 8 unsupported semantic stubs');
 
 // WebAssembly has no short-circuit logical AND. A pointer used directly as an
 // i32.and operand is a bit mask, so aligned addresses can turn a true predicate

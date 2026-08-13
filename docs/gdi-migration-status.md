@@ -21,8 +21,9 @@ canonical surface storage. Former imports still lacking WAT implementations
 are listed under `eliminatedNonTextSemantics`; their JavaScript methods are
 deleted and their callers resolve to explicit zero-return WAT stubs until real
 WAT implementations replace them. Pen, solid-brush, memory-DC,
-compatible-bitmap, DIB-section, window-surface, region, line, basic shape,
-chrome, pixel, and core blit semantics are now WAT-owned. This intentionally
+compatible-bitmap, DIB-section, window-surface, region painting, line, basic
+shape, chrome, pixel, core blit, transparent image, disabled image, and DC
+mapping semantics are now WAT-owned. This intentionally
 breaks unsupported application paths rather than retaining JavaScript GDI
 semantics.
 

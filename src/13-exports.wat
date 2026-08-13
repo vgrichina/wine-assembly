@@ -322,6 +322,46 @@
     (local.set $record (call $gdi_object_record (local.get 0)))
     (if (result i32) (local.get $record)
       (then (i32.load offset=36 (local.get $record))) (else (i32.const 0))))
+  (func (export "test_gdi_object_width") (param i32) (result i32)
+    (call $host_gdi_get_object_w (local.get 0)))
+  (func (export "test_gdi_object_height") (param i32) (result i32)
+    (call $host_gdi_get_object_h (local.get 0)))
+  (func (export "test_gdi_hdc_bitblt")
+        (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $host_gdi_bitblt
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8)))
+  (func (export "test_gdi_hdc_transparent_blt")
+        (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $host_gdi_transparent_blt
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8)))
+  (func (export "test_gdi_hdc_disabled_blt")
+        (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+    (call $host_gdi_disabled_blt
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)
+      (local.get 5) (local.get 6) (local.get 7) (local.get 8)))
+  (func (export "test_gdi_hdc_fill_rgn") (param i32 i32 i32) (result i32)
+    (call $host_gdi_fill_rgn (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "test_gdi_hdc_frame_rgn") (param i32 i32 i32 i32 i32) (result i32)
+    (call $host_gdi_frame_rgn
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
+  (func (export "test_gdi_mapping_adapters") (param i32) (result i32)
+    (drop (call $host_gdi_set_window_org (local.get 0) (i32.const 3) (i32.const 4)))
+    (drop (call $host_gdi_set_window_ext (local.get 0) (i32.const 5) (i32.const 6)))
+    (drop (call $host_gdi_set_viewport_org (local.get 0) (i32.const 7) (i32.const 8)))
+    (drop (call $host_gdi_set_viewport_ext (local.get 0) (i32.const 9) (i32.const 10)))
+    (i32.and
+      (i32.and
+        (i32.and (i32.eq (call $host_gdi_get_window_org_x (local.get 0)) (i32.const 3))
+          (i32.eq (call $host_gdi_get_window_org_y (local.get 0)) (i32.const 4)))
+        (i32.and (i32.eq (call $host_gdi_get_window_ext_x (local.get 0)) (i32.const 5))
+          (i32.eq (call $host_gdi_get_window_ext_y (local.get 0)) (i32.const 6))))
+      (i32.and
+        (i32.and (i32.eq (call $host_gdi_get_viewport_org_x (local.get 0)) (i32.const 7))
+          (i32.eq (call $host_gdi_get_viewport_org_y (local.get 0)) (i32.const 8)))
+        (i32.and (i32.eq (call $host_gdi_get_viewport_ext_x (local.get 0)) (i32.const 9))
+          (i32.eq (call $host_gdi_get_viewport_ext_y (local.get 0)) (i32.const 10))))))
   (func (export "test_call_DeleteObject") (param i32) (result i32)
     (call $handle_DeleteObject
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
