@@ -182,20 +182,66 @@ async function main() {
     assert.strictEqual(pixel(dib, 8, 2), 0);
   });
 
-  check('styled and wide pens take the named Canvas fallback', () => {
+  check('wide solid COPYPEN strokes use exact square integer footprints', () => {
+    const dib = makeDib(10, 8, 24, true);
+    const wide = base.host.gdi_create_pen(0, 3, 0x000000FF);
+    base.host.gdi_select_object(dib.hdc, wide);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 2, 3, 7, 3), 1);
+    for (let y = 0; y < dib.height; y++) {
+      for (let x = 0; x < dib.width; x++) {
+        const expected = x >= 1 && x <= 7 && y >= 2 && y <= 4;
+        assert.strictEqual(pixel(dib, x, y), expected ? 0xFF0000 : 0,
+          `unexpected wide-stroke pixel at ${x},${y}`);
+      }
+    }
+  });
+
+  check('even-width strokes use a stable top-left bias and clip at DIB edges', () => {
+    const dib = makeDib(7, 6, 32, true);
+    const wide = base.host.gdi_create_pen(0, 4, 0x0000FF00);
+    base.host.gdi_select_object(dib.hdc, wide);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 1, 4, 1), 1);
+    for (let y = 0; y < dib.height; y++) {
+      for (let x = 0; x < dib.width; x++) {
+        const expected = x <= 4 && y <= 2;
+        assert.strictEqual(pixel(dib, x, y), expected ? 0x00FF00 : 0,
+          `unexpected even-width clipped pixel at ${x},${y}`);
+      }
+    }
+  });
+
+  check('unsupported styled, wide ROP2, huge, and 16bpp lines fall back', () => {
     const dib = makeDib(6, 4, 24);
     const styled = base.host.gdi_create_pen(1, 1, 0x000000FF);
     base.host.gdi_select_object(dib.hdc, styled);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 4, 0), 0);
     const wide = base.host.gdi_create_pen(0, 3, 0x000000FF);
     base.host.gdi_select_object(dib.hdc, wide);
+    assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 7), 13);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 4, 0), 0);
+    assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 13), 7);
+    base.host.gdi_set_window_ext(dib.hdc, 1, 1);
+    base.host.gdi_set_viewport_ext(dib.hdc, 2, 1);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 2, 0), 0);
+    base.host.gdi_set_viewport_ext(dib.hdc, 1, 1);
     const thin = base.host.gdi_create_pen(0, 1, 0x000000FF);
     base.host.gdi_select_object(dib.hdc, thin);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 70000, 0), 0);
     const dib16 = makeDib(6, 4, 16);
     base.host.gdi_select_object(dib16.hdc, thin);
     assert.strictEqual(wat.test_gdi_line_try(dib16.hdc, 0, 0, 4, 0), 0);
+  });
+
+  check('wide dash requests normalize to solid and PS_NULL never draws', () => {
+    const dib = makeDib(8, 5, 24, true);
+    const wideDash = base.host.gdi_create_pen(1, 3, 0x000000FF);
+    base.host.gdi_select_object(dib.hdc, wideDash);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 2, 2, 6, 2), 1);
+    assert.strictEqual(pixel(dib, 3, 2), 0xFF0000);
+    const nullPen = base.host.gdi_create_pen(5, 1, 0x0000FF00);
+    base.host.gdi_select_object(dib.hdc, nullPen);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 4, 7, 4), 0);
+    assert.strictEqual(pixel(dib, 3, 4), 0);
   });
 
   console.log(`\n${passed}/${passed} checks passed`);
