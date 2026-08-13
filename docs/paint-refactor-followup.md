@@ -53,7 +53,7 @@ leaks records into `_dcTable` indefinitely.
 - **Keep legacy decoder as the resolver, but route through `_dcTable`
   for state.** Inline sites stay on `hwnd+0x40000` encoding; only the
   per-DC GDI state (penColor, brushColor, …) lives in the table. Pure
-  refactor benefit, no leak. Step 5 cleanup deletes `_dcState` only,
+  refactor benefit, no leak. Step 5 cleanup deleted the JS DC mirror,
   keeps the decoder.
 
 **Gate to chase:** `grep -rn '0x40000\|0xC0000' src/*.wat | grep -v
@@ -67,8 +67,8 @@ Blocked on (1). Once every site uses `_dcTable`:
 - Delete `_isWindowDC`, `_isWholeWindowDC`, `_isSurfaceDC`, `_hwndFromDC`
   in `lib/host-imports.js`.
 - Delete `_legacyGetDrawTarget` (the original `_getDrawTarget` body).
-- Delete `_dcState` and its 11 references — state moves into DcRecord.
-- Confirm no callers: `grep -rn _isWindowDC\|_hwndFromDC\|_dcState lib/
+- Keep DC state exclusively in the WAT `DcRecord` table.
+- Confirm no legacy semantic mirror returns to `lib/host-imports.js`.
   src/ host.js` returns 0.
 - The `+ 0x40000` / `+ 0xC0000` arithmetic in WAT must be gone first.
 

@@ -75,15 +75,6 @@ async function main() {
     onExit: () => {},
   };
   const base = createHostImports(ctx);
-  let commonControlBitmapHandle = 0;
-  const realLoadBitmap = base.host.gdi_load_bitmap;
-  base.host.gdi_load_bitmap = (hInstance, resourceId) => {
-    const h = realLoadBitmap(hInstance, resourceId);
-    if ((hInstance | 0) === -1 && (resourceId >>> 0) === 0) {
-      commonControlBitmapHandle = h >>> 0;
-    }
-    return h;
-  };
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread = () => 0;
@@ -138,13 +129,14 @@ async function main() {
     return g;
   }
   function countColorPixels(bmp) {
-    if (!bmp || !bmp.pixels) return 0;
+    if (!bmp || !bmp.surface) return 0;
+    const pixels = bmp.surface.rgbaRect(0, 0, bmp.width, bmp.height);
     let colorful = 0;
-    for (let i = 0; i + 3 < bmp.pixels.length; i += 4) {
-      const r = bmp.pixels[i];
-      const g = bmp.pixels[i + 1];
-      const b = bmp.pixels[i + 2];
-      const a = bmp.pixels[i + 3];
+    for (let i = 0; i + 3 < pixels.length; i += 4) {
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const a = pixels[i + 3];
       if (!a) continue;
       if (r === 192 && g === 192 && b === 192) continue;
       if (Math.max(r, g, b) - Math.min(r, g, b) >= 32) colorful++;
@@ -208,15 +200,14 @@ async function main() {
   check('TB_BUTTONSTRUCTSIZE accepts 20-byte TBBUTTON',
     e.send_message(toolbar, TB_BUTTONSTRUCTSIZE, 20, 0) === 1);
   check('TB_ADDBITMAP loads HINST_COMMCTRL standard small-color strip',
-    e.send_message(toolbar, TB_ADDBITMAP, 15, allocAddBitmap(-1, 0)) === 0 &&
-      commonControlBitmapHandle !== 0,
-    `hbitmap=0x${commonControlBitmapHandle.toString(16)}`);
-  const commonControlBitmap = base.gdi._gdiObjects[commonControlBitmapHandle];
+    e.send_message(toolbar, TB_ADDBITMAP, 15, allocAddBitmap(-1, 0)) === 0);
+  const commonControlBitmap = [...base.gdi.surfacePresentations.values()]
+    .find(p => p.width === 240 && p.height === 15);
   check('HINST_COMMCTRL standard strip has expected geometry',
     commonControlBitmap &&
-      commonControlBitmap.w === 240 &&
-      commonControlBitmap.h === 15,
-    commonControlBitmap ? `${commonControlBitmap.w}x${commonControlBitmap.h}` : 'missing');
+      commonControlBitmap.width === 240 &&
+      commonControlBitmap.height === 15,
+    commonControlBitmap ? `${commonControlBitmap.width}x${commonControlBitmap.height}` : 'missing');
   check('HINST_COMMCTRL standard strip has colored icon pixels',
     countColorPixels(commonControlBitmap) > 200,
     `colorPixels=${countColorPixels(commonControlBitmap)}`);

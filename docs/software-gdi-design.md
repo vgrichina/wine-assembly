@@ -95,8 +95,8 @@ with the resulting pixels copied back to the authoritative WAT surface.
 all-segment preflight. Cosmetic style phase continues across segment
 boundaries and each shared endpoint is covered once. `Polyline` preserves the
 DC current position; `PolylineTo` starts from and advances the WAT-owned
-current position. Unsupported paths use a single named Canvas fallback rather
-than mixing WAT and Canvas segments.
+current position. Unsupported paths fail explicitly; there is no Canvas
+geometry fallback.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.
@@ -109,10 +109,9 @@ The immediate drivers are visible in Win98 Paint:
   `imageSmoothingEnabled = false` affects scaled images, not `stroke()` or
   `fill()` rasterization, so output differs from classic integer GDI and can
   differ between browser engines.
-- A `CreateDIBSection` currently has guest-visible bytes plus a Canvas shadow.
-  Guest stores, host GDI operations, and presentation must keep the two copies
-  synchronized. Dirty-page tracking improved this path, but the two-copy model
-  remains more complex than necessary.
+- The former `CreateDIBSection` Canvas shadow required guest stores, host GDI
+  operations, and presentation to synchronize two pixel copies. Canonical WAT
+  memory has replaced that model.
 - Paint's brush-options panel is still visually incorrect. Its small bitmap and
   mask operations need exact pixel tests as part of this migration; software
   line rasterization alone will not necessarily fix it.
@@ -144,8 +143,9 @@ This is a staged replacement, not a flag-day rewrite.
    second authoritative RGBA copy.
 3. Canvas content is a derived presentation cache. Code never reads Canvas to
    discover the current value of a software-backed GDI surface.
-4. Every write marks a bounded dirty area. Guest CPU writes to DIB memory may
-   initially provide page-level dirtiness; GDI operations provide rectangles.
+4. Each GDI write presents an explicit bounded rectangle. Guest CPU writes to
+   DIB memory need no write barrier because all GDI reads use those bytes
+   directly; a later explicit presentation operation uploads them to Canvas.
 5. GDI read/modify/write operations run against the authoritative store,
    including raster operations, flood fill, `GetPixel`, and source blits.
 6. Rasterization uses integer coordinates and deterministic coverage rules.
@@ -186,8 +186,8 @@ There are two storage classes:
 
 A memory DC has no pixels of its own. Its selected bitmap resolves to a
 surface. A window DC resolves to the window backing surface plus an origin and
-clip. DirectDraw surface DCs should eventually resolve through the same
-interface, while preserving the DirectDraw surface's native storage.
+clip. DirectDraw surface DCs resolve through the same descriptor interface
+while preserving the DirectDraw surface's native storage.
 
 Recommended resolution API:
 
@@ -372,7 +372,7 @@ canonical intersection directly.
 Each surface maintains an optional Canvas presentation cache. Flushing a dirty
 surface performs:
 
-1. Coalesce dirty pages, rows, tiles, or rectangles.
+1. Coalesce explicit dirty rows, tiles, or rectangles.
 2. Convert native pixels and palettes to RGBA for only those areas.
 3. Upload without interpolation using `putImageData`, `ImageBitmap`, or an
    unscaled `drawImage` from a staging canvas.
@@ -603,9 +603,8 @@ authoritative surface.
 
 - Delete DIB hashes and Canvas-to-DIB conversion.
 - Delete compatibility paths whose callers have migrated.
-- Retain DIB page dirtiness and presentation uploads.
-- Make Canvas vector GDI fallbacks opt-in diagnostics, then remove them as
-  coverage reaches the supported API set.
+- Retain bounded presentation uploads without guest-write page tracking.
+- Keep Canvas vector GDI fallbacks removed.
 
 ## Testing strategy
 
@@ -620,9 +619,9 @@ Use three layers:
   sequences, resource masks, window invalidation, and presentation.
 
 Cross-engine browser tests should compare logical surface pixels or PNG hashes,
-not screenshots after CSS scaling. Safari must be included before removing a
-Canvas fallback because it is the engine that exposed the current presentation
-and coordinate issues.
+not screenshots after CSS scaling. Safari remains an important presentation
+check because it exposed the original Canvas geometry and coordinate
+differences.
 
 Reference fixtures should record their source and environment. Prefer captures
 from an actual Win98 system or a documented compatible GDI implementation. Do
@@ -635,8 +634,8 @@ not encode Canvas output as the expected result for operations being migrated.
   workloads.
 - Coalesce dirty rectangles and cap their count before falling back to a full
   surface upload.
-- Keep the current direct guest-memory translation fast path. DIB store
-  instrumentation remains one range check plus page-state writes.
+- Keep the current direct guest-memory translation fast path. DIB stores need
+  no instrumentation because the DIB bytes are canonical.
 - Profile before moving code into WASM. JavaScript typed arrays may be adequate
   for normal Win98 resolutions; the surface contract should permit a later
   WASM rasterizer without changing callers.

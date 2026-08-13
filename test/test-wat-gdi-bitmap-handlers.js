@@ -67,6 +67,23 @@ function readBitmapObject(wat, handle, wide = false) {
     assert.strictEqual(wat.test_call_CreateBitmap(-1, 2, 1, 24, 0), 0);
   });
 
+  check('HINST_COMMCTRL toolbar strips are canonical WAT bitmaps', () => {
+    const bitmap = wat.test_call_LoadBitmapA(-1, 0) >>> 0;
+    assert(bitmap);
+    assert.deepStrictEqual(readBitmapObject(wat, bitmap), [0, 240, 15, 960, 1 | (32 << 16), 0]);
+    const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
+    assert(storage);
+    const presentation = gdi.surfacePresentations.get(bitmap);
+    assert(presentation && presentation.surface, 'WAT bitmap should have a derived presentation');
+    const rgba = presentation.surface.rgbaRect(0, 0, 240, 15);
+    let colorful = 0;
+    for (let i = 0; i < rgba.length; i += 4) {
+      if (Math.max(rgba[i], rgba[i + 1], rgba[i + 2]) -
+          Math.min(rgba[i], rgba[i + 1], rgba[i + 2]) >= 32) colorful++;
+    }
+    assert(colorful > 200, `expected colored toolbar glyphs, got ${colorful}`);
+  });
+
   check('CreateDIBitmap copies top-down indexed pixels and owned RGBQUADs', () => {
     const bmi = wat.guest_alloc(48) >>> 0;
     wat.guest_write32(bmi, 40);

@@ -388,9 +388,8 @@ async function main() {
     const e = app.wine.instance.exports;
     const hdc = (${ready.main} + 0x40000) >>> 0;
     const gdi = app.wine.hostCtx && app.wine.hostCtx.sharedGdi;
-    const dc = gdi && gdi._dcState && gdi._dcState[hdc];
-    const handle = dc && dc.selectedFont || 0;
-    const font = gdi && gdi._gdiObjects && gdi._gdiObjects[handle];
+    const handle = e.test_gdi_dc_get_field ? e.test_gdi_dc_get_field(hdc, 88, 0) >>> 0 : 0;
+    const font = gdi && gdi.fontResources && gdi.fontResources[handle];
     return {
       handle,
       css: font && font.css || '',

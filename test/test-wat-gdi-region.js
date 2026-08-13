@@ -107,11 +107,11 @@ async function main() {
     const record = recordFor(handle);
     const mirror = dv.getUint32(record + 24, true);
     assert.strictEqual(mirror, handle);
-    assert.deepStrictEqual(base.gdi._gdiObjects[mirror].bbox, { l: 1, t: 2, r: 7, b: 8 });
+    assert.deepStrictEqual(base.gdi.regionPresentations[mirror].bbox, { l: 1, t: 2, r: 7, b: 8 });
 
     assert.strictEqual(wat.test_gdi_rgn_set_rect(handle, -4, -3, 5, 6), 1);
     assert.deepStrictEqual(box(handle), { complexity: 2, rect: [-4, -3, 5, 6] });
-    assert.deepStrictEqual(base.gdi._gdiObjects[mirror].bbox, { l: -4, t: -3, r: 5, b: 6 });
+    assert.deepStrictEqual(base.gdi.regionPresentations[mirror].bbox, { l: -4, t: -3, r: 5, b: 6 });
   });
 
   check('rectangle intersection and offset execute on canonical WAT bands', () => {
@@ -141,7 +141,7 @@ async function main() {
       assert.deepStrictEqual(bands(dst), rects, `mode ${mode}`);
       assert.strictEqual(dv.getUint32(recordFor(dst), true), rects.length === 1 ? 1 : 2);
       const mirror = dv.getUint32(recordFor(dst) + 24, true);
-      assert.deepStrictEqual(base.gdi._gdiObjects[mirror].rects,
+      assert.deepStrictEqual(base.gdi.regionPresentations[mirror].rects,
         rects.map(([l, t, r, btm]) => ({ x: l, y: t, w: r - l, h: btm - t })));
     }
     const copy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
@@ -248,9 +248,9 @@ async function main() {
 
   check('delete invalidates stale generations before reusing a slot', () => {
     const oldHandle = wat.test_gdi_rgn_alloc_rect(1, 1, 2, 2);
-    assert(base.gdi._gdiObjects[oldHandle]);
+    assert(base.gdi.regionPresentations[oldHandle]);
     assert.strictEqual(wat.test_gdi_rgn_delete(oldHandle), 1);
-    assert.strictEqual(base.gdi._gdiObjects[oldHandle], undefined);
+    assert.strictEqual(base.gdi.regionPresentations[oldHandle], undefined);
     const newHandle = wat.test_gdi_rgn_alloc_rect(4, 4, 9, 9);
     assert.strictEqual(newHandle & 0xFF, oldHandle & 0xFF);
     assert.notStrictEqual(newHandle, oldHandle);

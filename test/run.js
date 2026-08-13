@@ -5155,29 +5155,19 @@ if (VERBOSE) {
     }
   }
 
-  // Dump all GDI bitmaps as PNGs
+  // Dump the derived presentation of every canonical GDI surface as PNG.
   if (DUMP_GDI && createCanvas) {
     fs.mkdirSync(DUMP_GDI, { recursive: true });
-    const gdiObjects = base.gdi._gdiObjects;
     let count = 0;
-    for (const [handle, obj] of Object.entries(gdiObjects)) {
-      if (!obj || obj.type !== 'bitmap' || !obj.w || !obj.h) continue;
-      let c;
-      if (obj.canvas) {
-        // Read from canvas (authoritative after BitBlt operations)
-        c = createCanvas(obj.w, obj.h);
-        const dstCtx = c.getContext('2d');
-        const srcCtx = obj.canvas.getContext('2d');
-        const imgData = srcCtx.getImageData(0, 0, obj.w, obj.h);
-        dstCtx.putImageData(imgData, 0, 0);
-      } else if (obj.pixels) {
-        c = createCanvas(obj.w, obj.h);
-        const dstCtx = c.getContext('2d');
-        const img = dstCtx.createImageData(obj.w, obj.h);
-        img.data.set(obj.pixels);
-        dstCtx.putImageData(img, 0, 0);
-      } else continue;
-      const outFile = path.join(DUMP_GDI, `gdi_${handle}_${obj.w}x${obj.h}.png`);
+    for (const [handle, presentation] of base.gdi.surfacePresentations.entries()) {
+      if (!presentation || !presentation.surface || !presentation.width || !presentation.height) continue;
+      const { width, height, surface } = presentation;
+      const c = createCanvas(width, height);
+      const dstCtx = c.getContext('2d');
+      const img = dstCtx.createImageData(width, height);
+      img.data.set(surface.rgbaRect(0, 0, width, height));
+      dstCtx.putImageData(img, 0, 0);
+      const outFile = path.join(DUMP_GDI, `gdi_${handle}_${width}x${height}.png`);
       fs.writeFileSync(outFile, c.toBuffer('image/png'));
       count++;
     }

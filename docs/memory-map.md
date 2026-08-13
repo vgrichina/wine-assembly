@@ -121,7 +121,8 @@ tables are emulator state rather than general guest allocations.
 The software-GDI migration reserves `0x07E1C000..0x07EEBFFF` for 256 region
 slots of 208 canonical band rectangles each, followed by four 3.25KB work
 buffers at `0x07EEC000..0x07EEF3FF`. The preceding
-`0x07E10000..0x07E1BFFF` range remains DIB page-state/run metadata. Sized WAT
+`0x07E10000..0x07E1BFFF` range stores the DIB arena allocation bitmap and run
+lengths. It tracks ownership/reuse only, never write dirtiness. Sized WAT
 globals and `test/test-wat-memory-map.js` enforce that these regions do not
 overlap other emulator tables.
 

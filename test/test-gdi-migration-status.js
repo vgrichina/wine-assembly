@@ -63,11 +63,15 @@ assert.deepStrictEqual(jsMethods, expectedImports,
 for (const obsolete of [
   'dx_surface_sync', '_legacyGetDrawTarget', '_resolveDcRecord',
   '_getSurfaceCanvas', '_surfaceCanvasToDib', '_dibToSurfaceCanvas',
-  '_screenCanvasState', '_getScreenDcTarget',
+  '_screenCanvasState', '_getScreenDcTarget', '_dcState',
 ]) {
   assert(!header.includes(obsolete) && !hostImports.includes(obsolete),
     `${obsolete} must not restore a Canvas-owned or split-brain GDI path`);
 }
+assert(!/\bconst _getDC\b/.test(hostImports),
+  '_getDC must not restore a JavaScript semantic DC record');
+assert(!hostImports.includes('_gdiObjects'),
+  'mixed JavaScript GDI object storage must stay removed');
 const drawTargetBody = hostImports.match(
   /const _getDrawTarget = \(hdc\) => \{([\s\S]*?)\n  \};/);
 assert(drawTargetBody, 'text draw-target resolver must remain explicit');

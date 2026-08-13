@@ -137,7 +137,20 @@ async function main() {
 
   const text = wat.guest_alloc(2) >>> 0;
   wat.guest_write16(text, 0x58); // "X\0"
+  const textPresentation = base.gdi.surfacePresentations.get(surfaceId);
+  const rgbaRect = textPresentation.surface.rgbaRect.bind(textPresentation.surface);
+  const textSeedRects = [];
+  textPresentation.surface.rgbaRect = (...args) => {
+    textSeedRects.push(args);
+    return rgbaRect(...args);
+  };
   assert.strictEqual(wat.test_call_TextOutA(hdc, 10, 10, text, 1), 1);
+  textPresentation.surface.rgbaRect = rgbaRect;
+  assert.strictEqual(textSeedRects.length, 1,
+    'TextOut must seed its Canvas rasterizer once from canonical pixels');
+  assert(textSeedRects[0][2] < textPresentation.width &&
+    textSeedRects[0][3] < textPresentation.height,
+  'TextOut must seed only its bounded glyph rectangle, not the full surface');
   assert.deepStrictEqual(
     [...canvas.getContext('2d').getImageData(4, 6, 1, 1).data.subarray(0, 3)],
     [255, 0, 0], 'text synchronization must retain prior canonical geometry');
