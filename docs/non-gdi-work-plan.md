@@ -401,8 +401,11 @@ Static `CF_DIB` is a useful first handler, not the general object model.
   cached presentations.
 - [x] Implement real `IPersistStorage::InitNew`, `Load`, `Save`,
   `SaveCompleted`, and `HandsOffStorage` against the P2 storage model.
-- Generalize `IOleCache` beyond one DIB presentation, including replace/remove,
-  cache enumeration, and format/aspect selection.
+- [x] Generalize `IOleCache` beyond one DIB presentation with stable
+  connections, exact format/aspect entries, independent media ownership, and
+  targeted replace/remove behavior.
+- [x] Implement `IOleCache::EnumCache` as a stable `IEnumSTATDATA` snapshot
+  over the generalized presentation collection.
 - Preserve unknown streams and storage children during load/save so an object
   can round-trip even when wine-assembly cannot activate its server.
 
@@ -414,6 +417,17 @@ Save As recursively stages and atomically replaces the destination, preserving
 unknown streams, storage children, root CLSID, and state bits without needing
 to understand their schema. The static-handler suite passes 26/26. General
 multi-presentation caching and user/lifecycle metadata remain in P4.1/P4.2.
+
+2026-08-13 cache-collection result: `IOleCache::Cache` now assigns stable
+connection IDs to distinct format/aspect presentations and suppresses matching
+duplicates. `SetData` copies or transfers independently owned media, replaces
+only the matching presentation, and keeps the first usable CF_DIB mirrored into
+the proven render path. `Uncache` removes only its connection and returns
+`OLE_E_NOCONNECTION` for an unknown ID. The focused handler suite passes 34/34,
+and WordPad inline object Copy/Cut/Paste remains green at 13/13.
+`IEnumSTATDATA` now snapshots complete format/ADVF/sink/connection fields,
+deep-copies target-device metadata, and supports exact Next/Skip/Reset/Clone
+cursor semantics. The expanded focused suite passes 38/38.
 
 ### P4.2 Object lifecycle contracts
 

@@ -45,6 +45,13 @@ states; Save As uses a detached recursive storage copy before replacing the
 destination. This preserves unknown streams, nested storage, CLSID, and state
 bits for unavailable servers. The focused static-handler suite passes 26/26.
 
+The handler cache now stores multiple exact format/aspect presentations behind
+stable connection IDs. Media are independently copied or transferred,
+replacement and removal are scoped to one presentation, and CF_DIB selection
+continues to feed the existing render path. Stable `IEnumSTATDATA` snapshots
+cover complete fields, deep target metadata, cursor movement, and independent
+clones. The focused suite passes 38/38.
+
 ## ASCII TLDR
 
 ```text

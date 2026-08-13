@@ -78,6 +78,123 @@ async function main() {
     return value;
   };
 
+  const makeFormat = (id, aspect = 1, tymed = 1) => {
+    const value = alloc(20);
+    u8.fill(0, wa(value), wa(value) + 20);
+    dv.setUint16(wa(value), id, true);
+    dv.setUint32(wa(value) + 8, aspect, true);
+    dv.setInt32(wa(value) + 12, -1, true);
+    dv.setUint32(wa(value) + 16, tymed, true);
+    return value;
+  };
+  const makeMedium = bytes => {
+    const handle = alloc(bytes.length);
+    u8.set(bytes, wa(handle));
+    const value = alloc(12);
+    u8.fill(0, wa(value), wa(value) + 12);
+    dv.setUint32(wa(value), 1, true);
+    dv.setUint32(wa(value) + 4, handle, true);
+    return { value, handle };
+  };
+
+  const cacheObject = e.test_ole_create_static_handler(clsid) >>> 0;
+  const dibFormat = makeFormat(8);
+  const opaqueFormat = makeFormat(0xc401);
+  const opaqueTarget = alloc(8);
+  dv.setUint32(wa(opaqueTarget), 8, true);
+  dv.setUint32(wa(opaqueTarget) + 4, 0x11223344, true);
+  dv.setUint32(wa(opaqueFormat) + 4, opaqueTarget, true);
+  const dibConnection = alloc(4);
+  const opaqueConnection = alloc(4);
+  check('IOleCache assigns stable connections to distinct presentations',
+    e.test_ole_cache_add(cacheObject, dibFormat, 1, dibConnection) === 0 &&
+    e.test_ole_cache_add(cacheObject, opaqueFormat, 2, opaqueConnection) === 0 &&
+    dv.getUint32(wa(dibConnection), true) === 1 &&
+    dv.getUint32(wa(opaqueConnection), true) === 2 &&
+    e.test_ole_cache_count(cacheObject) === 2);
+  const duplicateConnection = alloc(4);
+  check('IOleCache reuses a matching connection without duplicating the entry',
+    e.test_ole_cache_add(cacheObject, dibFormat, 9, duplicateConnection) === 0 &&
+    dv.getUint32(wa(duplicateConnection), true) === 1 &&
+    e.test_ole_cache_count(cacheObject) === 2);
+
+  const opaqueMedium = makeMedium(Uint8Array.from([1, 2, 3, 0]));
+  check('IOleCache SetData copies an opaque presentation independently',
+    e.test_ole_cache_set_data(cacheObject, opaqueFormat, opaqueMedium.value, 0) === 0);
+  u8[wa(opaqueMedium.handle)] = 9;
+  const opaqueOut = alloc(12);
+  e.test_ole_cache_get(cacheObject, opaqueFormat, opaqueOut);
+  check('cached opaque presentation bytes do not alias the caller medium',
+    u8[wa(dv.getUint32(wa(opaqueOut) + 4, true))] === 1);
+  e.test_ole_release_medium(opaqueOut);
+
+  const dibMedium = makeMedium(Uint8Array.from([40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0]));
+  check('IOleCache SetData transfers fRelease ownership and selects CF_DIB for rendering',
+    e.test_ole_cache_set_data(cacheObject, dibFormat, dibMedium.value, 1) === 0 &&
+    dv.getUint32(wa(dibMedium.value), true) === 0 &&
+    dv.getUint32(wa(dibMedium.value) + 4, true) === 0 &&
+    e.test_ole_cache_render_valid(cacheObject) === 1);
+  const replacementMedium = makeMedium(Uint8Array.from([4, 5, 6, 0]));
+  e.test_ole_cache_set_data(cacheObject, opaqueFormat, replacementMedium.value, 0);
+  const replacementOut = alloc(12);
+  e.test_ole_cache_get(cacheObject, opaqueFormat, replacementOut);
+  check('IOleCache replaces one presentation without disturbing other entries',
+    e.test_ole_cache_count(cacheObject) === 2 &&
+    u8[wa(dv.getUint32(wa(replacementOut) + 4, true))] === 4 &&
+    e.test_ole_cache_render_valid(cacheObject) === 1);
+  e.test_ole_release_medium(replacementOut);
+  const cacheEnum = e.test_ole_create_cache_enum(cacheObject) >>> 0;
+  check('IOleCache EnumCache creates a stable multi-presentation snapshot', cacheEnum !== 0);
+  const storedOpaqueFormat = makeFormat(0xc401);
+  const storedOpaqueTarget = alloc(8);
+  dv.setUint32(wa(storedOpaqueTarget), 8, true);
+  dv.setUint32(wa(storedOpaqueTarget) + 4, 0x11223344, true);
+  dv.setUint32(wa(storedOpaqueFormat) + 4, storedOpaqueTarget, true);
+  dv.setUint32(wa(opaqueTarget) + 4, 0xdeadbeef, true);
+  check('IOleCache rejects unknown connection removal without mutation',
+    (e.test_ole_cache_uncache(cacheObject, 99) >>> 0) === 0x80040004 &&
+    e.test_ole_cache_count(cacheObject) === 2);
+  check('IOleCache Uncache removes only the selected connection and refreshes render selection',
+    e.test_ole_cache_uncache(cacheObject, 1) === 0 &&
+    e.test_ole_cache_count(cacheObject) === 1 &&
+    e.test_ole_cache_render_valid(cacheObject) === 0 &&
+    e.test_ole_cache_get(cacheObject, storedOpaqueFormat, replacementOut) === 0);
+  e.test_ole_release_medium(replacementOut);
+
+  const statItems = alloc(32 * 3);
+  const statFetched = alloc(4);
+  const statNextHr = e.test_ole_cache_enum_next(cacheEnum, 3, statItems, statFetched) >>> 0;
+  const firstStat = statItems;
+  const secondStat = statItems + 32;
+  check('IEnumSTATDATA Next returns exact format, ADVF, sink, and connection fields',
+    statNextHr === 1 && dv.getUint32(wa(statFetched), true) === 2 &&
+    dv.getUint16(wa(firstStat), true) === 8 && dv.getUint32(wa(firstStat) + 20, true) === 1 &&
+    dv.getUint32(wa(firstStat) + 24, true) === 0 && dv.getUint32(wa(firstStat) + 28, true) === 1 &&
+    dv.getUint16(wa(secondStat), true) === 0xc401 && dv.getUint32(wa(secondStat) + 20, true) === 2 &&
+    dv.getUint32(wa(secondStat) + 24, true) === 0 && dv.getUint32(wa(secondStat) + 28, true) === 2);
+  const enumeratedTarget = dv.getUint32(wa(secondStat) + 4, true) >>> 0;
+  check('IEnumSTATDATA snapshot deep-copies target metadata before live mutation',
+    enumeratedTarget !== 0 && enumeratedTarget !== opaqueTarget &&
+    dv.getUint32(wa(enumeratedTarget) + 4, true) === 0x11223344);
+  e.test_ole_format_free(firstStat);
+  e.test_ole_format_free(secondStat);
+  e.test_ole_format_enum_reset(cacheEnum);
+  e.test_ole_format_enum_skip(cacheEnum, 1);
+  const cacheEnumClone = e.test_ole_clone_cache_enum(cacheEnum) >>> 0;
+  const originalStat = alloc(32);
+  const clonedStat = alloc(32);
+  check('IEnumSTATDATA Clone preserves an independent cursor and owned FORMATETC',
+    cacheEnumClone !== 0 &&
+    e.test_ole_cache_enum_next(cacheEnum, 1, originalStat, 0) === 0 &&
+    e.test_ole_cache_enum_next(cacheEnumClone, 1, clonedStat, 0) === 0 &&
+    dv.getUint16(wa(originalStat), true) === 0xc401 &&
+    dv.getUint16(wa(clonedStat), true) === 0xc401);
+  e.test_ole_format_free(originalStat);
+  e.test_ole_format_free(clonedStat);
+  e.test_ole_release(cacheEnumClone);
+  e.test_ole_release(cacheEnum);
+  e.test_ole_release(cacheObject);
+
   const persistObject = e.test_ole_create_static_handler(clsid) >>> 0;
   const sourceStorage = e.test_ole_create_storage(0) >>> 0;
   const unknownName = writeWide('UnknownPayload');

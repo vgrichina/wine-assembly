@@ -87,8 +87,13 @@ The generic persistence foundation now gives the same embedded handler a real
 no-scribble and hands-off transitions, adopts replacement storage only through
 `SaveCompleted`, and performs atomic full-tree Save As copies. Unknown streams,
 nested storages, CLSID, and state bits survive without server-specific parsing.
-The expanded static-handler suite passes 26/26; generalized cache enumeration
-and multiple presentations remain next.
+The embedded cache now owns multiple exact format/aspect presentations with
+stable connection IDs, independent copy/transfer semantics, targeted
+replacement/removal, and deterministic CF_DIB render selection. The expanded
+static-handler suite passes 38/38 and native inline-object Copy/Cut/Paste stays
+green at 13/13. Cache enumeration now returns stable `IEnumSTATDATA` snapshots
+with complete format, ADVF, sink, and connection fields plus deep target-device
+ownership and independent clone cursors.
 
 ## Remaining Work
 
