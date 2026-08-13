@@ -1,0 +1,106 @@
+{
+  "background": "000000",
+  "foregroundColorRef": "00332211",
+  "foregroundPackedBgr": "112233",
+  "provenance": {
+    "kind": "implementation-regression",
+    "source": "Wine-Assembly WAT square-stamp rasterizer at commit e7d428d",
+    "generated": "2026-08-12",
+    "fidelityClaim": false,
+    "note": "These masks lock deterministic exact-color behavior during migration. They are not Win98 reference captures and must not be treated as pixel-fidelity evidence."
+  },
+  "cases": [
+    {
+      "name": "width 2 shallow positive slope",
+      "size": [12, 9],
+      "width": 2,
+      "line": [2, 2, 9, 5],
+      "pixels": [
+        "............",
+        ".###........",
+        ".#####......",
+        "...#####....",
+        ".....####...",
+        ".......##...",
+        "............",
+        "............",
+        "............"
+      ]
+    },
+    {
+      "name": "width 3 forty-five degree slope",
+      "size": [12, 12],
+      "width": 3,
+      "line": [2, 2, 9, 9],
+      "pixels": [
+        "............",
+        ".###........",
+        ".####.......",
+        ".#####......",
+        "..#####.....",
+        "...#####....",
+        "....#####...",
+        ".....#####..",
+        "......####..",
+        ".......###..",
+        "............",
+        "............"
+      ]
+    },
+    {
+      "name": "width 4 steep positive slope",
+      "size": [11, 12],
+      "width": 4,
+      "line": [3, 1, 6, 10],
+      "pixels": [
+        ".####......",
+        ".#####.....",
+        ".#####.....",
+        ".#####.....",
+        "..#####....",
+        "..#####....",
+        "..#####....",
+        "...#####...",
+        "...#####...",
+        "...#####...",
+        "....####...",
+        "..........."
+      ]
+    },
+    {
+      "name": "width 5 reverse negative slope",
+      "size": [13, 11],
+      "width": 5,
+      "line": [10, 2, 3, 8],
+      "pixels": [
+        "........#####",
+        ".......######",
+        "......#######",
+        "....#########",
+        "...##########",
+        "..##########.",
+        "..#########..",
+        "..########...",
+        "..######.....",
+        "..#####......",
+        "............."
+      ]
+    },
+    {
+      "name": "width 3 reverse horizontal endpoint",
+      "size": [13, 8],
+      "width": 3,
+      "line": [10, 4, 3, 4],
+      "pixels": [
+        ".............",
+        ".............",
+        ".............",
+        "...#########.",
+        "...#########.",
+        "...#########.",
+        ".............",
+        "............."
+      ]
+    }
+  ]
+}

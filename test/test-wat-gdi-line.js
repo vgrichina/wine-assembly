@@ -10,6 +10,8 @@ const { compileWat } = require('../lib/compile-wat');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
+const WIDE_LINE_FIXTURES = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'gdi-wide-line-pixels.json'), 'utf8'));
 
 async function main() {
   const wasmBytes = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
@@ -217,6 +219,37 @@ async function main() {
         assert.strictEqual(pixel(dib, x, y), expected ? 0x00FF00 : 0,
           `unexpected even-width clipped pixel at ${x},${y}`);
       }
+    }
+  });
+
+  check('wide-line migration fixtures match exact pixels and contain no blended colors', () => {
+    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.kind, 'implementation-regression');
+    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.fidelityClaim, false);
+    const foreground = parseInt(WIDE_LINE_FIXTURES.foregroundPackedBgr, 16);
+    const background = parseInt(WIDE_LINE_FIXTURES.background, 16);
+    const colorRef = parseInt(WIDE_LINE_FIXTURES.foregroundColorRef, 16);
+    for (const fixture of WIDE_LINE_FIXTURES.cases) {
+      const [width, height] = fixture.size;
+      const [x0, y0, x1, y1] = fixture.line;
+      assert.strictEqual(fixture.pixels.length, height, `${fixture.name}: fixture height`);
+      assert(fixture.pixels.every(row => row.length === width), `${fixture.name}: fixture width`);
+      const dib = makeDib(width, height, 24, true);
+      const pen = base.host.gdi_create_pen(0, fixture.width, colorRef);
+      base.host.gdi_select_object(dib.hdc, pen);
+      assert.strictEqual(wat.test_gdi_line_try(dib.hdc, x0, y0, x1, y1), 1,
+        `${fixture.name}: WAT must own the supported DIB stroke`);
+      const colors = new Set();
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const actual = pixel(dib, x, y);
+          colors.add(actual);
+          const expected = fixture.pixels[y][x] === '#' ? foreground : background;
+          assert.strictEqual(actual, expected,
+            `${fixture.name}: unexpected pixel at ${x},${y}`);
+        }
+      }
+      assert.deepStrictEqual([...colors].sort((a, b) => a - b), [background, foreground],
+        `${fixture.name}: output must contain only exact background and pen colors`);
     }
   });
 

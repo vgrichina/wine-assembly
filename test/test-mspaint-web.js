@@ -302,6 +302,50 @@ async function main() {
     poll();
   })`, 12000);
 
+  const wideLine = await evaluate(`(async () => {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const click = (x, y) => {
+      sharedRenderer.handleMouseDown(x, y, 1);
+      sharedRenderer.handleMouseUp(x, y, 1);
+    };
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+    const box = { x: 100, y: 75, w: 185, h: 90 };
+    sharedRenderer.repaint();
+    const before = Array.from(ctx.getImageData(box.x, box.y, box.w, box.h).data);
+    click(39, 196); // straight-line tool
+    await pause(100);
+    click(50, 300); // middle wide-pen option
+    await pause(100);
+    sharedRenderer.handleMouseDown(115, 90, 1);
+    sharedRenderer.handleMouseMove(160, 108);
+    sharedRenderer.handleMouseMove(215, 130);
+    sharedRenderer.handleMouseUp(270, 150, 1);
+    const started = performance.now();
+    while (performance.now() - started < 10000) {
+      await pause(100);
+      sharedRenderer.repaint();
+      const after = ctx.getImageData(box.x, box.y, box.w, box.h).data;
+      let exactBlack = 0;
+      let intermediate = 0;
+      const samples = [];
+      for (let i = 0; i < after.length; i += 4) {
+        if (before[i] !== 255 || before[i + 1] !== 255 || before[i + 2] !== 255) continue;
+        if (after[i] === 255 && after[i + 1] === 255 && after[i + 2] === 255) continue;
+        if (after[i] === 0 && after[i + 1] === 0 && after[i + 2] === 0) {
+          exactBlack++;
+        } else {
+          intermediate++;
+          if (samples.length < 8) samples.push([after[i], after[i + 1], after[i + 2]]);
+        }
+      }
+      if (exactBlack >= 100 || intermediate > 0) return { exactBlack, intermediate, samples };
+    }
+    throw new Error('Paint wide line did not appear in the sampled document area');
+  })()`, 13000);
+  assert.strictEqual(wideLine.intermediate, 0,
+    `Paint wide line contains antialias colors: ${JSON.stringify(wideLine)}`);
+
   const floodFill = await evaluate(`(async () => {
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const click = (x, y) => {
@@ -423,6 +467,7 @@ async function main() {
   console.log('PASS  Paint Win98 stays running in the browser');
   console.log(`PASS  Paint runs on wide ${viewport.canvasWidth}x${viewport.canvasHeight} browser canvas`);
   console.log(`PASS  Paint accepts wide-layout drawing input (${interaction.changed} changed pixels)`);
+  console.log(`PASS  Paint wide diagonal uses exact colors (${wideLine.exactBlack} black, no intermediate pixels)`);
   console.log(`PASS  Paint flood fill stays running and paints the closed area (${floodFill.red} red pixels)`);
   console.log(`PASS  Paint airbrush follows DOM drag (${airbrush.red} pixels at ${airbrush.centroidX.toFixed(1)},${airbrush.centroidY.toFixed(1)} in ${airbrush.elapsedMs}ms)`);
   console.log('PASS  Paint frame, Tools, and Colors windows are visible');

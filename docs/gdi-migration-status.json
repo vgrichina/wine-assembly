@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "scope": "Every host import whose external name starts with gdi_. Text is inventoried separately because Canvas text is intentional policy.",
+  "areas": {
+    "objects_and_dcs": [
+      "gdi_create_pen", "gdi_create_solid_brush", "gdi_create_compat_dc",
+      "gdi_create_compat_bitmap", "gdi_create_bitmap", "gdi_create_dib_bitmap",
+      "gdi_create_dib_section", "gdi_get_object_bits", "gdi_get_object_bpp",
+      "gdi_select_object", "gdi_delete_object", "gdi_delete_dc",
+      "gdi_get_current_object", "gdi_load_bitmap", "gdi_get_object_w", "gdi_get_object_h"
+    ],
+    "geometry_and_fills": [
+      "gdi_rectangle", "gdi_round_rect", "gdi_fill_rect", "gdi_draw_edge",
+      "gdi_draw_focus_rect", "gdi_gradient_fill_h", "gdi_ellipse", "gdi_fill_rgn",
+      "gdi_frame_rgn", "gdi_polygon", "gdi_poly_bezier", "gdi_polyline",
+      "gdi_polyline_to", "gdi_move_to", "gdi_line_to", "gdi_get_line_descriptor",
+      "gdi_present_dib_rect", "gdi_arc", "gdi_frame_rect"
+    ],
+    "regions_and_clipping": [
+      "gdi_create_rect_rgn", "gdi_set_rect_rgn", "gdi_set_region_bands",
+      "gdi_combine_rgn", "gdi_offset_rgn", "gdi_set_window_rgn",
+      "gdi_select_clip_rgn", "gdi_ext_select_clip_rgn", "gdi_exclude_clip_rect",
+      "gdi_intersect_clip_rect", "gdi_get_rgn_box", "gdi_get_clip_box"
+    ],
+    "blits_and_window_movement": [
+      "gdi_bitblt", "gdi_transparent_blt", "gdi_disabled_blt", "gdi_stretch_blt",
+      "gdi_scroll_window"
+    ],
+    "mapping_state": [
+      "gdi_set_viewport_org", "gdi_get_viewport_org_x", "gdi_get_viewport_org_y",
+      "gdi_set_viewport_ext", "gdi_get_viewport_ext_x", "gdi_get_viewport_ext_y",
+      "gdi_set_window_org", "gdi_get_window_org_x", "gdi_get_window_org_y",
+      "gdi_set_window_ext", "gdi_get_window_ext_x", "gdi_get_window_ext_y"
+    ],
+    "pixels_and_dibs": [
+      "gdi_set_pixel", "gdi_get_pixel", "gdi_ext_flood_fill", "gdi_get_di_bits",
+      "gdi_set_dib_bits", "gdi_get_dib_color_table", "gdi_set_dib_to_device",
+      "gdi_stretch_dib_bits"
+    ],
+    "canvas_text_policy": [
+      "gdi_set_text_color", "gdi_get_bk_color", "gdi_get_text_color",
+      "gdi_get_bk_mode", "gdi_set_bk_color", "gdi_set_bk_mode",
+      "gdi_set_text_align", "gdi_get_text_align", "gdi_text_out",
+      "gdi_ext_text_out", "gdi_draw_text"
+    ]
+  },
+  "ownership": {
+    "wat_owned_presentation_bridge": [
+      "gdi_set_region_bands", "gdi_present_dib_rect"
+    ],
+    "wat_semantics_with_host_mirror_or_fallback": [
+      "gdi_create_rect_rgn", "gdi_set_rect_rgn", "gdi_combine_rgn",
+      "gdi_offset_rgn", "gdi_select_clip_rgn", "gdi_ext_select_clip_rgn",
+      "gdi_exclude_clip_rect", "gdi_intersect_clip_rect", "gdi_get_rgn_box",
+      "gdi_get_clip_box", "gdi_move_to", "gdi_line_to", "gdi_polyline",
+      "gdi_polyline_to"
+    ],
+    "host_read_only_descriptor": [
+      "gdi_get_line_descriptor"
+    ],
+    "canvas_text_policy": [
+      "gdi_set_text_color", "gdi_get_bk_color", "gdi_get_text_color",
+      "gdi_get_bk_mode", "gdi_set_bk_color", "gdi_set_bk_mode",
+      "gdi_set_text_align", "gdi_get_text_align", "gdi_text_out",
+      "gdi_ext_text_out", "gdi_draw_text"
+    ],
+    "host_owned": [
+      "gdi_create_pen", "gdi_create_solid_brush", "gdi_create_compat_dc",
+      "gdi_create_compat_bitmap", "gdi_create_bitmap", "gdi_create_dib_bitmap",
+      "gdi_create_dib_section", "gdi_get_object_bits", "gdi_get_object_bpp",
+      "gdi_select_object", "gdi_delete_object", "gdi_delete_dc",
+      "gdi_rectangle", "gdi_round_rect", "gdi_fill_rect", "gdi_draw_edge",
+      "gdi_draw_focus_rect", "gdi_gradient_fill_h", "gdi_ellipse", "gdi_fill_rgn",
+      "gdi_frame_rgn", "gdi_set_window_rgn", "gdi_polygon", "gdi_poly_bezier",
+      "gdi_get_current_object", "gdi_arc", "gdi_bitblt", "gdi_transparent_blt",
+      "gdi_disabled_blt", "gdi_stretch_blt", "gdi_scroll_window",
+      "gdi_load_bitmap", "gdi_get_object_w", "gdi_get_object_h",
+      "gdi_set_viewport_org", "gdi_get_viewport_org_x", "gdi_get_viewport_org_y",
+      "gdi_set_viewport_ext", "gdi_get_viewport_ext_x", "gdi_get_viewport_ext_y",
+      "gdi_set_window_org", "gdi_get_window_org_x", "gdi_get_window_org_y",
+      "gdi_set_window_ext", "gdi_get_window_ext_x", "gdi_get_window_ext_y",
+      "gdi_set_pixel", "gdi_frame_rect", "gdi_get_pixel", "gdi_ext_flood_fill",
+      "gdi_get_di_bits", "gdi_set_dib_bits", "gdi_get_dib_color_table",
+      "gdi_set_dib_to_device", "gdi_stretch_dib_bits"
+    ]
+  }
+}
