@@ -2,7 +2,8 @@
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
 **Status (2026-08-12):** FUNCTIONAL for the bounded non-OLE scope plus static
-`CF_DIB` image paste, rendering, RTF save, and fresh-process reopen.
+`CF_DIB` image paste, Copy/Cut/Paste, rendering, RTF save, and fresh-process
+reopen.
 
 Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
@@ -19,7 +20,8 @@ enumeration, and eagerly owned `STGMEDIUM` payloads. `TYMED_HGLOBAL` data such
 as `CF_DIB` is copied byte-for-byte, stream/storage media retain COM ownership,
 `ReleaseStgMedium` releases supported payloads, and the OLE clipboard keeps a
 reference-counted current object. WordPad/RichEdit insertion and static DIB
-presentation are integrated.
+presentation are integrated. WordPad can copy, cut, and paste an existing
+inline static DIB without retaining a source-control-owned RichEdit object.
 
 RichEdit's first static-image clipboard route is now crash-safe. OLE32 exposes
 `CoDisconnectObject`, HGLOBAL-backed `IStream` helpers,
@@ -31,6 +33,20 @@ position as a space. `test/test-wordpad-ole-roundtrip.js` saves the object to
 RTF, starts a fresh WordPad, reopens it, and asserts the restored object slot
 and visible red/blue checker pixels. Linked/activated objects and non-DIB OLE
 servers remain outside this bounded static-image slice.
+
+Focused inline-image clipboard probe:
+
+```text
+paste a 32x24 checker DIB, select its one-character RichEdit object slot,
+then use WordPad Edit Copy/Paste followed by Edit Cut/Paste
+copy:       duplicates the inline object and retains an eager CF_DIB value
+cut:        WM_CLEAR removes only the selected object without corrupting the
+            source RichEdit control
+ownership:  DLL-private RichEdit IDataObjects are borrowed only while native
+            WM_COPY runs; the durable clipboard owns text/RTF/DIB snapshots
+pixels:     final screenshot contains the expected red and blue checker cells
+result:     PASS (11/11) for static-image Copy/Cut/Paste and visible rendering
+```
 
 WordPad opens and renders in both the CLI and browser-focused smokes:
 
@@ -92,8 +108,9 @@ bridge: Select All (57642), Copy (57634), Paste (57637), Cut (57635)
 copy/paste: selected "menu" copies and menu Paste duplicates it to "menumenu"
 cut/paste:  selected "menu" cuts to an empty buffer, then menu Paste restores
             "menu"
-OLE path:   CreateILockBytesOnHGlobal / StgCreateDocfileOnILockBytes are not
-            reached in this plain-text menu bridge path
+OLE path:   native WM_COPY may exercise RichEdit structured storage, but its
+            source-control-owned IDataObject is discarded after durable
+            CF_TEXT/RTF snapshots are captured
 result:     PASS for Edit-menu Select All / Copy / Cut / Paste plain-text
             behavior on WordPad's focused native RichEdit child. The current
             screenshot guard also confirms multiline editing no longer copies
@@ -154,9 +171,10 @@ format:    Paste restores selected character color plus paragraph numbering,
            insertion formatting is reset
 result:    PASS for same-session non-OLE RTF clipboard data plus basic
            RichEdit character/paragraph-format preservation on menu and
-           Ctrl+C/Ctrl+X/Ctrl+V paths. Embedded-object transfer and image
-           clipboard formats remain deferred. Advanced document RTF tables
-           are covered separately below.
+           Ctrl+C/Ctrl+X/Ctrl+V paths. Static CF_DIB object Copy/Cut/Paste is
+           covered separately above; linked/activated and arbitrary object
+           transfer remains deferred. Advanced document RTF tables are
+           covered separately below.
 ```
 
 Focused selection-highlight probe:

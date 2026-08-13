@@ -2561,16 +2561,20 @@
     (if (global.get $clipboard_rtf_ptr)
       (then (call $gs8 (global.get $clipboard_rtf_ptr) (i32.const 0)))))
 
+  (func $clipboard_clear_binary_data
+    (if (global.get $clipboard_binary_ptr)
+      (then (call $heap_free (global.get $clipboard_binary_ptr))))
+    (global.set $clipboard_binary_format (i32.const 0))
+    (global.set $clipboard_binary_ptr (i32.const 0))
+    (global.set $clipboard_binary_len (i32.const 0)))
+
   (func $clipboard_clear_all_data
     (global.set $clipboard_len (i32.const 0))
     (if (global.get $clipboard_ptr)
       (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
     (call $clipboard_clear_rtf_data)
-    (if (global.get $clipboard_binary_ptr)
-      (then (call $heap_free (global.get $clipboard_binary_ptr))))
-    (global.set $clipboard_binary_format (i32.const 0))
-    (global.set $clipboard_binary_ptr (i32.const 0))
-    (global.set $clipboard_binary_len (i32.const 0))
+    (call $clipboard_clear_binary_data)
+    (call $ole_clipboard_release_owner)
     (call $richedit_clipboard_clear_format))
 
   (func $clipboard_store_binary_data (param $fmt i32) (param $src_g i32) (result i32)
@@ -2833,6 +2837,23 @@
     (local $scratch_g i32) (local $lo i32) (local $hi i32) (local $tmp i32)
     (local $a i32) (local $b i32) (local $len i32) (local $need i32)
     (local $new_cap i32)
+    (local $saved_dib i32)
+    ;; Let native RichEdit exercise its normal copy path first, then keep the
+    ;; durable emulator-owned text/RTF snapshots below. RichEdit's IDataObject
+    ;; is DLL-private and tied to the source control, so it must not remain the
+    ;; active clipboard owner after a later Clear/Cut destroys that source.
+    ;; A static picture originally entered through CF_DIB. Snapshot that
+    ;; value before WM_COPY replaces clipboard ownership; if the selection is
+    ;; the one-character object placeholder, restore the eager DIB afterward.
+    ;; This makes Cut value-based instead of leaving a clipboard IDataObject
+    ;; tied to an object that is about to be deleted from the source control.
+    (if (i32.and
+          (i32.eq (global.get $clipboard_binary_format) (i32.const 8))
+          (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))
+      (then
+        (local.set $saved_dib
+          (call $ole_copy_hglobal (global.get $clipboard_binary_ptr)))))
+    (call $clipboard_clear_all_data)
     (local.set $text_len
       (call $wnd_send_message (local.get $hwnd) (i32.const 0x000E) (i32.const 0) (i32.const 0))) ;; WM_GETTEXTLENGTH
     (if (i32.lt_s (local.get $text_len) (i32.const 0))
@@ -2875,6 +2896,18 @@
     (if (i32.lt_u (local.get $b) (local.get $a))
       (then (local.set $b (local.get $a))))
     (local.set $len (i32.sub (local.get $b) (local.get $a)))
+    (if (i32.eqz
+          (i32.and
+            (i32.ne (local.get $saved_dib) (i32.const 0))
+            (i32.and
+              (i32.eq (local.get $len) (i32.const 1))
+              (i32.eq (call $gl8 (i32.add (local.get $text_g) (local.get $a))) (i32.const 32)))))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0301) (i32.const 0) (i32.const 0))) ;; WM_COPY
+        ;; OleSetClipboard above may have published a borrowed RichEdit
+        ;; IDataObject. The value snapshots below are the durable clipboard.
+        (call $ole_clipboard_release_owner)))
     (if (local.get $len)
       (then
         (local.set $need (i32.add (local.get $len) (i32.const 1)))
@@ -2898,13 +2931,28 @@
             (global.set $clipboard_len (local.get $len))
             (call $richedit_clipboard_capture_format (local.get $hwnd))
             (call $clipboard_build_basic_rtf_from_text_clipboard)))))
+    (if (i32.and
+          (i32.ne (local.get $saved_dib) (i32.const 0))
+          (i32.and
+            (i32.eq (local.get $len) (i32.const 1))
+            (i32.eq (call $gl8 (i32.add (local.get $text_g) (local.get $a))) (i32.const 32))))
+      (then
+        (call $ole_clipboard_release_owner)
+        (global.set $clipboard_binary_format (i32.const 8))
+        (global.set $clipboard_binary_ptr (local.get $saved_dib))
+        (global.set $clipboard_binary_len
+          (i32.sub
+            (call $gl32 (i32.sub (local.get $saved_dib) (i32.const 4)))
+            (i32.const 4)))
+        (local.set $saved_dib (i32.const 0))))
+    (if (local.get $saved_dib) (then (call $heap_free (local.get $saved_dib))))
     (call $heap_free (local.get $text_g))
     (call $heap_free (local.get $scratch_g))
     (i32.const 1))
 
   (func $wordpad_richedit_replace_empty (param $hwnd i32) (result i32)
     (drop (call $wnd_send_message
-      (local.get $hwnd) (i32.const 0x00C2) (i32.const 1) (i32.const 0))) ;; EM_REPLACESEL
+      (local.get $hwnd) (i32.const 0x0303) (i32.const 0) (i32.const 0))) ;; WM_CLEAR
     (call $paint_flag_set_inv (local.get $hwnd))
     (i32.const 1))
 
@@ -2912,6 +2960,19 @@
     (local $paste_g i32) (local $need i32) (local $scratch_g i32)
     (local $insert_lo i32) (local $insert_hi i32) (local $tmp i32)
     (local $post_start i32) (local $post_end i32)
+    ;; Native RichEdit consumes its own IDataObject with full run/object
+    ;; fidelity. A USER CF_DIB seeded by the host also needs the native paste
+    ;; path so RichEdit can construct the embedded static object.
+    (if (i32.or
+          (i32.ne (global.get $clipboard_ole_data_object) (i32.const 0))
+          (i32.and
+            (i32.eq (global.get $clipboard_binary_format) (i32.const 8))
+            (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0))))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0302) (i32.const 0) (i32.const 0))) ;; WM_PASTE
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return (i32.const 1))))
     (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_len)))
       (then (return (i32.const 1))))
     (local.set $need (i32.add (global.get $clipboard_len) (i32.const 1)))

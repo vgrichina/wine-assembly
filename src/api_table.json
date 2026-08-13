@@ -16985,5 +16985,26 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1111766103
+  },
+  {
+    "id": 2218,
+    "name": "OleRegGetMiscStatus",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 704313137
+  },
+  {
+    "id": 2219,
+    "name": "CreateMetaFileA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1212659125
+  },
+  {
+    "id": 2220,
+    "name": "CopyMetaFileA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3330116242
   }
 ]

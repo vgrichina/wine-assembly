@@ -701,6 +701,18 @@ and verifies both the restored inline-object position and rendered red/blue
 pixels (14/14 checks). This does not claim linked objects, executable OLE
 servers, in-place activation, drag/drop, or arbitrary compound-file fidelity.
 
+The static-image clipboard follow-up is also complete. WordPad Edit Copy and
+Cut preserve the eager `CF_DIB` presentation of a selected inline picture;
+Paste reconstructs a new RichEdit object and Cut removes the original with
+`WM_CLEAR`. RichEdit's DLL-private clipboard `IDataObject` is deliberately
+treated as borrowed: native `WM_COPY` may create it and exercise structured
+storage, but the emulator clears that pointer after capturing durable
+CF_TEXT/RTF/DIB values. This prevents a later Clear/Cut from leaving the
+clipboard pointed at an object whose source control has destroyed it.
+`test/test-wordpad-ole-clipboard.js` covers Copy/Paste duplication, Cut/Paste
+restoration, object-position counts, and visible red/blue presentation pixels
+(11/11 checks).
+
 ### 2026-08-12 advanced RTF slice
 
 `test/test-wordpad-advanced-rtf.js` imports a handcrafted Win98-era RTF through
@@ -993,7 +1005,7 @@ Expected message surface:
 - WAT menu edit-command routing for WordPad/MFC edit ids;
 - `WM_GETTEXT`, `EM_GETSEL`, `EM_SETSEL`, and `EM_REPLACESEL`;
 - registered non-OLE `Rich Text Format` clipboard data;
-- later: embedded-object/OLE clipboard fidelity.
+- static-DIB object clipboard fidelity; arbitrary/activated objects later.
 
 Acceptance:
 
@@ -1009,7 +1021,8 @@ Acceptance:
 [x] keyboard Ctrl+C/Ctrl+X/Ctrl+V preserve basic selected RichEdit
     char/paragraph formatting with CRLF and ANSI high-byte text
 [x] keyboard Copy advertises CF_TEXT plus registered non-OLE RTF clipboard data
-[ ] embedded-object/OLE clipboard transfer preserves object fidelity
+[x] static CF_DIB embedded-object Copy/Cut/Paste preserves object presentation
+[ ] linked/activated and arbitrary non-DIB clipboard objects preserve fidelity
 ```
 
 ### 6. Basic formatting
@@ -1099,6 +1112,7 @@ Acceptance:
     formatting and registered non-OLE RTF clipboard data
 [x] Static CF_DIB clipboard insertion, rendering, RTF save, and fresh reopen
     preserve the inline object and presentation
+[x] Static CF_DIB object Copy/Cut/Paste preserves object count and presentation
 [ ] Linked/activated and arbitrary non-DIB OLE objects preserve full fidelity
 [x] Bold/italic/underline command state toggles in WordPad
 [x] Bold/italic/underline are visibly asserted in WordPad

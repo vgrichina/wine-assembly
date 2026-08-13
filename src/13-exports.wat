@@ -754,6 +754,8 @@
     (global.get $clipboard_rtf_len))
   (func (export "clipboard_rtf_ptr") (result i32)
     (global.get $clipboard_rtf_ptr))
+  (func (export "clipboard_ole_data_object") (result i32)
+    (global.get $clipboard_ole_data_object))
   (func (export "clipboard_count_formats") (result i32)
     (call $clipboard_count_formats))
   (func (export "clipboard_is_format_available") (param $fmt i32) (result i32)

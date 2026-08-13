@@ -3,8 +3,9 @@
 //
 // WordPad/MFC uses standard edit command ids (ID_EDIT_COPY/CUT/PASTE/
 // SELECT_ALL). The emulator's WAT menu activation bridges those ids to
-// focused native RichEdit plain-text messages so everyday menu Copy/Cut/Paste
-// works without entering RichEdit's rich/OLE clipboard storage path.
+// focused native RichEdit clipboard messages. The durable emulator clipboard
+// stores selected document text, excluding RichEdit's implicit terminal
+// paragraph marker.
 
 const fs = require('fs');
 const path = require('path');
@@ -132,7 +133,7 @@ check('copy scenario typed text reached native RichEdit', /len=4 .*text="menu"/.
 check('menu Select All selected copy text', commandRet(copyOut, 'copy-select-all', ID_EDIT_SELECT_ALL) && /sel=0\.\.[1-9][0-9]*/.test(line(copyOut, 'copy-selected')));
 check('menu Copy command was bridged', commandRet(copyOut, 'copy', ID_EDIT_COPY));
 check('menu Paste command was bridged', commandRet(copyOut, 'paste', ID_EDIT_PASTE));
-check('menu Copy then Paste duplicated text', /len=8 .*text="menumenu"/.test(line(copyOut, 'after-copy-paste')));
+check('menu Copy then Paste duplicated selected document text', /len=8 .*text="menumenu"/.test(line(copyOut, 'after-copy-paste')));
 check('copy/paste screenshot written', fs.existsSync(COPY_PNG) && fs.statSync(COPY_PNG).size > 0);
 
 check('cut scenario reached WordPad ShowWindow', /ShowWindow\] hwnd=0x10001/.test(cutOut));
@@ -140,11 +141,11 @@ check('cut scenario typed text reached native RichEdit', /len=4 .*text="menu"/.t
 check('menu Select All selected cut text', commandRet(cutOut, 'cut-select-all', ID_EDIT_SELECT_ALL) && /sel=0\.\.[1-9][0-9]*/.test(line(cutOut, 'cut-selected')));
 check('menu Cut command was bridged', commandRet(cutOut, 'cut', ID_EDIT_CUT));
 check('menu Cut cleared selected text', /len=0 .*text=""/.test(line(cutOut, 'after-cut')));
-check('menu Paste restored cut text', commandRet(cutOut, 'paste', ID_EDIT_PASTE) && /len=4 .*text="menu"/.test(line(cutOut, 'after-cut-paste')));
+check('menu Paste restored cut document text', commandRet(cutOut, 'paste', ID_EDIT_PASTE) && /len=4 .*text="menu"/.test(line(cutOut, 'after-cut-paste')));
 check('cut/paste screenshot written', fs.existsSync(CUT_PNG) && fs.statSync(CUT_PNG).size > 0);
 
-check('menu bridge avoided RichEdit OLE clipboard storage path',
-  !/CreateILockBytesOnHGlobal|StgCreateDocfileOnILockBytes/.test(combined));
+check('native RichEdit clipboard used structured storage without crashing',
+  /CreateILockBytesOnHGlobal|StgCreateDocfileOnILockBytes/.test(combined));
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(combined));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(combined));
 

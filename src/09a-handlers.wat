@@ -8262,15 +8262,26 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 552: CreateMetaFileW — STUB: unimplemented
-  (func $handle_CreateMetaFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+  ;; Classic metafile recording compatibility. Canvas-backed GDI has no WMF
+  ;; serializer, but RichEdit only needs a drawable recording DC and a stable
+  ;; nonzero HMETAFILE token while assembling its clipboard data object. Keep
+  ;; the compatible DC alive across CloseMetaFile and release it at
+  ;; DeleteMetaFile; drawing operations therefore remain safe and isolated.
+  (func $handle_CreateMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_create_compat_dc (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 553: CopyMetaFileW — STUB: unimplemented
+  (func $handle_CreateMetaFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_gdi_create_compat_dc (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   (func $handle_CopyMetaFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL. Mapping is currently identity.
   (func $handle_DPtoLP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8522,15 +8533,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 583: CloseMetaFile — STUB: unimplemented
+  ;; Finish recording without destroying the backing DC; the returned token is
+  ;; released by DeleteMetaFile after RichEdit has transferred ownership.
   (func $handle_CloseMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; 584: DeleteMetaFile — STUB: unimplemented
   (func $handle_DeleteMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
+    (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 585: IntersectClipRect(hdc, l, t, r, b) — 5 args stdcall.
   (func $handle_IntersectClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

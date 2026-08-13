@@ -1736,11 +1736,25 @@
   )
 
   ;; OLE clipboard ownership over the bounded IDataObject implementation.
-  (func $handle_OleSetClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (global.get $clipboard_ole_data_object)
+  ;; Objects created by RichEdit itself use DLL-private layouts. Do not treat
+  ;; their bytes as our heap COM header; their source control retains the live
+  ;; object for this in-process clipboard. Emulator-created IDataObjects use
+  ;; our vtable and participate in the normal local refcount.
+  (func $ole_clipboard_owner_is_local (param $obj i32) (result i32)
+    (i32.and
+      (i32.ne (local.get $obj) (i32.const 0))
+      (i32.eq (call $gl32 (local.get $obj)) (global.get $DX_VTBL_OLE_DATAOBJECT))))
+
+  (func $ole_clipboard_release_owner
+    (if (call $ole_clipboard_owner_is_local (global.get $clipboard_ole_data_object))
       (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))
+    (global.set $clipboard_ole_data_object (i32.const 0)))
+
+  (func $handle_OleSetClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $ole_clipboard_release_owner)
     (global.set $clipboard_ole_data_object (local.get $arg0))
-    (if (local.get $arg0) (then (drop (call $ole_obj_addref (local.get $arg0)))))
+    (if (call $ole_clipboard_owner_is_local (local.get $arg0))
+      (then (drop (call $ole_obj_addref (local.get $arg0)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1750,7 +1764,10 @@
       (else
         (call $gs32 (local.get $arg0) (global.get $clipboard_ole_data_object))
         (if (global.get $clipboard_ole_data_object)
-          (then (drop (call $ole_obj_addref (global.get $clipboard_ole_data_object))) (global.set $eax (i32.const 0)))
+          (then
+            (if (call $ole_clipboard_owner_is_local (global.get $clipboard_ole_data_object))
+              (then (drop (call $ole_obj_addref (global.get $clipboard_ole_data_object)))))
+            (global.set $eax (i32.const 0)))
           (else (global.set $eax (i32.const 0x800401D0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1848,6 +1865,17 @@
   (func $handle_OleRegGetUserType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
     (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; OleRegGetMiscStatus(rclsid, dwAspect, pdwStatus). Static pictures have no
+  ;; registry-backed server flags; an empty status is the valid no-server case.
+  (func $handle_OleRegGetMiscStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003))) ;; E_POINTER
+      (else
+        (call $gs32 (local.get $arg2) (i32.const 0))
+        (global.set $eax (i32.const 0)))) ;; S_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

@@ -372,6 +372,7 @@ async function main() {
   //   B:formatrange-probe:WIDTH_TWIPS:HEIGHT_TWIPS[:LABEL] — paginate focused RichEdit
   //   B:main-resize:WIDTH:HEIGHT — resize the top-level main window and deliver WM_SIZE
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
+  //   B:send-focus-message:MSG:WPARAM:LPARAM[:LABEL] — synchronously send a message to focus
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:seed-cf-dib[:LABEL] — publish a 32x24 checker CF_DIB and paste it into focus
@@ -466,6 +467,15 @@ async function main() {
           start: parseInt(parts[2]) || 0,
           end: parseInt(parts[3]) || 0,
           label: parts[4] || '',
+        });
+      } else if (kind === 'send-focus-message') {
+        scheduledInput.push({
+          batch,
+          action: 'send-focus-message',
+          msg: parseInt(parts[2]) || 0,
+          wParam: parseInt(parts[3]) || 0,
+          lParam: parseInt(parts[4]) || 0,
+          label: parts[5] || '',
         });
       } else if (kind === 'set-focus-charformat-color') {
         scheduledInput.push({ batch, action: 'set-focus-charformat-color',
@@ -2745,10 +2755,13 @@ async function main() {
           const textLen = we.clipboard_text_len ? (we.clipboard_text_len() >>> 0) : 0;
           const rtfLen = we.clipboard_rtf_len() >>> 0;
           const count = we.clipboard_count_formats() >>> 0;
+          const oleObject = we.clipboard_ole_data_object ? (we.clipboard_ole_data_object() >>> 0) : 0;
           const availText = we.clipboard_is_format_available(1) >>> 0;
           const availRtf = we.clipboard_is_format_available(fmt) >>> 0;
+          const availDib = we.clipboard_is_format_available(8) >>> 0;
           const textHandle = we.clipboard_get_data_handle(1) >>> 0;
           const rtfHandle = we.clipboard_get_data_handle(fmt) >>> 0;
+          const dibHandle = we.clipboard_get_data_handle(8) >>> 0;
           let rtf = '';
           const ptr = we.clipboard_rtf_ptr() >>> 0;
           const wa = ptr ? g2w(ptr) : 0;
@@ -2757,7 +2770,7 @@ async function main() {
             const bytes = new Uint8Array(memory.buffer, wa, Math.max(0, n));
             rtf = Buffer.from(bytes).toString('latin1');
           }
-          logs.push(`[input] dump-clipboard${tag}: count=${count} textLen=${textLen} rtfFmt=0x${fmt.toString(16)} rtfLen=${rtfLen} availText=${availText} availRtf=${availRtf} textHandle=0x${textHandle.toString(16)} rtfHandle=0x${rtfHandle.toString(16)} rtf=${JSON.stringify(rtf)} at batch ${batch}`);
+          logs.push(`[input] dump-clipboard${tag}: count=${count} oleObject=0x${oleObject.toString(16)} textLen=${textLen} rtfFmt=0x${fmt.toString(16)} rtfLen=${rtfLen} availText=${availText} availRtf=${availRtf} availDib=${availDib} textHandle=0x${textHandle.toString(16)} rtfHandle=0x${rtfHandle.toString(16)} dibHandle=0x${dibHandle.toString(16)} rtf=${JSON.stringify(rtf)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-clipboard${tag}: NO CLIPBOARD API at batch ${batch}`);
         }
@@ -2807,6 +2820,18 @@ async function main() {
           logs.push(`[input] set-focus-selection${tag}: hwnd=0x${h.toString(16)} range=${ev.start}..${ev.end} ret=0x${ret.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] set-focus-selection${tag}: hwnd=0x${h.toString(16)} NO SEND API at batch ${batch}`);
+        }
+      } else if (ev.action === 'send-focus-message') {
+        const e = instance.exports;
+        const h = e.get_focus_hwnd ? (e.get_focus_hwnd() >>> 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] send-focus-message${tag}: NO FOCUS at batch ${batch}`);
+        } else if (e.send_message) {
+          const ret = e.send_message(h, ev.msg | 0, ev.wParam | 0, ev.lParam | 0) >>> 0;
+          logs.push(`[input] send-focus-message${tag}: hwnd=0x${h.toString(16)} msg=0x${(ev.msg >>> 0).toString(16)} wParam=0x${(ev.wParam >>> 0).toString(16)} lParam=0x${(ev.lParam >>> 0).toString(16)} ret=0x${ret.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] send-focus-message${tag}: hwnd=0x${h.toString(16)} NO SEND API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-focus-charformat') {
         const we = instance.exports;
