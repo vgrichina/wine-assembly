@@ -50,7 +50,10 @@ stable connection IDs. Media are independently copied or transferred,
 replacement and removal are scoped to one presentation, and CF_DIB selection
 continues to feed the existing render path. Stable `IEnumSTATDATA` snapshots
 cover complete fields, deep target metadata, cursor movement, and independent
-clones. The focused suite passes 38/38.
+clones. `GetClipboardData` now turns the full cache into an independently owned
+local `IDataObject`, while `InitFromData` stages and atomically imports all of
+that object's presentations before refreshing the CF_DIB render choice. The
+focused suite passes 42/42.
 
 ## ASCII TLDR
 

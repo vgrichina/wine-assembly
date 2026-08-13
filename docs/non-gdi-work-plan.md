@@ -434,11 +434,23 @@ cursor semantics. The expanded focused suite passes 38/38.
 - Complete client-site ownership, host names, close/dirty transitions,
   extents, user class/type, misc-status, advisory connection, and running-state
   bookkeeping.
-- Implement clipboard `InitFromData`/`GetClipboardData` through the generalized
-  P3 object rather than DIB-only branches.
+- [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
+  generalized P3 object rather than DIB-only branches for runtime-owned
+  `IDataObject` instances.
 - Add a synthetic in-process OLE server fixture. Use it to test client calls,
   failure paths, refcounts, and persistence without depending on an installed
   desktop application or rendered pixels.
+
+2026-08-13 clipboard-conversion result: `IOleObject::GetClipboardData` now
+returns a distinct local `IDataObject` containing every cached presentation,
+with deep `FORMATETC` metadata and independently owned media.
+`IOleObject::InitFromData` validates the bounded local object kind, stages all
+presentations, and swaps the collection only after every copy succeeds; the
+first usable CF_DIB is then restored into the proven render slot. Later cache
+replacement/removal cannot mutate an earlier clipboard result. DLL-private
+data objects still require the deferred guest COM callback bridge. The focused
+static-handler suite passes 42/42, and native WordPad object clipboard
+regression remains a separate acceptance gate.
 
 ### Acceptance
 

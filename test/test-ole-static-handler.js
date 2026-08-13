@@ -134,6 +134,15 @@ async function main() {
     dv.getUint32(wa(dibMedium.value), true) === 0 &&
     dv.getUint32(wa(dibMedium.value) + 4, true) === 0 &&
     e.test_ole_cache_render_valid(cacheObject) === 1);
+  const clipboardData = e.test_ole_static_get_clipboard_data(cacheObject) >>> 0;
+  const clipboardOpaqueOut = alloc(12);
+  check('IOleObject GetClipboardData snapshots every cached presentation',
+    clipboardData !== 0 && e.test_ole_data_count(clipboardData) === 2 &&
+    e.test_ole_data_query(clipboardData, dibFormat) === 0 &&
+    e.test_ole_data_query(clipboardData, opaqueFormat) === 0 &&
+    e.test_ole_data_get(clipboardData, opaqueFormat, clipboardOpaqueOut) === 0 &&
+    u8[wa(dv.getUint32(wa(clipboardOpaqueOut) + 4, true))] === 1);
+  e.test_ole_release_medium(clipboardOpaqueOut);
   const replacementMedium = makeMedium(Uint8Array.from([4, 5, 6, 0]));
   e.test_ole_cache_set_data(cacheObject, opaqueFormat, replacementMedium.value, 0);
   const replacementOut = alloc(12);
@@ -160,6 +169,30 @@ async function main() {
     e.test_ole_cache_render_valid(cacheObject) === 0 &&
     e.test_ole_cache_get(cacheObject, storedOpaqueFormat, replacementOut) === 0);
   e.test_ole_release_medium(replacementOut);
+
+  const independentOpaqueOut = alloc(12);
+  check('GetClipboardData result remains independent of later cache replacement and removal',
+    e.test_ole_data_count(clipboardData) === 2 &&
+    e.test_ole_data_query(clipboardData, dibFormat) === 0 &&
+    e.test_ole_data_get(clipboardData, storedOpaqueFormat, independentOpaqueOut) === 0 &&
+    u8[wa(dv.getUint32(wa(independentOpaqueOut) + 4, true))] === 1);
+  e.test_ole_release_medium(independentOpaqueOut);
+
+  const initializedObject = e.test_ole_create_static_handler(clsid) >>> 0;
+  check('IOleObject InitFromData rejects non-IDataObject local objects without mutation',
+    (e.test_ole_static_init_from_data(initializedObject, cacheObject) >>> 0) === 0x80004002 &&
+    e.test_ole_cache_count(initializedObject) === 0);
+  const initializedOpaqueOut = alloc(12);
+  check('IOleObject InitFromData atomically imports all local IDataObject presentations',
+    e.test_ole_static_init_from_data(initializedObject, clipboardData) === 0 &&
+    e.test_ole_cache_count(initializedObject) === 2 &&
+    e.test_ole_cache_render_valid(initializedObject) === 1 &&
+    e.test_ole_persist_dirty(initializedObject) === 1 &&
+    e.test_ole_cache_get(initializedObject, storedOpaqueFormat, initializedOpaqueOut) === 0 &&
+    u8[wa(dv.getUint32(wa(initializedOpaqueOut) + 4, true))] === 1);
+  e.test_ole_release_medium(initializedOpaqueOut);
+  e.test_ole_release(initializedObject);
+  e.test_ole_release(clipboardData);
 
   const statItems = alloc(32 * 3);
   const statFetched = alloc(4);
