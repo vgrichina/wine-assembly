@@ -780,11 +780,11 @@
   (func $handle_CreateThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $lpThreadId i32)
     (local.set $lpThreadId (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (global.set $eax (call $host_create_thread (local.get $arg2) (local.get $arg3) (local.get $arg1)))
-    ;; CREATE_SUSPENDED (0x00000004) creates all thread bookkeeping but keeps
-    ;; the worker off the runnable scheduler until ResumeThread reaches zero.
-    (if (i32.and (local.get $arg4) (i32.const 4))
-      (then (drop (call $host_suspend_thread (global.get $eax)))))
+    ;; Pass dwCreationFlags into the host so CREATE_SUSPENDED is part of the
+    ;; atomic creation event instead of a briefly-runnable create followed by
+    ;; a separate SuspendThread call.
+    (global.set $eax (call $host_create_thread
+      (local.get $arg2) (local.get $arg3) (local.get $arg1) (local.get $arg4)))
     (if (local.get $lpThreadId)
       (then (call $gs32 (local.get $lpThreadId) (global.get $eax))))
     (call $host_log_i32 (global.get $eax))

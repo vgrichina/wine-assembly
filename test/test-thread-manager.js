@@ -46,9 +46,9 @@ assert(!tm.threads.has(handles[0]), 'reused exited slot should drop old handle b
 
 assert.strictEqual(tm.createThread(0x5000, 0, 0), 0, 'a pending reused slot still counts as occupied');
 
-const suspendTm = makeThreadManager();
-const suspendedHandle = suspendTm.createThread(0x6000, 0, 0);
-assert.strictEqual(suspendTm.suspendThread(suspendedHandle), 0, 'initial suspend returns the previous zero count');
+const suspendTm = makeThreadManager({ recordThreadEvents: true });
+const suspendedHandle = suspendTm.createThread(0x6000, 0, 0, 0x4);
+assert.strictEqual(suspendTm._pendingThreads[0].suspendCount, 1, 'CREATE_SUSPENDED is atomic with thread creation');
 assert.strictEqual(suspendTm.suspendThread(suspendedHandle), 1, 'nested suspend returns the previous count');
 assert.strictEqual(suspendTm._pendingThreads[0].suspendCount, 2, 'pending CREATE_SUSPENDED state survives until instantiation');
 assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 2, 'first resume returns two and leaves the thread suspended');
@@ -56,6 +56,17 @@ assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 1, 'final resume ret
 assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 0, 'resuming a running thread returns zero without underflow');
 assert.strictEqual(suspendTm.suspendThread(0xdeadbeef), 0xFFFFFFFF, 'invalid suspend handle fails');
 assert.strictEqual(suspendTm.resumeThread(0xdeadbeef), 0xFFFFFFFF, 'invalid resume handle fails');
+
+const lifecycleEvents = suspendTm.getThreadEvents();
+assert.deepStrictEqual(
+  lifecycleEvents.map(event => event.type),
+  ['create', 'suspend', 'resume', 'resume', 'resume'],
+  'thread lifecycle events preserve creation and suspend/resume order'
+);
+assert.strictEqual(lifecycleEvents[0].creationFlags, 0x4, 'create event preserves dwCreationFlags');
+assert.strictEqual(lifecycleEvents[0].suspendCount, 1, 'create event records the initial suspend count');
+assert.strictEqual(lifecycleEvents[2].previousSuspendCount, 2, 'resume event records the previous count');
+assert.strictEqual(lifecycleEvents[3].suspendCount, 0, 'final resume event records runnable state');
 
 const fullMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
 const cacheTm = makeThreadManagerWithMemory(fullMemory);

@@ -1636,7 +1636,8 @@ async function main() {
   let threadManager = null;
 
   // Wire thread/event imports to ThreadManager
-  h.create_thread = (startAddr, param, stackSize) => threadManager.createThread(startAddr, param, stackSize);
+  h.create_thread = (startAddr, param, stackSize, creationFlags) =>
+    threadManager.createThread(startAddr, param, stackSize, creationFlags);
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);

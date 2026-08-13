@@ -10,8 +10,8 @@ Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
 advanced ruler/dialog commands, international UTF-16/IME commit input, and
 representative complex-script behavior now have focused app-level regressions.
-Suspended-thread behavior has scheduler coverage; a dedicated trace proving
-WordPad's real startup uses that path is still missing.
+Suspended-thread behavior has scheduler coverage and a bounded app-level trace
+now proves WordPad's real startup uses that path.
 Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences
 are covered as well. The reusable OLE persistence foundation provides binary
 `ILockBytes`, named `IStorage`/`IStream` children, and storage class identity.
@@ -67,10 +67,7 @@ as a separate GDI rejoin gate there.
 5. **International breadth.** Add more scripts, font-fallback combinations,
    composition UI, bidi editing, and complex-cluster editing. Current tests
    cover representative input, readback, and visible shaping.
-6. **WordPad thread-path proof.** Add a bounded app-level trace showing the
-   real WordPad startup `CREATE_SUSPENDED`/`ResumeThread` sequence. Scheduler
-   tests already cover suspend counts, invalid handles, and runnable state.
-7. **Shared-code regressions.** After USER/GDI/RichEdit changes, rerun WordPad,
+6. **Shared-code regressions.** After USER/GDI/RichEdit changes, rerun WordPad,
    Notepad, and installer license panes with visual clipping, caret, selection,
    scrolling, and toolbar assertions.
 
@@ -838,11 +835,16 @@ the blank-canvas gate for this case.
 ## Threading Note
 
 The older blocker was `ResumeThread` during OLE/COM initialization. As of
-2026-08-12, `CreateThread(CREATE_SUSPENDED)` records an initial suspend count,
-the cooperative scheduler excludes suspended workers, and `SuspendThread` /
-`ResumeThread` return the previous nested count. Only the transition to zero
-makes the worker runnable. The scheduler-level regression is complete; a
-focused app-level trace of WordPad's real startup thread remains to be added.
+2026-08-12, `CreateThread(CREATE_SUSPENDED)` atomically records the creation
+flags and initial suspend count, the cooperative scheduler excludes suspended
+workers, and `SuspendThread` / `ResumeThread` return the previous nested count.
+Only the transition to zero makes the worker runnable.
+
+`test/test-wordpad-thread-startup.js` provides the focused app-level proof. Its
+structured lifecycle trace records WordPad's real sequence as suspended create,
+`ResumeThread(previous=1, current=0)`, worker instantiation, and first worker
+slice at the original entry point. The bounded regression passes 8/8 without a
+pixel assertion.
 
 ## Follow-Up
 

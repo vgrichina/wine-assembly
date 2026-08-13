@@ -25,9 +25,9 @@ RichEdit-version probes all have focused coverage. Remaining work is:
 - breadth beyond representative fixtures: arbitrary nested/overlapping RTF,
   exact printer layout, more scripts/fonts/IME cases, uncommon toolbar/ruler
   state, and exhaustive undocumented RichEdit quirks;
-- a bounded WordPad startup trace for its real
-  `CREATE_SUSPENDED`/`ResumeThread` path. Scheduler behavior is covered by
-  `test/test-thread-manager.js`; no WordPad-specific trace test exists.
+- general OLE and high-fidelity breadth remain after the thread-fidelity item;
+  the real WordPad `CREATE_SUSPENDED`/`ResumeThread` path now has bounded
+  app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
 storage suites remain green at 12/12 and 13/13.
@@ -659,7 +659,7 @@ screenshot where the result is visual.
    [x] SuspendThread/ResumeThread return previous nested suspend counts
    [x] only the final ResumeThread makes a worker runnable
    [x] invalid/exited handles return 0xFFFFFFFF
-   [ ] app-level WordPad startup regression covers the real ResumeThread path
+   [x] app-level WordPad startup regression covers the real ResumeThread path
 ```
 
 Still postponed because it is OLE/object work: embedded objects, in-place

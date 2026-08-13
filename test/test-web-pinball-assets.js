@@ -227,7 +227,7 @@ assert(indexHtml.includes('lib/gdi-surface.js?v=1'), 'web host should load the c
 assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host-imports.js?v=190'),
   'web host should load the GDI surface module before host imports');
 assert(indexHtml.includes('lib/host-imports.js?v=190'), 'web host should cache-bust host imports after canonical DIB pixel access');
-assert(indexHtml.includes('lib/thread-manager.js?v=169'), 'web host should cache-bust thread manager after wait handling changes');
+assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('host.js?v=189'), 'web host should cache-bust host.js after DIB arena changes');
 assert(hostJs.includes("static SOURCE_VERSION = '189'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');

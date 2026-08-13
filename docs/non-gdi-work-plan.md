@@ -178,9 +178,9 @@ an earlier ownership/persistence contract is still ambiguous.
 
 ## P1 — Thread fidelity and WordPad startup proof
 
-The scheduler already models `CREATE_SUSPENDED`, suspend counts, and
-`ResumeThread`; the missing result is proof that WordPad exercises the real
-path during startup.
+Status: complete on 2026-08-12. The scheduler models `CREATE_SUSPENDED`, suspend
+counts, and `ResumeThread`, and the focused WordPad regression proves the real
+startup path.
 
 ### Work
 
@@ -196,9 +196,16 @@ path during startup.
 
 ### Acceptance
 
-- One WordPad emulator child completes under 90 seconds.
-- The test proves event order and scheduler state; it does not depend on a
+- [x] One WordPad emulator child completes under 90 seconds.
+- [x] The test proves event order and scheduler state; it does not depend on a
   WordPad screenshot.
+
+Implementation result: the host receives `dwCreationFlags` as part of the
+thread-creation call, so `CREATE_SUSPENDED` is atomic. `ThreadManager` exposes
+structured `create`, `suspend`, `resume`, `spawn`, `first_run`, and `exit`
+events. `test/test-wordpad-thread-startup.js` passes 8/8 and proves suspended
+create -> final resume -> spawn -> first runnable slice at the original entry
+point.
 
 ## P2 — Structured storage and stream completeness
 

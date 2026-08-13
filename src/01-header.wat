@@ -430,7 +430,7 @@
   ;; com_get_pending_dll() → WASM addr of pending DLL name string (0=none)
 
   ;; Thread/event host imports
-  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32) (result i32)))
+  (import "host" "create_thread" (func $host_create_thread (param i32 i32 i32 i32) (result i32)))
   (import "host" "suspend_thread" (func $host_suspend_thread (param i32) (result i32)))
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
   (import "host" "exit_thread" (func $host_exit_thread (param i32)))
