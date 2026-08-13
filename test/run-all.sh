@@ -41,6 +41,7 @@ UNIT=(
   test/test-gdi-surface.js
   test/test-wat-memory-map.js
   test/test-wat-gdi-state.js
+  test/test-wat-gdi-shapes.js
   test/test-dib-dirty-sync.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js
