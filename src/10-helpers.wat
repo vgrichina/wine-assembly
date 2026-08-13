@@ -573,6 +573,114 @@
         (br $scan)))
     (i32.const 0))
 
+  ;; Pixel-center ellipse coverage using the implicit equation
+  ;; dx^2*h^2 + dy^2*w^2 <= w^2*h^2. All terms are i64 and dimensions are
+  ;; capped so the doubled coordinates cannot overflow signed i32 first.
+  (func $gdi_rgn_ellipse_inside (param $x i32) (param $y i32)
+        (param $cx2 i32) (param $cy2 i32) (param $width i32) (param $height i32) (result i32)
+    (local $dx i64) (local $dy i64) (local $w i64) (local $h i64)
+    (local.set $dx (i64.extend_i32_s
+      (i32.sub (i32.add (i32.shl (local.get $x) (i32.const 1)) (i32.const 1)) (local.get $cx2))))
+    (local.set $dy (i64.extend_i32_s
+      (i32.sub (i32.add (i32.shl (local.get $y) (i32.const 1)) (i32.const 1)) (local.get $cy2))))
+    (local.set $w (i64.extend_i32_u (local.get $width)))
+    (local.set $h (i64.extend_i32_u (local.get $height)))
+    (i64.le_s
+      (i64.add
+        (i64.mul (i64.mul (local.get $dx) (local.get $dx)) (i64.mul (local.get $h) (local.get $h)))
+        (i64.mul (i64.mul (local.get $dy) (local.get $dy)) (i64.mul (local.get $w) (local.get $w))))
+      (i64.mul (i64.mul (local.get $w) (local.get $w)) (i64.mul (local.get $h) (local.get $h)))))
+
+  (func $gdi_rgn_alloc_ellipse (param $left_in i32) (param $top_in i32) (param $right_in i32) (param $bottom_in i32) (result i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $width i32) (local $height i32) (local $cx2 i32) (local $cy2 i32)
+    (local $y i32) (local $lo i32) (local $hi i32) (local $mid i32) (local $center i32) (local $first i32) (local $last i32)
+    (local $count i32) (local $p i32) (local $prev i32) (local $handle i32) (local $record i32)
+    (local.set $left (local.get $left_in)) (local.set $top (local.get $top_in))
+    (local.set $right (local.get $right_in)) (local.set $bottom (local.get $bottom_in))
+    (if (i32.gt_s (local.get $left) (local.get $right))
+      (then (local.set $left (local.get $right_in)) (local.set $right (local.get $left_in))))
+    (if (i32.gt_s (local.get $top) (local.get $bottom))
+      (then (local.set $top (local.get $bottom_in)) (local.set $bottom (local.get $top_in))))
+    (local.set $width (i32.sub (local.get $right) (local.get $left)))
+    (local.set $height (i32.sub (local.get $bottom) (local.get $top)))
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0)) (i32.le_s (local.get $height) (i32.const 0)))
+      (then (return (call $gdi_rgn_alloc_rect (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))))
+    (if (i32.or (i32.gt_u (local.get $width) (i32.const 46340))
+          (i32.gt_u (local.get $height) (i32.const 46340)))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.or (i32.lt_s (local.get $left) (i32.const -1073741824))
+            (i32.gt_s (local.get $right) (i32.const 1073741823)))
+          (i32.or (i32.lt_s (local.get $top) (i32.const -1073741824))
+            (i32.gt_s (local.get $bottom) (i32.const 1073741823))))
+      (then (return (i32.const 0))))
+    (local.set $cx2 (i32.add (local.get $left) (local.get $right)))
+    (local.set $cy2 (i32.add (local.get $top) (local.get $bottom)))
+    (local.set $center (i32.add (local.get $left)
+      (i32.shr_u (i32.sub (local.get $width) (i32.const 1)) (i32.const 1))))
+    (local.set $y (local.get $top))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $y) (local.get $bottom)))
+      (if (call $gdi_rgn_ellipse_inside
+            (local.get $center) (local.get $y) (local.get $cx2) (local.get $cy2)
+            (local.get $width) (local.get $height))
+        (then
+          ;; First covered x on the monotonic false-to-true left half.
+          (local.set $lo (local.get $left))
+          (local.set $hi (local.get $center))
+          (block $left_done (loop $left_search
+            (br_if $left_done (i32.ge_s (local.get $lo) (local.get $hi)))
+            (local.set $mid (i32.add (local.get $lo)
+              (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 1))))
+            (if (call $gdi_rgn_ellipse_inside
+                  (local.get $mid) (local.get $y) (local.get $cx2) (local.get $cy2)
+                  (local.get $width) (local.get $height))
+              (then (local.set $hi (local.get $mid)))
+              (else (local.set $lo (i32.add (local.get $mid) (i32.const 1)))))
+            (br $left_search)))
+          (local.set $first (local.get $lo))
+          ;; First uncovered x after the right half of the covered span.
+          (local.set $lo (local.get $center))
+          (local.set $hi (local.get $right))
+          (block $right_done (loop $right_search
+            (br_if $right_done (i32.ge_s (local.get $lo) (local.get $hi)))
+            (local.set $mid (i32.add (local.get $lo)
+              (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 1))))
+            (if (call $gdi_rgn_ellipse_inside
+                  (local.get $mid) (local.get $y) (local.get $cx2) (local.get $cy2)
+                  (local.get $width) (local.get $height))
+              (then (local.set $lo (i32.add (local.get $mid) (i32.const 1))))
+              (else (local.set $hi (local.get $mid))))
+            (br $right_search)))
+          (local.set $last (local.get $lo))
+          (if (i32.gt_u (local.get $count) (i32.const 0))
+            (then (local.set $prev (i32.add (global.get $GDI_REGION_WORK)
+              (i32.shl (i32.sub (local.get $count) (i32.const 1)) (i32.const 4))))))
+          (if (i32.and (i32.gt_u (local.get $count) (i32.const 0))
+                (i32.and (i32.eq (i32.load (local.get $prev)) (local.get $first))
+                  (i32.and (i32.eq (i32.load offset=8 (local.get $prev)) (local.get $last))
+                    (i32.eq (i32.load offset=12 (local.get $prev)) (local.get $y)))))
+            (then (i32.store offset=12 (local.get $prev) (i32.add (local.get $y) (i32.const 1))))
+            (else
+              (if (i32.ge_u (local.get $count) (global.get $GDI_REGION_MAX_RECTS))
+                (then (return (i32.const 0))))
+              (local.set $p (i32.add (global.get $GDI_REGION_WORK)
+                (i32.shl (local.get $count) (i32.const 4))))
+              (i32.store (local.get $p) (local.get $first))
+              (i32.store offset=4 (local.get $p) (local.get $y))
+              (i32.store offset=8 (local.get $p) (local.get $last))
+              (i32.store offset=12 (local.get $p) (i32.add (local.get $y) (i32.const 1)))
+              (local.set $count (i32.add (local.get $count) (i32.const 1)))))))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (local.set $handle (call $gdi_rgn_alloc_rect (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (local.set $record (call $gdi_rgn_record (local.get $handle)))
+    (drop (call $gdi_rgn_set_buffer
+      (local.get $record) (global.get $GDI_REGION_WORK) (local.get $count)))
+    (local.get $handle))
+
   (func $gdi_rgn_set_rect (param $hrgn i32) (param $left_in i32) (param $top_in i32) (param $right_in i32) (param $bottom_in i32) (result i32)
     (local $record i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))

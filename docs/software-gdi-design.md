@@ -18,8 +18,9 @@ boxes, object typing, lifetime, and `RGN_AND`/`OR`/`XOR`/`DIFF`/`COPY`. Each
 region has a fixed canonical arena of up to 128 sorted, disjoint half-open band
 rectangles. Boolean results are constructed in alias-safe WAT scratch buffers.
 JavaScript receives those rectangles only to rebuild derived Canvas clip and
-window-shape presentation data. Polygon and ellipse region scan conversion is
-still a legacy host fallback.
+window-shape presentation data. Ellipse regions use deterministic integer
+pixel-center scan conversion into the same WAT arena. Polygon region scan
+conversion is still a legacy host fallback.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.

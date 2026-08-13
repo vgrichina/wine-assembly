@@ -206,8 +206,6 @@
   ;; gdi_exclude_clip_rect(hdc, l, t, r, b) -> complexity
   (import "host" "gdi_intersect_clip_rect" (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_intersect_clip_rect(hdc, l, t, r, b) -> complexity
-  (import "host" "gdi_create_ellipse_rgn" (func $host_gdi_create_ellipse_rgn (param i32 i32 i32 i32) (result i32)))
-  ;; gdi_create_ellipse_rgn(l, t, r, b) -> hrgn
   (import "host" "gdi_create_polygon_rgn" (func $host_gdi_create_polygon_rgn (param i32 i32 i32) (result i32)))
   ;; gdi_create_polygon_rgn(pts_wa, n, fillMode) -> hrgn
   (import "host" "gdi_get_rgn_box" (func $host_gdi_get_rgn_box (param i32 i32) (result i32)))

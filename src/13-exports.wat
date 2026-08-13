@@ -202,6 +202,10 @@
         (param i32) (param i32) (param i32) (param i32) (result i32)
     (call $gdi_rgn_alloc_rect
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  (func (export "test_gdi_rgn_alloc_ellipse")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_rgn_alloc_ellipse
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   (func (export "test_gdi_rgn_set_rect")
         (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
     (call $gdi_rgn_set_rect

@@ -12018,7 +12018,7 @@
 
   ;; CreateEllipticRgn(left, top, right, bottom) → HRGN
   (func $handle_CreateEllipticRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_ellipse_rgn
+    (global.set $eax (call $gdi_rgn_alloc_ellipse
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )

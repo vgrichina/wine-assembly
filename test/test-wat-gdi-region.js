@@ -134,6 +134,32 @@ async function main() {
     assert.deepStrictEqual(bands(dst), [[0, 0, 4, 8]]);
   });
 
+  check('ellipses scan-convert into exact canonical WAT bands', () => {
+    const ellipse = wat.test_gdi_rgn_alloc_ellipse(0, 0, 10, 8);
+    assert.notStrictEqual(ellipse, 0);
+    assert.deepStrictEqual(bands(ellipse), [
+      [3, 0, 7, 1], [1, 1, 9, 2], [0, 2, 10, 6],
+      [1, 6, 9, 7], [3, 7, 7, 8],
+    ]);
+    assert.deepStrictEqual(box(ellipse), { complexity: 3, rect: [0, 0, 10, 8] });
+
+    const negative = wat.test_gdi_rgn_alloc_ellipse(5, 4, -5, -4);
+    assert.deepStrictEqual(bands(negative), [
+      [-2, -4, 2, -3], [-4, -3, 4, -2], [-5, -2, 5, 2],
+      [-4, 2, 4, 3], [-2, 3, 2, 4],
+    ]);
+    assert.deepStrictEqual(bands(wat.test_gdi_rgn_alloc_ellipse(0, 0, 1, 1)), [[0, 0, 1, 1]]);
+    assert.deepStrictEqual(bands(wat.test_gdi_rgn_alloc_ellipse(4, 4, 4, 9)), []);
+  });
+
+  check('ellipse bands participate in WAT Boolean algebra', () => {
+    const ellipse = wat.test_gdi_rgn_alloc_ellipse(0, 0, 10, 8);
+    const clip = wat.test_gdi_rgn_alloc_rect(2, 1, 8, 7);
+    const dst = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
+    assert.strictEqual(wat.test_gdi_rgn_combine(dst, ellipse, clip, 1), 2);
+    assert.deepStrictEqual(bands(dst), [[2, 1, 8, 7]]);
+  });
+
   check('Boolean operations are alias-safe and preserve empty results', () => {
     const a = wat.test_gdi_rgn_alloc_rect(0, 0, 8, 8);
     const b = wat.test_gdi_rgn_alloc_rect(3, 2, 10, 6);
