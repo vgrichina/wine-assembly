@@ -17,6 +17,11 @@
   ;; 146: DeleteObject(hObject) — delegate to host GDI
   (func $handle_DeleteObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $bits_wa i32)
+    (if (call $gdi_rgn_record (local.get $arg0))
+      (then
+        (global.set $eax (call $gdi_rgn_delete (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (local.set $bits_wa (call $host_gdi_get_object_bits (local.get $arg0)))
     (global.set $eax (call $host_gdi_delete_object (local.get $arg0)))
     (if (i32.and (global.get $eax) (local.get $bits_wa))

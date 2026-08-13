@@ -702,6 +702,7 @@
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
+  ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
@@ -841,6 +842,12 @@
   ;;   +0x40  4 slots x 256 PALETTEENTRY bytes
   (global $GDI_PALETTE_TABLE i32 (i32.const 0x07F0B000))
   (global $GDI_PALETTE_TABLE_SIZE i32 (i32.const 0x00001040))
+  ;; WAT-owned HRGN records (255 live slots in a 256 x 32-byte table):
+  ;;   +0 state (0 free, 1 rectangle, 2 legacy complex mirror)
+  ;;   +4 generation, +8..+20 bbox RECT, +24 temporary host mirror handle.
+  ;; Handles use 0x0050GGSS where GG is generation and SS is slot + 1.
+  (global $GDI_REGION_TABLE i32 (i32.const 0x07F0D000))
+  (global $GDI_REGION_TABLE_SIZE i32 (i32.const 0x00002000))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

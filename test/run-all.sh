@@ -33,7 +33,9 @@ UNIT=(
   test/test-wavein-audio.js
   test/test-audio-mixer.js
   test/test-core-no-app-fast-paths.js
+  test/test-wat-gdi-region.js
   test/test-gdi-surface.js
+  test/test-wat-memory-map.js
   test/test-dib-dirty-sync.js
   test/test-web-pinball-assets.js
   test/test-web-touch-input.js

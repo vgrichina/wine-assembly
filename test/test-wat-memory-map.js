@@ -88,6 +88,7 @@ const requiredRegions = [
   'SYNC_TABLE',
   'EDIT_LAYOUT_SCRATCH',
   'GDI_PALETTE_TABLE',
+  'GDI_REGION_TABLE',
   'D3DIM_MATRICES',
   'DX_OBJECTS',
   'COM_WRAPPERS',

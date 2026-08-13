@@ -5136,7 +5136,7 @@
     (local.set $rv (call $update_get_rect (local.get $arg0) (global.get $PAINT_SCRATCH)))
     (if (i32.and (i32.ne (local.get $rv) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
       (then
-        (drop (call $host_gdi_set_rect_rgn
+        (drop (call $gdi_rgn_set_rect
           (local.get $arg1)
           (i32.load (global.get $PAINT_SCRATCH))
           (i32.load offset=4 (global.get $PAINT_SCRATCH))
@@ -5300,11 +5300,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
   )
 
-  ;; 361: CreateRectRgnIndirect(lprc) — read RECT and call CreateRectRgn host fn.
+  ;; 361: CreateRectRgnIndirect(lprc) — allocate a WAT-owned rectangle region.
   (func $handle_CreateRectRgnIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $r i32)
     (local.set $r (call $g2w (local.get $arg0)))
-    (global.set $eax (call $host_gdi_create_rect_rgn
+    (global.set $eax (call $gdi_rgn_alloc_rect
       (i32.load (local.get $r))
       (i32.load (i32.add (local.get $r) (i32.const 4)))
       (i32.load (i32.add (local.get $r) (i32.const 8)))
@@ -5410,7 +5410,7 @@
 
   ;; 369: OffsetRgn(hrgn, nXOffset, nYOffset) → region complexity
   (func $handle_OffsetRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_offset_rgn
+    (global.set $eax (call $gdi_rgn_offset
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -6553,21 +6553,22 @@
   ;; 438: FillRgn(hdc, hrgn, hbrush) → BOOL
   (func $handle_FillRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_fill_rgn
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; PaintRgn(hdc, hrgn) → BOOL — paint with DC's current brush
   (func $handle_PaintRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_fill_rgn
-      (local.get $arg0) (local.get $arg1) (i32.const 0)))
+      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; FrameRgn(hdc, hrgn, hbrush, nWidth, nHeight) -> BOOL
   (func $handle_FrameRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_frame_rgn
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1))
+      (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -8305,18 +8306,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 555: CombineRgn — call host to merge region objects
+  ;; 555: CombineRgn — WAT owns rectangle semantics; complex compatibility is mirrored.
   (func $handle_CombineRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode) — 4 args stdcall
-    (global.set $eax (call $host_gdi_combine_rgn
+    (global.set $eax (call $gdi_rgn_combine
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 556: SetRectRgn — call host to update region object
+  ;; 556: SetRectRgn — update WAT-owned geometry and the presentation mirror.
   (func $handle_SetRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetRectRgn(hrgn, left, top, right, bottom) — 5 args stdcall.
-    (global.set $eax (call $host_gdi_set_rect_rgn
+    (global.set $eax (call $gdi_rgn_set_rect
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
@@ -8355,6 +8356,11 @@
     (if (i32.eqz (local.get $arg0))
       (then
         (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (call $gdi_rgn_record (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 8)) ;; OBJ_REGION
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; Palette handles from CreatePalette: 0x000A0001+
@@ -8427,7 +8433,7 @@
   ;; 564: ExtSelectClipRgn(hdc, hrgn, fnMode) — 3 args stdcall
   (func $handle_ExtSelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_ext_select_clip_rgn
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 565: SelectClipPath — STUB: unimplemented
@@ -8435,10 +8441,10 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 566: CreateRectRgn — call host to allocate real region object
+  ;; 566: CreateRectRgn — allocate a WAT-owned rectangle region.
   (func $handle_CreateRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CreateRectRgn(left, top, right, bottom) — 4 args stdcall
-    (global.set $eax (call $host_gdi_create_rect_rgn
+    (global.set $eax (call $gdi_rgn_alloc_rect
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -8513,7 +8519,7 @@
   ;; 579: SelectClipRgn(hdc, hrgn) — 2 args stdcall
   (func $handle_SelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_gdi_select_clip_rgn
-      (local.get $arg0) (local.get $arg1)))
+      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 580: OffsetWindowOrgEx(hdc, dx, dy, lpPoint) → BOOL
@@ -10654,7 +10660,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (local.get $arg1)
       (then
-        (local.set $rt (call $host_gdi_get_rgn_box (local.get $arg1) (global.get $PAINT_SCRATCH)))
+        (local.set $rt (call $gdi_rgn_get_box (local.get $arg1) (global.get $PAINT_SCRATCH)))
         (if (local.get $rt)
           (then
             (call $update_invalidate_rect (local.get $arg0)
@@ -11588,7 +11594,7 @@
   (func $handle_SetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $rect i32) (local $w i32) (local $h i32)
     (global.set $eax (call $host_gdi_set_window_rgn
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
     (if (global.get $eax)
       (then
         (call $wnd_region_set
@@ -12023,7 +12029,7 @@
     (local $rect_wa i32)
     (local.set $rect_wa (if (result i32) (local.get $arg1)
       (then (call $g2w (local.get $arg1))) (else (i32.const 0))))
-    (global.set $eax (call $host_gdi_get_rgn_box
+    (global.set $eax (call $gdi_rgn_get_box
       (local.get $arg0) (local.get $rect_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

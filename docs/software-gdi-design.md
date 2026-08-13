@@ -12,9 +12,17 @@ all geometric primitives, source blits, window surfaces, and text still use
 the existing Canvas paths. Canvas text remains intentional policy, as
 described below.
 
+Rectangular HRGN ownership moved into WAT in the first architecture-boundary
+milestone. WAT now allocates generation-tagged region handles and owns rectangle
+normalization, mutation, offset, bounding-box queries, intersection, object
+typing, and lifetime. Each record temporarily carries a private JS mirror for
+Canvas-facing compatibility calls. Complex Boolean results are explicitly
+tagged as legacy mirrors until WAT band storage replaces that fallback.
+
 This document describes the incremental migration from Canvas 2D vector
-drawing to deterministic software rasterization. It does not propose replacing
-Canvas as the desktop compositor or presentation API.
+drawing to deterministic software rasterization implemented primarily in WAT.
+It does not propose replacing Canvas as the desktop compositor or presentation
+API.
 
 The immediate drivers are visible in Win98 Paint:
 
@@ -32,16 +40,21 @@ The immediate drivers are visible in Win98 Paint:
 
 ## Decision
 
-GDI surfaces will use one authoritative pixel store. GDI primitives will read
-and write that store through a software rasterizer. Canvas will receive dirty
-rectangles from the authoritative store and will remain responsible for final
-window composition, scaling, and display.
+GDI surfaces will use one authoritative pixel store. WAT owns GDI handles, DC
+state, regions, clipping, rasterization, ROPs, and native-format pixel access.
+GDI primitives read and write the authoritative store without delegating their
+semantics to JavaScript. JavaScript receives dirty rectangles and remains
+responsible for browser-facing presentation, final window composition,
+scaling, and display.
 
 Canvas vector paths must not be used for geometric GDI primitives whose Win32
 result is defined as raster pixels. Text is the deliberate exception: Canvas
 remains the font-layout and glyph-rasterization backend for this redesign.
-Canvas may also remain an implementation detail for presentation and for
-explicitly documented compatibility fallbacks during the migration.
+JavaScript host imports are limited to facilities WebAssembly cannot directly
+provide: Canvas upload/composition, browser font rasterization, audio, input,
+storage, and similar platform APIs. Canvas may also remain an explicitly
+documented compatibility fallback during migration, but new GDI algorithms
+must not be implemented in JavaScript.
 
 This is a staged replacement, not a flag-day rewrite.
 
@@ -63,8 +76,8 @@ This is a staged replacement, not a flag-day rewrite.
 
 ## Surface model
 
-Introduce a `GdiSurface` layer below DC resolution. It should expose bulk
-operations rather than a polymorphic JavaScript call for every pixel.
+Introduce a WAT-owned surface descriptor table below DC resolution. It exposes
+bulk operations rather than a host call for every pixel.
 
 ```js
 {
@@ -100,7 +113,7 @@ interface, while preserving the DirectDraw surface's native storage.
 Recommended resolution API:
 
 ```js
-resolveGdiTarget(hdc) -> {
+gdi_resolve_target(hdc) -> {
   surface,
   originX,
   originY,
@@ -109,8 +122,34 @@ resolveGdiTarget(hdc) -> {
 }
 ```
 
-The rasterizer receives this resolved target once per GDI call. Hot loops then
-operate on typed arrays and spans without repeatedly looking up the HDC.
+The WAT rasterizer resolves this target once per GDI call. Hot loops then
+operate directly on linear memory and spans without repeatedly looking up the
+HDC or crossing the JS boundary.
+
+## Implementation boundary
+
+The end-state ownership is:
+
+```text
+WAT
+  GDI handle allocation and object tables
+  DC selection, mapping, colors, modes, and clip state
+  DIB and host-surface descriptors
+  HRGN bands and Boolean operations
+  geometry coverage, pixels, spans, ROP2/ROP3, flood fill
+  dirty page/rectangle bookkeeping
+
+JavaScript
+  allocate/resize Canvas presentation caches on WAT request
+  upload dirty native pixels to Canvas
+  composite windows and handle browser scaling
+  rasterize font glyphs into scratch masks until a WAT font backend exists
+  browser APIs: audio, MIDI, input, storage, clipboard, networking
+```
+
+The migration may temporarily mirror existing JS GDI handles into WAT tables,
+but each milestone must move ownership toward WAT. A JS helper that implements
+new region, clipping, geometry, pixel, or ROP semantics is out of scope.
 
 ## DIB ownership and synchronization
 
@@ -201,10 +240,10 @@ rectangles deterministically. A banded region representation is the preferred
 long-term form because fills, blits, and dirty tracking all consume spans.
 
 The first migration slice handles unclipped and rectangularly clipped DIB
-fills exactly. The next clipping milestone will add a canonical band/span
-representation for rectangle combinations and rasterized polygon/ellipse
-regions. Until then, complex regions remain on the named Canvas compatibility
-path and are not treated as canonical software output.
+fills exactly. The next clipping milestone will add a WAT-owned canonical
+band/span representation for rectangle combinations and rasterized
+polygon/ellipse regions. Until then, complex regions remain on the named
+Canvas compatibility path and are not treated as canonical software output.
 
 ## Presentation
 

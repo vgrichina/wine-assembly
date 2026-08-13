@@ -195,6 +195,39 @@
   (func (export "wnd_region_get_export") (param $hwnd i32) (result i32)
     (call $wnd_region_get (local.get $hwnd)))
 
+  ;; Software-GDI migration probes. Production API handlers call the same
+  ;; WAT-owned region registry; these exports keep its ownership testable
+  ;; without driving the x86 stdcall dispatcher.
+  (func (export "test_gdi_rgn_alloc_rect")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_rgn_alloc_rect
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  (func (export "test_gdi_rgn_set_rect")
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_rgn_set_rect
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
+  (func (export "test_gdi_rgn_get_box") (param i32) (param i32) (result i32)
+    (call $gdi_rgn_get_box (local.get 0) (local.get 1)))
+  (func (export "test_gdi_rgn_offset") (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_rgn_offset (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "test_gdi_rgn_combine")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_rgn_combine (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  (func (export "test_gdi_rgn_delete") (param i32) (result i32)
+    (call $gdi_rgn_delete (local.get 0)))
+  (func (export "get_gdi_region_table") (result i32) (global.get $GDI_REGION_TABLE))
+  (func (export "test_call_CreateRectRgn")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_CreateRectRgn
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetObjectType") (param i32) (result i32)
+    (call $handle_GetObjectType
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)
     (call $nc_flags_set (local.get $hwnd) (i32.const 1)))   ;; bit 0
