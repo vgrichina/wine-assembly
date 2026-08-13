@@ -89,6 +89,8 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_GetCurrentObject(dcA, 5) >>> 0, 0x3001F);
     assert.strictEqual(wat.test_call_SelectPalette(dcA, a) >>> 0, 0x3001F);
     assert.strictEqual(wat.test_call_SelectPalette(dcB, b) >>> 0, 0x3001F);
+    assert.strictEqual(wat.test_gdi_dc_aux_set(dcA, 28, 6, 0), 0,
+      'text justification break count remains independent palette state');
     assert.strictEqual(wat.test_call_GetCurrentObject(dcA, 5) >>> 0, a);
     assert.strictEqual(wat.test_call_GetCurrentObject(dcB, 5) >>> 0, b);
     assert.strictEqual(wat.test_call_RealizePalette(dcA), 2);
@@ -96,6 +98,12 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_SelectPalette(dcA, 0x3001F) >>> 0, a);
     assert.strictEqual(wat.test_call_GetCurrentObject(dcB, 5) >>> 0, b,
       'changing one DC must not alter another DC palette');
+    const saved = wat.test_call_SaveDC(dcB);
+    assert.strictEqual(saved, 1);
+    assert.strictEqual(wat.test_call_SelectPalette(dcB, 0x3001F) >>> 0, b);
+    assert.strictEqual(wat.test_call_RestoreDC(dcB, -1), 1);
+    assert.strictEqual(wat.test_call_GetCurrentObject(dcB, 5) >>> 0, b,
+      'RestoreDC must restore the selected logical palette');
   });
 
   check('palette mutation, resize, nearest lookup, and deletion are canonical', () => {

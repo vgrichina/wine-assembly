@@ -23,7 +23,9 @@ flag-day bridge purge now has a WAT implementation; both unsupported-stub
 inventories are empty. Pen, solid-brush, memory-DC,
 compatible-bitmap, DIB-section, window-surface, region painting, line, basic
 shape, chrome, pixel, core blit, transparent image, disabled image, and DC
-mapping semantics are now WAT-owned. This includes `GetDIBits`, `SetDIBits`,
+mapping and save-stack semantics are now WAT-owned. `SaveDC`/`RestoreDC`
+preserve nested hot and auxiliary state, selected palettes, color adjustment,
+and independent explicit-clip snapshots. This includes `GetDIBits`, `SetDIBits`,
 `GetDIBColorTable`, `SetDIBColorTable`, and `StretchDIBits` conversion across
 canonical indexed and true-color bitmap descriptors, plus logical palette
 objects, per-DC palette selection, `DIB_PAL_COLORS` resolution, rounded

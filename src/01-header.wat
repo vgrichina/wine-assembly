@@ -930,7 +930,7 @@
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
-  ;; 0x07EF0800 2KB      GDI_DC_RASTER_TABLE (256 x {HDC, ROP2})
+  ;; 0x07EF0800 2KB      GDI_DC_SAVE_TABLE (256 x {HDC, meta guest pointer})
   ;; 0x07EF1000 80B      GDI_LINE_DESC scratch
   ;; 0x07EF1100 160B     GDI_BLIT_DESC scratch
   ;; 0x07EF11A0 304B     GDI_BITMAP_PLAN/name scratch
@@ -1103,9 +1103,9 @@
   (global $GDI_DC_CLIP_TABLE i32 (i32.const 0x07EF0000))
   (global $GDI_DC_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
   (global $GDI_DC_CLIP_COUNT i32 (i32.const 256))
-  (global $GDI_DC_RASTER_TABLE i32 (i32.const 0x07EF0800))
-  (global $GDI_DC_RASTER_TABLE_SIZE i32 (i32.const 0x00000800))
-  (global $GDI_DC_RASTER_COUNT i32 (i32.const 256))
+  (global $GDI_DC_SAVE_TABLE i32 (i32.const 0x07EF0800))
+  (global $GDI_DC_SAVE_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_SAVE_COUNT i32 (i32.const 256))
   (global $GDI_LINE_DESC i32 (i32.const 0x07EF1000))
   (global $GDI_LINE_DESC_SIZE i32 (i32.const 0x00000050))
   ;; Two 80-byte surface descriptors for raster/blit destination and source.

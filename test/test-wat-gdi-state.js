@@ -103,6 +103,54 @@ async function main() {
   assert.strictEqual(wat.test_gdi_dc_set_rop2(hdcA, 7), 13);
   assert.strictEqual(wat.test_gdi_dc_get_rop2(hdcA), 7);
 
+  const clipRect = 0x07EF12D0;
+  const memoryView = new DataView(memory.buffer);
+  const readClipRect = () => [0, 4, 8, 12].map(offset =>
+    memoryView.getInt32(clipRect + offset, true));
+  const savedClip = wat.test_call_CreateRectRgn(1, 2, 11, 12) >>> 0;
+  assert(savedClip);
+  assert.strictEqual(wat.test_gdi_dc_clip_select(hdcA, savedClip), 2);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 20, 3, 0), 0);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 24, 9, 0), 0);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 28, 2, 0), 0);
+  const savedLevel1 = wat.test_call_SaveDC(hdcA);
+  assert.strictEqual(savedLevel1, 1);
+
+  assert.strictEqual(wat.test_call_SelectObject(hdcA, 0x30017), 0x30018);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 20, 0x00112233, 0), 0);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 20, 7, 0), 3);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 24, 15, 0), 9);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 28, 4, 0), 2);
+  assert.strictEqual(wat.test_gdi_dc_clip_offset(hdcA, 20, 30), 2);
+  const savedLevel2 = wat.test_call_SaveDC(hdcA);
+  assert.strictEqual(savedLevel2, 2);
+
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 20, 0x00ABCDEF, 0), 0x00112233);
+  assert.strictEqual(wat.test_gdi_dc_aux_set(hdcA, 20, 99, 0), 7);
+  assert.strictEqual(wat.test_gdi_dc_clip_clear(hdcA), 1);
+  assert.strictEqual(wat.test_call_RestoreDC(hdcA, -1), 1,
+    'relative restore should select the most recent snapshot');
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 4, 0), 0x30017);
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 20, 0), 0x00112233);
+  assert.strictEqual(wat.test_gdi_dc_aux_get(hdcA, 20, 0), 7);
+  assert.strictEqual(wat.test_gdi_dc_aux_get(hdcA, 24, 0), 15);
+  assert.strictEqual(wat.test_gdi_dc_aux_get(hdcA, 28, 0), 4);
+  assert.strictEqual(wat.test_gdi_dc_clip_get_box(hdcA, clipRect), 2);
+  assert.deepStrictEqual(readClipRect(), [21, 32, 31, 42]);
+
+  assert.strictEqual(wat.test_call_RestoreDC(hdcA, savedLevel1), 1,
+    'absolute restore should discard the requested snapshot and newer states');
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 4, 0), 0x30018);
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, 20, 0), 0);
+  assert.strictEqual(wat.test_gdi_dc_aux_get(hdcA, 20, 0), 3);
+  assert.strictEqual(wat.test_gdi_dc_aux_get(hdcA, 24, 0), 9);
+  assert.strictEqual(wat.test_gdi_dc_aux_get(hdcA, 28, 0), 2);
+  assert.strictEqual(wat.test_gdi_dc_clip_get_box(hdcA, clipRect), 2);
+  assert.deepStrictEqual(readClipRect(), [1, 2, 11, 12]);
+  assert.strictEqual(wat.test_call_RestoreDC(hdcA, savedLevel1), 0,
+    'restored snapshots must no longer remain on the stack');
+  assert.strictEqual(wat.test_call_DeleteObject(savedClip), 1);
+
   assert.strictEqual(wat.test_gdi_map_coordinate(10, 0, 10, 5, 20), 25);
   assert.strictEqual(wat.test_gdi_map_coordinate(-3, -5, 4, 7, 6), 10,
     'mapping must preserve signed coordinates and round consistently');

@@ -1956,8 +1956,6 @@
 
   ;; 100: ReleaseDC(hwnd, hdc) — release the WAT-owned DC, return 1.
   (func $handle_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gdi_dc_clip_release (local.get $arg1))
-    (call $gdi_dc_raster_release (local.get $arg1))
     (drop (call $host_release_dc (local.get $arg1)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -4737,16 +4735,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 312: SaveDC(hdc) → saved state index. We do not maintain a full DC stack
-  ;; yet; return a non-zero token so callers proceed and RestoreDC can succeed.
+  ;; 312: SaveDC(hdc) → saved state index.
   (func $handle_SaveDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $gdi_dc_save (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 313: RestoreDC(hdc, nSavedDC) → BOOL. See SaveDC note above.
+  ;; 313: RestoreDC(hdc, nSavedDC) → BOOL.
   (func $handle_RestoreDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $gdi_dc_restore (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

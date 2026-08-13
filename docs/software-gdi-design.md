@@ -34,8 +34,12 @@ region cannot change the DC. `SelectClipRgn`, `ExtSelectClipRgn`,
 `IntersectClipRect`, `ExcludeClipRect`, `OffsetClipRgn`, `GetClipRgn`,
 `GetClipBox`, `PtVisible`, and `RectVisible` operate on that copy. JavaScript
 receives a rebuilt host-region mirror only for Canvas clipping. DC deletion and
-release destroy the private region. The system/window visibility region and
-`SaveDC`/`RestoreDC` stacks remain separate follow-up work.
+release destroy the private region. `SaveDC`/`RestoreDC` use a WAT-owned nested
+stack and take independent copies of the selected explicit clip along with the
+complete hot DC record, auxiliary text/brush/arc state, color adjustment, and
+selected logical palette. Absolute and relative restore indices discard the
+restored snapshot and every newer snapshot. The derived system/window
+visibility region remains separate follow-up work.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
