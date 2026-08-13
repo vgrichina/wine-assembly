@@ -29,6 +29,10 @@ detaching retained pre-revert interfaces safely.
 `IStream` now also has shared commit/revert checkpoints, owner-scoped region
 locks across clones, lock-aware sizing, and buffered `CopyTo` with exact
 partial-count and self-copy behavior.
+`STATSTG` records now consistently expose owned names, object types, 64-bit
+sizes, stream lock capabilities, storage CLSIDs/state bits, and
+`STATFLAG_NONAME`; snapshots, deep copies, and transaction checkpoints preserve
+that metadata. The focused storage/stream suite passes 68/68.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports

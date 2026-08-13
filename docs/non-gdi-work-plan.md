@@ -128,9 +128,9 @@ an earlier ownership/persistence contract is still ambiguous.
 1. **Thread trace:** generic event log plus bounded WordPad startup test.
 2. **Stream core:** complete on 2026-08-12. `IStream::Clone`, independent
    cursors, shared backing lifetime, and edge-case coverage pass 23/23.
-3. **Storage tree:** core complete on 2026-08-12. Nested trees, mutations,
-   enumeration, and transactional checkpoints pass 53/53; remaining metadata
-   breadth stays tracked below.
+3. **Storage tree:** complete on 2026-08-12. Nested trees, mutations,
+   enumeration, transactional checkpoints, and complete bounded `STATSTG`
+   metadata pass 68/68.
 4. **CFB persistence:** deterministic writer, defensive reader, and
    fresh-process tree comparison.
 5. **Multi-format transfer:** format collection, full enumerator, Unicode text,
@@ -235,7 +235,8 @@ the first storage-tree slice.
 64-bit counts plus safe self-copy; shared-root checkpoints restore bytes/size
 through any clone; root-visible region locks distinguish write/exclusive access,
 enforce exact-owner unlock, gate resize, and disappear with their owner. The
-combined storage/stream suite passes 64/64.
+combined storage/stream suite passes 68/68 after the metadata completion
+described below.
 
 ### P2.2 Storage tree
 
@@ -244,7 +245,7 @@ combined storage/stream suite passes 64/64.
 - [x] Add `CopyTo` and `MoveElementTo` for mixed stream/storage subtrees.
 - [x] Implement `EnumElements` with a real `IEnumSTATSTG`, including `Next` counts,
   `Skip`, `Reset`, `Clone`, and stable enumeration while referenced.
-- Return correct `STATSTG` names, types, sizes, CLSIDs, and supported metadata.
+- [x] Return correct `STATSTG` names, types, sizes, CLSIDs, and supported metadata.
 - [x] Implement in-memory commit/revert snapshots rather than leaving successful
   no-ops that claim transactional behavior.
 
@@ -269,6 +270,13 @@ independent tree before atomically replacing the prior checkpoint; `Revert`
 stages restoration before swapping live contents. Names, bytes, nested nodes,
 and CLSIDs restore, post-commit additions disappear, old retained interfaces
 detach safely, and later commits replace earlier checkpoints.
+
+Completing bounded `STATSTG` metadata raises the suite to 68/68. `IStream`,
+`IStorage`, and `ILockBytes` now share one 72-byte record implementation with
+correct type, low/high size, name ownership, `STATFLAG_NONAME`, stream lock
+capabilities, storage CLSID, and masked state bits. Enumerator snapshots retain
+the same metadata, while deep copy and transaction checkpoints preserve state
+bits.
 
 ### P2.3 Compound File Binary persistence
 

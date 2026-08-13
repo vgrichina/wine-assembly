@@ -922,6 +922,10 @@
     (call $ole_storage_commit (local.get $storage)))
   (func (export "test_ole_storage_revert") (param $storage i32) (result i32)
     (call $ole_storage_revert (local.get $storage)))
+  (func (export "test_ole_fill_stat") (param $obj i32) (param $stat i32) (param $flags i32) (result i32)
+    (call $ole_fill_statstg (local.get $obj) (local.get $stat) (local.get $flags)))
+  (func (export "test_ole_storage_set_state_bits") (param $storage i32) (param $bits i32) (param $mask i32) (result i32)
+    (call $ole_storage_set_state_bits (local.get $storage) (local.get $bits) (local.get $mask)))
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (if (i32.or

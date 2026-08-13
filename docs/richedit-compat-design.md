@@ -30,7 +30,7 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   app-level coverage in `test/test-wordpad-thread-startup.js`.
 
 Static DIB Copy/Cut/Paste remains green at 13/13. Low-level OLE data-object and
-storage suites remain green at 12/12 and 64/64.
+storage suites remain green at 12/12 and 68/68.
 
 ## ASCII TLDR
 
@@ -702,6 +702,11 @@ to 53/53.
 Completing `IStream` adds clone-shared byte checkpoints, owner-scoped region
 locks, lock-aware resize, buffered/self-safe `CopyTo`, and exact partial-count
 behavior, raising the combined suite to 64/64.
+The bounded storage metadata pass then raises it to 68/68: all three storage
+interfaces share correct 72-byte `STATSTG` records, including name ownership,
+`STATFLAG_NONAME`, 64-bit size fields, stream lock capabilities, storage CLSID,
+and masked state bits. Enumeration, deep copy, and commit/revert preserve the
+same metadata.
 At this foundation stage it did not serialize a Compound File Binary container,
 expose an `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server.
 Later sections document the completed bounded `IDataObject` and static-DIB

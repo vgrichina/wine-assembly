@@ -72,6 +72,30 @@ async function main() {
   const writeHr = e.test_ole_stream_write(stream, input, payload.length, count) >>> 0;
   check('IStream write grows the backing buffer', writeHr === 0 && dv.getUint32(wa(count), true) === payload.length && e.test_ole_stream_size(stream) === payload.length);
 
+  const streamStat = alloc(72);
+  check('IStream Stat reports its name, 64-bit size, type and lock capabilities',
+    e.test_ole_fill_stat(stream, streamStat, 0) === 0 &&
+    readWide(dv.getUint32(wa(streamStat), true)) === 'ObjectData' &&
+    dv.getUint32(wa(streamStat) + 4, true) === 2 &&
+    dv.getUint32(wa(streamStat) + 8, true) === payload.length &&
+    dv.getUint32(wa(streamStat) + 12, true) === 0 &&
+    dv.getUint32(wa(streamStat) + 44, true) === 3);
+  e.guest_free(dv.getUint32(wa(streamStat), true));
+  check('STATFLAG_NONAME suppresses allocated stream names',
+    e.test_ole_fill_stat(stream, streamStat, 1) === 0 &&
+    dv.getUint32(wa(streamStat), true) === 0);
+
+  const lockbytesStat = alloc(72);
+  const storageStat = alloc(72);
+  check('ILockBytes and root IStorage Stat return complete unnamed object types',
+    e.test_ole_fill_stat(lockbytes, lockbytesStat, 0) === 0 &&
+    dv.getUint32(wa(lockbytesStat), true) === 0 &&
+    dv.getUint32(wa(lockbytesStat) + 4, true) === 3 &&
+    dv.getUint32(wa(lockbytesStat) + 12, true) === 0 &&
+    e.test_ole_fill_stat(storage, storageStat, 0) === 0 &&
+    dv.getUint32(wa(storageStat), true) === 0 &&
+    dv.getUint32(wa(storageStat) + 4, true) === 1);
+
   e.test_ole_stream_seek(stream, 0);
   const output = alloc(16);
   u8.fill(0xcc, wa(output), wa(output) + 16);
@@ -212,6 +236,19 @@ async function main() {
     e.test_ole_storage_parent(childStorage) === storage &&
     e.test_ole_storage_parent(grandchildStorage) === childStorage &&
     e.test_ole_storage_parent(siblingStorage) === storage);
+  const childClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0x70 + i));
+  e.test_ole_set_class(childStorage, childClsid);
+  e.test_ole_storage_set_state_bits(childStorage, 0xa5, 0xff);
+  e.test_ole_storage_set_state_bits(childStorage, 0x10, 0x30);
+  const childStat = alloc(72);
+  check('IStorage SetStateBits masks updates and Stat returns name, CLSID and state',
+    e.test_ole_fill_stat(childStorage, childStat, 0) === 0 &&
+    readWide(dv.getUint32(wa(childStat), true)) === 'Folder' &&
+    dv.getUint32(wa(childStat) + 4, true) === 1 &&
+    Array.from(u8.slice(wa(childStat) + 48, wa(childStat) + 64))
+      .every((value, i) => value === 0x70 + i) &&
+    dv.getUint32(wa(childStat) + 64, true) === 0x95);
+  e.guest_free(dv.getUint32(wa(childStat), true));
   e.test_ole_release(siblingStorage);
 
   const foldedFolderName = writeWide('fOlDeR');
@@ -281,6 +318,7 @@ async function main() {
   const nestedCopyStreamName = writeWide('NestedBytes');
   const nestedCopySource = e.test_ole_create_stream(grandchildStorage, nestedCopyStreamName) >>> 0;
   e.test_ole_stream_write(nestedCopySource, writeBytes(Uint8Array.from([8, 9])), 2, count);
+  e.test_ole_storage_set_state_bits(grandchildStorage, 0x1234, 0xffff);
   const copyDestination = e.test_ole_create_storage(0) >>> 0;
   check('IStorage CopyTo deep-copies mixed stream/storage trees',
     e.test_ole_copy_storage(childStorage, copyDestination) === 0 &&
@@ -289,8 +327,11 @@ async function main() {
       const copiedNested = e.test_ole_find_storage(copyDestination, writeWide('nested')) >>> 0;
       const copiedNestedStream = copiedNested
         ? e.test_ole_find_stream(copiedNested, writeWide('nestedbytes')) >>> 0 : 0;
+      const copiedNestedStat = alloc(72);
+      const metadataOk = copiedNested && e.test_ole_fill_stat(copiedNested, copiedNestedStat, 1) === 0 &&
+        dv.getUint32(wa(copiedNestedStat) + 64, true) === 0x1234;
       const ok = copiedStream !== 0 && copiedStream !== copySourceStream &&
-        copiedNested !== 0 && copiedNested !== grandchildStorage && copiedNestedStream !== 0;
+        copiedNested !== 0 && copiedNested !== grandchildStorage && copiedNestedStream !== 0 && metadataOk;
       if (copiedNestedStream) e.test_ole_release(copiedNestedStream);
       if (copiedNested) e.test_ole_release(copiedNested);
       if (copiedStream) e.test_ole_release(copiedStream);
@@ -361,6 +402,7 @@ async function main() {
   const enumFolder = e.test_ole_create_child_storage(enumStorage, enumFolderName) >>> 0;
   const enumClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0xa0 + i));
   e.test_ole_set_class(enumFolder, enumClsid);
+  e.test_ole_storage_set_state_bits(enumFolder, 0x55aa, 0xffff);
   const statEnum = e.test_ole_create_stat_enum(enumStorage) >>> 0;
   check('IStorage EnumElements creates a snapshot enumerator', statEnum !== 0);
   e.test_ole_rename_element(enumStorage, enumAlphaName, writeWide('AlphaNow'));
@@ -382,17 +424,20 @@ async function main() {
       name: readWide(statName),
       type: dv.getUint32(wa(stat) + 4, true),
       size: dv.getUint32(wa(stat) + 8, true),
+      sizeHigh: dv.getUint32(wa(stat) + 12, true),
+      locks: dv.getUint32(wa(stat) + 44, true),
       clsid: Array.from(u8.slice(wa(stat) + 48, wa(stat) + 64)),
+      stateBits: dv.getUint32(wa(stat) + 64, true),
     });
     e.guest_free(statName);
   }
   check('IEnumSTATSTG Next returns S_FALSE with an exact partial fetched count',
     enumHr === 1 && fetchedStats.length === 3);
-  check('IEnumSTATSTG snapshot preserves names, types, sizes and storage CLSID after live mutation',
-    fetchedStats.some(s => s.name === 'Alpha' && s.type === 2 && s.size === 5) &&
-    fetchedStats.some(s => s.name === 'Beta' && s.type === 2 && s.size === 2) &&
+  check('IEnumSTATSTG snapshot preserves complete stream and storage metadata after live mutation',
+    fetchedStats.some(s => s.name === 'Alpha' && s.type === 2 && s.size === 5 && s.sizeHigh === 0 && s.locks === 3) &&
+    fetchedStats.some(s => s.name === 'Beta' && s.type === 2 && s.size === 2 && s.sizeHigh === 0 && s.locks === 3) &&
     fetchedStats.some(s => s.name === 'EnumFolder' && s.type === 1 &&
-      s.clsid.every((v, i) => v === 0xa0 + i)));
+      s.stateBits === 0x55aa && s.clsid.every((v, i) => v === 0xa0 + i)));
 
   check('IEnumSTATSTG Reset and Skip update the snapshot cursor',
     e.test_ole_stat_enum_reset(statEnum) === 0 && e.test_ole_stat_enum_skip(statEnum, 1) === 0);
@@ -430,6 +475,7 @@ async function main() {
   e.test_ole_stream_write(txNested, writeBytes(Uint8Array.from([2, 7])), 2, count);
   const txClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0x30 + i));
   e.test_ole_set_class(txStorage, txClsid);
+  e.test_ole_storage_set_state_bits(txStorage, 0xcafe, 0xffff);
   check('IStorage Commit captures a deep transaction checkpoint',
     e.test_ole_storage_commit(txStorage) === 0);
 
@@ -440,6 +486,7 @@ async function main() {
   const postCommitName = writeWide('PostCommit');
   const postCommit = e.test_ole_create_stream(txStorage, postCommitName) >>> 0;
   e.test_ole_set_class(txStorage, writeBytes(Uint8Array.from({ length: 16 }, () => 0xee)));
+  e.test_ole_storage_set_state_bits(txStorage, 0xbeef, 0xffff);
   check('IStorage Revert atomically restores the committed tree',
     e.test_ole_storage_revert(txStorage) === 0 &&
     e.test_ole_find_stream(txStorage, writeWide('ChangedStream')) === 0 &&
@@ -452,14 +499,17 @@ async function main() {
       const restoredNested = restoredFolder
         ? e.test_ole_find_stream(restoredFolder, writeWide('nestedvalue')) >>> 0 : 0;
       const restoredClsid = alloc(16);
+      const restoredStat = alloc(72);
       e.test_ole_get_class(txStorage, restoredClsid);
+      e.test_ole_fill_stat(txStorage, restoredStat, 1);
       e.test_ole_stream_seek(restored, 0);
       const restoredBytes = alloc(3);
       const ok = restored !== 0 && restored !== txStream && restoredNested !== 0 &&
         e.test_ole_stream_read(restored, restoredBytes, 3, count) === 0 &&
         Array.from(u8.slice(wa(restoredBytes), wa(restoredBytes) + 3)).join(',') === '3,1,4' &&
         Array.from(u8.slice(wa(restoredClsid), wa(restoredClsid) + 16))
-          .every((v, i) => v === 0x30 + i);
+          .every((v, i) => v === 0x30 + i) &&
+        dv.getUint32(wa(restoredStat) + 64, true) === 0xcafe;
       if (restoredNested) e.test_ole_release(restoredNested);
       if (restoredFolder) e.test_ole_release(restoredFolder);
       if (restored) e.test_ole_release(restored);
