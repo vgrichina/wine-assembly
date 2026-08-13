@@ -17,13 +17,14 @@ Four `gdi_*` calls remain under the explicit Canvas text policy. Text color,
 background mode, alignment, mapping, and selected font state are owned by the
 canonical WAT DC record; `gdi_text_bind` exposes that record to the retained
 Canvas text rasterizer and writes memory and window DC text pixels back to
-canonical surface storage. The other 59
-former imports are listed under `eliminatedNonTextSemantics`; their JavaScript
-methods are deleted and their callers resolve to explicit zero-return WAT stubs
-until real WAT implementations replace them. Pen, solid-brush, memory-DC,
-compatible-bitmap, and DIB-section creation, selection, and lifetime are now
-WAT-owned. This intentionally breaks
-unsupported application paths rather than retaining JavaScript GDI semantics.
+canonical surface storage. Former imports still lacking WAT implementations
+are listed under `eliminatedNonTextSemantics`; their JavaScript methods are
+deleted and their callers resolve to explicit zero-return WAT stubs until real
+WAT implementations replace them. Pen, solid-brush, memory-DC,
+compatible-bitmap, DIB-section, window-surface, region, line, basic shape,
+chrome, pixel, and core blit semantics are now WAT-owned. This intentionally
+breaks unsupported application paths rather than retaining JavaScript GDI
+semantics.
 
 There are no resource-byte exceptions and the temporary non-text exception
 budget is zero. `test/test-gdi-migration-status.js` owns a separate hard-coded
