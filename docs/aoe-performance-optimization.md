@@ -2584,3 +2584,57 @@ Artifacts:
 /private/tmp/rct-expanded-subset-candidate-fixed-10s.json
 /private/tmp/rct-expanded-subset-candidate-fixed-10s.png
 ```
+
+### Fully Automatic 385-Handler `br_table` Control
+
+To measure whether converting the entire threaded table is worthwhile, the
+build now reuses the local WAT S-expression parser to inventory and clone all
+385 canonical `$th_*` function bodies into one generated dispatcher. This is a
+control-flow transformation rather than a second x86 implementation:
+
+```mermaid
+flowchart LR
+    A[existing th_* WAT] --> B[parse and classify exits]
+    B --> C[rename locals / labels]
+    C --> D[return_call next becomes dispatch branch]
+    D --> E[generated 385-case br_table]
+    E --> F[X86_FULL_BRTABLE runtime toggle]
+```
+
+The analyzer currently finds 335 continuing, 37 terminal, and 13 mixed-exit
+handlers, with all 385 automatically convertible. Reused function locals are
+zeroed on each case entry to preserve Wasm function-local initialization, and
+the generated loop reproduces the existing 999-handler slice cutoff. The WAT
+compiler remains the final structural/type validator. Differential tests cover
+ordinary corpus forms and the long RCT packet.
+
+The 31-trial two-million-block comparison provides a direct architectural
+control:
+
+```text
+variant                             median       paired vs x86
+x86 call_indirect                  223.78 ms          1.000x
+automatic 385-case br_table        161.06 ms          1.362x
+compact cached corpus subset       104.66 ms          2.204x
+```
+
+The generated source is 279,880 bytes and adds 29,205 bytes (7.6%) to the
+primary Wasm binary. A real 30-second AoE campaign pair routed 200.3M blocks
+through the whole-table function: guest/unwrapped time fell 3.09%, but total
+`main.runSlice` rose 0.78% and present FPS fell 1.46%. RCT's parked warm loop
+improved 1.839x by median slice, versus 2.864x for its compact subset.
+
+Thus complete automatic conversion is feasible and useful as a benchmark
+control, but the current monolithic function is not the preferred production
+layout. Generate compact hot tables, multiple family tables, or a hot-table
+front end with whole-table fallback, and retain this toggle for periodic
+end-to-end comparisons.
+
+Artifacts:
+
+```text
+/private/tmp/aoe-full-brtable-candidate-30s.json
+/private/tmp/aoe-full-brtable-candidate-30s.png
+/private/tmp/rct-full-brtable-candidate-10s.json
+/private/tmp/rct-full-brtable-candidate-10s.png
+```

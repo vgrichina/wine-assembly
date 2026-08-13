@@ -113,6 +113,16 @@
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
+      ;; Whole-table generated dispatcher benchmark. Unlike the hot-subset
+      ;; path, this needs no packet classifier: all 385 handlers are cases.
+      (if (i32.and
+            (global.get $x86_full_brtable_enabled)
+            (i32.eqz (global.get $handler_hist_enabled)))
+        (then
+          (global.set $x86_full_brtable_blocks
+            (i32.add (global.get $x86_full_brtable_blocks) (i32.const 1)))
+          (call $run_x86_full_brtable_packet (local.get $thread))
+          (br $main)))
       ;; Experimental block-level dispatcher. Eligibility is classified once
       ;; when the packet enters the cache. Cold packets continue through the
       ;; ordinary threaded path without repeating the cache lookup.
@@ -632,6 +642,16 @@
     (call $clear_cache))
   (func (export "get_x86_hot_subset_enabled") (result i32)
     (global.get $x86_hot_subset_enabled))
+  (func (export "set_x86_full_brtable_enabled") (param $flag i32)
+    (global.set $x86_full_brtable_enabled (local.get $flag))
+    (global.set $x86_full_brtable_blocks (i32.const 0))
+    (call $clear_cache))
+  (func (export "get_x86_full_brtable_enabled") (result i32)
+    (global.get $x86_full_brtable_enabled))
+  (func (export "get_x86_full_brtable_blocks") (result i32)
+    (global.get $x86_full_brtable_blocks))
+  (func (export "reset_x86_full_brtable_counters")
+    (global.set $x86_full_brtable_blocks (i32.const 0)))
   (func (export "reset_x86_hot_subset_counters")
     (global.set $x86_hot_subset_hot_blocks (i32.const 0))
     (global.set $x86_hot_subset_fallback_blocks (i32.const 0))

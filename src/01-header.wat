@@ -1008,6 +1008,10 @@
   (global $x86_hot_subset_fallback_blocks (mut i32) (i32.const 0))
   (global $x86_hot_subset_classified_hot (mut i32) (i32.const 0))
   (global $x86_hot_subset_classified_cold (mut i32) (i32.const 0))
+  ;; Fully automatic whole-table br_table conversion benchmark. Every case is
+  ;; generated from the canonical $th_* function body at build time.
+  (global $x86_full_brtable_enabled (mut i32) (i32.const 0))
+  (global $x86_full_brtable_blocks (mut i32) (i32.const 0))
   ;; Disabled-by-default compiled packet prototype. The decoder only emits
   ;; handler 356 for exact AoE block/trace addresses implemented by
   ;; $th_stack_packet.

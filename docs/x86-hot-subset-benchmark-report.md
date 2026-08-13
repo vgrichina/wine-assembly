@@ -234,3 +234,78 @@ both profiled applications rather than requiring AoE-only gating.
 The machine-readable summary is in
 `docs/x86-hot-subset-benchmark-results.json`. Original browser profiles were
 large temporary harness artifacts and are intentionally not committed.
+
+## Automatically generated whole-table control
+
+The repository's own WAT S-expression parser now inventories the canonical
+thread table and mechanically clones handler bodies into one `br_table`
+dispatcher. It does not translate x86 semantics. It renames labels and locals,
+maps the handler parameter to the dispatcher operand, changes
+`return_call $next` into a dispatch-loop branch, changes ordinary returns into
+block exits, zeroes reused scratch locals, and preserves `$next`'s decrement-
+before-dispatch 999-handler limit.
+
+```mermaid
+flowchart LR
+    A[canonical 385 th_* functions] --> B[WAT S-expression analyzer]
+    B --> C[335 continue]
+    B --> D[37 terminal]
+    B --> E[13 mixed exit]
+    C --> F[rename locals and labels]
+    D --> F
+    E --> F
+    F --> G[generated 385-case br_table]
+    G --> H[X86_FULL_BRTABLE=1 benchmark]
+```
+
+All 385 table entries are structurally convertible in the current source. No
+handler has a non-tail call to `$next`, foreign tail call, unresolved function,
+or numeric local reference. The generated WAT is 279,880 bytes, shares at most
+30 `i32` and five `i64` scratch locals, and increases the compiled primary Wasm
+from 381,917 to 411,122 bytes (+29,205 / 7.6%). The original functions remain
+only to provide the baseline and differential oracle while evaluating the
+architecture.
+
+The direct three-way fixture command is:
+
+```sh
+env VARIANTS=x86-threaded,x86-full-brtable,x86-cached-subset-production \
+  TRIALS=31 BLOCKS=2000000 WARMUP_BLOCKS=2000000 \
+  node tools/bench-aoe-recompile-loop.js
+```
+
+| Variant | Median ms | Paired vs x86 |
+|---|---:|---:|
+| x86 `call_indirect` | 223.78 | 1.000x |
+| automatic 385-case `br_table` | 161.06 | 1.362x |
+| compact cached corpus subset | 104.66 | 2.204x |
+
+The whole-table path therefore proves that dispatch conversion alone is
+profitable, but also that one giant function leaves substantial performance on
+the table versus a compact corpus-selected dispatcher.
+
+A single 30-second full-browser AoE campaign pair showed the same mixed result:
+
+| Metric | Baseline | Whole table | Delta |
+|---|---:|---:|---:|
+| `main.runSlice` total | 19820.7 ms | 19974.6 ms | +0.78% |
+| guest/unwrapped total | 17094.0 ms | 16565.1 ms | -3.09% |
+| completed slices | 1998 | 2003 | +0.25% |
+| present FPS | 16.285 | 16.048 | -1.46% |
+| repaint FPS | 58.652 | 58.099 | -0.94% |
+| generated block entries | - | 200,289,197 | - |
+
+The screenshot shows valid campaign gameplay. Guest CPU improved, but the
+end-to-end frame metrics do not justify preferring the giant dispatcher over
+the compact subset from this pair.
+
+On RCT's stable warm loop, the whole table reduced median slices from 2134.0
+to 1160.5 ms (1.839x) and average slices from 2153.1 to 1170.0 ms (1.840x),
+with 900,000 generated block entries. The compact RCT subset remains much
+faster at 745.0 ms median (2.864x). This remains the non-interactive parked RCT
+loop caveat described above.
+
+The practical direction is therefore automated generation of several compact
+tables or a hot-table plus full-table fallback, rather than shipping one
+monolithic 385-case function. The new full-table mode makes that choice cheap
+to remeasure whenever handlers or browser engines change.

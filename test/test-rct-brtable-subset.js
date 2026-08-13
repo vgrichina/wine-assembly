@@ -74,15 +74,23 @@ function loopBytes(ops) {
 (async () => {
   const baseline = await makeHarness(false);
   const candidate = await makeHarness(true);
+  const full = await makeHarness(false);
+  full.e.set_x86_full_brtable_enabled(1);
 
   // add byte [eax],al; add byte [ecx+4],al; add dl,dh; jmp CODE
   const trio = loopBytes([0x00, 0x00, 0x00, 0x41, 0x04, 0x00, 0xf2]);
   seed(baseline, trio);
   seed(candidate, trio);
+  seed(full, trio);
   baseline.e.run(1);
   candidate.e.run(1);
+  full.e.run(1);
   assert.deepStrictEqual(snapshot(candidate), snapshot(baseline),
     'RCT exact-form packet state');
+  assert.deepStrictEqual(snapshot(full), snapshot(baseline),
+    'automatically generated full-table exact-form state');
+  assert.strictEqual(full.e.get_x86_full_brtable_blocks(), 1,
+    'full-table dispatcher must execute the packet');
   assert.strictEqual(candidate.e.get_x86_hot_subset_cached_status(CODE), 1,
     'RCT exact-form packet must classify hot');
   assert.strictEqual(candidate.e.get_x86_hot_subset_hot_blocks(), 1,
@@ -104,12 +112,17 @@ function loopBytes(ops) {
   ]);
   baseline.e.set_x86_hot_subset_enabled(0);
   candidate.e.set_x86_hot_subset_enabled(1);
+  full.e.set_x86_full_brtable_enabled(1);
   seed(baseline, corpusPacket);
   seed(candidate, corpusPacket);
+  seed(full, corpusPacket);
   baseline.e.run(1);
   candidate.e.run(1);
+  full.e.run(1);
   assert.deepStrictEqual(snapshot(candidate), snapshot(baseline),
     'RCT observed handler-family packet state');
+  assert.deepStrictEqual(snapshot(full), snapshot(baseline),
+    'full-table observed handler-family packet state');
   assert.strictEqual(candidate.e.get_x86_hot_subset_cached_status(CODE), 1,
     'RCT observed handler-family packet must classify hot');
 
@@ -121,16 +134,21 @@ function loopBytes(ops) {
   const budgeted = loopBytes(longPrefix);
   baseline.e.set_x86_hot_subset_enabled(0);
   candidate.e.set_x86_hot_subset_enabled(1);
+  full.e.set_x86_full_brtable_enabled(1);
   seed(baseline, budgeted);
   seed(candidate, budgeted);
+  seed(full, budgeted);
   baseline.e.run(1);
   candidate.e.run(1);
+  full.e.run(1);
   assert.deepStrictEqual(snapshot(candidate), snapshot(baseline),
     '999-handler cutoff state');
+  assert.deepStrictEqual(snapshot(full), snapshot(baseline),
+    'full-table 999-handler cutoff state');
   assert.strictEqual(candidate.e.get_x86_hot_subset_cached_status(CODE), 1,
     'supported 999-handler prefix must classify hot');
 
-  console.log('PASS  RCT exact forms and 999-handler cutoff match x86 threading');
+  console.log('PASS  subset and automatic full br_table match x86 threading');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

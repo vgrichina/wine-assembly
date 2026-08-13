@@ -37,6 +37,7 @@ const STACK_PACKET_ADDR = parseU32(process.env.STACK_PACKET_ADDR || '0x0049d9d1'
 const STACK_PACKET_COUNT = process.env.STACK_PACKET_COUNT !== '0';
 const AOE_RECOMPILE = process.env.AOE_RECOMPILE === '1';
 const X86_HOT_SUBSET = process.env.X86_HOT_SUBSET === '1';
+const X86_FULL_BRTABLE = process.env.X86_FULL_BRTABLE === '1';
 const HOTFORM_SPECIALIZE = process.env.HOTFORM_SPECIALIZE === undefined
   ? null
   : process.env.HOTFORM_SPECIALIZE === '1';
@@ -1420,6 +1421,9 @@ async function main() {
       exForHist.set_x86_hot_subset_enabled(${X86_HOT_SUBSET ? '1' : '0'});
       if (exForHist.reset_x86_hot_subset_counters) exForHist.reset_x86_hot_subset_counters();
     }
+    if (exForHist && exForHist.set_x86_full_brtable_enabled) {
+      exForHist.set_x86_full_brtable_enabled(${X86_FULL_BRTABLE ? '1' : '0'});
+    }
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.reset_handler_hist) exForHist.reset_handler_hist();
     if (${HANDLER_HIST ? 'true' : 'false'} && exForHist && exForHist.set_handler_hist_enabled) exForHist.set_handler_hist_enabled(1);
     const buildSnapshot = () => {
@@ -1486,6 +1490,12 @@ async function main() {
             : 0,
           classifiedCold: e.get_x86_hot_subset_classified_cold
             ? (e.get_x86_hot_subset_classified_cold() >>> 0)
+            : 0,
+        } : null,
+        x86FullBrTable: e && e.get_x86_full_brtable_enabled ? {
+          enabled: e.get_x86_full_brtable_enabled() >>> 0,
+          blocks: e.get_x86_full_brtable_blocks
+            ? (e.get_x86_full_brtable_blocks() >>> 0)
             : 0,
         } : null,
         stackPacket: e && e.get_stack_packet_enabled ? {

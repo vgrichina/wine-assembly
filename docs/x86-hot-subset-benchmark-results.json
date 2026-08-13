@@ -68,6 +68,37 @@
     },
     "decision": "disabled-by-default pending repeated full-app pairs and an interactive rendered RCT gameplay harness"
   },
+  "automaticWholeTable": {
+    "handlerCount": 385,
+    "exitShapes": { "continue": 335, "terminal": 37, "mixed": 13 },
+    "generatedWatBytes": 279880,
+    "primaryWasmBytes": 411122,
+    "primaryWasmAddedBytes": 29205,
+    "fixedWork": {
+      "blocks": 2000000,
+      "warmupBlocks": 2000000,
+      "trials": 31,
+      "variants": {
+        "x86-threaded": { "medianMs": 223.78, "pairedSpeedup": 1.000 },
+        "x86-full-brtable": { "medianMs": 161.06, "pairedSpeedup": 1.362 },
+        "x86-cached-subset-production": { "medianMs": 104.66, "pairedSpeedup": 2.204 }
+      }
+    },
+    "fullBrowser": {
+      "aoe30s": {
+        "baseline": { "runSliceTotalMs": 19820.7, "slices": 1998, "guestMs": 17094.0, "presentFps": 16.285, "repaintFps": 58.652 },
+        "candidate": { "runSliceTotalMs": 19974.6, "slices": 2003, "guestMs": 16565.1, "presentFps": 16.048, "repaintFps": 58.099, "generatedBlocks": 200289197 }
+      },
+      "rctStableLoop10s": {
+        "baseline": { "runSliceMedianMs": 2134.0, "runSliceAvgMs": 2153.1, "slices": 5 },
+        "candidate": { "runSliceMedianMs": 1160.5, "runSliceAvgMs": 1170.022, "slices": 9, "generatedBlocks": 900000 },
+        "medianSpeedup": 1.839,
+        "averageSpeedup": 1.840,
+        "note": "stable instruction-heavy loop at EIP 0x00850000 rather than interactive park gameplay"
+      }
+    },
+    "decision": "retain as an automatic benchmark control; prefer compact generated tables over one monolithic 385-case function"
+  },
   "fullBrowser": {
     "aoe": [
       {

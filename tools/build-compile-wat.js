@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { compileWat } = require('../lib/compile-wat');
+const { generate: generateFullBrTable } = require('./generate-full-brtable-dispatch');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -11,6 +12,7 @@ const OUT = path.join(ROOT, 'build', 'wine-assembly.wasm');
 const COMPAT_OUT = path.join(ROOT, 'build', 'wine-assembly.compat.wasm');
 
 (async () => {
+  generateFullBrTable();
   const bytes = await compileWat((file) => fs.promises.readFile(path.join(SRC, file), 'utf8'));
   const compatBytes = await compileWat(
     (file) => fs.promises.readFile(path.join(SRC, file), 'utf8'),
