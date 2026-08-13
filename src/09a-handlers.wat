@@ -8629,9 +8629,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 569: SetColorAdjustment — STUB: unimplemented
+  ;; 569: SetColorAdjustment — validate and copy complete per-DC state.
   (func $handle_SetColorAdjustment (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_color_adjustment_set
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  (func $handle_GetColorAdjustment (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_color_adjustment_get
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 570: PolylineTo(hdc, lppt, cPoints)

@@ -20,7 +20,7 @@ function fnv1a(str) {
 }
 
 // Read the generated WAT data segment directly
-const watPath = path.join(__dirname, '..', 'src', 'parts', '01b-api-hashes.generated.wat');
+const watPath = path.join(__dirname, '..', 'src', '01b-api-hashes.generated.wat');
 const wat = fs.readFileSync(watPath, 'utf8');
 
 // Parse hex bytes from the data segment

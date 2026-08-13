@@ -45,6 +45,7 @@ UNIT=(
   test/test-wat-memory-map.js
   test/test-wat-gdi-state.js
   test/test-wat-gdi-text.js
+  test/test-wat-gdi-callback-state.js
   test/test-wat-gdi-window-surface.js
   test/test-wat-gdi-shapes.js
   test/test-wat-gdi-geometry-handlers.js

@@ -957,6 +957,7 @@
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
   ;; 0x07EFC800 8KB      GDI_DC_AUX_TABLE (256 x 32-byte extended DC state)
+  ;; 0x07EFE800 6KB      GDI_COLOR_ADJUST_TABLE (256 x 24-byte structures)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -1172,6 +1173,8 @@
   (global $GDI_DC_AUX_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $GDI_DC_AUX_COUNT i32 (i32.const 256))
   (global $GDI_DC_AUX_STRIDE i32 (i32.const 32))
+  (global $GDI_COLOR_ADJUST_TABLE i32 (i32.const 0x07EFE800))
+  (global $GDI_COLOR_ADJUST_TABLE_SIZE i32 (i32.const 0x00001800))
   ;; Keep WAT-owned namespaces disjoint from the retained Canvas font and
   ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
@@ -1634,6 +1637,20 @@
   (global $mm_timer_saved_esp (mut i32) (i32.const 0)) ;; ESP before callback injection
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return
+  ;; LineDDA callback continuation (CACA0012) and exact integer walk state.
+  (global $line_dda_ret_thunk (mut i32) (i32.const 0))
+  (global $line_dda_callback (mut i32) (i32.const 0))
+  (global $line_dda_data (mut i32) (i32.const 0))
+  (global $line_dda_x (mut i32) (i32.const 0))
+  (global $line_dda_y (mut i32) (i32.const 0))
+  (global $line_dda_end_x (mut i32) (i32.const 0))
+  (global $line_dda_end_y (mut i32) (i32.const 0))
+  (global $line_dda_dx (mut i32) (i32.const 0))
+  (global $line_dda_dy (mut i32) (i32.const 0))
+  (global $line_dda_sx (mut i32) (i32.const 0))
+  (global $line_dda_sy (mut i32) (i32.const 0))
+  (global $line_dda_err (mut i32) (i32.const 0))
+  (global $line_dda_ret (mut i32) (i32.const 0))
   ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
   ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
   ;; current ptr is freed (if cap too small) and a fresh one is allocated

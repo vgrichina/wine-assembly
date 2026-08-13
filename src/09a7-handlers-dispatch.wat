@@ -209,14 +209,73 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
-  ;; 712: LineDDA(xStart, yStart, xEnd, yEnd, lpProc) — stub: just return, callback not invoked
+  ;; Invoke the current LineDDA point callback, or finish the original API.
+  (func $line_dda_abs (param $value i32) (result i32)
+    (select (i32.sub (i32.const 0) (local.get $value)) (local.get $value)
+      (i32.lt_s (local.get $value) (i32.const 0))))
+
+  (func $line_dda_continue
+    (local $e2 i32)
+    ;; Endpoint is excluded, matching GDI's line convention and LineDDA docs.
+    (if (i32.and (i32.eq (global.get $line_dda_x) (global.get $line_dda_end_x))
+          (i32.eq (global.get $line_dda_y) (global.get $line_dda_end_y)))
+      (then
+        (global.set $eip (global.get $line_dda_ret))
+        (global.set $eax (i32.const 1))
+        (return)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $line_dda_data))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $line_dda_y))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $line_dda_x))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $line_dda_ret_thunk))
+    (global.set $eip (global.get $line_dda_callback))
+    (global.set $steps (i32.const 0)))
+
+  (func $line_dda_advance
+    (local $e2 i32)
+    (local.set $e2 (i32.shl (global.get $line_dda_err) (i32.const 1)))
+    (if (i32.ge_s (local.get $e2) (global.get $line_dda_dy))
+      (then
+        (global.set $line_dda_err
+          (i32.add (global.get $line_dda_err) (global.get $line_dda_dy)))
+        (global.set $line_dda_x
+          (i32.add (global.get $line_dda_x) (global.get $line_dda_sx)))))
+    (if (i32.le_s (local.get $e2) (global.get $line_dda_dx))
+      (then
+        (global.set $line_dda_err
+          (i32.add (global.get $line_dda_err) (global.get $line_dda_dx)))
+        (global.set $line_dda_y
+          (i32.add (global.get $line_dda_y) (global.get $line_dda_sy)))))
+    (call $line_dda_continue))
+
+  ;; 712: LineDDA(xStart, yStart, xEnd, yEnd, lpProc, lParam).
   (func $handle_LineDDA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; LineDDA calls a callback for each pixel on a line. Cards.dll uses it
-    ;; but we can stub it since card rendering happens in the DLL code that gets emulated.
-    ;; Actually cards.dll code calls this API thunk — we need to implement the callback loop.
-    ;; For now return non-zero (success) and skip the callback.
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args + data param
+    (if (i32.eqz (local.get $arg4))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    (global.set $line_dda_ret (call $gl32 (global.get $esp)))
+    (global.set $line_dda_callback (local.get $arg4))
+    (global.set $line_dda_data (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $line_dda_x (local.get $arg0))
+    (global.set $line_dda_y (local.get $arg1))
+    (global.set $line_dda_end_x (local.get $arg2))
+    (global.set $line_dda_end_y (local.get $arg3))
+    (global.set $line_dda_dx (call $line_dda_abs (i32.sub (local.get $arg2) (local.get $arg0))))
+    (global.set $line_dda_dy (i32.sub (i32.const 0)
+      (call $line_dda_abs (i32.sub (local.get $arg3) (local.get $arg1)))))
+    (global.set $line_dda_sx (select (i32.const 1) (i32.const -1)
+      (i32.lt_s (local.get $arg0) (local.get $arg2))))
+    (global.set $line_dda_sy (select (i32.const 1) (i32.const -1)
+      (i32.lt_s (local.get $arg1) (local.get $arg3))))
+    (global.set $line_dda_err (i32.add (global.get $line_dda_dx) (global.get $line_dda_dy)))
+    ;; Discard the original stdcall frame before entering the first callback.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    (call $line_dda_continue)
   )
 
   ;; 713: OpenFile(lpFileName, lpReOpenBuff, uStyle) — delegate to host_fs_create_file

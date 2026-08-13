@@ -3587,7 +3587,7 @@
   {
     "id": 429,
     "name": "LineDDA",
-    "nargs": 5,
+    "nargs": 6,
     "convention": "stdcall",
     "hash": 2152398450
   },
@@ -17055,5 +17055,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3858993295
+  },
+  {
+    "id": 2228,
+    "name": "GetColorAdjustment",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1473038309
   }
 ]

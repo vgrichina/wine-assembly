@@ -834,6 +834,10 @@ const extra = [
   // GDI32 — region builders + queries (exact polygon clip + GetRgnBox).
   { name: 'CreateEllipticRgn', nargs: 4 },
   { name: 'GetRgnBox', nargs: 2 },
+  // GDI32 — callback/state APIs. LineDDA historically had the wrong five-
+  // argument metadata; keep its six-argument ABI explicit here.
+  { name: 'LineDDA', nargs: 6 },
+  { name: 'GetColorAdjustment', nargs: 2 },
   // OLE32 — structured-storage element enumerator.
   { name: 'IEnumSTATSTG_QueryInterface', nargs: 3 },
   { name: 'IEnumSTATSTG_AddRef', nargs: 1 },
@@ -851,8 +855,9 @@ for (const api of extra) {
   if (!seen.has(api.name)) {
     existing.push({ id: existing.length, ...api, convention: api.convention || 'stdcall', hash: 0 });
     seen.add(api.name);
-  } else if (api.args || api.ret || api.convention) {
+  } else if (api.nargs !== undefined || api.args || api.ret || api.convention) {
     const current = existing.find(entry => entry.name === api.name);
+    if (api.nargs !== undefined) current.nargs = api.nargs;
     if (api.args) current.args = api.args;
     if (api.ret) current.ret = api.ret;
     if (api.convention) current.convention = api.convention;

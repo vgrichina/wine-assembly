@@ -714,6 +714,12 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
         (return)))
 
+    ;; LineDDA point callback returned; stdcall popped its three arguments.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0012))
+      (then
+        (call $line_dda_advance)
+        (return)))
+
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then

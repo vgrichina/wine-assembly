@@ -157,6 +157,25 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(canvasRgb(dst, 2, 4), 0x112233);
   });
 
+  check('color blits expand monochrome DDB bits through destination text and background colors', () => {
+    const bits = wat.guest_alloc(2) >>> 0;
+    wat.guest_write16(bits, 0x0040); // MSB-first pixels: zero, one.
+    const bitmap = wat.test_call_CreateBitmap(2, 1, 1, 1, bits) >>> 0;
+    const mono = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap && mono);
+    wat.test_call_SelectObject(mono, bitmap);
+    wat.test_gdi_dc_set_field(dst.hdc, 20, 0x000000FF, 0); // text = red COLORREF
+    wat.test_gdi_dc_set_field(dst.hdc, 24, 0x0000FF00, 0xFFFFFF); // background = green
+    assert.strictEqual(wat.test_call_StretchBlt(
+      dst.hdc, 0, 0, 4, 1, mono, 0, 0, 2, 1, 0x00CC0020), 1);
+    assert.deepStrictEqual([0, 1, 2, 3].map(x => packed(dst, x, 0)), [
+      0xFF0000, 0xFF0000, 0x00FF00, 0x00FF00,
+    ]);
+    assert.strictEqual(wat.test_call_BitBlt(
+      dst.hdc, 0, 1, 2, 1, mono, 0, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([packed(dst, 0, 1), packed(dst, 1, 1)], [0xFF0000, 0x00FF00]);
+  });
+
   check('SetDIBitsToDevice decodes indexed RGBQUAD sprites in WAT', () => {
     const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
     const bitsGa = wat.guest_alloc(8) >>> 0;
