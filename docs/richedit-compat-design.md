@@ -707,6 +707,11 @@ interfaces share correct 72-byte `STATSTG` records, including name ownership,
 `STATFLAG_NONAME`, 64-bit size fields, stream lock capabilities, storage CLSID,
 and masked state bits. Enumeration, deep copy, and commit/revert preserve the
 same metadata.
+The next persistence slice adds a real CFB v3 writer. It emits DIFAT/FAT,
+directory sectors with name-ordered red-black sibling trees, mini-FAT and the
+root mini-stream, nested storage metadata, and exact regular/mini stream bytes.
+An independent byte-level parser passes 8/8. Defensive reopen and wiring CFB
+bytes into public storage commit remain the next steps.
 At this foundation stage it did not serialize a Compound File Binary container,
 expose an `IDataObject`, insert a `REOBJECT`, or render/activate an OLE server.
 Later sections document the completed bounded `IDataObject` and static-DIB

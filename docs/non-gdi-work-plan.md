@@ -280,6 +280,9 @@ bits.
 
 ### P2.3 Compound File Binary persistence
 
+Status: writer foundation complete on 2026-08-12; defensive reopen and public
+commit integration remain open.
+
 - Define one internal tree model shared by in-memory storage and serialization.
 - Implement a minimal valid CFB writer: header, DIFAT/FAT, directory, stream
   chains, mini-FAT/mini-stream where required, root CLSID, and deterministic
@@ -291,6 +294,15 @@ bits.
 - Add a small checked-in interoperability fixture produced by an external
   Win32/OLE implementation if licensing permits; otherwise document fixture
   provenance and generate it from a tiny test program.
+
+2026-08-12 writer result: the in-memory tree serializes to a valid CFB v3
+container with a 512-byte header/sectors, DIFAT/FAT chains, directory sectors,
+name-ordered red-black sibling trees, CLSIDs/state bits, regular stream chains,
+and mini-stream/mini-FAT chains for data below 4 KiB. The independent byte-level
+parser in `test/test-ole-cfb.js` passes 8/8, including nested parentage and exact
+small/large payload bytes. This is deliberately exposed to tests first; public
+`IStorage::Commit` will emit it only after the defensive reader and malformed
+container suite are complete.
 
 ### Acceptance
 

@@ -926,6 +926,12 @@
     (call $ole_fill_statstg (local.get $obj) (local.get $stat) (local.get $flags)))
   (func (export "test_ole_storage_set_state_bits") (param $storage i32) (param $bits i32) (param $mask i32) (result i32)
     (call $ole_storage_set_state_bits (local.get $storage) (local.get $bits) (local.get $mask)))
+  (func (export "test_ole_cfb_serialize") (param $storage i32) (param $lockbytes i32) (result i32)
+    (call $ole_cfb_serialize (local.get $storage) (local.get $lockbytes)))
+  (func (export "test_ole_lockbytes_data") (param $lockbytes i32) (result i32)
+    (call $gl32 (i32.add (local.get $lockbytes) (i32.const 12))))
+  (func (export "test_ole_lockbytes_size") (param $lockbytes i32) (result i32)
+    (call $gl32 (i32.add (local.get $lockbytes) (i32.const 16))))
   (func (export "test_ole_create_stream") (param $storage i32) (param $name i32) (result i32)
     (local $stream i32)
     (if (i32.or

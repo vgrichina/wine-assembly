@@ -33,6 +33,10 @@ partial-count and self-copy behavior.
 sizes, stream lock capabilities, storage CLSIDs/state bits, and
 `STATFLAG_NONAME`; snapshots, deep copies, and transaction checkpoints preserve
 that metadata. The focused storage/stream suite passes 68/68.
+The first compound-file persistence slice now writes real CFB v3 containers,
+including FAT, mini-FAT/mini-stream, nested directory trees, CLSIDs/state bits,
+and small/large stream payloads; its independent byte parser passes 8/8.
+Defensive CFB reopen and public commit integration remain pending.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports
