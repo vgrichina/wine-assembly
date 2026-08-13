@@ -229,12 +229,14 @@ assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host
   'web host should load the GDI surface module before host imports');
 assert(indexHtml.includes('lib/host-imports.js?v=197'), 'web host should cache-bust host imports after WAT polyline support');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
-assert(indexHtml.includes('host.js?v=193'), 'web host should cache-bust host.js after WAT polyline rasterization');
-assert(hostJs.includes("static SOURCE_VERSION = '193'"), 'web host should cache-bust WAT source compilation');
+assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
+assert(indexHtml.includes('host.js?v=194'), 'web host should cache-bust host.js after resilient WAT compilation');
+assert(hostJs.includes("static SOURCE_VERSION = '194'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
-assert(hostJs.includes('sourceVersion: WineAssembly.SOURCE_VERSION'), 'host.js should include WAT source version in compile cache key');
+assert(hostJs.includes('compileWatSnapshot('), 'host.js should compile declaration and body passes from one WAT source snapshot');
+assert(hostJs.includes('WineAssembly._wasmModulePromise = null'), 'host.js should allow a failed WAT compilation to retry');
 assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
 assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');
 assert(hostImportsJs.includes('ctx.availableDllFiles'), 'host imports should let LoadLibraryA yield for browser-fetchable DLLs not already in VFS');

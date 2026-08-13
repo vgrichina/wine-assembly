@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '193';
+  static SOURCE_VERSION = '194';
 
   constructor() {
     this.instance = null;
@@ -721,15 +721,28 @@ class WineAssembly {
 
   static getWasmModule() {
     if (!WineAssembly._wasmModulePromise) {
-      WineAssembly._wasmModulePromise = (async () => {
+      const attempt = (WineAssembly._wasmCompileAttempt || 0) + 1;
+      WineAssembly._wasmCompileAttempt = attempt;
+      const modulePromise = (async () => {
         const tailCalls = WineAssembly.supportsWasmTailCalls();
         console.log(`[host] wasm tail calls ${tailCalls ? 'enabled' : 'not available; using compatibility dispatch'}`);
-        const bytes = await compileWat(
-          f => fetch(`src/${f}?v=${WineAssembly.SOURCE_VERSION}`).then(r => r.text()),
-          { tailCalls, sourceVersion: WineAssembly.SOURCE_VERSION }
+        const bytes = await compileWatSnapshot(
+          async file => {
+            const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`);
+            if (!response.ok) throw new Error(`Unable to load ${file}: HTTP ${response.status}`);
+            return response.text();
+          },
+          { tailCalls, cacheKey: `${WineAssembly.SOURCE_VERSION}:browser:${attempt}` }
         );
         return WebAssembly.compile(bytes);
       })();
+      WineAssembly._wasmModulePromise = modulePromise;
+      modulePromise.catch(() => {
+        // A transient source update must not poison every later Launch click.
+        if (WineAssembly._wasmModulePromise === modulePromise) {
+          WineAssembly._wasmModulePromise = null;
+        }
+      });
     }
     return WineAssembly._wasmModulePromise;
   }
