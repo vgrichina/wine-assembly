@@ -65,10 +65,11 @@ assert.strictEqual(internalStubs.length, 70,
 (async () => {
   const wasm = await compileWat(file => fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
   assert(wasm.length > 0, 'WAT must remain linkable after removing JS imports');
+  await WebAssembly.compile(wasm);
   console.log(`PASS  JS GDI bridge is restricted to ${PERMANENT_NON_TEXT_BRIDGE.length} presentation imports and ${CANVAS_TEXT_POLICY.length} text imports`);
   console.log(`PASS  all ${internalStubs.length} eliminated non-text semantic calls are explicit WAT stubs`);
   console.log('PASS  temporary non-text exception budget is zero and cannot expand');
-  console.log(`PASS  WAT compiles after the bridge purge (${wasm.length} bytes)`);
+  console.log(`PASS  WAT validates after the bridge purge (${wasm.length} bytes)`);
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);
