@@ -108,8 +108,27 @@ function readBitmapObject(wat, handle, wide = false) {
     const presentation = gdi.surfacePresentations.get(bitmap);
     assert.strictEqual(presentation.surface.topDown, true);
     assert.deepStrictEqual(presentation.surface.palette, [[0, 0, 0], [0x33, 0x22, 0x11]]);
-    assert.strictEqual(wat.test_call_CreateDIBitmap(0, bmi, 4, pixelsGa, bmi, 1), 0,
-      'DIB_PAL_COLORS requires palette-object realization and must not be misrendered');
+    const logical = wat.guest_alloc(12) >>> 0;
+    wat.guest_write32(logical, 0x00020300); // version 0x300, two entries
+    wat.guest_write32(logical + 4, 0x00443322); // R=22 G=33 B=44
+    wat.guest_write32(logical + 8, 0x00A0B0C0); // R=C0 G=B0 B=A0
+    const palette = wat.test_call_CreatePalette(logical) >>> 0;
+    const dc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(palette && dc);
+    assert.strictEqual(wat.test_call_SelectPalette(dc, palette) >>> 0, 0x3001F);
+    wat.guest_write32(bmi + 40, 0x00000001); // WORD palette indexes [1, 0]
+    const palBitmap = wat.test_call_CreateDIBitmap(dc, bmi, 4, pixelsGa, bmi, 1) >>> 0;
+    assert(palBitmap, 'DIB_PAL_COLORS should resolve through the source DC palette');
+    const palStorage = wat.test_gdi_bitmap_storage(palBitmap) >>> 0;
+    assert.deepStrictEqual([...bytes.subarray(palStorage + 8, palStorage + 16)], [
+      0xA0, 0xB0, 0xC0, 0,
+      0x44, 0x33, 0x22, 0,
+    ]);
+    wat.guest_write32(bmi + 40, 0xFFFFFFFF);
+    assert.deepStrictEqual([...bytes.subarray(palStorage + 8, palStorage + 16)], [
+      0xA0, 0xB0, 0xC0, 0,
+      0x44, 0x33, 0x22, 0,
+    ], 'created bitmap must own its resolved color table');
   });
 
   check('CreateDIBitmap without CBM_INIT ignores caller pixel bytes', () => {

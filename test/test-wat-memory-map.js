@@ -87,7 +87,6 @@ const requiredRegions = [
   'TV_TABLE',
   'SYNC_TABLE',
   'EDIT_LAYOUT_SCRATCH',
-  'GDI_PALETTE_TABLE',
   'GDI_REGION_TABLE',
   'GDI_REGION_BANDS',
   'GDI_REGION_WORK',
@@ -95,6 +94,7 @@ const requiredRegions = [
   'GDI_DC_RASTER_TABLE',
   'GDI_LINE_DESC',
   'GDI_BLIT_DESC',
+  'GDI_PALETTE_RESOLVE',
   'GDI_DC_STATE_TABLE',
   'GDI_OBJECT_TABLE',
   'GDI_WINDOW_SURFACE_TABLE',
@@ -135,14 +135,8 @@ assert(!/\(i32\.const\s+0x0*9000\)/i.test(treeviewSource),
 
 const handlersSource = fs.readFileSync(path.join(SRC, '09a-handlers.wat'), 'utf8');
 const hostImportsSource = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
-assert(!/\b0x0*60(?:00|20|40)\b/i.test(`${handlersSource}\n${hostImportsSource}`),
-  'GDI palette storage must use $GDI_PALETTE_TABLE, not the obsolete 0x6000/0x6020/0x6040 low-memory table');
-
-const paletteTable = globals.get('GDI_PALETTE_TABLE');
-const hostPaletteMatch = hostImportsSource.match(/\bconst\s+GDI_PALETTE_TABLE\s*=\s*(0x[0-9a-f]+|\d+)\s*;/i);
-assert(hostPaletteMatch, 'host-imports.js must define GDI_PALETTE_TABLE');
-assert.strictEqual(parseConstI32(hostPaletteMatch[1]), paletteTable.value,
-  'host-imports.js GDI_PALETTE_TABLE must match the WAT global');
+assert(!/GDI_PALETTE_(?:TABLE|SELECTED|ENTRIES)/.test(hostImportsSource),
+  'JavaScript must not retain semantic GDI palette storage');
 
 const apiTable = JSON.parse(fs.readFileSync(path.join(SRC, 'api_table.json'), 'utf8'));
 assert(apiTable.some(api => api.name === 'GetProfileStringW' && api.nargs === 5),

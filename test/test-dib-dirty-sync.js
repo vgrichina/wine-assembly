@@ -50,8 +50,8 @@ const DESCRIPTOR = 0x07EF1000;
   assert.strictEqual(host.gdi_surface_upload(bitmap, 1, 0, 2, 1), 1);
   const presented = gdi.surfacePresentations.get(bitmap).canvas
     .getContext('2d').getImageData(0, 0, 2, 1).data;
-  assert.deepStrictEqual(Array.from(presented), [0, 0, 0, 0, 0, 255, 0, 255],
-    'bounded upload should update only its requested pixel');
+  assert.deepStrictEqual(Array.from(presented), [0, 0, 0, 255, 0, 255, 0, 255],
+    'bounded upload should update only its requested pixel and retain opaque BI_RGB presentation');
 
   e.guest_write32(bitsGA + 4094, 0x11223344);
   assert.strictEqual(e.test_dib_is_allocated(bitsGA), 1, 'the first backing page remains allocated');

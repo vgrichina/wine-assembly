@@ -24,9 +24,10 @@ inventories are empty. Pen, solid-brush, memory-DC,
 compatible-bitmap, DIB-section, window-surface, region painting, line, basic
 shape, chrome, pixel, core blit, transparent image, disabled image, and DC
 mapping semantics are now WAT-owned. This includes `GetDIBits`, `SetDIBits`,
-`GetDIBColorTable`, and `StretchDIBits` conversion across canonical indexed
-and true-color bitmap descriptors, plus rounded rectangles, Bezier curves,
-arcs, and window scrolling. DirectDraw HDCs now address native WAT DIB bytes,
+`GetDIBColorTable`, `SetDIBColorTable`, and `StretchDIBits` conversion across
+canonical indexed and true-color bitmap descriptors, plus logical palette
+objects, per-DC palette selection, `DIB_PAL_COLORS` resolution, rounded
+rectangles, Bezier curves, arcs, and window scrolling. DirectDraw HDCs now address native WAT DIB bytes,
 screen DCs select a persistent WAT bitmap, and JS no longer owns DC handles,
 semantic DC records, HDC target resolution, or Canvas-to-DIB synchronization.
 Broader public GDI32 compatibility is tracked

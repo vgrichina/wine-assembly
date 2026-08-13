@@ -19,6 +19,8 @@ const { bootRenderHarness } = require('./render-helper');
   function makeDib(width, height) {
     const bmi = wat.guest_alloc(40) >>> 0;
     const out = wat.guest_alloc(4) >>> 0;
+    for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmi + offset, 0);
+    wat.guest_write32(out, 0);
     wat.guest_write32(bmi, 40);
     wat.guest_write32(bmi + 4, width);
     wat.guest_write32(bmi + 8, -height);
@@ -27,7 +29,7 @@ const { bootRenderHarness } = require('./render-helper');
     const bitmap = wat.test_call_CreateDIBSection(0, bmi, out) >>> 0;
     const bitsGa = wat.guest_read32(out) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
-    assert(bitmap && bitsGa && hdc);
+    assert(bitmap && bitsGa && hdc, 'CreateDIBSection/DC failed');
     assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap) >>> 0, 0x30007);
     return {
       bitmap, hdc, width, height, stride: width * 4,
@@ -127,8 +129,6 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(dst, 0, 1), 0x0000FF);
     assert.strictEqual(packed(dst, 1, 1), 0xFF0000);
     assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
-    assert.strictEqual(wat.test_call_CreateDIBPatternBrushPt(dib, 1), 0,
-      'DIB_PAL_COLORS must fail until selected palette realization is owned');
   });
 
   check('BitBlt applies SRCCOPY between canonical WAT surfaces', () => {
@@ -346,11 +346,11 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write32(bmiGa + 8, 3);
     wat.guest_write16(bmiGa + 12, 1);
     wat.guest_write16(bmiGa + 14, 24);
-    assert.strictEqual(wat.test_gdi_get_dibits(surface.bitmap, 0, 3, outWa, bmiWa, 0), 3);
+    assert.strictEqual(wat.test_gdi_get_dibits(0, surface.bitmap, 0, 3, outWa, bmiWa, 0), 3);
     // Bottom-up output begins with the blue bottom scanline (DWORD stride 12).
     assert.deepStrictEqual([...bytes.slice(outWa + 6, outWa + 9)], [0xFF, 0x00, 0x00]);
     const copy = makeDib(3, 3);
-    assert.strictEqual(wat.test_gdi_set_dibits(copy.bitmap, 0, 3, outWa, bmiWa, 0), 3);
+    assert.strictEqual(wat.test_gdi_set_dibits(0, copy.bitmap, 0, 3, outWa, bmiWa, 0), 3);
     assert.strictEqual(packed(copy, 0, 0), 0xFF0000);
     assert.strictEqual(packed(copy, 1, 1), 0x00FF00);
     assert.strictEqual(packed(copy, 2, 2), 0x0000FF);

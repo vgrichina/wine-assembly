@@ -53,8 +53,12 @@ strict source/destination bounds. The raster core reads and writes 1-, 4-,
 owned RGBQUAD table (expanding core RGBTRIPLE palettes), and performs cross-format ROP blits before uploading the
 result. This is sufficient for Paint's compressed tool strip and SkiFree's
 indexed sprite-atlas construction, as well as Solitaire's CARDS.dll core
-bitmaps. `BI_BITFIELDS` and
-palette-object (`DIB_PAL_COLORS`) realization remain follow-up work.
+bitmaps. `BI_BITFIELDS` remains follow-up work. Logical palettes are canonical
+WAT GDI objects with per-DC selection, mutation, resizing, nearest-color
+lookup, and owned entry storage. `DIB_PAL_COLORS` bitmap creation and transient
+DIB calls resolve WORD indexes through the selected logical palette; pattern
+brushes preserve the indexes and resolve them against the destination DC at
+sample time.
 
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
 24- and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
@@ -79,10 +83,11 @@ serializes stable `LOGPEN`, `LOGBRUSH`, `BITMAP`, and `LOGFONT` structures.
 Pattern-dependent `PatBlt`, `BitBlt`, `StretchBlt`, `StretchDIBits`, and flood
 fill operations use the same coordinate-aware sampler. `CreatePatternBrush`
 snapshots any canonical bitmap into brush-owned storage, and
-`CreateDIBPatternBrushPt` copies packed `DIB_RGB_COLORS` data into the same
-native-format bitmap records. Pattern pixels repeat in device coordinates with
-the canonical brush origin and are sampled by every brush-dependent WAT path.
-Indexed `DIB_PAL_COLORS` patterns remain pending selected-palette realization.
+`CreateDIBPatternBrushPt` copies packed `DIB_RGB_COLORS` data or preserves
+`DIB_PAL_COLORS` logical indexes in the same native-format bitmap records.
+Pattern pixels repeat in device coordinates with the canonical brush origin
+and are sampled by every brush-dependent WAT path. Palette-index patterns are
+resolved through each destination DC's selected logical palette when sampled.
 
 Tabbed text now uses the same canonical DC-to-text binding as ordinary text.
 WAT parses ANSI or UTF-16 tab characters, measures individual runs, expands

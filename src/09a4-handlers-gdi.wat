@@ -549,7 +549,8 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; UpdateColors(hdc) — palette refresh is a no-op for canvas-backed GDI.
+  ;; UpdateColors(hdc) — canonical surfaces store true-color results, so no
+  ;; physical palette remap is required after realizing a logical palette.
   (func $handle_UpdateColors (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))

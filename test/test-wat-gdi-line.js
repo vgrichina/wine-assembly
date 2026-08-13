@@ -47,6 +47,8 @@ async function main() {
     const stride = ((width * bpp + 31) >> 5) << 2;
     const bmi = wat.guest_alloc(0x1000) >>> 0;
     const out = wat.guest_alloc(4) >>> 0;
+    for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmi + offset, 0);
+    wat.guest_write32(out, 0);
     wat.guest_write32(bmi, 40);
     wat.guest_write32(bmi + 4, width);
     wat.guest_write32(bmi + 8, topDown ? -height : height);
@@ -281,9 +283,12 @@ async function main() {
     const thin = createPen(0, 1, 0x000000FF);
     selectObject(dib.hdc, thin);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 70000, 0), 0);
-    const dib16 = makeDib(6, 4, 16);
-    selectObject(dib16.hdc, thin);
-    assert.strictEqual(wat.test_gdi_line_try(dib16.hdc, 0, 0, 4, 0), 0);
+    const bitmap16 = wat.test_call_CreateBitmap(6, 4, 1, 16, 0) >>> 0;
+    const dc16 = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap16 && dc16, 'failed to create 16bpp DDB/DC');
+    assert.strictEqual(selectObject(dc16, bitmap16), 0x30007);
+    selectObject(dc16, thin);
+    assert.strictEqual(wat.test_gdi_line_try(dc16, 0, 0, 4, 0), 0);
   });
 
   check('wide dash requests normalize to solid and PS_NULL never draws', () => {

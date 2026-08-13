@@ -422,17 +422,67 @@
       (br $commands)))
     (i32.const 0))
 
-  ;; Materialize a parsed bitmap as an owned DDB. Pixel and palette bytes are
+  ;; Copy a source color table into canonical RGBQUAD-sized storage.
+  ;; mode 0 copies RGBQUAD/RGBTRIPLE input, mode 1 resolves WORD indexes
+  ;; through a logical palette, mode 2 preserves WORD indexes for deferred
+  ;; DIB pattern-brush realization, and mode 3 clones preserved i32 indexes.
+  (func $gdi_bitmap_copy_palette (param $dst i32) (param $src i32)
+        (param $count i32) (param $flags i32) (param $mode i32)
+        (param $palette_handle i32) (result i32)
+    (local $i i32) (local $index i32) (local $color i32)
+    (if (i32.eqz (local.get $count)) (then (return (i32.const 1))))
+    (if (i32.or (i32.eqz (local.get $dst)) (i32.eqz (local.get $src)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $mode))
+      (then
+        (if (i32.and (local.get $flags) (i32.const 8))
+          (then
+            (block $done (loop $triples
+              (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+              (i32.store (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))
+                (i32.and (i32.load (i32.add (local.get $src)
+                  (i32.mul (local.get $i) (i32.const 3)))) (i32.const 0x00FFFFFF)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $triples))))
+          (else (memory.copy (local.get $dst) (local.get $src)
+            (i32.shl (local.get $count) (i32.const 2)))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $mode) (i32.const 3))
+      (then
+        (memory.copy (local.get $dst) (local.get $src)
+          (i32.shl (local.get $count) (i32.const 2)))
+        (return (i32.const 1))))
+    (block $done (loop $indexes
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $index (i32.load16_u (i32.add (local.get $src)
+        (i32.shl (local.get $i) (i32.const 1)))))
+      (if (i32.eq (local.get $mode) (i32.const 2))
+        (then (i32.store (i32.add (local.get $dst)
+          (i32.shl (local.get $i) (i32.const 2))) (local.get $index)))
+        (else
+          (local.set $color (call $gdi_palette_colorref
+            (local.get $palette_handle) (local.get $index)))
+          (if (i32.eq (local.get $color) (i32.const -1))
+            (then (return (i32.const 0))))
+          (i32.store (i32.add (local.get $dst)
+            (i32.shl (local.get $i) (i32.const 2)))
+            (call $gdi_raster_swap_rb (local.get $color)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $indexes)))
+    (i32.const 1))
+
+  ;; Materialize a parsed bitmap as an owned DDB/DIB. Pixel and palette bytes are
   ;; copied into one DIB-arena allocation; JavaScript receives only the final
   ;; presentation descriptor through gdi_surface_create/upload.
   (func $gdi_bitmap_create_owned (param $plan i32) (param $pixels i32)
-        (param $copy_pixels i32) (param $copy_palette i32) (result i32)
+        (param $copy_pixels i32) (param $copy_palette i32)
+        (param $object_flags i32) (param $palette_mode i32)
+        (param $palette_handle i32) (result i32)
     (local $width i32) (local $height i32) (local $bpp i32) (local $flags i32)
     (local $stride i32) (local $image_size i32) (local $palette_src i32)
     (local $palette_count i32) (local $palette_size i32) (local $total i64)
     (local $compression i32) (local $encoded_size i32)
     (local $storage_ga i32) (local $storage i32) (local $palette i32) (local $handle i32)
-    (local $i i32)
     (if (i32.eqz (local.get $plan)) (then (return (i32.const 0))))
     (local.set $width (i32.load (local.get $plan)))
     (local.set $height (i32.load offset=4 (local.get $plan)))
@@ -474,20 +524,19 @@
             (i32.ne (local.get $palette_src) (i32.const 0))))
       (then
         (local.set $palette (i32.add (local.get $storage) (local.get $image_size)))
-        (if (i32.and (local.get $flags) (i32.const 8))
+        (if (i32.eqz (call $gdi_bitmap_copy_palette
+              (local.get $palette) (local.get $palette_src) (local.get $palette_count)
+              (local.get $flags) (local.get $palette_mode) (local.get $palette_handle)))
           (then
-            (block $palette_done (loop $palette_copy
-              (br_if $palette_done (i32.ge_u (local.get $i) (local.get $palette_count)))
-              (i32.store (i32.add (local.get $palette) (i32.shl (local.get $i) (i32.const 2)))
-                (i32.and (i32.load (i32.add (local.get $palette_src)
-                  (i32.mul (local.get $i) (i32.const 3)))) (i32.const 0x00FFFFFF)))
-              (local.set $i (i32.add (local.get $i) (i32.const 1)))
-              (br $palette_copy))))
-          (else
-            (memory.copy (local.get $palette) (local.get $palette_src) (local.get $palette_size))))))
+            (call $dib_free_wasm (local.get $storage))
+            (return (i32.const 0))))))
+    (if (i32.or (i32.eq (local.get $palette_mode) (i32.const 2))
+          (i32.eq (local.get $palette_mode) (i32.const 3)))
+      (then (local.set $object_flags
+        (i32.or (local.get $object_flags) (i32.const 0x10)))))
     (local.set $handle (call $gdi_bitmap_alloc
       (local.get $width) (local.get $height) (local.get $bpp)
-      (i32.or (local.get $flags) (i32.const 4))
+      (i32.or (i32.or (local.get $flags) (local.get $object_flags)) (i32.const 4))
       (local.get $storage) (local.get $stride) (local.get $palette) (local.get $palette_count)))
     (if (i32.eqz (local.get $handle))
       (then
@@ -504,7 +553,8 @@
           (local.get $bits_pixel) (global.get $GDI_BITMAP_PLAN)))
       (then (return (i32.const 0))))
     (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN) (local.get $pixels)
-      (i32.ne (local.get $pixels) (i32.const 0)) (i32.const 0)))
+      (i32.ne (local.get $pixels) (i32.const 0)) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
 
   ;; HINST_COMMCTRL names six standard toolbar strips that are owned by the
   ;; common-controls DLL rather than the caller's PE resources. Keep the
@@ -557,7 +607,8 @@
     (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
       (i32.mul (local.get $stride) (local.get $height)))
     (local.set $handle (call $gdi_bitmap_create_owned
-      (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
     (local.set $record (call $gdi_object_record (local.get $handle)))
     (local.set $bits (i32.load offset=24 (local.get $record)))
@@ -590,21 +641,30 @@
       (i32.const 0) (local.get $width) (local.get $height)))
     (local.get $handle))
 
-  (func $gdi_bitmap_create_dibitmap (param $info i32) (param $pixels i32)
+  (func $gdi_bitmap_create_dibitmap (param $hdc i32) (param $info i32) (param $pixels i32)
         (param $init i32) (param $usage i32) (result i32)
     (if (i32.eqz (call $gdi_bitmap_plan_info
           (local.get $info) (global.get $GDI_BITMAP_PLAN)))
       (then (return (i32.const 0))))
-    ;; DIB_PAL_COLORS tables contain WORD palette indexes rather than RGBQUADs.
-    ;; Palette-object realization is not yet WAT-owned, so fail rather than
-    ;; publishing incorrect colors for paletted inputs.
-    (if (i32.and (i32.ne (local.get $usage) (i32.const 0))
-          (i32.le_u (i32.load offset=8 (global.get $GDI_BITMAP_PLAN)) (i32.const 8)))
+    (if (i32.gt_u (local.get $usage) (i32.const 1))
       (then (return (i32.const 0))))
     (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN) (local.get $pixels)
       (i32.and (i32.ne (local.get $init) (i32.const 0))
         (i32.ne (local.get $pixels) (i32.const 0)))
-      (i32.const 1)))
+      (i32.const 1) (i32.const 0) (local.get $usage)
+      (call $gdi_dc_selected_palette (local.get $hdc))))
+
+  (func $gdi_bitmap_create_dib_section (param $hdc i32) (param $info i32)
+        (param $usage i32) (result i32)
+    (if (i32.eqz (call $gdi_bitmap_plan_info
+          (local.get $info) (global.get $GDI_BITMAP_PLAN)))
+      (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $usage) (i32.const 1))
+      (then (return (i32.const 0))))
+    (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN)
+      (i32.const 0) (i32.const 0) (i32.const 1)
+      (i32.const 1) (local.get $usage)
+      (call $gdi_dc_selected_palette (local.get $hdc))))
 
   (func $gdi_bitmap_clone_owned (param $bitmap i32) (result i32)
     (local $record i32) (local $plan i32)
@@ -625,7 +685,11 @@
       (i32.mul (i32.load offset=28 (local.get $record))
         (i32.load offset=12 (local.get $record))))
     (call $gdi_bitmap_create_owned (local.get $plan)
-      (i32.load offset=24 (local.get $record)) (i32.const 1) (i32.const 1)))
+      (i32.load offset=24 (local.get $record)) (i32.const 1) (i32.const 1)
+      (i32.and (i32.load offset=20 (local.get $record)) (i32.const 1))
+      (select (i32.const 3) (i32.const 0)
+        (i32.ne (i32.and (i32.load offset=20 (local.get $record)) (i32.const 0x10)) (i32.const 0)))
+      (i32.const 0)))
 
   (func $gdi_bitmap_wrap_pattern_brush (param $bitmap i32) (param $style i32) (result i32)
     (local $brush i32) (local $record i32)
@@ -650,9 +714,10 @@
     (if (i32.eqz (local.get $owned)) (then (return (i32.const 0))))
     (call $gdi_bitmap_wrap_pattern_brush (local.get $owned) (i32.const 3)))
 
-  ;; packedDib points at BITMAPINFO immediately followed by its RGBQUAD table
-  ;; and native pixels. DIB_PAL_COLORS requires selected-palette realization,
-  ;; so indexed requests fail atomically until that state is canonical.
+  ;; packedDib points at BITMAPINFO followed by an RGBQUAD table or WORD
+  ;; logical-palette indexes and then native pixels. Palette-index brushes
+  ;; preserve those indexes and resolve them against the destination DC when
+  ;; sampled, matching their deferred Win32 semantics.
   (func $gdi_bitmap_create_dib_pattern_brush (param $packed_dib i32)
         (param $usage i32) (result i32)
     (local $plan i32) (local $pixels i32) (local $bitmap i32)
@@ -660,14 +725,20 @@
     (local.set $plan (global.get $GDI_BITMAP_PLAN))
     (if (i32.eqz (call $gdi_bitmap_plan_info (local.get $packed_dib) (local.get $plan)))
       (then (return (i32.const 0))))
-    (if (i32.and (i32.ne (local.get $usage) (i32.const 0))
-          (i32.le_u (i32.load offset=8 (local.get $plan)) (i32.const 8)))
+    (if (i32.gt_u (local.get $usage) (i32.const 1))
       (then (return (i32.const 0))))
     (local.set $pixels (i32.add (local.get $packed_dib)
       (i32.add (i32.load offset=36 (local.get $plan))
-        (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 2)))))
+        (if (result i32) (i32.and (i32.ne (local.get $usage) (i32.const 0))
+              (i32.le_u (i32.load offset=8 (local.get $plan)) (i32.const 8)))
+          (then (i32.and (i32.add
+            (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 1))
+            (i32.const 3)) (i32.const -4)))
+          (else (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 2)))))))
     (local.set $bitmap (call $gdi_bitmap_create_owned
-      (local.get $plan) (local.get $pixels) (i32.const 1) (i32.const 1)))
+      (local.get $plan) (local.get $pixels) (i32.const 1) (i32.const 1)
+      (i32.const 0) (select (i32.const 2) (i32.const 0)
+        (i32.ne (local.get $usage) (i32.const 0))) (i32.const 0)))
     (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
     (call $gdi_bitmap_wrap_pattern_brush (local.get $bitmap) (i32.const 6)))
 
@@ -677,7 +748,7 @@
       (then (return (i32.const 0))))
     (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN)
       (i32.load offset=28 (global.get $GDI_BITMAP_PLAN))
-      (i32.const 1) (i32.const 1)))
+      (i32.const 1) (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
 
   ;; Convert a bounded LoadBitmapW name to the ASCII-compatible resource-name
   ;; form understood by the shared PE resource walker. Integer IDs pass through.

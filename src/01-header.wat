@@ -160,15 +160,8 @@
       (local.get 2) (local.get 3)))
   ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
   (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32)
-    (call $gdi_bitmap_create_dibitmap (local.get 0) (local.get 1)
+    (call $gdi_bitmap_create_dibitmap (i32.const 0) (local.get 0) (local.get 1)
       (i32.ne (i32.and (local.get 2) (i32.const 4)) (i32.const 0)) (i32.const 0)))
-  ;; gdi_create_dib_bitmap(lpbmi_wa, lpbInit_wa, fdwInit) → handle
-  (func $host_gdi_create_dib_section (param i32 i32 i32 i32 i32) (result i32)
-    (call $gdi_create_dib_section_internal
-      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
-  ;; gdi_create_dib_section(w, h, bpp, lpBits_wa, lpbmi_wa) → handle; guest writes pixels directly to
-  ;; lpBits_wa. WAT raster operations and presentation read that canonical
-  ;; storage directly; JavaScript does not maintain a DIB shadow copy.
   (func $host_gdi_get_object_bits (param i32) (result i32)
     (call $gdi_bitmap_public_bits (local.get 0)))
   ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
@@ -376,7 +369,8 @@
       (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 4) (i32.const 0x30017)))))
     (if (i32.eq (local.get $type) (i32.const 2))
       (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010)))))
-    (if (i32.eq (local.get $type) (i32.const 5)) (then (return (i32.const 0x3001F))))
+    (if (i32.eq (local.get $type) (i32.const 5))
+      (then (return (call $gdi_dc_selected_palette (local.get $hdc)))))
     (if (i32.eq (local.get $type) (i32.const 6))
       (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 88) (i32.const 0x3001D)))))
     (if (i32.eq (local.get $type) (i32.const 7))
@@ -506,13 +500,13 @@
   ;; gdi_ext_flood_fill(hdc, x, y, color, fillType) → BOOL
   (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_get_dibits
-      (local.get 1) (local.get 2) (local.get 3)
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (if (result i32) (local.get 4) (then (call $g2w (local.get 4))) (else (i32.const 0)))
       (local.get 5) (local.get 6)))
   ;; gdi_get_di_bits(hdc, hBitmap, startScan, numScans, bitsGA, bmiWA, colorUse) → numScans
   (func $host_gdi_set_dib_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_set_dibits
-      (local.get 1) (local.get 2) (local.get 3)
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (local.get 4) (local.get 5) (local.get 6)))
   ;; gdi_set_dib_bits(hdc, hBitmap, startScan, numScans, bitsWasmAddr, bmiWasmAddr, colorUse) → numScans
   (func $host_gdi_get_dib_color_table (param i32 i32 i32 i32) (result i32)
@@ -954,7 +948,6 @@
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
-  ;; 0x07F0B000 4160B    GDI_PALETTE_TABLE (4 palette slots + selected index)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
@@ -1089,12 +1082,6 @@
   (global $EDIT_LAYOUT_SCRATCH i32 (i32.const 0x07F01800))
   (global $EDIT_LAYOUT_SCRATCH_SIZE i32 (i32.const 0x00000C00))
   (global $EDIT_LAYOUT_MAX i32 (i32.const 384))
-  ;; GDI palette table:
-  ;;   +0x00  4 slots x {handle:i32, count:i32}
-  ;;   +0x20  selected palette index for host DIB_PAL_COLORS resolution
-  ;;   +0x40  4 slots x 256 PALETTEENTRY bytes
-  (global $GDI_PALETTE_TABLE i32 (i32.const 0x07F0B000))
-  (global $GDI_PALETTE_TABLE_SIZE i32 (i32.const 0x00001040))
   ;; WAT-owned HRGN records (255 live slots in a 256 x 32-byte table):
   ;;   +0 state (0 free, 1 simple/empty, 2 canonical complex, 3 legacy mirror)
   ;;   +4 generation, +8..+20 bbox RECT, +24 temporary host mirror handle,
@@ -1142,6 +1129,10 @@
   ;; descriptor so it cannot clobber active line/blit descriptors.
   (global $GDI_BRUSH_DESC i32 (i32.const 0x07EF12E0))
   (global $GDI_BRUSH_DESC_SIZE i32 (i32.const 0x00000050))
+  ;; Synchronous DIB_PAL_COLORS decoding resolves WORD logical-palette
+  ;; indexes into this RGBQUAD table before a raster operation starts.
+  (global $GDI_PALETTE_RESOLVE i32 (i32.const 0x07EF1330))
+  (global $GDI_PALETTE_RESOLVE_SIZE i32 (i32.const 0x00000400))
   ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
   ;; presentation and GDI operations that have not moved to WAT yet.
   (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))
@@ -1916,10 +1907,6 @@
   (global $fpu_raw5 (mut i64) (i64.const 0))
   (global $fpu_raw6 (mut i64) (i64.const 0))
   (global $fpu_raw7 (mut i64) (i64.const 0))
-
-  ;; Palette management
-  (global $palette_counter (mut i32) (i32.const 0))   ;; Next palette index
-  (global $selected_palette (mut i32) (i32.const 0))  ;; Currently selected HPALETTE
 
   ;; Cosmetic line style phase is reset per LineTo/path and shared across the
   ;; segments of one WAT-rasterized polyline.
