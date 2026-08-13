@@ -52,17 +52,28 @@ function radioDotIsDark(h, hwnd) {
   return dark >= 2;
 }
 
+function editClientIsLight(h, hwnd) {
+  const p = controlCanvasPoint(h, hwnd, 4, 4);
+  const data = h.canvas.getContext('2d').getImageData(p.x, p.y, 12, 8).data;
+  let light = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] > 220 && data[i + 1] > 220 && data[i + 2] > 220) light++;
+  }
+  return light >= 70;
+}
+
 runRenderTest('find-dlg', async (h, check) => {
   const e = h.exports;
   const dlg = e.test_create_find_dialog();
   check('dialog hwnd allocated', dlg !== 0, 'hwnd=0x' + dlg.toString(16));
 
   // Find the two autoradios (Up=0x420, Down=0x421) and click Down.
-  let up = 0, down = 0;
+  let edit = 0, up = 0, down = 0;
   let slot = 0;
   while ((slot = e.wnd_next_child_slot(dlg, slot)) !== -1) {
     const ch = e.wnd_slot_hwnd(slot);
     slot++;
+    if (e.ctrl_get_class(ch) === 2 && e.ctrl_get_id(ch) === 0x480) edit = ch;
     if (e.ctrl_get_class(ch) !== 1) continue;
     const id = e.ctrl_get_id(ch);
     if (id === 0x420) up = ch;
@@ -77,6 +88,7 @@ runRenderTest('find-dlg', async (h, check) => {
   e.send_message(up, 0x000F, 0, 0);
   e.send_message(down, 0x000F, 0, 0);
   h.renderer.repaint();
+  check('Find edit client renders white', edit !== 0 && editClientIsLight(h, edit));
   check('initial Down radio dot rendered checked', radioDotIsDark(h, down));
 
   e.send_message(up, 0x0201, 0, 0);

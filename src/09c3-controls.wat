@@ -2624,7 +2624,11 @@
     ;; the control dispatcher do not pass through DefWindowProc automatically,
     ;; so paint the border and both scrollbar styles here instead of leaving
     ;; their backing-surface pixels black.
-    (if (i32.eq (local.get $msg) (i32.const 0x0085)) ;; WM_NCPAINT
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0085)) ;; WM_NCPAINT
+          (i32.ne
+            (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00300000))
+            (i32.const 0)))
       (then
         (call $defwndproc_do_ncpaint (local.get $hwnd))
         (return (i32.const 0))))
@@ -10508,7 +10512,11 @@
             ;; Refresh non-client chrome after the edit reaches its final
             ;; size. Notepad does not send another WM_NCPAINT after sizing its
             ;; child, and client clipping intentionally excludes these strips.
-            (if (i32.eqz (local.get $wParam))
+            (if (i32.and
+                  (i32.eqz (local.get $wParam))
+                  (i32.ne
+                    (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00300000))
+                    (i32.const 0)))
               (then (call $defwndproc_do_ncpaint (local.get $hwnd))))
             (return (i32.const 0))))
         (if (local.get $buf)
@@ -10641,7 +10649,11 @@
               (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
               (select (global.get $sb_pressed_part) (i32.const 0)
                       (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
-        (if (i32.eqz (local.get $wParam))
+        (if (i32.and
+              (i32.eqz (local.get $wParam))
+              (i32.ne
+                (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00300000))
+                (i32.const 0)))
           (then (call $defwndproc_do_ncpaint (local.get $hwnd))))
         (return (i32.const 0))))
 
