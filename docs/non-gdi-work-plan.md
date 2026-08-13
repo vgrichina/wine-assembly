@@ -128,8 +128,8 @@ an earlier ownership/persistence contract is still ambiguous.
 1. **Thread trace:** generic event log plus bounded WordPad startup test.
 2. **Stream core:** complete on 2026-08-12. `IStream::Clone`, independent
    cursors, shared backing lifetime, and edge-case coverage pass 23/23.
-3. **Storage tree:** nested storage, enumeration, rename/delete/copy/move, and
-   commit/revert tests.
+3. **Storage tree:** in progress. Nested create/open and lifetime pass; next are
+   enumeration, rename/delete/copy/move, and commit/revert tests.
 4. **CFB persistence:** deterministic writer, defensive reader, and
    fresh-process tree comparison.
 5. **Multi-format transfer:** format collection, full enumerator, Unicode text,
@@ -227,12 +227,13 @@ storage layer before adding more OLE object types.
 mutable data/size/capacity, and keep their own positions. Write and SetSize are
 visible across interfaces, shrink/grow zero-fills exposed bytes, HGLOBAL clones
 return the same handle, and a clone remains readable after the original caller
-and owning storage are released. `test/test-ole-storage.js` passes 23/23. The
+and owning storage are released. `test/test-ole-storage.js` passes 27/27 after
+the first storage-tree slice. The
 unchecked line above remains open for full CopyTo/locking/transaction breadth.
 
 ### P2.2 Storage tree
 
-- Add nested `CreateStorage`/`OpenStorage` and case-insensitive child lookup.
+- [x] Add nested `CreateStorage`/`OpenStorage` and case-insensitive child lookup.
 - Add stream/storage deletion and rename with collision/error behavior.
 - Add `CopyTo` and `MoveElementTo` for mixed stream/storage subtrees.
 - Implement `EnumElements` with a real `IEnumSTATSTG`, including `Next` counts,
@@ -240,6 +241,13 @@ unchecked line above remains open for full CopyTo/locking/transaction breadth.
 - Return correct `STATSTG` names, types, sizes, CLSIDs, and supported metadata.
 - Implement in-memory commit/revert snapshots rather than leaving successful
   no-ops that claim transactional behavior.
+
+2026-08-12 nested-storage result: storage nodes now keep separate first-child
+and next-sibling links, so arbitrary depth does not corrupt sibling traversal.
+Parents own children, retained children survive ancestor release, names are
+case-insensitive, and streams/storages share one collision namespace. The
+public CreateStorage/OpenStorage handlers use the same helpers as the 27/27
+focused storage suite.
 
 ### P2.3 Compound File Binary persistence
 

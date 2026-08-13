@@ -18,7 +18,9 @@ are covered as well. The reusable OLE persistence foundation provides binary
 `IStream::Clone` now shares backing bytes and size while retaining an
 independent seek cursor; the clone keeps its root alive after the original
 interface and owning storage are released. Truncation followed by growth
-zero-fills newly exposed bytes.
+zero-fills newly exposed bytes. Nested `IStorage::CreateStorage`/`OpenStorage`
+now maintain arbitrary-depth child trees with case-insensitive names and
+retained-child lifetime; enumeration and tree mutations remain open.
 Static DIB presentations now also survive WordPad's RTF Save As and reopen path.
 
 The next transfer layer is also present: a bounded `IDataObject` supports

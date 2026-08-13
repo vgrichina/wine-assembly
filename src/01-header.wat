@@ -186,6 +186,8 @@
   ;; gdi_create_rect_rgn(l, t, r, b) -> hrgn
   (import "host" "gdi_set_rect_rgn" (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_set_rect_rgn(hrgn, l, t, r, b) -> bool
+  (import "host" "gdi_set_region_bands" (func $host_gdi_set_region_bands (param i32 i32 i32) (result i32)))
+  ;; gdi_set_region_bands(hrgn, rects_wa, count) rebuilds derived Canvas data.
   (import "host" "gdi_combine_rgn" (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32)))
   ;; gdi_combine_rgn(dst, src1, src2, mode) -> complexity
   (import "host" "gdi_offset_rgn" (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32)))
@@ -694,6 +696,10 @@
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
+  ;; 0x07E10000 16KB     DIB_PAGE_STATE
+  ;; 0x07E14000 32KB     DIB_PAGE_RUNS
+  ;; 0x07E1C000 512KB    GDI_REGION_BANDS (256 x 128 RECT slots)
+  ;; 0x07E9C000 8KB      GDI_REGION_WORK (4 x 128 RECT buffers)
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
@@ -843,11 +849,20 @@
   (global $GDI_PALETTE_TABLE i32 (i32.const 0x07F0B000))
   (global $GDI_PALETTE_TABLE_SIZE i32 (i32.const 0x00001040))
   ;; WAT-owned HRGN records (255 live slots in a 256 x 32-byte table):
-  ;;   +0 state (0 free, 1 rectangle, 2 legacy complex mirror)
-  ;;   +4 generation, +8..+20 bbox RECT, +24 temporary host mirror handle.
+  ;;   +0 state (0 free, 1 simple/empty, 2 canonical complex, 3 legacy mirror)
+  ;;   +4 generation, +8..+20 bbox RECT, +24 temporary host mirror handle,
+  ;;   +28 canonical band-rectangle count.
   ;; Handles use 0x0050GGSS where GG is generation and SS is slot + 1.
   (global $GDI_REGION_TABLE i32 (i32.const 0x07F0D000))
   (global $GDI_REGION_TABLE_SIZE i32 (i32.const 0x00002000))
+  ;; Each canonical region owns 128 sorted, disjoint half-open RECTs. Slot 255
+  ;; is reserved so the arena remains power-of-two sized and never gets a
+  ;; public handle. Boolean sweeps use four adjacent alias-safe work buffers.
+  (global $GDI_REGION_BANDS i32 (i32.const 0x07E1C000))
+  (global $GDI_REGION_BANDS_SIZE i32 (i32.const 0x00080000))
+  (global $GDI_REGION_WORK i32 (i32.const 0x07E9C000))
+  (global $GDI_REGION_WORK_SIZE i32 (i32.const 0x00002000))
+  (global $GDI_REGION_MAX_RECTS i32 (i32.const 128))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))

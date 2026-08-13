@@ -118,6 +118,13 @@ separation.
 window. Guest APIs receive translated wrapper pointers where necessary; these
 tables are emulator state rather than general guest allocations.
 
+The software-GDI migration reserves `0x07E1C000..0x07E9BFFF` for 256 region
+slots of 128 canonical band rectangles each, followed by four 2KB Boolean-work
+buffers at `0x07E9C000..0x07E9DFFF`. The preceding
+`0x07E10000..0x07E1BFFF` range remains DIB page-state/run metadata. Sized WAT
+globals and `test/test-wat-memory-map.js` enforce that these regions do not
+overlap other emulator tables.
+
 ### Comparison
 
 | Concept | Win98 | wine-assembly |

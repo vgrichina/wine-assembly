@@ -418,9 +418,8 @@
     (global.set $free_list (local.get $block)))
 
   ;; ---- WAT-owned GDI region registry ---------------------------------
-  ;; Complex bands are the next migration stage. State 2 explicitly marks a
-  ;; legacy complex region whose bbox is mirrored here while JS preserves its
-  ;; current Canvas-facing shape.
+  ;; Canonical regions are sorted, disjoint half-open rectangles grouped into
+  ;; horizontal bands. JS only holds a derived Canvas presentation mirror.
   (func $gdi_rgn_record (param $hrgn i32) (result i32)
     (local $slot i32) (local $record i32)
     (if (i32.ne
@@ -447,14 +446,91 @@
       (then (i32.load offset=24 (local.get $record)))
       (else (local.get $hrgn))))
 
+  (func $gdi_rgn_bands (param $record i32) (result i32)
+    (i32.add (global.get $GDI_REGION_BANDS)
+      (i32.shl
+        (i32.shr_u (i32.sub (local.get $record) (global.get $GDI_REGION_TABLE)) (i32.const 5))
+        (i32.const 11))))
+
+  (func $gdi_rgn_sync_mirror (param $record i32) (result i32)
+    (call $host_gdi_set_region_bands
+      (i32.load offset=24 (local.get $record))
+      (call $gdi_rgn_bands (local.get $record))
+      (i32.load offset=28 (local.get $record))))
+
   (func $gdi_rgn_complexity_record (param $record i32) (result i32)
     (if (i32.or
           (i32.ge_s (i32.load offset=8 (local.get $record)) (i32.load offset=16 (local.get $record)))
           (i32.ge_s (i32.load offset=12 (local.get $record)) (i32.load offset=20 (local.get $record))))
       (then (return (i32.const 1))))
-    (if (result i32) (i32.eq (i32.load (local.get $record)) (i32.const 1))
+    (if (result i32) (i32.eq (i32.load offset=28 (local.get $record)) (i32.const 1))
       (then (i32.const 2))
       (else (i32.const 3))))
+
+  (func $gdi_rgn_update_bbox (param $record i32)
+    (local $base i32) (local $count i32) (local $i i32) (local $p i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local.set $count (i32.load offset=28 (local.get $record)))
+    (if (i32.eqz (local.get $count))
+      (then
+        (i32.store offset=8 (local.get $record) (i32.const 0))
+        (i32.store offset=12 (local.get $record) (i32.const 0))
+        (i32.store offset=16 (local.get $record) (i32.const 0))
+        (i32.store offset=20 (local.get $record) (i32.const 0))
+        (i32.store (local.get $record) (i32.const 1))
+        (return)))
+    (local.set $base (call $gdi_rgn_bands (local.get $record)))
+    (local.set $left (i32.load (local.get $base)))
+    (local.set $top (i32.load offset=4 (local.get $base)))
+    (local.set $right (i32.load offset=8 (local.get $base)))
+    (local.set $bottom (i32.load offset=12 (local.get $base)))
+    (local.set $i (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.lt_s (i32.load (local.get $p)) (local.get $left))
+        (then (local.set $left (i32.load (local.get $p)))))
+      (if (i32.lt_s (i32.load offset=4 (local.get $p)) (local.get $top))
+        (then (local.set $top (i32.load offset=4 (local.get $p)))))
+      (if (i32.gt_s (i32.load offset=8 (local.get $p)) (local.get $right))
+        (then (local.set $right (i32.load offset=8 (local.get $p)))))
+      (if (i32.gt_s (i32.load offset=12 (local.get $p)) (local.get $bottom))
+        (then (local.set $bottom (i32.load offset=12 (local.get $p)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.store offset=8 (local.get $record) (local.get $left))
+    (i32.store offset=12 (local.get $record) (local.get $top))
+    (i32.store offset=16 (local.get $record) (local.get $right))
+    (i32.store offset=20 (local.get $record) (local.get $bottom))
+    (i32.store (local.get $record)
+      (select (i32.const 1) (i32.const 2) (i32.eq (local.get $count) (i32.const 1)))))
+
+  (func $gdi_rgn_set_buffer (param $record i32) (param $source i32) (param $count i32) (result i32)
+    (if (i32.gt_u (local.get $count) (global.get $GDI_REGION_MAX_RECTS))
+      (then (return (i32.const 0))))
+    (if (local.get $count)
+      (then (memory.copy
+        (call $gdi_rgn_bands (local.get $record))
+        (local.get $source)
+        (i32.shl (local.get $count) (i32.const 4)))))
+    (i32.store offset=28 (local.get $record) (local.get $count))
+    (call $gdi_rgn_update_bbox (local.get $record))
+    (drop (call $gdi_rgn_sync_mirror (local.get $record)))
+    (call $gdi_rgn_complexity_record (local.get $record)))
+
+  (func $gdi_rgn_write_rect (param $record i32) (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+    (local $base i32)
+    (local.set $base (call $gdi_rgn_bands (local.get $record)))
+    (if (i32.or (i32.ge_s (local.get $left) (local.get $right))
+          (i32.ge_s (local.get $top) (local.get $bottom)))
+      (then (i32.store offset=28 (local.get $record) (i32.const 0)))
+      (else
+        (i32.store (local.get $base) (local.get $left))
+        (i32.store offset=4 (local.get $base) (local.get $top))
+        (i32.store offset=8 (local.get $base) (local.get $right))
+        (i32.store offset=12 (local.get $base) (local.get $bottom))
+        (i32.store offset=28 (local.get $record) (i32.const 1))))
+    (call $gdi_rgn_update_bbox (local.get $record)))
 
   (func $gdi_rgn_alloc_rect (param $left_in i32) (param $top_in i32) (param $right_in i32) (param $bottom_in i32) (result i32)
     (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
@@ -486,6 +562,9 @@
             (i32.store offset=16 (local.get $record) (local.get $right))
             (i32.store offset=20 (local.get $record) (local.get $bottom))
             (i32.store offset=24 (local.get $record) (local.get $mirror))
+            (call $gdi_rgn_write_rect (local.get $record)
+              (local.get $left) (local.get $top) (local.get $right) (local.get $bottom))
+            (drop (call $gdi_rgn_sync_mirror (local.get $record)))
             (return
               (i32.or (i32.const 0x00500000)
                 (i32.or (i32.shl (local.get $generation) (i32.const 8))
@@ -506,15 +585,9 @@
       (then (local.set $left (local.get $right_in)) (local.set $right (local.get $left_in))))
     (if (i32.gt_s (local.get $top) (local.get $bottom))
       (then (local.set $top (local.get $bottom_in)) (local.set $bottom (local.get $top_in))))
-    (if (i32.eqz (call $host_gdi_set_rect_rgn
-          (i32.load offset=24 (local.get $record))
-          (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
-      (then (return (i32.const 0))))
-    (i32.store (local.get $record) (i32.const 1))
-    (i32.store offset=8 (local.get $record) (local.get $left))
-    (i32.store offset=12 (local.get $record) (local.get $top))
-    (i32.store offset=16 (local.get $record) (local.get $right))
-    (i32.store offset=20 (local.get $record) (local.get $bottom))
+    (call $gdi_rgn_write_rect (local.get $record)
+      (local.get $left) (local.get $top) (local.get $right) (local.get $bottom))
+    (drop (call $gdi_rgn_sync_mirror (local.get $record)))
     (i32.const 1))
 
   (func $gdi_rgn_get_box (param $hrgn i32) (param $rect i32) (result i32)
@@ -531,63 +604,268 @@
     (call $gdi_rgn_complexity_record (local.get $record)))
 
   (func $gdi_rgn_offset (param $hrgn i32) (param $dx i32) (param $dy i32) (result i32)
-    (local $record i32) (local $result i32)
+    (local $record i32) (local $result i32) (local $base i32) (local $count i32) (local $i i32) (local $p i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
     (if (i32.eqz (local.get $record))
       (then (return (call $host_gdi_offset_rgn (local.get $hrgn) (local.get $dx) (local.get $dy)))))
-    (local.set $result (call $host_gdi_offset_rgn
-      (i32.load offset=24 (local.get $record)) (local.get $dx) (local.get $dy)))
-    (if (i32.eqz (local.get $result)) (then (return (i32.const 0))))
-    (i32.store offset=8 (local.get $record) (i32.add (i32.load offset=8 (local.get $record)) (local.get $dx)))
-    (i32.store offset=12 (local.get $record) (i32.add (i32.load offset=12 (local.get $record)) (local.get $dy)))
-    (i32.store offset=16 (local.get $record) (i32.add (i32.load offset=16 (local.get $record)) (local.get $dx)))
-    (i32.store offset=20 (local.get $record) (i32.add (i32.load offset=20 (local.get $record)) (local.get $dy)))
+    (if (i32.eq (i32.load (local.get $record)) (i32.const 3))
+      (then
+        (local.set $result (call $host_gdi_offset_rgn
+          (i32.load offset=24 (local.get $record)) (local.get $dx) (local.get $dy)))
+        (if (i32.eqz (local.get $result)) (then (return (i32.const 0))))
+        (i32.store offset=8 (local.get $record) (i32.add (i32.load offset=8 (local.get $record)) (local.get $dx)))
+        (i32.store offset=12 (local.get $record) (i32.add (i32.load offset=12 (local.get $record)) (local.get $dy)))
+        (i32.store offset=16 (local.get $record) (i32.add (i32.load offset=16 (local.get $record)) (local.get $dx)))
+        (i32.store offset=20 (local.get $record) (i32.add (i32.load offset=20 (local.get $record)) (local.get $dy)))
+        (return (call $gdi_rgn_complexity_record (local.get $record)))))
+    (local.set $base (call $gdi_rgn_bands (local.get $record)))
+    (local.set $count (i32.load offset=28 (local.get $record)))
+    (block $done (loop $move
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (i32.store (local.get $p) (i32.add (i32.load (local.get $p)) (local.get $dx)))
+      (i32.store offset=4 (local.get $p) (i32.add (i32.load offset=4 (local.get $p)) (local.get $dy)))
+      (i32.store offset=8 (local.get $p) (i32.add (i32.load offset=8 (local.get $p)) (local.get $dx)))
+      (i32.store offset=12 (local.get $p) (i32.add (i32.load offset=12 (local.get $p)) (local.get $dy)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $move)))
+    (call $gdi_rgn_update_bbox (local.get $record))
+    (drop (call $gdi_rgn_sync_mirror (local.get $record)))
     (call $gdi_rgn_complexity_record (local.get $record)))
 
+  (func $gdi_rgn_first_y (param $base i32) (param $count i32) (result i32)
+    (local $i i32) (local $best i32) (local $value i32)
+    (local.set $best (i32.const 0x7FFFFFFF))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $value (i32.load offset=4
+        (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4)))))
+      (if (i32.lt_s (local.get $value) (local.get $best)) (then (local.set $best (local.get $value))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  (func $gdi_rgn_next_y (param $base i32) (param $count i32) (param $y i32) (result i32)
+    (local $i i32) (local $best i32) (local $p i32) (local $value i32)
+    (local.set $best (i32.const 0x7FFFFFFF))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $value (i32.load offset=4 (local.get $p)))
+      (if (i32.and (i32.gt_s (local.get $value) (local.get $y)) (i32.lt_s (local.get $value) (local.get $best)))
+        (then (local.set $best (local.get $value))))
+      (local.set $value (i32.load offset=12 (local.get $p)))
+      (if (i32.and (i32.gt_s (local.get $value) (local.get $y)) (i32.lt_s (local.get $value) (local.get $best)))
+        (then (local.set $best (local.get $value))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  (func $gdi_rgn_first_x (param $base i32) (param $count i32) (param $y i32) (result i32)
+    (local $i i32) (local $best i32) (local $p i32) (local $value i32)
+    (local.set $best (i32.const 0x7FFFFFFF))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.and (i32.le_s (i32.load offset=4 (local.get $p)) (local.get $y))
+            (i32.gt_s (i32.load offset=12 (local.get $p)) (local.get $y)))
+        (then
+          (local.set $value (i32.load (local.get $p)))
+          (if (i32.lt_s (local.get $value) (local.get $best)) (then (local.set $best (local.get $value))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  (func $gdi_rgn_next_x (param $base i32) (param $count i32) (param $x i32) (param $y i32) (result i32)
+    (local $i i32) (local $best i32) (local $p i32) (local $value i32)
+    (local.set $best (i32.const 0x7FFFFFFF))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.and (i32.le_s (i32.load offset=4 (local.get $p)) (local.get $y))
+            (i32.gt_s (i32.load offset=12 (local.get $p)) (local.get $y)))
+        (then
+          (local.set $value (i32.load (local.get $p)))
+          (if (i32.and (i32.gt_s (local.get $value) (local.get $x)) (i32.lt_s (local.get $value) (local.get $best)))
+            (then (local.set $best (local.get $value))))
+          (local.set $value (i32.load offset=8 (local.get $p)))
+          (if (i32.and (i32.gt_s (local.get $value) (local.get $x)) (i32.lt_s (local.get $value) (local.get $best)))
+            (then (local.set $best (local.get $value))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  (func $gdi_rgn_contains (param $base i32) (param $count i32) (param $x i32) (param $y i32) (result i32)
+    (local $i i32) (local $p i32)
+    (block $miss (loop $scan
+      (br_if $miss (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.and
+            (i32.and (i32.le_s (i32.load (local.get $p)) (local.get $x))
+              (i32.gt_s (i32.load offset=8 (local.get $p)) (local.get $x)))
+            (i32.and (i32.le_s (i32.load offset=4 (local.get $p)) (local.get $y))
+              (i32.gt_s (i32.load offset=12 (local.get $p)) (local.get $y))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $gdi_rgn_mode_contains (param $mode i32) (param $a i32) (param $b i32) (result i32)
+    (if (i32.eq (local.get $mode) (i32.const 1))
+      (then (return (i32.and (local.get $a) (local.get $b)))))
+    (if (i32.eq (local.get $mode) (i32.const 2))
+      (then (return (i32.or (local.get $a) (local.get $b)))))
+    (if (i32.eq (local.get $mode) (i32.const 3))
+      (then (return (i32.xor (local.get $a) (local.get $b)))))
+    (i32.and (local.get $a) (i32.eqz (local.get $b))))
+
+  ;; Returns the canonical output RECT count, or -1 when the fixed arena cap
+  ;; would be exceeded. Sources remain untouched, so dst may alias either one.
+  (func $gdi_rgn_boolean_sweep (param $a_base i32) (param $a_count i32)
+        (param $b_base i32) (param $b_count i32) (param $mode i32) (result i32)
+    (local $out i32) (local $band i32) (local $out_count i32) (local $band_count i32)
+    (local $prev_start i32) (local $prev_count i32) (local $same i32) (local $i i32)
+    (local $y i32) (local $next_y i32) (local $x i32) (local $next_x i32)
+    (local $candidate i32) (local $inside_a i32) (local $inside_b i32) (local $p i32)
+    (local.set $out (global.get $GDI_REGION_WORK))
+    (local.set $band (i32.add (global.get $GDI_REGION_WORK) (i32.const 0x800)))
+    (local.set $prev_start (i32.const -1))
+    (local.set $y (call $gdi_rgn_first_y (local.get $a_base) (local.get $a_count)))
+    (local.set $candidate (call $gdi_rgn_first_y (local.get $b_base) (local.get $b_count)))
+    (if (i32.lt_s (local.get $candidate) (local.get $y)) (then (local.set $y (local.get $candidate))))
+    (block $finished (loop $bands
+      (br_if $finished (i32.eq (local.get $y) (i32.const 0x7FFFFFFF)))
+      (local.set $next_y (call $gdi_rgn_next_y (local.get $a_base) (local.get $a_count) (local.get $y)))
+      (local.set $candidate (call $gdi_rgn_next_y (local.get $b_base) (local.get $b_count) (local.get $y)))
+      (if (i32.lt_s (local.get $candidate) (local.get $next_y)) (then (local.set $next_y (local.get $candidate))))
+      (br_if $finished (i32.eq (local.get $next_y) (i32.const 0x7FFFFFFF)))
+      (local.set $band_count (i32.const 0))
+      (local.set $x (call $gdi_rgn_first_x (local.get $a_base) (local.get $a_count) (local.get $y)))
+      (local.set $candidate (call $gdi_rgn_first_x (local.get $b_base) (local.get $b_count) (local.get $y)))
+      (if (i32.lt_s (local.get $candidate) (local.get $x)) (then (local.set $x (local.get $candidate))))
+      (block $x_done (loop $spans
+        (br_if $x_done (i32.eq (local.get $x) (i32.const 0x7FFFFFFF)))
+        (local.set $next_x (call $gdi_rgn_next_x
+          (local.get $a_base) (local.get $a_count) (local.get $x) (local.get $y)))
+        (local.set $candidate (call $gdi_rgn_next_x
+          (local.get $b_base) (local.get $b_count) (local.get $x) (local.get $y)))
+        (if (i32.lt_s (local.get $candidate) (local.get $next_x)) (then (local.set $next_x (local.get $candidate))))
+        (br_if $x_done (i32.eq (local.get $next_x) (i32.const 0x7FFFFFFF)))
+        (local.set $inside_a (call $gdi_rgn_contains
+          (local.get $a_base) (local.get $a_count) (local.get $x) (local.get $y)))
+        (local.set $inside_b (call $gdi_rgn_contains
+          (local.get $b_base) (local.get $b_count) (local.get $x) (local.get $y)))
+        (if (call $gdi_rgn_mode_contains (local.get $mode) (local.get $inside_a) (local.get $inside_b))
+          (then
+            (if (i32.and (i32.gt_u (local.get $band_count) (i32.const 0))
+                  (i32.eq
+                    (i32.load offset=8 (i32.add (local.get $band)
+                      (i32.shl (i32.sub (local.get $band_count) (i32.const 1)) (i32.const 4))))
+                    (local.get $x)))
+              (then
+                (i32.store offset=8 (i32.add (local.get $band)
+                  (i32.shl (i32.sub (local.get $band_count) (i32.const 1)) (i32.const 4)))
+                  (local.get $next_x)))
+              (else
+                (if (i32.ge_u (local.get $band_count) (global.get $GDI_REGION_MAX_RECTS))
+                  (then (return (i32.const -1))))
+                (local.set $p (i32.add (local.get $band) (i32.shl (local.get $band_count) (i32.const 4))))
+                (i32.store (local.get $p) (local.get $x))
+                (i32.store offset=4 (local.get $p) (local.get $y))
+                (i32.store offset=8 (local.get $p) (local.get $next_x))
+                (i32.store offset=12 (local.get $p) (local.get $next_y))
+                (local.set $band_count (i32.add (local.get $band_count) (i32.const 1)))))))
+        (local.set $x (local.get $next_x))
+        (br $spans)))
+      (if (i32.eqz (local.get $band_count))
+        (then
+          (local.set $prev_start (i32.const -1))
+          (local.set $prev_count (i32.const 0)))
+        (else
+          (local.set $same (i32.and
+            (i32.ge_s (local.get $prev_start) (i32.const 0))
+            (i32.eq (local.get $prev_count) (local.get $band_count))))
+          (local.set $i (i32.const 0))
+          (block $compare_done (loop $compare
+            (br_if $compare_done (i32.or (i32.eqz (local.get $same))
+              (i32.ge_u (local.get $i) (local.get $band_count))))
+            (if (i32.or
+                  (i32.ne
+                    (i32.load (i32.add (local.get $out)
+                      (i32.shl (i32.add (local.get $prev_start) (local.get $i)) (i32.const 4))))
+                    (i32.load (i32.add (local.get $band) (i32.shl (local.get $i) (i32.const 4)))))
+                  (i32.or
+                    (i32.ne
+                      (i32.load offset=8 (i32.add (local.get $out)
+                        (i32.shl (i32.add (local.get $prev_start) (local.get $i)) (i32.const 4))))
+                      (i32.load offset=8 (i32.add (local.get $band) (i32.shl (local.get $i) (i32.const 4)))))
+                    (i32.ne
+                      (i32.load offset=12 (i32.add (local.get $out)
+                        (i32.shl (i32.add (local.get $prev_start) (local.get $i)) (i32.const 4))))
+                      (local.get $y))))
+              (then (local.set $same (i32.const 0))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $compare)))
+          (if (local.get $same)
+            (then
+              (local.set $i (i32.const 0))
+              (block $extend_done (loop $extend
+                (br_if $extend_done (i32.ge_u (local.get $i) (local.get $band_count)))
+                (i32.store offset=12 (i32.add (local.get $out)
+                  (i32.shl (i32.add (local.get $prev_start) (local.get $i)) (i32.const 4)))
+                  (local.get $next_y))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $extend))))
+            (else
+              (if (i32.gt_u (i32.add (local.get $out_count) (local.get $band_count))
+                    (global.get $GDI_REGION_MAX_RECTS))
+                (then (return (i32.const -1))))
+              (memory.copy
+                (i32.add (local.get $out) (i32.shl (local.get $out_count) (i32.const 4)))
+                (local.get $band)
+                (i32.shl (local.get $band_count) (i32.const 4)))
+              (local.set $prev_start (local.get $out_count))
+              (local.set $prev_count (local.get $band_count))
+              (local.set $out_count (i32.add (local.get $out_count) (local.get $band_count)))))))
+      (local.set $y (local.get $next_y))
+      (br $bands)))
+    (local.get $out_count))
+
   (func $gdi_rgn_combine (param $dst i32) (param $src1 i32) (param $src2 i32) (param $mode i32) (result i32)
-    (local $dst_record i32) (local $a i32) (local $b i32) (local $result i32)
-    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $dst_record i32) (local $a i32) (local $b i32) (local $result i32) (local $count i32)
     (local.set $dst_record (call $gdi_rgn_record (local.get $dst)))
     (local.set $a (call $gdi_rgn_record (local.get $src1)))
     (local.set $b (call $gdi_rgn_record (local.get $src2)))
-    ;; COPY and rectangle intersection have complete WAT semantics now.
+    (if (i32.or (i32.lt_u (local.get $mode) (i32.const 1))
+          (i32.gt_u (local.get $mode) (i32.const 5)))
+      (then (return (i32.const 0))))
+    ;; Canonical inputs use WAT Boolean algebra. COPY does not require src2.
     (if (i32.and
           (i32.ne (local.get $dst_record) (i32.const 0))
-          (i32.ne (local.get $a) (i32.const 0)))
-      (then
-        (if (i32.and
-              (i32.eq (local.get $mode) (i32.const 5))
-              (i32.eq (i32.load (local.get $a)) (i32.const 1)))
-          (then
-            (if (i32.eqz (call $gdi_rgn_set_rect (local.get $dst)
-                  (i32.load offset=8 (local.get $a)) (i32.load offset=12 (local.get $a))
-                  (i32.load offset=16 (local.get $a)) (i32.load offset=20 (local.get $a))))
-              (then (return (i32.const 0))))
-            (return (call $gdi_rgn_complexity_record (local.get $dst_record)))))
-        (if (i32.and (i32.eq (local.get $mode) (i32.const 1))
-              (i32.and (i32.eq (i32.load (local.get $a)) (i32.const 1))
+          (i32.and (i32.ne (local.get $a) (i32.const 0))
+            (i32.and (i32.ne (i32.load (local.get $a)) (i32.const 3))
+              (i32.or (i32.eq (local.get $mode) (i32.const 5))
                 (i32.and (i32.ne (local.get $b) (i32.const 0))
-                  (i32.eq (i32.load (local.get $b)) (i32.const 1)))))
+                  (i32.ne (i32.load (local.get $b)) (i32.const 3)))))))
+      (then
+        (if (i32.eq (local.get $mode) (i32.const 5))
           (then
-            (local.set $left (select
-              (i32.load offset=8 (local.get $a)) (i32.load offset=8 (local.get $b))
-              (i32.gt_s (i32.load offset=8 (local.get $a)) (i32.load offset=8 (local.get $b)))))
-            (local.set $top (select
-              (i32.load offset=12 (local.get $a)) (i32.load offset=12 (local.get $b))
-              (i32.gt_s (i32.load offset=12 (local.get $a)) (i32.load offset=12 (local.get $b)))))
-            (local.set $right (select
-              (i32.load offset=16 (local.get $a)) (i32.load offset=16 (local.get $b))
-              (i32.lt_s (i32.load offset=16 (local.get $a)) (i32.load offset=16 (local.get $b)))))
-            (local.set $bottom (select
-              (i32.load offset=20 (local.get $a)) (i32.load offset=20 (local.get $b))
-              (i32.lt_s (i32.load offset=20 (local.get $a)) (i32.load offset=20 (local.get $b)))))
-            (if (i32.gt_s (local.get $left) (local.get $right)) (then (local.set $right (local.get $left))))
-            (if (i32.gt_s (local.get $top) (local.get $bottom)) (then (local.set $bottom (local.get $top))))
-            (drop (call $gdi_rgn_set_rect (local.get $dst)
-              (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
-            (return (call $gdi_rgn_complexity_record (local.get $dst_record)))))))
-    ;; Until band algebra lands, preserve complex compatibility in the host
-    ;; mirror and cache its bbox/complexity in the authoritative WAT handle.
+            (return (call $gdi_rgn_set_buffer
+              (local.get $dst_record) (call $gdi_rgn_bands (local.get $a))
+              (i32.load offset=28 (local.get $a))))))
+        (local.set $count (call $gdi_rgn_boolean_sweep
+          (call $gdi_rgn_bands (local.get $a)) (i32.load offset=28 (local.get $a))
+          (call $gdi_rgn_bands (local.get $b)) (i32.load offset=28 (local.get $b))
+          (local.get $mode)))
+        (if (i32.ge_s (local.get $count) (i32.const 0))
+          (then (return (call $gdi_rgn_set_buffer
+            (local.get $dst_record) (global.get $GDI_REGION_WORK) (local.get $count)))))
+        ;; Win32 permits CombineRgn to fail. Keep dst unchanged when the fixed
+        ;; canonical arena cannot represent the result; never invoke JS region
+        ;; algebra or corrupt a partially written destination.
+        (return (i32.const 0))))
+    ;; Non-WAT polygon/ellipse regions preserve compatibility through the
+    ;; legacy host mirror until their WAT scan conversion lands.
     (local.set $result (call $host_gdi_combine_rgn
       (call $gdi_rgn_host_handle (local.get $dst))
       (call $gdi_rgn_host_handle (local.get $src1))
@@ -604,7 +882,8 @@
         (i32.store offset=16 (local.get $dst_record) (i32.load offset=8 (global.get $PAINT_SCRATCH)))
         (i32.store offset=20 (local.get $dst_record) (i32.load offset=12 (global.get $PAINT_SCRATCH)))
         (i32.store (local.get $dst_record)
-          (select (i32.const 1) (i32.const 2) (i32.eq (local.get $result) (i32.const 1))))
+          (select (i32.const 1) (i32.const 3) (i32.eq (local.get $result) (i32.const 1))))
+        (i32.store offset=28 (local.get $dst_record) (i32.const 0))
         (return (call $gdi_rgn_complexity_record (local.get $dst_record)))))
     (local.get $result))
 
@@ -616,7 +895,8 @@
     (if (local.get $result)
       (then
         (i32.store (local.get $record) (i32.const 0))
-        (i32.store offset=24 (local.get $record) (i32.const 0))))
+        (i32.store offset=24 (local.get $record) (i32.const 0))
+        (i32.store offset=28 (local.get $record) (i32.const 0))))
     (local.get $result))
 
   ;; heap_realloc: reallocate a heap block (guest ptrs)

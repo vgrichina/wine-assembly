@@ -12,12 +12,14 @@ all geometric primitives, source blits, window surfaces, and text still use
 the existing Canvas paths. Canvas text remains intentional policy, as
 described below.
 
-Rectangular HRGN ownership moved into WAT in the first architecture-boundary
-milestone. WAT now allocates generation-tagged region handles and owns rectangle
-normalization, mutation, offset, bounding-box queries, intersection, object
-typing, and lifetime. Each record temporarily carries a private JS mirror for
-Canvas-facing compatibility calls. Complex Boolean results are explicitly
-tagged as legacy mirrors until WAT band storage replaces that fallback.
+Rectangular HRGN ownership and Boolean algebra now run in WAT. WAT allocates
+generation-tagged handles and owns normalization, mutation, offset, bounding
+boxes, object typing, lifetime, and `RGN_AND`/`OR`/`XOR`/`DIFF`/`COPY`. Each
+region has a fixed canonical arena of up to 128 sorted, disjoint half-open band
+rectangles. Boolean results are constructed in alias-safe WAT scratch buffers.
+JavaScript receives those rectangles only to rebuild derived Canvas clip and
+window-shape presentation data. Polygon and ellipse region scan conversion is
+still a legacy host fallback.
 
 This document describes the incremental migration from Canvas 2D vector
 drawing to deterministic software rasterization implemented primarily in WAT.

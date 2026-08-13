@@ -11,6 +11,7 @@ const { compileWat } = require('../lib/compile-wat');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const RECT_SCRATCH = 0x07E09000;
+const GDI_REGION_BANDS = 0x07E1C000;
 
 async function main() {
   const wasmBytes = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
@@ -51,6 +52,18 @@ async function main() {
     return wat.get_gdi_region_table() + slot * 32;
   }
 
+  function bands(handle) {
+    const slot = (handle & 0xFF) - 1;
+    const record = recordFor(handle);
+    const count = dv.getUint32(record + 28, true);
+    const base = GDI_REGION_BANDS + slot * 128 * 16;
+    const rects = [];
+    for (let i = 0; i < count; i++) {
+      rects.push([0, 4, 8, 12].map(offset => dv.getInt32(base + i * 16 + offset, true)));
+    }
+    return rects;
+  }
+
   check('allocates normalized generation-tagged rectangle handles in WAT', () => {
     const handle = wat.test_gdi_rgn_alloc_rect(8, 9, 2, 3);
     assert.strictEqual(handle & 0xFFFF0000, 0x00500000);
@@ -78,23 +91,78 @@ async function main() {
     assert.deepStrictEqual(base.gdi._gdiObjects[mirror].bbox, { l: -4, t: -3, r: 5, b: 6 });
   });
 
-  check('offset and rectangle intersection execute in WAT', () => {
+  check('rectangle intersection and offset execute on canonical WAT bands', () => {
     const a = wat.test_gdi_rgn_alloc_rect(0, 0, 8, 8);
     const b = wat.test_gdi_rgn_alloc_rect(3, 2, 10, 6);
     const dst = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
     assert.strictEqual(wat.test_gdi_rgn_combine(dst, a, b, 1), 2); // RGN_AND
     assert.deepStrictEqual(box(dst), { complexity: 2, rect: [3, 2, 8, 6] });
+    assert.deepStrictEqual(bands(dst), [[3, 2, 8, 6]]);
     assert.strictEqual(wat.test_gdi_rgn_offset(dst, -2, 5), 2);
     assert.deepStrictEqual(box(dst), { complexity: 2, rect: [1, 7, 6, 11] });
+    assert.deepStrictEqual(bands(dst), [[1, 7, 6, 11]]);
   });
 
-  check('complex combinations are explicitly tagged pending WAT band algebra', () => {
+  check('all Boolean modes produce exact disjoint WAT bands', () => {
     const a = wat.test_gdi_rgn_alloc_rect(0, 0, 8, 8);
     const b = wat.test_gdi_rgn_alloc_rect(3, 2, 10, 6);
+    const expected = new Map([
+      [1, [[3, 2, 8, 6]]],
+      [2, [[0, 0, 8, 2], [0, 2, 10, 6], [0, 6, 8, 8]]],
+      [3, [[0, 0, 8, 2], [0, 2, 3, 6], [8, 2, 10, 6], [0, 6, 8, 8]]],
+      [4, [[0, 0, 8, 2], [0, 2, 3, 6], [0, 6, 8, 8]]],
+    ]);
+    for (const [mode, rects] of expected) {
+      const dst = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
+      assert.strictEqual(wat.test_gdi_rgn_combine(dst, a, b, mode), rects.length === 1 ? 2 : 3);
+      assert.deepStrictEqual(bands(dst), rects, `mode ${mode}`);
+      assert.strictEqual(dv.getUint32(recordFor(dst), true), rects.length === 1 ? 1 : 2);
+      const mirror = dv.getUint32(recordFor(dst) + 24, true);
+      assert.deepStrictEqual(base.gdi._gdiObjects[mirror].rects,
+        rects.map(([l, t, r, btm]) => ({ x: l, y: t, w: r - l, h: btm - t })));
+    }
+    const copy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
+    assert.strictEqual(wat.test_gdi_rgn_combine(copy, a, 0, 5), 2);
+    assert.deepStrictEqual(bands(copy), [[0, 0, 8, 8]]);
+  });
+
+  check('adjacent equal bands coalesce vertically', () => {
+    const top = wat.test_gdi_rgn_alloc_rect(0, 0, 4, 4);
+    const bottom = wat.test_gdi_rgn_alloc_rect(0, 4, 4, 8);
     const dst = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
-    assert.strictEqual(wat.test_gdi_rgn_combine(dst, a, b, 4), 3); // RGN_DIFF
-    assert.deepStrictEqual(box(dst), { complexity: 3, rect: [0, 0, 8, 8] });
-    assert.strictEqual(dv.getUint32(recordFor(dst), true), 2);
+    assert.strictEqual(wat.test_gdi_rgn_combine(dst, top, bottom, 2), 2);
+    assert.deepStrictEqual(bands(dst), [[0, 0, 4, 8]]);
+  });
+
+  check('Boolean operations are alias-safe and preserve empty results', () => {
+    const a = wat.test_gdi_rgn_alloc_rect(0, 0, 8, 8);
+    const b = wat.test_gdi_rgn_alloc_rect(3, 2, 10, 6);
+    assert.strictEqual(wat.test_gdi_rgn_combine(a, a, b, 4), 3);
+    assert.deepStrictEqual(bands(a), [[0, 0, 8, 2], [0, 2, 3, 6], [0, 6, 8, 8]]);
+
+    const far = wat.test_gdi_rgn_alloc_rect(20, 20, 30, 30);
+    assert.strictEqual(wat.test_gdi_rgn_combine(a, a, far, 1), 1);
+    assert.deepStrictEqual(bands(a), []);
+    assert.deepStrictEqual(box(a), { complexity: 1, rect: [0, 0, 0, 0] });
+  });
+
+  check('arena overflow returns ERROR and leaves destination unchanged', () => {
+    const buildStripes = startY => {
+      const result = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
+      for (let i = 0; i < 128; i++) {
+        const stripe = wat.test_gdi_rgn_alloc_rect(0, startY + i * 4, 4, startY + i * 4 + 1);
+        assert.notStrictEqual(stripe, 0);
+        assert.notStrictEqual(wat.test_gdi_rgn_combine(result, result, stripe, 2), 0);
+        assert.strictEqual(wat.test_gdi_rgn_delete(stripe), 1);
+      }
+      assert.strictEqual(bands(result).length, 128);
+      return result;
+    };
+    const even = buildStripes(0);
+    const odd = buildStripes(2);
+    const dst = wat.test_gdi_rgn_alloc_rect(90, 91, 99, 100);
+    assert.strictEqual(wat.test_gdi_rgn_combine(dst, even, odd, 2), 0);
+    assert.deepStrictEqual(bands(dst), [[90, 91, 99, 100]]);
   });
 
   check('delete invalidates stale generations before reusing a slot', () => {

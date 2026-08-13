@@ -114,6 +114,33 @@ async function main() {
   check('IStorage persists the 16-byte class identifier',
     Array.from(u8.slice(wa(clsidOut), wa(clsidOut) + 16)).every((v, i) => v === u8[wa(clsid) + i]));
 
+  const folderName = writeWide('Folder');
+  const childStorage = e.test_ole_create_child_storage(storage, folderName) >>> 0;
+  const grandchildName = writeWide('Grandchild');
+  const grandchildStorage = e.test_ole_create_child_storage(childStorage, grandchildName) >>> 0;
+  const siblingName = writeWide('Sibling');
+  const siblingStorage = e.test_ole_create_child_storage(storage, siblingName) >>> 0;
+  check('IStorage creates independent nested and sibling storage nodes',
+    childStorage !== 0 && grandchildStorage !== 0 && siblingStorage !== 0 &&
+    e.test_ole_storage_parent(childStorage) === storage &&
+    e.test_ole_storage_parent(grandchildStorage) === childStorage &&
+    e.test_ole_storage_parent(siblingStorage) === storage);
+  e.test_ole_release(siblingStorage);
+
+  const foldedFolderName = writeWide('fOlDeR');
+  const reopenedChild = e.test_ole_find_storage(storage, foldedFolderName) >>> 0;
+  check('IStorage opens nested storages case-insensitively without confusing sibling links',
+    reopenedChild === childStorage);
+  e.test_ole_release(reopenedChild);
+
+  const collisionName = writeWide('Element');
+  const childStream = e.test_ole_create_stream(childStorage, collisionName) >>> 0;
+  const foldedCollisionName = writeWide('eLeMeNt');
+  check('streams and child storages share one case-insensitive element namespace',
+    childStream !== 0 && e.test_ole_create_child_storage(childStorage, foldedCollisionName) === 0);
+  e.test_ole_release(childStream);
+  e.test_ole_release(grandchildStorage);
+
   check('COM reference counts include storage and clone ownership',
     e.test_ole_addref(stream) === 4 && e.test_ole_release(stream) === 3);
   check('caller stream release preserves storage and clone ownership', e.test_ole_release(stream) === 2);
@@ -134,6 +161,13 @@ async function main() {
     e.test_ole_stream_read(clone, cloneAfterOriginalRelease, 8, count) === 0 &&
     dv.getUint32(wa(count), true) === 8);
   e.test_ole_release(clone);
+
+  const retainedGrandchild = e.test_ole_find_storage(childStorage, writeWide('GRANDCHILD')) >>> 0;
+  check('a retained child storage survives root release with its subtree intact',
+    e.test_ole_storage_parent(childStorage) === 0 && retainedGrandchild === grandchildStorage &&
+    e.test_ole_storage_parent(retainedGrandchild) === childStorage);
+  e.test_ole_release(retainedGrandchild);
+  e.test_ole_release(childStorage);
 
   const globalPayload = writeBytes(Uint8Array.from([9, 8, 7, 6]));
   const globalStream = e.test_ole_create_hglobal_stream(globalPayload, 0) >>> 0;
