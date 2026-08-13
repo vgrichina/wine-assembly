@@ -369,6 +369,12 @@
     (local.set $record (call $gdi_object_record (local.get 0)))
     (if (result i32) (local.get $record)
       (then (i32.load offset=12 (local.get $record))) (else (i32.const 0))))
+  (func (export "test_gdi_brush_sample")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $gdi_brush_sample
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  (func (export "test_gdi_rop3_uses_pattern") (param i32) (result i32)
+    (call $gdi_rop3_uses_pattern (local.get 0)))
   (func (export "test_gdi_object_height") (param i32) (result i32)
     (call $host_gdi_get_object_h (local.get 0)))
   (func (export "test_gdi_hdc_bitblt")

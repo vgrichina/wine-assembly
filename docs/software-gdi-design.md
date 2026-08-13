@@ -76,8 +76,9 @@ Rectangle, ellipse, round-rectangle, polygon, `FillRect`, and region fill paths
 sample hatch masks in device coordinates, including `SetBrushOrgEx`, opaque
 background color, and transparent background preservation. `GetObjectA/W`
 serializes stable `LOGPEN`, `LOGBRUSH`, `BITMAP`, and `LOGFONT` structures.
-Pattern-dependent ROP3 operations and flood fill still need the common
-per-pixel brush sampler; they currently accept only a constant solid pattern.
+Pattern-dependent `PatBlt`, `BitBlt`, `StretchBlt`, `StretchDIBits`, and flood
+fill operations use the same coordinate-aware sampler. DIB pattern brushes are
+still pending owned bitmap-pattern records and repeat sampling.
 
 `Polyline` and `PolylineTo` reuse the WAT line kernel after an atomic
 all-segment preflight. Cosmetic style phase continues across segment

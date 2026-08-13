@@ -60,10 +60,28 @@ const { bootRenderHarness } = require('./render-helper');
   check('PatBlt resolves the selected WAT brush and uploads its dirty rectangle', () => {
     const green = wat.test_call_CreateSolidBrush(0x0000FF00) >>> 0;
     wat.test_call_SelectObject(dst.hdc, green);
+    assert.strictEqual(wat.test_gdi_rop3_uses_pattern(0xF0), 1);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dst.hdc, 8, 0), green);
+    assert.strictEqual(wat.test_gdi_brush_sample(dst.hdc, green, 2, 2), 0x0000FF00);
     assert.strictEqual(wat.test_call_PatBlt(dst.hdc, 1, 1, 3, 2, 0x00F00021), 1);
     assert.strictEqual(packed(dst, 2, 2), 0x00FF00);
     assert.strictEqual(canvasRgb(dst, 2, 2), 0x00FF00);
     assert.strictEqual(packed(dst, 0, 0), 0);
+  });
+
+  check('PatBlt samples hatch brushes per pixel and honors brush origin', () => {
+    const surface = makeDib(10, 4);
+    const hatch = wat.test_call_CreateHatchBrush(1, 0x000000FF) >>> 0;
+    wat.test_call_SelectObject(surface.hdc, hatch);
+    wat.test_gdi_dc_set_field(surface.hdc, 24, 0x0000FF00, 0xFFFFFF);
+    wat.test_gdi_dc_set_field(surface.hdc, 28, 2, 2);
+    wat.test_call_SetBrushOrgEx(surface.hdc, 2, 0, 0);
+    assert.strictEqual(wat.test_call_PatBlt(
+      surface.hdc, 0, 0, 10, 4, 0x00F00021), 1);
+    assert.strictEqual(packed(surface, 2, 1), 0xFF0000);
+    assert.strictEqual(packed(surface, 3, 1), 0x00FF00);
+    assert.strictEqual(packed(surface, 9, 1), 0x00FF00);
+    assert.strictEqual(canvasRgb(surface, 2, 1), 0xFF0000);
   });
 
   check('BitBlt applies SRCCOPY between canonical WAT surfaces', () => {
@@ -151,6 +169,18 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(border, 2, 2), 0xFF0000);
     assert.strictEqual(packed(border, 1, 2), 0xFFFFFF);
     assert.strictEqual(packed(border, 0, 0), 0);
+  });
+
+  check('ExtFloodFill samples hatch pixels without changing region discovery', () => {
+    const surface = makeDib(9, 4);
+    const hatch = wat.test_call_CreateHatchBrush(0, 0x00FF0000) >>> 0;
+    wat.test_call_SelectObject(surface.hdc, hatch);
+    wat.test_gdi_dc_set_field(surface.hdc, 28, 1, 2);
+    bytes.fill(0x44, surface.bits, surface.bits + surface.stride * surface.height);
+    assert.strictEqual(wat.test_call_ExtFloodFill(
+      surface.hdc, 1, 1, 0x00444444, 1), 1);
+    assert.strictEqual(packed(surface, 4, 0), 0x0000FF);
+    assert.strictEqual(packed(surface, 4, 1), 0x444444);
   });
 
   check('internal bitmap and mapping adapters use canonical WAT records', () => {
@@ -265,8 +295,10 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write32(bmiGa + 8, -2);
     wat.guest_write16(bmiGa + 12, 1);
     wat.guest_write16(bmiGa + 14, 24);
+    wat.guest_write32(bmiGa + 16, 0);
     // top-down: red, green / blue, white with 8-byte stride
     bytes.set([0, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0], bitsWa);
+    assert.strictEqual(wat.test_gdi_rop3_uses_pattern(0xCC), 0);
     assert.strictEqual(wat.test_gdi_stretch_dibits(
       surface.hdc, 0, 0, 4, 4, 0, 0, 2, 2, bitsWa, bmiWa, 0, 0x00CC0020), 2);
     assert.strictEqual(packed(surface, 0, 0), 0xFF0000);

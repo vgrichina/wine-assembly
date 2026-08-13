@@ -6840,7 +6840,7 @@
   (func $handle_StretchBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32) (local $src i32) (local $src_hdc i32)
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
-    (local $rop i32) (local $rop3 i32) (local $brush_color i32)
+    (local $rop i32) (local $rop3 i32)
     (local $dx i32) (local $dy i32) (local $pattern i32) (local $ok i32)
     (local.set $dst (global.get $GDI_BLIT_DST_DESC))
     (local.set $src (global.get $GDI_BLIT_SRC_DESC))
@@ -6871,26 +6871,11 @@
               (i32.eqz (local.get $src)))
           (then (local.set $ok (i32.const 0)))
           (else
-            (if (i32.ne (i32.and
-                  (i32.xor (local.get $rop3) (i32.shr_u (local.get $rop3) (i32.const 4)))
-                  (i32.const 0x0F)) (i32.const 0))
-              (then
-                (local.set $brush_color (call $gdi_brush_color
-                  (call $gdi_dc_get_field (local.get $arg0) (i32.const 8) (i32.const 0x30010))))
-                (if (i32.le_u (local.get $brush_color) (i32.const 0xFFFFFF))
-                  (then
-                    (local.set $pattern (call $gdi_raster_swap_rb (local.get $brush_color)))
-                    (local.set $ok (call $gdi_raster_stretch_blt
-                      (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
-                      (local.get $arg3) (local.get $arg4) (local.get $src)
-                      (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
-                      (local.get $pattern) (local.get $rop))))))
-              (else
-                (local.set $ok (call $gdi_raster_stretch_blt
-                  (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
-                  (local.get $arg3) (local.get $arg4) (local.get $src)
-                  (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
-                  (i32.const 0) (local.get $rop)))))))
+            (local.set $ok (call $gdi_raster_stretch_blt
+              (local.get $arg0) (local.get $dst) (local.get $dx) (local.get $dy)
+              (local.get $arg3) (local.get $arg4) (local.get $src)
+              (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
+              (local.get $pattern) (local.get $rop)))))
         (if (local.get $ok)
           (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
             (local.get $dx) (local.get $dy)
