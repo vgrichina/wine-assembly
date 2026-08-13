@@ -399,12 +399,21 @@ Static `CF_DIB` is a useful first handler, not the general object model.
 - Introduce a generic embedded-object record containing CLSID, storage,
   extent/aspect, user type, client site, dirty/closed state, and zero or more
   cached presentations.
-- Implement real `IPersistStorage::InitNew`, `Load`, `Save`, `SaveCompleted`,
-  and `HandsOffStorage` against the P2 storage model.
+- [x] Implement real `IPersistStorage::InitNew`, `Load`, `Save`,
+  `SaveCompleted`, and `HandsOffStorage` against the P2 storage model.
 - Generalize `IOleCache` beyond one DIB presentation, including replace/remove,
   cache enumeration, and format/aspect selection.
 - Preserve unknown streams and storage children during load/save so an object
   can round-trip even when wine-assembly cannot activate its server.
+
+2026-08-13 persistence-state result: the bounded embedded handler now enforces
+uninitialized, normal, no-scribble, and both hands-off states. `Load` starts
+clean, `InitNew` starts dirty, repeated initialization returns
+`CO_E_ALREADYINITIALIZED`, and `SaveCompleted` validates its handoff storage.
+Save As recursively stages and atomically replaces the destination, preserving
+unknown streams, storage children, root CLSID, and state bits without needing
+to understand their schema. The static-handler suite passes 26/26. General
+multi-presentation caching and user/lifecycle metadata remain in P4.1/P4.2.
 
 ### P4.2 Object lifecycle contracts
 

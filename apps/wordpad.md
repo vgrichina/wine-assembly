@@ -82,6 +82,14 @@ reaches its bounded timeout before the final state/screenshot actions. The
 single-process object clipboard probe remains green at 13/13. Linked/activated
 objects and non-DIB OLE servers remain outside this bounded static-image slice.
 
+The generic persistence foundation now gives the same embedded handler a real
+`IPersistStorage` state machine. It rejects repeated initialization, enforces
+no-scribble and hands-off transitions, adopts replacement storage only through
+`SaveCompleted`, and performs atomic full-tree Save As copies. Unknown streams,
+nested storages, CLSID, and state bits survive without server-specific parsing.
+The expanded static-handler suite passes 26/26; generalized cache enumeration
+and multiple presentations remain next.
+
 ## Remaining Work
 
 The everyday non-OLE WordPad target is complete. Remaining work is narrower.

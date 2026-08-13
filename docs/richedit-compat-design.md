@@ -39,6 +39,12 @@ value snapshots independent of subsequent owner mutation. Runtime-owned
 stream/storage-plus-releaser lifetime rules; DLL-private releasers remain a
 guest-callback follow-up only if traced.
 
+The first general embedded-object persistence slice is also complete.
+`IPersistStorage` now models initialization, normal, no-scribble, and hands-off
+states; Save As uses a detached recursive storage copy before replacing the
+destination. This preserves unknown streams, nested storage, CLSID, and state
+bits for unavailable servers. The focused static-handler suite passes 26/26.
+
 ## ASCII TLDR
 
 ```text

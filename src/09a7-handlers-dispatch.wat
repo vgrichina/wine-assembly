@@ -3845,9 +3845,11 @@
 
   ;; Bounded in-process static presentation object. The secondary
   ;; IPersistStorage interface is embedded at root+12 and shares root refcount.
-  ;; Layout (96 bytes): IOleObject vtbl/ref/kind=6, IPersistStorage vtbl,
+  ;; Layout (100 bytes): IOleObject vtbl/ref/kind=6, IPersistStorage vtbl,
   ;; client site, storage, CLSID[16], extent.cx/cy, dirty, IOleCache and
-  ;; IViewObject2 interface slots, cached STGMEDIUM/FORMATETC, valid flag.
+  ;; IViewObject2 interface slots, cached STGMEDIUM/FORMATETC, valid flag,
+  ;; persistence state (0 uninitialized, 1 normal, 2 no-scribble,
+  ;; 3 hands-off-from-normal, 4 hands-off-after-save).
   (func $ole_static_root (param $iface i32) (result i32)
     (if (result i32)
       (i32.eq (call $gl32 (local.get $iface)) (global.get $DX_VTBL_OLE_PERSISTSTORAGE))
@@ -3889,9 +3891,9 @@
 
   (func $ole_create_static_handler (param $clsid i32) (result i32)
     (local $obj i32)
-    (local.set $obj (call $heap_alloc (i32.const 96)))
+    (local.set $obj (call $heap_alloc (i32.const 100)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 96))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 100))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_OBJECT))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 6))
@@ -3987,25 +3989,104 @@
   (func $handle_IPersistStorage_IsDirty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (select (i32.const 0) (i32.const 1) (call $gl32 (i32.add (call $ole_static_root (local.get $arg0)) (i32.const 48)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $ole_persist_replace_storage (param $root i32) (param $storage i32)
+    (local $old i32)
+    (local.set $old (call $gl32 (i32.add (local.get $root) (i32.const 20))))
+    (if (i32.eq (local.get $old) (local.get $storage)) (then (return)))
+    (if (local.get $storage) (then (drop (call $ole_obj_addref (local.get $storage)))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 20)) (local.get $storage))
+    (if (local.get $old) (then (drop (call $ole_obj_release (local.get $old)))))
+  )
+
+  (func $ole_persist_initialize (param $root i32) (param $storage i32) (param $loaded i32) (result i32)
+    (if (i32.eqz (local.get $storage)) (then (return (i32.const 0x80004003))))
+    (if (call $gl32 (i32.add (local.get $root) (i32.const 96)))
+      (then (return (i32.const 0x800401F1)))) ;; CO_E_ALREADYINITIALIZED
+    (call $ole_persist_replace_storage (local.get $root) (local.get $storage))
+    (call $gs32 (i32.add (local.get $root) (i32.const 48))
+      (select (i32.const 0) (i32.const 1) (local.get $loaded)))
+    (call $gs32 (i32.add (local.get $root) (i32.const 96)) (i32.const 1))
+    (i32.const 0)
+  )
+
+  ;; Preserve the complete source storage value through a detached staging
+  ;; tree, then swap it into the destination only after every recursive copy
+  ;; succeeds. Unknown streams and children therefore survive Save As without
+  ;; requiring this handler to understand their schema.
+  (func $ole_persist_save (param $root i32) (param $dest i32) (param $same_as_load i32) (result i32)
+    (local $source i32) (local $staged i32) (local $hr i32) (local $state i32)
+    (if (i32.eqz (local.get $dest)) (then (return (i32.const 0x80004003))))
+    (local.set $state (call $gl32 (i32.add (local.get $root) (i32.const 96))))
+    (if (i32.or (i32.eqz (local.get $state)) (i32.ge_u (local.get $state) (i32.const 2)))
+      (then (return (i32.const 0x8000FFFF)))) ;; E_UNEXPECTED
+    (local.set $source (call $gl32 (i32.add (local.get $root) (i32.const 20))))
+    (if (i32.and (i32.ne (local.get $source) (i32.const 0))
+          (i32.ne (local.get $source) (local.get $dest)))
+      (then
+        (local.set $staged (call $ole_create_storage (i32.const 0)))
+        (if (i32.eqz (local.get $staged)) (then (return (i32.const 0x8007000E))))
+        (memory.copy
+          (call $g2w (i32.add (local.get $staged) (i32.const 20)))
+          (call $g2w (i32.add (local.get $source) (i32.const 20)))
+          (i32.const 16))
+        (call $gs32 (i32.add (local.get $staged) (i32.const 56))
+          (call $gl32 (i32.add (local.get $source) (i32.const 56))))
+        (local.set $hr (call $ole_storage_copy_contents (local.get $source) (local.get $staged)))
+        (if (local.get $hr)
+          (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+        (call $ole_storage_adopt_contents (local.get $dest) (local.get $staged))
+        (drop (call $ole_obj_release (local.get $staged)))))
+    (drop (local.get $same_as_load))
+    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $root) (i32.const 96)) (i32.const 2))
+    (i32.const 0)
+  )
+
+  (func $ole_persist_save_completed (param $root i32) (param $storage i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $gl32 (i32.add (local.get $root) (i32.const 96))))
+    (if (i32.and (i32.ne (local.get $state) (i32.const 2))
+          (i32.and (i32.ne (local.get $state) (i32.const 3)) (i32.ne (local.get $state) (i32.const 4))))
+      (then (return (i32.const 0x8000FFFF)))) ;; E_UNEXPECTED
+    (if (i32.and (i32.ge_u (local.get $state) (i32.const 3)) (i32.eqz (local.get $storage)))
+      (then (return (i32.const 0x80070057)))) ;; E_INVALIDARG
+    (if (local.get $storage)
+      (then (call $ole_persist_replace_storage (local.get $root) (local.get $storage))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $root) (i32.const 96)) (i32.const 1))
+    (i32.const 0)
+  )
+
+  (func $ole_persist_hands_off (param $root i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $gl32 (i32.add (local.get $root) (i32.const 96))))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0x8000FFFF))))
+    (call $ole_persist_replace_storage (local.get $root) (i32.const 0))
+    (call $gs32 (i32.add (local.get $root) (i32.const 96))
+      (select (i32.const 4) (i32.const 3) (i32.eq (local.get $state) (i32.const 2))))
+    (i32.const 0)
+  )
+
   (func $handle_IPersistStorage_InitNew (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $root i32) (local.set $root (call $ole_static_root (local.get $arg0)))
-    (if (call $gl32 (i32.add (local.get $root) (i32.const 20))) (then (drop (call $ole_obj_release (call $gl32 (i32.add (local.get $root) (i32.const 20)))))))
-    (call $gs32 (i32.add (local.get $root) (i32.const 20)) (local.get $arg1))
-    (if (local.get $arg1) (then (drop (call $ole_obj_addref (local.get $arg1)))))
-    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1))
-    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1))) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $eax (call $ole_persist_initialize
+      (call $ole_static_root (local.get $arg0)) (local.get $arg1) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IPersistStorage_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IPersistStorage_InitNew (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (global.set $eax (call $ole_persist_initialize
+      (call $ole_static_root (local.get $arg0)) (local.get $arg1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IPersistStorage_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $gs32 (i32.add (call $ole_static_root (local.get $arg0)) (i32.const 48)) (i32.const 0))
-    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1))) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (global.set $eax (call $ole_persist_save
+      (call $ole_static_root (local.get $arg0)) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IPersistStorage_SaveCompleted (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $eax (call $ole_persist_save_completed
+      (call $ole_static_root (local.get $arg0)) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IPersistStorage_HandsOffStorage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $root i32) (local.set $root (call $ole_static_root (local.get $arg0)))
-    (if (call $gl32 (i32.add (local.get $root) (i32.const 20))) (then (drop (call $ole_obj_release (call $gl32 (i32.add (local.get $root) (i32.const 20)))))))
-    (call $gs32 (i32.add (local.get $root) (i32.const 20)) (i32.const 0))
-    (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (global.set $eax (call $ole_persist_hands_off (call $ole_static_root (local.get $arg0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IOleCache is required by RichEdit when it reconstructs an RTF \pict
   ;; presentation through OleCreateDefaultHandler. The presentation stream is
