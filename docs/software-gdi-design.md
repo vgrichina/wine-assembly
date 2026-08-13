@@ -28,10 +28,11 @@ and write that store through a software rasterizer. Canvas will receive dirty
 rectangles from the authoritative store and will remain responsible for final
 window composition, scaling, and display.
 
-Canvas vector paths must not be used for operations whose Win32 result is
-defined as raster pixels. Canvas may remain an implementation detail for
-presentation and for explicitly documented compatibility fallbacks during the
-migration.
+Canvas vector paths must not be used for geometric GDI primitives whose Win32
+result is defined as raster pixels. Text is the deliberate exception: Canvas
+remains the font-layout and glyph-rasterization backend for this redesign.
+Canvas may also remain an implementation detail for presentation and for
+explicitly documented compatibility fallbacks during the migration.
 
 This is a staged replacement, not a flag-day rewrite.
 
@@ -211,20 +212,133 @@ surface-backed.
 
 ## Text
 
-Canvas text is a separate fidelity problem. The surface architecture should
-accept a glyph coverage mask so text can migrate without changing DC or storage
-ownership.
+Canvas is the selected text backend for the initial software-GDI design. It
+continues to provide font selection, fallback, shaping, kerning, measurement,
+and glyph rasterization. Replacing it with a font engine or period-correct
+bitmap fonts is outside the active migration plan.
 
-Stages:
+Canvas must not bypass authoritative surface storage. Text operations use this
+pipeline:
 
-1. Keep current Canvas text only as an explicit hybrid fallback, compositing
-   its result into the authoritative surface before returning from the GDI
-   call.
-2. Use monochrome or grayscale glyph masks with GDI background-mode, text
-   color, clipping, and raster-operation handling in software.
-3. Add period-correct bitmap fonts and font-smoothing policy where available.
+```text
+TextOut/ExtTextOut/DrawText
+        |
+        v
+Canvas scratch surface renders glyphs
+        |
+        v
+coverage or RGBA rectangle is read from scratch
+        |
+        v
+software composition applies GDI text/background colors,
+clipping, opaque/transparent background mode, and supported ROP
+        |
+        v
+authoritative GdiSurface + dirty rectangle
+```
 
-No Canvas-only draw may leave the authoritative surface stale.
+The scratch Canvas is temporary source material, not a presentation cache and
+not a second owner of destination pixels. Reading it with `getImageData` is
+allowed. Reading the destination's presentation Canvas to recover bitmap state
+is not.
+
+Initially, existing Canvas text output may be copied as RGBA into the surface
+to reduce migration risk. The preferred follow-up is to render white glyphs on
+transparent black, interpret the alpha channel as a coverage mask, and apply
+the DC's text semantics in the software compositor. A compatibility option may
+threshold coverage for non-antialiased Win98-style text where appropriate.
+
+Known limitations remain explicit: browser font availability, metrics,
+hinting, shaping, and antialiasing can differ between Safari, Chromium, and
+Node. These differences are accepted for text during this redesign; geometric
+primitives and bitmap operations must still be deterministic.
+
+No Canvas-only text draw may leave the authoritative surface stale when that
+surface can later be observed through GDI.
+
+### Future high-fidelity Win98 text backend
+
+After the surface migration is stable, an optional deterministic font backend
+can replace Canvas for classic raster-font cases without changing any GDI
+callers. The font backend returns glyph masks and metrics; the existing
+software text compositor applies colors, clipping, background mode, and ROPs.
+
+The target selection order is:
+
+1. An exact bitmap strike from a legally supplied Windows `.FON`/`.FNT` file.
+2. A pre-generated monochrome strike from a bundled open substitute.
+3. Deterministic monochrome rasterization of a bundled outline font.
+4. Canvas text for faces, sizes, scripts, or shaping the deterministic backend
+   does not support.
+
+The loader should understand NE `.FON` containers with one or more Windows FNT
+resources as well as standalone `.FNT` files. FreeType is a viable future
+dependency because it supports Windows FNT, PCF, BDF, and outline fonts and can
+produce monochrome glyph bitmaps. A smaller project-native FNT parser is also
+reasonable for the narrow Win98 UI-font use case. Font-file parsing and glyph
+rasterization must run in WASM or shared JavaScript code so Node and browsers
+consume the same strikes.
+
+For each face/size/weight/charset strike, cache:
+
+```text
+glyph bitmap (1 bpp)
+A/B/C widths or left bearing + advance
+ascent, descent, internal/external leading
+average/max width, first/last/default/break character
+character-set/code-page mapping
+kerning pairs where the source supplies them
+```
+
+Font matching should reproduce the GDI inputs that affect `CreateFont` and
+`LOGFONT`: face aliases, height versus cell height, width, weight, italic,
+underline, strikeout, charset, pitch/family, escapement, and orientation.
+Point sizes must use the em-height and device DPI rules rather than CSS pixels.
+The stock `SYSTEM_FONT`, `DEFAULT_GUI_FONT`, `ANSI_FIXED_FONT`, and
+`OEM_FIXED_FONT` objects should resolve to explicit configured strikes instead
+of browser fallback chains.
+
+Raster output should be monochrome by default for the Win98 look. Glyph origins
+and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,
+justification, tabs, opaque backgrounds, `ETO_CLIPPED`, and `ETO_OPAQUE` are
+handled above the font provider. Complex scripts may remain on the Canvas path
+until a shaping engine such as HarfBuzz is introduced.
+
+Validation requires reference captures from an actual Win98 environment at
+known DPI. Test `GetTextMetrics`, `GetTextExtentPoint32`, ABC widths, dialog
+layout, menu widths, edit caret placement, underline/strikeout, and exact glyph
+bitmaps for the stock UI and fixed fonts. Pixel hashes should match across
+Safari, Chromium, and Node when the same deterministic strike is selected.
+
+### Font sources and licensing
+
+The repository already bundles two open substitutes:
+
+- **W95FA** is an OFL-licensed recreation used for MS Sans Serif/Tahoma-like UI
+  text. It is an outline/web font, not the original Microsoft bitmap strikes.
+- **Fixedsys Excelsior** is reported as public domain and provides a strong
+  Fixedsys-style fixed-pitch fallback. It is also distributed here as an
+  outline font.
+
+Both can be rasterized once at build time into bundled strike files for the
+exact pixel sizes the emulator supports. Generated strikes remain subject to
+the source font's license and attribution/renaming requirements. This makes
+output deterministic, but it does not make their glyphs identical to
+Microsoft's originals.
+
+Other viable open bitmap sources include Terminus (SIL OFL, fixed pitch) and
+GNU Unifont (SIL OFL or GPL with font exception, broad Unicode coverage). They
+are useful fallbacks for terminal text and missing scripts, not close visual
+substitutes for proportional MS Sans Serif.
+
+Do not bundle original Microsoft `SSERIFE.FON`, `VGASYS.FON`, `VGAOEM.FON`,
+Tahoma, Microsoft Sans Serif, or extracted bitmap strikes without a verified
+redistribution license. Converting a proprietary font to BDF, PNG, or a custom
+atlas does not remove its license restrictions. Exact original fonts should be
+loaded only from user-provided files or from a licensed redistributable package.
+Every bundled font or generated strike must have an upstream URL, version,
+license text/SPDX identifier, checksum, and generation recipe recorded under
+`fonts/`.
 
 ## Migration plan
 
@@ -277,7 +391,9 @@ same operation fixtures hash identically in Safari, Chromium, and Node.
   model.
 - Integrate DirectDraw `GetDC` without DIB-to-Canvas-to-DIB round trips.
 
-Exit gate: GDI code reads no window or bitmap Canvas for state.
+Exit gate: GDI code reads no window or bitmap presentation Canvas for state.
+Text may read only its temporary scratch Canvas before committing to the
+authoritative surface.
 
 ### Phase 5: remove shadow synchronization
 
@@ -331,7 +447,8 @@ not encode Canvas output as the expected result for operations being migrated.
   guest-visible DIBs, so format adapters are required.
 - Window-surface conversion changes invalidation and child-window clipping. It
   should follow bitmap migration, not lead it.
-- Text fidelity remains incomplete until glyph rasterization moves off Canvas.
+- Canvas text remains engine- and font-dependent. This is an accepted fidelity
+  boundary, but text must still commit into authoritative surface storage.
 - A software rasterizer can regress performance if it uploads whole canvases or
   uses generic per-pixel dispatch in hot loops.
 
@@ -341,6 +458,8 @@ not encode Canvas output as the expected result for operations being migrated.
   first migration.
 - Implementing the entire documented Win32 GDI API before landing useful
   phases.
+- Replacing Canvas font measurement, shaping, or glyph rasterization during
+  this migration.
 - Treating antialiasing removal alone as proof of GDI compatibility.
 - Removing dirty tracking. The redesign removes competing pixel owners, not
   the need to know what changed.
