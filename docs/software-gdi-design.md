@@ -11,7 +11,7 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are complete path recording, scalable glyph extraction, remaining enhanced
+gaps are complete path consumption and remaining recording families, scalable glyph extraction, remaining enhanced
 metafile record families, remaining classic WMF record families, and printer
 integration.
 The
@@ -53,6 +53,19 @@ stack and take independent copies of the selected explicit clip along with the
 complete hot DC record, auxiliary text/brush/arc state, color adjustment, and
 selected logical palette. Absolute and relative restore indices discard the
 restored snapshot and every newer snapshot.
+
+Path brackets now have WAT-owned per-DC lifecycle and typed geometry storage.
+`BeginPath`, `EndPath`, `AbortPath`, `CloseFigure`, and `GetPath` operate on a
+bounded, growable point/type stream; points are transformed into device space
+when recorded and inverse-transformed through the current mapping when queried.
+`MoveToEx`, `LineTo`, `Rectangle`, `Polygon`, `Polyline`, `PolylineTo`,
+`PolyBezier`, `PolyBezierTo`, `PolyDraw`, and `PolyPolyline` record instead of
+painting while a bracket is open. Straight-line figures feed `PathToRegion`
+and `SelectClipPath` through canonical WAT regions, and `PathToRegion` consumes
+the closed path as Win32 specifies. Curve flattening for region conversion,
+ellipse/arc/round-rectangle/text recording, and `FillPath`, `StrokePath`,
+`StrokeAndFillPath`, `FlattenPath`, and `WidenPath` remain explicit path work;
+none of them fall back to Canvas geometry.
 
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the

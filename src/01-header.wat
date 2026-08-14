@@ -977,7 +977,7 @@
   ;; 0x07F0A800 1KB      GDI_BITMAP_FONT_TABLE (16 installed FNT strikes)
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
-  ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte closed-path records)
+  ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)

@@ -281,6 +281,37 @@
       (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_BeginPath") (param i32) (result i32)
+    (call $handle_BeginPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_EndPath") (param i32) (result i32)
+    (call $handle_EndPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_AbortPath") (param i32) (result i32)
+    (call $handle_AbortPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CloseFigure") (param i32) (result i32)
+    (call $handle_CloseFigure
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetPath")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_GetPath
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_PathToRegion") (param i32) (result i32)
+    (call $handle_PathToRegion
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_GetObjectType") (param i32) (result i32)
     (call $handle_GetObjectType
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
@@ -1291,6 +1322,15 @@
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
     (call $handle_PolyDraw
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PolyPolyline")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PolyPolyline
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))

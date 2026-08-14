@@ -358,6 +358,12 @@ const extra = [
   { name: 'IEnumString_Reset', nargs: 1 },
   { name: 'IEnumString_Clone', nargs: 2 },
   // GDI extras
+  { name: 'AbortPath', nargs: 1 },
+  { name: 'BeginPath', nargs: 1 },
+  { name: 'CloseFigure', nargs: 1 },
+  { name: 'EndPath', nargs: 1 },
+  { name: 'GetPath', nargs: 4 },
+  { name: 'PathToRegion', nargs: 1 },
   { name: 'SaveDC', nargs: 1 },
   { name: 'RestoreDC', nargs: 2 },
   { name: 'SetMapMode', nargs: 2 },

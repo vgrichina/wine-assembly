@@ -17986,5 +17986,47 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 566247804
+  },
+  {
+    "id": 2361,
+    "name": "AbortPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2928650786
+  },
+  {
+    "id": 2362,
+    "name": "BeginPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3440408789
+  },
+  {
+    "id": 2363,
+    "name": "CloseFigure",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 782234579
+  },
+  {
+    "id": 2364,
+    "name": "EndPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1215483161
+  },
+  {
+    "id": 2365,
+    "name": "GetPath",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2542725184
+  },
+  {
+    "id": 2366,
+    "name": "PathToRegion",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 907611139
   }
 ]

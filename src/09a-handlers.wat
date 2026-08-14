@@ -7153,6 +7153,12 @@
   ;; 451: Polygon(hdc, lpPoints, nCount) — 3 args stdcall
   (func $handle_Polygon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32)
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then
+        (global.set $eax (call $gdi_dc_path_record_polygon
+          (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_polygon_desc
@@ -7196,8 +7202,11 @@
 
   ;; 455: PolyBezier(hdc, lppt, cPoints)
   (func $handle_PolyBezier (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_poly_bezier
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (global.set $eax (call $gdi_dc_path_record_bezier
+        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0))))
+      (else (global.set $eax (call $host_gdi_poly_bezier
+        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -7210,8 +7219,11 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (local.set $p (call $g2w (local.get $arg1)))
-    (local.set $ok (call $gdi_polyline_try
-      (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (local.set $ok (call $gdi_dc_path_record_polyline
+        (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0))))
+      (else (local.set $ok (call $gdi_polyline_try
+        (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0)))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -8959,8 +8971,11 @@
 
   ;; 568: PolyBezierTo(hdc, lppt, cPoints)
   (func $handle_PolyBezierTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_poly_bezier
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (global.set $eax (call $gdi_dc_path_record_bezier
+        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1))))
+      (else (global.set $eax (call $host_gdi_poly_bezier
+        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -8985,8 +9000,11 @@
   (func $handle_PolylineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $p i32) (local $ok i32) (local $last i32) (local $x i32) (local $y i32)
     (local.set $p (call $g2w (local.get $arg1)))
-    (local.set $ok (call $gdi_polyline_try
-      (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (local.set $ok (call $gdi_dc_path_record_polyline
+        (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1))))
+      (else (local.set $ok (call $gdi_polyline_try
+        (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1)))))
     (if (i32.and (local.get $ok) (i32.gt_s (local.get $arg2) (i32.const 0)))
       (then
         (local.set $last (i32.add (local.get $p)
@@ -9001,8 +9019,11 @@
 
   ;; 571: PolyDraw — WAT-owned PT_MOVETO/PT_LINETO/PT_BEZIERTO path execution.
   (func $handle_PolyDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_poly_draw (local.get $arg0)
-      (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (global.set $eax (call $gdi_dc_path_record_polydraw (local.get $arg0)
+        (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3))))
+      (else (global.set $eax (call $gdi_poly_draw (local.get $arg0)
+        (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -12752,11 +12773,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_PolyPolyline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_poly_polyline_try
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg2)
-        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg3)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (global.set $eax (call $gdi_dc_path_record_poly_polyline
+        (local.get $arg0)
+        (if (result i32) (local.get $arg1)
+          (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+        (if (result i32) (local.get $arg2)
+          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $arg3))))
+      (else (global.set $eax (call $gdi_poly_polyline_try
+        (local.get $arg0)
+        (if (result i32) (local.get $arg1)
+          (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+        (if (result i32) (local.get $arg2)
+          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+        (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))

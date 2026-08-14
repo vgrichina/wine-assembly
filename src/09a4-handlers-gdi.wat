@@ -167,6 +167,13 @@
   ;; 153: Rectangle
   (func $handle_Rectangle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32)
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then
+        (global.set $eax (call $gdi_dc_path_record_rectangle
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_rectangle_desc
@@ -188,9 +195,15 @@
       (call $gs32 (local.get $arg3) (local.get $old_x))
       (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $old_y))
     ))
-    (local.set $ok (i32.const 1))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 12) (local.get $arg1) (i32.const 0)))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $arg2) (i32.const 0)))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (local.set $ok (call $gdi_dc_path_record_move
+        (local.get $arg0) (local.get $arg1) (local.get $arg2))))
+      (else (local.set $ok (i32.ne
+        (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0)))))
+    (if (local.get $ok)
+      (then
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 12) (local.get $arg1) (i32.const 0)))
+        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $arg2) (i32.const 0)))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -200,16 +213,20 @@
     (local $ok i32) (local $from_x i32) (local $from_y i32) (local $desc i32)
     (local.set $from_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 12) (i32.const 0)))
     (local.set $from_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 16) (i32.const 0)))
-    ;; A standalone LineTo starts a fresh cosmetic style run.
-    (global.set $gdi_line_style_phase (i32.const 0))
-    (local.set $desc (global.get $GDI_LINE_DESC))
-    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
-      (then (local.set $ok (call $gdi_line_desc
-        (local.get $arg0) (local.get $desc)
-        (local.get $from_x) (local.get $from_y) (local.get $arg1) (local.get $arg2)
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 4) (i32.const 0x30017))
-        (call $gdi_dc_get_rop2 (local.get $arg0)))))
-      (else (local.set $ok (i32.const 0))))
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then (local.set $ok (call $gdi_dc_path_record_line
+        (local.get $arg0) (local.get $arg1) (local.get $arg2))))
+      (else
+        ;; A standalone LineTo starts a fresh cosmetic style run.
+        (global.set $gdi_line_style_phase (i32.const 0))
+        (local.set $desc (global.get $GDI_LINE_DESC))
+        (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
+          (then (local.set $ok (call $gdi_line_desc
+            (local.get $arg0) (local.get $desc)
+            (local.get $from_x) (local.get $from_y) (local.get $arg1) (local.get $arg2)
+            (call $gdi_dc_get_field (local.get $arg0) (i32.const 4) (i32.const 0x30017))
+            (call $gdi_dc_get_rop2 (local.get $arg0)))))
+          (else (local.set $ok (i32.const 0))))))
     (if (local.get $ok) (then
       (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 12) (local.get $arg1) (i32.const 0)))
       (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $arg2) (i32.const 0)))
@@ -217,6 +234,34 @@
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
+
+  (func $handle_BeginPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_begin (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_EndPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_end (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_AbortPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_abort (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_CloseFigure (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_close_figure (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GetPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_get
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_PathToRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_to_region (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 156: Ellipse
   (func $handle_Ellipse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
