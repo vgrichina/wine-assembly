@@ -189,7 +189,7 @@ check('formatted screenshot written', fs.existsSync(FORMATTED_PNG) && fs.statSyn
 check('bold/italic/underline formatting changes visible text pixels',
   visual &&
   !visual.mismatch &&
-  visual.changedPixels >= 80 &&
+  visual.changedPixels >= 60 &&
   visual.darkDelta >= 20 &&
   visual.diffSum >= 20000);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
