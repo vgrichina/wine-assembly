@@ -94,6 +94,14 @@ assert(/menu_prepare_overlay/.test(rendererJs) && /menu_paint_dropdown/.test(ren
   'renderer should composite the WAT-painted canonical popup-menu overlay');
 assert(!/menu_hittest_bar|\.menu_open\(/.test(rendererInputJs), 'renderer input should not fall back to JS-driven menu hit-test/open logic');
 assert(indexHtml.includes('id="midi-select"'), 'debug toolbar should expose a MIDI selector');
+assert(indexHtml.includes('<option value="dxball">DX-Ball 1.09</option>'),
+  'debug app selector should expose the local DX-Ball candidate');
+assert(/dxball:\s*\{[^}]*exe:\s*dxballCandidateRoot \+ 'dxball\.exe'[^}]*files:\s*dxballCandidateFiles[^}]*requiredFiles:\s*true/s.test(indexHtml),
+  'DX-Ball debug launch should require its prepared installed payload');
+assert(!/\[\s*'dxball'\s*,\s*'DX-Ball'/.test(indexHtml),
+  'normal desktop whitelist should not promote the local DX-Ball payload');
+assert(!deployJs.includes('test/binaries/candidates/dxball'),
+  'public deploy should exclude the local DX-Ball payload');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
@@ -287,6 +295,7 @@ console.log('PASS  deploy filters include .mid/.wav/.inf/DAT and Pinball asset d
 console.log('PASS  Pinball sound uses bundled assets instead of a run-loop EIP hack');
 console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
+console.log('PASS  debug-only selector exposes local DX-Ball without deploying it');
 console.log('PASS  Start menu exposes screen recording');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');

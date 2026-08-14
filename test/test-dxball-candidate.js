@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-// Candidate-only end-to-end gate for the original DX-Ball 1.09 Wise package.
-// This intentionally stays out of test/run-all.sh and the main fixture matrix.
+// End-to-end gate for the original DX-Ball 1.09 Wise package. The package is
+// still a local, gitignored corpus fixture, so the canonical matrix reports an
+// explicit SKIP when it has not been fetched.
 
 const fs = require('fs');
 const os = require('os');
@@ -13,6 +14,7 @@ const { compileWatSnapshot } = require('../lib/compile-wat');
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const INSTALLER = path.join(__dirname, 'binaries', 'candidates', 'dxball', 'dxball19.exe');
+const DEBUG_WEB_DIR = path.join(__dirname, 'binaries', 'candidates', 'dxball', 'installed');
 
 function runCli(args, timeout) {
   const result = spawnSync('node', [RUN, ...args], {
@@ -134,6 +136,12 @@ async function main() {
     assert(installerStats.nonBlack > 100000 && installerStats.colors > 20,
       `installer completion window was not visibly rendered: ${JSON.stringify(installerStats)}`);
     console.log(`PASS installer: completion window ${installerStats.width}x${installerStats.height}, ${installerStats.colors} colors`);
+
+    if (process.env.PREPARE_DXBALL_DEBUG_WEB === '1') {
+      fs.mkdirSync(DEBUG_WEB_DIR, { recursive: true });
+      fs.cpSync(installDir, DEBUG_WEB_DIR, { recursive: true, force: true });
+      console.log(`prepared debug web payload: ${path.relative(ROOT, DEBUG_WEB_DIR)}`);
+    }
 
     console.log('DX-Ball candidate stage 2/2: launching installed game...');
     const gameOutput = runCli([

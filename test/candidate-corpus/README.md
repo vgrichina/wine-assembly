@@ -1,8 +1,11 @@
 # CLI candidate corpus
 
 This is an intentionally separate pool of possible future Wine-Assembly
-fixtures. It is not referenced by `test/run-all.sh`, `test/test-all-exes.js`,
-the browser app list, or deployment tooling.
+fixtures. The general survey is not referenced by `test/run-all.sh`,
+`test/test-all-exes.js`, the normal browser desktop, or deployment tooling.
+DX-Ball is the first exception: its dedicated installer-plus-game gate is in
+the canonical end-to-end matrix, while its package remains local and
+gitignored.
 
 The manifest records exact versions, source pages, package hashes, executable
 names, and small CLI smoke budgets. Candidate binaries are downloaded beneath
@@ -48,7 +51,7 @@ node test/test-cli-candidate-corpus.js --dry-run
 node test/test-cli-candidate-corpus.js --strict
 ```
 
-DX-Ball also has a deliberately separate two-stage candidate gate. It drives
+DX-Ball also has a dedicated two-stage gate. It drives
 the original Wise installer through completion, validates the installed
 payload, then launches that payload and requires a visible 640x480 DirectDraw
 frame:
@@ -57,10 +60,21 @@ frame:
 node test/test-dxball-candidate.js
 ```
 
-This longer test is not included in `test/run-all.sh`. It skips when the local,
-gitignored DX-Ball package has not been fetched. Set
+This longer test is included in the end-to-end tier of `test/run-all.sh`. It
+skips when the local, gitignored DX-Ball package has not been fetched. Set
 `KEEP_DXBALL_CANDIDATE_TMP=1` to retain its screenshots and extracted VFS for
 inspection.
+
+To make DX-Ball selectable on the local web page, prepare its validated
+installed payload and open the debug view:
+
+```sh
+PREPARE_DXBALL_DEBUG_WEB=1 node test/test-dxball-candidate.js
+open 'http://127.0.0.1:8000/index.html?debug'
+```
+
+The `DX-Ball 1.09` option is deliberately debug-only. The prepared files stay
+under gitignored `test/binaries/candidates/` and are not part of deployment.
 
 The runner rejects DOS, NE, and non-x86 files before invoking Wine-Assembly;
 only PE32/i386 executables enter the survey. It compiles one immutable WAT

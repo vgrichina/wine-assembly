@@ -504,6 +504,9 @@
           <option value="winamp295_inst">Winamp 2.95 Installer</option>
           <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
+        <optgroup label="Local Candidates">
+          <option value="dxball">DX-Ball 1.09</option>
+        </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
       <button onclick="stopAllApps()">Stop All</button>
@@ -1146,6 +1149,26 @@ Resource-aware Win98 emulator
       'binaries/dx-sdk/bin/win95.ppm',
     ];
 
+    // Prepared from the original Wise installer by running
+    // PREPARE_DXBALL_DEBUG_WEB=1 node test/test-dxball-candidate.js.
+    // test/binaries is gitignored and excluded from public deployment; this
+    // manifest is reachable only from the unfiltered ?debug app selector.
+    const dxballCandidateRoot = 'test/binaries/candidates/dxball/installed/';
+    const dxballCandidateFiles = [
+      '12flight.mds', 'acker-gs.mds', 'ao-laser.wav', 'bang.wav',
+      'bassdrum.wav', 'bigbolt.pcx', 'boing.wav', 'brain.mds',
+      'byeball.wav', 'candy.sbk', 'chisel2.sbk', 'default.bds',
+      'effect.wav', 'effect2.wav', 'ethno_pa.mds', 'fanfare.wav',
+      'freebee.mds', 'glass.wav', 'gmfigaro.mds', 'gunfire.wav',
+      'highscor.pcx', 'humm.wav', 'intro.pcx', 'mainmenu.pcx',
+      'mainmenu.sbk', 'mball2.sbk', 'mbbkgrnd.pcx', 'orchblas.wav',
+      'orchestr.wav', 'padexplo.wav', 'peow!.wav', 'readme.txt',
+      'ricochet.wav', 'saucer.wav', 'score.dat', 'sfont.sbk',
+      'sweepdow.wav', 'swordswi.wav', 'sysfont.sbk', 'tank.wav',
+      'thefont.sbk', 'thudclap.wav', 'voltage.wav', 'whine.wav',
+      'wowpulse.wav', 'xploshor.wav', 'xplosht1.wav',
+    ].map(name => dxballCandidateRoot + name);
+
     const apps = {
       notepad:  { exe: 'binaries/notepad.exe' },
       calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'] },
@@ -1208,6 +1231,11 @@ Resource-aware Win98 emulator
       sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
       pinball:  { exe: 'binaries/pinball/pinball.exe', files: pinballFiles },
       pinball_plus95: { exe: 'binaries/pinball-plus95/pinball.exe', files: pinballPlus95Files },
+      dxball: {
+        exe: dxballCandidateRoot + 'dxball.exe',
+        files: dxballCandidateFiles,
+        requiredFiles: true,
+      },
       funtris:    {
         exe: 'binaries/wep32-community/Funpack/Funtris.exe',
         dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
