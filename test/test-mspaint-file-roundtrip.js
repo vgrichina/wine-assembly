@@ -30,25 +30,25 @@ for (const file of [...Object.values(shots), bmpPath]) {
 }
 
 const input = [
-  '40:click:39:146',
-  '50:mousedown:120:140', '51:mousemove:150:160', '52:mouseup:190:190',
-  '70:0x111:57604',                       // File > Save As
-  `120:open-dlg-pick:${FILE_NAME}`,
-  `180:png:${shots.saved}`,
-  '181:dump-windows:saved',
-  '190:0x111:57600',                      // File > New
-  `240:png:${shots.new}`,
-  '241:dump-windows:new',
-  '250:0x111:57601',                      // File > Open
-  `300:open-dlg-pick:${FILE_NAME}`,
-  `390:png:${shots.reopened}`,
-  '391:dump-windows:reopened',
-  '400:mousedown:170:100', '401:mousemove:190:115', '402:mouseup:220:130',
-  '420:0x111:57603',                      // File > Save (no dialog)
-  `470:png:${shots.resaved}`,
-  `471:vfs-export:${FILE_NAME}:${bmpPath}`,
-  '472:dump-windows:resaved',
-  '480:stop',
+  '18:click:39:146',
+  '19:mousedown:120:140', '20:mousemove:150:160', '21:mouseup:190:190',
+  '23:0x111:57604',                       // File > Save As
+  `32:open-dlg-pick:${FILE_NAME}`,
+  `40:png:${shots.saved}`,
+  '40:dump-windows:saved',
+  '42:0x111:57600',                       // File > New
+  `50:png:${shots.new}`,
+  '50:dump-windows:new',
+  '52:0x111:57601',                       // File > Open
+  `61:open-dlg-pick:${FILE_NAME}`,
+  `70:png:${shots.reopened}`,
+  '70:dump-windows:reopened',
+  '72:mousedown:170:100', '73:mousemove:190:115', '74:mouseup:220:130',
+  '76:0x111:57603',                       // File > Save (no dialog)
+  `84:png:${shots.resaved}`,
+  `84:vfs-export:${FILE_NAME}:${bmpPath}`,
+  '84:dump-windows:resaved',
+  '85:stop',
 ].join(',');
 
 let output = '';
@@ -58,14 +58,14 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=520',
+    '--max-batches=90',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
     '--trace-api=GetSaveFileNameA,GetOpenFileNameA,CreateFileA,ReadFile,WriteFile,GetDIBits,SetDIBitsToDevice',
     '--trace-fs',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 12 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 12 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
