@@ -12028,6 +12028,30 @@
       (call $client_rect_get_t (local.get $hwnd)))
     (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
 
+  ;; A window DC may outlive the visibility state under which GetDC created
+  ;; its USER clip. Rebuild all retained window clips when WS_VISIBLE changes;
+  ;; parent/child/sibling visibility can affect DCs other than the changed
+  ;; window itself. Visibility changes are rare, so the bounded table scan is
+  ;; preferable to checking hierarchy state in every rasterized pixel.
+  (func $gdi_refresh_window_dc_system_clips
+    (local $i i32) (local $dc i32) (local $hdc i32)
+    (local $binding i32) (local $hwnd i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_STATE_COUNT)))
+      (local.set $dc (i32.add (global.get $GDI_DC_STATE_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_DC_STATE_STRIDE))))
+      (local.set $hdc (i32.load (local.get $dc)))
+      (local.set $binding (i32.load offset=92 (local.get $dc)))
+      (local.set $hwnd (i32.and (local.get $binding) (i32.const 0x7FFFFFFF)))
+      (if (i32.and (i32.ne (local.get $hdc) (i32.const 0))
+            (i32.ne (local.get $hwnd) (i32.const 0)))
+        (then
+          (if (i32.lt_s (local.get $binding) (i32.const 0))
+            (then (call $dc_apply_window_clip (local.get $hdc) (local.get $hwnd)))
+            (else (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
   (func $dc_apply_nc_clip (param $hdc i32) (param $hwnd i32) (param $w i32) (param $h i32)
     (local $cr_l i32) (local $cr_t i32) (local $cr_r i32) (local $cr_b i32)
     (if (i32.eqz (call $gdi_dc_system_clip_reset (local.get $hdc))) (then (return)))

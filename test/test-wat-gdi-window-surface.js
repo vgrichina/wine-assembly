@@ -140,6 +140,16 @@ async function main() {
   assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 33, 21), 1,
     'clearing the app clip must retain USER visibility');
 
+  // SkiFree acquires and retains its drawing DC from WM_CREATE, before the
+  // main window is shown. Its system clip must follow later visibility
+  // changes without requiring the application to acquire another DC.
+  wat.wnd_set_style_export(HWND, 0);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 0, 0), 0,
+    'hiding a window must empty the system clip of a retained DC');
+  wat.wnd_set_style_export(HWND, 0x10000000);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 0, 0), 1,
+    'showing a window must restore the system clip of a retained DC');
+
   // Paint establishes its preview clip under MM_TEXT, then switches the same
   // DC to MM_ANISOTROPIC before drawing the page. The retained clip must stay
   // in device coordinates instead of being reinterpreted by the new mapping.

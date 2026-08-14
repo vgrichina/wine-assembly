@@ -581,6 +581,10 @@
     (local.set $ptr (call $wnd_record_addr (local.get $idx)))
     (local.set $old (i32.load offset=16 (local.get $ptr)))
     (i32.store offset=16 (local.get $ptr) (local.get $style))
+    (if (i32.ne
+          (i32.and (local.get $old) (i32.const 0x10000000))
+          (i32.and (local.get $style) (i32.const 0x10000000)))
+      (then (call $gdi_refresh_window_dc_system_clips)))
     (local.get $old)
   )
 
