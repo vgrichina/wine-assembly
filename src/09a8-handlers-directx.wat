@@ -61,6 +61,7 @@
   (global $DX_VTBL_DA_BEHAVIOR (mut i32) (i32.const 0))
   (global $DX_VTBL_IMALLOC    (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_ROT    (mut i32) (i32.const 0))
+  (global $DX_VTBL_OLE_ENUMMONIKER (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_MONIKER (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_BINDCTX (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_ENUMSTRING (mut i32) (i32.const 0))

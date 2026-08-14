@@ -469,8 +469,9 @@ native-editing path is alive.
   The `CreateFileMoniker` placeholder described at this historical stage was
   replaced by the generic file-moniker implementation documented in the
   2026-08-14 section below. `CreateBindCtx` was subsequently replaced by the
-  generic bind-context implementation documented there; retained ROT state
-  remains.
+  generic bind-context implementation documented there. The former no-op ROT
+  was subsequently replaced by the retained process-local implementation in
+  the 2026-08-14 activation foundation below.
 - Extended the same bounded regression to cover WordPad File New and File Open.
   `SetWindowTextA/W` now forwards `WM_SETTEXT` to native child windows with real
   wndprocs, which lets WordPad's New document-type dialog clear the RichEdit
@@ -790,10 +791,19 @@ through the existing suspended guest-callback continuation rather than being
 treated as local heap objects. `test/test-ole-bind-context.js` passes 33/33
 through the public API and generated vtables.
 
-The next generic slices are a retaining process-local ROT keyed by moniker
-value and binding through that ROT. File-moniker stream persistence,
-composite/relative monikers, class factories, verbs, links, and drag/drop
-remain after those foundations.
+The next slice replaces the no-op ROT with retained process-local records keyed
+by normalized file-moniker value. Registrations own their objects and monikers,
+use stable cookies, preserve independent duplicates, record change times, and
+survive release of short-lived ROT interface wrappers. `EnumRunning` exposes a
+stable `IEnumMoniker` snapshot with full Next/Skip/Reset/Clone semantics.
+File-moniker `IsRunning`, `GetTimeOfLastChange`, and `BindToObject` now consult
+that table; binding returns a caller-owned interface and also registers it with
+the supplied bind context. Local emulator COM objects and DLL-private objects
+both have balanced ownership through the guest callback bridge.
+`test/test-ole-running-object-table.js` passes 28/28.
+
+File-moniker stream persistence, composite/relative monikers, class factories,
+verbs, links, and drag/drop remain after these foundations.
 
 In the isolated real-app gate, WordPad Save As created and wrote the file,
 called `CreateFileMoniker`, registered it through the ROT, released the ROT,

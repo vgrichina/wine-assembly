@@ -302,6 +302,14 @@ const extra = [
   { name: 'IRunningObjectTable_NoteChangeTime', nargs: 3 },
   { name: 'IRunningObjectTable_GetTimeOfLastChange', nargs: 3 },
   { name: 'IRunningObjectTable_EnumRunning', nargs: 2 },
+  // IEnumMoniker is a stable snapshot of ROT registrations.
+  { name: 'IEnumMoniker_QueryInterface', nargs: 3 },
+  { name: 'IEnumMoniker_AddRef', nargs: 1 },
+  { name: 'IEnumMoniker_Release', nargs: 1 },
+  { name: 'IEnumMoniker_Next', nargs: 4 },
+  { name: 'IEnumMoniker_Skip', nargs: 2 },
+  { name: 'IEnumMoniker_Reset', nargs: 1 },
+  { name: 'IEnumMoniker_Clone', nargs: 2 },
   // IMoniker inherits IUnknown, IPersist and IPersistStream. Keep this block
   // in exact COM vtable order; gen_dispatch.js consumes the contiguous IDs.
   { name: 'IMoniker_QueryInterface', nargs: 3 },

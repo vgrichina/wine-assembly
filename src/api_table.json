@@ -17699,5 +17699,54 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3945360142
+  },
+  {
+    "id": 2320,
+    "name": "IEnumMoniker_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 998195636
+  },
+  {
+    "id": 2321,
+    "name": "IEnumMoniker_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2163112815
+  },
+  {
+    "id": 2322,
+    "name": "IEnumMoniker_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 577913464
+  },
+  {
+    "id": 2323,
+    "name": "IEnumMoniker_Next",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1960874210
+  },
+  {
+    "id": 2324,
+    "name": "IEnumMoniker_Skip",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1060851840
+  },
+  {
+    "id": 2325,
+    "name": "IEnumMoniker_Reset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 560147418
+  },
+  {
+    "id": 2326,
+    "name": "IEnumMoniker_Clone",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4137070816
   }
 ]

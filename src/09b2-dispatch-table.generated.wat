@@ -42,7 +42,7 @@
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2320))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2327))
       (then
         (call $dispatch_api_table_page_9 (i32.sub (local.get $api_id) (i32.const 2304)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -9338,8 +9338,15 @@
   )
 
   (func $dispatch_api_table_page_9 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2304..2319
+    ;; api ids 2304..2326
     (block $fallback
+    (block $api_22
+    (block $api_21
+    (block $api_20
+    (block $api_19
+    (block $api_18
+    (block $api_17
+    (block $api_16
     (block $api_15
     (block $api_14
     (block $api_13
@@ -9356,7 +9363,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $fallback (local.get $api_id))
     ) ;; 2304: IBindCtx_RevokeObjectBound
       (call $handle_IBindCtx_RevokeObjectBound (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -9404,6 +9411,27 @@
       (return)
     ) ;; 2319: IEnumString_Clone
       (call $handle_IEnumString_Clone (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2320: IEnumMoniker_QueryInterface
+      (call $handle_IEnumMoniker_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2321: IEnumMoniker_AddRef
+      (call $handle_IEnumMoniker_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2322: IEnumMoniker_Release
+      (call $handle_IEnumMoniker_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2323: IEnumMoniker_Next
+      (call $handle_IEnumMoniker_Next (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2324: IEnumMoniker_Skip
+      (call $handle_IEnumMoniker_Skip (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2325: IEnumMoniker_Reset
+      (call $handle_IEnumMoniker_Reset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2326: IEnumMoniker_Clone
+      (call $handle_IEnumMoniker_Clone (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2304)))
@@ -9456,6 +9484,8 @@
     (global.set $DX_VTBL_IMALLOC (call $init_com_vtable (i32.const 2015) (i32.const 9)))
     ;; IRunningObjectTable: 10 methods starting at api_id 2059
     (global.set $DX_VTBL_OLE_ROT (call $init_com_vtable (i32.const 2059) (i32.const 10)))
+    ;; IEnumMoniker: 7 methods starting at api_id 2320
+    (global.set $DX_VTBL_OLE_ENUMMONIKER (call $init_com_vtable (i32.const 2320) (i32.const 7)))
     ;; IMoniker: 23 methods starting at api_id 2277
     (global.set $DX_VTBL_OLE_MONIKER (call $init_com_vtable (i32.const 2277) (i32.const 23)))
     ;; IBindCtx: 13 methods starting at api_id 2300

@@ -1765,6 +1765,11 @@
   (global $com_cls_ctx   (mut i32) (i32.const 0))   ;; dwClsContext
   (global $com_dll_name  (mut i32) (i32.const 0))   ;; WASM addr of DLL name string (from registry)
   (global $com_state_unknown (mut i32) (i32.const 0)) ;; CoSetState/CoGetState single-thread placeholder
+  ;; Process-local Running Object Table. Entries are retained independently of
+  ;; the short-lived IRunningObjectTable interface wrappers returned to callers.
+  (global $ole_rot_entries (mut i32) (i32.const 0))
+  (global $ole_rot_next_cookie (mut i32) (i32.const 1))
+  (global $ole_rot_mutating (mut i32) (i32.const 0))
   (global $last_error   (mut i32) (i32.const 0))    ;; GetLastError value
   (global $haccel       (mut i32) (i32.const 0))    ;; Accelerator table handle
   (global $haccel_data  (mut i32) (i32.const 0))    ;; WASM addr of accel table bytes (0 if none)

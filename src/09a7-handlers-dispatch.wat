@@ -636,9 +636,6 @@
   )
 
   ;; GetRunningObjectTable(reserved, pprot)
-  ;; Minimal process-local ROT placeholder. MFC WordPad's save path calls this
-  ;; after CreateFileMoniker and then uses the returned vtable immediately, so
-  ;; failure/null is not a safe compatibility answer.
   (func $handle_GetRunningObjectTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
     (drop (local.get $arg0))
@@ -649,6 +646,12 @@
     (if (i32.eqz (local.get $arg1))
       (then
         (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $arg1) (i32.const 0))
+    (if (local.get $arg0)
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (local.set $obj (call $ole_create_rot))
@@ -663,9 +666,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; IRunningObjectTable — reference-counted process-local object. Registration
-  ;; records are implemented by the next activation slice; empty-table queries
-  ;; remain deterministic in the meantime.
+  ;; IRunningObjectTable — wrappers share the retained process-local table.
   (func $handle_IRunningObjectTable_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eqz (local.get $arg2))
       (then (global.set $eax (i32.const 0x80004003)))
@@ -690,37 +691,243 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
   (func $handle_IRunningObjectTable_Register (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 1))))
-    (global.set $eax (i32.const 0)) ;; S_OK
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (local $entry i32) (local $duplicate i32) (local $owned i32)
+    (local $ret i32) (local $ctx i32) (local $hr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+          (i32.or (i32.eqz (local.get $arg4))
+            (i32.ne (i32.and (local.get $arg1) (i32.const 0xFFFFFFFC)) (i32.const 0))))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (i32.eqz (call $ole_rot_moniker_supported (local.get $arg3)))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (global.get $ole_rot_mutating)
+      (then
+        (global.set $eax (i32.const 0x8000FFFF))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $owned (select (i32.const 1) (i32.const 2)
+      (call $ole_interface_is_local (local.get $arg2))))
+    (if (i32.eq (local.get $owned) (i32.const 2))
+      (then
+        (if (i32.or
+              (i32.eqz (call $ole_guest_method_addr (local.get $arg2) (i32.const 1)))
+              (i32.eqz (call $ole_guest_method_addr (local.get $arg2) (i32.const 2))))
+          (then
+            (global.set $eax (i32.const 0x80004002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))))
+    (local.set $entry (call $heap_alloc (i32.const 32)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (call $zero_memory (call $g2w (local.get $entry)) (i32.const 32))
+    (local.set $duplicate (call $ole_rot_find_moniker (local.get $arg3)))
+    (local.set $hr (select (i32.const 0x000401E7) (i32.const 0) (local.get $duplicate)))
+    (call $gs32 (local.get $entry) (call $ole_rot_allocate_cookie))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 28)) (local.get $owned))
+    (call $ole_rot_stamp_now (local.get $entry))
+    (drop (call $ole_addref_local_interface (local.get $arg3)))
+    (if (i32.eq (local.get $owned) (i32.const 1))
+      (then
+        (drop (call $ole_addref_local_interface (local.get $arg2)))
+        (call $ole_rot_commit_entry (local.get $entry) (local.get $arg4))
+        (global.set $eax (local.get $hr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (global.set $ole_rot_mutating (i32.const 1))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 23) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 24))
+      (i32.const 0) (local.get $entry) (local.get $arg4) (local.get $hr) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $arg2) (i32.const 1)))
+    (return)
   )
   (func $handle_IRunningObjectTable_Revoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) ;; S_OK
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (local $entry i32) (local $object i32) (local $ret i32) (local $ctx i32)
+    (if (global.get $ole_rot_mutating)
+      (then
+        (global.set $eax (i32.const 0x8000FFFF))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $entry (call $ole_rot_find_cookie (local.get $arg1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $object (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 28))) (i32.const 2))
+          (i32.eqz (call $ole_guest_method_addr (local.get $object) (i32.const 2))))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $ole_rot_unlink_entry (local.get $entry))
+    (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
+      (then
+        (call $ole_rot_release_entry_local (local.get $entry))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Retire the moniker before entering the DLL-private object Release.
+    (drop (call $ole_release_local_interface
+      (call $gl32 (i32.add (local.get $entry) (i32.const 12)))))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
+    (global.set $ole_rot_mutating (i32.const 1))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 24) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 12))
+      (i32.const 0) (local.get $entry) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $object) (i32.const 2)))
+    (return)
   )
   (func $handle_IRunningObjectTable_IsRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1)) ;; S_FALSE: object not running
+    (global.set $eax
+      (if (result i32) (call $ole_rot_moniker_supported (local.get $arg1))
+        (then (select (i32.const 0) (i32.const 1) (call $ole_rot_find_moniker (local.get $arg1))))
+        (else (i32.const 0x80070057))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
   (func $handle_IRunningObjectTable_GetObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $object i32) (local $ret i32) (local $ctx i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
-    (global.set $eax (i32.const 0x800401E3)) ;; MK_E_UNAVAILABLE
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eqz (call $ole_rot_moniker_supported (local.get $arg1)))
+      (then (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $entry (call $ole_rot_find_moniker (local.get $arg1)))
+    (if (i32.eqz (local.get $entry))
+      (then (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $object (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
+      (then
+        (drop (call $ole_addref_local_interface (local.get $object)))
+        (call $gs32 (local.get $arg2) (local.get $object))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.eqz (call $ole_guest_method_addr (local.get $object) (i32.const 1)))
+      (then (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 25) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 16))
+      (i32.const 0) (local.get $object) (local.get $arg2) (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $object) (i32.const 1)))
+    (return)
   )
   (func $handle_IRunningObjectTable_NoteChangeTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0)) ;; S_OK
+    (local $entry i32)
+    (local.set $entry (call $ole_rot_find_cookie (local.get $arg1)))
+    (if (i32.or (i32.eqz (local.get $entry)) (i32.eqz (local.get $arg2)))
+      (then (global.set $eax (i32.const 0x80070057)))
+      (else
+        (memory.copy
+          (call $g2w (i32.add (local.get $entry) (i32.const 16)))
+          (call $g2w (local.get $arg2)) (i32.const 8))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
   (func $handle_IRunningObjectTable_GetTimeOfLastChange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then (call $zero_memory (call $g2w (local.get $arg3)) (i32.const 8))))
-    (global.set $eax (i32.const 0x800401E3)) ;; MK_E_UNAVAILABLE
+    (local $entry i32)
+    (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 8))))
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003))))
+    (if (local.get $arg2)
+      (then
+        (if (i32.eqz (call $ole_rot_moniker_supported (local.get $arg1)))
+          (then (global.set $eax (i32.const 0x80070057)))
+          (else
+            (local.set $entry (call $ole_rot_find_moniker (local.get $arg1)))
+            (if (local.get $entry)
+              (then
+                (memory.copy (call $g2w (local.get $arg2))
+                  (call $g2w (i32.add (local.get $entry) (i32.const 16))) (i32.const 8))
+                (global.set $eax (i32.const 0)))
+              (else (global.set $eax (i32.const 1))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
   (func $handle_IRunningObjectTable_EnumRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
-    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (local $enumerator i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (local.set $enumerator (call $ole_create_moniker_enum))
+        (if (local.get $enumerator)
+          (then (call $gs32 (local.get $arg1) (local.get $enumerator)) (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x8007000E))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
+
+  ;; IEnumMoniker {00000102-0000-0000-C000-000000000046}.
+  (func $handle_IEnumMoniker_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg2) (i32.const 0))
+        (if (i32.or
+              (call $ole_iid_is_com (local.get $arg1) (i32.const 0))
+              (call $ole_iid_is_com (local.get $arg1) (i32.const 0x102)))
+          (then
+            (call $gs32 (local.get $arg2) (local.get $arg0))
+            (drop (call $ole_obj_addref (local.get $arg0)))
+            (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x80004002))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IEnumMoniker_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IEnumMoniker_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IEnumMoniker_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_moniker_enum_next
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IEnumMoniker_Skip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_moniker_enum_skip (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IEnumMoniker_Reset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IEnumMoniker_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $clone i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (local.set $clone (call $ole_clone_moniker_enum (local.get $arg0)))
+        (if (local.get $clone)
+          (then (call $gs32 (local.get $arg1) (local.get $clone)) (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x8007000E))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; CreateBindCtx(reserved, ppbc)
   (func $handle_CreateBindCtx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1286,9 +1493,77 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IMoniker_BindToObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $object i32) (local $node i32)
+    (local $ret i32) (local $ctx i32) (local $hr i32)
     (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
-    (global.set $eax (select (i32.const 0x800401EA) (i32.const 0x80004003) (local.get $arg4))) ;; MK_E_CANTOPENFILE / E_POINTER
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (if (i32.eqz (local.get $arg4))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (i32.or
+          (i32.eqz (local.get $arg1))
+          (i32.or
+            (i32.ne (call $gl32 (local.get $arg1)) (global.get $DX_VTBL_OLE_BINDCTX))
+            (i32.ne (call $gl32 (i32.add (local.get $arg1) (i32.const 8))) (i32.const 12))))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (local.get $arg2)
+      (then
+        (global.set $eax (i32.const 0x800401E7)) ;; MK_E_INTERMEDIATEINTERFACENOTSUPPORTED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (call $gl32 (i32.add (local.get $arg1) (i32.const 52)))
+      (then
+        (global.set $eax (i32.const 0x8000FFFF))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $entry (call $ole_rot_find_moniker (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x800401EA)) ;; activation from storage follows later
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; Reserve the bind-context node before QueryInterface so an allocation
+    ;; failure never publishes a caller reference that cannot be retained.
+    (local.set $node (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $node))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (call $zero_memory (call $g2w (local.get $node)) (i32.const 8))
+    (local.set $object (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (if (call $ole_interface_is_local (local.get $object))
+      (then
+        (local.set $hr (call $ole_rot_local_query_interface
+          (local.get $object) (local.get $arg3) (local.get $arg4)))
+        (if (local.get $hr)
+          (then (call $heap_free (local.get $node)))
+          (else
+            (call $gs32 (local.get $node) (call $gl32 (local.get $arg4)))
+            (drop (call $ole_addref_local_interface (call $gl32 (local.get $arg4))))
+            (call $ole_bindctx_commit_bound_node (local.get $arg1) (local.get $node))))
+        (global.set $eax (local.get $hr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (i32.eqz (call $ole_guest_method_addr (local.get $object) (i32.const 0)))
+      (then
+        (call $heap_free (local.get $node))
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 26) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 24))
+      (local.get $arg1) (local.get $arg4) (local.get $node) (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke3
+      (local.get $ctx) (local.get $object) (i32.const 0) (local.get $arg3) (local.get $arg4)))
+    (return)
+  )
 
   (func $handle_IMoniker_BindToStorage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
@@ -1334,14 +1609,36 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IMoniker_IsRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1)) ;; S_FALSE until ROT-backed binding is layered in
+    (if (local.get $arg3)
+      (then
+        (global.set $eax
+          (select (i32.const 0) (i32.const 1)
+            (call $ole_rot_monikers_equal (local.get $arg0) (local.get $arg3)))))
+      (else
+        (if (i32.eqz (local.get $arg1))
+          (then (global.set $eax (i32.const 0x80070057)))
+          (else
+            (global.set $eax
+              (select (i32.const 0) (i32.const 1)
+                (call $ole_rot_find_moniker (local.get $arg0))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IMoniker_GetTimeOfLastChange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (call $gs32 (local.get $arg3) (i32.const 0))
-            (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (i32.const 0))))
-    (global.set $eax (select (i32.const 0x800401EA) (i32.const 0x80004003) (local.get $arg3)))
+    (local $entry i32)
+    (if (i32.eqz (local.get $arg3))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $zero_memory (call $g2w (local.get $arg3)) (i32.const 8))
+        (if (i32.eqz (local.get $arg1))
+          (then (global.set $eax (i32.const 0x80070057)))
+          (else
+            (local.set $entry (call $ole_rot_find_moniker (local.get $arg0)))
+            (if (local.get $entry)
+              (then
+                (memory.copy (call $g2w (local.get $arg3))
+                  (call $g2w (i32.add (local.get $entry) (i32.const 16))) (i32.const 8))
+                (global.set $eax (i32.const 0)))
+              (else (global.set $eax (i32.const 0x800401E5))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IMoniker_Inverse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1523,9 +1820,8 @@
       (call $ole_moniker_hash_path (local.get $copy)))
     (local.get $obj))
 
-  ;; Process-local activation support objects. The ROT state itself is filled
-  ;; in by the following activation slice; this helper already gives every
-  ;; caller a correctly reference-counted IRunningObjectTable interface.
+  ;; IRunningObjectTable wrappers are intentionally short lived. The actual
+  ;; process-local table lives in $ole_rot_entries and survives wrapper release.
   (func $ole_create_rot (result i32)
     (local $obj i32)
     (local.set $obj (call $heap_alloc (i32.const 12)))
@@ -1535,6 +1831,238 @@
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 14))
     (local.get $obj))
+
+  ;; ROT entry (32 bytes): cookie, flags, retained object, retained file
+  ;; moniker, FILETIME low/high, next, object ownership kind (1 local/2 guest).
+  ;; The value-key subset is deliberately the generic file-moniker class this
+  ;; runtime implements; unsupported moniker classes fail instead of silently
+  ;; comparing interface addresses.
+  (func $ole_rot_moniker_supported (param $moniker i32) (result i32)
+    (i32.and
+      (i32.ne (local.get $moniker) (i32.const 0))
+      (i32.and
+        (i32.eq (call $gl32 (local.get $moniker)) (global.get $DX_VTBL_OLE_MONIKER))
+        (i32.eq (call $gl32 (i32.add (local.get $moniker) (i32.const 8))) (i32.const 11)))))
+
+  (func $ole_rot_monikers_equal (param $left i32) (param $right i32) (result i32)
+    (i32.and
+      (i32.and
+        (call $ole_rot_moniker_supported (local.get $left))
+        (call $ole_rot_moniker_supported (local.get $right)))
+      (call $ole_moniker_paths_equal
+        (call $gl32 (i32.add (local.get $left) (i32.const 12)))
+        (call $gl32 (i32.add (local.get $right) (i32.const 12))))))
+
+  (func $ole_rot_find_moniker (param $moniker i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (global.get $ole_rot_entries))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $entry)))
+      (if (call $ole_rot_monikers_equal
+            (call $gl32 (i32.add (local.get $entry) (i32.const 12)))
+            (local.get $moniker))
+        (then (return (local.get $entry))))
+      (local.set $entry (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_rot_find_cookie (param $cookie i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (global.get $ole_rot_entries))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $entry)))
+      (if (i32.eq (call $gl32 (local.get $entry)) (local.get $cookie))
+        (then (return (local.get $entry))))
+      (local.set $entry (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_rot_unlink_entry (param $target i32)
+    (local $entry i32) (local $previous i32) (local $next i32)
+    (local.set $entry (global.get $ole_rot_entries))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $entry)))
+      (local.set $next (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+      (if (i32.eq (local.get $entry) (local.get $target))
+        (then
+          (if (local.get $previous)
+            (then (call $gs32 (i32.add (local.get $previous) (i32.const 24)) (local.get $next)))
+            (else (global.set $ole_rot_entries (local.get $next))))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 24)) (i32.const 0))
+          (return)))
+      (local.set $previous (local.get $entry))
+      (local.set $entry (local.get $next))
+      (br $scan))))
+
+  (func $ole_rot_allocate_cookie (result i32)
+    (local $cookie i32)
+    (local.set $cookie (global.get $ole_rot_next_cookie))
+    (if (i32.eqz (local.get $cookie)) (then (local.set $cookie (i32.const 1))))
+    (global.set $ole_rot_next_cookie (i32.add (local.get $cookie) (i32.const 1)))
+    (if (i32.eqz (global.get $ole_rot_next_cookie))
+      (then (global.set $ole_rot_next_cookie (i32.const 1))))
+    (local.get $cookie))
+
+  (func $ole_rot_stamp_now (param $entry i32)
+    ;; Match GetSystemTimeAsFileTime's deterministic emulator clock.
+    (call $gs32 (i32.add (local.get $entry) (i32.const 16))
+      (i32.add (i32.const 0x256D4000) (i32.mul (call $host_get_ticks) (i32.const 10000))))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 20)) (i32.const 0x01BF53EB)))
+
+  (func $ole_rot_commit_entry (param $entry i32) (param $out i32)
+    (call $gs32 (i32.add (local.get $entry) (i32.const 24)) (global.get $ole_rot_entries))
+    (global.set $ole_rot_entries (local.get $entry))
+    (call $gs32 (local.get $out) (call $gl32 (local.get $entry)))
+    (global.set $ole_rot_mutating (i32.const 0)))
+
+  (func $ole_rot_release_entry_local (param $entry i32)
+    (local $object i32) (local $moniker i32)
+    (local.set $object (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $moniker (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+    (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
+      (then (drop (call $ole_release_local_interface (local.get $object)))))
+    (if (local.get $moniker)
+      (then (drop (call $ole_release_local_interface (local.get $moniker)))))
+    (call $heap_free (local.get $entry)))
+
+  ;; IEnumMoniker snapshot (28 bytes, kind=15): vtable/ref/kind, retained
+  ;; moniker pointer array, count, cursor, owns-array flag.
+  (func $ole_create_moniker_enum (result i32)
+    (local $obj i32) (local $entry i32) (local $array i32)
+    (local $count i32) (local $index i32) (local $moniker i32)
+    (local.set $entry (global.get $ole_rot_entries))
+    (block $counted (loop $count_entries
+      (br_if $counted (i32.eqz (local.get $entry)))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (local.set $entry (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+      (br $count_entries)))
+    (local.set $obj (call $heap_alloc (i32.const 28)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 28))
+    (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_ENUMMONIKER))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 15))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $count))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 24)) (i32.const 1))
+    (if (local.get $count)
+      (then
+        (local.set $array (call $heap_alloc (i32.shl (local.get $count) (i32.const 2))))
+        (if (i32.eqz (local.get $array))
+          (then (call $heap_free (local.get $obj)) (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $array))
+        (local.set $entry (global.get $ole_rot_entries))
+        (block $copied (loop $copy
+          (br_if $copied (i32.eqz (local.get $entry)))
+          (local.set $moniker (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+          (drop (call $ole_addref_local_interface (local.get $moniker)))
+          (call $gs32 (i32.add (local.get $array) (i32.shl (local.get $index) (i32.const 2))) (local.get $moniker))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (local.set $entry (call $gl32 (i32.add (local.get $entry) (i32.const 24))))
+          (br $copy)))))
+    (local.get $obj))
+
+  (func $ole_clone_moniker_enum (param $source i32) (result i32)
+    (local $obj i32) (local $source_array i32) (local $array i32)
+    (local $count i32) (local $index i32) (local $moniker i32)
+    (local.set $count (call $gl32 (i32.add (local.get $source) (i32.const 16))))
+    (local.set $obj (call $heap_alloc (i32.const 28)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 28))
+    (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_ENUMMONIKER))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 15))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $count))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 20))
+      (call $gl32 (i32.add (local.get $source) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 24)) (i32.const 1))
+    (if (local.get $count)
+      (then
+        (local.set $array (call $heap_alloc (i32.shl (local.get $count) (i32.const 2))))
+        (if (i32.eqz (local.get $array))
+          (then (call $heap_free (local.get $obj)) (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $array))
+        (local.set $source_array (call $gl32 (i32.add (local.get $source) (i32.const 12))))
+        (block $done (loop $copy
+          (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+          (local.set $moniker (call $gl32 (i32.add (local.get $source_array) (i32.shl (local.get $index) (i32.const 2)))))
+          (drop (call $ole_addref_local_interface (local.get $moniker)))
+          (call $gs32 (i32.add (local.get $array) (i32.shl (local.get $index) (i32.const 2))) (local.get $moniker))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $copy)))))
+    (local.get $obj))
+
+  (func $ole_moniker_enum_next
+      (param $obj i32) (param $requested i32) (param $output i32) (param $fetched_out i32)
+      (result i32)
+    (local $array i32) (local $count i32) (local $cursor i32)
+    (local $fetched i32) (local $moniker i32)
+    (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (i32.const 0))))
+    (if (i32.or
+          (i32.and (i32.ne (local.get $requested) (i32.const 0)) (i32.eqz (local.get $output)))
+          (i32.and (i32.gt_u (local.get $requested) (i32.const 1)) (i32.eqz (local.get $fetched_out))))
+      (then (return (i32.const 0x80004003))))
+    (local.set $array (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
+    (block $done (loop $copy
+      (br_if $done (i32.or
+        (i32.ge_u (local.get $fetched) (local.get $requested))
+        (i32.ge_u (local.get $cursor) (local.get $count))))
+      (local.set $moniker (call $gl32 (i32.add (local.get $array) (i32.shl (local.get $cursor) (i32.const 2)))))
+      (drop (call $ole_addref_local_interface (local.get $moniker)))
+      (call $gs32 (i32.add (local.get $output) (i32.shl (local.get $fetched) (i32.const 2))) (local.get $moniker))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+      (local.set $fetched (i32.add (local.get $fetched) (i32.const 1)))
+      (br $copy)))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $cursor))
+    (if (local.get $fetched_out) (then (call $gs32 (local.get $fetched_out) (local.get $fetched))))
+    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $fetched) (local.get $requested))))
+
+  (func $ole_moniker_enum_skip (param $obj i32) (param $requested i32) (result i32)
+    (local $count i32) (local $cursor i32) (local $remaining i32) (local $take i32)
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
+    (local.set $remaining (select
+      (i32.sub (local.get $count) (local.get $cursor)) (i32.const 0)
+      (i32.lt_u (local.get $cursor) (local.get $count))))
+    (local.set $take (select (local.get $requested) (local.get $remaining)
+      (i32.lt_u (local.get $requested) (local.get $remaining))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (i32.add (local.get $cursor) (local.get $take)))
+    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $requested))))
+
+  (func $ole_bindctx_commit_bound_node (param $root i32) (param $node i32)
+    (call $gs32 (i32.add (local.get $node) (i32.const 4))
+      (call $gl32 (i32.add (local.get $root) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 12)) (local.get $node)))
+
+  ;; Direct QueryInterface for the emulator-local file-moniker value used as a
+  ;; synthetic ROT object in focused tests and local activation paths. Other
+  ;; runtime objects can be added by interface family without pointer guessing.
+  (func $ole_rot_local_query_interface
+      (param $iface i32) (param $iid i32) (param $out i32) (result i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
+    (call $gs32 (local.get $out) (i32.const 0))
+    (if (i32.and
+          (i32.eq (call $gl32 (local.get $iface)) (global.get $DX_VTBL_OLE_MONIKER))
+          (i32.or
+            (i32.or
+              (call $ole_iid_is_com (local.get $iid) (i32.const 0))
+              (call $ole_iid_is_com (local.get $iid) (i32.const 0x0F)))
+            (i32.or
+              (call $ole_iid_is_com (local.get $iid) (i32.const 0x10C))
+              (call $ole_iid_is_com (local.get $iid) (i32.const 0x109)))))
+      (then
+        (drop (call $ole_addref_local_interface (local.get $iface)))
+        (call $gs32 (local.get $out) (local.get $iface))
+        (return (i32.const 0))))
+    ;; Every local interface supports IUnknown even where its primary family
+    ;; is not yet listed above.
+    (if (call $ole_iid_is_com (local.get $iid) (i32.const 0))
+      (then
+        (drop (call $ole_addref_local_interface (local.get $iface)))
+        (call $gs32 (local.get $out) (local.get $iface))
+        (return (i32.const 0))))
+    (i32.const 0x80004002))
 
   ;; IBindCtx (56 bytes, kind=12): vtable/ref/kind, bound-reference list,
   ;; object-parameter list, BIND_OPTS3 fields (without cbStruct), mutation lock.
@@ -3663,6 +4191,19 @@
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $enumstring_entries)))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
+    (if (i32.eq (local.get $kind) (i32.const 15))
+      (then
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (local.set $child (i32.const 0))
+        (block $enummoniker_done (loop $enummoniker_entries
+          (br_if $enummoniker_done (i32.ge_u (local.get $child)
+            (call $gl32 (i32.add (local.get $obj) (i32.const 16)))))
+          (local.set $next (call $gl32 (i32.add (local.get $data) (i32.shl (local.get $child) (i32.const 2)))))
+          (if (local.get $next)
+            (then (drop (call $ole_release_local_interface (local.get $next)))))
+          (local.set $child (i32.add (local.get $child) (i32.const 1)))
+          (br $enummoniker_entries)))
+        (if (local.get $data) (then (call $heap_free (local.get $data))))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 28))))
     (if (i32.and
           (i32.ne (local.get $data) (i32.const 0))
@@ -4169,6 +4710,8 @@
       (then (return (call $ole_obj_release (local.get $root)))))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMSTRING))
       (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMMONIKER))
+      (then (return (call $ole_obj_release (local.get $root)))))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ROT))
       (then (return (call $ole_obj_release (local.get $root)))))
     (i32.const 0))
@@ -4207,7 +4750,9 @@
                     (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_BINDCTX))
                     (i32.or
                       (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMSTRING))
-                      (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ROT))))))))))))
+                      (i32.or
+                        (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMMONIKER))
+                        (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ROT)))))))))))))
 
   (func $ole_medium_data_interface (param $medium i32) (result i32)
     (local $tymed i32)
@@ -6457,7 +7002,9 @@
   ;; 19: IBindCtx single-object revocation Release;
   ;; 20: IBindCtx ReleaseBoundObjects sequence;
   ;; 21: final IBindCtx registered-object teardown;
-  ;; 22: IBindCtx GetObjectParam guest AddRef completion.
+  ;; 22: IBindCtx GetObjectParam guest AddRef completion;
+  ;; 23/24/25: ROT Register/Revoke/GetObject guest ownership;
+  ;; 26: file-moniker BindToObject guest QueryInterface/bind ownership.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -6707,6 +7254,91 @@
       (then
         (call $gs32 (local.get $p2) (local.get $p1))
         (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 23))
+      (then
+        ;; The DLL-private object now owns the registration reference; publish
+        ;; the entry and cookie only after that AddRef has completed.
+        (call $ole_rot_commit_entry (local.get $p1) (local.get $p2))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $p3))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 24))
+      (then
+        ;; Revoke unlinked the entry before invoking the guest Release.
+        (call $heap_free (local.get $p1))
+        (global.set $ole_rot_mutating (i32.const 0))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 25))
+      (then
+        (call $gs32 (local.get $p2) (local.get $p1))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 26))
+      (then
+        (if (i32.eqz (local.get $stage))
+          (then
+            ;; QueryInterface owns the result for the caller. Acquire a second
+            ;; reference before linking it into the bind context.
+            (local.set $hr (global.get $eax))
+            (if (i32.or
+                  (i32.lt_s (local.get $hr) (i32.const 0))
+                  (i32.eqz (call $gl32 (local.get $p1))))
+              (then
+                (call $heap_free (local.get $p2))
+                (if (i32.lt_s (local.get $hr) (i32.const 0))
+                  (then (call $gs32 (local.get $p1) (i32.const 0))))
+                (call $ole_guest_callback_finish (local.get $ctx)
+                  (select (local.get $hr) (i32.const 0x80004002)
+                    (i32.lt_s (local.get $hr) (i32.const 0))))
+                (return)))
+            (local.set $iface (call $gl32 (local.get $p1)))
+            (call $gs32 (local.get $p2) (local.get $iface))
+            (if (call $ole_interface_is_local (local.get $iface))
+              (then
+                (drop (call $ole_addref_local_interface (local.get $iface)))
+                (call $ole_bindctx_commit_bound_node (local.get $root) (local.get $p2))
+                (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+                (return)))
+            (if (i32.or
+                  (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 1)))
+                  (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 2))))
+              (then
+                ;; A malformed returned interface cannot become context-owned.
+                ;; Roll back its caller reference when Release is callable.
+                (call $gs32 (local.get $p1) (i32.const 0))
+                (if (call $ole_guest_method_addr (local.get $iface) (i32.const 2))
+                  (then
+                    (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+                    (if (call $ole_guest_callback_invoke1
+                          (local.get $ctx) (local.get $iface) (i32.const 2))
+                      (then (return)))))
+                (call $heap_free (local.get $p2))
+                (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0x80004002))
+                (return)))
+            (if (call $gl32 (i32.add (local.get $root) (i32.const 52)))
+              (then
+                (call $gs32 (local.get $p1) (i32.const 0))
+                (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+                (drop (call $ole_guest_callback_invoke1
+                  (local.get $ctx) (local.get $iface) (i32.const 2)))
+                (return)))
+            (call $gs32 (i32.add (local.get $root) (i32.const 52)) (i32.const 1))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 1))
+            (drop (call $ole_guest_callback_invoke1
+              (local.get $ctx) (local.get $iface) (i32.const 1)))
+            (return)))
+        (if (i32.eq (local.get $stage) (i32.const 1))
+          (then
+            (call $ole_bindctx_commit_bound_node (local.get $root) (local.get $p2))
+            (call $gs32 (i32.add (local.get $root) (i32.const 52)) (i32.const 0))
+            (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+            (return)))
+        ;; stage 2 completed rollback of a QueryInterface result that could not
+        ;; be retained by the bind context.
+        (call $heap_free (local.get $p2))
+        (call $gs32 (i32.add (local.get $root) (i32.const 52)) (i32.const 0))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0x80004002))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then

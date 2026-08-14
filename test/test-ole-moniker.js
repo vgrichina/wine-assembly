@@ -174,7 +174,12 @@ async function main() {
   write(enumOut, 0xcccccccc);
   check('simple file monikers enumerate no composite components',
     callMethod(created.object, 12, 1, enumOut) === 0 && read(enumOut) === 0);
-  check('unregistered file monikers report not running', callMethod(created.object, 15, 0, 0, 0) === 1);
+  const bindCtxOut = alloc(4);
+  assert.strictEqual(callApi('CreateBindCtx', 0, bindCtxOut), 0);
+  const bindCtx = read(bindCtxOut);
+  check('unregistered file monikers report not running',
+    callMethod(created.object, 15, bindCtx, 0, 0) === 1);
+  assert.strictEqual(callMethod(bindCtx, 2), 0);
 
   const unsupportedOut = alloc(8);
   write(unsupportedOut, 0xcccccccc);

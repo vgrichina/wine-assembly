@@ -655,7 +655,7 @@ GDI-rejoin concern, but its protocol and state machine can be completed now.
   system-moniker type, and deterministic unsupported results.
 - [x] Implement `CreateBindCtx` and the needed `IBindCtx` option, bound-object,
   object-parameter, and ROT-access contracts.
-- [ ] Replace the no-op process-local Running Object Table with retained
+- [x] Replace the no-op process-local Running Object Table with retained
   registration records, stable cookies, moniker-value lookup, timestamps,
   revocation, and enumeration; then connect file-moniker binding to it.
 - [ ] Add file-moniker `IPersistStream` save/load and supported composition /
@@ -694,10 +694,25 @@ Next/Skip/Reset/Clone cursor semantics and caller-owned string buffers.
 Emulator-local objects use their canonical COM root while DLL-private objects
 run their real guest AddRef/Release methods through the suspended callback
 bridge. `GetRunningObjectTable` returns a correctly reference-counted ROT
-interface; retained ROT registration state remains the next P5.1 slice.
+interface.
 `test/test-ole-bind-context.js` exercises the public API/vtables, options,
 duplicate ownership, replacement ordering, snapshots, guest callbacks, final
 teardown, and malformed-interface atomicity and passes 33/33.
+
+2026-08-14 running-object-table result: the process-local ROT now retains
+registration records independently of wrapper lifetimes, issues stable nonzero
+cookies, compares file monikers by normalized value, and balances local or
+DLL-private object ownership across registration, lookup, and revocation.
+Duplicate registrations remain distinct and return
+`MK_S_MONIKERALREADYREGISTERED`; timestamps support `NoteChangeTime` and
+`GetTimeOfLastChange`. `EnumRunning` returns a stable seven-slot
+`IEnumMoniker` snapshot with caller-owned results and independent cloned
+cursors. File-moniker `IsRunning`, `GetTimeOfLastChange`, and `BindToObject`
+use the shared ROT, and successful binding also registers the returned object
+with the supplied bind context. `test/test-ole-running-object-table.js`
+exercises the public APIs, all ROT and enumerator slots, duplicate and wrapper
+lifetime, local and guest ownership, timestamps, snapshots, and binding and
+passes 28/28.
 
 ### P5.2 Drag/drop
 
