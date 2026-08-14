@@ -231,6 +231,62 @@ function readBitmapObject(wat, handle, wide = false) {
     'indexed source pixels must expand through their owned RGBQUAD palette');
   });
 
+  check('LoadBitmapA promotes colored 1-bpp resources to color DDBs', () => {
+    rdv.setUint16(payload + 14, 1, true);
+    rdv.setUint32(payload + 32, 2, true);
+    rbytes.set([
+      0x00, 0x00, 0xFF, 0x00, // palette 0: red
+      0xFF, 0xFF, 0xFF, 0x00, // palette 1: white
+    ], payload + 40);
+    rbytes.set([
+      0x40, 0, 0, 0, // bottom row: red, white
+      0x80, 0, 0, 0, // top row: white, red
+    ], payload + 48);
+
+    const bitmap = rw.test_call_LoadBitmapA(0, 101) >>> 0;
+    assert(bitmap);
+    assert.deepStrictEqual(readBitmapObject(rw, bitmap),
+      [0, 2, 2, 8, 1 | (32 << 16), 0],
+      'colored mono resources must remain private color DDBs');
+    assert.strictEqual(rw.test_gdi_bitmap_palette_count(bitmap), 0);
+
+    const srcDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
+    assert.strictEqual(rw.test_call_SelectObject(srcDc, bitmap) >>> 0, 0x30007);
+    const bmi = rw.guest_alloc(40) >>> 0;
+    const bitsOut = rw.guest_alloc(4) >>> 0;
+    rw.guest_write32(bmi, 40);
+    rw.guest_write32(bmi + 4, 2);
+    rw.guest_write32(bmi + 8, -2);
+    rw.guest_write32(bmi + 12, 1 | (32 << 16));
+    const dstBitmap = rw.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+    const dstDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(dstBitmap && dstDc);
+    assert.strictEqual(rw.test_call_SelectObject(dstDc, dstBitmap) >>> 0, 0x30007);
+    assert.strictEqual(rw.test_call_BitBlt(
+      dstDc, 0, 0, 2, 2, srcDc, 0, 0, 0x00CC0020), 1);
+    const storage = rw.test_gdi_bitmap_storage(dstBitmap) >>> 0;
+    const pixel = offset => rdv.getUint32(offset, true) & 0x00FFFFFF;
+    assert.deepStrictEqual([
+      pixel(storage), pixel(storage + 4),
+      pixel(storage + 8), pixel(storage + 12),
+    ], [0xFFFFFF, 0xFF0000, 0xFF0000, 0xFFFFFF],
+    'BitBlt must preserve the resource palette colors instead of applying text colors');
+
+    rbytes.set([
+      0x00, 0x00, 0x00, 0x00,
+      0xFF, 0xFF, 0xFF, 0x00,
+    ], payload + 40);
+    const monoBitmap = rw.test_call_LoadBitmapA(0, 101) >>> 0;
+    assert(monoBitmap);
+    assert.deepStrictEqual(readBitmapObject(rw, monoBitmap),
+      [0, 2, 2, 4, 1 | (1 << 16), 0],
+      'true black/white resources must retain monochrome DDB semantics');
+
+    rdv.setUint16(payload + 14, 8, true);
+    rbytes.set([0, 0, 0, 0, 0x30, 0x20, 0x10, 0], payload + 40);
+    rbytes.set(resourcePixels, payload + 48);
+  });
+
   check('LoadBitmapW handles integer and named resources; misses return NULL', () => {
     rbytes.set([0, 0, 0, 0, 0x30, 0x20, 0x10, 0], payload + 40);
     rbytes.set(resourcePixels, payload + 48);

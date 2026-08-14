@@ -840,10 +840,104 @@
     (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
     (call $gdi_bitmap_wrap_pattern_brush (local.get $bitmap) (i32.const 6)))
 
+  (func $gdi_bitmap_plan_palette_color (param $plan i32) (param $index i32) (result i32)
+    (local $palette i32) (local $entry i32)
+    (local.set $palette (i32.load offset=20 (local.get $plan)))
+    (if (i32.or (i32.eqz (local.get $palette))
+          (i32.ge_u (local.get $index) (i32.load offset=24 (local.get $plan))))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.and (i32.load offset=12 (local.get $plan)) (i32.const 8))
+          (i32.const 0))
+      (then
+        (local.set $entry (i32.add (local.get $palette)
+          (i32.mul (local.get $index) (i32.const 3))))
+        (return (i32.or
+          (i32.or (i32.load8_u (local.get $entry))
+            (i32.shl (i32.load8_u offset=1 (local.get $entry)) (i32.const 8)))
+          (i32.shl (i32.load8_u offset=2 (local.get $entry)) (i32.const 16))))))
+    (i32.and (i32.load (i32.add (local.get $palette)
+      (i32.shl (local.get $index) (i32.const 2)))) (i32.const 0x00FFFFFF)))
+
+  ;; LoadBitmap returns a display-compatible DDB. A 1-bpp resource remains a
+  ;; monochrome mask only when both palette entries are black/white; colored
+  ;; palettes such as CARDS.DLL's red suits must be materialized as color DDBs.
+  (func $gdi_bitmap_plan_is_colored_mono (param $plan i32) (result i32)
+    (local $color0 i32) (local $color1 i32)
+    (if (i32.or (i32.ne (i32.load offset=8 (local.get $plan)) (i32.const 1))
+          (i32.lt_u (i32.load offset=24 (local.get $plan)) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (local.set $color0 (call $gdi_bitmap_plan_palette_color
+      (local.get $plan) (i32.const 0)))
+    (local.set $color1 (call $gdi_bitmap_plan_palette_color
+      (local.get $plan) (i32.const 1)))
+    (i32.or
+      (i32.and (i32.ne (local.get $color0) (i32.const 0))
+        (i32.ne (local.get $color0) (i32.const 0x00FFFFFF)))
+      (i32.and (i32.ne (local.get $color1) (i32.const 0))
+        (i32.ne (local.get $color1) (i32.const 0x00FFFFFF)))))
+
+  (func $gdi_bitmap_create_colored_mono_resource (param $plan i32) (result i32)
+    (local $width i32) (local $height i32) (local $src i32) (local $src_stride i32)
+    (local $dst_ga i32) (local $dst i32) (local $dst_stride i32)
+    (local $x i32) (local $y i32) (local $color0 i32) (local $color1 i32)
+    (local $handle i32) (local $total i64)
+    (local.set $width (i32.load (local.get $plan)))
+    (local.set $height (i32.load offset=4 (local.get $plan)))
+    (local.set $src (i32.load offset=28 (local.get $plan)))
+    (local.set $src_stride (i32.load offset=16 (local.get $plan)))
+    (if (i32.or (i32.eqz (local.get $src))
+          (i32.gt_u (local.get $width) (i32.const 0x1FFFFFFF)))
+      (then (return (i32.const 0))))
+    (local.set $dst_stride (i32.shl (local.get $width) (i32.const 2)))
+    (local.set $total (i64.mul (i64.extend_i32_u (local.get $dst_stride))
+      (i64.extend_i32_u (local.get $height))))
+    (if (i64.gt_u (local.get $total)
+          (i64.extend_i32_u (global.get $DIB_BACKING_BASE_SIZE)))
+      (then (return (i32.const 0))))
+    (local.set $dst_ga (call $dib_alloc (i32.wrap_i64 (local.get $total))))
+    (if (i32.eqz (local.get $dst_ga)) (then (return (i32.const 0))))
+    (local.set $dst (call $g2w (local.get $dst_ga)))
+    (local.set $color0 (call $gdi_bitmap_plan_palette_color
+      (local.get $plan) (i32.const 0)))
+    (local.set $color1 (call $gdi_bitmap_plan_palette_color
+      (local.get $plan) (i32.const 1)))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $height)))
+      (local.set $x (i32.const 0))
+      (block $pixels_done (loop $pixels
+        (br_if $pixels_done (i32.ge_u (local.get $x) (local.get $width)))
+        (i32.store
+          (i32.add (i32.add (local.get $dst)
+            (i32.mul (local.get $y) (local.get $dst_stride)))
+            (i32.shl (local.get $x) (i32.const 2)))
+          (select (local.get $color1) (local.get $color0)
+            (i32.ne (i32.and
+              (i32.load8_u (i32.add
+                (i32.add (local.get $src)
+                  (i32.mul (local.get $y) (local.get $src_stride)))
+                (i32.shr_u (local.get $x) (i32.const 3))))
+              (i32.shr_u (i32.const 0x80)
+                (i32.and (local.get $x) (i32.const 7)))) (i32.const 0))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $pixels)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (local.set $handle (call $gdi_bitmap_alloc
+      (local.get $width) (local.get $height) (i32.const 32)
+      (i32.or (i32.and (i32.load offset=12 (local.get $plan)) (i32.const 2))
+        (i32.const 4))
+      (local.get $dst) (local.get $dst_stride) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $handle))
+      (then (call $dib_free_wasm (local.get $dst)) (return (i32.const 0))))
+    (local.get $handle))
+
   (func $gdi_bitmap_create_resource (param $data i32) (param $size i32) (result i32)
     (if (i32.eqz (call $gdi_bitmap_parse_dib
           (local.get $data) (local.get $size) (global.get $GDI_BITMAP_PLAN)))
       (then (return (i32.const 0))))
+    (if (call $gdi_bitmap_plan_is_colored_mono (global.get $GDI_BITMAP_PLAN))
+      (then (return (call $gdi_bitmap_create_colored_mono_resource
+        (global.get $GDI_BITMAP_PLAN)))))
     (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN)
       (i32.load offset=28 (global.get $GDI_BITMAP_PLAN))
       (i32.const 1) (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
