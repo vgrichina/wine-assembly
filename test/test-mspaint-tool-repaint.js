@@ -38,16 +38,20 @@ const input = [
   '17:click:38:71', `19:png:${shots.select}`,
   '20:click:63:170',
   '21:mousedown:105:100', '22:mousemove:210:140', '23:mouseup:210:140',
-  '25:keydown:65', '25:keypress:65', '25:keyup:65',
-  '26:keydown:66', '26:keypress:98', '26:keyup:66',
-  '27:keydown:13', '27:keypress:13', '27:keyup:13',
-  '28:keydown:67', '28:keypress:99', '28:keyup:67',
-  '29:keydown:8', '29:keyup:8',
-  '30:keydown:68', '30:keypress:100', '30:keyup:68',
-  '31:dump-focus-state:paint-text', '31:dump-windows:text',
-  `32:png:${shots['text-edit']}`,
-  '33:click:63:145', `35:png:${shots['text-committed']}`,
-  '36:stop',
+  // Toggle Arial Bold in the floating palette, then return focus to the edit.
+  // Paint installs the new HFONT on control 114 with WM_SETFONT.
+  '24:click:307:63', '25:click:120:110',
+  '26:send-focus-message:49:0:0:paint-font',
+  '27:keydown:65', '27:keypress:65', '27:keyup:65',
+  '28:keydown:66', '28:keypress:98', '28:keyup:66',
+  '29:keydown:13', '29:keypress:13', '29:keyup:13',
+  '30:keydown:67', '30:keypress:99', '30:keyup:67',
+  '31:keydown:8', '31:keyup:8',
+  '32:keydown:68', '32:keypress:100', '32:keyup:68',
+  '33:dump-focus-state:paint-text', '33:dump-windows:text',
+  `34:png:${shots['text-edit']}`,
+  '35:click:63:145', `37:png:${shots['text-committed']}`,
+  '38:stop',
 ].join(',');
 
 let output = '';
@@ -57,7 +61,7 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=37',
+    '--max-batches=39',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
@@ -149,6 +153,8 @@ assert(/Draws using a brush/.test(output) && /Draws using an airbrush/.test(outp
 
 assert(/dump-focus-state paint-text:.*class=2 id=114 .*len=4 .*lineCount=2 text="Ab\\nd"/.test(output),
   'Paint text entry did not preserve multiline typing and Backspace in its native EDIT control');
+assert(/send-focus-message paint-font:.*msg=0x31 .*ret=0x4000[0-9a-f]+/.test(output),
+  'Paint text edit did not retain the HFONT installed from its Fonts palette');
 assert(/window:text .*parent=0x0 .*visible=true .*title="Fonts"/.test(output),
   'Paint Fonts palette is not a visible top-level floating toolbar');
 
@@ -169,4 +175,4 @@ assert(committedInk >= 5, `Paint did not commit typed text to the canvas (${comm
 console.log('PASS  Paint tool glyphs survive brush/airbrush/text/selection repaints');
 console.log('PASS  Paint tool mask remains transparent in all five snapshots');
 console.log('PASS  Paint pressed buttons and tool-option glyphs render correctly');
-console.log(`PASS  Paint floating Fonts toolbar keeps focus in EDIT and commits multiline text (${committedInk} pixels)`);
+console.log(`PASS  Paint Fonts palette installs its font and commits multiline text (${committedInk} pixels)`);

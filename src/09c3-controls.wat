@@ -9568,7 +9568,10 @@
     ;; ---------- WM_CREATE (0x0001) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
-        (local.set $state (call $heap_alloc (i32.const 32)))
+        ;; EditState additionally keeps the font installed by WM_SETFONT at
+        ;; +32.  Paint replaces this font whenever its floating Fonts palette
+        ;; changes, and queries it back with WM_GETFONT for text metrics.
+        (local.set $state (call $heap_alloc (i32.const 36)))
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store         (local.get $state_w) (i32.const 0))
         (i32.store offset=4  (local.get $state_w) (i32.const 0))
@@ -9585,6 +9588,7 @@
             (i32.or
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25)))))
+        (i32.store offset=32 (local.get $state_w) (i32.const 0))
         ;; Copy initial text from CREATESTRUCT if provided (lParam may be 0
         ;; when WM_CREATE is delivered via pending_child_create from GetMessageA)
         (if (local.get $lParam)
@@ -9617,6 +9621,24 @@
           (then (i32.store offset=24 (local.get $state_w)
             (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x04)))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_SETFONT (0x0030) / WM_GETFONT (0x0031) ----------
+    ;; MFC's CWnd::SetFont sends these through the application's EDIT
+    ;; subclass. Keep the handle in native EditState so Paint's font toolbar
+    ;; can both retrieve it for metrics and use it during control painting.
+    (if (i32.eq (local.get $msg) (i32.const 0x0030))
+      (then
+        (if (local.get $state)
+          (then
+            (i32.store offset=32 (call $g2w (local.get $state)) (local.get $wParam))
+            (if (local.get $lParam)
+              (then (call $invalidate_hwnd (local.get $hwnd))))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0031))
+      (then
+        (if (local.get $state)
+          (then (return (i32.load offset=32 (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_DESTROY (0x0002) ----------
@@ -10353,9 +10375,15 @@
           (then
             (if (i32.gt_u (local.get $w) (i32.const 16))
               (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
-        ;; Default GUI font + transparent bk mode so glyphs don't paint over
-        ;; the white edit area with an opaque white box.
-        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        ;; Use the font installed with WM_SETFONT, falling back to the default
+        ;; GUI font. Paint relies on this when committing its text object into
+        ;; the picture memory DC.
+        (drop (call $host_gdi_select_object
+          (local.get $hdc)
+          (select
+            (i32.load offset=32 (local.get $state_w))
+            (i32.const 0x30021)
+            (i32.ne (i32.load offset=32 (local.get $state_w)) (i32.const 0)))))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; 1) White background (WHITE_BRUSH stock obj 0 = 0x30010)
         (drop (call $host_gdi_fill_rect (local.get $hdc)
