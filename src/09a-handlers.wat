@@ -3030,16 +3030,81 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
+  ;; DrawTextEx applies DRAWTEXTPARAMS around the common DrawText backend.
+  ;; Margins are logical rectangle units; the tab length is an average-cell
+  ;; count consumed directly by the WAT bitmap layout without overlapping the
+  ;; legacy DrawText DT_TABSTOP bits.
+  (func $draw_text_ex (param $hdc i32) (param $text_guest i32) (param $count i32)
+        (param $rect_guest i32) (param $format i32) (param $params_guest i32)
+        (param $wide i32) (result i32)
+    (local $text i32) (local $rect i32) (local $params i32) (local $valid i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $left_margin i32) (local $right_margin i32) (local $tab_chars i32)
+    (local $result i32) (local $drawn i32) (local $calculated_right i32)
+    (local.set $text (call $g2w (local.get $text_guest)))
+    (local.set $rect (call $g2w (local.get $rect_guest)))
+    (if (local.get $params_guest)
+      (then
+        (local.set $params (call $g2w (local.get $params_guest)))
+        (local.set $valid (i32.ge_u (i32.load (local.get $params)) (i32.const 20)))))
+    (if (i32.and (local.get $valid) (i32.ne (local.get $rect_guest) (i32.const 0)))
+      (then
+        (local.set $left (i32.load (local.get $rect)))
+        (local.set $top (i32.load offset=4 (local.get $rect)))
+        (local.set $right (i32.load offset=8 (local.get $rect)))
+        (local.set $bottom (i32.load offset=12 (local.get $rect)))
+        (local.set $left_margin (i32.load offset=8 (local.get $params)))
+        (local.set $right_margin (i32.load offset=12 (local.get $params)))
+        (i32.store (local.get $rect) (i32.add (local.get $left) (local.get $left_margin)))
+        (i32.store offset=8 (local.get $rect)
+          (i32.sub (local.get $right) (local.get $right_margin)))))
+    (if (i32.and (local.get $valid)
+          (i32.ne (i32.and (local.get $format) (i32.const 0x40)) (i32.const 0)))
+      (then
+        (local.set $tab_chars (i32.load offset=4 (local.get $params)))
+        (if (i32.lt_s (local.get $tab_chars) (i32.const 0))
+          (then (local.set $tab_chars (i32.const 0))))
+        (if (i32.gt_s (local.get $tab_chars) (i32.const 255))
+          (then (local.set $tab_chars (i32.const 255))))))
+    (global.set $gdi_bitmap_draw_text_tab_chars (local.get $tab_chars))
+    (local.set $result (call $host_gdi_draw_text
+      (local.get $hdc) (local.get $text) (local.get $count) (local.get $rect)
+      (local.get $format) (local.get $wide)))
+    (global.set $gdi_bitmap_draw_text_tab_chars (i32.const 0))
+    (if (local.get $valid)
+      (then
+        (local.set $drawn (local.get $count))
+        (if (i32.eq (local.get $drawn) (i32.const -1))
+          (then (local.set $drawn
+            (if (result i32) (local.get $wide)
+              (then (call $strlen_w (local.get $text)))
+              (else (call $strlen_a (local.get $text)))))))
+        (if (i32.lt_s (local.get $drawn) (i32.const 0))
+          (then (local.set $drawn (i32.const 0))))
+        (i32.store offset=16 (local.get $params) (local.get $drawn))))
+    (if (i32.and (local.get $valid) (i32.ne (local.get $rect_guest) (i32.const 0)))
+      (then
+        (if (i32.ne (i32.and (local.get $format) (i32.const 0x400)) (i32.const 0))
+          (then
+            (local.set $calculated_right (i32.load offset=8 (local.get $rect)))
+            (i32.store (local.get $rect) (local.get $left))
+            (i32.store offset=4 (local.get $rect) (local.get $top))
+            (i32.store offset=8 (local.get $rect)
+              (i32.add (local.get $calculated_right) (local.get $right_margin))))
+          (else
+            (i32.store (local.get $rect) (local.get $left))
+            (i32.store offset=4 (local.get $rect) (local.get $top))
+            (i32.store offset=8 (local.get $rect) (local.get $right))
+            (i32.store offset=12 (local.get $rect) (local.get $bottom))))))
+    (local.get $result))
+
   ;; DrawTextExA(hdc, lpString, nCount, lpRect, uFormat, lpDTParams)
   (func $handle_DrawTextExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_draw_text
-      (local.get $arg0)
-      (call $g2w (local.get $arg1))
-      (local.get $arg2)
-      (call $g2w (local.get $arg3))
-      (local.get $arg4)
-      (i32.const 0) ;; isWide = 0
-    ))
+    (global.set $eax (call $draw_text_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
@@ -6026,14 +6091,11 @@
 
   ;; DrawTextExW
   (func $handle_DrawTextExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_draw_text
-      (local.get $arg0)
-      (call $g2w (local.get $arg1))
-      (local.get $arg2)
-      (call $g2w (local.get $arg3))
-      (local.get $arg4)
-      (i32.const 1) ;; isWide = 1
-    ))
+    (global.set $eax (call $draw_text_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 

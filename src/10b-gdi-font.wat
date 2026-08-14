@@ -639,6 +639,7 @@
   (global $GDI_BITMAP_TEXT_LAYOUT i32 (i32.const 0x07F0AC00))
   (global $GDI_BITMAP_TEXT_LAYOUT_CHARS i32 (i32.const 4096))
   (global $gdi_bitmap_text_active_tab_width (mut i32) (i32.const 0))
+  (global $gdi_bitmap_draw_text_tab_chars (mut i32) (i32.const 0))
 
   (func $gdi_bitmap_text_scale_y_delta (param $desc i32) (param $delta i32)
         (result i32)
@@ -683,12 +684,15 @@
     (if (i32.eqz (i32.and (local.get $format) (i32.const 0x40)))
       (then (return (i32.const 0))))
     (local.set $chars (i32.const 8))
-    (if (i32.ne (i32.and (local.get $format) (i32.const 0x80)) (i32.const 0))
-      (then
-        (local.set $chars
-          (i32.and (i32.shr_u (local.get $format) (i32.const 8)) (i32.const 0xFF)))
-        (if (i32.eqz (local.get $chars))
-          (then (local.set $chars (i32.const 8))))))
+    (if (i32.gt_s (global.get $gdi_bitmap_draw_text_tab_chars) (i32.const 0))
+      (then (local.set $chars (global.get $gdi_bitmap_draw_text_tab_chars)))
+      (else
+        (if (i32.ne (i32.and (local.get $format) (i32.const 0x80)) (i32.const 0))
+          (then
+            (local.set $chars
+              (i32.and (i32.shr_u (local.get $format) (i32.const 8)) (i32.const 0xFF)))
+            (if (i32.eqz (local.get $chars))
+              (then (local.set $chars (i32.const 8))))))))
     (local.set $height (call $gdi_bitmap_font_height
       (local.get $hdc) (local.get $strike)))
     (local.set $average (call $gdi_round_ratio

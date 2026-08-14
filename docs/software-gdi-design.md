@@ -487,8 +487,11 @@ canonical, format-aware GDI raster path. The WAT `ExtTextOut` path applies
 `TA_UPDATECP` before bounded presentation. The WAT `DrawText` path handles
 explicit lines, word wrapping, horizontal and vertical alignment, rectangle
 clipping, `DT_CALCRECT`, mnemonic prefixes and underlines, expanded tabs, and
-single-line end/path/word ellipsis. `DT_MODIFYSTRING` copies an ellipsified
-byte-oriented presentation back to ANSI or UTF-16 caller storage.
+single-line or final-visible-row end/path/word ellipsis. `DrawTextExA/W`
+additionally applies validated `DRAWTEXTPARAMS` left/right margins, its separate
+tab-cell interval, and `uiLengthDrawn` output without encoding the tab count
+over unrelated format bits. `DT_MODIFYSTRING` copies an ellipsified byte-oriented
+presentation back to ANSI or UTF-16 caller storage.
 Unsupported formats and shaped/scalable faces continue through the Canvas
 fallback.
 
