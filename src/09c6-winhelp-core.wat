@@ -30,6 +30,7 @@
   (global $HELP_ERROR_CONTEXT_INDEX i32 (i32.const 11))
   (global $HELP_ERROR_PHRASE_TABLE i32 (i32.const 12))
   (global $HELP_ERROR_TOPIC_RECORD i32 (i32.const 13))
+  (global $HELP_ERROR_TOPIC_FORMAT i32 (i32.const 14))
 
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
@@ -58,6 +59,10 @@
   (global $help_doc_phrase_image_size (mut i32) (i32.const 0))
   ;; 0=no phrase table, 1=Hall |PhrIndex/|PhrImage, 2=legacy |Phrases.
   (global $help_doc_phrase_mode (mut i32) (i32.const 0))
+  (global $help_doc_display_record_count (mut i32) (i32.const 0))
+  (global $help_doc_paragraph_count (mut i32) (i32.const 0))
+  (global $help_doc_table_count (mut i32) (i32.const 0))
+  (global $help_doc_format_command_count (mut i32) (i32.const 0))
   (global $help_doc_system_minor (mut i32) (i32.const 0))
   (global $help_doc_system_major (mut i32) (i32.const 0))
   (global $help_doc_system_flags (mut i32) (i32.const 0))
@@ -140,6 +145,10 @@
     (global.set $help_doc_phrase_count (i32.const 0))
     (global.set $help_doc_phrase_image_size (i32.const 0))
     (global.set $help_doc_phrase_mode (i32.const 0))
+    (global.set $help_doc_display_record_count (i32.const 0))
+    (global.set $help_doc_paragraph_count (i32.const 0))
+    (global.set $help_doc_table_count (i32.const 0))
+    (global.set $help_doc_format_command_count (i32.const 0))
     (global.set $help_doc_system_minor (i32.const 0))
     (global.set $help_doc_system_major (i32.const 0))
     (global.set $help_doc_system_flags (i32.const 0))
@@ -424,6 +433,14 @@
     (local.set $offsets (i32.add (global.get $help_doc_phrase_offsets_wa)
       (i32.mul (local.get $index) (i32.const 4))))
     (i32.sub (i32.load offset=4 (local.get $offsets)) (i32.load (local.get $offsets))))
+  (func (export "get_help_display_record_count") (result i32)
+    (global.get $help_doc_display_record_count))
+  (func (export "get_help_paragraph_count") (result i32)
+    (global.get $help_doc_paragraph_count))
+  (func (export "get_help_table_count") (result i32)
+    (global.get $help_doc_table_count))
+  (func (export "get_help_format_command_count") (result i32)
+    (global.get $help_doc_format_command_count))
   (func (export "test_help_resolve_context_id") (param $map_id i32) (result i32)
     (local $i i32) (local $record i32)
     (block $missing (loop $scan

@@ -34,6 +34,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicLengths: [63,60,85,80,70,101,73,93,90,72,72,236,35,38,37,32,78,386,128,186,91,85,84,89,190,165,88,88,91,163,234,181,119,214,212,242,140,65,80,101,58,50,184,328,284,292,296,237,236,100,104,155,130,77,168,68,195,155,352,156,165,160,147,134,55,205,81,106,38,0],
     rawTopicBytes: 9453,
     rawTopicHash: '29a572c4051d6dfb19a2d308dfed6879dd5211a3ce03f5cdf1c48f0528a701dc',
+    formatCounts: [69,69,0,556],
   },
   'freecell.hlp': {
     title: 'Free Cell', cnt: '', topics: [0,115,383,421],
@@ -44,6 +45,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicLengths: [115,268,38,0],
     rawTopicBytes: 421,
     rawTopicHash: '275ba9bdf872ccd38f6c147f7a15183ed7bbcb706b24add13af7389e0260889b',
+    formatCounts: [3,3,0,9],
   },
   'mspaint.hlp': {
     title: 'Paint Help', cnt: 'mspaint.cnt', topics: [0,38,187,313,376,437,514,700,884,1051,1229,1285,1341,1424,1511,1593,1661,1833,1933,1992,2056,2117,2182,2236,2377,2509,2580,2725,2763],
@@ -55,6 +57,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicLengths: [38,148,126,63,61,77,186,184,167,178,56,56,83,87,82,68,172,100,59,64,61,65,54,141,132,71,145,38,0],
     rawTopicBytes: 2762,
     rawTopicHash: 'e060a6a35b928d056701cea5e91da8acc209452f556a7d4cba35d687a487db67',
+    formatCounts: [28,28,0,92],
   },
   'notepad.hlp': {
     title: 'Notepad Help', cnt: '', topics: [0,495,994,1032],
@@ -65,6 +68,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicLengths: [495,499,38,0],
     rawTopicBytes: 1032,
     rawTopicHash: 'f41f6f28c5daac376b0888eadee88b4f5cc7bea26359e12fbdf733c892540478',
+    formatCounts: [21,41,16,128],
   },
   'sol.hlp': {
     title: 'Solitaire Help', cnt: 'sol.cnt', topics: [0,155,331,1047,1273,1311],
@@ -75,6 +79,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicLengths: [155,176,709,223,38,0],
     rawTopicBytes: 1301,
     rawTopicHash: '56cf53aa2a1a4949b3cefd24ee2968665708858911f0c69ac667f3e6351a5350',
+    formatCounts: [10,10,0,59],
   },
   'wordpad.hlp': {
     title: 'WordPad Help', cnt: '', topics: [0,30,63,91,242,311,409,557,643,712,781,855,923,968,1175,1245,1314,1461,1495,1528,1563,1729,2204,2289,2386,2509,2657,2692,2730,2891,3054,32768,32914,33299,33689,33727],
@@ -86,6 +91,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicLengths: [30,33,28,150,69,98,148,86,69,69,74,68,45,204,70,69,147,34,33,35,166,471,85,97,123,148,35,38,161,163,41,146,385,390,38,0],
     rawTopicBytes: 4046,
     rawTopicHash: '69bfb58fc671db239cc3bb8b36fe3c65419565c8a82d876b46d9f95ff9161c8b',
+    formatCounts: [39,39,0,168],
   },
 };
 
@@ -231,20 +237,25 @@ function buildSyntheticTopic(topicCount = 4) {
 }
 
 function buildSyntheticOldTopic(compressed = true) {
-  const positions = [12, 61, 87, 136, 185];
+  const positions = [12, 61, 98, 147, 196];
   const types = [2, 0x20, 2, 2, 2];
-  const sizes = [49, 26, 49, 49, 49];
+  const sizes = [49, 37, 49, 49, 49];
+  const displayFormat = Buffer.alloc(10);
+  displayFormat.writeUInt16LE(0x801a, 0); // compressed long TopicSize = 13
+  displayFormat[2] = 26; // compressed unsigned TopicLength = 13
+  displayFormat[9] = 0xff;
   const links = Buffer.alloc(sizes.reduce((sum, size) => sum + size, 0));
   let raw = 0;
   for (let i = 0; i < positions.length; i++) {
-    const source = i === 1 ? Buffer.from([1, 0, 1, 3, '!'.charCodeAt(0)]) : Buffer.alloc(0);
+    const source = i === 1 ? Buffer.from([1, 0, 1, 3, '!'.charCodeAt(0), 0]) : Buffer.alloc(0);
     links.writeUInt32LE(sizes[i], raw);
-    links.writeUInt32LE(i === 1 ? 12 : 0, raw + 4);
+    links.writeUInt32LE(i === 1 ? 13 : 0, raw + 4);
     links.writeInt32LE(i === 0 ? -1 : positions[i - 1], raw + 8);
     links.writeInt32LE(i + 1 === positions.length ? -1 : positions[i + 1], raw + 12);
-    links.writeUInt32LE(i === 1 ? 21 : 49, raw + 16);
+    links.writeUInt32LE(i === 1 ? 31 : 49, raw + 16);
     links[raw + 20] = types[i];
-    source.copy(links, raw + 21);
+    if (i === 1) displayFormat.copy(links, raw + 21);
+    source.copy(links, raw + (i === 1 ? 31 : 21));
     raw += sizes[i];
   }
   const header = Buffer.alloc(12);
@@ -252,6 +263,52 @@ function buildSyntheticOldTopic(compressed = true) {
   header.writeUInt32LE(12, 4);
   header.writeUInt32LE(0, 8);
   return Buffer.concat([header, compressed ? encodeLiteralLz77(links) : links]);
+}
+
+function encodeCompressedLong(value) {
+  const result = Buffer.alloc(2);
+  result.writeUInt16LE((value + 0x4000) * 2);
+  return result;
+}
+
+function buildSyntheticFormattedTopic() {
+  const commands = Buffer.concat([
+    Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
+    Buffer.from([0x86, 3]), encodeCompressedLong(4), Buffer.from([0, 0, 7, 0]),
+    Buffer.from([0xe2, 0x78, 0x56, 0x34, 0x12, 0x89]),
+    Buffer.from([0xc8, 2, 0, 'X'.charCodeAt(0), 0]),
+    Buffer.from([0xea, 6, 0, 0, 1, 2, 3, 4, 5]),
+    Buffer.from([0x8b, 0x8c, 0xff]),
+  ]);
+  const strings = Buffer.concat(Array.from({ length: 12 }, (_, index) =>
+    Buffer.from([65 + index, 0])));
+  const displayFormat = Buffer.alloc(9 + commands.length);
+  encodeCompressedLong(strings.length).copy(displayFormat, 0);
+  displayFormat[2] = strings.length * 2;
+  commands.copy(displayFormat, 9);
+  const displaySize = 21 + displayFormat.length + strings.length;
+  const sizes = [49, displaySize, 49, 49, 49];
+  const positions = [12];
+  for (let i = 1; i < sizes.length; i++) positions.push(positions[i - 1] + sizes[i - 1]);
+  const links = Buffer.alloc(sizes.reduce((sum, size) => sum + size, 0));
+  let raw = 0;
+  for (let i = 0; i < sizes.length; i++) {
+    links.writeUInt32LE(sizes[i], raw);
+    links.writeUInt32LE(i === 1 ? strings.length : 0, raw + 4);
+    links.writeInt32LE(i === 0 ? -1 : positions[i - 1], raw + 8);
+    links.writeInt32LE(i + 1 === sizes.length ? -1 : positions[i + 1], raw + 12);
+    links.writeUInt32LE(i === 1 ? 21 + displayFormat.length : 49, raw + 16);
+    links[raw + 20] = i === 1 ? 0x20 : 2;
+    if (i === 1) {
+      displayFormat.copy(links, raw + 21);
+      strings.copy(links, raw + 21 + displayFormat.length);
+    }
+    raw += sizes[i];
+  }
+  const header = Buffer.alloc(12);
+  header.writeInt32LE(-1, 0);
+  header.writeUInt32LE(12, 4);
+  return Buffer.concat([header, encodeLiteralLz77(links)]);
 }
 
 function buildOldPhrases(values, variant = 'hc31') {
@@ -526,6 +583,13 @@ async function main() {
     check(`${file} phrase lookup is bounded`,
       e.get_help_phrase_ptr(semantic.phraseCount) === 0 &&
       e.get_help_phrase_len(semantic.phraseCount) === 0);
+    check(`${file} exact LinkData1 record grammar counts`,
+      JSON.stringify([
+        e.get_help_display_record_count(),
+        e.get_help_paragraph_count(),
+        e.get_help_table_count(),
+        e.get_help_format_command_count(),
+      ]) === JSON.stringify(semantic.formatCounts));
 
     const rawParts = [];
     const rawTopics = [];
@@ -655,6 +719,19 @@ async function main() {
     e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity) === 1 &&
     dv.getUint32(topicTokensWA, true) === 13 && dv.getUint32(topicTokensWA + 4, true) === 0);
 
+  const formattedCommands = buildSyntheticSemanticHelp({ topic: buildSyntheticFormattedTopic() });
+  check('documented LinkData1 command payload families parse',
+    load(formattedCommands.file) === 1 &&
+    e.get_help_display_record_count() === 1 && e.get_help_paragraph_count() === 1 &&
+    e.get_help_table_count() === 0 && e.get_help_format_command_count() === 12);
+  check('formatted-command fixture retains one string per command',
+    e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity) === 13 &&
+    Array.from({ length: 12 }, (_, index) =>
+      dv.getUint32(topicTokensWA + index * 16, true) === 1 &&
+      dv.getUint32(topicTokensWA + index * 16 + 8, true) === 1).every(Boolean) &&
+    dv.getUint32(topicTokensWA + 12 * 16, true) === 13);
+
   for (const [variant, minor, compressedTopic] of [
     ['hc30', 15, false],
     ['hc31', 16, true],
@@ -674,7 +751,8 @@ async function main() {
       readLatin1(e.get_help_phrase_ptr(2), e.get_help_phrase_len(2)) === '!');
     const oldLength = e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity);
     check(`${variant} topic stream uses old-style phrase references and spacing`,
-      oldLength === 12 && readLatin1(topicOutWA, oldLength) === 'helloworld !');
+      oldLength === 13 && readLatin1(topicOutWA, 12) === 'helloworld !' &&
+      bytes[topicOutWA + 12] === 0);
     check(`${variant} old-style stream emits TEXT then END_TOPIC`,
       e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity,
         topicTokensWA, topicTokenCapacity) === 2 &&
@@ -913,6 +991,41 @@ async function main() {
   check('truncated MVB old-style phrase header fails',
     load(truncatedMvbPhrases.file) === 0 && e.get_help_last_error() === 12);
 
+  const unknownFormatCommand = buildSyntheticSemanticHelp({
+    topic: buildSyntheticOldTopic(),
+    oldPhrases: buildOldPhrases(['hello', 'world', '!']),
+  });
+  writeSyntheticTopicRaw(unknownFormatCommand, 49 + 21 + 9, 0x90, 1);
+  check('unknown LinkData1 commands fail without partial publication',
+    load(unknownFormatCommand.file) === 0 && e.get_help_last_error() === 14 &&
+    e.get_help_topic_count() === 0 && e.get_help_display_record_count() === 0 &&
+    e.get_help_paragraph_count() === 0 && e.get_help_format_command_count() === 0);
+
+  const truncatedFormatHeader = buildSyntheticSemanticHelp({
+    topic: buildSyntheticOldTopic(),
+    oldPhrases: buildOldPhrases(['hello', 'world', '!']),
+  });
+  writeSyntheticTopicRaw(truncatedFormatHeader, 49 + 16, 30);
+  check('truncated LinkData1 paragraph header fails before publication',
+    load(truncatedFormatHeader.file) === 0 && e.get_help_last_error() === 14 &&
+    e.get_help_topic_count() === 0);
+
+  const truncatedTabInfo = buildSyntheticSemanticHelp({
+    topic: buildSyntheticOldTopic(),
+    oldPhrases: buildOldPhrases(['hello', 'world', '!']),
+  });
+  writeSyntheticTopicRaw(truncatedTabInfo, 49 + 21 + 7, 0x0200, 2);
+  check('truncated LinkData1 tab metadata fails before publication',
+    load(truncatedTabInfo.file) === 0 && e.get_help_last_error() === 14);
+
+  const truncatedPictureCommand = buildSyntheticSemanticHelp({
+    topic: buildSyntheticOldTopic(),
+    oldPhrases: buildOldPhrases(['hello', 'world', '!']),
+  });
+  writeSyntheticTopicRaw(truncatedPictureCommand, 49 + 21 + 9, 0x86, 1);
+  check('truncated LinkData1 picture payload fails before publication',
+    load(truncatedPictureCommand.file) === 0 && e.get_help_last_error() === 14);
+
   const shortTopicBlock = buildSyntheticSemanticHelp();
   shortTopicBlock.file.writeUInt32LE(11, shortTopicBlock.offsets['|TOPIC'] + 4);
   check('truncated TOPIC physical block fails before publication',
@@ -968,6 +1081,8 @@ async function main() {
     e.get_help_file_ptr() === 0 && e.get_help_directory_count() === 0 &&
     e.get_help_topic_count() === 0 && e.get_help_context_count() === 0 &&
     e.get_help_map_count() === 0 && e.get_help_phrase_count() === 0 &&
+    e.get_help_display_record_count() === 0 && e.get_help_paragraph_count() === 0 &&
+    e.get_help_table_count() === 0 && e.get_help_format_command_count() === 0 &&
     e.get_help_last_error() === 0);
 
   console.log(`--- winhelp-wat-parser: ${passed} passed, ${failed} failed`);

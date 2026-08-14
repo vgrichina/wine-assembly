@@ -11,7 +11,10 @@ streams. Legacy `|Phrases` tables are supported in HC30, HC31, and MVB forms.
 The first bounded topic-IR layer now preserves every non-empty, NUL-delimited
 text string as a `TEXT` token followed by `END_TOPIC`, retaining offsets into
 the exact decoded bytes for later `LinkData1` command interleaving. Formatted
-commands and the runtime UI cutover remain.
+`LinkData1` is now fully bounds-walked—including compressed values, tables,
+paragraph metrics, tabs, fonts, pictures, hotspots, and macros—before any
+document is published. Command-to-token interleaving and the runtime UI
+cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -828,6 +831,11 @@ The initial token builder preflights its token arena, preserves the exact
 `LinkData2` string boundaries, rejects overlapping arenas, and emits a terminal
 `END_TOPIC`; it deliberately does not guess paragraph breaks from NUL bytes.
 Parsing and interleaving `LinkData1` paragraph/font/hotspot commands is next.
+The conditional `LinkData1` grammar is now validated in WAT for every display
+and table record, with exact real-corpus display/paragraph/table/command counts
+and synthetic coverage for all documented variable-size command payloads.
+Malformed or unknown commands fail before partial document publication.
+Emitting those validated commands into the token stream is next.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.
