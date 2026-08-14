@@ -113,6 +113,8 @@ const { bootRenderHarness } = require('./render-helper');
     const copy = wat.test_call_CopyEnhMetaFileA(metafile, 0) >>> 0;
     assert(copy && copy !== metafile);
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 64, 64) >>> 0;
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
     const rect = allocZero(16);
     wat.guest_write32(rect + 8, 64);
     wat.guest_write32(rect + 12, 64);
@@ -123,18 +125,52 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_DeleteEnhMetaFile(copy), 1);
   });
 
-  check('WMF/EMF conversion fallbacks emit valid empty target streams', () => {
-    const emf = wat.test_call_SetEnhMetaFileBits(108, makeEmf()) >>> 0;
-    const required = wat.test_call_GetWinMetaFileBits(emf, 0, 0, 8, 0);
-    assert.strictEqual(required, 24);
+  check('WMF/EMF conversion preserves bitmap records and replay pixels', () => {
+    const recording = wat.test_call_CreateMetaFileA(0) >>> 0;
+    const red = wat.test_call_CreateSolidBrush(0x000000ff) >>> 0;
+    const fill = allocZero(16);
+    wat.guest_write32(fill, 10);
+    wat.guest_write32(fill + 4, 10);
+    wat.guest_write32(fill + 8, 30);
+    wat.guest_write32(fill + 12, 25);
+    assert.strictEqual(wat.test_call_FillRect(recording, fill, red), 1);
+    const sourceWmf = wat.test_call_CloseMetaFile(recording) >>> 0;
+    const sourceSize = wat.test_call_GetMetaFileBitsEx(sourceWmf, 0, 0) >>> 0;
+    const sourceBytes = allocZero(sourceSize);
+    assert.strictEqual(
+      wat.test_call_GetMetaFileBitsEx(sourceWmf, sourceSize, sourceBytes), sourceSize);
+
+    const emf = wat.test_call_SetWinMetaFileBits(sourceSize, sourceBytes, 0, 0) >>> 0;
+    assert(emf, 'SetWinMetaFileBits must convert the bitmap record');
+    assert.strictEqual(wat.test_call_GetEnhMetaFileBits(emf, 0, 0), 640 * 480 * 4 + 228);
+    const header = allocZero(88);
+    assert.strictEqual(wat.test_call_GetEnhMetaFileHeader(emf, 88, header), 88);
+    assert.strictEqual(wat.guest_read32(header + 48), 640 * 480 * 4 + 228);
+
+    const emfDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const emfBitmap = wat.test_call_CreateCompatibleBitmap(0, 640, 480) >>> 0;
+    assert.notStrictEqual(wat.test_call_SelectObject(emfDc, emfBitmap) | 0, -1);
+    const target = allocZero(16);
+    wat.guest_write32(target + 8, 640);
+    wat.guest_write32(target + 12, 480);
+    assert.strictEqual(wat.test_call_PlayEnhMetaFile(emfDc, emf, target), 1);
+    assert.strictEqual(wat.test_call_GetPixel(emfDc, 15, 15) >>> 0, 0x000000ff,
+      'EMR_STRETCHDIBITS replay must preserve recorded color');
+
+    const required = wat.test_call_GetWinMetaFileBits(emf, 0, 0, 8, 0) >>> 0;
+    assert.strictEqual(required, 640 * 480 * 4 + 120);
     const wmf = allocZero(required);
     assert.strictEqual(wat.test_call_GetWinMetaFileBits(emf, required, wmf, 8, 0), required);
     assert.strictEqual(read16(wmf + 2), 9);
-    const converted = wat.test_call_SetWinMetaFileBits(required, wmf, 0, 0) >>> 0;
+    assert.strictEqual(read16(wmf + 50), 0x0f43);
+    const converted = wat.test_call_SetMetaFileBitsEx(required, wmf) >>> 0;
     assert(converted);
-    const header = allocZero(88);
-    assert.strictEqual(wat.test_call_GetEnhMetaFileHeader(converted, 88, header), 88);
-    assert.strictEqual(wat.guest_read32(header + 48), 108);
+    const wmfDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const wmfBitmap = wat.test_call_CreateCompatibleBitmap(0, 640, 480) >>> 0;
+    assert.notStrictEqual(wat.test_call_SelectObject(wmfDc, wmfBitmap) | 0, -1);
+    assert.strictEqual(wat.test_call_PlayMetaFile(wmfDc, converted), 1);
+    assert.strictEqual(wat.test_call_GetPixel(wmfDc, 15, 15) >>> 0, 0x000000ff,
+      'EMF-to-WMF conversion must preserve replay pixels');
   });
 
   check('ICM profile sizing and ResetDCA follow public contracts', () => {

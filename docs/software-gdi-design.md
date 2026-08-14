@@ -67,7 +67,11 @@ pixels into a standard top-down 32-bpp `META_STRETCHDIB` WMF record, and
 `PlayMetaFile` validates, decodes, maps, clips, and presents that record through
 the shared WAT blitter. This gives independently transportable WMF bytes and
 faithful replay of all drawing that reached the recording surface. Native
-vector record preservation, enumeration callbacks, and EMF record playback
+`EMR_STRETCHDIBITS` playback uses the same validation and blitter, including
+the destination rectangle transform supplied to `PlayEnhMetaFile`.
+`GetWinMetaFileBits` and `SetWinMetaFileBits` convert supported bitmap records
+by replaying through a temporary canonical surface and serializing the target
+standard format. Native vector record preservation and enumeration callbacks
 remain separate compatibility layers.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage

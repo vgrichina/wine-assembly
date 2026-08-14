@@ -1136,11 +1136,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_PlayEnhMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.and
-      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))
-      (i32.and
-        (i32.ne (call $gdi_metafile_record (local.get $arg1) (i32.const 7)) (i32.const 0))
-        (i32.ne (local.get $arg2) (i32.const 0)))))
+    (global.set $eax (call $gdi_metafile_play_emf
+      (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_GetWinMetaFileBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1148,12 +1147,15 @@
     (if (i32.eqz (call $gdi_metafile_record (local.get $arg0) (i32.const 7)))
       (then (global.set $eax (i32.const 0)))
       (else
-        (local.set $temporary (call $gdi_metafile_empty_wmf))
-        (global.set $eax (call $gdi_metafile_bits
-          (local.get $temporary) (i32.const 6) (local.get $arg1)
-          (if (result i32) (local.get $arg2)
-            (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
-        (drop (call $gdi_object_delete_full (local.get $temporary)))))
+        (local.set $temporary (call $gdi_metafile_convert_emf_to_wmf (local.get $arg0)))
+        (if (i32.eqz (local.get $temporary))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (global.set $eax (call $gdi_metafile_bits
+              (local.get $temporary) (i32.const 6) (local.get $arg1)
+              (if (result i32) (local.get $arg2)
+                (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+            (drop (call $gdi_object_delete_full (local.get $temporary)))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   (func $handle_SetWinMetaFileBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1161,7 +1163,8 @@
     (if (local.get $arg1) (then (local.set $data (call $g2w (local.get $arg1)))))
     (global.set $eax
       (if (result i32) (call $gdi_metafile_valid_wmf (local.get $data) (local.get $arg0))
-        (then (call $gdi_metafile_empty_emf))
+        (then (call $gdi_metafile_convert_wmf_to_emf
+          (local.get $data) (local.get $arg0)))
         (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
