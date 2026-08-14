@@ -26,6 +26,7 @@ try { fs.unlinkSync(SHOT); } catch (_) {}
 const input = [
   '30:wait-title-command:untitled_-_Paint:80:37683:attributes',
   '50:dlg-dump:attributes',
+  '51:dump-windows:attributes',
   `52:png:${SHOT}`,
   '53:stop',
 ].join(',');
@@ -53,12 +54,18 @@ assert(/dlg-dump:attributes: dlg=0x[0-9a-f]+/.test(output),
   'Paint Attributes dialog did not open');
 assert(/text="&Width:"/.test(output) && /text="&Height:"/.test(output),
   'Paint Attributes controls were not created');
+const dialogWindow = output.match(
+  /window:attributes hwnd=\d+ .* pos=(-?\d+),(-?\d+) size=(\d+)x(\d+).* title="Attributes"/);
+assert(dialogWindow, 'Paint Attributes window geometry was not reported');
+const dialogY = Number(dialogWindow[2]);
+assert(dialogY >= 40 && dialogY <= 100,
+  `Paint Attributes was not centered over its owner (y=${dialogY})`);
 assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|CRASH/.test(output),
   'Paint Attributes triggered an emulator failure');
 
 const image = PNG.sync.read(fs.readFileSync(SHOT));
 let activeCaptionPixels = 0;
-for (let y = 3; y < Math.min(22, image.height); y++) {
+for (let y = dialogY + 3; y < Math.min(dialogY + 22, image.height); y++) {
   for (let x = 3; x < Math.min(356, image.width); x++) {
     const p = (y * image.width + x) * 4;
     const r = image.data[p];
