@@ -23,6 +23,7 @@ if (!fs.existsSync(EXE)) {
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
+try { fs.unlinkSync(PNG_OUT); } catch (_) {}
 
 const seq = ['70:click:40:150'];
 let b = 74;
@@ -36,18 +37,6 @@ function typeText(text) {
   for (const ch of text) push(`keypress:${ch.charCodeAt(0)}`);
 }
 
-function enter() {
-  push('keydown:13');
-  push('keyup:13');
-}
-
-function ctrlKey(vk) {
-  push('keydown:17');
-  push(`keydown:${vk}`);
-  push(`keyup:${vk}`);
-  push('keyup:17');
-}
-
 typeText('mouse select');
 push('dump-focus-state:typed', 8);
 push('mousedown:10:150', 2);
@@ -55,17 +44,21 @@ push('mousemove:120:150', 2);
 push('mouseup:120:150', 6);
 push('dump-focus-state:dragged', 8);
 
-ctrlKey(65); // Ctrl+A
-for (let i = 0; i < 35; i++) {
-  typeText(`line${String(i).padStart(2, '0')}`);
-  if (i !== 34) enter();
-}
+const longText = Array.from({ length: 35 }, (_, i) =>
+  `line${String(i).padStart(2, '0')}`).join('\r\n');
+const encodedLongText = Buffer.from(longText, 'latin1').toString('base64');
+push(`set-focus-text-b64:${encodedLongText}:long`, 2);
+push(`set-focus-selection:${longText.length}:${longText.length}:end`, 2);
+push('send-focus-message:183:0:0:scroll-caret', 8); // EM_SCROLLCARET
 push('dump-focus-state:long-before-wheel', 8);
 push('wheel:200:170:-120', 4);
 push('wheel:200:170:-120', 4);
 push('wheel:200:170:-120', 8);
 push('dump-focus-state:long-after-wheel', 8);
-push('mousedown:390:225', 2);
+// At firstVisible=16 of 35, the shared 16px-minimum thumb occupies roughly
+// y=194..210 in this 150px RichEdit scrollbar. Start on the thumb, not the
+// lower page track, then drag it upward.
+push('mousedown:390:200', 2);
 push('mousemove:390:160', 2);
 push('mouseup:390:160', 8);
 push('dump-focus-state:long-after-thumb', 8);
@@ -101,8 +94,12 @@ try {
 const interesting = out.split('\n').filter(l =>
   l.includes('ShowWindow') ||
   l.includes('dump-focus-state') ||
+  l.includes('set-focus-text-b64') ||
+  l.includes('set-focus-selection') ||
+  l.includes('send-focus-message') ||
   l.includes('[input] wheel') ||
   l.includes('[input] png') ||
+  l.includes('Program exited') ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH') ||
   l.includes('Unreachable code') ||

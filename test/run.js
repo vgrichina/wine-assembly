@@ -29,7 +29,11 @@ const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
 // Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
-const getArg = (name, def) => { const a = args.find(a => a.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; };
+const getArg = (name, def) => {
+  const prefix = `--${name}=`;
+  const arg = args.find(value => value.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : def;
+};
 const hasFlag = name => args.includes(`--${name}`);
 
 const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
@@ -374,6 +378,7 @@ async function main() {
   //   B:dump-print-state[:LABEL] — log printer lifecycle and message-loop state
   //   B:formatrange-probe:WIDTH_TWIPS:HEIGHT_TWIPS[:LABEL] — paginate focused RichEdit
   //   B:main-resize:WIDTH:HEIGHT — resize the top-level main window and deliver WM_SIZE
+  //   B:set-focus-text-b64:BASE64[:LABEL] — WM_SETTEXT decoded Latin-1 on the focused control
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:send-focus-message:MSG:WPARAM:LPARAM[:LABEL] — synchronously send a message to focus
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
@@ -448,6 +453,10 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-focus-state', label: parts[2] || '' });
       } else if (kind === 'dump-focus-unicode') {
         scheduledInput.push({ batch, action: 'dump-focus-unicode', label: parts[2] || '' });
+      } else if (kind === 'set-focus-text-b64') {
+        scheduledInput.push({ batch, action: 'set-focus-text-b64',
+          text: Buffer.from(parts[2] || '', 'base64').toString('latin1'),
+          label: parts[3] || '' });
       } else if (kind === 'dump-print-state') {
         scheduledInput.push({ batch, action: 'dump-print-state', label: parts[2] || '' });
       } else if (kind === 'formatrange-probe') {
@@ -2849,6 +2858,24 @@ async function main() {
           if (we.guest_free) we.guest_free(dibG);
           const queued = we.post_message_q(h, 0x0302, 0, 0) | 0;
           logs.push(`[input] seed-cf-dib${tag}: hwnd=0x${h.toString(16)} owned=0x${owned.toString(16)} queued=${queued} at batch ${batch}`);
+        }
+      } else if (ev.action === 'set-focus-text-b64') {
+        const e = instance.exports;
+        const h = e.get_focus_hwnd ? (e.get_focus_hwnd() >>> 0) : 0;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] set-focus-text-b64${tag}: NO FOCUS at batch ${batch}`);
+        } else if (e.send_message && e.guest_alloc) {
+          const g = e.guest_alloc(ev.text.length + 1) >>> 0;
+          const wa = g2w(g);
+          const u8 = new Uint8Array(memory.buffer);
+          for (let i = 0; i < ev.text.length; i++) u8[wa + i] = ev.text.charCodeAt(i) & 0xff;
+          u8[wa + ev.text.length] = 0;
+          const ret = e.send_message(h, 0x000C, 0, g) >>> 0; // WM_SETTEXT
+          if (e.guest_free) e.guest_free(g);
+          logs.push(`[input] set-focus-text-b64${tag}: hwnd=0x${h.toString(16)} len=${ev.text.length} ret=${ret} at batch ${batch}`);
+        } else {
+          logs.push(`[input] set-focus-text-b64${tag}: hwnd=0x${h.toString(16)} NO TEXT API at batch ${batch}`);
         }
       } else if (ev.action === 'set-focus-selection') {
         const e = instance.exports;
