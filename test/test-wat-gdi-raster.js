@@ -165,20 +165,26 @@ const SRC = path.join(ROOT, 'src');
   check('StretchBlt mirrors pixels when source and destination extent signs differ', () => {
     const src = surface(3, 2, 24);
     const horizontal = surface(3, 2, 32);
+    const negativeDestination = surface(3, 2, 32);
     const vertical = surface(3, 2, 32);
     const bothNegative = surface(3, 2, 32);
     [[1, 2, 3], [4, 5, 6]].forEach((row, y) =>
       row.forEach((color, x) => setPacked(src, x, y, color)));
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
-      horizontal.desc, 3, 0, -3, 2, src.desc, 0, 0, 3, 2, 0, 0x00CC0020), 1);
+      horizontal.desc, 0, 0, 3, 2, src.desc, 2, 0, -3, 2, 0, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(horizontal, x, 0)), [3, 2, 1]);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(horizontal, x, 1)), [6, 5, 4]);
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
-      vertical.desc, 0, 0, 3, 2, src.desc, 0, 2, 3, -2, 0, 0x00CC0020), 1);
+      negativeDestination.desc, 2, 0, -3, 2,
+      src.desc, 0, 0, 3, 2, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(negativeDestination, x, 0)), [3, 2, 1]);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(negativeDestination, x, 1)), [6, 5, 4]);
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      vertical.desc, 0, 0, 3, 2, src.desc, 0, 1, 3, -2, 0, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(vertical, x, 0)), [4, 5, 6]);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(vertical, x, 1)), [1, 2, 3]);
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
-      bothNegative.desc, 3, 2, -3, -2, src.desc, 3, 2, -3, -2, 0, 0x00CC0020), 1);
+      bothNegative.desc, 2, 1, -3, -2, src.desc, 2, 1, -3, -2, 0, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(bothNegative, x, 0)), [1, 2, 3]);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(bothNegative, x, 1)), [4, 5, 6]);
   });
@@ -188,7 +194,7 @@ const SRC = path.join(ROOT, 'src');
     [[1, 2, 3, 4], [5, 6, 7, 8]].forEach((row, y) =>
       row.forEach((color, x) => setPacked(image, x, y, color)));
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
-      image.desc, 4, 0, -4, 2, image.desc, 0, 0, 4, 2, 0, 0x00CC0020), 1);
+      image.desc, 0, 0, 4, 2, image.desc, 3, 0, -4, 2, 0, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(4)].map((_, x) => packed(image, x, 0)), [4, 3, 2, 1]);
     assert.deepStrictEqual([...Array(4)].map((_, x) => packed(image, x, 1)), [8, 7, 6, 5]);
 
@@ -196,8 +202,8 @@ const SRC = path.join(ROOT, 'src');
     setPacked(paintImage, 0, 100, 0x112233);
     setPacked(paintImage, 319, 100, 0x445566);
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
-      paintImage.desc, 320, 0, -320, 200,
-      paintImage.desc, 0, 0, 320, 200, 0, 0x00CC0020), 1);
+      paintImage.desc, 0, 0, 320, 200,
+      paintImage.desc, 319, 0, -320, 200, 0, 0x00CC0020), 1);
     assert.strictEqual(packed(paintImage, 0, 100), 0x445566);
     assert.strictEqual(packed(paintImage, 319, 100), 0x112233);
   });

@@ -3479,13 +3479,13 @@
     ;; normalized dirty rectangle without changing the canonical coordinates.
     (if (i32.gt_s (local.get $left) (local.get $right))
       (then
-        (local.set $swap (local.get $left))
-        (local.set $left (local.get $right))
+        (local.set $swap (i32.add (local.get $left) (i32.const 1)))
+        (local.set $left (i32.add (local.get $right) (i32.const 1)))
         (local.set $right (local.get $swap))))
     (if (i32.gt_s (local.get $top) (local.get $bottom))
       (then
-        (local.set $swap (local.get $top))
-        (local.set $top (local.get $bottom))
+        (local.set $swap (i32.add (local.get $top) (i32.const 1)))
+        (local.set $top (i32.add (local.get $bottom) (i32.const 1)))
         (local.set $bottom (local.get $swap))))
     (drop (call $host_gdi_surface_upload
       (i32.load offset=68 (local.get $desc)) (local.get $left) (local.get $top)
@@ -5809,14 +5809,12 @@
       (i32.lt_s (local.get $sw) (i32.const 0))))
     (local.set $src_y_step (select (i32.const -1) (i32.const 1)
       (i32.lt_s (local.get $sh) (i32.const 0))))
-    (local.set $dst_x0 (select (i32.sub (local.get $dx) (i32.const 1)) (local.get $dx)
-      (i32.lt_s (local.get $dw) (i32.const 0))))
-    (local.set $dst_y0 (select (i32.sub (local.get $dy) (i32.const 1)) (local.get $dy)
-      (i32.lt_s (local.get $dh) (i32.const 0))))
-    (local.set $src_x0 (select (i32.sub (local.get $sx) (i32.const 1)) (local.get $sx)
-      (i32.lt_s (local.get $sw) (i32.const 0))))
-    (local.set $src_y0 (select (i32.sub (local.get $sy) (i32.const 1)) (local.get $sy)
-      (i32.lt_s (local.get $sh) (i32.const 0))))
+    ;; Negative extents reverse traversal from the inclusive origin supplied by
+    ;; the caller. Paint passes sx=width-1, sw=-width for an exact mirror.
+    (local.set $dst_x0 (local.get $dx))
+    (local.set $dst_y0 (local.get $dy))
+    (local.set $src_x0 (local.get $sx))
+    (local.set $src_y0 (local.get $sy))
     ;; Paint mirrors a selection by selecting the same bitmap into both DCs.
     ;; Preserve the source surface in the page-backed DIB arena, including a
     ;; private descriptor whose bits pointer names the snapshot. A bulk copy

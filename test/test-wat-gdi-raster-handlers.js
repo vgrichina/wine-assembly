@@ -159,16 +159,26 @@ const { bootRenderHarness } = require('./render-helper');
 
   check('StretchBlt mirrors signed destination extents and uploads normalized bounds', () => {
     const mirrored = makeDib(4, 1);
+    const negativeDestination = makeDib(4, 1);
     wat.test_call_SetPixel(src.hdc, 0, 0, 0x000000FF); // red
     wat.test_call_SetPixel(src.hdc, 1, 0, 0x0000FF00); // green
     wat.test_call_SetPixel(src.hdc, 2, 0, 0x00FF0000); // blue
     wat.test_call_SetPixel(src.hdc, 3, 0, 0x00FFFFFF); // white
     assert.strictEqual(wat.test_call_StretchBlt(
-      mirrored.hdc, 4, 0, -4, 1, src.hdc, 0, 0, 4, 1, 0x00CC0020), 1);
+      mirrored.hdc, 0, 0, 4, 1, src.hdc, 3, 0, -4, 1, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(4)].map((_, x) => packed(mirrored, x, 0)), [
       0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
     ]);
     assert.deepStrictEqual([...Array(4)].map((_, x) => canvasRgb(mirrored, x, 0)), [
+      0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
+    ]);
+    assert.strictEqual(wat.test_call_StretchBlt(
+      negativeDestination.hdc, 3, 0, -4, 1,
+      src.hdc, 0, 0, 4, 1, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => packed(negativeDestination, x, 0)), [
+      0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
+    ]);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => canvasRgb(negativeDestination, x, 0)), [
       0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
     ]);
   });
@@ -180,7 +190,7 @@ const { bootRenderHarness } = require('./render-helper');
     wat.test_call_SetPixel(image.hdc, 2, 0, 0x00FF0000); // blue
     wat.test_call_SetPixel(image.hdc, 3, 0, 0x00FFFFFF); // white
     assert.strictEqual(wat.test_call_StretchBlt(
-      image.hdc, 4, 0, -4, 1, image.hdc, 0, 0, 4, 1, 0x00CC0020), 1);
+      image.hdc, 0, 0, 4, 1, image.hdc, 3, 0, -4, 1, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(4)].map((_, x) => packed(image, x, 0)), [
       0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
     ]);
