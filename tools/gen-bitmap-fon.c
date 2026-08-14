@@ -49,6 +49,11 @@ typedef enum {
   RASTER_EXACT_SIZE
 } RasterSizing;
 
+typedef enum {
+  CHARSET_ANSI,
+  CHARSET_OEM
+} CharacterSet;
+
 static void die(const char *message) {
   fprintf(stderr, "gen-bitmap-fon: %s\n", message);
   exit(1);
@@ -131,6 +136,41 @@ static uint32_t cp1252_codepoint(unsigned byte) {
   return byte;
 }
 
+static uint32_t cp437_codepoint(unsigned byte) {
+  static const uint16_t controls[32] = {
+    0x0020, 0x263a, 0x263b, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022,
+    0x25d8, 0x25cb, 0x25d9, 0x2642, 0x2640, 0x266a, 0x266b, 0x263c,
+    0x25ba, 0x25c4, 0x2195, 0x203c, 0x00b6, 0x00a7, 0x25ac, 0x21a8,
+    0x2191, 0x2193, 0x2192, 0x2190, 0x221f, 0x2194, 0x25b2, 0x25bc
+  };
+  static const uint16_t high[128] = {
+    0x00c7, 0x00fc, 0x00e9, 0x00e2, 0x00e4, 0x00e0, 0x00e5, 0x00e7,
+    0x00ea, 0x00eb, 0x00e8, 0x00ef, 0x00ee, 0x00ec, 0x00c4, 0x00c5,
+    0x00c9, 0x00e6, 0x00c6, 0x00f4, 0x00f6, 0x00f2, 0x00fb, 0x00f9,
+    0x00ff, 0x00d6, 0x00dc, 0x00a2, 0x00a3, 0x00a5, 0x20a7, 0x0192,
+    0x00e1, 0x00ed, 0x00f3, 0x00fa, 0x00f1, 0x00d1, 0x00aa, 0x00ba,
+    0x00bf, 0x2310, 0x00ac, 0x00bd, 0x00bc, 0x00a1, 0x00ab, 0x00bb,
+    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556,
+    0x2555, 0x2563, 0x2551, 0x2557, 0x255d, 0x255c, 0x255b, 0x2510,
+    0x2514, 0x2534, 0x252c, 0x251c, 0x2500, 0x253c, 0x255e, 0x255f,
+    0x255a, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256c, 0x2567,
+    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256b,
+    0x256a, 0x2518, 0x250c, 0x2588, 0x2584, 0x258c, 0x2590, 0x2580,
+    0x03b1, 0x00df, 0x0393, 0x03c0, 0x03a3, 0x03c3, 0x00b5, 0x03c4,
+    0x03a6, 0x0398, 0x03a9, 0x03b4, 0x221e, 0x03c6, 0x03b5, 0x2229,
+    0x2261, 0x00b1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00f7, 0x2248,
+    0x00b0, 0x2219, 0x00b7, 0x221a, 0x207f, 0x00b2, 0x25a0, 0x00a0
+  };
+  if (byte < 0x20) return controls[byte];
+  if (byte == 0x7f) return 0x2302;
+  if (byte >= 0x80) return high[byte - 0x80];
+  return byte;
+}
+
+static uint32_t encoded_codepoint(unsigned byte, CharacterSet charset) {
+  return charset == CHARSET_OEM ? cp437_codepoint(byte) : cp1252_codepoint(byte);
+}
+
 static int ceil_26_6(FT_Pos value) {
   if (value <= 0) return 0;
   return (int)((value + 63) >> 6);
@@ -165,7 +205,7 @@ static FT_Int32 hinting_load_flags(HintingMode hinting) {
 
 static void render_glyph(FT_Face face, unsigned byte, int cell_height,
                          int ascent, int fixed_width, HintingMode hinting,
-                         int bitmap_only, Glyph *glyph) {
+                         int bitmap_only, CharacterSet charset, Glyph *glyph) {
   FT_Error error;
   FT_GlyphSlot slot;
   int advance;
@@ -174,8 +214,14 @@ static void render_glyph(FT_Face face, unsigned byte, int cell_height,
   int x;
   int y;
   int width_bytes;
+  uint32_t codepoint = encoded_codepoint(byte, charset);
 
-  error = FT_Load_Char(face, cp1252_codepoint(byte), hinting_load_flags(hinting));
+  if (charset == CHARSET_OEM && FT_Get_Char_Index(face, codepoint) == 0) {
+    fprintf(stderr, "gen-bitmap-fon: source is missing CP437 byte 0x%02x (U+%04x)\n",
+            byte, codepoint);
+    exit(1);
+  }
+  error = FT_Load_Char(face, codepoint, hinting_load_flags(hinting));
   if (error) {
     error = FT_Load_Char(face, '?', hinting_load_flags(hinting));
   }
@@ -220,10 +266,11 @@ static void render_glyph(FT_Face face, unsigned byte, int cell_height,
 static Strike make_strike(FT_Face face, int requested_height,
                           const char *face_name, int force_fixed,
                           const char *copyright, HintingMode hinting,
-                          RasterSizing raster_sizing, int bitmap_only) {
-  enum { FIRST_CHAR = 32, LAST_CHAR = 255, GLYPH_COUNT = LAST_CHAR - FIRST_CHAR + 1 };
+                          RasterSizing raster_sizing, int bitmap_only,
+                          CharacterSet charset) {
+  enum { LAST_CHAR = 255, MAX_GLYPH_COUNT = 256 };
   Strike strike;
-  Glyph glyphs[GLYPH_COUNT];
+  Glyph glyphs[MAX_GLYPH_COUNT];
   FT_Error error;
   int raster_height;
   int ascent;
@@ -234,6 +281,8 @@ static Strike make_strike(FT_Face face, int requested_height,
   int printable_count = 0;
   int width_bytes = 0;
   int fixed_width = 0;
+  int first_char = charset == CHARSET_OEM ? 0 : 32;
+  int glyph_count = LAST_CHAR - first_char + 1;
   size_t char_table;
   size_t bits_offset;
   size_t face_offset;
@@ -270,10 +319,10 @@ static Strike make_strike(FT_Face face, int requested_height,
     if (fixed_width > 255) fixed_width = 255;
   }
 
-  for (i = 0; i < GLYPH_COUNT; i++) {
-    int byte = FIRST_CHAR + i;
+  for (i = 0; i < glyph_count; i++) {
+    int byte = first_char + i;
     render_glyph(face, (unsigned)byte, height, ascent, fixed_width, hinting, bitmap_only,
-                 &glyphs[i]);
+                 charset, &glyphs[i]);
     if (glyphs[i].width > max_width) max_width = glyphs[i].width;
     width_bytes += (glyphs[i].width + 7) / 8;
     if (byte >= 32 && byte <= 126) {
@@ -282,18 +331,18 @@ static Strike make_strike(FT_Face face, int requested_height,
     }
   }
 
-  resize_zero(&strike.bytes, 148 + (GLYPH_COUNT + 1) * 6);
+  resize_zero(&strike.bytes, 148 + (glyph_count + 1) * 6);
   char_table = 148;
   bits_offset = strike.bytes.len;
-  for (i = 0; i < GLYPH_COUNT; i++) {
+  for (i = 0; i < glyph_count; i++) {
     size_t entry = char_table + (size_t)i * 6;
     put_u16(&strike.bytes, entry, (uint16_t)glyphs[i].width);
     put_u32(&strike.bytes, entry + 2, (uint32_t)strike.bytes.len);
     append(&strike.bytes, glyphs[i].bits, glyphs[i].bits_len);
     free(glyphs[i].bits);
   }
-  put_u16(&strike.bytes, char_table + GLYPH_COUNT * 6, 0);
-  put_u32(&strike.bytes, char_table + GLYPH_COUNT * 6 + 2,
+  put_u16(&strike.bytes, char_table + glyph_count * 6, 0);
+  put_u32(&strike.bytes, char_table + glyph_count * 6 + 2,
           (uint32_t)strike.bytes.len);
   face_offset = append(&strike.bytes, face_name, strlen(face_name) + 1);
 
@@ -315,7 +364,7 @@ static Strike make_strike(FT_Face face, int requested_height,
   put_u8(&strike.bytes, 81, 0);
   put_u8(&strike.bytes, 82, 0);
   put_u16(&strike.bytes, 83, 400);
-  put_u8(&strike.bytes, 85, 0); /* ANSI_CHARSET */
+  put_u8(&strike.bytes, 85, (uint8_t)(charset == CHARSET_OEM ? 255 : 0));
   put_u16(&strike.bytes, 86, (uint16_t)fixed_width);
   put_u16(&strike.bytes, 88, (uint16_t)height);
   put_u8(&strike.bytes, 90,
@@ -323,10 +372,10 @@ static Strike make_strike(FT_Face face, int requested_height,
   put_u16(&strike.bytes, 91,
           (uint16_t)(printable_count ? (printable_width + printable_count / 2) / printable_count : 1));
   put_u16(&strike.bytes, 93, (uint16_t)max_width);
-  put_u8(&strike.bytes, 95, FIRST_CHAR);
+  put_u8(&strike.bytes, 95, (uint8_t)first_char);
   put_u8(&strike.bytes, 96, LAST_CHAR);
-  put_u8(&strike.bytes, 97, (uint8_t)('?' - FIRST_CHAR));
-  put_u8(&strike.bytes, 98, (uint8_t)(' ' - FIRST_CHAR));
+  put_u8(&strike.bytes, 97, (uint8_t)('?' - first_char));
+  put_u8(&strike.bytes, 98, (uint8_t)(' ' - first_char));
   put_u16(&strike.bytes, 99, (uint16_t)width_bytes);
   put_u32(&strike.bytes, 101, 0); /* device name */
   put_u32(&strike.bytes, 105, (uint32_t)face_offset);
@@ -489,6 +538,7 @@ int main(int argc, char **argv) {
   const char *hinting_name = "auto";
   HintingMode hinting = HINTING_AUTO;
   RasterSizing raster_sizing = RASTER_FIT_CELL;
+  CharacterSet charset = CHARSET_ANSI;
   int force_fixed = 0;
   int bitmap_only = 0;
   int first_height = 4;
@@ -506,6 +556,7 @@ int main(int argc, char **argv) {
     fprintf(stderr,
       "usage: %s INPUT.otf OUTPUT.fon FACE [--fixed] [--copyright=TEXT]"
       " [--bitmap-only]"
+      " [--charset=ansi|oem]"
       " [--hinting=auto|auto-normal|auto-light|native|none]"
       " [--raster=fit|exact]"
       " [PIXEL_HEIGHT ...]\n"
@@ -523,6 +574,10 @@ int main(int argc, char **argv) {
       force_fixed = 1;
     } else if (strcmp(argv[first_height], "--bitmap-only") == 0) {
       bitmap_only = 1;
+    } else if (strcmp(argv[first_height], "--charset=ansi") == 0) {
+      charset = CHARSET_ANSI;
+    } else if (strcmp(argv[first_height], "--charset=oem") == 0) {
+      charset = CHARSET_OEM;
     } else if (strncmp(argv[first_height], "--copyright=", 12) == 0) {
       copyright = argv[first_height] + 12;
       if (!*copyright) die("copyright text must not be empty");
@@ -575,7 +630,7 @@ int main(int argc, char **argv) {
   if (!strikes) die("out of memory");
   for (i = 0; i < count; i++) {
     strikes[i] = make_strike(face, heights[i], face_name, force_fixed, copyright,
-                             hinting, raster_sizing, bitmap_only);
+                             hinting, raster_sizing, bitmap_only, charset);
     fprintf(stderr, "strike request=%dpx cell=%dpx em=%dpx ascent=%d avg=%d max=%d hinting=%s bytes=%zu\n",
       heights[i], strikes[i].height, strikes[i].raster_height, strikes[i].ascent,
       strikes[i].average_width, strikes[i].maximum_width, hinting_name,

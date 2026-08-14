@@ -659,8 +659,8 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     const imports = this.getImports();
 
-    // Make deterministic Wine bitmap stock fonts available before guest code
-    // can issue its first GDI text call. WAT installs each FON lazily.
+    // Make deterministic Wine/ANAKRON bitmap stock fonts available before
+    // guest code can issue its first GDI text call. WAT installs each FON lazily.
     await this.loadFiles([
       {
         url: 'fonts/System.fon',
@@ -677,6 +677,10 @@ class WineAssembly {
       {
         url: 'fonts/Courier.fon',
         vfsPath: 'c:\\windows\\fonts\\courier.fon',
+      },
+      {
+        url: 'fonts/Terminal.fon',
+        vfsPath: 'c:\\windows\\fonts\\terminal.fon',
       },
     ], { required: true });
 

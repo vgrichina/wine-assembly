@@ -35,7 +35,9 @@ function formatNumber(value) {
   const root = path.join(__dirname, '..');
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  for (const name of ['System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon']) {
+  for (const name of [
+    'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
+  ]) {
     hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
       data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
       attrs: 0x20,

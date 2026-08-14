@@ -24,7 +24,9 @@ const { bootRenderHarness } = require('./render-helper');
   const root = path.join(__dirname, '..');
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  for (const name of ['System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon']) {
+  for (const name of [
+    'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
+  ]) {
     hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
       data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
       attrs: 0x20,
@@ -66,8 +68,12 @@ const { bootRenderHarness } = require('./render-helper');
   const text = allocZero(8);
   bytes.set(Buffer.from('MWii\0', 'latin1'), wa(text));
   const size = allocZero(8);
+  const stockLogfont = allocZero(60);
+  assert.strictEqual(wat.test_call_GetObjectA(0x3001a, 60, stockLogfont), 60);
+  assert.strictEqual(wat.guest_read32(stockLogfont), 12,
+    'OEM_FIXED_FONT must expose the native Terminal LOGFONT height');
   const fixedStocks = [
-    { handle: 0x3001a, height: 15, face: 'Fixedsys', note: 'OEM fallback' },
+    { handle: 0x3001a, height: 12, face: 'Terminal', note: 'OEM fixed' },
     { handle: 0x3001b, height: 13, face: 'Courier', note: 'ANSI fixed' },
     { handle: 0x30020, height: 15, face: 'Fixedsys', note: 'system fixed' },
   ];
@@ -90,8 +96,29 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 4), 1);
   }
   assertNoCanvasText('all fixed stock font rendering and measurement must stay in WAT');
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 2,
-    'fixed stock selection should load only Fixedsys and Courier');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 3,
+    'fixed stock selection should load only Terminal, Fixedsys, and Courier');
+
+  const terminal = wat.test_call_CreateFontW(-12, 400, 0, writeWide('Terminal')) >>> 0;
+  assert(terminal && wat.test_gdi_bitmap_font_bound(terminal),
+    'an explicit Terminal LOGFONT should bind to ANAKRON');
+  wat.test_call_SelectObject(hdc, terminal);
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 18, text, 4), 1);
+  assertNoCanvasText('explicit Terminal rendering must stay in WAT');
+
+  const dibBits = wat.guest_read32(bitsOut) >>> 0;
+  const pixel = (x, y) => wat.guest_read32(dibBits + (y * 128 + x) * 4) & 0xffffff;
+  const boxDrawing = allocZero(2);
+  bytes[wa(boxDrawing)] = 0xb3;
+  assert.strictEqual(wat.test_call_PatBlt(hdc, 80, 0, 8, 12, 0x00f00021), 1);
+  wat.test_gdi_dc_set_field(hdc, 28, 1, 2); // TRANSPARENT
+  wat.test_gdi_dc_set_field(hdc, 20, 0x000000, 0); // black
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 80, 0, boxDrawing, 1), 1);
+  assert.deepStrictEqual(Array.from({ length: 12 }, (_, y) =>
+    Array.from({ length: 8 }, (_, x) => pixel(80 + x, y) === 0 ? x : -1)
+      .filter(x => x >= 0)), Array.from({ length: 12 }, () => [4]),
+  'CP437 0xb3 must render as one uninterrupted WAT-surface column');
+  assertNoCanvasText('CP437 box drawing must stay in WAT');
 
   const created = wat.test_call_CreateFontW(-16, 400, 0, writeWide('Fixedsys')) >>> 0;
   assert(created && wat.test_gdi_bitmap_font_bound(created),
@@ -128,7 +155,7 @@ const { bootRenderHarness } = require('./render-helper');
     'all native sizes scale the same authentic 8x15 bitmap strike');
   assertNoCanvasText('multi-strike Fixedsys selection must stay in WAT');
 
-  console.log('PASS  fixed stocks use Wine Courier/Fixedsys bitmaps with native Fixedsys scaling');
+  console.log('PASS  fixed stocks use ANAKRON Terminal and Wine Courier/Fixedsys bitmaps');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

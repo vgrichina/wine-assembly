@@ -26,7 +26,9 @@ const { bootRenderHarness } = require('./render-helper');
   const root = path.join(__dirname, '..');
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  for (const name of ['System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon']) {
+  for (const name of [
+    'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
+  ]) {
     hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
       data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
       attrs: 0x20,
@@ -115,8 +117,8 @@ const { bootRenderHarness } = require('./render-helper');
   assert(calls.bind > 0 && calls.textOut > 0,
     'unsupported scalable faces should retain the documented Canvas fallback');
 
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 7,
-    'four Wine resources should install seven embedded bitmap strikes');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
+    'four Wine resources plus Terminal should install eight bitmap strikes');
 
   console.log('PASS  System and MS Sans Serif stock/alias text uses Wine bitmaps without Canvas');
 })().catch(error => {

@@ -36,3 +36,10 @@ generate fixedsys Fixedsys Fixedsys --fixed 15
 generate system System System 16 18
 generate ms_sans_serif MSSansSerif "MS Sans Serif" 13 16 20
 generate courier Courier Courier --fixed 13
+
+# ANAKRON v0.3.3 is a native 8x12 Unicode bitmap.  Repackage its exact pixels
+# as the Win9x Terminal face, mapping every FNT byte through IBM code page 437.
+"$fontgen_dir/gen-bitmap-fon" \
+  "$repo_root/fonts/anakron/ANAKRON-v0.3.3.bdf" "$output_dir/Terminal.fon" Terminal \
+  "--copyright=ANAKRON v0.3.3; OFL-1.1" \
+  --bitmap-only --hinting=native --raster=exact --charset=oem --fixed 12

@@ -3,6 +3,7 @@
 'use strict';
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,6 +21,7 @@ const expected = {
   'System.fon': { face: 'System', metrics: [[7, 16], [8, 18]] },
   'MSSansSerif.fon': { face: 'MS Sans Serif', metrics: [[6, 13], [7, 16], [8, 20]] },
   'Courier.fon': { face: 'Courier', metrics: [[8, 13]] },
+  'Terminal.fon': { face: 'Terminal', metrics: [[8, 12]], charset: 255, first: 0 },
 };
 
 function strikes(bytes) {
@@ -40,14 +42,44 @@ function strikes(bytes) {
       const face = bytes.subarray(strike + bytes.readUInt32LE(strike + 105))
         .toString('latin1').split('\0')[0];
       result.push({
+        offset: strike,
         face,
         average: bytes.readUInt16LE(strike + 91),
         height: bytes.readUInt16LE(strike + 88),
+        charset: bytes[strike + 85],
+        first: bytes[strike + 95],
+        last: bytes[strike + 96],
       });
     }
   }
   return result;
 }
+
+function glyphRows(bytes, strike, code) {
+  assert(code >= strike.first && code <= strike.last, 'glyph is within FNT range');
+  const entry = strike.offset + 148 + (code - strike.first) * 6;
+  const width = bytes.readUInt16LE(entry);
+  const height = strike.height;
+  const bits = strike.offset + bytes.readUInt32LE(entry + 2);
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    let row = 0;
+    for (let x = 0; x < width; x++) {
+      if (bytes[bits + Math.floor(x / 8) * height + y] & (0x80 >> (x & 7))) {
+        row |= 0x80 >> x;
+      }
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+const anakronSource = fs.readFileSync(path.join(
+  ROOT, 'fonts', 'anakron', 'ANAKRON-v0.3.3.bdf'));
+assert.strictEqual(
+  crypto.createHash('sha256').update(anakronSource).digest('hex'),
+  'd792885acf2043beb7e16bd0a85fce498e3e072e2ce828c750d14b074474f119',
+  'ANAKRON source must remain the pinned v0.3.3 release asset');
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-wine-fonts-'));
 try {
@@ -63,8 +95,28 @@ try {
     assert(parsed.every(strike => strike.face === spec.face), `${name} face names`);
     assert.deepStrictEqual(parsed.map(strike => [strike.average, strike.height]), spec.metrics,
       `${name} embedded strike metrics`);
+    if (spec.charset !== undefined) {
+      assert(parsed.every(strike => strike.charset === spec.charset), `${name} charset`);
+      assert(parsed.every(strike => strike.first === spec.first && strike.last === 255),
+        `${name} byte coverage`);
+    }
+    if (name === 'Terminal.fon') {
+      const strike = parsed[0];
+      assert.deepStrictEqual(glyphRows(generated, strike, 0x00), Array(12).fill(0),
+        'CP437 0x00 must remain a blank NUL cell');
+      assert.deepStrictEqual(glyphRows(generated, strike, 0x01),
+        [0, 0, 0x3c, 0x42, 0xa5, 0x81, 0xa5, 0x99, 0x42, 0x3c, 0, 0],
+        'CP437 0x01 must be the ANAKRON white smiling face');
+      assert.deepStrictEqual(glyphRows(generated, strike, 0xb3),
+        Array(12).fill(0x08), 'CP437 0xb3 must be an unbroken vertical line');
+      assert.deepStrictEqual(glyphRows(generated, strike, 0xc4),
+        [0, 0, 0, 0, 0, 0, 0xff, 0, 0, 0, 0, 0],
+        'CP437 0xc4 must be an edge-to-edge horizontal line');
+      assert.deepStrictEqual(glyphRows(generated, strike, 0xdb),
+        Array(12).fill(0xff), 'CP437 0xdb must be a complete 8x12 block');
+    }
   }
-  console.log('PASS  Wine bitmap sources reproduce all four tracked FON resources byte-for-byte');
+  console.log('PASS  Wine and ANAKRON sources reproduce all five tracked FON resources exactly');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

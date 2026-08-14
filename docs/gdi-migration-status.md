@@ -21,14 +21,16 @@ text pixels back to canonical surface storage using WAT-owned clip bands.
 Installed FNT 2.x/3.x strikes bypass all four calls: WAT measures and writes
 their glyphs directly, including `ExtTextOut` rectangle/lpDx behavior and
 `DrawText` wrapping, alignment, clipping, and calculated rectangles.
-The tracked Wine System, MS Sans Serif, Fixedsys, and Courier FONs are preloaded
-into every browser and CLI process and installed lazily by WAT. Stock variable
-UI fonts, common Win9x UI aliases, ANSI/SYSTEM fixed stocks, and explicit
-requests for those bitmap faces therefore use this path without calling the
-four Canvas text-policy imports. Wine has no distinct Terminal 8x12 bitmap, so
-OEM_FIXED_FONT is the documented exception and currently uses the Fixedsys
-8x15 WAT fallback. Explicit scalable/document faces and shaped text retain the
-Canvas fallback.
+The tracked Wine System, MS Sans Serif, Fixedsys, and Courier FONs plus the
+ANAKRON-derived Terminal FON are preloaded into every browser and CLI process
+and installed lazily by WAT. Stock variable UI fonts, common Win9x UI aliases,
+all three fixed stocks, and explicit requests for those bitmap faces therefore
+use this path without calling the four Canvas text-policy imports.
+`OEM_FIXED_FONT` selects the open Terminal 8x12 strike, whose complete byte
+range is generated through CP437 and marked `OEM_CHARSET`. Explicit
+scalable/document faces and shaped text retain the Canvas fallback. See
+[`bitmap-font-review.md`](bitmap-font-review.md) for the candidate and license
+audit.
 Every non-text semantic call removed in the
 flag-day bridge purge now has a WAT implementation; both unsupported-stub
 inventories are empty. Pen, solid-brush, memory-DC,

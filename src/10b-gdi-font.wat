@@ -20,15 +20,18 @@
   (global $GDI_BITMAP_FONT_FIXED_STATE i32 (i32.const 0x07F0A4F8))
   (global $GDI_BITMAP_FONT_COURIER_PATH i32 (i32.const 0x07F0A4FC))
   (global $GDI_BITMAP_FONT_COURIER_STATE i32 (i32.const 0x07F0A51C))
+  (global $GDI_BITMAP_FONT_TERMINAL_PATH i32 (i32.const 0x07F0A5B0))
+  (global $GDI_BITMAP_FONT_TERMINAL_STATE i32 (i32.const 0x07F0A5D0))
 
   ;; Browser and CLI hosts preload this tracked file into the process VFS.
   ;; The state word is shared across worker instances: 0=untried, 1=loading,
-  ;; 2=installed, 3=unavailable. The resources preserve Wine's embedded
-  ;; monochrome strikes; WAT scales those pixels without a Canvas text path.
+  ;; 2=installed, 3=unavailable. The resources preserve Wine's embedded and
+  ;; ANAKRON's native monochrome strikes; WAT scales them without Canvas text.
   (data (i32.const 0x07F0A490) "C:\\WINDOWS\\FONTS\\SYSTEM.FON\00")
   (data (i32.const 0x07F0A4B0) "C:\\WINDOWS\\FONTS\\MSSANSSERIF.FON\00")
   (data (i32.const 0x07F0A4D8) "C:\\WINDOWS\\FONTS\\FIXEDSYS.FON\00")
   (data (i32.const 0x07F0A4FC) "C:\\WINDOWS\\FONTS\\COURIER.FON\00")
+  (data (i32.const 0x07F0A5B0) "C:\\WINDOWS\\FONTS\\TERMINAL.FON\00")
   (data (i32.const 0x07F0A520) "System\00")
   (data (i32.const 0x07F0A528) "Fixedsys\00")
   (data (i32.const 0x07F0A534) "Courier\00")
@@ -86,14 +89,8 @@
         (result i32)
     (if (call $gdi_bitmap_font_face_equal (local.get $requested) (local.get $installed))
       (then (return (i32.const 1))))
-    ;; MS Sans Serif receives the Win9x UI aliases. System remains a distinct
-    ;; bitmap face, and Terminal is an explicit fallback to Fixedsys until a
-    ;; redistributable OEM 8x12 strike is available.
-    (if (call $gdi_bitmap_font_face_equal
-          (local.get $installed) (i32.const 0x07F0A528))
-      (then
-        (return (call $gdi_bitmap_font_face_equal
-          (local.get $requested) (i32.const 0x07F0A5A0)))))
+    ;; MS Sans Serif receives the Win9x UI aliases. System, Fixedsys, and the
+    ;; ANAKRON-derived Terminal face remain distinct bitmap families.
     (if (i32.eqz (call $gdi_bitmap_font_face_equal
           (local.get $installed) (i32.const 0x07F0A53C)))
       (then (return (i32.const 0))))
@@ -381,6 +378,11 @@
       (global.get $GDI_BITMAP_FONT_COURIER_PATH)
       (global.get $GDI_BITMAP_FONT_COURIER_STATE)))
 
+  (func $gdi_bitmap_font_ensure_terminal (result i32)
+    (call $gdi_bitmap_font_ensure
+      (global.get $GDI_BITMAP_FONT_TERMINAL_PATH)
+      (global.get $GDI_BITMAP_FONT_TERMINAL_STATE)))
+
   (func $gdi_bitmap_font_ensure_stock (result i32)
     (local $loaded i32)
     (local.set $loaded (call $gdi_bitmap_font_ensure_system))
@@ -390,6 +392,8 @@
       (call $gdi_bitmap_font_ensure_fixed)))
     (local.set $loaded (i32.or (local.get $loaded)
       (call $gdi_bitmap_font_ensure_courier)))
+    (local.set $loaded (i32.or (local.get $loaded)
+      (call $gdi_bitmap_font_ensure_terminal)))
     (local.get $loaded))
 
   (func $gdi_bitmap_font_best (param $face i32) (param $request i32) (result i32)
@@ -445,10 +449,12 @@
         (if (i32.and (i32.ne (local.get $strike) (i32.const 0))
               (i32.ne (i32.load (local.get $strike)) (i32.const 0)))
           (then (return (local.get $strike))))))
-    ;; Wine currently has no distinct OEM/Terminal 8x12 resource, so only
-    ;; OEM_FIXED_FONT intentionally falls back to Fixedsys.
-    (if (i32.or (i32.eq (local.get $handle) (i32.const 0x3001A))
-          (i32.eq (local.get $handle) (i32.const 0x30020)))
+    (if (i32.eq (local.get $handle) (i32.const 0x3001A))
+      (then
+        (drop (call $gdi_bitmap_font_ensure_terminal))
+        (return (call $gdi_bitmap_font_best
+          (i32.const 0x07F0A5A0) (i32.const 12)))))
+    (if (i32.eq (local.get $handle) (i32.const 0x30020))
       (then
         (drop (call $gdi_bitmap_font_ensure_fixed))
         (return (call $gdi_bitmap_font_best
@@ -518,11 +524,14 @@
               (if (result i32) (i32.eq (local.get $handle) (i32.const 0x3001D))
                 (then (i32.const 16))
                 (else
-                  (if (result i32) (i32.or
-                        (i32.eq (local.get $handle) (i32.const 0x3001A))
-                        (i32.eq (local.get $handle) (i32.const 0x30020)))
-                    (then (i32.const 15))
-                    (else (i32.const 13))))))))))
+                  (if (result i32) (i32.eq
+                        (local.get $handle) (i32.const 0x3001A))
+                    (then (i32.const 12))
+                    (else
+                      (if (result i32) (i32.eq
+                            (local.get $handle) (i32.const 0x30020))
+                        (then (i32.const 15))
+                        (else (i32.const 13))))))))))))
     (if (i32.lt_s (local.get $height) (i32.const 0))
       (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
     (if (i32.eqz (local.get $height))
