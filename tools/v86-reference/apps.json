@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "apps": {
+    "geometry-probe": {
+      "title": "Minesweeper geometry probe",
+      "probeSource": "tools/v86-reference/probes/query-winrect.c",
+      "probeName": "PROBE.EXE",
+      "launch": "D:\\PROBE.EXE",
+      "waitMs": 10000,
+      "files": [
+        { "path": "test/binaries/entertainment-pack/winmine.exe", "name": "WINMINE.EXE" }
+      ]
+    },
+    "minesweeper": {
+      "title": "Minesweeper",
+      "launch": "D:\\WINMINE.EXE",
+      "files": [
+        "test/binaries/entertainment-pack/winmine.exe",
+        "test/binaries/entertainment-pack/aboutwep.dll"
+      ]
+    },
+    "calculator": {
+      "title": "Calculator",
+      "launch": "D:\\CALC.EXE",
+      "files": ["test/binaries/calc.exe"]
+    },
+    "solitaire": {
+      "title": "Solitaire",
+      "launch": "D:\\SOL.EXE",
+      "files": [
+        "test/binaries/entertainment-pack/sol.exe",
+        "test/binaries/entertainment-pack/cards.dll",
+        "test/binaries/entertainment-pack/aboutwep.dll"
+      ]
+    },
+    "freecell": {
+      "title": "FreeCell",
+      "launch": "D:\\FREECELL.EXE",
+      "files": [
+        "test/binaries/entertainment-pack/freecell.exe",
+        "test/binaries/entertainment-pack/cards.dll",
+        "test/binaries/entertainment-pack/aboutwep.dll"
+      ]
+    },
+    "paint98": {
+      "title": "Paint (Windows 98)",
+      "launch": "D:\\MSPAINT.EXE",
+      "files": ["test/binaries/entertainment-pack/mspaint.exe"]
+    },
+    "regedit": {
+      "title": "Registry Editor",
+      "launch": "D:\\REGEDIT.EXE",
+      "files": ["test/binaries/win98-apps/regedit.exe"]
+    },
+    "notepad98": {
+      "title": "Notepad (Windows 98)",
+      "launch": "D:\\NOTEPAD98.EXE",
+      "files": ["test/binaries/win98-apps/notepad98.exe"]
+    },
+    "wordpad": {
+      "title": "WordPad",
+      "launch": "D:\\WORDPAD.EXE",
+      "files": ["test/binaries/win98-apps/wordpad.exe"]
+    },
+    "sound-recorder": {
+      "title": "Sound Recorder",
+      "launch": "D:\\SNDREC32.EXE",
+      "files": ["test/binaries/win98-apps/sndrec32.exe"]
+    },
+    "volume-control": {
+      "title": "Volume Control",
+      "launch": "D:\\SNDVOL32.EXE",
+      "files": ["test/binaries/win98-apps/sndvol32.exe"]
+    },
+    "task-manager": {
+      "title": "Task Manager",
+      "launch": "D:\\TASKMAN.EXE",
+      "files": ["test/binaries/win98-apps/taskman.exe"]
+    },
+    "media-player": {
+      "title": "Windows Media Player",
+      "launch": "D:\\MPLAY32.EXE",
+      "files": ["test/binaries/win98-apps/mplay32.exe"]
+    },
+    "ski": {
+      "title": "SkiFree",
+      "launch": "D:\\SKI32.EXE",
+      "files": [
+        "test/binaries/entertainment-pack/ski32.exe",
+        "test/binaries/entertainment-pack/aboutwep.dll"
+      ]
+    },
+    "bricks": {
+      "title": "Bricks",
+      "launch": "D:\\BRICKS.EXE",
+      "files": [
+        "test/binaries/wep32-community/Bricks/bricks.exe",
+        "test/binaries/wep32-community/Bricks/brk1.dll"
+      ]
+    },
+    "spider": {
+      "title": "Spider Solitaire",
+      "launch": "D:\\SPIDER.EXE",
+      "files": ["test/binaries/plus98/SPIDER.EXE"]
+    },
+    "marbles": {
+      "title": "Marbles",
+      "launch": "D:\\MARBLES.EXE",
+      "files": ["test/binaries/plus98/MARBLES.EXE"]
+    }
+  }
+}

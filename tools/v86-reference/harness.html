@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>v86 reference harness</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      min-width: 100%;
+      min-height: 100%;
+      background: #111;
+    }
+
+    #screen_container {
+      width: 640px;
+      height: 480px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #screen_container > div {
+      white-space: pre;
+      font: 14px monospace;
+      line-height: 14px;
+    }
+
+    #screen_container canvas {
+      display: none;
+      image-rendering: pixelated;
+    }
+  </style>
+</head>
+<body>
+  <div id="screen_container">
+    <div></div>
+    <canvas></canvas>
+  </div>
+  <script src="/runtime/libv86.js"></script>
+  <script src="/harness.js"></script>
+</body>
+</html>

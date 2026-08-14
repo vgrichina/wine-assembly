@@ -11,7 +11,8 @@
     "test:unit": "test/run-all.sh unit",
     "test:e2e": "test/run-all.sh e2e",
     "test:smoke": "test/run-all.sh smoke",
-    "test:quick": "test/run-all.sh quick"
+    "test:quick": "test/run-all.sh quick",
+    "reference:v86": "node tools/v86-reference/capture.js"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +23,8 @@
     "wabt": "^1.0.39"
   },
   "devDependencies": {
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "puppeteer": "25.7.0",
+    "v86": "0.5.432"
   }
 }

@@ -4,6 +4,8 @@ node_modules/
 .DS_Store
 .claude/
 scratch/
+.cache/v86-reference/
+screenshots/v86-reference/generated/
 MARKETING.md
 test/output/
 *-opcodes.log
