@@ -3898,11 +3898,51 @@
   (func $handle_IEnumFORMATETC_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IEnumFORMATETC_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (call $ole_enum_release_api (local.get $arg0) (i32.const 8)))
   (func $handle_IEnumFORMATETC_Next (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $kind i32) (local $hr i32) (local $fetched i32)
+    (local $ret i32) (local $ctx i32)
+    (local.set $kind (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 10))
+      (then
+        (if (i32.or
+              (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.eqz (local.get $arg2)))
+              (i32.and (i32.gt_u (local.get $arg1) (i32.const 1)) (i32.eqz (local.get $arg3))))
+          (then
+            (global.set $eax (call $ole_statdata_enum_next
+              (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (if (i32.eqz (call $ole_enum_next_guest_methods_valid (local.get $arg0) (local.get $arg1)))
+          (then
+            (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+            (global.set $eax (i32.const 0x80004002))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $hr (call $ole_statdata_enum_next
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (if (i32.lt_s (local.get $hr) (i32.const 0))
+          (then
+            (global.set $eax (local.get $hr))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
+        (local.set $fetched
+          (if (result i32) (local.get $arg3)
+            (then (call $gl32 (local.get $arg3)))
+            (else (select (local.get $arg1) (i32.const 0) (i32.eqz (local.get $hr))))))
+        (local.set $ret (call $gl32 (global.get $esp)))
+        (local.set $ctx (call $ole_guest_callback_context
+          (i32.const 10) (i32.const 0) (local.get $ret)
+          (i32.add (global.get $esp) (i32.const 20))
+          (local.get $arg0) (local.get $arg2) (local.get $fetched)
+          (i32.const 0) (local.get $hr)))
+        (if (call $ole_enum_output_guest_addref_next (local.get $ctx))
+          (then (return)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
     (if (i32.or
-          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 8))
-          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 10)))
+          (i32.eq (local.get $kind) (i32.const 8))
+          (i32.eq (local.get $kind) (i32.const 10)))
       (then (global.set $eax (call $ole_statdata_enum_next
         (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))))
       (else (global.set $eax (call $ole_format_enum_next
@@ -3915,16 +3955,37 @@
     (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (i32.const 0))
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IEnumFORMATETC_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $clone i32)
+    (local $clone i32) (local $kind i32) (local $ret i32) (local $ctx i32)
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0x80004003)))
       (else
         (call $gs32 (local.get $arg1) (i32.const 0))
+        (local.set $kind (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
         (if (i32.or
-              (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 8))
-              (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 10)))
+              (i32.eq (local.get $kind) (i32.const 8))
+              (i32.eq (local.get $kind) (i32.const 10)))
           (then (local.set $clone (call $ole_clone_cache_enum (local.get $arg0))))
           (else (local.set $clone (call $ole_clone_format_enum (local.get $arg0)))))
+        (if (i32.and
+              (i32.ne (local.get $clone) (i32.const 0))
+              (i32.eq (local.get $kind) (i32.const 10)))
+          (then
+            (if (i32.eqz (call $ole_enum_guest_methods_valid (local.get $clone) (i32.const 1)))
+              (then
+                (drop (call $ole_obj_release (local.get $clone)))
+                (global.set $eax (i32.const 0x80004002))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+                (return)))
+            (if (call $ole_enum_has_guest_sink (local.get $clone))
+              (then
+                (local.set $ret (call $gl32 (global.get $esp)))
+                (local.set $ctx (call $ole_guest_callback_context
+                  (i32.const 8) (i32.const 0) (local.get $ret)
+                  (i32.add (global.get $esp) (i32.const 12))
+                  (local.get $clone) (i32.const 0) (local.get $arg1)
+                  (i32.const 0) (i32.const 0)))
+                (drop (call $ole_enum_guest_callback_next (local.get $ctx) (i32.const 1)))
+                (return)))))
         (if (local.get $clone)
           (then (call $gs32 (local.get $arg1) (local.get $clone)) (global.set $eax (i32.const 0)))
           (else (global.set $eax (i32.const 0x8007000E))))))
@@ -4079,7 +4140,8 @@
   ;; CACA0011 enters here after a guest AddRef/Release/SaveObject returns.
   ;; operation 1: SetClientSite; 2: GetClientSite; 3: Close/SaveObject;
   ;; 4: final static-handler Release; 5/6: Advise/Unadvise ownership;
-  ;; 7: IAdviseSink OnSave/OnClose notification sequence.
+  ;; 7: IAdviseSink OnSave/OnClose notification sequence;
+  ;; 8/9/10: EnumAdvise snapshot AddRef, final Release, and Next AddRef.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -4150,6 +4212,26 @@
               (then (return)))))
         (call $ole_guest_callback_finish
           (local.get $ctx) (call $gl32 (i32.add (local.get $ctx) (i32.const 32))))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 8))
+      (then
+        (if (call $ole_enum_guest_callback_next (local.get $ctx) (i32.const 1))
+          (then (return)))
+        (call $gs32 (local.get $p2) (local.get $root))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 9))
+      (then
+        (if (call $ole_enum_guest_callback_next (local.get $ctx) (i32.const 2))
+          (then (return)))
+        (local.set $hr (call $ole_obj_release (local.get $root)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 10))
+      (then
+        (if (call $ole_enum_output_guest_addref_next (local.get $ctx))
+          (then (return)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $p4))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then
@@ -4448,6 +4530,144 @@
           (br $copy)))))
     (local.get $obj)
   )
+
+  (func $ole_enum_has_guest_sink (param $obj i32) (result i32)
+    (local $data i32) (local $count i32) (local $i i32) (local $sink i32)
+    (if (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 8))) (i32.const 10))
+      (then (return (i32.const 0))))
+    (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $sink (call $gl32 (i32.add
+        (i32.add (local.get $data) (i32.mul (local.get $i) (i32.const 32)))
+        (i32.const 24))))
+      (if (i32.and (i32.ne (local.get $sink) (i32.const 0))
+            (i32.eqz (call $ole_is_test_site (local.get $sink))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_enum_guest_methods_valid
+        (param $obj i32) (param $method i32) (result i32)
+    (local $data i32) (local $count i32) (local $i i32) (local $sink i32)
+    (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $sink (call $gl32 (i32.add
+        (i32.add (local.get $data) (i32.mul (local.get $i) (i32.const 32)))
+        (i32.const 24))))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $sink) (i32.const 0))
+              (i32.eqz (call $ole_is_test_site (local.get $sink))))
+            (i32.eqz (call $ole_guest_method_addr (local.get $sink) (local.get $method))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; Snapshot callback context uses root=enumerator and p1=next item index.
+  (func $ole_enum_guest_callback_next
+        (param $ctx i32) (param $method i32) (result i32)
+    (local $obj i32) (local $data i32) (local $count i32)
+    (local $i i32) (local $sink i32)
+    (local.set $obj (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (local.set $i (call $gl32 (i32.add (local.get $ctx) (i32.const 24))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $sink (call $gl32 (i32.add
+        (i32.add (local.get $data) (i32.mul (local.get $i) (i32.const 32)))
+        (i32.const 24))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (if (i32.and (i32.ne (local.get $sink) (i32.const 0))
+            (i32.eqz (call $ole_is_test_site (local.get $sink))))
+        (then
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 24)) (local.get $i))
+          (drop (call $ole_guest_callback_invoke1
+            (local.get $ctx) (local.get $sink) (local.get $method)))
+          (return (i32.const 1))))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_enum_next_guest_methods_valid
+        (param $obj i32) (param $requested i32) (result i32)
+    (local $data i32) (local $count i32) (local $cursor i32)
+    (local $remaining i32) (local $take i32) (local $end i32) (local $sink i32)
+    (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+    (local.set $cursor (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
+    (if (i32.ge_u (local.get $cursor) (local.get $count))
+      (then (return (i32.const 1))))
+    (local.set $remaining (i32.sub (local.get $count) (local.get $cursor)))
+    (local.set $take (select (local.get $requested) (local.get $remaining)
+      (i32.lt_u (local.get $requested) (local.get $remaining))))
+    (local.set $end (i32.add (local.get $cursor) (local.get $take)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $cursor) (local.get $end)))
+      (local.set $sink (call $gl32 (i32.add
+        (i32.add (local.get $data) (i32.mul (local.get $cursor) (i32.const 32)))
+        (i32.const 24))))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $sink) (i32.const 0))
+              (i32.eqz (call $ole_is_test_site (local.get $sink))))
+            (i32.eqz (call $ole_guest_method_addr (local.get $sink) (i32.const 1))))
+        (then (return (i32.const 0))))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; Next callback context uses p1=STATDATA output, p2=fetched count,
+  ;; p3=next output index, and p4=the synchronous Next HRESULT.
+  (func $ole_enum_output_guest_addref_next (param $ctx i32) (result i32)
+    (local $items i32) (local $count i32) (local $i i32) (local $sink i32)
+    (local.set $items (call $gl32 (i32.add (local.get $ctx) (i32.const 24))))
+    (local.set $count (call $gl32 (i32.add (local.get $ctx) (i32.const 28))))
+    (local.set $i (call $gl32 (i32.add (local.get $ctx) (i32.const 32))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $sink (call $gl32 (i32.add
+        (i32.add (local.get $items) (i32.mul (local.get $i) (i32.const 32)))
+        (i32.const 24))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (if (i32.and (i32.ne (local.get $sink) (i32.const 0))
+            (i32.eqz (call $ole_is_test_site (local.get $sink))))
+        (then
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 32)) (local.get $i))
+          (drop (call $ole_guest_callback_invoke1
+            (local.get $ctx) (local.get $sink) (i32.const 1)))
+          (return (i32.const 1))))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_enum_release_api (param $obj i32) (param $pop_bytes i32)
+    (local $ret i32) (local $ctx i32)
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 8))) (i32.const 10))
+          (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 4))) (i32.const 1))
+            (call $ole_enum_has_guest_sink (local.get $obj))))
+      (then
+        (if (i32.eqz (call $ole_enum_guest_methods_valid (local.get $obj) (i32.const 2)))
+          (then
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes)))
+            (return)))
+        (local.set $ret (call $gl32 (global.get $esp)))
+        (local.set $ctx (call $ole_guest_callback_context
+          (i32.const 9) (i32.const 0) (local.get $ret)
+          (i32.add (global.get $esp) (local.get $pop_bytes))
+          (local.get $obj) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (if (call $ole_enum_guest_callback_next (local.get $ctx) (i32.const 2))
+          (then (return)))
+        (call $ole_guest_callback_finish
+          (local.get $ctx) (call $ole_obj_release (local.get $obj)))
+        (return)))
+    (global.set $eax (call $ole_obj_release (local.get $obj)))
+    (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes))))
 
   (func $ole_static_close (param $root i32) (param $option i32) (result i32)
     (local $site i32)
@@ -4873,12 +5093,30 @@
       (i32.const 0) (i32.const 0)))
     (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $sink) (i32.const 2))))
   (func $handle_IOleObject_EnumAdvise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32)
+    (local $obj i32) (local $ret i32) (local $ctx i32)
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0x80004003)))
       (else
         (call $gs32 (local.get $arg1) (i32.const 0))
         (local.set $obj (call $ole_create_advise_enum (local.get $arg0)))
+        (if (local.get $obj)
+          (then
+            (if (i32.eqz (call $ole_enum_guest_methods_valid (local.get $obj) (i32.const 1)))
+              (then
+                (drop (call $ole_obj_release (local.get $obj)))
+                (global.set $eax (i32.const 0x80004002))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+                (return)))
+            (if (call $ole_enum_has_guest_sink (local.get $obj))
+              (then
+                (local.set $ret (call $gl32 (global.get $esp)))
+                (local.set $ctx (call $ole_guest_callback_context
+                  (i32.const 8) (i32.const 0) (local.get $ret)
+                  (i32.add (global.get $esp) (i32.const 12))
+                  (local.get $obj) (i32.const 0) (local.get $arg1)
+                  (i32.const 0) (i32.const 0)))
+                (drop (call $ole_enum_guest_callback_next (local.get $ctx) (i32.const 1)))
+                (return)))))
         (if (local.get $obj)
           (then (call $gs32 (local.get $arg1) (local.get $obj)) (global.set $eax (i32.const 0)))
           (else (global.set $eax (i32.const 0x8007000E))))))

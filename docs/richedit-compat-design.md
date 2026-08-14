@@ -60,9 +60,9 @@ success returns: independently owned host application/object names, validated
 content extents with persistent dirty tracking, caller-owned user-type text,
 static misc flags, close state, running state, nested run locks,
 last-unlock-close, and contained state. The expanded focused suite passes
-52/52. DLL-private client-site and live advisory ownership now use the guest
-COM callback bridge; guest-owned advisory snapshots and general data objects
-remain the next bridge users.
+52/52. DLL-private client-site, live advisory, and advisory snapshot ownership
+now use the guest COM callback bridge; general data objects remain the next
+bridge users.
 
 Client-site fidelity is covered for both local fixtures and DLL-private guest
 interfaces. Assignment, repeated assignment, retrieval, replacement,
@@ -70,7 +70,7 @@ dirty-close `SaveObject`, and final destruction have explicit reference-count
 assertions. Guest AddRef/Release/SaveObject methods execute as x86 callbacks
 through a stack-resident continuation context, so the original WAT API frame
 resumes without synchronous re-entry. The local suite remains 65/65 and the
-expanded guest callback suite passes 18/18.
+expanded guest callback suite passes 29/29.
 
 Synthetic local advisory sinks now cover the corresponding collection
 contract: monotonic connections, independently retained sinks, targeted and
@@ -80,8 +80,10 @@ suite passes 65/65. DLL-private live sinks now execute real guest AddRef,
 Release, `OnSave`, and `OnClose` callbacks through the continuation bridge.
 Dirty save failure is notification-atomic, final handler release balances all
 references, and stable connection traversal excludes sinks added during an
-in-flight notification. Guest-owned `EnumAdvise` snapshot AddRef/Release is
-still the next advisory lifecycle slice rather than being approximated with
+in-flight notification. Guest-owned `EnumAdvise` snapshots now add and release
+their own references across creation, `Next`, `Clone`, and destruction. The
+snapshot remains valid after live `Unadvise` and source-enumerator destruction;
+malformed guest methods fail atomically rather than being approximated with
 unsafe synchronous re-entry.
 
 ## ASCII TLDR

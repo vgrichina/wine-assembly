@@ -442,9 +442,8 @@ cursor semantics. The expanded focused suite passes 38/38.
   guest AddRef/Release/SaveObject callbacks.
 - [x] Extend live advisory ownership and `OnSave`/`OnClose` notifications to
   DLL-private interfaces through the same guest COM callback bridge.
-- Extend `EnumAdvise` snapshot ownership to DLL-private sinks; live advisory
-  references are complete, but guest enumerator AddRef/Release sequencing is a
-  separate callback-boundary slice.
+- [x] Extend `EnumAdvise` snapshot creation, `Next`, `Clone`, and final release
+  ownership to DLL-private sinks through suspended guest callbacks.
 - [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
   generalized P3 object rather than DIB-only branches for runtime-owned
   `IDataObject` instances.
@@ -471,9 +470,9 @@ OLEMISC_STATIC`. It records validated close options, maintains running and
 nested run-lock state, honors last-unlock-close, and tracks whether the object
 is contained. Owned host strings are released with the handler. The later guest
 client-site and live-advisory results below complete DLL-private `SaveObject`,
-live sink notifications, and handler ownership. Guest-owned advisory
-enumeration snapshots remain a separate callback-bridge slice. The focused
-static-handler suite passes 52/52 at this milestone.
+live sink notifications, handler ownership, and guest-owned advisory
+enumeration snapshots. The focused static-handler suite passes 52/52 at this
+milestone.
 
 2026-08-13 guest-client-site result: a stack-resident continuation context now
 suspends an OLE API frame, invokes DLL-private guest x86 vtable methods, and
@@ -505,8 +504,20 @@ sink's `OnSave` followed by `OnClose`; clean and `OLECLOSE_NOSAVE` paths emit
 only `OnClose`, while a failing guest `SaveObject` preserves dirty state and
 suppresses both notifications. Traversal is bounded by stable connection IDs,
 so mutation cannot skip a following sink and newly advised sinks wait for the
-next sequence. The real guest-x86 callback suite passes 18/18. Guest-owned
-`EnumAdvise` snapshot references remain the next lifecycle slice.
+next sequence. At this milestone the real guest-x86 callback suite passed
+18/18, with guest-owned `EnumAdvise` snapshot references as the next lifecycle
+slice.
+
+2026-08-13 guest-EnumAdvise result: each DLL-private sink now receives a
+distinct guest `AddRef` for the `IEnumSTATDATA` snapshot, every returned
+`STATDATA`, and every cloned snapshot. Final source and clone release execute
+the matching guest `Release` sequence before freeing enumerator storage.
+Snapshots remain usable after live `Unadvise` and after the source enumerator
+is destroyed. Missing guest AddRef/Release slots fail before publishing output,
+advancing a cursor, or partially releasing ownership. The expanded real guest
+x86 callback suite passes 29/29; the local static-handler suite remains 65/65,
+the continuation regression passes, and native WordPad static-object
+Copy/Cut/Paste remains 13/13.
 
 ### Acceptance
 
