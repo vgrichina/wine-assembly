@@ -48,6 +48,24 @@ function imageStats(filename) {
   return { width: png.width, height: png.height, nonBlack, colors: colors.size };
 }
 
+function pixelDiff(filenameA, filenameB, region = null) {
+  const a = PNG.sync.read(fs.readFileSync(filenameA));
+  const b = PNG.sync.read(fs.readFileSync(filenameB));
+  assert(a.width === b.width && a.height === b.height, 'cannot compare differently sized frames');
+  const box = region || { x: 0, y: 0, width: a.width, height: a.height };
+  let changed = 0;
+  for (let y = box.y; y < box.y + box.height; y++) {
+    for (let x = box.x; x < box.x + box.width; x++) {
+      const i = (y * a.width + x) * 4;
+      if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] ||
+          a.data[i + 2] !== b.data[i + 2] || a.data[i + 3] !== b.data[i + 3]) {
+        changed++;
+      }
+    }
+  }
+  return changed;
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -63,7 +81,12 @@ async function main() {
   const vfsRoot = path.join(temp, 'installed-vfs');
   const wasmPath = path.join(temp, 'candidate.wasm');
   const installerPng = path.join(temp, 'installer-finished.png');
-  const gamePng = path.join(temp, 'dxball-live.png');
+  const menuPng = path.join(temp, 'dxball-menu.png');
+  const readyPng = path.join(temp, 'dxball-level-ready.png');
+  const ballPngA = path.join(temp, 'dxball-ball-a.png');
+  const ballPngB = path.join(temp, 'dxball-ball-b.png');
+  const ballPngC = path.join(temp, 'dxball-ball-c.png');
+  const paddleLeftPng = path.join(temp, 'dxball-paddle-left.png');
   fs.mkdirSync(inputRoot, { recursive: true });
   fs.copyFileSync(INSTALLER, path.join(inputRoot, 'dxball19.exe'));
 
@@ -116,19 +139,45 @@ async function main() {
     const gameOutput = runCli([
       `--exe=${gameExe}`,
       ...common,
-      '--batch-size=10000',
-      '--max-batches=330',
-      '--stuck-after=1000',
-      `--input=300:png-pixels:${gamePng}`,
+      '--batch-size=50000',
+      '--max-batches=340',
+      '--stuck-after=500',
+      '--trace-api=midiStreamOpen,midiStreamOut,midiStreamRestart,midiStreamPause',
+      '--trace-host=voice_play_ring',
+      `--input=62:keydown:27,63:keyup:27,120:png-pixels:${menuPng},` +
+        `124:mousedown:320:240,140:mouseup:320:240,220:png-pixels:${readyPng},` +
+        `235:mousedown:320:430,245:mouseup:320:430,255:png-pixels:${ballPngA},` +
+        `275:png-pixels:${ballPngB},295:png-pixels:${ballPngC},` +
+        `305:mousemove:120:430,325:png-pixels:${paddleLeftPng}`,
     ], 60000);
     assert(/title="DX-Ball"/i.test(gameOutput), 'installed game did not create its DX-Ball window');
-    assert(fs.existsSync(gamePng), 'installed game did not produce the scheduled live frame');
-    const gameStats = imageStats(gamePng);
+    for (const frame of [menuPng, readyPng, ballPngA, ballPngB, ballPngC, paddleLeftPng]) {
+      assert(fs.existsSync(frame), `installed game omitted scheduled frame ${path.basename(frame)}`);
+    }
+    const menuStats = imageStats(menuPng);
+    const gameStats = imageStats(ballPngC);
     assert(gameStats.width === 640 && gameStats.height === 480,
       `installed game used an unexpected frame size: ${gameStats.width}x${gameStats.height}`);
-    assert(gameStats.nonBlack > 100000 && gameStats.colors > 40,
-      `installed game window stayed blank: ${JSON.stringify(gameStats)}`);
-    console.log(`PASS game: live DirectDraw frame ${gameStats.width}x${gameStats.height}, ${gameStats.nonBlack} lit pixels, ${gameStats.colors} colors`);
+    assert(menuStats.nonBlack > 50000 && menuStats.colors > 40,
+      `installed game menu stayed blank: ${JSON.stringify(menuStats)}`);
+    assert(gameStats.nonBlack > 50000 && gameStats.colors > 100,
+      `installed game level stayed blank: ${JSON.stringify(gameStats)}`);
+
+    const playfield = { x: 0, y: 270, width: 640, height: 170 };
+    const ballDeltaAB = pixelDiff(ballPngA, ballPngB, playfield);
+    const ballDeltaBC = pixelDiff(ballPngB, ballPngC, playfield);
+    assert(ballDeltaAB > 300 && ballDeltaBC > 300,
+      `ball did not animate across successive gameplay frames: ${ballDeltaAB}, ${ballDeltaBC}`);
+    const paddleDelta = pixelDiff(readyPng, paddleLeftPng,
+      { x: 0, y: 420, width: 640, height: 60 });
+    assert(paddleDelta > 1000, `paddle did not follow mouse movement: ${paddleDelta} changed pixels`);
+
+    assert(/midiStreamOpen\(/.test(gameOutput) && /midiStreamOut\(/.test(gameOutput) &&
+      /midiStreamRestart\(/.test(gameOutput), 'DX-Ball did not initialize and start its MIDI soundtrack');
+    assert(/\[host\] voice_play_ring\(/.test(gameOutput),
+      'DX-Ball did not submit its DirectSound PCM effect buffer for playback');
+    console.log(`PASS game: playable ${gameStats.width}x${gameStats.height} level, ball deltas ${ballDeltaAB}/${ballDeltaBC}, paddle delta ${paddleDelta}`);
+    console.log('PASS audio: queued/restarted MIDI stream and submitted DirectSound PCM');
     console.log('DX-Ball candidate: PASS 2/2');
   } finally {
     if (process.env.KEEP_DXBALL_CANDIDATE_TMP === '1') {

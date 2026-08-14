@@ -10961,6 +10961,7 @@
   ;; 792: timeGetTime — same as GetTickCount, returns ms
   (func $handle_timeGetTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $tick_count (call $host_get_ticks))
+    (call $midi_stream_service (global.get $tick_count))
     (global.set $eax (global.get $tick_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
