@@ -24,15 +24,15 @@ try { fs.unlinkSync(shot); } catch (_) {}
 
 const input = [
   // Brush, largest round option, then smallest round option.
-  '40:click:64:146',
-  '50:click:37:269', '60:click:120:100',
-  '70:click:62:269', '80:click:150:100',
+  '7:click:64:146',
+  '8:click:37:269', '9:click:120:100',
+  '10:click:62:269', '11:click:150:100',
   // Airbrush, smallest option, then largest option.
-  '90:click:39:171',
-  '100:click:39:279', '110:click:120:160',
-  '120:click:50:310', '130:click:180:160',
-  `140:png:${shot}`,
-  '141:stop',
+  '12:click:39:171',
+  '13:click:39:279', '14:click:120:160',
+  '15:click:50:310', '16:click:180:160',
+  `18:png:${shot}`,
+  '19:stop',
 ].join(',');
 
 let output = '';
@@ -42,12 +42,12 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=155',
+    '--max-batches=25',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 12 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 9000, maxBuffer: 12 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
