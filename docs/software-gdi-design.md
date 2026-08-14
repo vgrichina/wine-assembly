@@ -11,8 +11,9 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are complete path recording, scalable glyph extraction, remaining vector
-EMF playback, remaining classic WMF record families, and printer integration.
+gaps are complete path recording, scalable glyph extraction, remaining enhanced
+metafile record families, remaining classic WMF record families, and printer
+integration.
 The
 checked-in PE corpus has a machine-checked public API inventory in
 `gdi-public-api-status.json`; its exact sorted import-set hash
@@ -67,8 +68,15 @@ pixels into a standard top-down 32-bpp `META_STRETCHDIB` WMF record, and
 `PlayMetaFile` validates, decodes, maps, clips, and presents that record through
 the shared WAT blitter. This gives independently transportable WMF bytes and
 faithful replay of all drawing that reached the recording surface. Native
-`EMR_STRETCHDIBITS` playback uses the same validation and blitter, including
-the destination rectangle transform supplied to `PlayEnhMetaFile`.
+`PlayEnhMetaFile` playback owns a bounded DWORD handle table, composes the
+requested destination rectangle into private mapping state, and restores the
+complete caller DC on every exit. `EMR_STRETCHDIBITS` uses the shared
+validation and blitter. Core EMR mapping/color/ROP2/fill/stretch/save/clip
+state, pen/brush creation-selection-deletion, `SETPIXELV`, current-position
+lines, rectangles, ellipses, round rectangles, polygons, polylines, and
+polyline-to records use the same WAT object, DC, region, and integer-raster
+paths as public GDI. Both POINTL and bounded signed POINTS variants are
+supported, and an entire polyline is preflighted before its first pixel.
 `GetWinMetaFileBits` and `SetWinMetaFileBits` convert supported bitmap records
 by replaying through a temporary canonical surface and serializing the target
 standard format. Classic WMF playback also interprets common mapping, color,
@@ -92,8 +100,9 @@ walks the validated record stream through a resumable guest `MFENUMPROC`, with
 a live bounded `HANDLETABLE`, EOF delivery, early-stop semantics, and caller-DC
 restoration. `PlayMetaFileRecord` routes each callback record through the same
 WAT evaluator so state and object-table mutations persist between callbacks.
-Vector EMF records and unsupported classic WMF families remain separate
-compatibility layers.
+Enhanced-metafile font/text, region-object, path, world-transform, arc/Bezier,
+multi-poly, palette, and remaining bitmap-record families are still separate
+compatibility work. Unsupported classic WMF families also remain incomplete.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains

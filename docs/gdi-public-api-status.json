@@ -15,11 +15,11 @@
       "EnumMetaFile",
       "PlayMetaFileRecord",
       "CreateMetaFileA/W records into a canonical 640x480 WAT surface; CloseMetaFile serializes a standard META_STRETCHDIB WMF and PlayMetaFile replays supported bitmap and vector records through the WAT rasterizer",
-      "PlayEnhMetaFile validates and replays EMR_STRETCHDIBITS; GetWinMetaFileBits and SetWinMetaFileBits preserve supported bitmap content across standard WMF/EMF streams",
+      "PlayEnhMetaFile validates a bounded EMF handle table, composes the target rectangle, restores caller state, and replays EMR_STRETCHDIBITS plus core mapping/color/ROP2/fill/stretch/save/clip state, pen/brush lifetime, SetPixelV, MoveTo/LineTo, Rectangle, Ellipse, RoundRect, Polygon/Polyline/PolylineTo and their 16-bit variants through canonical WAT surfaces",
       "Classic WMF playback supports mapping, colors, ROP2, fill mode, SaveDC/RestoreDC, pen/brush/font/region creation and lifetime, lines, rectangles, ellipses, round rectangles, polygons, polylines, bitmap-font text, region drawing, and mapped clip-region mutation",
       "EnumMetaFile validates and enumerates every classic WMF record through the guest callback with a live HANDLETABLE; PlayMetaFileRecord reuses the canonical WAT state/object/vector/bitmap evaluator and callback early termination is honored",
       "META_TEXTOUT and META_EXTTEXTOUT parse bounded Win16 strings, ETO rectangles, signed Dx arrays, font and text state in WAT; installed FNT faces rasterize without Canvas and scalable faces retain the text-only fallback",
-      "Vector EMF records are not preserved; unsupported well-formed classic WMF records are skipped during playback and raster conversion"
+      "Enhanced-metafile fonts/text, regions, paths, world transforms, arcs/Bezier families, multi-poly records, palettes, and remaining bitmap record variants are not implemented; unsupported well-formed classic WMF records are skipped during playback and raster conversion"
     ],
     "printer": [
       "CreateDCA/W and PrintDlg allocate a WAT-owned 2400x3150 32-bpp page; StartDoc/StartPage/EndPage/EndDoc/AbortDoc enforce job ordering and each page begins white",

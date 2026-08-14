@@ -112,6 +112,68 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write32(data + 104, 20);
     return data;
   };
+  const emfDwords = (...values) => {
+    const payload = Buffer.alloc(values.length * 4);
+    values.forEach((value, index) => payload.writeInt32LE(value | 0, index * 4));
+    return payload;
+  };
+  const emfRecord = (type, payload = Buffer.alloc(0)) => {
+    const size = (8 + payload.length + 3) & ~3;
+    const record = Buffer.alloc(size);
+    record.writeUInt32LE(type >>> 0, 0);
+    record.writeUInt32LE(size, 4);
+    Buffer.from(payload).copy(record, 8);
+    return record;
+  };
+  const emfPolyRecord = (type, points, shortPoints = false) => {
+    const payload = Buffer.alloc(20 + points.length * (shortPoints ? 4 : 8));
+    const xs = points.map(point => point[0]);
+    const ys = points.map(point => point[1]);
+    payload.writeInt32LE(Math.min(...xs), 0);
+    payload.writeInt32LE(Math.min(...ys), 4);
+    payload.writeInt32LE(Math.max(...xs) + 1, 8);
+    payload.writeInt32LE(Math.max(...ys) + 1, 12);
+    payload.writeUInt32LE(points.length, 16);
+    points.forEach(([x, y], index) => {
+      if (shortPoints) {
+        payload.writeInt16LE(x, 20 + index * 4);
+        payload.writeInt16LE(y, 22 + index * 4);
+      } else {
+        payload.writeInt32LE(x, 20 + index * 8);
+        payload.writeInt32LE(y, 24 + index * 8);
+      }
+    });
+    return emfRecord(type, payload);
+  };
+  const makeVectorEmf = (records, {
+    bounds = [0, 0, 64, 48], handles = 8,
+  } = {}) => {
+    const eof = emfRecord(14, emfDwords(0, 0, 20));
+    const encoded = [...records, eof];
+    const total = 88 + encoded.reduce((sum, record) => sum + record.length, 0);
+    const stream = Buffer.alloc(total);
+    stream.writeUInt32LE(1, 0);                  // EMR_HEADER
+    stream.writeUInt32LE(88, 4);
+    bounds.forEach((value, index) => stream.writeInt32LE(value, 8 + index * 4));
+    bounds.forEach((value, index) => stream.writeInt32LE(value, 24 + index * 4));
+    stream.writeUInt32LE(0x464d4520, 40);       // ENHMETA_SIGNATURE
+    stream.writeUInt32LE(0x00010000, 44);
+    stream.writeUInt32LE(total, 48);
+    stream.writeUInt32LE(encoded.length + 1, 52);
+    stream.writeUInt16LE(handles, 56);
+    stream.writeInt32LE(bounds[2] - bounds[0], 72);
+    stream.writeInt32LE(bounds[3] - bounds[1], 76);
+    stream.writeInt32LE(169, 80);
+    stream.writeInt32LE(127, 84);
+    let offset = 88;
+    for (const record of encoded) {
+      record.copy(stream, offset);
+      offset += record.length;
+    }
+    const data = allocZero(total);
+    bytes.set(stream, wa(data));
+    return { data, size: total };
+  };
   const readBytes = (pointer, size) => Array.from(bytes.subarray(wa(pointer), wa(pointer) + size));
   const read16 = pointer => bytes[wa(pointer)] | (bytes[wa(pointer) + 1] << 8);
   const makeRecord = (fn, params = []) => {
@@ -674,6 +736,158 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_GetEnhMetaFileBits(copy, 0, 0), 108,
       'copy must retain independent storage');
     assert.strictEqual(wat.test_call_DeleteEnhMetaFile(copy), 1);
+  });
+
+  check('enhanced vector records replay through canonical WAT state and pixels', () => {
+    const { data, size } = makeVectorEmf([
+      emfRecord(17, emfDwords(8)),                         // EMR_SETMAPMODE
+      emfRecord(9, emfDwords(64, 48)),                    // EMR_SETWINDOWEXTEX
+      emfRecord(11, emfDwords(64, 48)),                   // EMR_SETVIEWPORTEXTEX
+      emfRecord(38, emfDwords(1, 0, 1, 0, 0x000000ff)),  // red pen
+      emfRecord(39, emfDwords(2, 0, 0x0000ff00, 0)),     // green brush
+      emfRecord(37, emfDwords(1)),                        // select pen
+      emfRecord(37, emfDwords(2)),                        // select brush
+      emfRecord(33),                                      // save DC
+      emfRecord(20, emfDwords(7)),                        // temporary XOR ROP2
+      emfRecord(34, emfDwords(-1)),                       // restore DC
+      emfRecord(43, emfDwords(5, 5, 20, 15)),            // rectangle
+      emfRecord(42, emfDwords(24, 4, 38, 18)),           // ellipse
+      emfRecord(44, emfDwords(40, 4, 60, 18, 4, 4)),     // round rectangle
+      emfPolyRecord(3, [[24, 24], [38, 24], [31, 38]]),  // polygon
+      emfRecord(27, emfDwords(2, 22)),                    // move to
+      emfRecord(54, emfDwords(20, 22)),                   // line to
+      emfPolyRecord(4, [[42, 24], [60, 24], [60, 38]]),  // polyline
+      emfRecord(27, emfDwords(2, 40)),                    // move to
+      emfPolyRecord(89, [[10, 40], [10, 45]], true),      // polyline-to 16
+      emfRecord(15, emfDwords(22, 40, 0x00ff0000)),       // blue pixel
+      emfRecord(37, emfDwords(0x80000007)),               // stock black pen
+      emfRecord(37, emfDwords(0x80000000)),               // stock white brush
+      emfRecord(40, emfDwords(1)),                        // delete pen
+      emfRecord(40, emfDwords(2)),                        // delete brush
+    ]);
+    const metafile = wat.test_call_SetEnhMetaFileBits(size, data) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 148, 112) >>> 0;
+    const callerPen = wat.test_call_CreatePen(0, 1, 0x0000ffff) >>> 0;
+    const callerBrush = wat.test_call_CreateSolidBrush(0x00ff00ff) >>> 0;
+    const target = allocZero(16);
+    wat.guest_write32(target, 10);
+    wat.guest_write32(target + 4, 8);
+    wat.guest_write32(target + 8, 138);
+    wat.guest_write32(target + 12, 104);
+    assert(metafile && hdc && bitmap && callerPen && callerBrush);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+    wat.test_call_SelectObject(hdc, callerPen);
+    wat.test_call_SelectObject(hdc, callerBrush);
+    wat.test_gdi_dc_set_field(hdc, 12, 77, 0);
+    wat.test_gdi_dc_set_field(hdc, 16, 66, 0);
+    wat.test_gdi_dc_set_field(hdc, 36, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 48, 3, 1);
+    wat.test_gdi_dc_set_field(hdc, 52, 4, 1);
+    wat.test_gdi_dc_set_field(hdc, 64, 5, 1);
+    wat.test_gdi_dc_set_field(hdc, 68, 6, 1);
+
+    assert.strictEqual(wat.test_call_PlayEnhMetaFile(hdc, metafile, target), 1);
+    assert.strictEqual(wat.test_call_GetCurrentObject(hdc, 1) >>> 0, callerPen);
+    assert.strictEqual(wat.test_call_GetCurrentObject(hdc, 2) >>> 0, callerBrush);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 12, 0), 77);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 16, 0), 66);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 36, 0), 1);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 48, 0), 3);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 52, 0), 4);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 64, 0), 5);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 68, 0), 6);
+    wat.test_gdi_dc_set_field(hdc, 40, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 44, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 48, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 52, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 56, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 60, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 64, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 68, 1, 1);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 18) >>> 0, 0x000000ff,
+      'target-scaled rectangle edge must use the EMF pen');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 30, 28) >>> 0, 0x0000ff00,
+      'target-scaled rectangle interior must use the EMF brush');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 72, 30) >>> 0, 0x0000ff00,
+      'ellipse interior must use the canonical integer rasterizer');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 110, 30) >>> 0, 0x0000ff00,
+      'round-rectangle interior must use the canonical integer rasterizer');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 72, 68) >>> 0, 0x0000ff00,
+      '32-bit EMR_POLYGON must fill at the mapped target location');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 30, 52) >>> 0, 0x000000ff,
+      'EMR_MOVETOEX/EMR_LINETO must preserve the logical current position');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 110, 56) >>> 0, 0x000000ff,
+      '32-bit EMR_POLYLINE must rasterize exact WAT pixels');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 30, 88) >>> 0, 0x000000ff,
+      '16-bit EMR_POLYLINETO16 must widen signed points and continue the path');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 54, 88) >>> 0, 0x00ff0000,
+      'EMR_SETPIXELV must write the canonical target surface');
+    for (let index = 0; index < 140; index++) {
+      assert.strictEqual(wat.test_call_PlayEnhMetaFile(hdc, metafile, target), 1,
+        'EMF playback objects must be recycled after every call');
+    }
+    const recycled = wat.test_call_CreateSolidBrush(0x00010101) >>> 0;
+    assert(recycled, 'temporary EMF objects must not exhaust the WAT object table');
+    assert.strictEqual(wat.test_call_DeleteObject(recycled), 1);
+    assert.strictEqual(wat.test_call_DeleteEnhMetaFile(metafile), 1);
+  });
+
+  check('enhanced vector clipping and malformed records are bounded', () => {
+    const clipped = makeVectorEmf([
+      emfRecord(39, emfDwords(1, 0, 0x0000ff00, 0)),
+      emfRecord(37, emfDwords(1)),
+      emfRecord(30, emfDwords(32, 0, 64, 48)),
+      emfRecord(43, emfDwords(0, 0, 64, 48)),
+      emfRecord(37, emfDwords(0x80000000)),
+      emfRecord(40, emfDwords(1)),
+    ]);
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 128, 96) >>> 0;
+    const target = allocZero(16);
+    wat.guest_write32(target + 8, 128);
+    wat.guest_write32(target + 12, 96);
+    const metafile = wat.test_call_SetEnhMetaFileBits(clipped.size, clipped.data) >>> 0;
+    assert(metafile && hdc && bitmap);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+    const outsideBefore = wat.test_call_GetPixel(hdc, 32, 48) >>> 0;
+    assert.strictEqual(wat.test_call_PlayEnhMetaFile(hdc, metafile, target), 1);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 32, 48) >>> 0, outsideBefore,
+      'mapped intersect clip must reject pixels outside its right half');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 96, 48) >>> 0, 0x0000ff00,
+      'mapped intersect clip must retain pixels inside its right half');
+    assert.strictEqual(wat.test_call_DeleteEnhMetaFile(metafile), 1);
+
+    const cases = [];
+    cases.push(makeVectorEmf([
+      emfRecord(38, emfDwords(1, 0, 1, 0, 0xff)),
+      emfRecord(38, emfDwords(1, 0, 1, 0, 0xff)),
+    ]));
+    cases.push(makeVectorEmf([
+      emfRecord(39, emfDwords(8, 0, 0xff00, 0)),
+    ], { handles: 8 }));
+    const truncatedPoly = emfPolyRecord(4, [[1, 1], [5, 5]]);
+    truncatedPoly.writeUInt32LE(3, 24);
+    cases.push(makeVectorEmf([truncatedPoly]));
+    cases.push(makeVectorEmf([emfRecord(34, emfDwords(-1))]));
+    const wrongRecordCount = makeVectorEmf([]);
+    wat.guest_write32(wrongRecordCount.data + 52, 3);
+    cases.push(wrongRecordCount);
+    const wrongEofSize = makeVectorEmf([]);
+    wat.guest_write32(wrongEofSize.data + 104, 16);
+    cases.push(wrongEofSize);
+    for (const malformed of cases) {
+      const bad = wat.test_call_SetEnhMetaFileBits(malformed.size, malformed.data) >>> 0;
+      assert(bad, 'transport accepts structurally bounded bytes before replay validation');
+      assert.strictEqual(wat.test_call_PlayEnhMetaFile(hdc, bad, target), 0,
+        'invalid EMF state, object, or point records must fail playback');
+      assert.strictEqual(wat.test_call_DeleteEnhMetaFile(bad), 1);
+    }
+    for (let index = 0; index < 140; index++) {
+      const reusable = wat.test_call_CreatePen(0, 1, index) >>> 0;
+      assert(reusable, 'failed EMF playback must release temporary WAT objects');
+      assert.strictEqual(wat.test_call_DeleteObject(reusable), 1);
+    }
   });
 
   check('WMF/EMF conversion preserves bitmap records and replay pixels', () => {
