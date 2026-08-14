@@ -1453,6 +1453,30 @@
     (call $nc_flags_set (local.get $hwnd) (i32.const 2)))   ;; bit 1
   (func (export "nc_post_calcsize") (param $hwnd i32)
     (call $nc_flags_set (local.get $hwnd) (i32.const 4)))   ;; bit 2
+  ;; Mark a visible window tree dirty without calling $host_invalidate for
+  ;; every descendant. The host schedules one composite after this export;
+  ;; generating per-child host invalidations here would create late synthetic
+  ;; WM_NCPAINT work after a status bar has already repainted.
+  (func $paint_mark_visible_tree (param $hwnd i32)
+    (local $slot i32) (local $child i32)
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+      (then (return)))
+    (call $update_invalidate_full (local.get $hwnd))
+    (call $paint_flag_set (local.get $hwnd))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $child (call $wnd_slot_hwnd (local.get $slot)))
+      (call $paint_mark_visible_tree (local.get $child))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+  )
+  ;; Host-side child exposure happens while an app is still recalculating its
+  ;; control-bar layout. Put the resulting repaint into USER's update-region
+  ;; queue so pending non-client work drains before parent/child WM_PAINT.
+  (func (export "paint_invalidate_visible_tree") (param $hwnd i32)
+    (call $paint_mark_visible_tree (local.get $hwnd)))
   (func (export "nc_flags_test") (param $hwnd i32) (result i32)
     (call $nc_flags_test (local.get $hwnd)))
   (func (export "post_message_q")
