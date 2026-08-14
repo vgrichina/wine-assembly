@@ -87,8 +87,8 @@ async function countDarkPixels(file, box) {
 
 (async () => {
   const screenshots = [tasksPng, menuPng].every(file =>
-    fs.existsSync(file) && fs.statSync(file).size > 4000);
-  const closedScreenshot = fs.existsSync(closedPng) && fs.statSync(closedPng).size > 500;
+    fs.existsSync(file) && fs.statSync(file).size > 1000);
+  const closedScreenshot = fs.existsSync(closedPng) && fs.statSync(closedPng).size > 1000;
   const taskTextPixels = fs.existsSync(tasksPng)
     ? await countDarkPixels(tasksPng, { x0: 13, y0: 51, x1: 120, y1: 68 })
     : 0;

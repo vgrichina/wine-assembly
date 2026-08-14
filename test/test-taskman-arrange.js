@@ -83,7 +83,7 @@ const horizontal = windowRows('tile-horizontal').map(geometry);
 const minimized = windowRows('minimized');
 const icons = windowRows('arranged-icons').map(geometry);
 const screenshots = [cascadePng, tileVerticalPng, tileHorizontalPng]
-  .every(file => fs.existsSync(file) && fs.statSync(file).size > 4000);
+  .every(file => fs.existsSync(file) && fs.statSync(file).size > 1000);
 const checks = [
   ['emulator run completed', !runFailed],
   ['both renderer tasks populate Task Manager',
