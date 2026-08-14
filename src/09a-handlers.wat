@@ -5352,10 +5352,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
-  ;; 365: PlayMetaFile(hdc, hmf) — metafile playback is not implemented.
-  ;; Return FALSE so callers can reject the content without terminating the app.
+  ;; 365: PlayMetaFile(hdc, hmf) — validate WAT-owned opaque WMF transport.
   (func $handle_PlayMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (i32.and
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))
+      (i32.ne (call $gdi_metafile_record (local.get $arg1) (i32.const 6)) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8289,11 +8290,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 6)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_CopyMetaFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 6)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL.
@@ -8388,9 +8389,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 561: EnumMetaFile — STUB: unimplemented
+  ;; 561: EnumMetaFile — opaque streams currently contain no replay callbacks.
   (func $handle_EnumMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.ne
+      (call $gdi_metafile_record (local.get $arg1) (i32.const 6)) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 562: GetObjectType(h) → OBJ_* type. Host GDI owns the full object table,
@@ -8409,6 +8412,16 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     (local.set $wat_type (call $gdi_object_type (local.get $arg0)))
+    (if (i32.eq (local.get $wat_type) (i32.const 6))
+      (then
+        (global.set $eax (i32.const 9)) ;; OBJ_METAFILE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.eq (local.get $wat_type) (i32.const 7))
+      (then
+        (global.set $eax (i32.const 13)) ;; OBJ_ENHMETAFILE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (if (local.get $wat_type)
       (then
         (global.set $eax
@@ -8472,9 +8485,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 563: PlayMetaFileRecord — STUB: unimplemented
+  ;; 563: PlayMetaFileRecord — accept bounded record enumeration fallback.
   (func $handle_PlayMetaFileRecord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.and
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))
+      (i32.ne (local.get $arg2) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 564: ExtSelectClipRgn(hdc, hrgn, fnMode) — 3 args stdcall
@@ -8651,14 +8667,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; Finish recording without destroying the backing DC; the returned token is
-  ;; released by DeleteMetaFile after RichEdit has transferred ownership.
+  ;; Finish recording and return a valid empty WMF stream. Geometry recording
+  ;; remains a documented semantic limitation, but the result is an ordinary
+  ;; independently owned metafile object rather than a disguised DC handle.
   (func $handle_CloseMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg0))
+    (if (i32.eqz (call $host_gdi_delete_dc (local.get $arg0)))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $gdi_metafile_empty_wmf))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_DeleteMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_delete_dc (local.get $arg0)))
+    (global.set $eax
+      (if (result i32)
+        (i32.ne (call $gdi_metafile_record (local.get $arg0) (i32.const 6)) (i32.const 0))
+        (then (call $gdi_object_delete_full (local.get $arg0)))
+        (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 585: IntersectClipRect(hdc, l, t, r, b) — 5 args stdcall.

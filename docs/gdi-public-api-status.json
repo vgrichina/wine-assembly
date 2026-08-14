@@ -5,23 +5,9 @@
     "peFileCount": 183,
     "importCount": 218,
     "sortedImportSha256": "e12833e9e0e671014fc3eb8a97c7299d53867fe97d3827eef5e4632e80c481a6",
-    "representedInApiTable": 205
+    "representedInApiTable": 218
   },
-  "notExposed": [
-    "CopyEnhMetaFileA",
-    "DeleteEnhMetaFile",
-    "GetEnhMetaFileBits",
-    "GetEnhMetaFileHeader",
-    "GetEnhMetaFilePaletteEntries",
-    "GetICMProfileA",
-    "GetMetaFileBitsEx",
-    "GetWinMetaFileBits",
-    "PlayEnhMetaFile",
-    "ResetDCA",
-    "SetEnhMetaFileBits",
-    "SetMetaFileBitsEx",
-    "SetWinMetaFileBits"
-  ],
+  "notExposed": [],
   "knownPartialOrUnsupported": {
     "metafile": [
       "CloseMetaFile",
@@ -31,7 +17,9 @@
       "CreateMetaFileW",
       "EnumMetaFile",
       "PlayMetaFile",
-      "PlayMetaFileRecord"
+      "PlayMetaFileRecord",
+      "WMF/EMF recording and playback preserve valid object/byte contracts but do not capture or replay drawing records",
+      "GetWinMetaFileBits and SetWinMetaFileBits emit valid empty target streams rather than converting drawing records"
     ],
     "printer": [
       "AbortDoc",

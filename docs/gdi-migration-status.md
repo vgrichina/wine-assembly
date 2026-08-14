@@ -42,6 +42,10 @@ presentation boundary.
 delegate glyph measurement to the allowed Canvas policy while WAT owns prefix
 fitting and Win32 result structures. Font enumeration and resource/table
 fallback contracts are exposed without adding another JavaScript bridge.
+All named GDI32 imports in the checked-in PE corpus are now exposed. Classic
+and enhanced metafiles have WAT-owned byte objects, deep-copy/lifetime,
+header/query, and valid empty conversion-stream semantics; drawing-record
+capture and replay remain explicitly partial.
 DirectDraw HDCs now address native WAT DIB bytes,
 screen DCs select a persistent WAT bitmap, and JS no longer owns DC handles,
 semantic DC records, HDC target resolution, or Canvas-to-DIB synchronization.

@@ -17272,5 +17272,96 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3342577783
+  },
+  {
+    "id": 2259,
+    "name": "CopyEnhMetaFileA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 88951893
+  },
+  {
+    "id": 2260,
+    "name": "DeleteEnhMetaFile",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2647597704
+  },
+  {
+    "id": 2261,
+    "name": "GetEnhMetaFileBits",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1327510823
+  },
+  {
+    "id": 2262,
+    "name": "GetEnhMetaFileHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 329960786
+  },
+  {
+    "id": 2263,
+    "name": "GetEnhMetaFilePaletteEntries",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3524212402
+  },
+  {
+    "id": 2264,
+    "name": "GetICMProfileA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 680522106
+  },
+  {
+    "id": 2265,
+    "name": "GetMetaFileBitsEx",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3835014617
+  },
+  {
+    "id": 2266,
+    "name": "GetWinMetaFileBits",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2741867076
+  },
+  {
+    "id": 2267,
+    "name": "PlayEnhMetaFile",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 852379543
+  },
+  {
+    "id": 2268,
+    "name": "ResetDCA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3158243892
+  },
+  {
+    "id": 2269,
+    "name": "SetEnhMetaFileBits",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2603202195
+  },
+  {
+    "id": 2270,
+    "name": "SetMetaFileBitsEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3505863061
+  },
+  {
+    "id": 2271,
+    "name": "SetWinMetaFileBits",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3624457120
   }
 ]

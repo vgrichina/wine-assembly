@@ -1021,3 +1021,123 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
     (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3)
       (call $gl32 (i32.sub (global.get $esp) (i32.const 20)))))
+
+  (func $handle_SetMetaFileBitsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data i32)
+    (if (local.get $arg1) (then (local.set $data (call $g2w (local.get $arg1)))))
+    (global.set $eax
+      (if (result i32) (call $gdi_metafile_valid_wmf (local.get $data) (local.get $arg0))
+        (then (call $gdi_metafile_create
+          (i32.const 6) (local.get $data) (local.get $arg0)))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetMetaFileBitsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_metafile_bits
+      (local.get $arg0) (i32.const 6) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_SetEnhMetaFileBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data i32)
+    (if (local.get $arg1) (then (local.set $data (call $g2w (local.get $arg1)))))
+    (global.set $eax
+      (if (result i32) (call $gdi_metafile_valid_emf (local.get $data) (local.get $arg0))
+        (then (call $gdi_metafile_create
+          (i32.const 7) (local.get $data) (local.get $arg0)))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetEnhMetaFileBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_metafile_bits
+      (local.get $arg0) (i32.const 7) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_CopyEnhMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 7)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_DeleteEnhMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32)
+        (i32.ne (call $gdi_metafile_record (local.get $arg0) (i32.const 7)) (i32.const 0))
+        (then (call $gdi_object_delete_full (local.get $arg0)))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GetEnhMetaFileHeader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_enh_metafile_header
+      (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetEnhMetaFilePaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.eqz (call $gdi_metafile_record (local.get $arg0) (i32.const 7)))
+      (then (global.set $eax (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_PlayEnhMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.and
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))
+      (i32.and
+        (i32.ne (call $gdi_metafile_record (local.get $arg1) (i32.const 7)) (i32.const 0))
+        (i32.ne (local.get $arg2) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetWinMetaFileBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $temporary i32)
+    (if (i32.eqz (call $gdi_metafile_record (local.get $arg0) (i32.const 7)))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $temporary (call $gdi_metafile_empty_wmf))
+        (global.set $eax (call $gdi_metafile_bits
+          (local.get $temporary) (i32.const 6) (local.get $arg1)
+          (if (result i32) (local.get $arg2)
+            (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+        (drop (call $gdi_object_delete_full (local.get $temporary)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_SetWinMetaFileBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data i32)
+    (if (local.get $arg1) (then (local.set $data (call $g2w (local.get $arg1)))))
+    (global.set $eax
+      (if (result i32) (call $gdi_metafile_valid_wmf (local.get $data) (local.get $arg0))
+        (then (call $gdi_metafile_empty_emf))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_GetICMProfileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (if (i32.or
+          (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+          (i32.eqz (local.get $arg1)))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (if (i32.or (i32.eqz (local.get $arg2))
+              (i32.lt_u (call $gl32 (local.get $arg1)) (i32.const 29)))
+          (then
+            (call $gs32 (local.get $arg1) (i32.const 29))
+            (global.set $eax (i32.const 0)))
+          (else
+            (local.set $dst (call $g2w (local.get $arg2)))
+            (i32.store (local.get $dst) (i32.const 0x42475273))
+            (i32.store offset=4 (local.get $dst) (i32.const 0x6C6F4320))
+            (i32.store offset=8 (local.get $dst) (i32.const 0x5320726F))
+            (i32.store offset=12 (local.get $dst) (i32.const 0x65636170))
+            (i32.store offset=16 (local.get $dst) (i32.const 0x6F725020))
+            (i32.store offset=20 (local.get $dst) (i32.const 0x656C6966))
+            (i32.store offset=24 (local.get $dst) (i32.const 0x6D63692E))
+            (i32.store8 offset=28 (local.get $dst) (i32.const 0))
+            (call $gs32 (local.get $arg1) (i32.const 29))
+            (global.set $eax (i32.const 1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_ResetDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select (local.get $arg0) (i32.const 0)
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
