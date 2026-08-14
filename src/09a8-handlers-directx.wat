@@ -543,6 +543,50 @@
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; stdcall 3 args
 
+  ;; DirectDrawCreateEx(lpGUID, lplpDD, riid, pUnkOuter) → HRESULT
+  ;; DirectX 7 callers request IDirectDraw7 directly rather than creating the
+  ;; v1 interface and calling QueryInterface. The emulator's extended DDraw
+  ;; wrapper serves IDirectDraw2/4/7, matching the existing QI path.
+  (func $handle_DirectDrawCreateEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $iid_dword i32) (local $vtbl i32) (local $obj_guest i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (if (local.get $arg3)
+      (then
+        (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $iid_dword (call $gl32 (local.get $arg2)))
+    (if (i32.or
+          (i32.eqz (local.get $iid_dword))
+          (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
+      (then (local.set $vtbl (global.get $DX_VTBL_DDRAW)))
+      (else
+        (if (i32.or
+              (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
+              (i32.or
+                (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
+                (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
+          (then (local.set $vtbl (global.get $DX_VTBL_DDRAW2)))
+          (else
+            (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
+    (local.set $obj_guest (call $dx_create_com_obj (i32.const 1) (local.get $vtbl)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (call $gs32 (local.get $arg1) (local.get $obj_guest))
+    (global.set $dx_ddraw_this (local.get $obj_guest))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
   ;; DirectDrawCreateClipper(dwFlags, lplpDDClipper, pUnkOuter) → HRESULT
   ;; Standalone clipper factory — equivalent to IDirectDraw_CreateClipper.
   (func $handle_DirectDrawCreateClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -582,6 +626,41 @@
     (call $gs32 (local.get $arg2) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))) ;; stdcall 4 args
+
+  ;; DirectInput8Create(hInstance, dwVersion, riidltf, ppvOut, pUnkOuter)
+  ;; IDirectInput8 keeps the legacy methods at the front of its vtable, which
+  ;; covers the device creation/input path currently implemented here.
+  (func $handle_DirectInput8Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $iid_dword i32) (local $obj_guest i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (if (local.get $arg4)
+      (then
+        (global.set $eax (i32.const 0x80040110)) ;; CLASS_E_NOAGGREGATION
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (i32.or (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $iid_dword (call $gl32 (local.get $arg2)))
+    (if (i32.and
+          (i32.ne (local.get $iid_dword) (i32.const 0xBF798030))
+          (i32.ne (local.get $iid_dword) (i32.const 0xBF798031)))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $obj_guest
+      (call $dx_create_com_obj (i32.const 6) (global.get $DX_VTBL_DINPUT)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (global.set $eax (i32.const 0x80004005)) ;; E_FAIL
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (call $gs32 (local.get $arg3) (local.get $obj_guest))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectDraw methods

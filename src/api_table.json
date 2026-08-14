@@ -17972,5 +17972,19 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2832259242
+  },
+  {
+    "id": 2359,
+    "name": "DirectDrawCreateEx",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 641447215
+  },
+  {
+    "id": 2360,
+    "name": "DirectInput8Create",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 566247804
   }
 ]
