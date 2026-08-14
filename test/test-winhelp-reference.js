@@ -210,6 +210,36 @@ if (!/dump-tree:contents:[^\n]*state=0x22[^\n]*text="The object of FreeCell"[^\n
 if (!fs.existsSync(contentsScreenshot) || fs.statSync(contentsScreenshot).size < 1000) {
   failures.push('rendered FreeCell Contents screenshot is missing');
 }
+if (fs.existsSync(contentsScreenshot)) {
+  const png = PNG.sync.read(fs.readFileSync(contentsScreenshot));
+  // The WinHelp Topics dialog carries DS_CONTEXTHELP. Win98 therefore places
+  // a raised question-mark button immediately left of Close. At the restored
+  // reference position its glyph is this exact 6x9 mask.
+  const expectedContextGlyph = [
+    '.####.',
+    '##..##',
+    '##..##',
+    '...##.',
+    '..##..',
+    '..##..',
+    '......',
+    '..##..',
+    '..##..',
+  ];
+  const actualContextGlyph = [];
+  for (let y = 57; y < 66; y++) {
+    let row = '';
+    for (let x = 562; x < 568; x++) {
+      const offset = (y * png.width + x) * 4;
+      row += png.data[offset] < 70 && png.data[offset + 1] < 70 &&
+        png.data[offset + 2] < 70 && png.data[offset + 3] !== 0 ? '#' : '.';
+    }
+    actualContextGlyph.push(row);
+  }
+  if (actualContextGlyph.join('/') !== expectedContextGlyph.join('/')) {
+    failures.push(`WinHelp context-help glyph differs from Win98 (${actualContextGlyph.join('/')})`);
+  }
+}
 if (/UNIMPLEMENTED API|R6018|\*\*\* CRASH|FATAL:/.test(contentsOutput)) {
   failures.push('Contents dialog hit a fatal compatibility path');
 }

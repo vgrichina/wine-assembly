@@ -58,8 +58,8 @@
     (local $is_p i32)        ;; pressed flag for current sysbutton
     (local $edge i32)        ;; EDGE_RAISED (0x05) or EDGE_SUNKEN (0x0A)
     (local $off i32)         ;; glyph offset (0 or 1) when pressed
-    (local $pr_close i32) (local $pr_max i32) (local $pr_min i32)
-    (local $nc_style i32) (local $has_min i32) (local $has_max i32)
+    (local $pr_close i32) (local $pr_context i32) (local $pr_max i32) (local $pr_min i32)
+    (local $nc_style i32) (local $has_context i32) (local $has_min i32) (local $has_max i32)
     (local $simple_child_border i32)
     (local $glyph_brush i32)
 
@@ -73,6 +73,12 @@
     (local.set $is_maxed    (i32.and (local.get $flags) (i32.const 0x04)))
     (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
     (local.set $nc_style (call $wnd_get_style (local.get $hwnd)))
+    ;; DS_CONTEXTHELP shares 0x2000 with the dialog template's style word.
+    ;; USER renders its question-mark caption button only on dialog frames.
+    (local.set $has_context
+      (i32.and
+        (i32.ne (local.get $is_dialog) (i32.const 0))
+        (i32.ne (i32.and (local.get $nc_style) (i32.const 0x00002000)) (i32.const 0))))
     (local.set $simple_child_border
       (i32.and
         (i32.and
@@ -173,6 +179,7 @@
     (if (i32.eq (global.get $nc_pressed_hwnd) (local.get $hwnd))
       (then
         (local.set $pr_close (i32.eq (global.get $nc_pressed_hit) (i32.const 20)))
+        (local.set $pr_context (i32.eq (global.get $nc_pressed_hit) (i32.const 21)))
         (local.set $pr_max   (i32.eq (global.get $nc_pressed_hit) (i32.const 9)))
         (local.set $pr_min   (i32.eq (global.get $nc_pressed_hit) (i32.const 8)))))
 
@@ -219,7 +226,66 @@
     (drop (call $host_gdi_line_to (local.get $hdc)
             (i32.sub (local.get $cx) (i32.const 1)) (i32.add (local.get $cy) (local.get $cs))))
 
-    ;; Dialog style: only the close button.
+    ;; --- Context-help button (DS_CONTEXTHELP) ---
+    ;; Win98 places this immediately left of Close and uses a compact bitmap
+    ;; question mark rather than the caption font. The rectangles below match
+    ;; the native 6x9 mask exactly and shift with the pressed frame.
+    (if (local.get $has_context)
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (local.get $max_x) (local.get $btn_y)
+                (i32.add (local.get $max_x) (local.get $btn_w))
+                (i32.add (local.get $btn_y) (local.get $btn_h))
+                (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (local.get $max_x) (local.get $btn_y)
+                (i32.add (local.get $max_x) (local.get $btn_w))
+                (i32.add (local.get $btn_y) (local.get $btn_h))
+                (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_context))
+                (i32.const 0x0F)))
+        (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_context)))
+        (local.set $cx (i32.add (local.get $max_x) (local.get $off)))
+        (local.set $cy (i32.add (local.get $btn_y) (local.get $off)))
+        ;; Top hook: .####. / ##..## / ##..##
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 6))
+                (i32.add (local.get $cy) (i32.const 2))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 5))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 7))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 11))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.const 0x30014)))
+        ;; Bend, stem, one-row gap, and two-pixel-high dot.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 8))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 6))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 7))
+                (i32.add (local.get $cy) (i32.const 6))
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 8))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 7))
+                (i32.add (local.get $cy) (i32.const 9))
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 11))
+                (i32.const 0x30014)))))
+
+    ;; Dialog style: Close plus optional context help; never min/max.
     (if (local.get $is_dialog)
       (then
         (drop (call $host_release_dc (local.get $hdc)))
@@ -628,12 +694,13 @@
   ;; HT codes: HTNOWHERE=0 HTCLIENT=1 HTCAPTION=2 HTSYSMENU=3
   ;;           HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13 HTTOPRIGHT=14
   ;;           HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
-  ;;           HTBORDER=18 HTCLOSE=20 HTMINBUTTON=8 HTMAXBUTTON=9
+  ;;           HTBORDER=18 HTCLOSE=20 HTHELP=21 HTMINBUTTON=8 HTMAXBUTTON=9
   (func $defwndproc_do_nchittest
         (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
     (local $rect i32) (local $wx i32) (local $wy i32)
     (local $w i32) (local $h i32) (local $lx i32) (local $ly i32)
     (local $style i32) (local $has_cap i32) (local $is_dialog i32) (local $is_child i32)
+    (local $has_context i32)
     (local $has_thick i32) (local $has_min i32) (local $has_max i32)
     (local $corner i32) (local $border i32)
     (local $cap_top i32) (local $cap_bot i32) (local $cap_l i32) (local $cap_r i32)
@@ -703,11 +770,23 @@
                 (i32.ne (i32.and (local.get $style) (i32.const 0x00400000)) (i32.const 0))
                 (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
               (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000)))))
+            (local.set $has_context
+              (i32.and
+                (i32.ne (local.get $is_dialog) (i32.const 0))
+                (i32.ne (i32.and (local.get $style) (i32.const 0x00002000)) (i32.const 0))))
             (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
                                   (i32.lt_s (local.get $ly) (local.get $btn_bot)))
                           (i32.and (i32.ge_s (local.get $lx) (local.get $close_x))
                                    (i32.lt_s (local.get $lx) (i32.add (local.get $close_x) (local.get $bw)))))
               (then (return (i32.const 20)))) ;; HTCLOSE
+            (if (i32.and
+                  (local.get $has_context)
+                  (i32.and
+                    (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                             (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                    (i32.and (i32.ge_s (local.get $lx) (local.get $max_x))
+                             (i32.lt_s (local.get $lx) (i32.add (local.get $max_x) (local.get $bw))))))
+              (then (return (i32.const 21)))) ;; HTHELP
             (if (i32.eqz (local.get $is_dialog))
               (then
                 (if (local.get $has_max)
@@ -853,8 +932,10 @@
     (local.set $hit (call $defwndproc_do_nchittest
       (local.get $hwnd) (local.get $sx) (local.get $sy)))
     (if (i32.or
-          (i32.or (i32.eq (local.get $hit) (i32.const 20))
-                  (i32.eq (local.get $hit) (i32.const 8)))
+          (i32.or
+            (i32.or (i32.eq (local.get $hit) (i32.const 20))
+                    (i32.eq (local.get $hit) (i32.const 21)))
+            (i32.eq (local.get $hit) (i32.const 8)))
           (i32.eq (local.get $hit) (i32.const 9)))
       (then
         (call $nc_set_pressed (local.get $hwnd) (local.get $hit))
