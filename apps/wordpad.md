@@ -1,7 +1,7 @@
 # WordPad (Win98) — FUNCTIONAL (static OLE images)
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
-**Status (2026-08-12):** FUNCTIONAL for the bounded non-OLE scope plus static
+**Status (2026-08-14):** FUNCTIONAL for the bounded non-OLE scope plus static
 `CF_DIB` image paste, Copy/Cut/Paste, rendering, and RTF save. Fresh-process
 reopen is implemented and has passed, but needs current-tip bounded
 revalidation after the recent GDI/DIB changes (see **Remaining Work**).
@@ -187,6 +187,16 @@ the guest focus owner, so the native `RichEdit20A` child receives `WM_CHAR`
 instead of the WordPad frame. The bounded `test/test-wordpad-web.js` regression
 proves the app stays alive, types `hello world`, and writes
 `test/output/wordpad-web/hello-world.png`.
+
+The same browser gate now verifies that uncovered pixels remain Win98 teal.
+WordPad's printer-metrics worker previously restarted its per-instance GDI
+object/DC counters while sharing the process GDI tables. Its first 2400x3150
+white printer page reused the main thread's screen handles and replaced the
+canonical 640x480 desktop presentation. GDI allocation now skips every live
+process-shared handle, so worker printer surfaces remain independent and the
+desktop stays 640x480 `COLOR_DESKTOP` throughout startup, typing, and image
+paste. `test/test-desktop-surface-color.js` models the stale worker counters
+directly, while `test/test-wordpad-web.js` guards the final rendered pixel.
 
 WordPad's menu bar now retains the Win98 `DEFAULT_GUI_FONT` (`W95FA`) instead
 of changing to a wide monospace fallback during MFC startup. The GDI layer no

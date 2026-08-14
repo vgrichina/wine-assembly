@@ -1555,9 +1555,21 @@
 
   (func $gdi_object_alloc (param $type i32) (param $a i32) (param $b i32)
         (param $c i32) (param $d i32) (result i32)
-    (local $handle i32)
-    (local.set $handle (global.get $gdi_next_object_handle))
-    (global.set $gdi_next_object_handle (i32.add (local.get $handle) (i32.const 1)))
+    (local $handle i32) (local $attempts i32)
+    ;; Worker WASM instances share the process object table but begin with a
+    ;; fresh copy of the handle-counter global. Skip handles already allocated
+    ;; by another thread instead of letting gdi_object_adopt overwrite the live
+    ;; record (notably the main thread's canonical screen bitmap).
+    (block $available (loop $scan
+      (if (i32.ge_u (local.get $attempts) (global.get $GDI_OBJECT_COUNT))
+        (then (return (i32.const 0))))
+      (local.set $handle (global.get $gdi_next_object_handle))
+      (global.set $gdi_next_object_handle
+        (i32.add (local.get $handle) (i32.const 1)))
+      (if (i32.eqz (call $gdi_object_record (local.get $handle)))
+        (then (br $available)))
+      (local.set $attempts (i32.add (local.get $attempts) (i32.const 1)))
+      (br $scan)))
     (if (i32.eqz (call $gdi_object_adopt (local.get $handle) (local.get $type)
           (local.get $a) (local.get $b) (local.get $c) (local.get $d)))
       (then (return (i32.const 0))))
@@ -3528,9 +3540,19 @@
     (local.get $required))
 
   (func $gdi_dc_alloc (result i32)
-    (local $handle i32)
-    (local.set $handle (global.get $gdi_next_dc_handle))
-    (global.set $gdi_next_dc_handle (i32.add (local.get $handle) (i32.const 1)))
+    (local $handle i32) (local $attempts i32)
+    ;; DC records are process-shared as well. A worker's stale counter must not
+    ;; select its printer bitmap into an active main-thread screen/window DC.
+    (block $available (loop $scan
+      (if (i32.ge_u (local.get $attempts) (global.get $GDI_DC_STATE_COUNT))
+        (then (return (i32.const 0))))
+      (local.set $handle (global.get $gdi_next_dc_handle))
+      (global.set $gdi_next_dc_handle
+        (i32.add (local.get $handle) (i32.const 1)))
+      (if (i32.eqz (call $gdi_dc_state_entry (local.get $handle) (i32.const 0)))
+        (then (br $available)))
+      (local.set $attempts (i32.add (local.get $attempts) (i32.const 1)))
+      (br $scan)))
     (if (i32.eqz (call $gdi_dc_state_entry (local.get $handle) (i32.const 1)))
       (then (return (i32.const 0))))
     (local.get $handle))

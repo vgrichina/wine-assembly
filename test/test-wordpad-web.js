@@ -447,6 +447,7 @@ async function main() {
     }
     return {
       buttonDetail, sizeWhite, sizeTextDark,
+      desktopPixel: color(canvas.width - 2, canvas.height - 2),
     };
   })()`);
   const consoleText = consoleSummary(cdp.events).join('\n');
@@ -462,6 +463,8 @@ async function main() {
     `formatting toolbar buttons should be visibly painted: ${JSON.stringify(toolbarVisualState)}`);
   assert(toolbarVisualState.sizeWhite >= 350 && toolbarVisualState.sizeTextDark >= 5,
     `size combobox should visibly paint its 10pt text: ${JSON.stringify(toolbarVisualState)}`);
+  assert.deepStrictEqual(toolbarVisualState.desktopPixel, [0, 128, 128, 255],
+    `uncovered desktop should retain the Win98 teal background: ${JSON.stringify(toolbarVisualState)}`);
   assert(/W95FA/.test(menuFontState.css),
     `WordPad menu should use the Win98 UI font: ${JSON.stringify(menuFontState)}`);
   assert(imagePixels.red > 100 && imagePixels.blue > 100,
