@@ -472,12 +472,14 @@ primitives and bitmap operations must still be deterministic.
 No Canvas-only text draw may leave the authoritative surface stale when that
 surface can later be observed through GDI.
 
-### Future high-fidelity Win98 text backend
+### High-fidelity Win98 text backend
 
-After the surface migration is stable, an optional deterministic font backend
-can replace Canvas for classic raster-font cases without changing any GDI
-callers. The font backend returns glyph masks and metrics; the existing
-software text compositor applies colors, clipping, background mode, and ROPs.
+The first deterministic bitmap-font path is implemented for classic raster
+fonts without changing GDI callers. `AddFontResourceA` parses NE `.FON`
+containers and standalone FNT 2.x/3.x resources supplied through the VFS.
+`CreateFont` selects an installed strike by face name, and `TextOut` consumes
+its one-bit glyph rows and integer metrics with nearest-neighbor scaling.
+Unsupported formats and text paths continue through the Canvas fallback.
 
 The target selection order is:
 
@@ -487,13 +489,11 @@ The target selection order is:
 4. Canvas text for faces, sizes, scripts, or shaping the deterministic backend
    does not support.
 
-The loader should understand NE `.FON` containers with one or more Windows FNT
-resources as well as standalone `.FNT` files. FreeType is a viable future
-dependency because it supports Windows FNT, PCF, BDF, and outline fonts and can
-produce monochrome glyph bitmaps. A smaller project-native FNT parser is also
-reasonable for the narrow Win98 UI-font use case. Font-file parsing and glyph
-rasterization must run in WASM or shared JavaScript code so Node and browsers
-consume the same strikes.
+The project-native loader understands NE `.FON` containers with one or more
+Windows FNT resources as well as standalone `.FNT` files. It runs in shared
+JavaScript so Node and browsers consume the same strikes. FreeType remains a
+possible future dependency for PCF, BDF, outline fonts, and broader font-table
+coverage.
 
 For each face/size/weight/charset strike, cache:
 

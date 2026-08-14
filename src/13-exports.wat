@@ -138,6 +138,11 @@
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "set_fs_base") (param i32) (global.set $fs_base (local.get 0)))
   (func (export "get_current_thread_id") (result i32) (global.get $current_thread_id))
+  (func (export "get_process_id") (result i32) (call $current_process_id))
+  (func (export "set_process_id") (param $pid i32)
+    ;; PID zero is reserved by Win32 and means "use the compatibility default"
+    ;; internally, so hosts should always assign a positive value.
+    (i32.store (global.get $SHARED_PROCESS_ID) (local.get $pid)))
   (func (export "get_sync_msg_depth") (result i32) (global.get $sync_msg_depth))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
@@ -2754,6 +2759,11 @@
   (func (export "colorgrid_color") (param $idx i32) (result i32)
     (call $colorgrid_color_for_idx (local.get $idx)))
 
+  ;; Resolve a swatch through its control so tests can cover caller-owned
+  ;; custom colors as well as the predefined table.
+  (func (export "colorgrid_control_color") (param $hwnd i32) (param $idx i32) (result i32)
+    (call $colorgrid_color_for_hwnd (local.get $hwnd) (local.get $idx)))
+
   ;; Current selection for a colorgrid hwnd (reads ColorGridState[0]).
   (func (export "colorgrid_get_sel") (param $hwnd i32) (result i32)
     (local $s i32)
@@ -2763,12 +2773,22 @@
 
   ;; Test helper: build a Color dialog standalone (no x86 caller).
   (func (export "test_create_color_dialog") (result i32)
-    (local $dlg i32) (local $cc i32)
+    (local $dlg i32) (local $cc i32) (local $custom i32)
     (local.set $cc (call $heap_alloc (i32.const 36)))
+    (local.set $custom (call $heap_alloc (i32.const 64)))
+    (i32.store offset=16 (call $g2w (local.get $cc)) (local.get $custom))
+    ;; Give one custom box a distinctive value for interaction coverage.
+    (i32.store offset=20 (call $g2w (local.get $custom)) (i32.const 0x00123456))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_color_dialog (local.get $dlg) (i32.const 0) (local.get $cc))
     (local.get $dlg))
+
+  (func (export "test_color_dialog_result") (param $dlg i32) (result i32)
+    (local $cc i32)
+    (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
+    (if (i32.eqz (local.get $cc)) (then (return (i32.const -1))))
+    (i32.load offset=12 (call $g2w (local.get $cc))))
 
   ;; Test helper: build a Font dialog standalone (no x86 caller). Needs
   ;; a fake CHOOSEFONT guest ptr with at minimum lpLogFont at +0x0C so

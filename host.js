@@ -2,9 +2,33 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '204';
+  static SOURCE_VERSION = '205';
+  static _nextProcessId = 1000;
+
+  static hasRemainingAppWindow(destroyed, remainingTopLevel) {
+    // A hidden startup/helper window disappearing is not a user-visible app
+    // close. Pinball hides and destroys its splash before its main frame is
+    // ready; stopping synchronously here prevents the guest from reaching the
+    // later ShowWindow call even when no renderer window currently remains.
+    if (destroyed && destroyed.visible === false) return true;
+    if (!remainingTopLevel || remainingTopLevel.length === 0) return false;
+    if (!destroyed || !destroyed.isDialog) return true;
+
+    // A dialog-only application usually leaves one invisible owner behind
+    // when its last visible dialog closes. Pinball does the inverse during
+    // startup: its independent main frame may exist but not be shown yet.
+    // Keep a hidden independent frame, but not the dialog's hidden owner.
+    const ownerHwnd = destroyed.ownerHwnd >>> 0;
+    return remainingTopLevel.some(w =>
+      w && (w.visible || (w.hwnd >>> 0) !== ownerHwnd)
+    );
+  }
 
   constructor() {
+    // One WineAssembly object models one Win32 process. Worker WASM instances
+    // created by ThreadManager are threads of this process and share its PID
+    // through the process's SharedArrayBuffer-backed memory.
+    this.processId = WineAssembly._nextProcessId++;
     this.instance = null;
     this.memory = null;
     this.running = false;
@@ -193,6 +217,7 @@ class WineAssembly {
         const instance = this.instance;
         return instance ? instance.exports : null;
       },
+      get processId() { return self.processId; },
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
       threadId: opts.threadId | 0,
       vfs: opts.vfs || null,
@@ -248,12 +273,9 @@ class WineAssembly {
         const remainingTopLevel = Object.values(self.renderer.windows).filter(w =>
           w && !w.isChild && w.hwnd >= lo && w.hwnd < hi
         );
-        // Closing a startup/modal dialog must leave its visible main frame
-        // running. Dialog-only accessories instead use an invisible owner,
-        // so their last visible dialog is their application window.
-        const stillHasTopLevel = destroyed && destroyed.isDialog
-          ? remainingTopLevel.some(w => w.visible)
-          : remainingTopLevel.length > 0;
+        const stillHasTopLevel = WineAssembly.hasRemainingAppWindow(
+          destroyed, remainingTopLevel
+        );
         if (!stillHasTopLevel) self.stop({ repaint: false });
       },
       onExit: (code) => {
@@ -408,13 +430,21 @@ class WineAssembly {
       if (self.verbose) console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
       self.logToUI(`[CreateWindow] "${title}"`);
       const ownerInstance = ctx.instance || self.instance;
-      if (self.renderer) self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId, ownerInstance, self.memory);
+      if (self.renderer) {
+        self.renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId, ownerInstance, self.memory);
+        const win = self.renderer.windows && self.renderer.windows[hwnd];
+        if (win) win.processId = self.processId;
+      }
       return hwnd;
     };
     h.dialog_loaded = (hwnd, parentHwnd) => {
       if (self.verbose) console.log(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
       const ownerInstance = ctx.instance || self.instance;
-      if (self.renderer) self.renderer.createDialog(hwnd, parentHwnd, ownerInstance, self.memory);
+      if (self.renderer) {
+        self.renderer.createDialog(hwnd, parentHwnd, ownerInstance, self.memory);
+        const win = self.renderer.windows && self.renderer.windows[hwnd];
+        if (win) win.processId = self.processId;
+      }
     };
 
     h.set_window_text = (hwnd, textPtr) => {
@@ -634,6 +664,9 @@ class WineAssembly {
     imports.host.memory = this.memory;
 
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
+    if (this.instance.exports.set_process_id) {
+      this.instance.exports.set_process_id(this.processId);
+    }
     this._wasmModule = wasmModule;
     if (this.renderer) {
       this.renderer.wasm = this.instance;

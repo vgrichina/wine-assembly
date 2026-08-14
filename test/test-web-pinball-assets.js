@@ -230,8 +230,8 @@ assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host
 assert(indexHtml.includes('lib/host-imports.js?v=200'), 'web host should cache-bust binary text rasterization');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(indexHtml.includes('host.js?v=204'), 'web host should cache-bust host.js after common-dialog hook fixes');
-assert(hostJs.includes("static SOURCE_VERSION = '204'"), 'web host should cache-bust WAT source compilation');
+assert(indexHtml.includes('host.js?v=205'), 'web host should cache-bust host.js after top-level dialog caption fixes');
+assert(hostJs.includes("static SOURCE_VERSION = '205'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
@@ -250,8 +250,8 @@ assert(hostJs.includes('audioHot ? (menuOpen ? 20000 : 10000) : 50000'), 'web ho
 assert(hostJs.includes('menuOpen ? (mainThreadWaiting ? 8 : 6) : 4'), 'web host should use a smaller wall budget while waveOut audio is active');
 assert(hostJs.includes('prioritizeAudioThreads: audioHot && !menuOpen'), 'web host should leave WAT menu tracking responsive while waveOut audio is active');
 assert(hostJs.includes('recentInputWake ? 0'), 'web host should give synchronous dialog input a short worker-free grace period');
-assert(hostJs.includes('destroyed && destroyed.isDialog') && hostJs.includes('remainingTopLevel.some(w => w.visible)'),
-  'web multi-app cleanup should retain visible main frames but stop dialog-only accessories');
+assert(hostJs.includes('WineAssembly.hasRemainingAppWindow('),
+  'web multi-app cleanup should distinguish Pinball startup from dialog-only accessory shutdown');
 assert(hostImportsJs.includes('onTopLevelWindowDestroyed(hwnd, destroyed)'), 'host imports should pass destroyed window metadata to browser cleanup');
 assert(indexHtml.includes('Loading ${app.files.length} data file(s)...'), 'web launcher should log data-file preload progress');
 assert(indexHtml.includes('onProgress: ({ loaded, failed, total }) =>'), 'web launcher should report data-file preload progress');

@@ -732,6 +732,52 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
   )
 
+  ;; LZ32's file APIs also accept ordinary, uncompressed files. Font Viewer
+  ;; uses that path for font-resource files, so map the handle operations onto
+  ;; the VFS. SZDD decompression can be added separately if a caller needs it.
+  (func $handle_LZOpenFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $handle i32) (local $of_wa i32)
+    (local.set $handle (call $host_fs_create_file
+      (call $g2w (local.get $arg0))
+      (i32.const 0x80000000)  ;; GENERIC_READ
+      (i32.const 3)           ;; OPEN_EXISTING
+      (i32.const 0x80)        ;; FILE_ATTRIBUTE_NORMAL
+      (i32.const 0)))         ;; ANSI path
+    (if (local.get $arg1)
+      (then
+        (local.set $of_wa (call $g2w (local.get $arg1)))
+        (i32.store8 (local.get $of_wa) (i32.const 136))
+        (i32.store16 offset=2 (local.get $of_wa)
+          (select (i32.const 2) (i32.const 0)
+            (i32.eq (local.get $handle) (i32.const -1))))))
+    (global.set $eax (local.get $handle))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_LZRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $bytes_ga i32) (local $bytes_wa i32)
+    (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
+    (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
+    (i32.store (local.get $bytes_wa) (i32.const 0))
+    (if (call $host_fs_read_file
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $bytes_ga))
+      (then (global.set $eax (i32.load (local.get $bytes_wa))))
+      (else (global.set $eax (i32.const -1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_LZSeek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_set_file_pointer
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_LZClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $host_fs_close_handle (local.get $arg0)))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 938: _hread — identical to _lread
   (func $handle__hread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $bytes_read_ga i32) (local $bytes_read_wa i32)
@@ -1257,22 +1303,31 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 60: LoadResource(hModule, hResInfo) → HGLOBAL
-  ;; On Win32, LoadResource just returns hResInfo — LockResource does the actual work
+  ;; 60: LoadResource(hModule, hResInfo) → HGLOBAL/resource-data pointer.
+  ;; Keep the module context: HRSRC is an offset relative to the module whose
+  ;; resource tree FindResource searched. Returning the raw offset loses that
+  ;; context and makes native comctl32 parse the main EXE at a DLL-resource
+  ;; offset when it builds property-sheet dialog templates.
   (func $handle_LoadResource (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (local.get $arg1))  ;; return hResInfo as-is
+    (local $rva i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $push_rsrc_ctx (local.get $arg0))
+    (local.set $rva
+      (call $gl32 (i32.add (call $r_base) (local.get $arg1))))
+    (global.set $eax (i32.add (call $r_base) (local.get $rva)))
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
   ;; 61: LockResource
   (func $handle_LockResource (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; LockResource(hGlobal) → pointer to resource data
-    ;; hGlobal = offset of data entry in rsrc. Read RVA from it, return image_base + RVA
-    (if (i32.eqz (local.get $arg0))
-    (then (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (global.set $eax (i32.add (global.get $image_base)
-      (call $gl32 (i32.add (global.get $image_base) (local.get $arg0)))))
+    ;; LoadResource already resolves HRSRC through the owning module and
+    ;; returns the stable resource-data pointer. LockResource exposes it.
+    (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -1479,7 +1534,11 @@
     (then (global.set $focus_hwnd (i32.const 0))
       (local.set $focus_lost (i32.const 1))))
     ;; When destroying main_hwnd, promote to next window only if it's a sibling
-    ;; top-level window — NOT a child of the destroyed window.
+    ;; top-level window — NOT a child of the destroyed window.  A hidden first
+    ;; window may only be a startup/helper HWND: Pinball destroys its invisible
+    ;; splash before creating the visible table window.  Do not leave a stale
+    ;; WM_QUIT behind in that case; a later GetMessage path (Options > Music)
+    ;; would consume it and terminate an otherwise healthy app.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
       (if (i32.and
@@ -1487,7 +1546,9 @@
             (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
                     (global.get $main_hwnd)))
         (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
-        (else (global.set $quit_flag (i32.const 1))))))
+        (else
+          (if (call $wnd_is_effectively_visible (local.get $arg0))
+            (then (global.set $quit_flag (i32.const 1))))))))
     ;; Recursively destroy window and all its children (frees table slots)
     (call $wnd_destroy_recursive (local.get $arg0))
     ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.
@@ -1998,10 +2059,16 @@
       (then
         (global.set $eax (call $wnd_set_style (local.get $arg0) (local.get $arg2)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; For other indices (exstyle, positive offsets), store in userdata for now
+    ;; Dialog extra bytes are independent of application GWL_USERDATA.
     (if (i32.ge_s (local.get $arg1) (i32.const 0))  ;; positive offset = dialog extra bytes
       (then
-        (global.set $eax (call $wnd_set_userdata (local.get $arg0) (local.get $arg2)))
+        (if (call $dialog_proc_get (local.get $arg0))
+          (then
+            (global.set $eax (call $dialog_extra_set
+              (local.get $arg0) (local.get $arg1) (local.get $arg2))))
+          (else
+            ;; Preserve legacy extra-byte behavior for non-dialog windows.
+            (global.set $eax (call $wnd_set_userdata (local.get $arg0) (local.get $arg2)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     ;; Default: return 0 for unhandled indices
     (global.set $eax (i32.const 0))
@@ -2020,7 +2087,11 @@
     (local.set $len (call $guest_strlen (local.get $arg1)))
     ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
     ;; Top-level dialogs/windows still update the caption title table below.
-    (if (call $ctrl_table_get_class (local.get $arg0))
+    (if (i32.and
+          (call $ctrl_table_get_class (local.get $arg0))
+          (i32.or
+            (i32.lt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 10))
+            (i32.gt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 16))))
       (then
         (global.set $eax (call $control_wndproc_dispatch
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $arg1)))
@@ -2046,6 +2117,10 @@
     ;; caption text from WAT-side state. Also post WM_NCPAINT.
     (call $title_table_set (local.get $arg0) (local.get $wa) (local.get $len))
     (call $nc_flags_set (local.get $arg0) (i32.const 1))
+    ;; SetWindowText can run inside a synchronous common-dialog hook, where
+    ;; the normal deferred NC-paint scan cannot run until after the modal
+    ;; frame is already exposed. Paint the new caption immediately as USER does.
+    (call $defwndproc_do_ncpaint (local.get $arg0))
     (call $host_set_window_text (local.get $arg0) (local.get $wa))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
@@ -2680,10 +2755,11 @@
     (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
     (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 0))
     (global.set $dlg_proc (local.get $arg3))
-    ;; Register dialog proc in wnd_table before $dlg_load so the walker
-    ;; can find the slot for WND_DLG_RECORDS, and so SendMessageA
-    ;; routing finds the dlgProc immediately.
-    (call $wnd_table_set (local.get $hwnd) (local.get $arg3))
+    ;; USER keeps the DLGPROC separate from the dialog window's DefDlgProc
+    ;; WNDPROC. This is observable when a framework subclasses the dialog and
+    ;; chains to the saved previous procedure.
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_DIALOG))
+    (drop (call $dialog_proc_set (local.get $hwnd) (local.get $arg3)))
     ;; Parse the RT_DIALOG template fully in WAT — allocates child hwnds,
     ;; fills CONTROL_TABLE + CONTROL_GEOM, sends WM_CREATE, stores header
     ;; state in WND_DLG_RECORDS[slot]. Handles int IDs and guest string
@@ -2763,7 +2839,10 @@
   ;; UTF-16 string templates fall to the int branch either way (like
   ;; CreateDialogParamW). Winmine's Custom dialog uses int IDs (0x5A).
   (func $handle_DialogBoxParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hwnd i32)
+    (local.set $hwnd (global.get $next_hwnd))
     (call $handle_DialogBoxParamA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
   )
 
   ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
@@ -3315,8 +3394,8 @@
     (global.set $initterm_ret (call $gl32 (global.get $esp)))
     (global.set $initterm_end (local.get $arg1))
     (global.set $initterm_ptr (local.get $arg0))
-    ;; Clean _initterm frame (ret + 2 args = 12 bytes)
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ;; cdecl: pop only the return address; the caller owns both arguments.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     ;; Find first non-NULL entry and call it
     (block $done (loop $scan
       (br_if $done (i32.ge_u (global.get $initterm_ptr) (global.get $initterm_end)))
@@ -3335,10 +3414,11 @@
     (global.set $eip (global.get $initterm_ret))
   )
 
-  ;; 211: _controlfp(new, mask) — return default FPU control word
+  ;; 211: _controlfp(new, mask) — cdecl; return default FPU control word
   (func $handle__controlfp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x9001F))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ;; The caller owns the two arguments. Pop only our return address.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 212: _strrev
@@ -3946,14 +4026,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 260: __set_app_type(type) — sets GUI vs console, no-op for us
+  ;; 260: __set_app_type(type) — cdecl; sets GUI vs console, no-op for us
   (func $handle___set_app_type (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 261: __setusermatherr(handler) — set math error handler, no-op
+  ;; 261: __setusermatherr(handler) — cdecl; set math error handler, no-op
   (func $handle___setusermatherr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 262: _adjust_fdiv
@@ -4005,14 +4085,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
-  ;; 269: _onexit — STUB: unimplemented
+  ;; 269: _onexit(func) — cdecl; accept the shutdown registration.
+  ;; The emulator tears down the whole guest process at exit, so there is no
+  ;; process-global CRT state left for these callbacks to release. Returning
+  ;; the supplied function matches successful CRT registration.
   (func $handle__onexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 270: __dllonexit — STUB: unimplemented
+  ;; 270: __dllonexit(func, begin, end) — cdecl; DLL-local counterpart.
   (func $handle___dllonexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 271: _splitpath — STUB: unimplemented
@@ -4025,7 +4110,7 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 273: _wtoi — wide string to int
+  ;; 273: _wtoi — cdecl; wide string to int
   (func $handle__wtoi (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32)
     (local.set $i (i32.const 0))
@@ -4046,7 +4131,7 @@
       (local.set $v (call $gl16 (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1)))))
       (br $parse)))
     (global.set $eax (local.get $tmp))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
   ;; 274: _itow — int to wide string (STUB: unimplemented: write "0")
@@ -4157,7 +4242,8 @@
   ;; ANSI callers. Class table keys are byte-string hashes, so RegisterClassW
   ;; and CreateWindowExA-style lookup share the same slots after conversion.
   (func $handle_CreateWindowExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $class_a i32) (local $title_a i32)
+    (local $class_a i32) (local $title_a i32) (local $hwnd i32)
+    (local.set $hwnd (global.get $next_hwnd))
     (local.set $class_a (local.get $arg1))
     (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
       (then
@@ -4179,6 +4265,7 @@
       (local.get $arg3)
       (local.get $arg4)
       (local.get $name_ptr))
+    (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
     (return)
   )
 
@@ -4378,7 +4465,11 @@
             (local.set $text_wa (call $g2w (local.get $text_gp)))))))
     ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
     ;; WAT-native controls store byte strings, so pass the converted buffer.
-    (if (call $ctrl_table_get_class (local.get $arg0))
+    (if (i32.and
+          (call $ctrl_table_get_class (local.get $arg0))
+          (i32.or
+            (i32.lt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 10))
+            (i32.gt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 16))))
       (then
         (global.set $eax (call $control_wndproc_dispatch
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $text_gp)))
@@ -4393,6 +4484,7 @@
           (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0)))
       (then
         (call $richedit_format_reset_hwnd (local.get $arg0))
+        (call $title_table_set (local.get $arg0) (local.get $text_wa) (local.get $len))
         (global.set $eax (call $wnd_send_message
           (local.get $arg0) (i32.const 0x000C) (i32.const 0) (local.get $text_gp)))
         (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
@@ -4401,6 +4493,7 @@
         (return)))
     (call $title_table_set (local.get $arg0) (local.get $text_wa) (local.get $len))
     (call $nc_flags_set (local.get $arg0) (i32.const 1))
+    (call $defwndproc_do_ncpaint (local.get $arg0))
     (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
     (if (local.get $text_gp) (then (call $heap_free (local.get $text_gp))))
     (global.set $eax (i32.const 1))
@@ -4649,10 +4742,10 @@
       (i32.ge_u (local.get $arg0) (i32.const 0x10000))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; IsWindowUnicode(hwnd) → BOOL. The current window/class path is ANSI-first,
-  ;; including VCL apps such as Tetravex, so report FALSE.
+  ;; IsWindowUnicode(hwnd) reflects whether the HWND was created through a W
+  ;; entry point. Native common controls use this to choose A/W message layouts.
   (func $handle_IsWindowUnicode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $wnd_unicode_get (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
@@ -5798,9 +5891,17 @@
   ;; Phase B: alloc DcRecord with kind='whole' so origin is window top-left.
   (func $handle_GetWindowDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hdc i32)
-    (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 1)))
-    (if (local.get $arg0)
-      (then (call $dc_apply_window_clip (local.get $hdc) (local.get $arg0))))
+    ;; GetDesktopWindow returns our fixed pseudo HWND 0x10000. It has no
+    ;; ordinary window-table geometry, so binding a window DC to it fails and
+    ;; MFC's CWindowDC constructor throws CResourceException. Native Windows
+    ;; treats both NULL and the desktop HWND as requests for a screen DC.
+    (if (i32.or (i32.eqz (local.get $arg0))
+          (i32.eq (local.get $arg0) (i32.const 0x10000)))
+      (then (local.set $hdc (call $host_alloc_screen_dc)))
+      (else
+        (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 1)))
+        (if (local.get $hdc)
+          (then (call $dc_apply_window_clip (local.get $hdc) (local.get $arg0))))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -7612,9 +7713,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 491: GetCurrentProcessId — return fake PID
+  ;; 491: GetCurrentProcessId — return this emulated process's stable PID
   (func $handle_GetCurrentProcessId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1000))
+    (global.set $eax (call $current_process_id))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -8056,12 +8157,17 @@
 
   ;; 534: SizeofResource(hModule, hResInfo) — return size from resource data entry
   (func $handle_SizeofResource (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; hResInfo (arg1) is offset from image_base to data entry (same as FindResource return)
+    ;; hResInfo (arg1) is relative to hModule (same as FindResource return).
     ;; Data entry: [RVA:4][Size:4][CodePage:4][Reserved:4]
     (if (i32.eqz (local.get $arg1))
       (then (global.set $eax (i32.const 0))
       (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (global.set $eax (call $gl32 (i32.add (global.get $image_base) (i32.add (local.get $arg1) (i32.const 4)))))
+    (call $push_rsrc_ctx (local.get $arg0))
+    (global.set $eax
+      (call $gl32
+        (i32.add (call $r_base)
+          (i32.add (local.get $arg1) (i32.const 4)))))
+    (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -9017,9 +9123,12 @@
     (global.set $steps (i32.const 0)))
 
   ;; 608: GetWindowPlacement(hWnd, lpwndpl) — 2 args stdcall
-  ;; Fill WINDOWPLACEMENT with defaults: SW_SHOWNORMAL, zero min/max pts, 0,0,640,480 rect
+  ;; WINDOWPLACEMENT's normal rect describes the requested window, not the
+  ;; desktop. MFC uses this for child layout too (Font Viewer sizes its sample
+  ;; pane from dialog-control placements), so a fixed 640x480 rect produces
+  ;; negative child dimensions.
   (func $handle_GetWindowPlacement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $x i32) (local $y i32)
     (local.set $wa (call $g2w (local.get $arg1)))
     ;; length = 44
     (i32.store (local.get $wa) (i32.const 44))
@@ -9033,11 +9142,23 @@
     ;; ptMaxPosition = (-1,-1)
     (i32.store offset=20 (local.get $wa) (i32.const -1))
     (i32.store offset=24 (local.get $wa) (i32.const -1))
-    ;; rcNormalPosition = {0, 0, 640, 480}
-    (i32.store offset=28 (local.get $wa) (i32.const 0))
-    (i32.store offset=32 (local.get $wa) (i32.const 0))
-    (i32.store offset=36 (local.get $wa) (i32.const 640))
-    (i32.store offset=40 (local.get $wa) (i32.const 480))
+    ;; rcNormalPosition = current window rectangle. Child placement uses
+    ;; parent-client coordinates; top-level placement uses screen coordinates.
+    (if (i32.and
+          (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
+          (call $wnd_get_parent (local.get $arg0)))
+      (then
+        (local.set $x (call $ctrl_get_x_s (local.get $arg0)))
+        (local.set $y (call $ctrl_get_y_s (local.get $arg0)))
+        (i32.store offset=28 (local.get $wa) (local.get $x))
+        (i32.store offset=32 (local.get $wa) (local.get $y))
+        (i32.store offset=36 (local.get $wa)
+          (i32.add (local.get $x) (call $wnd_screen_w (local.get $arg0))))
+        (i32.store offset=40 (local.get $wa)
+          (i32.add (local.get $y) (call $wnd_screen_h (local.get $arg0)))))
+      (else
+        (call $host_get_window_rect (local.get $arg0)
+          (i32.add (local.get $wa) (i32.const 28)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -9129,6 +9250,15 @@
               (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
           (else
             (global.set $eax (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; DefDlgProc marker returned by GWL_WNDPROC before a dialog is
+    ;; subclassed. Execute the per-window DLGPROC and honor DWL_MSGRESULT.
+    (if (i32.eq (local.get $arg0) (global.get $WNDPROC_DIALOG))
+      (then
+        (global.set $eax (call $dialog_default_proc
+          (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; WAT-native wndprocs (for current controls, 0xFFFF0002) are markers,
@@ -9867,12 +9997,27 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 646: GetWindowThreadProcessId — STUB: unimplemented
+  ;; 646: GetWindowThreadProcessId
   (func $handle_GetWindowThreadProcessId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $pid i32)
     ;; GetWindowThreadProcessId(hWnd, lpdwProcessId) → threadId
-    ;; If lpdwProcessId is non-null, write process ID
+    ;; Renderer-owned top-level enumeration can return an HWND from another
+    ;; emulator instance, so ask the shared host window registry first.
+    (local.set $pid (call $host_get_window_info (local.get $arg0) (i32.const 3)))
+    ;; Headless/minimal hosts may not mirror windows. A HWND in our local USER
+    ;; table still belongs to this process.
+    (if (i32.eqz (local.get $pid))
+      (then
+        (if (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (then (local.set $pid (call $current_process_id))))))
+    ;; Invalid HWND: return zero and leave the caller's PID storage untouched.
+    (if (i32.eqz (local.get $pid))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (if (local.get $arg1)
-      (then (call $gs32 (local.get $arg1) (i32.const 1))))  ;; fake PID = 1
+      (then (call $gs32 (local.get $arg1) (local.get $pid))))
     (global.set $eax (i32.const 1))  ;; fake thread ID = 1
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -10238,10 +10383,13 @@
 
   ;; 660: CreateDialogIndirectParamW — STUB: unimplemented
   (func $handle_CreateDialogIndirectParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hwnd i32)
+    (local.set $hwnd (global.get $next_hwnd))
     (global.set $dlg_indirect_template_ptr (local.get $arg1))
     (call $handle_CreateDialogParamA
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
   )
 
   (func $handle_CreateDialogIndirectParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

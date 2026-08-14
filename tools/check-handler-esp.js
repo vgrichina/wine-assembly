@@ -7,6 +7,13 @@
 const fs = require('fs');
 const path = require('path');
 
+const conventionArg = process.argv.find(arg => arg.startsWith('--convention='));
+const conventionFilter = conventionArg ? conventionArg.slice('--convention='.length) : null;
+if (conventionFilter && !['cdecl', 'stdcall'].includes(conventionFilter)) {
+  console.error('usage: check-handler-esp.js [--convention=cdecl|stdcall]');
+  process.exit(2);
+}
+
 const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
 const apiByName = {};
 for (const entry of apiTable) {
@@ -16,6 +23,7 @@ for (const entry of apiTable) {
 // Names that legitimately don't follow stdcall esp cleanup or do their own.
 const EXEMPT = new Set([
   'wsprintfA', 'wsprintfW', 'sprintf', '_snprintf',  // cdecl varargs
+  '_EH_prolog',  // naked helper builds an SEH frame and returns manually
 ]);
 
 const SRC = ['src/09a-handlers.wat', 'src/09a2-handlers-console.wat',
@@ -61,12 +69,15 @@ for (const file of SRC) {
           const entry = apiByName[lookupName];
           if (entry && typeof entry.nargs === 'number' && espAdjust !== 'multi' && !delegates) {
             // cdecl: caller pops stdcall args, handler only pops return address (4)
-            const isStdcall = (entry.convention || 'stdcall') === 'stdcall';
-            const expected = isStdcall ? 4 * (entry.nargs + 1) : 4;
-            if (espAdjust === null) {
-              issues.push(`${file}:${funcStart+1}\t$handle_${funcName}\tNO esp cleanup (expected ${expected})`);
-            } else if (espAdjust !== expected) {
-              issues.push(`${file}:${espLine}\t$handle_${funcName}\tesp += ${espAdjust} (expected ${expected}, nargs=${entry.nargs})`);
+            const convention = entry.convention || 'stdcall';
+            if (!conventionFilter || convention === conventionFilter) {
+              const isStdcall = convention === 'stdcall';
+              const expected = isStdcall ? 4 * (entry.nargs + 1) : 4;
+              if (espAdjust === null) {
+                issues.push(`${file}:${funcStart+1}\t$handle_${funcName}\tNO esp cleanup (expected ${expected})`);
+              } else if (espAdjust !== expected) {
+                issues.push(`${file}:${espLine}\t$handle_${funcName}\tesp += ${espAdjust} (expected ${expected}, nargs=${entry.nargs})`);
+              }
             }
           }
         }

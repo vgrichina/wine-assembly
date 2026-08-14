@@ -1,9 +1,13 @@
 # Font Viewer (fontview.exe) — Win98
 
-**Status:** WARN (3 APIs, no window)
+**Status:** WORKING (native `.FON` bitmap preview and Done lifecycle verified)
 
 ## Behavior
-Only makes 3 API calls: `__p__fmode`, `__p__commode`, `_controlfp` — then hangs or exits. This is the very start of CRT init from MSVCRT20.dll.
+Loads its MFC 3.0 dialog, reads an NE-format `.FON` resource through LZ32,
+registers its FNT bitmap strike, lays out the preview child, and rasterizes all
+sample rows from the font's one-bit glyph data. The web launcher opens the
+local `vgasys.fon` fixture by default. A real click on **Done** runs the MFC
+cleanup handler, unregisters the font, posts `WM_QUIT`, and exits.
 
 ## DLL Dependencies
 - **MFC30.DLL** — MFC 3.0 (older version, NOT the same as mfc42.dll)
@@ -11,14 +15,28 @@ Only makes 3 API calls: `__p__fmode`, `__p__commode`, `_controlfp` — then hang
 - **LZ32.dll** — Lempel-Ziv compression
 - **VERSION.dll** — version info queries
 
-None of these are currently available.
+`MFC30.DLL` and `MSVCRT20.dll` are available as documented, gitignored local
+fixtures. LZ32's ordinary-file calls and the required VERSION APIs are handled
+by the WAT runtime.
 
-## Blocking Issue
-Missing DLLs — the app can't even start CRT init without MSVCRT20.dll and MFC30.DLL.
+## Fixture provenance
 
-## What's Needed
-1. Obtain MFC30.DLL (from Win98 install media or VC++ 2.0 redist)
-2. Obtain MSVCRT20.dll (from Win98 system files)
-3. Obtain LZ32.dll and VERSION.dll (from Win98 system files)
+See `test/binaries/SOURCES.md` for the executable and
+`test/binaries/dlls/SOURCES.md` for the two runtime DLLs and `vgasys.fon`.
+The stock Windows supporting files are local-only and are deliberately absent
+from public deployment manifests.
 
-## Difficulty: Medium (DLL acquisition + loading)
+## Regression coverage
+
+`test/test-fontview.js` verifies that the 224-glyph, 16-pixel System FNT strike
+is parsed (rather than replaced with a CSS face), captures the populated
+preview, then clicks Done and checks `RemoveFontResourceA` plus
+`PostQuitMessage` before clean exit.
+
+## Remaining limitations
+
+- This executable validates Windows NE `.FON` modules; passing an arbitrary
+  TrueType `.TTF` directly produces its normal “not a valid font file” error.
+- The bitmap rasterizer supports FNT 2.x/3.x strikes. Other legacy font
+  container formats still fall back to the configured CSS font map.
+- Print UI exists, but printer fidelity is outside this startup/preview check.

@@ -1,7 +1,7 @@
 # Wine-Assembly EXE Status Report
 
-**Date:** 2026-04-04
-**Score:** 25 PASS / 7 FAIL / 13 WARN / 0 SKIP (45 total)
+**Date:** 2026-04-04 (Font Viewer updated 2026-08-13)
+**Score:** 26 PASS / 7 FAIL / 12 WARN / 0 SKIP (45 total)
 
 ## Changes This Session
 
@@ -9,7 +9,7 @@
 - Fixed CW_USEDEFAULT window size: defaults to 427x320 instead of 0x80000000 (was breaking card position calculations)
 - +2 PASS from last report, several apps now render correctly that didn't before
 
-## PASS (25) — Window created, message loop running
+## PASS (26) — Window created, message loop running
 
 | EXE | APIs | Notes |
 |-----|------|-------|
@@ -38,6 +38,7 @@
 | Sound Recorder (XP) | 55 | Dialog + controls |
 | Space Cadet Pinball | 107 | Pinball table renders |
 | Kodak Preview | 53 | 6 windows created |
+| Font Viewer | 1,100+ | Loads MFC30/MSVCRT20 and renders the System `.FON` preview |
 
 ## FAIL (7) — Crashes
 
@@ -51,14 +52,13 @@
 | Task Manager | SetWindowLongA | Memory OOB during dialog init after window subclass — complex batch execution issue | Hard |
 | Telnet | RegCloseKey | Loads WSOCK32.dll for networking, crashes on first winsock call (thunk not set up) | Hard |
 
-## WARN (13) — No window created, no crash
+## WARN (12) — No window created, no crash
 
 | EXE | APIs | Root Cause | Fixable? |
 |-----|------|------------|----------|
 | Write | 32 | ShellExecute launcher — calls ShellExecuteA to launch wordpad.exe, then exits | Expected |
 | CD Player | 26 | No CD drive — calls GetLogicalDrives/GetDriveTypeA, finds no CD, shows MessageBox, exits | Expected |
 | Media Player 32 | 54 | MFC app stuck in init — SetEvent returns 0, enters loop waiting for event | Medium |
-| Font Viewer | 3 | Only 3 APIs (_controlfp) — something wrong very early in CRT init | Unknown |
 | Volume Control | 39 | No mixer — mixerGetID fails, app exits normally | Expected |
 | Welcome (98) | 29 | Jumps to MZ header (EIP=0x00905a4d) — bad indirect call/jump target | Hard |
 | Win98 Tour | 60 | MFC init loop — 388 API calls in 80 batches, all CriticalSection/TlsGetValue, never reaches WinMain | Needs more batches |
@@ -73,5 +73,4 @@
 
 1. **mplay32.exe**: Needs SetEvent to return success (1) and MsgWaitForMultipleObjects
 2. **tour98/claass/xp_eos**: Just need more batches in test (increase max-batches for MFC apps)
-3. **fontview.exe**: Debug why only 3 API calls — likely CRT init issue
-4. **HyperTerminal**: InitInstance might just need to return success
+3. **HyperTerminal**: InitInstance might just need to return success

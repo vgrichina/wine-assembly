@@ -6,7 +6,7 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const { exports: wat, memory } = await bootRenderHarness();
+  const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
@@ -93,6 +93,28 @@ const { bootRenderHarness } = require('./render-helper');
   });
 
   check('font-resource and unavailable font-table contracts are deterministic', () => {
+    // Minimal standalone FNT 2.0 strike: one 8x8 glyph plus a face name.
+    // This keeps the unit test independent of the optional Win98 fixtures.
+    const fnt = Buffer.alloc(139);
+    fnt.writeUInt16LE(0x0200, 0);
+    fnt.writeUInt32LE(fnt.length, 2);
+    fnt.writeUInt16LE(8, 74);  // ascent
+    fnt.writeUInt16LE(400, 83); // weight
+    fnt.writeUInt16LE(8, 88);  // pixel height
+    fnt.writeUInt16LE(8, 91);  // average width
+    fnt.writeUInt16LE(8, 93);  // maximum width
+    fnt[95] = 65;              // first char
+    fnt[96] = 65;              // last char
+    fnt[97] = 0;               // default-char offset
+    fnt.writeUInt32LE(134, 105); // face-name offset
+    fnt.writeUInt16LE(8, 118);
+    fnt.writeUInt16LE(126, 120);
+    fnt.writeUInt16LE(0, 122); // sentinel entry
+    fnt.writeUInt16LE(134, 124);
+    fnt.fill(0xff, 126, 134);
+    fnt.write('UnitFnt\0', 134, 'latin1');
+    hostCtx.readFile = requested => /TEST\.FON$/i.test(requested) ? fnt : null;
+
     const { hdc } = createTextDc();
     const path = allocZero(16);
     bytes.set(Buffer.from('TEST.FON\0', 'latin1'), wa(path));

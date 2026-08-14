@@ -59,6 +59,7 @@ UNIT=(
   test/test-wat-gdi-geometry-handlers.js
   test/test-dib-dirty-sync.js
   test/test-web-pinball-assets.js
+  test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
   test/test-web-pwa-metadata.js
   test/test-radio-mutex.js
@@ -66,6 +67,7 @@ UNIT=(
   test/test-tooltip.js
   test/test-open-nav.js
   test/test-host-window-related.js
+  test/test-process-id.js
   test/test-render-color-dlg.js
   test/test-render-find-dlg.js
   test/test-render-font-dlg.js
@@ -83,6 +85,7 @@ E2E=(
   test/test-taskman-web.js
   test/test-wordpad-web.js
   test/test-wordpad-thread-startup.js
+  test/test-fontview.js
   test/test-mspaint-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js

@@ -241,7 +241,11 @@ async function main() {
     const response = await Promise.race([cdp.send('Runtime.evaluate', {
       expression, awaitPromise: true, returnByValue: true,
     }), timeout]);
-    if (response.exceptionDetails) throw new Error(response.exceptionDetails.text || JSON.stringify(response.exceptionDetails));
+    if (response.exceptionDetails) {
+      const details = response.exceptionDetails;
+      const description = details.exception && details.exception.description;
+      throw new Error(description || details.text || JSON.stringify(details));
+    }
     return response.result && response.result.value;
   }
 

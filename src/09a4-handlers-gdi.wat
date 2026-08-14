@@ -1006,15 +1006,19 @@
     (global.set $eax (i32.const -1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; Dynamic host font-file installation is unavailable in browsers. Accept
-  ;; a named resource for application compatibility; Canvas font fallback and
-  ;; existing CreateFont selection remain deterministic.
+  ;; Install Win16/Win9x bitmap-font resources in the host text rasterizer.
   (func $handle_AddFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $eax
+      (if (result i32) (local.get $arg0)
+        (then (call $host_add_font_resource (call $g2w (local.get $arg0))))
+        (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_RemoveFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $eax
+      (if (result i32) (local.get $arg0)
+        (then (call $host_remove_font_resource (call $g2w (local.get $arg0))))
+        (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_EnumFontsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

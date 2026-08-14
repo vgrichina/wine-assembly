@@ -10,7 +10,7 @@
     "id": 1,
     "name": "?terminate@@YAXXZ",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1844953435
   },
   {
@@ -6352,14 +6352,14 @@
     "id": 744,
     "name": "_XcptFilter",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1846881841
   },
   {
     "id": 745,
     "name": "__CxxFrameHandler",
     "nargs": 4,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 234850571
   },
   {
@@ -6373,84 +6373,84 @@
     "id": 747,
     "name": "__dllonexit",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 915710144
   },
   {
     "id": 748,
     "name": "__getmainargs",
     "nargs": 4,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 336392573
   },
   {
     "id": 749,
     "name": "__p__acmdln",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2564498548
   },
   {
     "id": 750,
     "name": "__p__commode",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2688401087
   },
   {
     "id": 751,
     "name": "__p__fmode",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3142482076
   },
   {
     "id": 752,
     "name": "__p__wcmdln",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2444970070
   },
   {
     "id": 753,
     "name": "__set_app_type",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 4065754098
   },
   {
     "id": 754,
     "name": "__setusermatherr",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2433004579
   },
   {
     "id": 755,
     "name": "__wgetmainargs",
     "nargs": 5,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 769226300
   },
   {
     "id": 756,
     "name": "_adjust_fdiv",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2199367379
   },
   {
     "id": 757,
     "name": "_controlfp",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 533454845
   },
   {
     "id": 758,
     "name": "_exit",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 900126006
   },
   {
@@ -6464,28 +6464,28 @@
     "id": 760,
     "name": "_getdcwd",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1316496576
   },
   {
     "id": 761,
     "name": "_global_unwind2",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 802491851
   },
   {
     "id": 762,
     "name": "_initterm",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2728746990
   },
   {
     "id": 763,
     "name": "_itow",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1067838697
   },
   {
@@ -6562,21 +6562,21 @@
     "id": 774,
     "name": "_onexit",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1541092487
   },
   {
     "id": 775,
     "name": "_purecall",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2330666216
   },
   {
     "id": 776,
     "name": "_splitpath",
     "nargs": 5,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 536731981
   },
   {
@@ -6604,21 +6604,21 @@
     "id": 780,
     "name": "_strrev",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2703181494
   },
   {
     "id": 781,
     "name": "_wcsicmp",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3299445660
   },
   {
     "id": 782,
     "name": "_wtoi",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3415650989
   },
   {
@@ -6639,21 +6639,21 @@
     "id": 785,
     "name": "calloc",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1944191491
   },
   {
     "id": 786,
     "name": "exit",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3454868101
   },
   {
     "id": 787,
     "name": "free",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2578706139
   },
   {
@@ -6817,7 +6817,7 @@
     "id": 800,
     "name": "malloc",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 1435248461
   },
   {
@@ -6831,21 +6831,21 @@
     "id": 802,
     "name": "memcpy",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2757553252
   },
   {
     "id": 803,
     "name": "memmove",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 17308555
   },
   {
     "id": 804,
     "name": "memset",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3414215686
   },
   {
@@ -6908,7 +6908,7 @@
     "id": 813,
     "name": "rand",
     "nargs": 0,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2711325910
   },
   {
@@ -6936,7 +6936,7 @@
     "id": 817,
     "name": "srand",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 465518633
   },
   {
@@ -6950,7 +6950,7 @@
     "id": 819,
     "name": "strchr",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2301597011
   },
   {
@@ -7006,7 +7006,7 @@
     "id": 827,
     "name": "toupper",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3691983576
   },
   {
@@ -7111,21 +7111,21 @@
     "id": 842,
     "name": "wcscmp",
     "nargs": 2,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 681012456
   },
   {
     "id": 843,
     "name": "wcslen",
     "nargs": 1,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2766379835
   },
   {
     "id": 844,
     "name": "wcsncpy",
     "nargs": 3,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 2227591988
   },
   {
@@ -11786,7 +11786,7 @@
     "id": 1499,
     "name": "bsearch",
     "nargs": 5,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 3761877705
   },
   {
@@ -17363,5 +17363,33 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3624457120
+  },
+  {
+    "id": 2272,
+    "name": "LZOpenFileA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2561438592
+  },
+  {
+    "id": 2273,
+    "name": "LZRead",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2823240375
+  },
+  {
+    "id": 2274,
+    "name": "LZSeek",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 512063631
+  },
+  {
+    "id": 2275,
+    "name": "LZClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3115698649
   }
 ]

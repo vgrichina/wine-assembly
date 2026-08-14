@@ -895,6 +895,11 @@ const extra = [
   { name: 'IEnumSTATSTG_Clone', nargs: 2 },
   // MSVCRT — binary search with guest-callback comparator (CACA000C continuation).
   { name: 'bsearch', nargs: 5 },
+  // LZ32 — transparent reads of ordinary (non-SZDD) files.
+  { name: 'LZOpenFileA', nargs: 3 },
+  { name: 'LZRead', nargs: 3 },
+  { name: 'LZSeek', nargs: 3 },
+  { name: 'LZClose', nargs: 1 },
   // WINMM — RIFF file seek used by RCT after the 16-bit POP decoder fix.
   { name: 'mmioSeek', nargs: 3 },
 ];
@@ -909,6 +914,29 @@ for (const api of extra) {
     if (api.ret) current.ret = api.ret;
     if (api.convention) current.convention = api.convention;
   }
+}
+
+// The Microsoft C runtime exports below use cdecl on x86: handlers pop only
+// the return address and callers remove arguments. Keep this explicit because
+// the table's historical default is stdcall (appropriate for Win32 APIs, but
+// stack-corrupting for CRT calls such as _controlfp and _initterm).
+const cdeclCrtApis = new Set([
+  '?terminate@@YAXXZ',
+  '_XcptFilter', '__CxxFrameHandler', '__GetMainArgs', '__dllonexit',
+  '__getmainargs', '__p__acmdln', '__p__commode', '__p__fmode', '__p__wcmdln',
+  '__set_app_type', '__setusermatherr', '__wgetmainargs', '_adjust_fdiv',
+  '_controlfp', '_exit', '_ftol', '_getdcwd', '_global_unwind2', '_initterm',
+  '_itow', '_mbschr', '_mbsinc', '_mbsnbcmp', '_mbsrchr', '_onexit',
+  '_purecall', '_splitpath', '_strdup', '_stricmp', '_strlwr', '_strrev',
+  '_wcsicmp', '_wtoi',
+  'atoi', 'atol', 'bsearch', 'calloc', 'exit', 'free', 'malloc', 'memcpy',
+  'memmove', 'memset', 'rand', 'realloc', 'sprintf', 'srand', 'strcat',
+  'strchr', 'strcmp', 'strcpy', 'strlen', 'strncpy', 'strrchr', 'time',
+  'toupper', 'wcscmp', 'wcslen', 'wcsncpy', 'wcsrchr', 'mbstowcs', 'wcstombs',
+  'ceil', 'sqrt', 'sin', 'pow', '_CIpow',
+]);
+for (const api of existing) {
+  if (cdeclCrtApis.has(api.name)) api.convention = 'cdecl';
 }
 
 // Pull Direct3D Immediate Mode methods from shared spec (used by gen_d3dim_stubs.js too)

@@ -26,7 +26,7 @@ const renderer = {
     this.repaintScheduled = true;
   },
   windows: {
-    100: { hwnd: 100, title: 'Tasks', className: 'MSTaskSwWClass', style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 10, wasm },
+    100: { hwnd: 100, title: 'Tasks', className: 'MSTaskSwWClass', style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 10, processId: 4321, wasm },
     200: { hwnd: 200, style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 20, wasm },
     300: { hwnd: 300, style: 0x10c00000, visible: true, enabled: true, isChild: false, zOrder: 30, wasm },
     110: { hwnd: 110, style: 0x50000000, visible: true, enabled: true, isChild: true, parentHwnd: 100, zOrder: 11, wasm },
@@ -65,6 +65,7 @@ assert.strictEqual(host.get_window_related(300, 6), 300, 'GW_ENABLEDPOPUP return
 assert.strictEqual(host.get_window_info(100, 0), 0x10c00000, 'get_window_info style');
 assert.strictEqual(host.get_window_info(410, 1), 0, 'get_window_info visible');
 assert.strictEqual(host.get_window_info(420, 2), 0, 'get_window_info enabled');
+assert.strictEqual(host.get_window_info(100, 3), 4321, 'get_window_info process owner');
 
 assert.strictEqual(host.get_window_text_length(100), 5, 'foreign renderer title length');
 assert.strictEqual(host.get_window_text(100, 32, 16), 5, 'foreign renderer title copy');

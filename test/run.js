@@ -940,6 +940,7 @@ async function main() {
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     renderer,
+    processId: 1000,
     apiTable,
     verbose: VERBOSE,
     _debugReadFile: TRACE_API,
@@ -971,6 +972,9 @@ async function main() {
   const base = createHostImports(ctx);
   const { readStr } = base;
   const h = base.host;
+  // Keep the CLI harness instantiable while optional host-side font resource
+  // loading is unavailable; browser/full hosts can provide the real loader.
+  if (!h.add_font_resource) h.add_font_resource = () => 0;
   if (SEED_WINDOW && renderer) {
     const originalGetWindowRelated = h.get_window_related;
     const originalActivateWindow = h.activate_window;
@@ -1685,6 +1689,7 @@ async function main() {
   const wasmModule = await WebAssembly.compile(wasmBytes);
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
+  if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
   if (renderer) {
     renderer.wasm = instance;
     renderer.wasmMemory = memory;
@@ -1833,7 +1838,7 @@ async function main() {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
     const required = requiredDlls;
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
-    const LOADABLE_DLLS = new Set(['msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
+    const LOADABLE_DLLS = new Set(['msvcrt20.dll', 'mfc30.dll', 'msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
       'msvcp60.dll', 'msvcp50.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll',
       'd3drm.dll', 'kvdd.dll', 'sdl.dll']);
     const exeDir = path.dirname(EXE_PATH);
@@ -1845,7 +1850,13 @@ async function main() {
       path.join(__dirname, 'binaries', 'dlls'),
     ];
     dlls = [];
-    for (const name of required) {
+    // Old MFC builds import their matching CRT during DllMain. Preserve a
+    // dependency-safe order even when the EXE import directory lists MFC first.
+    const orderedRequired = [...required].sort((a, b) => {
+      const rank = name => name.toLowerCase() === 'msvcrt20.dll' ? 0 : 1;
+      return rank(a) - rank(b);
+    });
+    for (const name of orderedRequired) {
       if (!LOADABLE_DLLS.has(name.toLowerCase())) continue;
       for (const dir of dllSearchDirs) {
         const p = path.join(dir, name);
@@ -3146,6 +3157,20 @@ async function main() {
           for (let s = 255; s >= 0; s--) {
             const hwnd = we.wnd_slot_hwnd(s);
             if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        // A property sheet's active page is itself a visible dialog and may
+        // have a higher z-order than the sheet frame. WM_COMMAND IDOK/IDCANCEL
+        // belongs to the outer dialog, so climb through dialog parents before
+        // injecting the command.
+        if (dlg && we.wnd_get_parent) {
+          for (let guard = 0; guard < 16; guard++) {
+            const parent = we.wnd_get_parent(dlg) | 0;
+            const parentWin = parent && renderer && renderer.windows
+              ? renderer.windows[parent]
+              : null;
+            if (!parent || !parentWin || !parentWin.isDialog) break;
+            dlg = parent;
           }
         }
         if (dlg) {

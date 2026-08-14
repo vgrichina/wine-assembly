@@ -130,6 +130,7 @@ async function main() {
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     renderer,
+    processId: 1000,
     apiTable,
     verbose: VERBOSE,
     onExit: () => { stopped = true; },
@@ -252,6 +253,7 @@ async function main() {
   const mod = await WebAssembly.compile(wasmBytes);
   const instance = await WebAssembly.instantiate(mod, { host: h });
   ctx.exports = instance.exports;
+  if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
   if (renderer) { renderer.wasm = instance; renderer.wasmMemory = memory; }
 
   // Load PE
@@ -287,8 +289,11 @@ async function main() {
   if (DLL_OVERRIDE) {
     dlls = DLL_OVERRIDE.split(',').map(p => ({ name: path.basename(p.trim()), bytes: fs.readFileSync(p.trim()) }));
   } else {
-    const LOADABLE = new Set(['msvcrt.dll','mfc42.dll','mfc42u.dll','comctl32.dll','msvcp60.dll','riched20.dll','cabinet.dll','usp10.dll','cards.dll']);
-    const required = requiredDlls;
+    const LOADABLE = new Set(['msvcrt20.dll','mfc30.dll','msvcrt.dll','mfc42.dll','mfc42u.dll','comctl32.dll','msvcp60.dll','riched20.dll','cabinet.dll','usp10.dll','cards.dll']);
+    const required = [...requiredDlls].sort((a, b) => {
+      const rank = name => name.toLowerCase() === 'msvcrt20.dll' ? 0 : 1;
+      return rank(a) - rank(b);
+    });
     const dirs = [dllDir, path.dirname(EXE_PATH), path.join(ROOT, 'test', 'binaries', 'dlls')];
     dlls = [];
     for (const name of required) {

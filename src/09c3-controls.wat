@@ -1599,52 +1599,94 @@
   ;; ColorGrid control (class 6) + Color (ChooseColor) dialog (class 15)
   ;; ============================================================
   ;;
-  ;; ColorGrid is an 8x3 grid of Windows basic colors. 24 cells at a
-  ;; fixed cell size (24x20 by default) — the control window must be
-  ;; sized ≥ 192x60 to fit the grid. Clicks pick a cell and notify the
-  ;; parent via WM_COMMAND + LBN_SELCHANGE (we reuse notification code 1).
+  ;; ColorGrid renders either the standard 8x6 basic-color table (id 0x460)
+  ;; or the CHOOSECOLOR-owned 8x2 custom-color table (id 0x461). Cells use
+  ;; the classic common-dialog spacing: a bordered swatch followed by a small
+  ;; COLOR_BTNFACE gutter. Clicks pick a cell and notify the parent through
+  ;; WM_COMMAND + LBN_SELCHANGE (we reuse notification code 1).
   ;;
   ;; ColorGridState (8 bytes, allocated in WM_CREATE)
-  ;;   +0   sel_idx       selected cell 0..23, -1 = none
+  ;;   +0   sel_idx       selected cell, -1 = none
   ;;   +4   ctrl_id
   ;;
-  ;; Cell colors are hardcoded — the real Windows basic color palette.
-  ;; Looked up by index via $colorgrid_color_for_idx.
+  ;; The predefined values match the classic comdlg32 6x8 palette. Custom
+  ;; colors are read directly from CHOOSECOLOR.lpCustColors so the application's
+  ;; persistent 16-entry array is reflected every time the grid repaints.
   (func $colorgrid_color_for_idx (param $idx i32) (result i32)
-    ;; 24 basic colors, row-major (8 cols × 3 rows). Values are 0x00BBGGRR
-    ;; (COLORREF) per standard Win32.
-    (if (i32.eq (local.get $idx) (i32.const  0)) (then (return (i32.const 0x00FFFFFF))))  ;; white
-    (if (i32.eq (local.get $idx) (i32.const  1)) (then (return (i32.const 0x00C0C0C0))))  ;; lt gray
-    (if (i32.eq (local.get $idx) (i32.const  2)) (then (return (i32.const 0x00808080))))  ;; gray
-    (if (i32.eq (local.get $idx) (i32.const  3)) (then (return (i32.const 0x00404040))))  ;; dk gray
-    (if (i32.eq (local.get $idx) (i32.const  4)) (then (return (i32.const 0x00000000))))  ;; black
-    (if (i32.eq (local.get $idx) (i32.const  5)) (then (return (i32.const 0x000000FF))))  ;; red
-    (if (i32.eq (local.get $idx) (i32.const  6)) (then (return (i32.const 0x000080FF))))  ;; orange
-    (if (i32.eq (local.get $idx) (i32.const  7)) (then (return (i32.const 0x0000FFFF))))  ;; yellow
-    (if (i32.eq (local.get $idx) (i32.const  8)) (then (return (i32.const 0x0000FF80))))  ;; lime
-    (if (i32.eq (local.get $idx) (i32.const  9)) (then (return (i32.const 0x0000FF00))))  ;; green
-    (if (i32.eq (local.get $idx) (i32.const 10)) (then (return (i32.const 0x0080FF00))))  ;; teal
-    (if (i32.eq (local.get $idx) (i32.const 11)) (then (return (i32.const 0x00FFFF00))))  ;; cyan
-    (if (i32.eq (local.get $idx) (i32.const 12)) (then (return (i32.const 0x00FF8000))))  ;; sky
-    (if (i32.eq (local.get $idx) (i32.const 13)) (then (return (i32.const 0x00FF0000))))  ;; blue
-    (if (i32.eq (local.get $idx) (i32.const 14)) (then (return (i32.const 0x00FF0080))))  ;; indigo
-    (if (i32.eq (local.get $idx) (i32.const 15)) (then (return (i32.const 0x00FF00FF))))  ;; magenta
-    (if (i32.eq (local.get $idx) (i32.const 16)) (then (return (i32.const 0x008000FF))))  ;; pink
-    (if (i32.eq (local.get $idx) (i32.const 17)) (then (return (i32.const 0x000000A0))))  ;; dk red
-    (if (i32.eq (local.get $idx) (i32.const 18)) (then (return (i32.const 0x000050A0))))  ;; brown
-    (if (i32.eq (local.get $idx) (i32.const 19)) (then (return (i32.const 0x00008080))))  ;; olive
-    (if (i32.eq (local.get $idx) (i32.const 20)) (then (return (i32.const 0x00008000))))  ;; dk grn
-    (if (i32.eq (local.get $idx) (i32.const 21)) (then (return (i32.const 0x00808000))))  ;; dk cyan
-    (if (i32.eq (local.get $idx) (i32.const 22)) (then (return (i32.const 0x00800000))))  ;; dk blue
-    (if (i32.eq (local.get $idx) (i32.const 23)) (then (return (i32.const 0x00800080))))  ;; dk magenta
+    ;; Values are COLORREF (0x00BBGGRR), indexed row-major.
+    (if (i32.eq (local.get $idx) (i32.const  0)) (then (return (i32.const 0x008080FF))))
+    (if (i32.eq (local.get $idx) (i32.const  1)) (then (return (i32.const 0x0080FFFF))))
+    (if (i32.eq (local.get $idx) (i32.const  2)) (then (return (i32.const 0x0080FF80))))
+    (if (i32.eq (local.get $idx) (i32.const  3)) (then (return (i32.const 0x0080FF00))))
+    (if (i32.eq (local.get $idx) (i32.const  4)) (then (return (i32.const 0x00FFFF80))))
+    (if (i32.eq (local.get $idx) (i32.const  5)) (then (return (i32.const 0x00FF8000))))
+    (if (i32.eq (local.get $idx) (i32.const  6)) (then (return (i32.const 0x00C080FF))))
+    (if (i32.eq (local.get $idx) (i32.const  7)) (then (return (i32.const 0x00FF80FF))))
+    (if (i32.eq (local.get $idx) (i32.const  8)) (then (return (i32.const 0x000000FF))))
+    (if (i32.eq (local.get $idx) (i32.const  9)) (then (return (i32.const 0x0000FFFF))))
+    (if (i32.eq (local.get $idx) (i32.const 10)) (then (return (i32.const 0x0000FF80))))
+    (if (i32.eq (local.get $idx) (i32.const 11)) (then (return (i32.const 0x0040FF00))))
+    (if (i32.eq (local.get $idx) (i32.const 12)) (then (return (i32.const 0x00FFFF00))))
+    (if (i32.eq (local.get $idx) (i32.const 13)) (then (return (i32.const 0x00C08000))))
+    (if (i32.eq (local.get $idx) (i32.const 14)) (then (return (i32.const 0x00C08080))))
+    (if (i32.eq (local.get $idx) (i32.const 15)) (then (return (i32.const 0x00FF00FF))))
+    (if (i32.eq (local.get $idx) (i32.const 16)) (then (return (i32.const 0x00404080))))
+    (if (i32.eq (local.get $idx) (i32.const 17)) (then (return (i32.const 0x004080FF))))
+    (if (i32.eq (local.get $idx) (i32.const 18)) (then (return (i32.const 0x0000FF00))))
+    (if (i32.eq (local.get $idx) (i32.const 19)) (then (return (i32.const 0x00808000))))
+    (if (i32.eq (local.get $idx) (i32.const 20)) (then (return (i32.const 0x00804000))))
+    (if (i32.eq (local.get $idx) (i32.const 21)) (then (return (i32.const 0x00FF8080))))
+    (if (i32.eq (local.get $idx) (i32.const 22)) (then (return (i32.const 0x00400080))))
+    (if (i32.eq (local.get $idx) (i32.const 23)) (then (return (i32.const 0x008000FF))))
+    (if (i32.eq (local.get $idx) (i32.const 24)) (then (return (i32.const 0x00000080))))
+    (if (i32.eq (local.get $idx) (i32.const 25)) (then (return (i32.const 0x000080FF))))
+    (if (i32.eq (local.get $idx) (i32.const 26)) (then (return (i32.const 0x00008000))))
+    (if (i32.eq (local.get $idx) (i32.const 27)) (then (return (i32.const 0x00408000))))
+    (if (i32.eq (local.get $idx) (i32.const 28)) (then (return (i32.const 0x00FF0000))))
+    (if (i32.eq (local.get $idx) (i32.const 29)) (then (return (i32.const 0x00A00000))))
+    (if (i32.eq (local.get $idx) (i32.const 30)) (then (return (i32.const 0x00800080))))
+    (if (i32.eq (local.get $idx) (i32.const 31)) (then (return (i32.const 0x00FF0080))))
+    (if (i32.eq (local.get $idx) (i32.const 32)) (then (return (i32.const 0x00000040))))
+    (if (i32.eq (local.get $idx) (i32.const 33)) (then (return (i32.const 0x00004080))))
+    (if (i32.eq (local.get $idx) (i32.const 34)) (then (return (i32.const 0x00004000))))
+    (if (i32.eq (local.get $idx) (i32.const 35)) (then (return (i32.const 0x00404000))))
+    (if (i32.eq (local.get $idx) (i32.const 36)) (then (return (i32.const 0x00800000))))
+    (if (i32.eq (local.get $idx) (i32.const 37)) (then (return (i32.const 0x00400000))))
+    (if (i32.eq (local.get $idx) (i32.const 38)) (then (return (i32.const 0x00400040))))
+    (if (i32.eq (local.get $idx) (i32.const 39)) (then (return (i32.const 0x00800040))))
+    (if (i32.eq (local.get $idx) (i32.const 40)) (then (return (i32.const 0x00000000))))
+    (if (i32.eq (local.get $idx) (i32.const 41)) (then (return (i32.const 0x00008080))))
+    (if (i32.eq (local.get $idx) (i32.const 42)) (then (return (i32.const 0x00408080))))
+    (if (i32.eq (local.get $idx) (i32.const 43)) (then (return (i32.const 0x00808080))))
+    (if (i32.eq (local.get $idx) (i32.const 44)) (then (return (i32.const 0x00808040))))
+    (if (i32.eq (local.get $idx) (i32.const 45)) (then (return (i32.const 0x00C0C0C0))))
+    (if (i32.eq (local.get $idx) (i32.const 46)) (then (return (i32.const 0x00400040))))
+    (if (i32.eq (local.get $idx) (i32.const 47)) (then (return (i32.const 0x00FFFFFF))))
     (i32.const 0x00FFFFFF))
+
+  (func $colorgrid_color_for_hwnd (param $hwnd i32) (param $idx i32) (result i32)
+    (local $state i32) (local $ctrl_id i32) (local $parent i32)
+    (local $cc i32) (local $custom i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0x00FFFFFF))))
+    (local.set $ctrl_id (i32.load offset=4 (call $g2w (local.get $state))))
+    (if (i32.ne (local.get $ctrl_id) (i32.const 0x461))
+      (then (return (call $colorgrid_color_for_idx (local.get $idx)))))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (local.set $cc (call $wnd_get_userdata (local.get $parent)))
+    (if (i32.eqz (local.get $cc)) (then (return (i32.const 0x00FFFFFF))))
+    (local.set $custom (i32.load offset=16 (call $g2w (local.get $cc))))
+    (if (i32.eqz (local.get $custom)) (then (return (i32.const 0x00FFFFFF))))
+    (i32.load (i32.add (call $g2w (local.get $custom))
+              (i32.mul (local.get $idx) (i32.const 4)))))
 
   (func $colorgrid_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $sw i32) (local $cs_w i32)
     (local $x i32) (local $y i32) (local $col i32) (local $row i32)
     (local $idx i32) (local $parent i32) (local $ctrl_id i32)
     (local $hdc i32) (local $sel i32) (local $brush i32)
-    (local $cx i32) (local $cy i32)
+    (local $cx i32) (local $cy i32) (local $row_count i32)
+    (local $other i32) (local $other_state i32) (local $cc i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -1669,34 +1711,44 @@
     (local.set $sw (call $g2w (local.get $state)))
 
     ;; ---------- WM_PAINT (0x000F) ----------
-    ;; 8 cols × 3 rows of basic colors. Each cell is 24×20 with a 1-px black
-    ;; border and a 2-px white selection ring drawn over the picked cell.
+    ;; Basic grid = 8x6; custom grid = 8x2. Each 26x22 cell contains a
+    ;; 22x18 bordered swatch and a four-pixel gutter, matching the spacing in
+    ;; the classic common-dialog template.
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         (local.set $sel (i32.load (local.get $sw)))
+        (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
+        (local.set $row_count
+          (select (i32.const 2) (i32.const 6)
+            (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0) (i32.const 208)
+                (i32.mul (local.get $row_count) (i32.const 22))
+                (i32.const 0x30011)))  ;; LTGRAY_BRUSH / COLOR_BTNFACE
         (local.set $row (i32.const 0))
         (block $rows_done (loop $rows
-          (br_if $rows_done (i32.ge_u (local.get $row) (i32.const 3)))
+          (br_if $rows_done (i32.ge_u (local.get $row) (local.get $row_count)))
           (local.set $col (i32.const 0))
           (block $cols_done (loop $cols
             (br_if $cols_done (i32.ge_u (local.get $col) (i32.const 8)))
             (local.set $idx (i32.add (i32.mul (local.get $row) (i32.const 8)) (local.get $col)))
-            (local.set $cx (i32.mul (local.get $col) (i32.const 24)))
-            (local.set $cy (i32.mul (local.get $row) (i32.const 20)))
+            (local.set $cx (i32.mul (local.get $col) (i32.const 26)))
+            (local.set $cy (i32.mul (local.get $row) (i32.const 22)))
             ;; 1-px black border = full cell painted black, then color fill 1px in
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (local.get $cx) (local.get $cy)
-                    (i32.add (local.get $cx) (i32.const 24))
-                    (i32.add (local.get $cy) (i32.const 20))
+                    (i32.add (local.get $cx) (i32.const 22))
+                    (i32.add (local.get $cy) (i32.const 18))
                     (i32.const 0x30014)))  ;; BLACK_BRUSH
             (local.set $brush (call $host_gdi_create_solid_brush
-                                (call $colorgrid_color_for_idx (local.get $idx))))
+                                (call $colorgrid_color_for_hwnd
+                                  (local.get $hwnd) (local.get $idx))))
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.add (local.get $cx) (i32.const 1))
                     (i32.add (local.get $cy) (i32.const 1))
-                    (i32.add (local.get $cx) (i32.const 23))
-                    (i32.add (local.get $cy) (i32.const 19))
+                    (i32.add (local.get $cx) (i32.const 21))
+                    (i32.add (local.get $cy) (i32.const 17))
                     (local.get $brush)))
             (drop (call $host_gdi_delete_object (local.get $brush)))
             ;; Selection: white ring 2 px in from the border
@@ -1705,8 +1757,8 @@
                 (drop (call $host_gdi_draw_edge (local.get $hdc)
                         (i32.add (local.get $cx) (i32.const 2))
                         (i32.add (local.get $cy) (i32.const 2))
-                        (i32.add (local.get $cx) (i32.const 22))
-                        (i32.add (local.get $cy) (i32.const 18))
+                        (i32.add (local.get $cx) (i32.const 20))
+                        (i32.add (local.get $cy) (i32.const 16))
                         (i32.const 0x05) (i32.const 0x0F)))))  ;; raised
             (local.set $col (i32.add (local.get $col) (i32.const 1)))
             (br $cols)))
@@ -1718,20 +1770,45 @@
       (then
         (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (local.set $y (i32.shr_u (local.get $lParam) (i32.const 16)))
-        (local.set $col (i32.div_s (local.get $x) (i32.const 24)))
-        (local.set $row (i32.div_s (local.get $y) (i32.const 20)))
+        (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
+        (local.set $row_count
+          (select (i32.const 2) (i32.const 6)
+            (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
+        (local.set $col (i32.div_s (local.get $x) (i32.const 26)))
+        (local.set $row (i32.div_s (local.get $y) (i32.const 22)))
         (if (i32.or (i32.or (i32.lt_s (local.get $col) (i32.const 0))
                             (i32.ge_s (local.get $col) (i32.const 8)))
                     (i32.or (i32.lt_s (local.get $row) (i32.const 0))
-                            (i32.ge_s (local.get $row) (i32.const 3))))
+                            (i32.ge_s (local.get $row) (local.get $row_count))))
+          (then (return (i32.const 0))))
+        ;; Ignore the four-pixel gutter after each visible swatch.
+        (if (i32.or
+              (i32.ge_u (i32.rem_u (local.get $x) (i32.const 26)) (i32.const 22))
+              (i32.ge_u (i32.rem_u (local.get $y) (i32.const 22)) (i32.const 18)))
           (then (return (i32.const 0))))
         (local.set $idx (i32.add (i32.mul (local.get $row) (i32.const 8)) (local.get $col)))
         (i32.store (local.get $sw) (local.get $idx))
         (call $invalidate_hwnd (local.get $hwnd))
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-        (local.set $ctrl_id (i32.load offset=4 (local.get $sw)))
         (if (local.get $parent)
           (then
+            ;; Only one of the two palettes owns the focus ring.
+            (local.set $other (call $ctrl_find_by_id (local.get $parent)
+              (select (i32.const 0x460) (i32.const 0x461)
+                (i32.eq (local.get $ctrl_id) (i32.const 0x461)))))
+            (if (local.get $other)
+              (then
+                (local.set $other_state (call $wnd_get_state_ptr (local.get $other)))
+                (if (local.get $other_state)
+                  (then (i32.store (call $g2w (local.get $other_state)) (i32.const -1))))
+                (call $invalidate_hwnd (local.get $other))))
+            ;; Keep rgbResult current for both basic and custom selections.
+            (local.set $cc (call $wnd_get_userdata (local.get $parent)))
+            (if (local.get $cc)
+              (then
+                (i32.store offset=12 (call $g2w (local.get $cc))
+                  (call $colorgrid_color_for_hwnd
+                    (local.get $hwnd) (local.get $idx)))))
             (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
                     (i32.or (local.get $ctrl_id) (i32.const 0x10000))   ;; HIWORD=1 (LBN_SELCHANGE reused)
                     (local.get $hwnd)))))
@@ -1741,8 +1818,7 @@
 
   (func $colordlg_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $cmd i32) (local $cc i32) (local $cc_w i32) (local $grid i32)
-    (local $sw i32) (local $idx i32)
+    (local $cmd i32)
 
     ;; CC_ENABLEHOOK lets applications customize the common dialog. Paint's
     ;; hook changes the stock "Color" caption to "Edit Colors" and expects to
@@ -1767,22 +1843,8 @@
 
     (if (i32.eq (local.get $cmd) (i32.const 1))
       (then
-        ;; Write selected color into CHOOSECOLOR.rgbResult (+0x0C).
-        (local.set $cc (call $wnd_get_userdata (local.get $hwnd)))
-        (if (local.get $cc)
-          (then
-            (local.set $cc_w (call $g2w (local.get $cc)))
-            (local.set $grid (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x460)))
-            (if (local.get $grid)
-              (then
-                (local.set $sw (call $wnd_get_state_ptr (local.get $grid)))
-                (if (local.get $sw)
-                  (then
-                    (local.set $idx (i32.load (call $g2w (local.get $sw))))
-                    (if (i32.ge_s (local.get $idx) (i32.const 0))
-                      (then
-                        (i32.store offset=12 (local.get $cc_w)
-                          (call $colorgrid_color_for_idx (local.get $idx)))))))))))
+        ;; A palette click already wrote the chosen basic/custom color into
+        ;; CHOOSECOLOR.rgbResult; IDOK only commits the modal result.
         (call $modal_done (i32.const 1))
         (return (i32.const 0))))
     (i32.const 0))
@@ -1812,11 +1874,13 @@
     (local.get $result))
 
   (func $create_color_dialog (param $dlg i32) (param $owner i32) (param $cc i32)
-    (local $grid i32) (local $rgb i32) (local $i i32) (local $sw i32)
+    (local $grid i32) (local $custom_grid i32) (local $rgb i32)
+    (local $i i32) (local $sw i32) (local $flags i32)
+    (local $custom i32) (local $found i32)
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
       (i32.const 0x252)   ;; "Color"
-      (i32.const 260) (i32.const 160)
+      (i32.const 236) (i32.const 298)
       (i32.const 1))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (i32.const 0x252) (i32.const 5))
@@ -1828,33 +1892,75 @@
     (call $nc_flags_set (local.get $dlg) (i32.const 3))
     (call $dlg_fill_bkgnd (local.get $dlg))
     (drop (call $wnd_set_userdata (local.get $dlg) (local.get $cc)))
-    ;; Swatch grid: 8 cols * 24px = 192, 3 rows * 20px = 60
+
+    ;; The left/partial half of the stock Win98 color.dlg template.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 8) (i32.const 6) (i32.const 208) (i32.const 16)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x11235) (i32.const 13))))
+    ;; Basic swatches: 8 columns * 26px, 6 rows * 22px.
     (local.set $grid (call $ctrl_create_child (local.get $dlg) (i32.const 6) (i32.const 0x460)
-            (i32.const 12) (i32.const 12) (i32.const 192) (i32.const 60)
+            (i32.const 8) (i32.const 24) (i32.const 208) (i32.const 132)
             (i32.const 0x50000000) (i32.const 0)))
-    ;; Pre-highlight the cell matching CHOOSECOLOR.rgbResult (+12) so the
-    ;; dialog opens with the app's current color already selected.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 8) (i32.const 164) (i32.const 208) (i32.const 16)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x11243) (i32.const 14))))
+    ;; Custom swatches reflect the caller's persistent lpCustColors[16].
+    (local.set $custom_grid (call $ctrl_create_child
+            (local.get $dlg) (i32.const 6) (i32.const 0x461)
+            (i32.const 8) (i32.const 182) (i32.const 208) (i32.const 44)
+            (i32.const 0x50000000) (i32.const 0)))
+
+    ;; CC_RGBINIT controls whether rgbResult is used initially; without it,
+    ;; the documented default is black. Highlight either the matching basic
+    ;; swatch or the matching caller-provided custom swatch.
     (if (local.get $cc)
       (then
-        (local.set $rgb (i32.load offset=12 (call $g2w (local.get $cc))))
+        (local.set $flags (i32.load offset=20 (call $g2w (local.get $cc))))
+        (if (i32.and (local.get $flags) (i32.const 1))
+          (then (local.set $rgb (i32.load offset=12 (call $g2w (local.get $cc)))))
+          (else
+            (local.set $rgb (i32.const 0))
+            (i32.store offset=12 (call $g2w (local.get $cc)) (i32.const 0))))
         (local.set $i (i32.const 0))
-        (block $done (loop $scan
-          (br_if $done (i32.ge_u (local.get $i) (i32.const 24)))
+        (block $basic_done (loop $scan_basic
+          (br_if $basic_done (i32.ge_u (local.get $i) (i32.const 48)))
           (if (i32.eq (call $colorgrid_color_for_idx (local.get $i)) (local.get $rgb))
             (then
               (local.set $sw (call $wnd_get_state_ptr (local.get $grid)))
               (if (local.get $sw)
                 (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
-              (br $done)))
+              (local.set $found (i32.const 1))
+              (br $basic_done)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan)))))
+          (br $scan_basic)))
+        (if (i32.eqz (local.get $found))
+          (then
+            (local.set $custom (i32.load offset=16 (call $g2w (local.get $cc))))
+            (if (local.get $custom)
+              (then
+                (local.set $i (i32.const 0))
+                (block $custom_done (loop $scan_custom
+                  (br_if $custom_done (i32.ge_u (local.get $i) (i32.const 16)))
+                  (if (i32.eq
+                        (i32.load (i32.add (call $g2w (local.get $custom))
+                          (i32.mul (local.get $i) (i32.const 4))))
+                        (local.get $rgb))
+                    (then
+                      (local.set $sw (call $wnd_get_state_ptr (local.get $custom_grid)))
+                      (if (local.get $sw)
+                        (then (i32.store (call $g2w (local.get $sw)) (local.get $i))))
+                      (br $custom_done)))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $scan_custom)))))))))
     ;; OK + Cancel
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
-            (i32.const 30) (i32.const 92) (i32.const 80) (i32.const 24)
+            (i32.const 8) (i32.const 240) (i32.const 68) (i32.const 24)
             (i32.const 0x50010001)
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
-            (i32.const 130) (i32.const 92) (i32.const 80) (i32.const 24)
+            (i32.const 82) (i32.const 240) (i32.const 68) (i32.const 24)
             (i32.const 0x50010000)
             (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
     ;; CCHookProc receives WM_INITDIALOG with lParam pointing at CHOOSECOLOR.
@@ -11268,6 +11374,7 @@
     (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32)
     (local $result i32) (local $edit_state i32) (local $edit_len_before i32)
+    (local $sync_rounds i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
@@ -11290,6 +11397,12 @@
       (then
         (if (call $menu_try_edit_command (i32.and (local.get $wParam) (i32.const 0xFFFF)))
           (then (return (i32.const 0))))))
+    ;; Dialog HWNDs install a USER DefDlgProc marker rather than exposing the
+    ;; application DLGPROC as their window procedure.
+    (if (i32.eq (local.get $wp) (global.get $WNDPROC_DIALOG))
+      (then (return (call $dialog_default_proc
+        (local.get $hwnd) (local.get $msg)
+        (local.get $wParam) (local.get $lParam)))))
     ;; WAT-native (>= 0xFFFF0000)
     (if (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000))
       (then (return (call $wat_wndproc_dispatch
@@ -11346,7 +11459,17 @@
     (global.set $yield_reason (i32.const 0))
     (global.set $yield_flag (i32.const 0))
     (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
-    (call $run (i32.const 1000000))
+    ;; A synchronous native-control procedure may legitimately execute more
+    ;; than one interpreter slice (property-sheet Cancel walks every tab/page
+    ;; before destroying the frame). Continue bounded slices until the return
+    ;; thunk sets EIP=0 instead of silently abandoning the guest call midway.
+    (local.set $sync_rounds (i32.const 0))
+    (block $sync_done (loop $sync_run
+      (call $run (i32.const 1000000))
+      (br_if $sync_done (i32.eqz (global.get $eip)))
+      (local.set $sync_rounds (i32.add (local.get $sync_rounds) (i32.const 1)))
+      (br_if $sync_done (i32.ge_u (local.get $sync_rounds) (i32.const 64)))
+      (br $sync_run)))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
     (local.set $result (global.get $eax))
@@ -11374,6 +11497,27 @@
           (local.get $wParam) (local.get $lParam)))))
     (local.get $result)
   )
+
+  ;; Minimal DefDlgProc semantics around the stored per-window DLGPROC.
+  ;; The DLGPROC returns BOOL; when TRUE, the actual message result comes from
+  ;; DWL_MSGRESULT. Temporarily exposing the guest proc lets the established
+  ;; synchronous sender execute it without duplicating the interpreter-state
+  ;; save/restore machinery. Restore only if the proc did not destroy the HWND.
+  (func $dialog_default_proc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $installed i32) (local $proc i32) (local $handled i32)
+    (local.set $installed (call $wnd_table_get (local.get $hwnd)))
+    (local.set $proc (call $dialog_proc_get (local.get $hwnd)))
+    (if (i32.eqz (local.get $proc)) (then (return (i32.const 0))))
+    (call $wnd_table_set (local.get $hwnd) (local.get $proc))
+    (local.set $handled (call $wnd_send_message
+      (local.get $hwnd) (local.get $msg)
+      (local.get $wParam) (local.get $lParam)))
+    (if (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then (call $wnd_table_set (local.get $hwnd) (local.get $installed))))
+    (if (local.get $handled)
+      (then (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+    (i32.const 0))
 
   ;; Route a client-relative mouse event to the first WAT-managed child
   ;; under (x,y). Returns 1 if a child was hit and the message dispatched,

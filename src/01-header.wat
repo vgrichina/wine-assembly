@@ -135,6 +135,9 @@
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
   ;; create_font(height, weight, italic, facePtr) → handle
+  (import "host" "add_font_resource" (func $host_add_font_resource (param i32) (result i32)))
+  ;; add_font_resource(pathWasmPtr) → number of bitmap-font faces installed
+  (import "host" "remove_font_resource" (func $host_remove_font_resource (param i32) (result i32)))
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   (import "host" "measure_text" (func $host_measure_text_raw (param i32 i32 i32 i32) (result i32)))
@@ -851,6 +854,10 @@
   (data (i32.const 0x11210) "9999\00")
   (data (i32.const 0x11220) "WINSPOOL\00")
   (data (i32.const 0x11229) "Web Printer\00")
+  ;; ChooseColor labels from the classic partial color-dialog template.
+  (data (i32.const 0x11235) "Basic colors:\00")
+  (data (i32.const 0x11243) "Custom colors:\00")
+  (data (i32.const 0x11252) "Define Custom Colors >>\00")
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
@@ -892,7 +899,10 @@
   ;; 0x00003100  128B    CLASS_NAME_STRINGS (built-in control class names)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
   ;; 0x00003900  ~1.75KB Free
-  ;; 0x00004000  12KB    Free (former API dispatch hash table)
+  ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
+  ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
+  ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
+  ;; 0x00005104  ~7.75KB Free (former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -1182,7 +1192,7 @@
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
-  (global $HANDLER_HIST_COUNT i32 (i32.const 357))
+  (global $HANDLER_HIST_COUNT i32 (i32.const 359))
   (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
   (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
   (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))
@@ -1276,6 +1286,20 @@
   ;;   +28  ctrl_count     number of controls (child hwnds = first_hwnd..first_hwnd+ctrl_count-1)
   (global $WND_DLG_RECORDS i32 (i32.const 0x0000B160))
   (global $WND_DLG_RECORDS_SIZE i32 (i32.const 0x00002000))
+  ;; USER dialog-manager state, separate from application GWL_USERDATA.
+  ;; 256 entries x 16 bytes, indexed by the corresponding WND_RECORDS slot:
+  ;;   +0  DLGPROC
+  ;;   +4  DWL_MSGRESULT (offset 0)
+  ;;   +8  reserved dialog extra bytes (offset 4 aliases DLGPROC)
+  ;;   +12 DWL_USER (offset 8)
+  (global $DIALOG_STATE_TABLE i32 (i32.const 0x00004000))
+  (global $DIALOG_STATE_TABLE_SIZE i32 (i32.const 0x00001000))
+  (global $WINDOW_UNICODE_TABLE i32 (i32.const 0x00005000))
+  (global $WINDOW_UNICODE_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; Process identity lives in shared linear memory rather than a mutable
+  ;; global because each emulated Win32 thread is a separate WASM instance.
+  (global $SHARED_PROCESS_ID i32 (i32.const 0x00005100))
+  (global $SHARED_PROCESS_ID_SIZE i32 (i32.const 0x00000004))
   ;; One-shot override for CreateDialogIndirectParam*: when non-zero,
   ;; $dlg_load reads the DLGTEMPLATE directly from this guest pointer
   ;; instead of resolving an RT_DIALOG resource.
@@ -1365,6 +1389,7 @@
   (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
   (global $WNDPROC_WAT_NATIVE i32 (i32.const 0xFFFF0001))  ;; WAT-native window wndproc
   (global $WNDPROC_BUILTIN    i32 (i32.const 0xFFFE0001))  ;; built-in control default wndproc
+  (global $WNDPROC_DIALOG     i32 (i32.const 0xFFFE0002))  ;; USER DefDlgProc wrapper
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
   ;; Guest code section bounds (set by PE loader)

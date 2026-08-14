@@ -21,9 +21,11 @@ file; it must not be shipped based on this document.
 | d3drm.dll | 437,008 | `fd80f3839a035b6b52362735b22eb8d2523d3434bf18afb3e0f1b5ace84357b0` | DirectX 6.0 path below |
 | d3dxof.dll | 107,792 | `1f2d0683668b3039d451d88ed449fd9d49371fab3fadb991636cd6bfb0aa6eee` | DirectX 6.0 path below |
 | imagehlp.dll | 106,013 | `a01ea2839b8b9676631cc7d5a9e8d6d64c2cae5cfba8d7e74d6e9f4b0e122331` | Windows Installer 2.0 path below |
+| mfc30.dll | 335,872 | `07eeb7e8d7b2fdba0a250e0f19a2d5336a0ff83ae70b7b0f8623fb86e066041a` | Windows 98 SE OEM path below; local-only |
 | mfc42.dll | 940,304 | `590ee92bc1c9cf0d4a6b40e11c9272db243c59e709f940147c6085f07e297788` | Unverified |
 | mfc42u.dll | 995,384 | `5b3b68bb88be968a0c7c24887b437fac6d9081671b8d8376482168383ca30b8b` | Unverified |
 | msvcp60.dll | 401,462 | `2b6b93c2d66969eb00258e2b5ad6172decebada096e3b1b077a3380c80e4a072` | Unverified |
+| msvcrt20.dll | 274,432 | `9446a83656e24ebf303a2c8c046ef0cce252a789c1becfde3580e9ab614b4316` | Windows 98 SE OEM path below; local-only |
 | msvcrt.dll | 278,581 | `887eb5ce93edb7192ca3e9220f07f9ca0f94db02af5862ebcbdfcb852db99fd1` | Unverified |
 | oleaut32.dll | 598,288 | `baeb2f7c1b8be56738d34e1d1ddf8e0eebd3a633215dc1575e14656be38b939d` | IE6 SP1 `OAINST.CAB`; outer archive reproduction pending |
 | riched20.dll | 431,133 | `1c2508fb55ddc459d0327f2017471545c87420443391567094e768fb34032da1` | Windows Installer 2.0 path below |
@@ -38,6 +40,35 @@ not stock Windows install media. These DLLs are instead emulated as "fake
 modules" by the WAT runtime: static imports resolve by name via the WAT API
 hash table, and dynamic `LoadLibraryA` returns a stub handle that
 `GetProcAddress` also resolves by name. No real PE body is needed.
+
+## Font Viewer local fixtures from Windows 98 SE OEM
+
+Source: `https://archive.org/details/microsoft-windows-98-second-edition-oem-x05-29232`
+
+Extraction path: `Microsoft Windows 98 Second Edition OEM [X05-29232].iso` >
+`WIN98/BASE4.CAB` (a continued cabinet set) > `mfc30.dll`, `msvcrt20.dll`, and
+`vgasys.fon`.
+
+The ISO downloaded on 2026-08-13 was 655,591,424 bytes. Its SHA-1
+`fa040cd3f7fd472e9612b1721bc72d7b82538450` matched the Internet Archive
+metadata. The extracted fixtures are:
+
+| File | Local path | Size | SHA-256 |
+|------|------------|-----:|---------|
+| `mfc30.dll` | `test/binaries/dlls/mfc30.dll` | 335,872 | `07eeb7e8d7b2fdba0a250e0f19a2d5336a0ff83ae70b7b0f8623fb86e066041a` |
+| `msvcrt20.dll` | `test/binaries/dlls/msvcrt20.dll` | 274,432 | `9446a83656e24ebf303a2c8c046ef0cce252a789c1becfde3580e9ab614b4316` |
+| `vgasys.fon` | `test/binaries/win98-apps/vgasys.fon` | 7,296 | `8e20e26fa8ee83caa5ba660c38deca1f4ac11186f7724d96d4988917f3c15e2a` |
+
+Reproduce after mounting or extracting the ISO:
+
+```bash
+cabextract -F mfc30.dll -F msvcrt20.dll -F vgasys.fon WIN98/BASE4.CAB
+shasum -a 256 mfc30.dll msvcrt20.dll vgasys.fon
+```
+
+These are stock Windows installation files, not redistributable runtime
+packages. They are gitignored local fixtures and must not be added to public
+deployment manifests unless redistribution permission is established.
 
 ## From IE6 SP1 (archive.org)
 

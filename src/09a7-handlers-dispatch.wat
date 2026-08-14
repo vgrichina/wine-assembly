@@ -5407,7 +5407,12 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.ge_s (local.get $arg1) (i32.const 0))  ;; positive = dialog extra bytes
       (then
-        (global.set $eax (call $wnd_get_userdata (local.get $arg0)))
+        (if (call $dialog_proc_get (local.get $arg0))
+          (then
+            (global.set $eax (call $dialog_extra_get
+              (local.get $arg0) (local.get $arg1))))
+          (else
+            (global.set $eax (call $wnd_get_userdata (local.get $arg0)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
@@ -7066,9 +7071,12 @@
   ;; seeded painting behavior. UTF-16 template-name strings remain limited by
   ;; the shared $find_resource implementation, which primarily handles int IDs.
   (func $handle_CreateDialogParamW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hwnd i32)
+    (local.set $hwnd (global.get $next_hwnd))
     (call $handle_CreateDialogParamA
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (call $wnd_unicode_set (local.get $hwnd) (i32.const 1)))
 
 
   ;; 820: PathGetArgsA(pszPath) → pointer to args after first unquoted space

@@ -609,7 +609,7 @@ Resource-aware Win98 emulator
   <script src="lib/host-imports.js?v=200"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/thread-manager.js?v=170"></script>
-  <script src="host.js?v=204"></script>
+  <script src="host.js?v=205"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script>
     let wine = null;
@@ -1176,7 +1176,16 @@ Resource-aware Win98 emulator
       sndrec32_98: { exe: 'binaries/win98-apps/sndrec32.exe' },
       sndvol32: { exe: 'binaries/win98-apps/sndvol32.exe' },
       vol98:    { exe: 'binaries/win98-apps/vol98.exe' },
-      fontview: { exe: 'binaries/win98-apps/fontview.exe' },
+      fontview: {
+        exe: 'binaries/win98-apps/fontview.exe',
+        // This Win98 build previews NE-format .FON resources and uses the
+        // VC++ 2.0/MFC 3.0 runtime pair. Load the CRT first because MFC30
+        // imports it during DllMain initialization.
+        dlls: ['binaries/dlls/msvcrt20.dll', 'binaries/dlls/mfc30.dll'],
+        files: ['binaries/win98-apps/vgasys.fon'],
+        requiredFiles: true,
+        args: 'vgasys.fon',
+      },
       kodakimg: { exe: 'binaries/win98-apps/kodakimg.exe' },
       kodakprv: { exe: 'binaries/win98-apps/kodakprv.exe' },
       hypertrm: { exe: 'binaries/win98-apps/hypertrm.exe' },
@@ -2149,6 +2158,8 @@ Resource-aware Win98 emulator
         const dllsToLoad = app.dlls ? [...app.dlls] : [];
         const availableDlls = {
           'comctl32.dll': 'binaries/dlls/comctl32.dll',
+          'msvcrt20.dll': 'binaries/dlls/msvcrt20.dll',
+          'mfc30.dll': 'binaries/dlls/mfc30.dll',
           'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
           'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
           'mfc42.dll': 'binaries/dlls/mfc42.dll',

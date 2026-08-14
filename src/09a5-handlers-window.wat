@@ -731,7 +731,7 @@
     ;; (and anything else using per-hwnd subclassing) can swap in its real
     ;; wndproc via SetWindowLongA before we start delivering messages.
     (if (i32.and
-          (global.get $cbt_hook_proc)
+          (i32.ne (global.get $cbt_hook_proc) (i32.const 0))
           (i32.or
             (i32.ne (call $wnd_table_get (local.get $hwnd)) (global.get $WNDPROC_CTRL_NATIVE))
             ;; ToolbarWindow32 is WAT-native only as the common-control
@@ -832,7 +832,7 @@
     (global.set $dlg_hwnd (local.get $hwnd))
     ;; Clear quit_flag — dialog recreation (e.g. calc mode switch) cancels pending quit
     (global.set $quit_flag (i32.const 0))
-    ;; Resolve the dialog's wndproc: prefer the supplied DlgProc (arg3); if
+    ;; Resolve the dialog's procedure: prefer the supplied DlgProc (arg3); if
     ;; NULL, fall back to a registered class wndproc (calc.exe's RT_DIALOG
     ;; template specifies class="SciCalc" and passes NULL DlgProc — without
     ;; this fallback, $wnd_send_message(dlg, WM_DRAWITEM) from owner-draw
@@ -843,10 +843,16 @@
         (if (global.get $wndproc_addr2)
           (then (local.set $dlg_wndproc (global.get $wndproc_addr2)))
           (else (local.set $dlg_wndproc (global.get $wndproc_addr))))))
-    ;; Register dialog in wnd_table BEFORE $dlg_load so the walker can
-    ;; find its slot for WND_DLG_RECORDS. SendMessageA routing looks at
-    ;; this slot.
-    (call $wnd_table_set (local.get $hwnd) (local.get $dlg_wndproc))
+    ;; USER windows created with a DLGPROC use DefDlgProc as their actual
+    ;; WNDPROC. Keep that distinction so frameworks can subclass the HWND and
+    ;; later CallWindowProc the saved default-procedure marker. A NULL DlgProc
+    ;; with a custom registered class remains a normal class window procedure.
+    (if (local.get $arg3)
+      (then
+        (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_DIALOG))
+        (drop (call $dialog_proc_set (local.get $hwnd) (local.get $arg3))))
+      (else
+        (call $wnd_table_set (local.get $hwnd) (local.get $dlg_wndproc))))
     ;; Record parent hwnd so GetParent returns the hosting window before
     ;; child dialogs update their outer title.
     (call $wnd_set_parent (local.get $hwnd) (local.get $arg2))
@@ -898,6 +904,16 @@
     ;; painting. Coordinate conversion APIs depend on this for child pages
     ;; hosted inside dialog client areas.
     (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    ;; CreateWindowEx seeds the first WM_SIZE payload, but resource dialogs
+    ;; bypass that path. Seed it from the finalized client rectangle so the
+    ;; first ShowWindow activation chain does not deliver a bogus 0x0 resize.
+    ;; Font Viewer's MFC layout otherwise collapses its sample pane.
+    (if (i32.and
+          (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+          (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x40000000))))
+      (then
+        (global.set $pending_wm_size
+          (call $host_get_window_client_size (local.get $hwnd)))))
     ;; Resource dialogs do not pass through CreateWindowEx's initial
     ;; non-client paint. Draw their frame synchronously before the modal loop
     ;; can present child controls, then retain normal NC invalidation for later
@@ -1719,6 +1735,17 @@
         (return)))
     ;; Look up wndproc from window table
     (local.set $wndproc (call $wnd_table_get (call $gl32 (local.get $arg0))))
+    ;; Dialog windows route through USER's DefDlgProc wrapper, not directly to
+    ;; the DLGPROC stored in their dialog state.
+    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
+      (then
+        (global.set $eax (call $dialog_default_proc
+          (call $gl32 (local.get $arg0))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; WAT-native WndProc dispatch (e.g. help window): wndproc >= 0xFFFF0000
     (if (i32.ge_u (local.get $wndproc) (i32.const 0xFFFF0000))
       (then
@@ -2076,6 +2103,13 @@
         (return)))
     ;; Look up wndproc from window table first
     (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
+    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
+      (then
+        (global.set $eax (call $dialog_default_proc
+          (local.get $arg0) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; WAT-native WndProc dispatch (e.g. help window)
     (if (i32.ge_u (local.get $wndproc) (i32.const 0xFFFF0000))
       (then

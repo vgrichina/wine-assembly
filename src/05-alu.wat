@@ -2868,6 +2868,18 @@
     (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $v))
     (return_call $next))
 
+  ;; 357-358: register forms of MOVZX/MOVSX r32,r16. These need dedicated
+  ;; handlers because lowering them to MOV+AND or MOV+shifts changes EFLAGS,
+  ;; while x86 MOVZX/MOVSX preserve every flag.
+  (func $th_movzx_r_r16 (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF)))
+    (return_call $next))
+  (func $th_movsx_r_r16 (param $op i32)
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4))
+      (call $sign_ext16 (call $get_reg (i32.and (local.get $op) (i32.const 0xF)))))
+    (return_call $next))
+
   ;; Handler 212: SAHF — load SF, ZF, CF from AH into flags (OF preserved)
   (func $th_sahf (param $op i32)
     (local $ah i32)

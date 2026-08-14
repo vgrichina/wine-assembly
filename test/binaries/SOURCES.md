@@ -98,6 +98,21 @@ Same abandonware posture as the rest of `test/binaries/` — not officially redi
 Source: `https://archive.org/details/windows-1999-programs`
 File: `Windows 1999 Programs.zip` — PE32 executables from Windows 98/99.
 
+The source ZIP downloaded on 2026-08-13 was 7,139,626 bytes with SHA-1
+`97d7f51e9b9bc6a056c03ecda2827948fb225c14`, matching the Internet Archive
+metadata. Its `FONTVIEW.EXE` is byte-for-byte identical to
+`win98-apps/fontview.exe`:
+
+| File | Size | SHA-256 |
+|------|-----:|---------|
+| `win98-apps/fontview.exe` | 61,952 | `fd0b6ad7baa5bcb61526cd715d1633ac5aa46a10d2d044e92f9ae4251f562ff9` |
+
+Font Viewer requires MFC 3.0, the Visual C++ 2.0 CRT, and a Windows `.FON`
+resource. The local fixture uses `mfc30.dll`, `msvcrt20.dll`, and `vgasys.fon`
+from the Windows 98 SE OEM media documented in `dlls/SOURCES.md`. These stock
+Windows files are local test fixtures only and must not be included in a public
+deployment without redistribution permission.
+
 Extracted apps: wordpad.exe, cdplayer.exe, fontview.exe, hypertrm.exe, kodakimg.exe, kodakprv.exe, mplayer.exe, sndvol32.exe, sndrec32.exe, welcome.exe, tour98.exe, explorer.exe, regedit.exe, taskman.exe, sysmon.exe, rsrcmtr.exe, winipcfg.exe, cleanmgr.exe, notepad98.exe, vol98.exe, telnet.exe, write.exe, mplay32.exe
 
 ## XP Apps

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // PNG screenshot test: ChooseColor dialog. Exercises the WAT colorgrid
-// WM_PAINT (8x3 swatches + selection ring) plus push buttons (OK / Cancel).
+// WM_PAINT (8x6 basic and 8x2 custom swatches + selection ring) plus buttons.
 //
 // Output: test/output/color-dlg.png
 //
@@ -18,17 +18,31 @@ runRenderTest('color-dlg', async (h, check) => {
 
   // Find the colorgrid child and pick cell 13 (blue) so the selection ring
   // has something to render.
-  let grid = 0;
+  let grid = 0, customGrid = 0;
   for (let s = 0; s < 256; s++) {
     const ch = e.wnd_slot_hwnd(s);
-    if (ch && e.ctrl_get_class(ch) === 6) { grid = ch; break; }
+    if (!ch || e.ctrl_get_class(ch) !== 6) continue;
+    if (e.ctrl_get_id(ch) === 0x460) grid = ch;
+    if (e.ctrl_get_id(ch) === 0x461) customGrid = ch;
   }
   check('colorgrid child found', grid !== 0, 'hwnd=0x' + grid.toString(16));
+  check('custom colorgrid child found', customGrid !== 0, 'hwnd=0x' + customGrid.toString(16));
 
-  // Click row 1, col 5 → idx 13.
-  const x = 5 * 24 + 10, y = 1 * 20 + 10;
+  // Click basic row 1, col 5 → idx 13.
+  const x = 5 * 26 + 10, y = 1 * 22 + 10;
   e.send_message(grid, 0x0201, 0, (x & 0xFFFF) | ((y & 0xFFFF) << 16));
   check('colorgrid sel_idx == 13 after click', e.colorgrid_get_sel(grid) === 13);
+
+  // Custom row 0, col 5 is backed by lpCustColors[5], not the basic table.
+  const customX = 5 * 26 + 10, customY = 10;
+  e.send_message(customGrid, 0x0201, 0,
+    (customX & 0xFFFF) | ((customY & 0xFFFF) << 16));
+  check('custom color comes from lpCustColors',
+    e.colorgrid_control_color(customGrid, 5) === 0x00123456);
+  check('custom click selects its cell', e.colorgrid_get_sel(customGrid) === 5);
+  check('custom click clears basic selection', e.colorgrid_get_sel(grid) === -1);
+  check('custom click updates CHOOSECOLOR.rgbResult',
+    e.test_color_dialog_result(dlg) === 0x00123456);
 
   h.renderer.repaint();
 }, { minColors: 16 });

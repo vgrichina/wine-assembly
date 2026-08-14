@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 357 funcref)
+  (table $handlers 359 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -412,4 +412,6 @@
     $th_store32_ro_base_edi ;; 354
     $th_jmp_ind_sib_eax4_abs ;; 355: jmp [disp+eax*4]
     $th_stack_packet         ;; 356: flagged stack-packet prototype
+    $th_movzx_r_r16          ;; 357: movzx r32, r16 (preserves flags)
+    $th_movsx_r_r16          ;; 358: movsx r32, r16 (preserves flags)
   )

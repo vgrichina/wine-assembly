@@ -114,6 +114,24 @@ async function main() {
   runCode([0x31, 0xC0]); // xor eax, eax
   test('xor eax, eax', e.get_eax(), 0);
 
+  // MOVZX/MOVSX preserve EFLAGS. MFC relies on this exact sequence in its
+  // WM_COMMAND routing: TEST button-id; MOVZX notification-code; JZ.
+  runCode([
+    0x85, 0xDB,             // test ebx,ebx (ZF=0)
+    0x0F, 0xB7, 0xE8,       // movzx ebp,ax (source is zero)
+    0x0F, 0x94, 0xC1,       // setz cl
+  ], () => { e.set_eax(0); e.set_ebx(1); e.set_ecx(0); });
+  test('MOVZX r32,r16 result', e.get_ebp(), 0);
+  test('MOVZX r32,r16 preserves ZF', e.get_ecx() & 0xFF, 0);
+
+  runCode([
+    0xF9,                   // stc
+    0x0F, 0xBF, 0xE8,       // movsx ebp,ax
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], () => { e.set_eax(0x8000); e.set_ecx(0); });
+  test('MOVSX r32,r16 result', e.get_ebp(), 0xFFFF8000);
+  test('MOVSX r32,r16 preserves CF', e.get_ecx() & 0xFF, 1);
+
   runCode([0x54, 0x58]); // push esp; pop eax
   test('PUSH ESP stores original ESP', e.get_eax(), imageBase + 0xD00000);
 

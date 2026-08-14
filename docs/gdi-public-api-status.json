@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scope": "Distinct named GDI32.dll imports in PE files under test/binaries.",
   "corpus": {
-    "peFileCount": 183,
+    "peFileCount": 185,
     "importCount": 218,
     "sortedImportSha256": "e12833e9e0e671014fc3eb8a97c7299d53867fe97d3827eef5e4632e80c481a6",
     "representedInApiTable": 218
@@ -46,7 +46,8 @@
       "Pixel-format APIs expose one software RGBA format; OpenGL command rendering is outside GDI"
     ],
     "fontPolicy": [
-      "AddFontResourceA and RemoveFontResourceA are accepted but cannot install browser-local font files",
+      "AddFontResourceA installs user-supplied NE .FON or standalone FNT 2.x/3.x bitmap strikes from the VFS; RemoveFontResourceA unregisters them",
+      "CreateFont selects installed bitmap faces by name and TextOut uses their one-bit glyphs and metrics; unsupported formats and text paths retain deterministic CSS fallbacks",
       "GetFontData returns GDI_ERROR because Canvas does not expose selected font tables",
       "GetGlyphOutlineA supports GGO_METRICS; outline and bitmap payload formats remain unavailable",
       "EnumFontsA shares the current deterministic single-face fallback enumeration"
