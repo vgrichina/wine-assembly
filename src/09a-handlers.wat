@@ -1610,18 +1610,39 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  (func $compat_is_pinball_exe (result i32)
+    (if (i32.ne (global.get $exe_name_len) (i32.const 11))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.load (global.get $exe_name_wa)) (i32.const 0x626E6970))
+      (then (return (i32.const 0)))) ;; pinb
+    (if (i32.ne (i32.load offset=4 (global.get $exe_name_wa)) (i32.const 0x2E6C6C61))
+      (then (return (i32.const 0)))) ;; all.
+    (if (i32.ne (i32.load offset=8 (global.get $exe_name_wa)) (i32.const 0x00657865))
+      (then (return (i32.const 0)))) ;; exe\0
+    (i32.const 1))
+
   ;; 85: GetDC — Phase B: alloc DcRecord via host_alloc_window_dc
   ;; (whole=0). GetDC(NULL) and GetDC(GetDesktopWindow()) → screen DC.
   (func $handle_GetDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $hdc i32)
-    ;; GetDesktopWindow returns the fixed pseudo HWND 0x10000. It has no
-    ;; window-table record or canonical per-window surface, so treat it like
-    ;; NULL just as GetWindowDC/GetDCEx already do.
-    (if (i32.and (local.get $arg0)
-          (i32.ne (local.get $arg0) (i32.const 0x10000)))
+    (local $hdc i32) (local $target_hwnd i32)
+    ;; Pinball uses its desktop handle as a window-clipped primary surface.
+    ;; Giving it the canonical desktop bitmap draws the table behind
+    ;; an opaque gray main window. Keep native desktop-DC behavior for other
+    ;; apps (notably MFC WinHelp), but bind this request to Pinball's actual
+    ;; compositor window.
+    (if (i32.and
+          (i32.eq (local.get $arg0) (i32.const 0x10000))
+          (i32.and
+            (call $compat_is_pinball_exe)
+            (i32.ne (global.get $main_hwnd) (i32.const 0))))
+      (then (local.set $target_hwnd (global.get $main_hwnd)))
+      (else
+        (if (i32.ne (local.get $arg0) (i32.const 0x10000))
+          (then (local.set $target_hwnd (local.get $arg0))))))
+    (if (local.get $target_hwnd)
       (then
-        (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
-        (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0)))
+        (local.set $hdc (call $host_alloc_window_dc (local.get $target_hwnd) (i32.const 0)))
+        (call $dc_apply_client_clip (local.get $hdc) (local.get $target_hwnd)))
       (else
         (local.set $hdc (call $host_alloc_screen_dc))))
     (global.set $eax (local.get $hdc))

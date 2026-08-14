@@ -9,6 +9,17 @@ const { bootRenderHarness } = require('./render-helper');
   const { exports: wat, memory, renderer, canvas, gdi } = await bootRenderHarness({
     width: 96,
     height: 64,
+    extraWat: `
+      (func (export "test_gdi_dc_binding") (param $hdc i32) (result i32)
+        (local $dc i32)
+        (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+        (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+        (i32.load offset=92 (local.get $dc)))
+      (func (export "test_is_pinball_compat") (result i32)
+        (call $compat_is_pinball_exe))
+      (func (export "test_set_main_hwnd") (param $hwnd i32)
+        (global.set $main_hwnd (local.get $hwnd)))
+    `,
   });
   const dv = new DataView(memory.buffer);
   const desc = 0x07EF1000;
@@ -62,6 +73,24 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(dv.getUint32(desc + 68, true), screenBitmap,
     'the desktop pseudo HWND must share the persistent screen bitmap');
   assert.strictEqual(wat.test_call_ReleaseDC(0x10000, desktop), 1);
+
+  const mainHwnd = 0x10001;
+  renderer.createWindow(mainHwnd, 0x10000000, 0, 0, 96, 64, 'Pinball', 0);
+  wat.wnd_table_set(mainHwnd, 0);
+  wat.ctrl_set_geom(mainHwnd, 0, 0, 96, 64);
+  wat.test_set_main_hwnd(mainHwnd);
+
+  const exeName = 0x400;
+  new Uint8Array(memory.buffer).set(Buffer.from('pinball.exe\0', 'ascii'), exeName);
+  wat.set_exe_name(exeName, 11);
+  assert.strictEqual(wat.test_is_pinball_compat(), 1,
+    'Pinball executable identity must select its desktop compatibility path');
+  const pinballDesktop = wat.test_call_GetDC(0x10000) >>> 0;
+  assert(pinballDesktop, 'Pinball must receive its compatibility desktop HDC');
+  assert.strictEqual(wat.test_gdi_dc_binding(pinballDesktop) >>> 0, mainHwnd,
+    'Pinball desktop DC must bind to its composited main-window surface');
+  assert.strictEqual(wat.test_gdi_surface_descriptor(pinballDesktop, desc), 1);
+  assert.strictEqual(wat.test_call_ReleaseDC(0x10000, pinballDesktop), 1);
 
   console.log('Canonical WAT screen surface: PASS');
 })().catch(error => {
