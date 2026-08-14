@@ -34,7 +34,7 @@ const { bootRenderHarness } = require('./render-helper');
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(bitmap && hdc);
     wat.test_call_SelectObject(hdc, bitmap);
-    return { bitmap, hdc };
+    return { bitmap, hdc, bits: wat.guest_read32(bitsOut) >>> 0 };
   };
 
   check('ANSI extent-ex returns progressive widths and exact fit count', () => {
@@ -95,7 +95,7 @@ const { bootRenderHarness } = require('./render-helper');
   check('font-resource and unavailable font-table contracts are deterministic', () => {
     // Minimal standalone FNT 2.0 strike: one 8x8 glyph plus a face name.
     // This keeps the unit test independent of the optional Win98 fixtures.
-    const fnt = Buffer.alloc(139);
+    const fnt = Buffer.alloc(142);
     fnt.writeUInt16LE(0x0200, 0);
     fnt.writeUInt32LE(fnt.length, 2);
     fnt.writeUInt16LE(8, 74);  // ascent
@@ -113,13 +113,40 @@ const { bootRenderHarness } = require('./render-helper');
     fnt.writeUInt16LE(134, 124);
     fnt.fill(0xff, 126, 134);
     fnt.write('UnitFnt\0', 134, 'latin1');
-    hostCtx.readFile = requested => /TEST\.FON$/i.test(requested) ? fnt : null;
+    hostCtx.vfs.files.set('c:\\test.fon', { data: new Uint8Array(fnt), attrs: 0x20 });
 
-    const { hdc } = createTextDc();
+    const { hdc, bits: dibBits } = createTextDc();
     const path = allocZero(16);
     bytes.set(Buffer.from('TEST.FON\0', 'latin1'), wa(path));
     assert.strictEqual(wat.test_call_AddFontResourceA(path), 1);
+    assert.strictEqual(wat.test_gdi_bitmap_font_count(), 1);
+
+    const face = allocZero(32);
+    [...'UnitFnt'].forEach((character, index) =>
+      wat.guest_write16(face + index * 2, character.charCodeAt(0)));
+    const font = wat.test_call_CreateFontW(-8, 400, 0, face) >>> 0;
+    assert(font);
+    assert(wat.test_gdi_bitmap_font_bound(font));
+    wat.test_call_SelectObject(hdc, font);
+    assert.strictEqual(wat.test_gdi_bitmap_font_selected(hdc),
+      wat.test_gdi_bitmap_font_bound(font));
+    const text = allocZero(2);
+    bytes[wa(text)] = 65;
+    const size = allocZero(8);
+    assert.strictEqual(wat.test_call_GetTextExtentExPointA(
+      hdc, text, 1, 0x7fffffff, 0, 0, size), 1);
+    assert.strictEqual(wat.guest_read32(size), 8);
+    assert.strictEqual(wat.guest_read32(size + 4), 8);
+
+    // Seed the canonical top-down DIB with a non-GDI byte pattern. An all-set
+    // FNT glyph must overwrite its 8x8 cell through WAT's raster writer.
+    for (let offset = 0; offset < 64 * 32 * 4; offset += 4) {
+      wat.guest_write32(dibBits + offset, 0x7f7f7f7f);
+    }
+    assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 3, text, 1), 1);
+    assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 2) * 4), 0);
     assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
+    assert.strictEqual(wat.test_gdi_bitmap_font_count(), 0);
     assert.strictEqual(wat.test_call_AddFontResourceA(0), 0);
     assert.strictEqual(wat.test_call_GetFontData(hdc, 0, 0, 0, 0) >>> 0, 0xffffffff);
   });

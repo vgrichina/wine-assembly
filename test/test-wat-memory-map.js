@@ -99,6 +99,9 @@ const requiredRegions = [
   'GDI_OBJECT_TABLE',
   'GDI_WINDOW_SURFACE_TABLE',
   'GDI_DC_AUX_TABLE',
+  'GDI_BITMAP_FONT_IO',
+  'GDI_BITMAP_FONT_DESC',
+  'GDI_BITMAP_FONT_TABLE',
   'D3DIM_MATRICES',
   'DX_OBJECTS',
   'COM_WRAPPERS',
@@ -137,6 +140,8 @@ const handlersSource = fs.readFileSync(path.join(SRC, '09a-handlers.wat'), 'utf8
 const hostImportsSource = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 assert(!/GDI_PALETTE_(?:TABLE|SELECTED|ENTRIES)/.test(hostImportsSource),
   'JavaScript must not retain semantic GDI palette storage');
+assert(!/_parseFntStrike|_parseFonStrikes|_drawBitmapGlyph|bitmapFont/.test(hostImportsSource),
+  'JavaScript must not retain FNT parsing, selection, or bitmap glyph rasterization');
 
 const apiTable = JSON.parse(fs.readFileSync(path.join(SRC, 'api_table.json'), 'utf8'));
 assert(apiTable.some(api => api.name === 'GetProfileStringW' && api.nargs === 5),

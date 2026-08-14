@@ -135,9 +135,6 @@
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
   ;; create_font(height, weight, italic, facePtr) → handle
-  (import "host" "add_font_resource" (func $host_add_font_resource (param i32) (result i32)))
-  ;; add_font_resource(pathWasmPtr) → number of bitmap-font faces installed
-  (import "host" "remove_font_resource" (func $host_remove_font_resource (param i32) (result i32)))
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   (import "host" "measure_text" (func $host_measure_text_raw (param i32 i32 i32 i32) (result i32)))
@@ -958,6 +955,9 @@
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
+  ;; 0x07F0A420 4B       GDI_BITMAP_FONT_IO (filesystem read count)
+  ;; 0x07F0A440 80B      GDI_BITMAP_FONT_DESC (surface scratch)
+  ;; 0x07F0A800 1KB      GDI_BITMAP_FONT_TABLE (16 installed FNT strikes)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)

@@ -146,6 +146,7 @@ E2E=(
   test/test-minesweeper-click.js
   test/test-minesweeper-no-resize.js
   test/test-minesweeper-smiley-reset.js
+  test/test-pinball-controls-layout.js
   test/test-pinball-flipper.js
   test/test-aoe-menu.js
   test/test-tworld-launch.js

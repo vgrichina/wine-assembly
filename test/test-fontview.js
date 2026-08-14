@@ -16,6 +16,8 @@ const FONT = path.join(__dirname, 'binaries', 'win98-apps', 'vgasys.fon');
 const CRT = path.join(__dirname, 'binaries', 'dlls', 'msvcrt20.dll');
 const MFC = path.join(__dirname, 'binaries', 'dlls', 'mfc30.dll');
 const PNG_PATH = path.join(ROOT, 'scratch', 'fontview.png');
+const FONT_WAT_SOURCE = fs.readFileSync(path.join(ROOT, 'src', '10b-gdi-font.wat'), 'utf8');
+const HOST_IMPORT_SOURCE = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 
 const missing = [EXE, FONT, CRT, MFC].filter(file => !fs.existsSync(file));
 if (missing.length) {
@@ -80,8 +82,10 @@ const checks = [
     output.indexOf('DLL: msvcrt20.dll') >= 0 &&
       output.indexOf('DLL: msvcrt20.dll') < output.indexOf('DLL: mfc30.dll')],
   ['font resource was accepted', apiCount('AddFontResourceA') >= 1],
-  ['the FNT bitmap strike was parsed instead of substituted',
-    /\[GDI\] loaded FNT bitmap face "System" \(224 glyphs, 16px\)/.test(output)],
+  ['FNT parsing and glyph rasterization are WAT-owned',
+    FONT_WAT_SOURCE.includes('(func $gdi_bitmap_font_parse_file') &&
+      FONT_WAT_SOURCE.includes('(func $gdi_bitmap_text_out') &&
+      !/_parseFntStrike|_drawBitmapGlyph|bitmapFont/.test(HOST_IMPORT_SOURCE)],
   ['MFC attached both dialog and preview window procedures', apiCount('SetWindowLongA') >= 2],
   ['preview paints all sample rows', apiCount('TextOutA') >= 10],
   ['main window uses the font name as its title', mainLine.includes('title="System"')],

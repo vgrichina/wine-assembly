@@ -504,24 +504,29 @@
     (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
       (i32.load (local.get $lf)) (i32.load offset=16 (local.get $lf))
       (i32.load8_u offset=20 (local.get $lf)) (i32.const 0)))
+    (call $gdi_bitmap_font_bind (local.get $handle)
+      (i32.add (local.get $lf) (i32.const 28)))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 168: CreateFontA — 14 params on stack
   (func $handle_CreateFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $weight i32) (local $italic i32)
+    (local $handle i32) (local $weight i32) (local $italic i32) (local $face i32)
     ;; arg0=nHeight, esp+16=fnWeight, esp+20=bItalic, esp+52=lpszFace
     (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
     (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (local.set $face (call $g2w (call $gl32
+      (i32.add (global.get $esp) (i32.const 52)))))
     (local.set $handle (call $host_create_font
       (local.get $arg0)                                              ;; height
       (local.get $weight)                                            ;; weight
       (local.get $italic)                                            ;; italic
-      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 52)))) ;; faceName
+      (local.get $face)                                              ;; faceName
     ))
     (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
       (local.get $arg0) (local.get $weight) (local.get $italic) (i32.const 0)))
+    (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
   )
@@ -1006,18 +1011,18 @@
     (global.set $eax (i32.const -1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; Install Win16/Win9x bitmap-font resources in the host text rasterizer.
+  ;; Install Win16/Win9x bitmap-font resources in the WAT text rasterizer.
   (func $handle_AddFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (if (result i32) (local.get $arg0)
-        (then (call $host_add_font_resource (call $g2w (local.get $arg0))))
+        (then (call $gdi_bitmap_font_add_resource (local.get $arg0)))
         (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_RemoveFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
       (if (result i32) (local.get $arg0)
-        (then (call $host_remove_font_resource (call $g2w (local.get $arg0))))
+        (then (call $gdi_bitmap_font_remove_resource (local.get $arg0)))
         (else (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 

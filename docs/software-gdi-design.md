@@ -6,8 +6,9 @@ Implementation started 2026-08-12. WAT now owns canonical bitmap and window
 surfaces, GDI object/DC state, regions and explicit clipping, native-format
 pixel access, all ROP2/ROP3 truth tables, source and stretch blits, flood fill,
 and integer geometry. JavaScript retains presentation uploads/composition and
-the deliberate Canvas text rasterization boundary; text output is copied back
-into the same canonical WAT surface before returning.
+the scalable-font Canvas fallback. Installed Win16/Win9x FNT bitmap strikes
+are parsed, selected, measured, and rasterized directly into the canonical WAT
+surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
 gaps are DIB/pattern brushes in pattern-dependent blits, path selection,
@@ -138,8 +139,9 @@ responsible for browser-facing presentation, final window composition,
 scaling, and display.
 
 Canvas vector paths must not be used for geometric GDI primitives whose Win32
-result is defined as raster pixels. Text is the deliberate exception: Canvas
-remains the font-layout and glyph-rasterization backend for this redesign.
+result is defined as raster pixels. Canvas remains the layout/raster fallback
+for scalable and shaped text; installed FNT bitmap faces use WAT-owned integer
+metrics and exact one-bit glyph data.
 JavaScript host imports are limited to facilities WebAssembly cannot directly
 provide: Canvas upload/composition, browser font rasterization, audio, input,
 storage, and similar platform APIs. Canvas may also remain an explicitly
@@ -428,16 +430,15 @@ never becomes a GDI pixel source.
 
 ## Text
 
-Canvas is the selected text backend for the initial software-GDI design. It
-continues to provide font selection, fallback, shaping, kerning, measurement,
-and glyph rasterization. Replacing it with a font engine or period-correct
-bitmap fonts is outside the active migration plan.
+Text has two explicit backends. Installed FNT 2.x/3.x bitmap strikes are a
+WAT-native backend; scalable faces and shaping remain on the Canvas fallback.
+The selected font object determines the route before any host text binding.
 
 Canvas must not bypass authoritative surface storage. Text operations use this
 pipeline:
 
 ```text
-TextOut/ExtTextOut/DrawText
+TextOut/ExtTextOut/DrawText (scalable fallback)
         |
         v
 Canvas scratch surface renders glyphs
@@ -466,20 +467,23 @@ threshold coverage for non-antialiased Win98-style text where appropriate.
 
 Known limitations remain explicit: browser font availability, metrics,
 hinting, shaping, and antialiasing can differ between Safari, Chromium, and
-Node. These differences are accepted for text during this redesign; geometric
-primitives and bitmap operations must still be deterministic.
+Node. These differences apply only to the Canvas fallback; FNT measurements
+and pixels are deterministic across those hosts.
 
 No Canvas-only text draw may leave the authoritative surface stale when that
 surface can later be observed through GDI.
 
 ### High-fidelity Win98 text backend
 
-The first deterministic bitmap-font path is implemented for classic raster
-fonts without changing GDI callers. `AddFontResourceA` parses NE `.FON`
-containers and standalone FNT 2.x/3.x resources supplied through the VFS.
-`CreateFont` selects an installed strike by face name, and `TextOut` consumes
-its one-bit glyph rows and integer metrics with nearest-neighbor scaling.
-Unsupported formats and text paths continue through the Canvas fallback.
+The deterministic bitmap-font path is implemented in `10b-gdi-font.wat`
+without changing GDI callers. `AddFontResourceA` reads NE `.FON` containers or
+standalone FNT 2.x/3.x resources through the VFS boundary, validates their
+tables, and copies accepted strikes into WAT-managed memory. `CreateFontA/W`
+and `CreateFontIndirectA/W` bind the closest installed strike by face and
+height. Measurement, metrics, `TextOutA`, and plain `ExtTextOutA/W` then use
+the one-bit vertical-strip glyphs and write pixels through the canonical,
+format-aware GDI raster path. Unsupported formats, shaped/scalable faces, and
+rectangle-option text paths continue through the Canvas fallback.
 
 The target selection order is:
 
@@ -489,11 +493,11 @@ The target selection order is:
 4. Canvas text for faces, sizes, scripts, or shaping the deterministic backend
    does not support.
 
-The project-native loader understands NE `.FON` containers with one or more
-Windows FNT resources as well as standalone `.FNT` files. It runs in shared
-JavaScript so Node and browsers consume the same strikes. FreeType remains a
-possible future dependency for PCF, BDF, outline fonts, and broader font-table
-coverage.
+The project-native WAT loader understands NE `.FON` containers with one or
+more RT_FONT resources as well as standalone `.FNT` files. Node and browsers
+therefore consume the same validated bytes and integer raster algorithm.
+FreeType remains a possible future dependency for PCF, BDF, outline fonts,
+and broader font-table coverage.
 
 For each face/size/weight/charset strike, cache:
 

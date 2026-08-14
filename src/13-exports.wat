@@ -247,6 +247,14 @@
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_GetSystemMetrics") (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetSystemMetrics
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_CreateHatchBrush") (param i32) (param i32) (result i32)
     (call $handle_CreateHatchBrush
       (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)

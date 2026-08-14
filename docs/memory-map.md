@@ -136,6 +136,12 @@ destination/source surface resolution without per-pixel host calls.
 Extended per-DC state occupies `0x07EFC800..0x07EFE7FF` as 256 32-byte
 records for arc direction, brush origin, mapper flags, and text spacing.
 
+The Win16/Win9x bitmap-font backend uses `0x07F0A420..0x07F0A46F` for its
+file-I/O counter and 80-byte surface descriptor, plus
+`0x07F0A800..0x07F0ABFF` for sixteen 64-byte installed-strike records. The
+validated FNT byte payloads themselves are owned allocations in the DIB arena;
+the static table stores their WAT backing addresses and parsed metrics.
+
 ### Comparison
 
 | Concept | Win98 | wine-assembly |

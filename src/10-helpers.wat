@@ -2820,7 +2820,12 @@
 
   (func $host_gdi_text_out (param $hdc i32) (param $x i32) (param $y i32)
         (param $text i32) (param $count i32) (param $wide i32) (result i32)
-    (local $token i32)
+    (local $token i32) (local $bitmap_result i32)
+    (local.set $bitmap_result (call $gdi_bitmap_text_out
+      (local.get $hdc) (local.get $x) (local.get $y) (i32.const 0) (i32.const 0)
+      (local.get $text) (local.get $count) (local.get $wide)))
+    (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
+      (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_gdi_text_out_raw (local.get $token) (local.get $x) (local.get $y)
@@ -2828,16 +2833,23 @@
 
   (func $host_measure_text (param $hdc i32) (param $text i32)
         (param $count i32) (param $wide i32) (result i32)
-    (local $token i32)
+    (local $token i32) (local $bitmap_result i32)
     (if (i32.le_s (local.get $count) (i32.const 0))
       (then (return (i32.const 0))))
+    (local.set $bitmap_result (call $gdi_bitmap_text_measure
+      (local.get $hdc) (local.get $text) (local.get $count) (local.get $wide)))
+    (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
+      (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_measure_text_raw (local.get $token) (local.get $text)
       (local.get $count) (local.get $wide)))
 
   (func $host_get_text_metrics (param $hdc i32) (result i32)
-    (local $token i32)
+    (local $token i32) (local $bitmap_result i32)
+    (local.set $bitmap_result (call $gdi_bitmap_text_metrics (local.get $hdc)))
+    (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
+      (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_get_text_metrics_raw (local.get $token)))
@@ -3036,7 +3048,18 @@
   (func $host_gdi_ext_text_out (param $hdc i32) (param $x i32) (param $y i32)
         (param $options i32) (param $rect i32) (param $text i32) (param $count i32)
         (param $wide i32) (result i32)
-    (local $token i32)
+    (local $token i32) (local $bitmap_result i32)
+    ;; Plain ExtTextOut shares the native bitmap path. Rectangle clipping and
+    ;; ETO_OPAQUE retain the general host fallback until their WAT rectangle
+    ;; policy is implemented.
+    (if (i32.eqz (local.get $options))
+      (then
+        (local.set $bitmap_result (call $gdi_bitmap_text_out
+          (local.get $hdc) (local.get $x) (local.get $y)
+          (local.get $options) (local.get $rect) (local.get $text)
+          (local.get $count) (local.get $wide)))
+        (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
+          (then (return (local.get $bitmap_result))))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_gdi_ext_text_out_raw (local.get $token) (local.get $x) (local.get $y)
@@ -10466,14 +10489,34 @@
     (i32.store offset=20 (local.get $dlg_rec) (local.get $title_ptr))
     (i32.store offset=24 (local.get $dlg_rec) (local.get $menu_key))
     (i32.store offset=28 (local.get $dlg_rec) (local.get $ctrl_count))
-    ;; Dialog HWNDs are real child windows too. Keep their WAT-side geometry
-    ;; populated so parent invalidation, clipping, hit-testing, and child DC
-    ;; origin accumulation can treat nested wizard pages like Win98 USER32.
+    ;; Dialog HWNDs are real windows too. DLGTEMPLATE cx/cy describe the
+    ;; client area for top-level dialogs, while CONTROL_GEOM describes the
+    ;; whole window. Add the same approximate non-client extents used by the
+    ;; renderer (frame/caption and optional menu), otherwise NCCALCSIZE removes
+    ;; chrome from an already-client-sized rect. Apps that center the dialog
+    ;; from GetWindowRect then preserve that undersized rect, clipping the
+    ;; bottom row of controls (pinball's Player Controls buttons).
+    ;;
+    ;; Child dialog pages have no separately composed top-level chrome, so
+    ;; their template dimensions remain unchanged.
     (call $ctrl_geom_set (local.get $dlg_slot)
       (i32.div_u (i32.mul (local.get $dlg_x) (i32.const 3)) (i32.const 2))
       (i32.div_u (i32.mul (local.get $dlg_y) (i32.const 7)) (i32.const 4))
-      (i32.div_u (i32.mul (local.get $dlg_cx) (i32.const 3)) (i32.const 2))
-      (i32.div_u (i32.mul (local.get $dlg_cy) (i32.const 7)) (i32.const 4)))
+      (i32.add
+        (i32.div_u (i32.mul (local.get $dlg_cx) (i32.const 3)) (i32.const 2))
+        (select
+          (i32.const 8) (i32.const 0)
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))))
+      (i32.add
+        (i32.div_u (i32.mul (local.get $dlg_cy) (i32.const 7)) (i32.const 4))
+        (select
+          (i32.add
+            (i32.const 30)
+            (select
+              (i32.const 18) (i32.const 0)
+              (i32.ne (local.get $menu_key) (i32.const 0))))
+          (i32.const 0)
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000))))))
     ;; Allocate one CREATESTRUCT on the heap, reused for every control
     (local.set $cs (call $heap_alloc (i32.const 48)))
     ;; Iterate DLGITEMTEMPLATE entries

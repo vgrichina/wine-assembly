@@ -1729,6 +1729,12 @@
     (if (i32.eq (local.get $arg0) (i32.const 8))  ;; SM_CYFIXEDFRAME
     (then (global.set $eax (i32.const 3))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (if (i32.eq (local.get $arg0) (i32.const 11)) ;; SM_CXICON
+    (then (global.set $eax (i32.const 32))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (if (i32.eq (local.get $arg0) (i32.const 12)) ;; SM_CYICON
+    (then (global.set $eax (i32.const 32))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 15)) ;; SM_CYMENU
     (then (global.set $eax (i32.const 19))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
@@ -1743,6 +1749,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 33)) ;; SM_CYFRAME
     (then (global.set $eax (i32.const 4))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    ;; Native Win98 COMCTL32 uses the small-icon metrics to size image lists.
+    ;; Returning zero makes ImageList_Create fail before controls can populate.
+    (if (i32.eq (local.get $arg0) (i32.const 49)) ;; SM_CXSMICON
+    (then (global.set $eax (i32.const 16))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (if (i32.eq (local.get $arg0) (i32.const 50)) ;; SM_CYSMICON
+    (then (global.set $eax (i32.const 16))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (i32.eq (local.get $arg0) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
     (then (global.set $eax (i32.add (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)) (i32.const 8)))
@@ -4877,11 +4891,13 @@
       (i32.load (local.get $lf))                              ;; height
       (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
-      (local.get $face)                                      ;; faceName WASM ptr
+      (call $g2w (local.get $face))                          ;; faceName WASM ptr
     ))
     (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
       (i32.load (local.get $lf)) (i32.load offset=16 (local.get $lf))
       (i32.load8_u offset=20 (local.get $lf)) (i32.const 0)))
+    (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
+    (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -8997,10 +9013,12 @@
         (call $gl32 (i32.add (global.get $esp) (i32.const 52)))
         (local.get $face) (i32.const 64)))))
     (local.set $handle (call $host_create_font
-      (local.get $arg0) (local.get $weight) (local.get $italic) (local.get $face)))
-    (if (local.get $face) (then (call $heap_free (local.get $face))))
+      (local.get $arg0) (local.get $weight) (local.get $italic)
+      (call $g2w (local.get $face))))
     (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
       (local.get $arg0) (local.get $weight) (local.get $italic) (i32.const 0)))
+    (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
+    (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
   )
