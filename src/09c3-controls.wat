@@ -4457,7 +4457,9 @@
                       (then (local.set $coord_x (i32.const 99999))))
                     (if (i32.gt_u (local.get $coord_y) (i32.const 99999))
                       (then (local.set $coord_y (i32.const 99999))))
-                    (local.set $coord_w (i32.add (global.get $PAINT_SCRATCH) (i32.const 32)))
+                    ;; The 16 bytes immediately after PAINT_SCRATCH are free;
+                    ;; +32 is MENU_DATA_TABLE and corrupts Paint's main menu.
+                    (local.set $coord_w (i32.add (global.get $PAINT_SCRATCH) (i32.const 16)))
                     (local.set $coord_len
                       (call $statusbar_write_uint (local.get $coord_w) (local.get $coord_x)))
                     (i32.store8 (i32.add (local.get $coord_w) (local.get $coord_len)) (i32.const 44))
