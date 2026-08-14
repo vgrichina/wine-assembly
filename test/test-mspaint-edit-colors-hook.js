@@ -23,9 +23,11 @@ if (!fs.existsSync(EXE)) {
 const input = [
   '20:wait-title-command:untitled_-_Paint:55:6869:colors',
   '31:dump-windows:colors',
-  '32:dlg-click:2',
-  '33:dump-windows:closed',
-  '34:stop',
+  '32:dlg-click:1122',
+  '33:dump-windows:expanded',
+  '34:dlg-click:2',
+  '35:dump-windows:closed',
+  '36:stop',
 ].join(',');
 
 let output = '';
@@ -51,6 +53,12 @@ const dialogLine = output.split('\n').find(line =>
   line.includes('window:colors') && line.includes('dialog=true')) || '';
 assert(dialogLine.includes('title="Edit Colors"'),
   'Paint Edit Colors dialog did not expose the hook-provided caption');
+const expandedLine = output.split('\n').find(line =>
+  line.includes('window:expanded') && line.includes('dialog=true')) || '';
+assert(expandedLine.includes('size=436x330'),
+  `Paint Define Custom Colors did not expand the dialog: ${expandedLine}`);
+assert(/dlg-click: id=1122/.test(output),
+  'Paint Define Custom Colors button was not handled');
 assert(/dlg-click: id=2/.test(output), 'Paint Edit Colors Cancel button was not handled');
 assert(!output.split('\n').some(line =>
   line.includes('window:closed') && line.includes('dialog=true')),

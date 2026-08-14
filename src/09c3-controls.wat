@@ -2045,6 +2045,14 @@
       (then (return (i32.const 0))))
     (local.set $proc (i32.load offset=28 (local.get $cc_w)))
     (if (i32.eqz (local.get $proc)) (then (return (i32.const 0))))
+    ;; Hooks commonly chain unhandled messages to DefWindowProc. That call
+    ;; re-enters this WAT common-dialog proc, so suppress the hook while its
+    ;; callback is active or the same message recursively invokes the hook
+    ;; until the host WebAssembly stack overflows. Preserve every caller flag
+    ;; and restore them before inspecting whether the callback destroyed the
+    ;; dialog.
+    (i32.store offset=20 (local.get $cc_w)
+      (i32.and (local.get $flags) (i32.const -17))) ;; ~CC_ENABLEHOOK
     ;; Reuse the bounded synchronous x86 wndproc bridge. The dialog remains a
     ;; WAT-native common dialog before and after the callback.
     (local.set $installed (call $wnd_table_get (local.get $hwnd)))
@@ -2052,6 +2060,7 @@
     (local.set $result (call $wnd_send_message
       (local.get $hwnd) (local.get $msg)
       (local.get $wParam) (local.get $lParam)))
+    (i32.store offset=20 (local.get $cc_w) (local.get $flags))
     (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
       (then (return (i32.const 1))))
     (call $wnd_table_set (local.get $hwnd) (local.get $installed))
