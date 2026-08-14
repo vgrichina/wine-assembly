@@ -325,9 +325,13 @@ async function main() {
 
     const offsetHdc = finiteDc();
     assert.strictEqual(wat.test_gdi_dc_clip_offset(offsetHdc, 3, -2), 2);
+    assert.strictEqual(wat.test_gdi_dc_clip_get(offsetHdc, copy), 1);
+    assert.deepStrictEqual(bands(copy), [[3, -2, 643, 478]],
+      'OffsetClipRgn must retain the application clip independently of target visibility');
     assert.strictEqual(wat.test_gdi_dc_clip_get_box(offsetHdc, RECT_SCRATCH), 2);
     assert.deepStrictEqual([0, 4, 8, 12].map(offset =>
-      dv.getInt32(RECT_SCRATCH + offset, true)), [3, -2, 643, 478]);
+      dv.getInt32(RECT_SCRATCH + offset, true)), [3, 0, 640, 478],
+    'GetClipBox must report the app clip intersected with target visibility');
   });
 
   check('clearing and releasing a DC destroy the owned clip region', () => {

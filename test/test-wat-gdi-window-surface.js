@@ -11,6 +11,7 @@ const { compileWat } = require('../lib/compile-wat');
 
 const HWND = 0x10001;
 const CHILD = 0x10002;
+const GRANDCHILD = 0x10003;
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -19,17 +20,22 @@ async function main() {
   let canvas = createCanvas(40, 30);
   let repaints = 0;
   const win = {
-    hwnd: HWND, x: 100, y: 50, w: 40, h: 30, style: 0, isChild: false,
+    hwnd: HWND, x: 100, y: 50, w: 40, h: 30, style: 0x10000000, isChild: false,
     clientRect: { x: 103, y: 55, w: 34, h: 22 },
   };
   const child = {
-    hwnd: CHILD, x: 7, y: 12, w: 20, h: 14, style: 0x40000000,
+    hwnd: CHILD, x: 7, y: 12, w: 20, h: 14, style: 0x50000000,
     isChild: true, parentHwnd: HWND,
     clientRect: { x: 0, y: 0, w: 20, h: 14 },
   };
+  const grandchild = {
+    hwnd: GRANDCHILD, x: 15, y: 8, w: 10, h: 10, style: 0x50000000,
+    isChild: true, parentHwnd: CHILD,
+    clientRect: { x: 0, y: 0, w: 10, h: 10 },
+  };
   const renderer = {
     canvas: createCanvas(640, 480),
-    windows: { [HWND]: win, [CHILD]: child },
+    windows: { [HWND]: win, [CHILD]: child, [GRANDCHILD]: grandchild },
     wasm: { exports: null },
     getWindowCanvas: hwnd => hwnd === HWND ? { canvas, ctx: canvas.getContext('2d') } : null,
     scheduleRepaint: () => { repaints++; },
@@ -81,12 +87,18 @@ async function main() {
 
   wat.wnd_table_set(HWND, 0);
   wat.wnd_table_set(CHILD, 0);
+  wat.wnd_table_set(GRANDCHILD, 0);
   wat.ctrl_set_geom(HWND, 100, 50, 40, 30);
   wat.ctrl_set_geom(CHILD, 7, 12, 20, 14);
+  wat.ctrl_set_geom(GRANDCHILD, 15, 8, 10, 10);
   wat.test_wnd_set_parent(CHILD, HWND);
-  wat.wnd_set_style_export(CHILD, 0x40000000);
+  wat.test_wnd_set_parent(GRANDCHILD, CHILD);
+  wat.wnd_set_style_export(HWND, 0x10000000);
+  wat.wnd_set_style_export(CHILD, 0x50000000);
+  wat.wnd_set_style_export(GRANDCHILD, 0x50000000);
   wat.test_gdi_client_rect_set(HWND, 3, 5, 37, 27);
   wat.test_gdi_client_rect_set(CHILD, 0, 0, 20, 14);
+  wat.test_gdi_client_rect_set(GRANDCHILD, 0, 0, 10, 10);
 
   const hdc = wat.test_call_GetDC(HWND) >>> 0;
   assert(hdc, 'GetDC must allocate a real window DC');
@@ -110,6 +122,49 @@ async function main() {
     [...canvas.getContext('2d').getImageData(3, 5, 1, 1).data],
     [192, 192, 192, 255],
     'attached presentation must expose untouched canonical window pixels');
+
+  const clipCopy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0) >>> 0;
+  assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 0,
+    'GetDC system visibility must not appear as an application-selected clip');
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 33, 21), 1);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 34, 21), 0,
+    'effective visibility must still constrain raster queries to the client');
+  const appClip = wat.test_gdi_rgn_alloc_rect(2, 2, 10, 10) >>> 0;
+  assert.strictEqual(wat.test_gdi_dc_clip_select(hdc, appClip), 2);
+  assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 1);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 9, 9), 1);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 10, 9), 0,
+    'raster visibility must intersect app and system clips');
+  assert.strictEqual(wat.test_gdi_dc_clip_clear(hdc), 1);
+  assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 0);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 33, 21), 1,
+    'clearing the app clip must retain USER visibility');
+
+  // Paint establishes its preview clip under MM_TEXT, then switches the same
+  // DC to MM_ANISOTROPIC before drawing the page. The retained clip must stay
+  // in device coordinates instead of being reinterpreted by the new mapping.
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 56, 2, 0), 0);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 60, 1, 0), 0);
+  assert.strictEqual(wat.test_gdi_dc_clip_intersect_rect(hdc, -1, -1, 20, 15), 2);
+  assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 1);
+  const clipBox = paintScratch;
+  assert.strictEqual(wat.test_gdi_rgn_get_box(clipCopy, clipBox), 2);
+  assert.deepStrictEqual([
+    dv.getInt32(clipBox, true), dv.getInt32(clipBox + 4, true),
+    dv.getInt32(clipBox + 8, true), dv.getInt32(clipBox + 12, true),
+  ], [1, 0, 22, 16], 'IntersectClipRect must retain its mapped device bounds');
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 48, 100, 0), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 52, 100, 0), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 64, 10, 0), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 68, 10, 0), 1);
+  assert.strictEqual(wat.test_call_SetPixel(hdc, 100, 50, 0x000000FF), 0x000000FF);
+  assert.deepStrictEqual(
+    [...canvas.getContext('2d').getImageData(15, 11, 1, 1).data.subarray(0, 3)],
+    [255, 0, 0], 'later anisotropic drawing must test the retained device clip');
+  assert.strictEqual(wat.test_gdi_dc_clip_clear(hdc), 1);
+  assert.strictEqual(wat.test_call_SetMapMode(hdc, 1), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 56, 0, 0), 2);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 60, 0, 0), 1);
 
   const redBrush = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
   const rect = wat.guest_alloc(16) >>> 0;
@@ -171,6 +226,24 @@ async function main() {
   assert([...childInk].some((value, index) => index % 4 !== 3 && value < 128),
     'child text must rasterize at its WAT-computed parent-surface origin');
   assert.strictEqual(wat.test_call_ReleaseDC(CHILD, childDc), 1);
+
+  const grandchildDc = wat.test_call_GetDC(GRANDCHILD) >>> 0;
+  assert(grandchildDc, 'nested child GetDC must allocate a canonical window DC');
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(grandchildDc, 4, 1), 1);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(grandchildDc, 5, 1), 0,
+    'nested visibility must clip through the immediate parent client');
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(grandchildDc, 4, 2), 0,
+    'nested visibility must also clip through the top-level client');
+  const beforeHiddenText = Buffer.from(canvas.toBuffer('raw'));
+  wat.wnd_set_style_export(CHILD, 0x40000000);
+  wat.dc_apply_client_clip(grandchildDc, GRANDCHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(grandchildDc, 0, 0), 0,
+    'a hidden ancestor must produce an empty USER visible region');
+  assert.strictEqual(wat.test_call_TextOutA(grandchildDc, 0, 0, text, 1), 1);
+  assert.deepStrictEqual(Buffer.from(canvas.toBuffer('raw')), beforeHiddenText,
+    'Canvas text fallback must consume the same empty effective device clip');
+  wat.wnd_set_style_export(CHILD, 0x50000000);
+  assert.strictEqual(wat.test_call_ReleaseDC(GRANDCHILD, grandchildDc), 1);
 
   // WAT-native control/chrome painters predate the explicit GetDC table and
   // still pass the Win9x-style encoded handles directly. They must be adopted

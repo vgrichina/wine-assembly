@@ -141,7 +141,7 @@ async function main() {
     ]);
   });
 
-  check('scaled targets inverse-map device pixels for logical clipping', () => {
+  check('SelectClipRgn retains device pixels across scaled mapping modes', () => {
     const t = target(10, 8);
     const green = object(2, 0, 0, 0x0000FF00);
     dv.setInt32(t.desc + 40, 5, true);
@@ -154,10 +154,10 @@ async function main() {
       t.hdc, t.desc, 0, 0, 5, 4, 0x30018, green, 13), 1);
     assert.deepStrictEqual(rows(t), [
       '..........',
-      '.GGGGGG...',
-      '.GGGGGG...',
-      '.GGGGGG...',
-      '.GGGGGG...',
+      '.GGG......',
+      '.GGG......',
+      '..........',
+      '..........',
       '..........',
       '..........',
       '..........',

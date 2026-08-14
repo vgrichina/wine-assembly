@@ -11,8 +11,9 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are DIB/pattern brushes in pattern-dependent blits, callback APIs such as
-object/font enumeration, and metafile and printer compatibility. The
+gaps are complete path recording, callback APIs such as object/font
+enumeration, scalable glyph extraction, and metafile and printer compatibility.
+The
 checked-in PE corpus has a machine-checked public API inventory in
 `gdi-public-api-status.json`; its exact sorted import-set hash
 prevents new application dependencies from silently expanding the
@@ -24,26 +25,33 @@ generation-tagged handles and owns normalization, mutation, offset, bounding
 boxes, object typing, lifetime, and `RGN_AND`/`OR`/`XOR`/`DIFF`/`COPY`. Each
 region has a fixed canonical arena of up to 208 sorted, disjoint half-open band
 rectangles. Boolean results are constructed in alias-safe WAT scratch buffers.
-JavaScript receives those rectangles only to rebuild derived Canvas clip and
-window-shape presentation data. Ellipse regions use deterministic integer
+JavaScript receives those rectangles only for window-shape presentation data;
+Canvas text receives a bounded copy of the already-combined effective bands.
+Ellipse regions use deterministic integer
 pixel-center scan conversion into the same WAT arena. Polygon regions use an
 exact-rational WAT scanline with half-open edges and grouped crossings for both
 `ALTERNATE` and `WINDING` fill modes. The current explicit envelope is 208
 vertices, 4,096 rows, and coordinates within +/-1,000,000; calls outside it
 fail instead of delegating geometry to JavaScript.
 
-Application-defined DC clips are also WAT-owned. Each live HDC entry holds a
+Application-defined DC clips and USER-derived visible regions are WAT-owned in
+separate tables. Each live HDC entry holds a
 private canonical HRGN copy, so deleting or modifying the caller's selected
 region cannot change the DC. `SelectClipRgn`, `ExtSelectClipRgn`,
 `IntersectClipRect`, `ExcludeClipRect`, `OffsetClipRgn`, `GetClipRgn`,
-`GetClipBox`, `PtVisible`, and `RectVisible` operate on that copy. JavaScript
-receives a rebuilt host-region mirror only for Canvas clipping. DC deletion and
-release destroy the private region. `SaveDC`/`RestoreDC` use a WAT-owned nested
+`GetClipBox`, `PtVisible`, and `RectVisible` operate on the effective
+intersection. Region selection remains in documented device units, while
+logical rectangle, offset, visibility, and bounding-box APIs transform at the
+call boundary. Retained clips therefore do not move when an application later
+changes its mapping mode. Client, whole-window, nested ancestor,
+`WS_CLIPCHILDREN`, and `WS_CLIPSIBLINGS` visibility contributes an independent
+system region; `GetClipRgn` continues to expose only application state. Canvas
+text consumes the same effective device bands as WAT geometry. DC deletion and
+release destroy both private regions. `SaveDC`/`RestoreDC` use a WAT-owned nested
 stack and take independent copies of the selected explicit clip along with the
 complete hot DC record, auxiliary text/brush/arc state, color adjustment, and
 selected logical palette. Absolute and relative restore indices discard the
-restored snapshot and every newer snapshot. The derived system/window
-visibility region remains separate follow-up work.
+restored snapshot and every newer snapshot.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
@@ -378,12 +386,12 @@ The existing region representation can remain initially if it can enumerate
 rectangles deterministically. A banded region representation is the preferred
 long-term form because fills, blits, and upload bounds all consume spans.
 
-The first migration slice handles unclipped and rectangularly clipped DIB
-fills exactly. WAT now owns canonical band regions for rectangle combinations,
-scan-converted polygons and ellipses, and application-defined HDC clips. The
-next clipping slice separates and combines system/window visibility clips and
-adds `SaveDC`/`RestoreDC` clip snapshots before raster kernels consume the
-canonical intersection directly.
+WAT now owns canonical band regions for rectangle combinations,
+scan-converted polygons and ellipses, application-defined HDC clips, and the
+independent USER-derived visible region. Raster and Canvas text paths consume
+the same target-bounds AND application-clip AND system-clip intersection.
+`SaveDC`/`RestoreDC` snapshots the application clip by value; the system region
+is re-derived from current window state.
 
 ## Presentation
 

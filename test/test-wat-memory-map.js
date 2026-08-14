@@ -93,6 +93,7 @@ const requiredRegions = [
   'GDI_REGION_BANDS',
   'GDI_REGION_WORK',
   'GDI_DC_CLIP_TABLE',
+  'GDI_DC_SYSTEM_CLIP_TABLE',
   'GDI_DC_SAVE_TABLE',
   'GDI_LINE_DESC',
   'GDI_BLIT_DESC',

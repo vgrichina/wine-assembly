@@ -967,6 +967,7 @@
   ;; 0x07F0A420 4B       GDI_BITMAP_FONT_IO (filesystem read count)
   ;; 0x07F0A440 80B      GDI_BITMAP_FONT_DESC (surface scratch)
   ;; 0x07F0A800 1KB      GDI_BITMAP_FONT_TABLE (16 installed FNT strikes)
+  ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte closed-path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1182,6 +1183,10 @@
   (global $GDI_DC_AUX_STRIDE i32 (i32.const 32))
   (global $GDI_COLOR_ADJUST_TABLE i32 (i32.const 0x07EFE800))
   (global $GDI_COLOR_ADJUST_TABLE_SIZE i32 (i32.const 0x00001800))
+  ;; USER-derived visible regions are independent from app-selected DC clips.
+  (global $GDI_DC_SYSTEM_CLIP_TABLE i32 (i32.const 0x07F0C000))
+  (global $GDI_DC_SYSTEM_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
+  (global $GDI_DC_SYSTEM_CLIP_COUNT i32 (i32.const 256))
   ;; Keep WAT-owned namespaces disjoint from the retained Canvas font and
   ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))

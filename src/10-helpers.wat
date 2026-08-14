@@ -1028,7 +1028,140 @@
         (local.set $hrgn (i32.load offset=4 (local.get $entry)))
         (if (local.get $hrgn) (then (drop (call $gdi_rgn_delete (local.get $hrgn)))))
         (i32.store (local.get $entry) (i32.const 0))
-        (i32.store offset=4 (local.get $entry) (i32.const 0)))))
+        (i32.store offset=4 (local.get $entry) (i32.const 0))))
+    (call $gdi_dc_system_clip_release (local.get $hdc)))
+
+  ;; USER's visible region is derived from window hierarchy/style state. Keep
+  ;; it independent from the application-selected clip so GetClipRgn and
+  ;; SaveDC continue to expose only application state.
+  (func $gdi_dc_system_clip_entry (param $hdc i32) (param $create i32) (result i32)
+    (local $i i32) (local $entry i32) (local $empty i32)
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_SYSTEM_CLIP_COUNT)))
+      (local.set $entry (i32.add (global.get $GDI_DC_SYSTEM_CLIP_TABLE)
+        (i32.shl (local.get $i) (i32.const 3))))
+      (if (i32.eq (i32.load (local.get $entry)) (local.get $hdc))
+        (then (return (local.get $entry))))
+      (if (i32.and (i32.eqz (local.get $empty))
+            (i32.eqz (i32.load (local.get $entry))))
+        (then (local.set $empty (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+          (i32.ne (local.get $empty) (i32.const 0)))
+      (then
+        (i32.store (local.get $empty) (local.get $hdc))
+        (i32.store offset=4 (local.get $empty) (i32.const 0))
+        (return (local.get $empty))))
+    (i32.const 0))
+
+  (func $gdi_dc_system_clip_handle (param $hdc i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $gdi_dc_system_clip_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $entry) (then (return (i32.load offset=4 (local.get $entry)))))
+    (i32.const 0))
+
+  (func $gdi_dc_system_clip_release (param $hdc i32)
+    (local $entry i32) (local $clip i32)
+    (local.set $entry (call $gdi_dc_system_clip_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $entry)
+      (then
+        (local.set $clip (i32.load offset=4 (local.get $entry)))
+        (if (local.get $clip) (then (drop (call $gdi_rgn_delete (local.get $clip)))))
+        (i64.store (local.get $entry) (i64.const 0)))))
+
+  (func $gdi_dc_system_clip_reset (param $hdc i32) (result i32)
+    (local $entry i32) (local $old i32) (local $clip i32)
+    (local.set $clip (call $gdi_dc_clip_default_region (local.get $hdc)))
+    (if (i32.eqz (local.get $clip)) (then (return (i32.const 0))))
+    (local.set $entry (call $gdi_dc_system_clip_entry (local.get $hdc) (i32.const 1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (drop (call $gdi_rgn_delete (local.get $clip)))
+        (return (i32.const 0))))
+    (local.set $old (i32.load offset=4 (local.get $entry)))
+    (i32.store offset=4 (local.get $entry) (local.get $clip))
+    (if (local.get $old) (then (drop (call $gdi_rgn_delete (local.get $old)))))
+    (call $gdi_rgn_get_box (local.get $clip) (i32.const 0)))
+
+  (func $gdi_dc_system_clip_rect (param $hdc i32)
+        (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+        (param $mode i32) (result i32)
+    (local $entry i32) (local $clip i32) (local $rect i32) (local $result i32)
+    (if (i32.and (i32.ne (local.get $mode) (i32.const 1))
+          (i32.ne (local.get $mode) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $entry (call $gdi_dc_system_clip_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.or (i32.eqz (local.get $entry))
+          (i32.eqz (i32.load offset=4 (local.get $entry))))
+      (then
+        (if (i32.eqz (call $gdi_dc_system_clip_reset (local.get $hdc)))
+          (then (return (i32.const 0))))
+        (local.set $entry (call $gdi_dc_system_clip_entry (local.get $hdc) (i32.const 0)))))
+    (local.set $clip (i32.load offset=4 (local.get $entry)))
+    (local.set $rect (call $gdi_rgn_alloc_rect
+      (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
+    (if (i32.eqz (local.get $rect)) (then (return (i32.const 0))))
+    (local.set $result (call $gdi_rgn_combine
+      (local.get $clip) (local.get $clip) (local.get $rect) (local.get $mode)))
+    (drop (call $gdi_rgn_delete (local.get $rect)))
+    (local.get $result))
+
+  ;; Return a temporary owned HRGN for target bounds AND app clip AND USER
+  ;; visible region. The caller must delete it. Raster hot paths avoid this
+  ;; allocation and test the two retained regions directly.
+  (func $gdi_dc_effective_clip_region (param $hdc i32) (result i32)
+    (local $result i32) (local $entry i32) (local $app i32) (local $system i32)
+    (local $size i32) (local $copied_app i32) (local $copied_system i32)
+    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $entry) (then (local.set $app (i32.load offset=4 (local.get $entry)))))
+    (local.set $system (call $gdi_dc_system_clip_handle (local.get $hdc)))
+    (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
+    (if (local.get $size)
+      (then (local.set $result (call $gdi_dc_clip_default_region (local.get $hdc))))
+      (else
+        ;; Region-only synthetic DCs have no target bounds. Preserve the
+        ;; retained clip contract used by clip queries and unit harnesses.
+        (local.set $result (call $gdi_rgn_alloc_rect
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (if (i32.and (i32.ne (local.get $result) (i32.const 0))
+              (i32.ne (local.get $app) (i32.const 0)))
+          (then
+            (if (i32.eqz (call $gdi_rgn_combine
+                  (local.get $result) (local.get $app) (i32.const 0) (i32.const 5)))
+              (then
+                (drop (call $gdi_rgn_delete (local.get $result)))
+                (return (i32.const 0))))
+            (local.set $copied_app (i32.const 1))))
+        (if (i32.and (i32.ne (local.get $result) (i32.const 0))
+              (i32.and (i32.eqz (local.get $app))
+                (i32.ne (local.get $system) (i32.const 0))))
+          (then
+            (if (i32.eqz (call $gdi_rgn_combine
+                  (local.get $result) (local.get $system) (i32.const 0) (i32.const 5)))
+              (then
+                (drop (call $gdi_rgn_delete (local.get $result)))
+                (return (i32.const 0))))
+            (local.set $copied_system (i32.const 1))))))
+    (if (i32.eqz (local.get $result)) (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $app) (i32.const 0))
+          (i32.eqz (local.get $copied_app)))
+      (then
+        (if (i32.eqz (call $gdi_rgn_combine
+              (local.get $result) (local.get $result) (local.get $app) (i32.const 1)))
+          (then
+            (drop (call $gdi_rgn_delete (local.get $result)))
+            (return (i32.const 0))))))
+    (if (i32.and (i32.ne (local.get $system) (i32.const 0))
+          (i32.eqz (local.get $copied_system)))
+      (then
+        (if (i32.eqz (call $gdi_rgn_combine
+              (local.get $result) (local.get $result) (local.get $system) (i32.const 1)))
+          (then
+            (drop (call $gdi_rgn_delete (local.get $result)))
+            (return (i32.const 0))))))
+    (local.get $result))
 
   (func $gdi_dc_path_entry (param $hdc i32) (param $create i32) (result i32)
     (local $i i32) (local $entry i32) (local $empty i32)
@@ -1159,9 +1292,41 @@
     (drop (call $gdi_dc_clip_sync (local.get $hdc) (local.get $entry)))
     (local.get $result))
 
+  ;; Explicit clips are retained in DC device coordinates, matching USER's
+  ;; visible region and the canonical surface rasterizer. Logical rectangle
+  ;; APIs transform once when the clip is changed; later map-mode changes do
+  ;; not reinterpret the retained region.
+  (func $gdi_dc_clip_map_x (param $hdc i32) (param $x i32) (result i32)
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
+      (then (return (i32.sub
+        (call $gdi_line_map_x (local.get $desc) (local.get $x))
+        (i32.load offset=72 (local.get $desc))))))
+    (local.get $x))
+
+  (func $gdi_dc_clip_map_y (param $hdc i32) (param $y i32) (result i32)
+    (local $desc i32)
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
+      (then (return (i32.sub
+        (call $gdi_line_map_y (local.get $desc) (local.get $y))
+        (i32.load offset=76 (local.get $desc))))))
+    (local.get $y))
+
   (func $gdi_dc_clip_intersect_rect (param $hdc i32) (param $left i32) (param $top i32)
         (param $right i32) (param $bottom i32) (result i32)
-    (local $rect i32) (local $result i32)
+    (local $rect i32) (local $result i32) (local $swap i32)
+    (local.set $left (call $gdi_dc_clip_map_x (local.get $hdc) (local.get $left)))
+    (local.set $right (call $gdi_dc_clip_map_x (local.get $hdc) (local.get $right)))
+    (local.set $top (call $gdi_dc_clip_map_y (local.get $hdc) (local.get $top)))
+    (local.set $bottom (call $gdi_dc_clip_map_y (local.get $hdc) (local.get $bottom)))
+    (if (i32.gt_s (local.get $left) (local.get $right))
+      (then (local.set $swap (local.get $left))
+        (local.set $left (local.get $right)) (local.set $right (local.get $swap))))
+    (if (i32.gt_s (local.get $top) (local.get $bottom))
+      (then (local.set $swap (local.get $top))
+        (local.set $top (local.get $bottom)) (local.set $bottom (local.get $swap))))
     (local.set $rect (call $gdi_rgn_alloc_rect
       (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
     (if (i32.eqz (local.get $rect)) (then (return (i32.const 0))))
@@ -1172,7 +1337,17 @@
 
   (func $gdi_dc_clip_exclude_rect (param $hdc i32) (param $left i32) (param $top i32)
         (param $right i32) (param $bottom i32) (result i32)
-    (local $cut i32) (local $result i32)
+    (local $cut i32) (local $result i32) (local $swap i32)
+    (local.set $left (call $gdi_dc_clip_map_x (local.get $hdc) (local.get $left)))
+    (local.set $right (call $gdi_dc_clip_map_x (local.get $hdc) (local.get $right)))
+    (local.set $top (call $gdi_dc_clip_map_y (local.get $hdc) (local.get $top)))
+    (local.set $bottom (call $gdi_dc_clip_map_y (local.get $hdc) (local.get $bottom)))
+    (if (i32.gt_s (local.get $left) (local.get $right))
+      (then (local.set $swap (local.get $left))
+        (local.set $left (local.get $right)) (local.set $right (local.get $swap))))
+    (if (i32.gt_s (local.get $top) (local.get $bottom))
+      (then (local.set $swap (local.get $top))
+        (local.set $top (local.get $bottom)) (local.set $bottom (local.get $swap))))
     (local.set $cut (call $gdi_rgn_alloc_rect
       (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
     (if (i32.eqz (local.get $cut)) (then (return (i32.const 0))))
@@ -1183,6 +1358,12 @@
 
   (func $gdi_dc_clip_offset (param $hdc i32) (param $dx i32) (param $dy i32) (result i32)
     (local $entry i32) (local $base i32) (local $result i32)
+    (local.set $dx (i32.sub
+      (call $gdi_dc_clip_map_x (local.get $hdc) (local.get $dx))
+      (call $gdi_dc_clip_map_x (local.get $hdc) (i32.const 0))))
+    (local.set $dy (i32.sub
+      (call $gdi_dc_clip_map_y (local.get $hdc) (local.get $dy))
+      (call $gdi_dc_clip_map_y (local.get $hdc) (i32.const 0))))
     (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
     (if (i32.or (i32.eqz (local.get $entry)) (i32.eqz (i32.load offset=4 (local.get $entry))))
       (then
@@ -1215,68 +1396,115 @@
     (i32.const 1))
 
   (func $gdi_dc_clip_get_box (param $hdc i32) (param $rect i32) (result i32)
-    (local $entry i32) (local $size i32)
-    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
-    (if (i32.and (i32.ne (local.get $entry) (i32.const 0))
-          (i32.ne (i32.load offset=4 (local.get $entry)) (i32.const 0)))
-      (then (return (call $gdi_rgn_get_box (i32.load offset=4 (local.get $entry)) (local.get $rect)))))
-    (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
-    (if (local.get $rect)
+    (local $effective i32) (local $result i32) (local $desc i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32) (local $swap i32)
+    (local.set $effective (call $gdi_dc_effective_clip_region (local.get $hdc)))
+    (if (i32.eqz (local.get $effective)) (then (return (i32.const 0))))
+    (local.set $result (call $gdi_rgn_get_box (local.get $effective) (local.get $rect)))
+    (drop (call $gdi_rgn_delete (local.get $effective)))
+    ;; GetClipBox reports logical units even though the retained effective
+    ;; region is device-space state.
+    (if (i32.and (i32.ne (local.get $rect) (i32.const 0))
+          (i32.ne (local.get $result) (i32.const 0)))
       (then
-        (i32.store (local.get $rect) (i32.const 0))
-        (i32.store offset=4 (local.get $rect) (i32.const 0))
-        (i32.store offset=8 (local.get $rect) (i32.and (local.get $size) (i32.const 0xFFFF)))
-        (i32.store offset=12 (local.get $rect) (i32.shr_u (local.get $size) (i32.const 16)))))
-    (i32.const 2))
+        (local.set $desc (global.get $GDI_LINE_DESC))
+        (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
+          (then
+            (local.set $left (call $gdi_shape_unmap_x (local.get $desc)
+              (i32.add (i32.load (local.get $rect)) (i32.load offset=72 (local.get $desc)))))
+            (local.set $top (call $gdi_shape_unmap_y (local.get $desc)
+              (i32.add (i32.load offset=4 (local.get $rect)) (i32.load offset=76 (local.get $desc)))))
+            (local.set $right (call $gdi_shape_unmap_x (local.get $desc)
+              (i32.add (i32.load offset=8 (local.get $rect)) (i32.load offset=72 (local.get $desc)))))
+            (local.set $bottom (call $gdi_shape_unmap_y (local.get $desc)
+              (i32.add (i32.load offset=12 (local.get $rect)) (i32.load offset=76 (local.get $desc)))))
+            (if (i32.gt_s (local.get $left) (local.get $right))
+              (then (local.set $swap (local.get $left))
+                (local.set $left (local.get $right)) (local.set $right (local.get $swap))))
+            (if (i32.gt_s (local.get $top) (local.get $bottom))
+              (then (local.set $swap (local.get $top))
+                (local.set $top (local.get $bottom)) (local.set $bottom (local.get $swap))))
+            (i32.store (local.get $rect) (local.get $left))
+            (i32.store offset=4 (local.get $rect) (local.get $top))
+            (i32.store offset=8 (local.get $rect) (local.get $right))
+            (i32.store offset=12 (local.get $rect) (local.get $bottom))))))
+    (local.get $result))
 
-  (func $gdi_dc_clip_point_visible (param $hdc i32) (param $x i32) (param $y i32) (result i32)
-    (local $entry i32) (local $record i32) (local $size i32) (local $visible i32)
-    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
-    (if (i32.or (i32.eqz (local.get $entry)) (i32.eqz (i32.load offset=4 (local.get $entry))))
-      (then
-        (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
-        (local.set $visible (i32.and
+  (func $gdi_dc_clip_device_point_visible (param $hdc i32) (param $x i32) (param $y i32) (result i32)
+    (local $entry i32) (local $record i32) (local $size i32) (local $clip i32)
+    ;; Surface bounds are always part of the effective clipping region.
+    (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
+    (if (i32.and (local.get $size) (i32.eqz (i32.and
           (i32.and (i32.ge_s (local.get $x) (i32.const 0))
             (i32.lt_s (local.get $x) (i32.and (local.get $size) (i32.const 0xFFFF))))
           (i32.and (i32.ge_s (local.get $y) (i32.const 0))
-            (i32.lt_s (local.get $y) (i32.shr_u (local.get $size) (i32.const 16))))))
-        (return (local.get $visible))))
-    (local.set $record (call $gdi_rgn_record (i32.load offset=4 (local.get $entry))))
-    (call $gdi_rgn_contains
-      (call $gdi_rgn_bands (local.get $record)) (i32.load offset=28 (local.get $record))
-      (local.get $x) (local.get $y)))
+            (i32.lt_s (local.get $y) (i32.shr_u (local.get $size) (i32.const 16)))))))
+      (then (return (i32.const 0))))
+    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $entry) (then (local.set $clip (i32.load offset=4 (local.get $entry)))))
+    (if (local.get $clip)
+      (then
+        (local.set $record (call $gdi_rgn_record (local.get $clip)))
+        (if (i32.or (i32.eqz (local.get $record))
+              (i32.eqz (call $gdi_rgn_contains
+                (call $gdi_rgn_bands (local.get $record))
+                (i32.load offset=28 (local.get $record))
+                (local.get $x) (local.get $y))))
+          (then (return (i32.const 0))))))
+    (local.set $clip (call $gdi_dc_system_clip_handle (local.get $hdc)))
+    (if (local.get $clip)
+      (then
+        (local.set $record (call $gdi_rgn_record (local.get $clip)))
+        (if (i32.or (i32.eqz (local.get $record))
+              (i32.eqz (call $gdi_rgn_contains
+                (call $gdi_rgn_bands (local.get $record))
+                (i32.load offset=28 (local.get $record))
+                (local.get $x) (local.get $y))))
+          (then (return (i32.const 0))))))
+    (i32.const 1))
+
+  (func $gdi_dc_clip_point_visible (param $hdc i32) (param $x i32) (param $y i32) (result i32)
+    (call $gdi_dc_clip_device_point_visible (local.get $hdc)
+      (call $gdi_dc_clip_map_x (local.get $hdc) (local.get $x))
+      (call $gdi_dc_clip_map_y (local.get $hdc) (local.get $y))))
 
   (func $gdi_dc_clip_rect_visible (param $hdc i32) (param $rect i32) (result i32)
-    (local $entry i32) (local $record i32) (local $base i32) (local $count i32) (local $size i32)
-    (local $i i32) (local $p i32) (local $visible i32)
+    (local $effective i32) (local $record i32) (local $base i32) (local $count i32)
+    (local $i i32) (local $p i32) (local $visible i32) (local $swap i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
     (if (i32.eqz (local.get $rect)) (then (return (i32.const 0))))
-    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
-    (if (i32.or (i32.eqz (local.get $entry)) (i32.eqz (i32.load offset=4 (local.get $entry))))
-      (then
-        (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
-        (local.set $visible (i32.and
-          (i32.and (i32.lt_s (i32.load (local.get $rect))
-              (i32.and (local.get $size) (i32.const 0xFFFF)))
-            (i32.gt_s (i32.load offset=8 (local.get $rect)) (i32.const 0)))
-          (i32.and (i32.lt_s (i32.load offset=4 (local.get $rect))
-              (i32.shr_u (local.get $size) (i32.const 16)))
-            (i32.gt_s (i32.load offset=12 (local.get $rect)) (i32.const 0)))))
-        (return (local.get $visible))))
-    (local.set $record (call $gdi_rgn_record (i32.load offset=4 (local.get $entry))))
+    (local.set $left (call $gdi_dc_clip_map_x
+      (local.get $hdc) (i32.load (local.get $rect))))
+    (local.set $top (call $gdi_dc_clip_map_y
+      (local.get $hdc) (i32.load offset=4 (local.get $rect))))
+    (local.set $right (call $gdi_dc_clip_map_x
+      (local.get $hdc) (i32.load offset=8 (local.get $rect))))
+    (local.set $bottom (call $gdi_dc_clip_map_y
+      (local.get $hdc) (i32.load offset=12 (local.get $rect))))
+    (if (i32.gt_s (local.get $left) (local.get $right))
+      (then (local.set $swap (local.get $left))
+        (local.set $left (local.get $right)) (local.set $right (local.get $swap))))
+    (if (i32.gt_s (local.get $top) (local.get $bottom))
+      (then (local.set $swap (local.get $top))
+        (local.set $top (local.get $bottom)) (local.set $bottom (local.get $swap))))
+    (local.set $effective (call $gdi_dc_effective_clip_region (local.get $hdc)))
+    (if (i32.eqz (local.get $effective)) (then (return (i32.const 0))))
+    (local.set $record (call $gdi_rgn_record (local.get $effective)))
     (local.set $base (call $gdi_rgn_bands (local.get $record)))
     (local.set $count (i32.load offset=28 (local.get $record)))
     (block $miss (loop $scan
       (br_if $miss (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $p (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
       (if (i32.and
-            (i32.and (i32.lt_s (i32.load (local.get $p)) (i32.load offset=8 (local.get $rect)))
-              (i32.gt_s (i32.load offset=8 (local.get $p)) (i32.load (local.get $rect))))
-            (i32.and (i32.lt_s (i32.load offset=4 (local.get $p)) (i32.load offset=12 (local.get $rect)))
-              (i32.gt_s (i32.load offset=12 (local.get $p)) (i32.load offset=4 (local.get $rect)))))
-        (then (return (i32.const 1))))
+            (i32.and (i32.lt_s (i32.load (local.get $p)) (local.get $right))
+              (i32.gt_s (i32.load offset=8 (local.get $p)) (local.get $left)))
+            (i32.and (i32.lt_s (i32.load offset=4 (local.get $p)) (local.get $bottom))
+              (i32.gt_s (i32.load offset=12 (local.get $p)) (local.get $top))))
+        (then (local.set $visible (i32.const 1)) (br $miss)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (i32.const 0))
+    (drop (call $gdi_rgn_delete (local.get $effective)))
+    (local.get $visible))
 
   ;; ---- WAT-owned GDI objects and DC state ------------------------------
   ;; Object records use 48 bytes. Types are 1=pen, 2=brush, 3=bitmap,
@@ -2854,8 +3082,9 @@
   (func $gdi_text_prepare (param $hdc i32) (result i32)
     (local $dc i32) (local $desc i32) (local $token i32)
     (local $origin_x i32) (local $origin_y i32) (local $aux i32)
-    (local $clip_entry i32) (local $clip_record i32)
-    (local $clip_bands i32) (local $clip_count i32)
+    (local $clip_entry i32) (local $clip_record i32) (local $system_clip i32)
+    (local $effective i32) (local $clip_bands i32) (local $clip_count i32)
+    (local $bound i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $token (local.get $hdc))
@@ -2867,18 +3096,23 @@
         (local.set $origin_y (i32.load offset=76 (local.get $desc)))))
     (local.set $aux (call $gdi_dc_aux_entry (local.get $hdc) (i32.const 1)))
     (local.set $clip_entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
-    (if (i32.and (i32.ne (local.get $clip_entry) (i32.const 0))
-          (i32.ne (i32.load offset=4 (local.get $clip_entry)) (i32.const 0)))
+    (local.set $system_clip (call $gdi_dc_system_clip_handle (local.get $hdc)))
+    (if (i32.or
+          (i32.and (i32.ne (local.get $clip_entry) (i32.const 0))
+            (i32.ne (i32.load offset=4 (local.get $clip_entry)) (i32.const 0)))
+          (i32.ne (local.get $system_clip) (i32.const 0)))
       (then
-        (local.set $clip_record (call $gdi_rgn_record
-          (i32.load offset=4 (local.get $clip_entry))))
+        (local.set $effective (call $gdi_dc_effective_clip_region (local.get $hdc)))
+        (local.set $clip_record (call $gdi_rgn_record (local.get $effective)))
         (if (local.get $clip_record)
           (then
             (local.set $clip_bands (call $gdi_rgn_bands (local.get $clip_record)))
             (local.set $clip_count (i32.load offset=28 (local.get $clip_record)))))))
-    (if (i32.eqz (call $host_gdi_text_bind_raw
-          (local.get $token) (local.get $dc) (local.get $origin_x) (local.get $origin_y)
-          (local.get $aux) (local.get $clip_bands) (local.get $clip_count)))
+    (local.set $bound (call $host_gdi_text_bind_raw
+      (local.get $token) (local.get $dc) (local.get $origin_x) (local.get $origin_y)
+      (local.get $aux) (local.get $clip_bands) (local.get $clip_count)))
+    (if (local.get $effective) (then (drop (call $gdi_rgn_delete (local.get $effective)))))
+    (if (i32.eqz (local.get $bound))
       (then (return (i32.const 0))))
     (local.get $token))
 
@@ -3480,10 +3714,10 @@
           (i32.or (i32.lt_s (local.get $y) (i32.const 0))
             (i32.ge_s (local.get $y) (i32.load offset=8 (local.get $desc)))))
       (then (return (i32.const 0))))
-    (if (i32.eqz (call $gdi_dc_clip_point_visible
+    (if (i32.eqz (call $gdi_dc_clip_device_point_visible
           (local.get $hdc)
-          (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
-          (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
+          (i32.sub (local.get $x) (i32.load offset=72 (local.get $desc)))
+          (i32.sub (local.get $y) (i32.load offset=76 (local.get $desc)))))
       (then (return (i32.const 0))))
     (local.set $dst (call $gdi_raster_read
       (local.get $desc) (local.get $x) (local.get $y)))
@@ -3503,19 +3737,8 @@
   ;; desc uses the line descriptor's surface/mapping layout. Geometry callers
   ;; own coverage; this helper owns native bytes, clip, and ROP2.
   (func $gdi_shape_clip_visible (param $hdc i32) (param $x i32) (param $y i32) (result i32)
-    (local $entry i32) (local $record i32)
-    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
-    ;; A descriptor already bounds the drawable target. No explicit region
-    ;; therefore means the complete target, without consulting host geometry.
-    (if (i32.or (i32.eqz (local.get $entry))
-          (i32.eqz (i32.load offset=4 (local.get $entry))))
-      (then (return (i32.const 1))))
-    (local.set $record (call $gdi_rgn_record (i32.load offset=4 (local.get $entry))))
-    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
-    (call $gdi_rgn_contains
-      (call $gdi_rgn_bands (local.get $record))
-      (i32.load offset=28 (local.get $record))
-      (local.get $x) (local.get $y)))
+    (call $gdi_dc_clip_device_point_visible
+      (local.get $hdc) (local.get $x) (local.get $y)))
 
   (func $gdi_shape_unmap_x (param $desc i32) (param $x i32) (result i32)
     (i32.add (i32.load offset=32 (local.get $desc))
@@ -3541,8 +3764,8 @@
         (param $x i32) (param $y i32) (result i32)
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 1))))
     (call $gdi_shape_clip_visible (local.get $hdc)
-      (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
-      (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
+      (i32.sub (local.get $x) (i32.load offset=72 (local.get $desc)))
+      (i32.sub (local.get $y) (i32.load offset=76 (local.get $desc)))))
 
   ;; Presentation is deliberately the only host boundary used by software
   ;; geometry. The canonical surface layer can replace this adapter's HDC
@@ -3577,8 +3800,8 @@
       (then (return (i32.const 0))))
     (if (i32.eqz (call $gdi_shape_clip_visible
           (local.get $hdc)
-          (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
-          (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
+          (i32.sub (local.get $x) (i32.load offset=72 (local.get $desc)))
+          (i32.sub (local.get $y) (i32.load offset=76 (local.get $desc)))))
       (then (return (i32.const 0))))
     (local.set $dst (call $gdi_raster_read
       (local.get $desc) (local.get $x) (local.get $y)))
@@ -10210,23 +10433,29 @@
     (i32.shr_u (local.get $sz) (i32.const 16)))
 
   (func $dc_clip_to_parent_client (param $hdc i32) (param $hwnd i32)
-    (local $parent i32) (local $xy i32) (local $x i32) (local $y i32)
+    (local $current i32) (local $parent i32) (local $x i32) (local $y i32)
     (local $pw i32) (local $ph i32)
-    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-    (if (i32.eqz (local.get $parent)) (then (return)))
-    (local.set $x (call $ctrl_get_x_s (local.get $hwnd)))
-    (local.set $y (call $ctrl_get_y_s (local.get $hwnd)))
-    (local.set $pw (call $wnd_client_w_for_clip (local.get $parent)))
-    (local.set $ph (call $wnd_client_h_for_clip (local.get $parent)))
-    (if (i32.and (i32.gt_s (local.get $pw) (i32.const 0))
-                 (i32.gt_s (local.get $ph) (i32.const 0)))
-      (then
-        (drop (call $host_gdi_intersect_clip_rect
-          (local.get $hdc)
-          (i32.sub (i32.const 0) (local.get $x))
-          (i32.sub (i32.const 0) (local.get $y))
-          (i32.sub (local.get $pw) (local.get $x))
-          (i32.sub (local.get $ph) (local.get $y)))))))
+    (local.set $current (local.get $hwnd))
+    (block $done (loop $ancestors
+      (br_if $done (i32.eqz (i32.and
+        (call $wnd_get_style (local.get $current)) (i32.const 0x40000000)))) ;; WS_CHILD
+      (local.set $parent (call $wnd_get_parent (local.get $current)))
+      (br_if $done (i32.eqz (local.get $parent)))
+      (local.set $x (i32.add (local.get $x) (call $ctrl_get_x_s (local.get $current))))
+      (local.set $y (i32.add (local.get $y) (call $ctrl_get_y_s (local.get $current))))
+      (local.set $pw (call $wnd_client_w_for_clip (local.get $parent)))
+      (local.set $ph (call $wnd_client_h_for_clip (local.get $parent)))
+      (if (i32.and (i32.gt_s (local.get $pw) (i32.const 0))
+                   (i32.gt_s (local.get $ph) (i32.const 0)))
+        (then
+          (drop (call $gdi_dc_system_clip_rect
+            (local.get $hdc)
+            (i32.sub (i32.const 0) (local.get $x))
+            (i32.sub (i32.const 0) (local.get $y))
+            (i32.sub (local.get $pw) (local.get $x))
+            (i32.sub (local.get $ph) (local.get $y)) (i32.const 1)))))
+      (local.set $current (local.get $parent))
+      (br $ancestors))))
 
   (func $dc_exclude_children_for_clip (param $hdc i32) (param $hwnd i32) (param $origin_x i32) (param $origin_y i32)
     (local $style i32) (local $slot i32) (local $ch i32) (local $cstyle i32)
@@ -10250,12 +10479,13 @@
           (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
                        (i32.gt_s (local.get $chh) (i32.const 0)))
             (then
-              (drop (call $host_gdi_exclude_clip_rect
+              (drop (call $gdi_dc_system_clip_rect
                 (local.get $hdc)
                 (i32.add (local.get $origin_x) (local.get $cx))
                 (i32.add (local.get $origin_y) (local.get $cy))
                 (i32.add (i32.add (local.get $origin_x) (local.get $cx)) (local.get $cw))
-                (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh)))))))))
+                (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh))
+                (i32.const 4))))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
@@ -10283,12 +10513,13 @@
           (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
                        (i32.gt_s (local.get $chh) (i32.const 0)))
             (then
-              (drop (call $host_gdi_exclude_clip_rect
+              (drop (call $gdi_dc_system_clip_rect
                 (local.get $hdc)
                 (i32.add (local.get $origin_x) (local.get $cx))
                 (i32.add (local.get $origin_y) (local.get $cy))
                 (i32.add (i32.add (local.get $origin_x) (local.get $cx)) (local.get $cw))
-                (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh)))))))))
+                (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh))
+                (i32.const 4))))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
@@ -10326,12 +10557,13 @@
               (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
                            (i32.gt_s (local.get $sh) (i32.const 0)))
                 (then
-                  (drop (call $host_gdi_exclude_clip_rect
+                  (drop (call $gdi_dc_system_clip_rect
                     (local.get $hdc)
                     (i32.sub (local.get $sx) (local.get $myx))
                     (i32.sub (local.get $sy) (local.get $myy))
                     (i32.add (i32.sub (local.get $sx) (local.get $myx)) (local.get $sw))
-                    (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh)))))))))))
+                    (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh))
+                    (i32.const 4))))))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
@@ -10362,13 +10594,20 @@
 
   (func $dc_apply_client_clip (param $hdc i32) (param $hwnd i32)
     (local $w i32) (local $h i32)
+    (if (i32.eqz (call $gdi_dc_system_clip_reset (local.get $hdc))) (then (return)))
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+      (then
+        (drop (call $gdi_dc_system_clip_rect (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)))
+        (return)))
     (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
     (local.set $h (call $wnd_client_h_for_clip (local.get $hwnd)))
     (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                  (i32.gt_s (local.get $h) (i32.const 0)))
       (then
-        (drop (call $host_gdi_intersect_clip_rect
-          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+        (drop (call $gdi_dc_system_clip_rect
+          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+          (i32.const 1)))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
     (call $dc_exclude_children_for_clip
       (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
@@ -10376,13 +10615,20 @@
 
   (func $dc_apply_client_erase_clip (param $hdc i32) (param $hwnd i32)
     (local $w i32) (local $h i32)
+    (if (i32.eqz (call $gdi_dc_system_clip_reset (local.get $hdc))) (then (return)))
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+      (then
+        (drop (call $gdi_dc_system_clip_rect (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)))
+        (return)))
     (local.set $w (call $wnd_client_w_for_clip (local.get $hwnd)))
     (local.set $h (call $wnd_client_h_for_clip (local.get $hwnd)))
     (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                  (i32.gt_s (local.get $h) (i32.const 0)))
       (then
-        (drop (call $host_gdi_intersect_clip_rect
-          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+        (drop (call $gdi_dc_system_clip_rect
+          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+          (i32.const 1)))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
     (call $dc_exclude_visible_children_for_erase
       (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
@@ -10390,6 +10636,12 @@
 
   (func $dc_apply_window_clip (param $hdc i32) (param $hwnd i32)
     (local $style i32) (local $wh i32)
+    (if (i32.eqz (call $gdi_dc_system_clip_reset (local.get $hdc))) (then (return)))
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+      (then
+        (drop (call $gdi_dc_system_clip_rect (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)))
+        (return)))
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (if (i32.and (local.get $style) (i32.const 0x40000000)) ;; WS_CHILD
       (then
@@ -10398,10 +10650,10 @@
               (i32.gt_s (i32.and (local.get $wh) (i32.const 0xFFFF)) (i32.const 0))
               (i32.gt_s (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 0)))
           (then
-            (drop (call $host_gdi_intersect_clip_rect
+            (drop (call $gdi_dc_system_clip_rect
               (local.get $hdc) (i32.const 0) (i32.const 0)
               (i32.and (local.get $wh) (i32.const 0xFFFF))
-              (i32.shr_u (local.get $wh) (i32.const 16))))))))
+              (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1)))))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
     (call $dc_exclude_children_for_clip
       (local.get $hdc) (local.get $hwnd)
@@ -10411,11 +10663,18 @@
 
   (func $dc_apply_nc_clip (param $hdc i32) (param $hwnd i32) (param $w i32) (param $h i32)
     (local $cr_l i32) (local $cr_t i32) (local $cr_r i32) (local $cr_b i32)
+    (if (i32.eqz (call $gdi_dc_system_clip_reset (local.get $hdc))) (then (return)))
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+      (then
+        (drop (call $gdi_dc_system_clip_rect (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)))
+        (return)))
     (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                  (i32.gt_s (local.get $h) (i32.const 0)))
       (then
-        (drop (call $host_gdi_intersect_clip_rect
-          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))))
+        (drop (call $gdi_dc_system_clip_rect
+          (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+          (i32.const 1)))))
     (local.set $cr_l (call $client_rect_get_l (local.get $hwnd)))
     (local.set $cr_t (call $client_rect_get_t (local.get $hwnd)))
     (local.set $cr_r (call $client_rect_get_r (local.get $hwnd)))
@@ -10423,10 +10682,10 @@
     (if (i32.and (i32.gt_s (i32.sub (local.get $cr_r) (local.get $cr_l)) (i32.const 0))
                  (i32.gt_s (i32.sub (local.get $cr_b) (local.get $cr_t)) (i32.const 0)))
       (then
-        (drop (call $host_gdi_exclude_clip_rect
+        (drop (call $gdi_dc_system_clip_rect
           (local.get $hdc)
           (local.get $cr_l) (local.get $cr_t)
-          (local.get $cr_r) (local.get $cr_b))))))
+          (local.get $cr_r) (local.get $cr_b) (i32.const 4))))))
 
   ;; $post_queue_push(hwnd, msg, wParam, lParam): append to the ring at 0x400.
   ;; Same layout as PostMessageA. Returns 1 on success, 0 if full.
