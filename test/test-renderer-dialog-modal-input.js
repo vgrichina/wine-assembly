@@ -16,8 +16,11 @@ const wasm = {
   exports: {
     get_capture_hwnd: () => 0x10002,
     wnd_top_level: () => 0x10001,
+    wnd_get_owner: () => 0x90001,
     wnd_mouse_msg_origin_x: () => 40,
     wnd_mouse_msg_origin_y: () => 50,
+    ctrl_get_class: () => 1,
+    send_message: () => { routedSynchronously++; return 0; },
     dialog_route_mouse: () => { routedSynchronously++; return 1; },
   },
 };
@@ -123,3 +126,65 @@ assert.strictEqual(watRenderer.inputQueue.length, 0,
   'WAT-owned modal dialog should not queue its mouse-up');
 
 console.log('PASS  WAT-owned modal dialog mouse-up stays synchronous');
+
+function capturedControlCase(ctrlClass, owner) {
+  const sent = [];
+  const captureWasm = {
+    exports: {
+      get_capture_hwnd: () => 0x30002,
+      wnd_top_level: () => 0x30001,
+      wnd_get_owner: () => owner,
+      wnd_mouse_msg_origin_x: () => 40,
+      wnd_mouse_msg_origin_y: () => 50,
+      ctrl_get_class: () => ctrlClass,
+      dialog_route_mouse: () => 0,
+      send_message: (hwnd, msg, wParam, lParam) => {
+        sent.push({ hwnd, msg, wParam, lParam: lParam >>> 0 });
+        return 0;
+      },
+    },
+  };
+  const r = new FakeRenderer();
+  r.wasm = captureWasm;
+  r.windows = {
+    0x30001: {
+      hwnd: 0x30001, visible: true, isChild: false,
+      x: 20, y: 20, w: 300, h: 220, wasm: captureWasm,
+    },
+  };
+  r.inputQueue = [];
+  r._dialogBtnDrag = {
+    parent: 0x30001, downLParam: 0,
+    clientX: 20, clientY: 20, wasm: captureWasm,
+  };
+  r._mapExclusiveInputPoint = (x, y) => ({ x, y, outside: false });
+  r._applyCursorClip = (x, y) => ({ x, y });
+  r._mouseMaskForButton = () => 1;
+  r._inputWasmAtPoint = () => captureWasm;
+  r._modalDialogHwnd = () => 0;
+  r._handleNativeScrollbarMove = () => false;
+  r._handleNativeScrollbarUp = () => false;
+  r._signalDirectInputDevice = () => {};
+  r._setMousePoint = (x, y) => { r._mouseX = x; r._mouseY = y; };
+  r._wakeMessageWait = () => {};
+  r.scheduleRepaint = () => {};
+  r.repaint = () => {};
+  r._mouseButtonsMask = 1;
+  r.handleMouseMove(55, 70);
+  r.handleMouseUp(55, 70, 1);
+  return { sent, queued: r.inputQueue };
+}
+
+const trackbar = capturedControlCase(19, 0x90001);
+assert.deepStrictEqual(trackbar.sent, [
+  { hwnd: 0x30002, msg: 0x0200, wParam: 1, lParam: (20 << 16) | 15 },
+  { hwnd: 0x30002, msg: 0x0202, wParam: 0, lParam: (20 << 16) | 15 },
+], 'captured WAT trackbar move and release should dispatch synchronously');
+assert.strictEqual(trackbar.queued.length, 0);
+
+const ownerlessButton = capturedControlCase(1, 0);
+assert.strictEqual(ownerlessButton.sent.length, 2,
+  'ownerless main-dialog WAT button should dispatch synchronously');
+assert.strictEqual(ownerlessButton.queued.length, 0);
+
+console.log('PASS  WAT capture dispatches directly outside owned guest modal buttons');
