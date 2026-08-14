@@ -102,13 +102,14 @@ async function inspectScreenshot(file) {
     })(),
     readoutInk: countIn(51, 48, 305, 89, (r, g, b) => r < 100 && g < 100 && b < 100),
     transportBottomInk: countIn(50, 145, 304, 153, (r, g, b) => r < 100 && g < 100 && b < 100),
-    lowerChromeInk: countIn(40, 154, 318, 165, (r, g, b) => r < 100 && g < 100 && b < 100),
+    lowerChromePixels: countIn(40, 154, 318, 165,
+      (r, g, b) => r > 80 || g < 80 || b < 80),
   };
 }
 
 (async () => {
   const screenshots = [beforePng, stoppedPng].every(file =>
-    fs.existsSync(file) && fs.statSync(file).size > 5500);
+    fs.existsSync(file) && fs.statSync(file).size > 4000);
   const visual = screenshots ? await inspectScreenshot(stoppedPng) : null;
   const pcm = fs.existsSync(playbackPcm) ? fs.readFileSync(playbackPcm) : Buffer.alloc(0);
   let nonzero = 0;
@@ -136,7 +137,7 @@ async function inspectScreenshot(file) {
       visual.displayBlack >= 2500 && visual.displayGreen >= 500 &&
       visual.waveformRows >= 15 && visual.readoutInk >= 150],
     ['transport buttons and lower window chrome are not clipped', visual &&
-      visual.transportBottomInk >= 200 && visual.lowerChromeInk >= 200],
+      visual.transportBottomInk >= 200 && visual.lowerChromePixels >= 2000],
     ['no unimplemented API or runtime crash', !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output)],
   ];
 

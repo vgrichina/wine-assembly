@@ -45,6 +45,7 @@ UNIT=(
   test/test-wat-gdi-public-bitmap-region.js
   test/test-wat-gdi-public-state-format.js
   test/test-wat-gdi-public-font.js
+  test/test-wat-gdi-bitmap-text-layout.js
   test/test-wat-gdi-public-metafile.js
   test/test-compatible-bitmap-wat.js
   test/test-gdi-surface.js
@@ -147,6 +148,7 @@ E2E=(
   test/test-minesweeper-no-resize.js
   test/test-minesweeper-smiley-reset.js
   test/test-pinball-controls-layout.js
+  test/test-pinball-fullscreen-menu.js
   test/test-pinball-flipper.js
   test/test-aoe-menu.js
   test/test-tworld-launch.js

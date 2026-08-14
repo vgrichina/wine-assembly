@@ -1127,10 +1127,13 @@
         ;; capture/exit. Win98 native child controls are ready to repaint as
         ;; part of showing the window; drain our WAT-native control queue here
         ;; so visible statics/progress/list controls don't remain blank.
-        (if (i32.ne (local.get $arg0) (global.get $main_hwnd))
-          (then
-            (drop (call $paint_drain_native_control_paints))
-            (drop (call $paint_flush_shown_native_children (local.get $arg0)))))))
+        ;; The first shown top-level may have been promoted from a hidden
+        ;; utility hwnd. Its canonical surface is attached/resized by the
+        ;; host_show_window call above, after dialog children initially drew.
+        ;; Recompose children for main windows too so the new surface does not
+        ;; retain only its cleared background.
+        (drop (call $paint_drain_native_control_paints))
+        (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
     ;; SW_MAXIMIZE (cmd=3): host already resized. Queue the actual
     ;; maximized move/size pair before paint and discard the stale
     ;; create-time pending size from CW_USEDEFAULT.

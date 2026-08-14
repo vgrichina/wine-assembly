@@ -1685,10 +1685,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 87: GetMenu(hwnd) — return fake menu handle (resource ID based)
+  ;; 87: GetMenu(hwnd) — return the attached menu's stable resource key.
   (func $handle_GetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return non-zero handle if window has a menu (we use 0x80001 as fake hmenu)
-    (global.set $eax (i32.const 0x80001))
+    ;; Named class menus use a guest string pointer rather than a low-word
+    ;; resource ID. Preserve that identity so SetMenu can reattach the menu
+    ;; after an app temporarily removes it (Pinball fullscreen). menu_set's
+    ;; legacy host blobs have no source key, so retain the old fake fallback.
+    (global.set $eax (call $menu_source_get (local.get $arg0)))
+    (if (i32.and
+          (i32.eqz (global.get $eax))
+          (i32.gt_s (call $menu_bar_count (local.get $arg0)) (i32.const 0)))
+      (then (global.set $eax (i32.const 0x80001))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -5477,16 +5484,19 @@
     (i32.const 0))
 
   ;; 364: ExtTextOutW(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
-  ;; Host draws UTF-16 text and honors ETO_OPAQUE/ETO_CLIPPED; lpDx is ignored.
+  ;; Selected FNT strikes consume lpDx in WAT; the generic host path ignores it.
   (func $handle_ExtTextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
-    (local $packed_ansi_len i32) (local $wide i32)
+    (local $packed_ansi_len i32) (local $wide i32) (local $dx_wa i32) (local $lpDx i32)
     (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
     (local.set $count    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; arg6 (wchar count)
     (if (local.get $arg4)
       (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
     (if (local.get $lpString)
       (then (local.set $text_wa (call $g2w (local.get $lpString)))))
+    (local.set $lpDx (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (if (local.get $lpDx)
+      (then (local.set $dx_wa (call $g2w (local.get $lpDx)))))
     (local.set $wide (i32.const 1))
     (local.set $packed_ansi_len
       (call $gdi_ext_text_out_w_packed_ansi_len (local.get $text_wa) (local.get $count)))
@@ -5497,7 +5507,7 @@
     (global.set $eax (call $host_gdi_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $rect_wa)
-      (local.get $text_wa) (local.get $count) (local.get $wide)))
+      (local.get $text_wa) (local.get $count) (local.get $dx_wa) (local.get $wide)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
@@ -12152,19 +12162,23 @@
   )
 
   ;; 949: ExtTextOutA(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
-  ;; Host draws ANSI text and honors ETO_OPAQUE/ETO_CLIPPED; lpDx is ignored.
+  ;; Selected FNT strikes consume lpDx in WAT; the generic host path ignores it.
   (func $handle_ExtTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
+    (local $lpDx i32) (local $dx_wa i32)
     (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
     (local.set $count (call $gl32 (i32.add (global.get $esp) (i32.const 28))))    ;; arg6
     (if (local.get $arg4)
       (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
     (if (local.get $lpString)
       (then (local.set $text_wa (call $g2w (local.get $lpString)))))
+    (local.set $lpDx (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (if (local.get $lpDx)
+      (then (local.set $dx_wa (call $g2w (local.get $lpDx)))))
     (global.set $eax (call $host_gdi_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $rect_wa)
-      (local.get $text_wa) (local.get $count) (i32.const 0)))
+      (local.get $text_wa) (local.get $count) (local.get $dx_wa) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; 8 args + ret
   )
 

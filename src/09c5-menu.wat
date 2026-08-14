@@ -56,9 +56,19 @@
     (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
     (call $g2w (local.get $g)))
 
-  ;; Persistent menu allocations carry a private i32 byte length immediately
-  ;; before the guest-visible blob. Dynamic TrackPopupMenu blobs do not use
-  ;; this table and are never passed to the global check-state walkers.
+  ;; Persistent menu allocations carry a private two-dword header immediately
+  ;; before the guest-visible blob: the original resource key at -8 and the
+  ;; blob byte length at -4. Keeping the key lets GetMenu return an identity
+  ;; that SetMenu can resolve again, including named menu resources. Dynamic
+  ;; TrackPopupMenu blobs do not use this table.
+  (func $menu_source_get (param $hwnd i32) (result i32)
+    (local $slot i32) (local $g i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $g (i32.load (call $menu_data_table_addr (local.get $slot))))
+    (if (i32.lt_u (local.get $g) (i32.const 8)) (then (return (i32.const 0))))
+    (i32.load (call $g2w (i32.sub (local.get $g) (i32.const 8)))))
+
   (func $menu_blob_size (param $hwnd i32) (result i32)
     (local $slot i32) (local $g i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -248,15 +258,16 @@
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
     (local.set $old (i32.load (local.get $tbl)))
     (if (local.get $old)
-      (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 8)))))
     (i32.store (local.get $tbl) (i32.const 0))
     (if (i32.eqz (local.get $len)) (then (return)))
-    (local.set $newg (call $heap_alloc (i32.add (local.get $len) (i32.const 4))))
-    (i32.store (call $g2w (local.get $newg)) (local.get $len))
+    (local.set $newg (call $heap_alloc (i32.add (local.get $len) (i32.const 8))))
+    (i32.store (call $g2w (local.get $newg)) (i32.const 0))
+    (i32.store offset=4 (call $g2w (local.get $newg)) (local.get $len))
     (call $memcpy
-      (call $g2w (i32.add (local.get $newg) (i32.const 4)))
+      (call $g2w (i32.add (local.get $newg) (i32.const 8)))
       (local.get $src_wa) (local.get $len))
-    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 4))))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8))))
 
   ;; Drop a window's menu (called from $host_destroy_window path).
   (func (export "menu_clear") (param $hwnd i32)
@@ -266,7 +277,7 @@
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
     (local.set $old (i32.load (local.get $tbl)))
     (if (local.get $old)
-      (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 8)))))
     (i32.store (local.get $tbl) (i32.const 0)))
 
   ;; Top-level item count (0 if no menu). Helper for keyboard nav.
@@ -1955,7 +1966,9 @@
     (local $slot i32) (local $tbl i32) (local $old i32)
     (local $entry i32) (local $bytes_g i32) (local $bytes_w i32)
     (local $size i32) (local $total i32) (local $newg i32)
+    (local $source_id i32)
     (local $version i32) (local $headerOffset i32) (local $items_w i32)
+    (local.set $source_id (local.get $menu_id))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
@@ -1963,7 +1976,7 @@
     (if (i32.eqz (local.get $menu_id))
       (then
         (if (local.get $old)
-          (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
+          (then (call $heap_free (i32.sub (local.get $old) (i32.const 8)))))
         (i32.store (local.get $tbl) (i32.const 0))
         (return)))
     (if (local.get $old) (then (return)))
@@ -2000,10 +2013,11 @@
     (if (i32.eqz (global.get $ml_bar_count)) (then (return)))
     ;; --- Allocate blob and run pass 2 ---
     (local.set $total (i32.add (global.get $ml_struct_size) (global.get $ml_string_size)))
-    (local.set $newg (call $heap_alloc (i32.add (local.get $total) (i32.const 4))))
-    (i32.store (call $g2w (local.get $newg)) (local.get $total))
-    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 4)))
-    (global.set $ml_blob_w (call $g2w (i32.add (local.get $newg) (i32.const 4))))
+    (local.set $newg (call $heap_alloc (i32.add (local.get $total) (i32.const 8))))
+    (i32.store (call $g2w (local.get $newg)) (local.get $source_id))
+    (i32.store offset=4 (call $g2w (local.get $newg)) (local.get $total))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
+    (global.set $ml_blob_w (call $g2w (i32.add (local.get $newg) (i32.const 8))))
     ;; bar_count header
     (i32.store (global.get $ml_blob_w) (global.get $ml_bar_count))
     ;; cursors: $ml_struct_cur runs forward through bar items + child

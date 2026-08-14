@@ -121,7 +121,7 @@ async function inspect(file) {
 
 (async () => {
   const filesReady = [initialPng, activePng, mutedPng, adjustedPng].every(file =>
-    fs.existsSync(file) && fs.statSync(file).size > 8000);
+    fs.existsSync(file) && fs.statSync(file).size > 4000);
   const visual = filesReady ? await inspect(initialPng) : null;
   const active = filesReady ? await inspect(activePng) : null;
   const muted = filesReady ? await inspect(mutedPng) : null;

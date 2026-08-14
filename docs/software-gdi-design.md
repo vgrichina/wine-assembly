@@ -480,10 +480,14 @@ without changing GDI callers. `AddFontResourceA` reads NE `.FON` containers or
 standalone FNT 2.x/3.x resources through the VFS boundary, validates their
 tables, and copies accepted strikes into WAT-managed memory. `CreateFontA/W`
 and `CreateFontIndirectA/W` bind the closest installed strike by face and
-height. Measurement, metrics, `TextOutA`, and plain `ExtTextOutA/W` then use
-the one-bit vertical-strip glyphs and write pixels through the canonical,
-format-aware GDI raster path. Unsupported formats, shaped/scalable faces, and
-rectangle-option text paths continue through the Canvas fallback.
+height. Measurement, metrics, `TextOutA`, `ExtTextOutA/W`, and `DrawTextA/W`
+then use the one-bit vertical-strip glyphs and write pixels through the
+canonical, format-aware GDI raster path. The WAT `ExtTextOut` path applies
+`ETO_OPAQUE`, `ETO_CLIPPED`, and per-character `lpDx` advances before bounded
+presentation. The WAT `DrawText` path handles explicit lines, word wrapping,
+horizontal and vertical alignment, rectangle clipping, and `DT_CALCRECT`.
+Unsupported formats and shaped/scalable faces continue through the Canvas
+fallback.
 
 The target selection order is:
 

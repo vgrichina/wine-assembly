@@ -18,6 +18,9 @@ background mode, alignment, mapping, and selected font state are owned by the
 canonical WAT DC record; `gdi_text_bind` exposes that record to the retained
 Canvas text rasterizer and writes memory, window, DirectDraw, and screen DC
 text pixels back to canonical surface storage using WAT-owned clip bands.
+Installed FNT 2.x/3.x strikes bypass all four calls: WAT measures and writes
+their glyphs directly, including `ExtTextOut` rectangle/lpDx behavior and
+`DrawText` wrapping, alignment, clipping, and calculated rectangles.
 Every non-text semantic call removed in the
 flag-day bridge purge now has a WAT implementation; both unsupported-stub
 inventories are empty. Pen, solid-brush, memory-DC,

@@ -2823,7 +2823,7 @@
     (local $token i32) (local $bitmap_result i32)
     (local.set $bitmap_result (call $gdi_bitmap_text_out
       (local.get $hdc) (local.get $x) (local.get $y) (i32.const 0) (i32.const 0)
-      (local.get $text) (local.get $count) (local.get $wide)))
+      (local.get $text) (local.get $count) (i32.const 0) (local.get $wide)))
     (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
       (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
@@ -3047,26 +3047,26 @@
       (i32.shl (i32.and (local.get $height) (i32.const 0xFFFF)) (i32.const 16))))
   (func $host_gdi_ext_text_out (param $hdc i32) (param $x i32) (param $y i32)
         (param $options i32) (param $rect i32) (param $text i32) (param $count i32)
-        (param $wide i32) (result i32)
+        (param $dx_array i32) (param $wide i32) (result i32)
     (local $token i32) (local $bitmap_result i32)
-    ;; Plain ExtTextOut shares the native bitmap path. Rectangle clipping and
-    ;; ETO_OPAQUE retain the general host fallback until their WAT rectangle
-    ;; policy is implemented.
-    (if (i32.eqz (local.get $options))
-      (then
-        (local.set $bitmap_result (call $gdi_bitmap_text_out
-          (local.get $hdc) (local.get $x) (local.get $y)
-          (local.get $options) (local.get $rect) (local.get $text)
-          (local.get $count) (local.get $wide)))
-        (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
-          (then (return (local.get $bitmap_result))))))
+    (local.set $bitmap_result (call $gdi_bitmap_text_out
+      (local.get $hdc) (local.get $x) (local.get $y)
+      (local.get $options) (local.get $rect) (local.get $text)
+      (local.get $count) (local.get $dx_array) (local.get $wide)))
+    (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
+      (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_gdi_ext_text_out_raw (local.get $token) (local.get $x) (local.get $y)
       (local.get $options) (local.get $rect) (local.get $text) (local.get $count) (local.get $wide)))
   (func $host_gdi_draw_text (param $hdc i32) (param $text i32) (param $count i32)
         (param $rect i32) (param $format i32) (param $wide i32) (result i32)
-    (local $token i32)
+    (local $token i32) (local $bitmap_result i32)
+    (local.set $bitmap_result (call $gdi_bitmap_draw_text
+      (local.get $hdc) (local.get $text) (local.get $count)
+      (local.get $rect) (local.get $format) (local.get $wide)))
+    (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
+      (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
     (call $host_gdi_draw_text_raw (local.get $token) (local.get $text) (local.get $count)
@@ -8185,11 +8185,10 @@
         (then
           (if (call $ctrl_table_get_class (local.get $ch))
             (then
-              (if (call $wnd_has_pending_ancestor_erase (local.get $ch))
-                (then
-                  (call $paint_flag_set_inv (local.get $ch))
-                  (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
-                  (br $scan)))
+              ;; host_show_window already attached/resized the canonical
+              ;; surface. Draw now even if the newly shown parent still has a
+              ;; queued client paint; EndPaint repeats the child-after-parent
+              ;; pass if that later paint overwrites shared pixels.
               (call $update_invalidate_full (local.get $ch))
               (drop (call $control_wndproc_dispatch
                 (local.get $ch) (i32.const 0x000F)

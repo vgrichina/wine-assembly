@@ -47,7 +47,7 @@
     ],
     "fontPolicy": [
       "AddFontResourceA installs user-supplied NE .FON or standalone FNT 2.x/3.x bitmap strikes from the VFS; RemoveFontResourceA unregisters them",
-      "WAT selects installed bitmap faces by name and rasterizes TextOut plus plain ExtTextOut directly into canonical GDI pixels; unsupported formats and shaped/scalable text paths retain the Canvas fallback",
+      "WAT selects installed bitmap faces by name and rasterizes TextOut, ExtTextOut rectangle/lpDx semantics, and DrawText layout directly into canonical GDI pixels; unsupported formats and shaped/scalable text paths retain the Canvas fallback",
       "GetFontData returns GDI_ERROR because raw selected-font table export is not implemented",
       "GetGlyphOutlineA supports GGO_METRICS; outline and bitmap payload formats remain unavailable",
       "EnumFontsA shares the current deterministic single-face fallback enumeration"

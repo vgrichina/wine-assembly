@@ -592,15 +592,28 @@
 
   ;; 174: SetMenu
   (func $handle_SetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $menu_key i32)
     ;; SetMenu changes the non-client layout. Install the menu in WAT before
     ;; later GetDC/GetClientRect/ShowWindow paths ask for client geometry;
     ;; several WEP games attach their menu after CreateWindowExA and paint
     ;; immediately.
-    (call $menu_load (local.get $arg0) (local.get $arg1))
+    ;; LoadMenuA/W tag integer resource handles with 0x00BE0000; the legacy
+    ;; menu_set fallback is 0x00080001. Named-resource keys returned by
+    ;; GetMenu are guest pointers and must remain intact.
+    (local.set $menu_key (local.get $arg1))
+    (if (i32.or
+          (i32.eq (local.get $menu_key) (i32.const 0x00080001))
+          (i32.eq
+            (i32.and (local.get $menu_key) (i32.const 0xFFFF0000))
+            (i32.const 0x00BE0000)))
+      (then
+        (local.set $menu_key
+          (i32.and (local.get $menu_key) (i32.const 0xFFFF)))))
+    (call $menu_load (local.get $arg0) (local.get $menu_key))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
     (call $host_set_menu
     (local.get $arg0)                                       ;; hWnd
-    (i32.and (local.get $arg1) (i32.const 0xFFFF)))         ;; resource ID from HMENU
+    (local.get $menu_key))                                  ;; resource ID or named-resource pointer
     (if (call $wnd_is_effectively_visible (local.get $arg0))
       (then
         (call $defwndproc_do_ncpaint (local.get $arg0))
@@ -713,7 +726,11 @@
           (i32.load offset=12 (local.get $wa))))
         ;; PAINTSTRUCT.hdc is at +0
         (local.set $hdc (i32.load (call $g2w (local.get $arg1))))
-        (drop (call $host_release_dc (local.get $hdc)))))
+        (drop (call $host_release_dc (local.get $hdc)))
+        ;; Child controls share the top-level canonical surface. Their queued
+        ;; paint must run after the parent finishes, otherwise the parent's
+        ;; background/client pass overwrites already-rendered controls.
+        (drop (call $paint_flush_visible_native_children (local.get $arg0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
