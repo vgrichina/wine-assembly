@@ -141,6 +141,29 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
   });
 
+  check('CreateDIBPatternBrushPt locates BITMAPCOREINFO pixels after RGBTRIPLEs', () => {
+    const dib = wat.guest_alloc(12 + 6 + 8) >>> 0;
+    wat.guest_write32(dib, 12);
+    wat.guest_write16(dib + 4, 2);
+    wat.guest_write16(dib + 6, 2);
+    wat.guest_write16(dib + 8, 1);
+    wat.guest_write16(dib + 10, 1);
+    const imageBase = wat.get_image_base() >>> 0;
+    const wa = 0x12000 + (dib - imageBase);
+    bytes.set([0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00], wa + 12);
+    bytes.set([0x40, 0, 0, 0, 0x80, 0, 0, 0], wa + 18);
+    const brush = wat.test_call_CreateDIBPatternBrushPt(dib, 0) >>> 0;
+    assert(brush);
+    wat.test_call_SelectObject(dst.hdc, brush);
+    wat.test_call_SetBrushOrgEx(dst.hdc, 0, 0, 0);
+    assert.strictEqual(wat.test_call_PatBlt(dst.hdc, 0, 0, 2, 2, 0x00F00021), 1);
+    assert.deepStrictEqual([
+      packed(dst, 0, 0), packed(dst, 1, 0),
+      packed(dst, 0, 1), packed(dst, 1, 1),
+    ], [0x0000FF, 0xFF0000, 0xFF0000, 0x0000FF]);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  });
+
   check('BitBlt applies SRCCOPY between canonical WAT surfaces', () => {
     wat.test_gdi_fast_reset();
     assert.strictEqual(wat.test_call_BitBlt(
@@ -611,6 +634,78 @@ const { bootRenderHarness } = require('./render-helper');
       0, 0, 0,
       1 << 16, 2 << 16, 3 << 16, 4 << 16, 5 << 16,
     ]);
+  });
+
+  check('BITMAPCOREINFO creates and round-trips indexed DIB pixels in WAT', () => {
+    const imageBase = wat.get_image_base() >>> 0;
+    const dv = new DataView(memory.buffer);
+    const infoGa = wat.guest_alloc(18) >>> 0;
+    const queryGa = wat.guest_alloc(18) >>> 0;
+    const bitsOutGa = wat.guest_alloc(8) >>> 0;
+    const ppvGa = wat.guest_alloc(4) >>> 0;
+    const infoWa = 0x12000 + (infoGa - imageBase);
+    const queryWa = 0x12000 + (queryGa - imageBase);
+    const bitsOutWa = 0x12000 + (bitsOutGa - imageBase);
+    bytes.fill(0, infoWa, infoWa + 18);
+    bytes.fill(0, queryWa, queryWa + 18);
+    wat.guest_write32(infoGa, 12);
+    wat.guest_write16(infoGa + 4, 2);
+    wat.guest_write16(infoGa + 6, 2);
+    wat.guest_write16(infoGa + 8, 1);
+    wat.guest_write16(infoGa + 10, 1);
+    bytes.set([0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00], infoWa + 12);
+    const bitmap = wat.test_call_CreateDIBSection(0, infoGa, ppvGa) >>> 0;
+    const bitsGa = wat.guest_read32(ppvGa) >>> 0;
+    assert(bitmap && bitsGa, 'core DIB section creation failed');
+    const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
+    bytes[bitsWa] = 0x40;
+    bytes[bitsWa + 4] = 0x80;
+
+    wat.guest_write32(queryGa, 12);
+    assert.strictEqual(wat.test_gdi_get_dibits(
+      0, bitmap, 0, 2, 0, queryWa, 0), 2);
+    assert.deepStrictEqual([
+      dv.getUint16(queryWa + 4, true), dv.getUint16(queryWa + 6, true),
+      dv.getUint16(queryWa + 8, true), dv.getUint16(queryWa + 10, true),
+    ], [2, 2, 1, 1]);
+    assert.deepStrictEqual([...bytes.subarray(queryWa + 12, queryWa + 18)],
+      [0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00],
+      'GetDIBits must emit RGBTRIPLE rather than RGBQUAD entries');
+    assert.strictEqual(wat.test_gdi_get_dibits(
+      0, bitmap, 0, 2, bitsOutWa, queryWa, 0), 2);
+    assert.deepStrictEqual([...bytes.subarray(bitsOutWa, bitsOutWa + 8)],
+      [0x40, 0, 0, 0, 0x80, 0, 0, 0]);
+
+    const copyPpvGa = wat.guest_alloc(4) >>> 0;
+    const copy = wat.test_call_CreateDIBSection(0, queryGa, copyPpvGa) >>> 0;
+    assert(copy, 'queried core DIB format must remain creatable');
+    assert.strictEqual(wat.test_gdi_set_dibits(
+      0, copy, 0, 2, bitsOutWa, queryWa, 0), 2);
+    const copyBitsGa = wat.guest_read32(copyPpvGa) >>> 0;
+    const copyBitsWa = 0x1C000000 + (copyBitsGa - 0x50000000);
+    assert.deepStrictEqual([...bytes.subarray(copyBitsWa, copyBitsWa + 8)],
+      [0x40, 0, 0, 0, 0x80, 0, 0, 0]);
+
+    const core32Ga = wat.guest_alloc(16) >>> 0;
+    const core32Wa = 0x12000 + (core32Ga - imageBase);
+    const core32BitsGa = wat.guest_alloc(src.width * src.height * 4) >>> 0;
+    const core32BitsWa = 0x12000 + (core32BitsGa - imageBase);
+    bytes.fill(0xCC, core32Wa, core32Wa + 16);
+    wat.guest_write32(core32Ga, 12);
+    wat.guest_write16(core32Ga + 4, 0);
+    wat.guest_write16(core32Ga + 6, 0);
+    wat.guest_write16(core32Ga + 8, 0);
+    wat.guest_write16(core32Ga + 10, 0);
+    assert.strictEqual(wat.test_gdi_get_dibits(
+      0, src.bitmap, 0, src.height, 0, core32Wa, 0), src.height);
+    assert.deepStrictEqual([
+      dv.getUint16(core32Wa + 4, true), dv.getUint16(core32Wa + 6, true),
+      dv.getUint16(core32Wa + 8, true), dv.getUint16(core32Wa + 10, true),
+    ], [src.width, src.height, 1, 32]);
+    assert.deepStrictEqual([...bytes.subarray(core32Wa + 12, core32Wa + 16)],
+      [0xCC, 0xCC, 0xCC, 0xCC], 'unpaletted core queries must stop at 12 bytes');
+    assert.strictEqual(wat.test_gdi_get_dibits(
+      0, src.bitmap, 0, src.height, core32BitsWa, core32Wa, 0), src.height);
   });
 
   check('GetDIBits and SetDIBits preserve explicit 16-bpp channel masks', () => {

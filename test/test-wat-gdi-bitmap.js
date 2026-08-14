@@ -146,6 +146,43 @@ const SRC = path.join(ROOT, 'src');
       'truncated core bitmap pixels must be rejected');
   });
 
+  check('BITMAPCOREINFO application headers produce canonical bitmap plans', () => {
+    const info = alloc();
+    const plan = alloc();
+    dv.setUint32(info, 12, true);
+    dv.setUint16(info + 4, 2, true);
+    dv.setUint16(info + 6, 3, true);
+    dv.setUint16(info + 8, 1, true);
+    dv.setUint16(info + 10, 1, true);
+    bytes.set([0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00], info + 12);
+    assert.strictEqual(wat.test_gdi_bitmap_plan_info(info, plan), 1);
+    assert.deepStrictEqual([
+      dv.getUint32(plan, true), dv.getUint32(plan + 4, true),
+      dv.getUint32(plan + 8, true), dv.getUint32(plan + 12, true),
+      dv.getUint32(plan + 16, true), dv.getUint32(plan + 20, true),
+      dv.getUint32(plan + 24, true), dv.getUint32(plan + 32, true),
+      dv.getUint32(plan + 36, true), dv.getUint32(plan + 40, true),
+    ], [2, 3, 1, 8, 4, info + 12, 2, 12, 12, 0]);
+
+    dv.setUint32(info, 11, true);
+    assert.strictEqual(wat.test_gdi_bitmap_plan_info(info, plan), 0,
+      'near-core header sizes must not be guessed');
+    dv.setUint32(info, 12, true);
+    dv.setUint16(info + 8, 2, true);
+    assert.strictEqual(wat.test_gdi_bitmap_plan_info(info, plan), 0,
+      'core bitmaps require one plane');
+
+    dv.setUint16(info + 8, 1, true);
+    for (const [bpp, stride] of [[16, 4], [24, 8], [32, 8]]) {
+      dv.setUint16(info + 10, bpp, true);
+      assert.strictEqual(wat.test_gdi_bitmap_plan_info(info, plan), 1);
+      assert.deepStrictEqual([
+        dv.getUint32(plan + 8, true), dv.getUint32(plan + 16, true),
+        dv.getUint32(plan + 24, true), dv.getUint32(plan + 32, true),
+      ], [bpp, stride, 0, stride * 3]);
+    }
+  });
+
   check('paletted top-down DIB plans expose exact palette and pixel spans', () => {
     const data = alloc();
     const plan = alloc();

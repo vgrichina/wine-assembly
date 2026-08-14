@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
 
@@ -30,6 +31,9 @@ const EXPECTED_SEMANTICS = {
     maps: [[119,33194],[65,65536],[81,0]],
     mapCount: 66,
     phraseCount: 199, phraseSize: 940, phrases: [[0,'+'],[5,'all'],[198,'yth']],
+    rawTopicLengths: [63,60,85,80,70,101,73,93,90,72,72,236,35,38,37,32,78,386,128,186,91,85,84,89,190,165,88,88,91,163,234,181,119,214,212,242,140,65,80,101,58,50,184,328,284,292,296,237,236,100,104,155,130,77,168,68,195,155,352,156,165,160,147,134,55,205,81,106,38,0],
+    rawTopicBytes: 9453,
+    rawTopicHash: '29a572c4051d6dfb19a2d308dfed6879dd5211a3ce03f5cdf1c48f0528a701dc',
   },
   'freecell.hlp': {
     title: 'Free Cell', cnt: '', topics: [0,115,383,421],
@@ -37,6 +41,9 @@ const EXPECTED_SEMANTICS = {
     hashes: [[2535747381,0],[3742568226,383],[1048560214,115]],
     maps: [], mapCount: 0,
     phraseCount: 17, phraseSize: 66, phrases: [[0,'.'],[4,'card'],[16,'to']],
+    rawTopicLengths: [115,268,38,0],
+    rawTopicBytes: 421,
+    rawTopicHash: '275ba9bdf872ccd38f6c147f7a15183ed7bbcb706b24add13af7389e0260889b',
   },
   'mspaint.hlp': {
     title: 'Paint Help', cnt: 'mspaint.cnt', topics: [0,38,187,313,376,437,514,700,884,1051,1229,1285,1341,1424,1511,1593,1661,1833,1933,1992,2056,2117,2182,2236,2377,2509,2580,2725,2763],
@@ -45,6 +52,9 @@ const EXPECTED_SEMANTICS = {
     maps: [[30050,1933],[30300,0],[30000,1229]],
     mapCount: 23,
     phraseCount: 82, phraseSize: 424, phrases: [[0,'%'],[5,'100'],[81,'your']],
+    rawTopicLengths: [38,148,126,63,61,77,186,184,167,178,56,56,83,87,82,68,172,100,59,64,61,65,54,141,132,71,145,38,0],
+    rawTopicBytes: 2762,
+    rawTopicHash: 'e060a6a35b928d056701cea5e91da8acc209452f556a7d4cba35d687a487db67',
   },
   'notepad.hlp': {
     title: 'Notepad Help', cnt: '', topics: [0,495,994,1032],
@@ -52,6 +62,9 @@ const EXPECTED_SEMANTICS = {
     hashes: [[3742568226,994],[1037673951,0]],
     maps: [[1000,495],[1001,0]], mapCount: 2,
     phraseCount: 62, phraseSize: 254, phrases: [[0,'"('],[7,'Align'],[61,'your']],
+    rawTopicLengths: [495,499,38,0],
+    rawTopicBytes: 1032,
+    rawTopicHash: 'f41f6f28c5daac376b0888eadee88b4f5cc7bea26359e12fbdf733c892540478',
   },
   'sol.hlp': {
     title: 'Solitaire Help', cnt: 'sol.cnt', topics: [0,155,331,1047,1273,1311],
@@ -59,6 +72,9 @@ const EXPECTED_SEMANTICS = {
     hashes: [[2713696239,0],[1807483151,1047]],
     maps: [], mapCount: 0,
     phraseCount: 52, phraseSize: 197, phrases: [[0,','],[5,'after'],[51,'You']],
+    rawTopicLengths: [155,176,709,223,38,0],
+    rawTopicBytes: 1301,
+    rawTopicHash: '56cf53aa2a1a4949b3cefd24ee2968665708858911f0c69ac667f3e6351a5350',
   },
   'wordpad.hlp': {
     title: 'WordPad Help', cnt: '', topics: [0,30,63,91,242,311,409,557,643,712,781,855,923,968,1175,1245,1314,1461,1495,1528,1563,1729,2204,2289,2386,2509,2657,2692,2730,2891,3054,32768,32914,33299,33689,33727],
@@ -67,6 +83,9 @@ const EXPECTED_SEMANTICS = {
     maps: [[1004,1461],[1031,0],[1029,712]],
     mapCount: 29,
     phraseCount: 116, phraseSize: 565, phrases: [[0,'('],[6,'Aligns'],[115,'your']],
+    rawTopicLengths: [30,33,28,150,69,98,148,86,69,69,74,68,45,204,70,69,147,34,33,35,166,471,85,97,123,148,35,38,161,163,41,146,385,390,38,0],
+    rawTopicBytes: 4046,
+    rawTopicHash: '69bfb58fc671db239cc3bb8b36fe3c65419565c8a82d876b46d9f95ff9161c8b',
   },
 };
 
@@ -184,6 +203,42 @@ function buildSemanticBtree(kind) {
   return b;
 }
 
+function encodeLiteralLz77(raw) {
+  const chunks = [];
+  for (let pos = 0; pos < raw.length; pos += 8) {
+    chunks.push(Buffer.from([0]));
+    chunks.push(raw.subarray(pos, Math.min(pos + 8, raw.length)));
+  }
+  return Buffer.concat(chunks);
+}
+
+function buildSyntheticTopic(topicCount = 4) {
+  const links = Buffer.alloc(topicCount * 49);
+  for (let i = 0; i < topicCount; i++) {
+    const pos = i * 49;
+    links.writeUInt32LE(49, pos);
+    links.writeUInt32LE(0, pos + 4);
+    links.writeInt32LE(i === 0 ? -1 : 12 + (i - 1) * 49, pos + 8);
+    links.writeInt32LE(i + 1 === topicCount ? -1 : 12 + (i + 1) * 49, pos + 12);
+    links.writeUInt32LE(49, pos + 16);
+    links[pos + 20] = 2;
+  }
+  const header = Buffer.alloc(12);
+  header.writeInt32LE(-1, 0);
+  header.writeUInt32LE(12, 4);
+  header.writeUInt32LE(0, 8);
+  return Buffer.concat([header, encodeLiteralLz77(links)]);
+}
+
+function writeSyntheticTopicRaw(document, rawOffset, value, byteLength = 4) {
+  const compressed = document.offsets['|TOPIC'] + 9 + 12;
+  for (let i = 0; i < byteLength; i++) {
+    const sourceOffset = rawOffset + i;
+    const encodedOffset = compressed + Math.floor(sourceOffset / 8) * 9 + 1 + sourceOffset % 8;
+    document.file[encodedOffset] = value >>> (i * 8) & 0xff;
+  }
+}
+
 function buildSyntheticSemanticHelp() {
   const title = Buffer.from('Synthetic Help\0', 'latin1');
   const system = Buffer.alloc(12 + 4 + title.length + 8);
@@ -210,7 +265,7 @@ function buildSyntheticSemanticHelp() {
     ['|CONTEXT', buildSemanticBtree('contexts')],
     ['|CTXOMAP', map],
     ['|SYSTEM', system],
-    ['|TOPIC', Buffer.alloc(1)],
+    ['|TOPIC', buildSyntheticTopic()],
     ['|TTLBTREE', buildSemanticBtree('titles')],
   ]);
   const names = [...contentsByName.keys()].sort();
@@ -287,6 +342,8 @@ async function main() {
   const dv = new DataView(memory.buffer);
   const staging = e.get_staging();
   const nameWA = staging + 0x10000;
+  const topicOutWA = staging + 0x20000;
+  const topicOutCapacity = 0x10000;
 
   let passed = 0;
   let failed = 0;
@@ -379,7 +436,8 @@ async function main() {
     check(`${file} exact canonical topic references`,
       JSON.stringify(topics.map(topic => topic.ref)) === JSON.stringify(semantic.topics));
     check(`${file} title metadata is not guessed from body text`,
-      topics.every(topic => topic.title === '' && topic.recordOff === 0));
+      topics.every((topic, index) => topic.title === '' && topic.recordOff >= 12 &&
+        (!index || topics[index - 1].recordOff < topic.recordOff)));
 
     const contexts = [];
     for (let i = 0; i < e.get_help_context_count(); i++) {
@@ -412,7 +470,40 @@ async function main() {
     check(`${file} phrase lookup is bounded`,
       e.get_help_phrase_ptr(semantic.phraseCount) === 0 &&
       e.get_help_phrase_len(semantic.phraseCount) === 0);
+
+    const rawParts = [];
+    const rawLengths = [];
+    let rawBytes = 0;
+    let rawOk = true;
+    for (let i = 0; i < semantic.topics.length; i++) {
+      const length = e.test_help_decode_topic_raw(i, topicOutWA, topicOutCapacity);
+      rawLengths.push(length);
+      if (length < 0) {
+        rawOk = false;
+        break;
+      }
+      const lengthPrefix = Buffer.alloc(4);
+      lengthPrefix.writeUInt32LE(length);
+      rawParts.push(lengthPrefix, Buffer.from(bytes.subarray(topicOutWA, topicOutWA + length)));
+      rawBytes += length;
+    }
+    const rawHash = rawOk
+      ? crypto.createHash('sha256').update(Buffer.concat(rawParts)).digest('hex')
+      : '';
+    check(`${file} exact raw topic lengths`,
+      rawOk && JSON.stringify(rawLengths) === JSON.stringify(semantic.rawTopicLengths),
+      `actual=${JSON.stringify(rawLengths)}`);
+    check(`${file} exact raw topic corpus`,
+      rawOk && rawBytes === semantic.rawTopicBytes && rawHash === semantic.rawTopicHash,
+      `bytes=${rawBytes} hash=${rawHash}`);
   }
+
+  const capacityFixture = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
+  check('topic decoder fixture reloads for capacity test', load(capacityFixture) === 1);
+  check('topic decoder enforces caller output capacity',
+    e.test_help_decode_topic_raw(0, topicOutWA, 114) === -1 && e.get_help_last_error() === 6);
+  check('topic decoder rejects an out-of-range topic index',
+    e.test_help_decode_topic_raw(e.get_help_topic_count(), topicOutWA, topicOutCapacity) === -1);
 
   for (const indexed of [false, true]) {
     const data = buildSyntheticDirectory({ indexed });
@@ -437,10 +528,15 @@ async function main() {
   }
   check('two-level title leaves publish exact canonical topics',
     JSON.stringify(syntheticTopics) === JSON.stringify([[0,'Alpha'],[10,'Beta'],[20,'Gamma'],[30,'Delta']]));
+  check('synthetic canonical topics bind to exact TOPICPOS records',
+    [12,61,110,159].every((pos, index) =>
+      dv.getUint32(e.get_help_topic_record(index) + 4, true) === pos));
   check('two-level signed hash tree resolves both leaves',
     e.test_help_resolve_context_hash(-10) === 0 && e.test_help_resolve_context_hash(20) === 30);
   check('synthetic numeric maps resolve canonical topics',
     e.test_help_resolve_context_id(7) === 20 && e.test_help_resolve_context_id(8) === 0);
+  check('synthetic header-only topics decode to empty raw streams',
+    [0,1,2,3].every(index => e.test_help_decode_topic_raw(index, topicOutWA, topicOutCapacity) === 0));
 
   const mounted = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
   ctx.vfs.files.set('c:\\fixture.hlp', { data: new Uint8Array(mounted), attrs: 0x20 });
@@ -609,6 +705,56 @@ async function main() {
   check('invalid LZ77 back-reference fails before publication',
     load(badPhraseLz) === 0 && e.get_help_last_error() === 12 &&
     e.get_help_phrase_count() === 0);
+
+  const shortTopicBlock = buildSyntheticSemanticHelp();
+  shortTopicBlock.file.writeUInt32LE(11, shortTopicBlock.offsets['|TOPIC'] + 4);
+  check('truncated TOPIC physical block fails before publication',
+    load(shortTopicBlock.file) === 0 && e.get_help_last_error() === 13 &&
+    e.get_help_topic_count() === 0);
+
+  const badTopicLz = buildSyntheticSemanticHelp();
+  const badTopicCompressed = badTopicLz.offsets['|TOPIC'] + 9 + 12;
+  badTopicLz.file[badTopicCompressed] = 1;
+  badTopicLz.file.writeUInt16LE(0x0fff, badTopicCompressed + 1);
+  check('invalid TOPIC LZ77 back-reference fails before publication',
+    load(badTopicLz.file) === 0 && e.get_help_last_error() === 13 &&
+    e.get_help_topic_count() === 0);
+
+  const truncatedTopicLz = buildSyntheticSemanticHelp();
+  const truncatedTopicCompressed = truncatedTopicLz.offsets['|TOPIC'] + 9 + 12;
+  truncatedTopicLz.file.writeUInt32LE(14, truncatedTopicLz.offsets['|TOPIC'] + 4);
+  truncatedTopicLz.file[truncatedTopicCompressed] = 1;
+  check('truncated TOPIC LZ77 back-reference fails before publication',
+    load(truncatedTopicLz.file) === 0 && e.get_help_last_error() === 13 &&
+    e.get_help_topic_count() === 0);
+
+  const badTopicPrev = buildSyntheticSemanticHelp();
+  writeSyntheticTopicRaw(badTopicPrev, 49 + 8, -1);
+  check('TOPIC link previous pointer must match the chain',
+    load(badTopicPrev.file) === 0 && e.get_help_last_error() === 13);
+
+  const cyclicTopicLinks = buildSyntheticSemanticHelp();
+  writeSyntheticTopicRaw(cyclicTopicLinks, 12, 12);
+  check('cyclic TOPIC links fail before publication',
+    load(cyclicTopicLinks.file) === 0 && e.get_help_last_error() === 13 &&
+    e.get_help_topic_count() === 0);
+
+  const topicLinkOutsideBlock = buildSyntheticSemanticHelp();
+  writeSyntheticTopicRaw(topicLinkOutsideBlock, 12, 16000);
+  check('TOPIC links cannot point beyond a decompressed block',
+    load(topicLinkOutsideBlock.file) === 0 && e.get_help_last_error() === 13 &&
+    e.get_help_topic_count() === 0);
+
+  const unknownTopicRecord = buildSyntheticSemanticHelp();
+  writeSyntheticTopicRaw(unknownTopicRecord, 20, 0x99, 1);
+  check('unknown TOPIC record types fail explicitly',
+    load(unknownTopicRecord.file) === 0 && e.get_help_last_error() === 13);
+
+  const missingTopicHeaders = buildSyntheticSemanticHelp();
+  writeSyntheticTopicRaw(missingTopicHeaders, 12, -1);
+  check('TOPIC header count must match canonical titles',
+    load(missingTopicHeaders.file) === 0 && e.get_help_last_error() === 13 &&
+    e.get_help_topic_count() === 0);
 
   e.test_help_reset();
   check('reset releases parser state',

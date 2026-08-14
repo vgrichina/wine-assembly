@@ -135,6 +135,14 @@ DIB calls resolve WORD indexes through the selected logical palette; pattern
 brushes preserve the indexes and resolve them against the destination DC at
 sample time.
 
+Application-supplied 12-byte `BITMAPCOREINFO` is normalized at the same WAT
+boundary. `CreateDIBitmap` and `CreateDIBSection` expand RGBTRIPLE tables into
+the bitmap's canonical RGBQUAD storage, while transient DIB drawing and
+`SetDIBits` use a bounded scratch expansion. `GetDIBits` writes the legacy
+16-bit dimensions and planes/depth fields and converts indexed palettes back
+to RGBTRIPLE entries. Core-header pixels remain bottom-up and never pass
+through Canvas.
+
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
 16-, 24-, and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
 canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and

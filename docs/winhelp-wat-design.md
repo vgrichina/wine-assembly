@@ -5,7 +5,9 @@ bounded-reader foundation, directory B+tree parser, and raw VFS load path are
 implemented. Phase 2 now parses `|SYSTEM`, canonical `|TTLBTREE` topics,
 `|CONTEXT`, `|CTXOMAP`, and Hall `|PhrIndex`/`|PhrImage` phrase tables,
 including two-level B+trees, bounded LZ77 expansion, and referential
-validation. Old-style phrases, topic-body decoding, and the runtime UI cutover
+validation. It also validates the complete `|TOPIC` link chain, binds canonical
+topics to their type-2 records, and decodes phrase-expanded raw `LinkData2`
+streams. Old-style phrases, formatted topic tokens, and the runtime UI cutover
 remain.
 
 This document defines the replacement for the current split WinHelp path. The
@@ -809,10 +811,14 @@ checked-in HLP with no call to `HlpParser`.
 
 Status: **partially implemented**. Document metadata, canonical topic/title
 records, signed context-hash indexes, numeric context maps, and Hall phrase
-tables are WAT-owned. All checked-in fixtures have exact topic-reference,
-context-resolution, and decompressed-phrase coverage, supplemented by
-synthetic two-level trees and malformed semantic indexes. Old-style phrase
-tables and `|TOPIC` record/token decoding are next.
+tables are WAT-owned. The bounded topic-block decoder now validates physical
+LZ77 blocks and the complete forward/back `TOPICLINK` chain, binds every
+canonical title entry to its type-2 record, and phrase-expands each topic's raw
+`LinkData2` stream while preserving paragraph-control bytes. All checked-in
+fixtures have exact topic-reference, context-resolution, decompressed-phrase,
+raw-topic-length, and full-corpus hash coverage, supplemented by synthetic
+two-level trees and malformed semantic/topic inputs. Old-style phrase tables
+and formatted topic-token decoding are next.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.

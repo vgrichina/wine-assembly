@@ -11,6 +11,8 @@
   (global $HELP_MAX_TOPICS i32 (i32.const 65536))
   (global $HELP_MAX_PHRASES i32 (i32.const 65536))
   (global $HELP_MAX_PHRASE_BYTES i32 (i32.const 65536))
+  (global $HELP_MAX_TOPIC_LINKS i32 (i32.const 262144))
+  (global $HELP_MAX_DECOMPRESSED_TOPIC_BYTES i32 (i32.const 0x00400000))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
