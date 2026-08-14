@@ -5669,8 +5669,11 @@
     (if (i32.eqz (call $gdi_brush_valid (local.get $brush)))
       (then (return (i32.const 0))))
     (if (i32.and (i32.ne (local.get $pen) (i32.const 0x30018))
-          (i32.and (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 0))
-            (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 6))))
+          (i32.and
+            (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 0))
+            (i32.and
+              (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 5))
+              (i32.ne (call $gdi_object_style (local.get $pen)) (i32.const 6)))))
       (then (return (i32.const 0))))
     (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $left)))
     (local.set $y0 (call $gdi_line_map_y (local.get $desc) (local.get $top)))
@@ -5685,7 +5688,10 @@
       (then (return (i32.const 1))))
     (local.set $pen_color (call $gdi_object_color (local.get $pen)))
     (local.set $pen_width (call $gdi_object_width (local.get $pen)))
-    (if (i32.eq (local.get $pen) (i32.const 0x30018)) (then (local.set $pen_width (i32.const 0))))
+    (if (i32.or
+          (i32.eq (local.get $pen) (i32.const 0x30018))
+          (i32.eq (call $gdi_object_style (local.get $pen)) (i32.const 5)))
+      (then (local.set $pen_width (i32.const 0))))
     (if (i32.gt_u (local.get $pen_width) (i32.const 64)) (then (return (i32.const 0))))
     (local.set $y (local.get $y0))
     (block $rows_done (loop $rows
@@ -6585,6 +6591,68 @@
       (local.set $from_x (local.get $to_x)) (local.set $from_y (local.get $to_y))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $draw)))
+    (i32.const 1))
+
+  ;; PolyPolyline preserves each sub-polyline boundary and never updates the
+  ;; DC current position. Preflight the entire call before changing pixels so
+  ;; a malformed later count cannot leave an earlier path partially drawn.
+  (func $gdi_poly_polyline_try (param $hdc i32) (param $points i32)
+        (param $counts i32) (param $poly_count i32) (result i32)
+    (local $poly i32) (local $point_index i32) (local $count i32) (local $i i32)
+    (local $from i32) (local $to i32)
+    (if (i32.or (i32.eqz (local.get $points))
+          (i32.or (i32.eqz (local.get $counts))
+            (i32.or (i32.eqz (local.get $poly_count))
+              (i32.gt_u (local.get $poly_count) (i32.const 4096)))))
+      (then (return (i32.const 0))))
+    (block $preflight_done (loop $preflight_polys
+      (br_if $preflight_done (i32.ge_u (local.get $poly) (local.get $poly_count)))
+      (local.set $count
+        (i32.load (i32.add (local.get $counts) (i32.shl (local.get $poly) (i32.const 2)))))
+      (if (i32.or (i32.lt_u (local.get $count) (i32.const 2))
+            (i32.gt_u (local.get $count)
+              (i32.sub (i32.const 4096) (local.get $point_index))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.const 1))
+      (block $segments_done (loop $preflight_segments
+        (br_if $segments_done (i32.ge_u (local.get $i) (local.get $count)))
+        (local.set $from (i32.add (local.get $points)
+          (i32.shl (i32.add (local.get $point_index)
+            (i32.sub (local.get $i) (i32.const 1))) (i32.const 3))))
+        (local.set $to (i32.add (local.get $points)
+          (i32.shl (i32.add (local.get $point_index) (local.get $i)) (i32.const 3))))
+        (if (i32.eqz (call $gdi_line_can_raster (local.get $hdc)
+              (i32.load (local.get $from)) (i32.load offset=4 (local.get $from))
+              (i32.load (local.get $to)) (i32.load offset=4 (local.get $to))))
+          (then (return (i32.const 0))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $preflight_segments)))
+      (local.set $point_index (i32.add (local.get $point_index) (local.get $count)))
+      (local.set $poly (i32.add (local.get $poly) (i32.const 1)))
+      (br $preflight_polys)))
+    (local.set $poly (i32.const 0))
+    (local.set $point_index (i32.const 0))
+    (block $draw_done (loop $draw_polys
+      (br_if $draw_done (i32.ge_u (local.get $poly) (local.get $poly_count)))
+      (local.set $count
+        (i32.load (i32.add (local.get $counts) (i32.shl (local.get $poly) (i32.const 2)))))
+      (global.set $gdi_line_style_phase (i32.const 0))
+      (local.set $i (i32.const 1))
+      (block $poly_done (loop $draw_segments
+        (br_if $poly_done (i32.ge_u (local.get $i) (local.get $count)))
+        (local.set $from (i32.add (local.get $points)
+          (i32.shl (i32.add (local.get $point_index)
+            (i32.sub (local.get $i) (i32.const 1))) (i32.const 3))))
+        (local.set $to (i32.add (local.get $points)
+          (i32.shl (i32.add (local.get $point_index) (local.get $i)) (i32.const 3))))
+        (drop (call $gdi_line_try (local.get $hdc)
+          (i32.load (local.get $from)) (i32.load offset=4 (local.get $from))
+          (i32.load (local.get $to)) (i32.load offset=4 (local.get $to))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $draw_segments)))
+      (local.set $point_index (i32.add (local.get $point_index) (local.get $count)))
+      (local.set $poly (i32.add (local.get $poly) (i32.const 1)))
+      (br $draw_polys)))
     (i32.const 1))
 
   (func (export "test_gdi_line_try")
@@ -7961,6 +8029,72 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $rects)))
     (local.get $ok))
+
+  (func $gdi_hdc_invert_rgn (param $hdc i32) (param $hrgn i32) (result i32)
+    (local $record i32) (local $base i32) (local $count i32) (local $i i32)
+    (local $rect i32) (local $desc i32) (local $left i32) (local $top i32)
+    (local $right i32) (local $bottom i32) (local $swap i32)
+    (local $dirty_left i32) (local $dirty_top i32)
+    (local $dirty_right i32) (local $dirty_bottom i32)
+    (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
+      (then (return (i32.const 0))))
+    (local.set $base (call $gdi_rgn_bands (local.get $record)))
+    (local.set $count (i32.load offset=28 (local.get $record)))
+    (if (i32.eqz (local.get $count)) (then (return (i32.const 1))))
+    (local.set $dirty_left (i32.const 0x7FFFFFFF))
+    (local.set $dirty_top (i32.const 0x7FFFFFFF))
+    (local.set $dirty_right (i32.const -2147483648))
+    (local.set $dirty_bottom (i32.const -2147483648))
+    (block $done (loop $rectangles
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rect (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $left (call $gdi_line_map_x
+        (local.get $desc) (i32.load (local.get $rect))))
+      (local.set $top (call $gdi_line_map_y
+        (local.get $desc) (i32.load offset=4 (local.get $rect))))
+      (local.set $right (call $gdi_line_map_x
+        (local.get $desc) (i32.load offset=8 (local.get $rect))))
+      (local.set $bottom (call $gdi_line_map_y
+        (local.get $desc) (i32.load offset=12 (local.get $rect))))
+      (if (i32.gt_s (local.get $left) (local.get $right))
+        (then
+          (local.set $swap (local.get $left))
+          (local.set $left (local.get $right))
+          (local.set $right (local.get $swap))))
+      (if (i32.gt_s (local.get $top) (local.get $bottom))
+        (then
+          (local.set $swap (local.get $top))
+          (local.set $top (local.get $bottom))
+          (local.set $bottom (local.get $swap))))
+      (if (i32.and (i32.lt_s (local.get $left) (local.get $right))
+            (i32.lt_s (local.get $top) (local.get $bottom)))
+        (then
+          (if (i32.eqz (call $gdi_raster_bitblt
+                (local.get $hdc) (i32.const 0) (local.get $desc)
+                (local.get $left) (local.get $top)
+                (i32.sub (local.get $right) (local.get $left))
+                (i32.sub (local.get $bottom) (local.get $top))
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0x00550009)))
+            (then (return (i32.const 0))))
+          (if (i32.lt_s (local.get $left) (local.get $dirty_left))
+            (then (local.set $dirty_left (local.get $left))))
+          (if (i32.lt_s (local.get $top) (local.get $dirty_top))
+            (then (local.set $dirty_top (local.get $top))))
+          (if (i32.gt_s (local.get $right) (local.get $dirty_right))
+            (then (local.set $dirty_right (local.get $right))))
+          (if (i32.gt_s (local.get $bottom) (local.get $dirty_bottom))
+            (then (local.set $dirty_bottom (local.get $bottom))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $rectangles)))
+    (if (i32.lt_s (local.get $dirty_left) (local.get $dirty_right))
+      (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+        (local.get $dirty_left) (local.get $dirty_top)
+        (local.get $dirty_right) (local.get $dirty_bottom))))
+    (i32.const 1))
 
   (func $gdi_hdc_frame_rgn (param $hdc i32) (param $hrgn i32) (param $brush i32)
         (param $frame_w i32) (param $frame_h i32) (result i32)
@@ -9923,6 +10057,31 @@
       (br $walk)))
     (i32.const 0))
 
+  ;; A native child must not paint ahead of an application-owned ancestor
+  ;; whose later WM_PAINT can overwrite the child's pixels on the shared
+  ;; top-level backing canvas. Keep the child queued until USER selects and
+  ;; consumes every dirty ancestor; the parent-selection path then propagates
+  ;; its update region back down to the child before the next native drain.
+  (func $wnd_has_pending_ancestor_paint (param $hwnd i32) (result i32)
+    (local $cur i32) (local $slot i32)
+    (local.set $cur (call $wnd_get_parent (local.get $hwnd)))
+    (block $done (loop $walk
+      (if (i32.eqz (local.get $cur)) (then (return (i32.const 0))))
+      (if (i32.and
+            (i32.eq (local.get $cur) (global.get $main_hwnd))
+            (i32.ne (global.get $paint_pending) (i32.const 0)))
+        (then (return (i32.const 1))))
+      (local.set $slot (call $wnd_table_find (local.get $cur)))
+      (if (i32.and
+            (i32.ne (local.get $slot) (i32.const -1))
+            (i32.ne
+              (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $slot)))
+              (i32.const 0)))
+        (then (return (i32.const 1))))
+      (local.set $cur (call $wnd_get_parent (local.get $cur)))
+      (br $walk)))
+    (i32.const 0))
+
   ;; Clear pending WAT-owned paint/update state for a subtree. ShowWindow(SW_HIDE)
   ;; makes the whole child tree non-paintable even when descendants retain their
   ;; own WS_VISIBLE style.
@@ -10105,7 +10264,9 @@
             (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
             (if (call $ctrl_table_get_class (local.get $hwnd))
               (then
-                (if (call $wnd_has_pending_ancestor_erase (local.get $hwnd))
+                (if (i32.or
+                      (call $wnd_has_pending_ancestor_erase (local.get $hwnd))
+                      (call $wnd_has_pending_ancestor_paint (local.get $hwnd)))
                   (then
                     (local.set $i (i32.add (local.get $i) (i32.const 1)))
                     (br $scan)))
@@ -10161,8 +10322,12 @@
               (drop (call $control_wndproc_dispatch
                 (local.get $ch) (i32.const 0x000F)
                 (i32.const 0) (i32.const 0)))
-              (call $update_clear_hwnd (local.get $ch))
-              (call $paint_flag_clear_hwnd (local.get $ch))
+              ;; The immediate exposure draw makes a just-shown hierarchy
+              ;; visible even before its message loop resumes. Keep one USER
+              ;; repaint queued as well: later pending non-client/ancestor
+              ;; work may still touch the shared top-level surface, and the
+              ;; queued native paint must be the final compositor pass.
+              (call $paint_flag_set_inv (local.get $ch))
               (local.set $n (i32.add (local.get $n) (i32.const 1))))
             (else
               (local.set $n (i32.add

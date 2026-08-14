@@ -108,6 +108,20 @@ async function main() {
     ]);
   });
 
+  check('dynamic PS_NULL pen fills a rectangle without an outline', () => {
+    const t = target(6, 5);
+    const nullPen = object(1, 5, 0, 0x00000000, 1);
+    assert.strictEqual(wat.test_gdi_rectangle_desc(
+      t.hdc, t.desc, 1, 1, 5, 4, nullPen, 0x30010, 13), 1);
+    assert.deepStrictEqual(rows(t), [
+      '......',
+      '.WWWW.',
+      '.WWWW.',
+      '.WWWW.',
+      '......',
+    ]);
+  });
+
   check('16-bpp rectangle fill and outline share the RGB555 raster codec', () => {
     const t = target(5, 4, 16, true);
     const redPen = object(1, 0, 1, 0x000000FF);
