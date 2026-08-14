@@ -920,10 +920,18 @@
                 (local.get $owner) (local.get $fr_w))))
               (local.set $replace_count (i32.add (local.get $replace_count) (i32.const 1)))
               (br $replace_all_loop)))))
-        (drop (call $post_queue_push (local.get $owner)
-          (select (global.get $findreplace_message) (i32.const 0xC000)
-                  (i32.ne (global.get $findreplace_message) (i32.const 0)))
-          (i32.const 0) (local.get $fr)))
+        ;; Native RichEdit owners are operated directly above. Posting the
+        ;; same FR_REPLACE notification would make their framework perform the
+        ;; operation a second time. Plain WAT/application owners still receive
+        ;; the standard registered common-dialog notification.
+        (if (i32.or
+              (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
+              (i32.eqz (call $wnd_get_parent (local.get $owner))))
+          (then
+            (drop (call $post_queue_push (local.get $owner)
+              (select (global.get $findreplace_message) (i32.const 0xC000)
+                      (i32.ne (global.get $findreplace_message) (i32.const 0)))
+              (i32.const 0) (local.get $fr)))))
         (return (i32.const 0))))
 
     ;; ---- Find Next (id=1) ----
@@ -992,10 +1000,16 @@
                         (i32.eq (i32.load offset=16 (local.get $main_state_w)) (local.get $main_len))))
                   (then (drop (call $wnd_send_message
                     (local.get $main_edit_h) (i32.const 0x00B1) (i32.const 0) (i32.const 0)))))))))
-        (drop (call $post_queue_push (local.get $owner)
-                (select (global.get $findreplace_message) (i32.const 0xC000)
-                        (i32.ne (global.get $findreplace_message) (i32.const 0)))
-                (i32.const 0) (local.get $fr)))
+        ;; Native RichEdit was handled synchronously above; avoid duplicating
+        ;; Find Next in the application after selecting the same match here.
+        (if (i32.or
+              (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
+              (i32.eqz (call $wnd_get_parent (local.get $owner))))
+          (then
+            (drop (call $post_queue_push (local.get $owner)
+                    (select (global.get $findreplace_message) (i32.const 0xC000)
+                            (i32.ne (global.get $findreplace_message) (i32.const 0)))
+                    (i32.const 0) (local.get $fr)))))
         (return (i32.const 0))))
 
     (i32.const 0)
