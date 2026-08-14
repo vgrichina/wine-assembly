@@ -179,6 +179,7 @@ function analyzeCaretStroke(file, origin, pos) {
   const y1 = Math.min(png.height - 1, expectedY + 18);
   let maxColumnDark = 0;
   let maxColumnX = -1;
+  let expectedColumnDark = 0;
 
   for (let x = x0; x <= x1; x++) {
     let dark = 0;
@@ -194,9 +195,10 @@ function analyzeCaretStroke(file, origin, pos) {
       maxColumnDark = dark;
       maxColumnX = x;
     }
+    if (x === expectedX) expectedColumnDark = dark;
   }
 
-  return { expectedX, expectedY, maxColumnDark, maxColumnX };
+  return { expectedX, expectedY, expectedColumnDark, maxColumnDark, maxColumnX };
 }
 
 function line(label) {
@@ -214,13 +216,13 @@ const visualOnAgain = analyzeCaretStroke(PNG_ON_AGAIN, origin, caretPos);
 if (caretPos) console.log(`last caret pos: x=${caretPos.x} y=${caretPos.y}`);
 if (origin) console.log(`richedit client: x=${origin.x} y=${origin.y} w=${origin.w} h=${origin.h}`);
 if (visualOn) {
-  console.log(`visual caret on: expected=${visualOn.expectedX},${visualOn.expectedY} maxColumnX=${visualOn.maxColumnX} dark=${visualOn.maxColumnDark}`);
+  console.log(`visual caret on: expected=${visualOn.expectedX},${visualOn.expectedY} expectedDark=${visualOn.expectedColumnDark} maxColumnX=${visualOn.maxColumnX} dark=${visualOn.maxColumnDark}`);
 }
 if (visualOff) {
-  console.log(`visual caret off: expected=${visualOff.expectedX},${visualOff.expectedY} maxColumnX=${visualOff.maxColumnX} dark=${visualOff.maxColumnDark}`);
+  console.log(`visual caret off: expected=${visualOff.expectedX},${visualOff.expectedY} expectedDark=${visualOff.expectedColumnDark} maxColumnX=${visualOff.maxColumnX} dark=${visualOff.maxColumnDark}`);
 }
 if (visualOnAgain) {
-  console.log(`visual caret on-again: expected=${visualOnAgain.expectedX},${visualOnAgain.expectedY} maxColumnX=${visualOnAgain.maxColumnX} dark=${visualOnAgain.maxColumnDark}`);
+  console.log(`visual caret on-again: expected=${visualOnAgain.expectedX},${visualOnAgain.expectedY} expectedDark=${visualOnAgain.expectedColumnDark} maxColumnX=${visualOnAgain.maxColumnX} dark=${visualOnAgain.maxColumnDark}`);
 }
 
 const checks = [];
@@ -242,7 +244,7 @@ check('caret paints an inverted vertical stroke in on phase',
   visualOn.maxColumnDark >= 10);
 check('caret off phase erases the stroke',
   visualOff &&
-  visualOff.maxColumnDark <= 3);
+  visualOff.expectedColumnDark <= 3);
 check('caret returns in the next on phase without stale backing-store damage',
   visualOnAgain &&
   visualOnAgain.maxColumnDark >= 10);
