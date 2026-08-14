@@ -11,6 +11,7 @@ const packageJson = require("../package.json");
 
 const root = path.resolve(__dirname, "..");
 const harnessRoot = path.join(root, "tools/v86-reference");
+const reviewedRoot = path.join(root, "screenshots/v86-reference/reviewed");
 const forbiddenExtensions = new Set([".bin", ".exe", ".img", ".iso", ".wasm", ".zst"]);
 
 function walk(directory) {
@@ -40,6 +41,27 @@ for (const [id, app] of Object.entries(manifest.apps)) {
     const relative = typeof specification === "string" ? specification : specification.path;
     assert(fs.existsSync(path.join(root, relative)), `${id} payload is missing: ${relative}`);
   }
+}
+
+const capturedApps = Object.entries(manifest.apps).filter(([, app]) => !app.skip);
+assert.equal(capturedApps.length, 16, "reviewed corpus size changed unexpectedly");
+for (const [id] of capturedApps) {
+  const pngPath = path.join(reviewedRoot, `${id}.png`);
+  const jsonPath = path.join(reviewedRoot, `${id}.json`);
+  assert(fs.existsSync(pngPath), `${id} reviewed PNG is missing`);
+  assert(fs.existsSync(jsonPath), `${id} reviewed metadata is missing`);
+
+  const metadata = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+  const digest = require("node:crypto").createHash("sha256").update(fs.readFileSync(pngPath)).digest("hex");
+  assert.equal(metadata.app.id, id, `${id} metadata identifies another app`);
+  assert.equal(metadata.output, `screenshots/v86-reference/reviewed/${id}.png`);
+  assert.equal(metadata.screenshotSha256, digest, `${id} PNG digest does not match metadata`);
+  assert.deepEqual(metadata.display, {
+    width: 640,
+    height: 480,
+    display: "block",
+    running: true,
+  });
 }
 
 const iso = generate([

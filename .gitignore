@@ -6,6 +6,11 @@ node_modules/
 scratch/
 .cache/v86-reference/
 screenshots/v86-reference/generated/
+!screenshots/v86-reference/
+!screenshots/v86-reference/reviewed/
+!screenshots/v86-reference/reviewed/*.png
+!screenshots/v86-reference/reviewed/*.json
+!screenshots/v86-reference/reviewed/README.md
 MARKETING.md
 test/output/
 *-opcodes.log
@@ -13,6 +18,7 @@ apps/*.log
 binaries
 *.exe
 *.png
+!screenshots/v86-reference/reviewed/*.png
 !icons/
 !icons/*.png
 *.dll

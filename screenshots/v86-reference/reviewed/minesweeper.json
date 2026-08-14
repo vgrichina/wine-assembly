@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-14T01:36:42.863Z",
+  "app": {
+    "id": "minesweeper",
+    "title": "Minesweeper",
+    "launch": "D:\\WINMINE.EXE"
+  },
+  "display": {
+    "width": 640,
+    "height": 480,
+    "display": "block",
+    "running": true
+  },
+  "output": "screenshots/v86-reference/reviewed/minesweeper.png",
+  "screenshotSha256": "71251cb274c5a2782dedd0644e7511dbe92db7feef2d03bd6f44132de9ead4e7",
+  "v86": {
+    "package": "v86@0.5.432",
+    "embeddedVersion": "0.5.432+gf3d4472",
+    "upstreamCommit": "f3d4472a9c934b9ad78a311f5849ba711a296d23"
+  },
+  "sources": {
+    "bios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/seabios.bin",
+    "vgaBios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/vgabios.bin",
+    "disk": "https://i.copy.sh/windows98/.img",
+    "state": "https://i.copy.sh/windows98_state-v2.bin.zst"
+  },
+  "payload": [
+    {
+      "name": "WINMINE.EXE",
+      "source": "test/binaries/entertainment-pack/winmine.exe",
+      "sha256": "2b554103fb9007c23b6c42eae4b410e294700fb82f84cf846a10e7a2a0d30a7d"
+    },
+    {
+      "name": "ABOUTWEP.DLL",
+      "source": "test/binaries/entertainment-pack/aboutwep.dll",
+      "sha256": "933b326f20d05c58e5fc8949f8a0077e08a951bff1d3fade902669eed4eb3e61"
+    }
+  ]
+}

@@ -71,6 +71,9 @@ Each capture writes a 640x480 PNG plus JSON metadata containing the runtime
 revision, asset locations, payload hashes, display dimensions, and screenshot
 hash. Generated captures go under `screenshots/v86-reference/generated/` and
 remain ignored until intentionally promoted as reviewed reference material.
+Reviewed captures live under `screenshots/v86-reference/reviewed/`. Their JSON
+sidecars retain the complete provenance and are checked against the PNG digest
+by `test/test-v86-reference-harness.js`.
 
 The first geometry probe on the pinned profile reported a `154x235` outer
 Minesweeper window, `148x191` client area, and client origin `(3,41)` relative

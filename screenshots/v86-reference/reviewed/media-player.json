@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-14T01:46:23.454Z",
+  "app": {
+    "id": "media-player",
+    "title": "Media Player (Windows 98)",
+    "launch": "D:\\MPLAYER.EXE"
+  },
+  "display": {
+    "width": 640,
+    "height": 480,
+    "display": "block",
+    "running": true
+  },
+  "output": "screenshots/v86-reference/reviewed/media-player.png",
+  "screenshotSha256": "711f92ed495e1143633a7abb4b77a7dc615eaa0c99d8dc9021f92817f46117db",
+  "v86": {
+    "package": "v86@0.5.432",
+    "embeddedVersion": "0.5.432+gf3d4472",
+    "upstreamCommit": "f3d4472a9c934b9ad78a311f5849ba711a296d23"
+  },
+  "sources": {
+    "bios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/seabios.bin",
+    "vgaBios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/vgabios.bin",
+    "disk": "https://i.copy.sh/windows98/.img",
+    "state": "https://i.copy.sh/windows98_state-v2.bin.zst"
+  },
+  "payload": [
+    {
+      "name": "MPLAYER.EXE",
+      "source": "test/binaries/win98-apps/mplayer.exe",
+      "sha256": "40490851dd92a4e9aa64f456b09af160beaab6638dd0a2720fe0dcb1721afc53"
+    }
+  ]
+}
