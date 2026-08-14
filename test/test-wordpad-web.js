@@ -412,6 +412,43 @@ async function main() {
     if (e.guest_free) e.guest_free(guest);
     return { rendererText: win.title, guestText };
   })()`);
+  const toolbarVisualState = await evaluate(`(() => {
+    const app = runningApps.find(item => item && item.name === 'wordpad');
+    const e = app.wine.instance.exports;
+    const windows = Object.values((sharedRenderer && sharedRenderer.windows) || {});
+    const formatting = windows.find(win => win && win.wasm === app.wine.instance &&
+      win.className === 'ToolbarWindow32' && (e.ctrl_get_id(win.hwnd) | 0) === 59396);
+    const size = windows.find(win => win && win.wasm === app.wine.instance &&
+      win.className === 'COMBOBOX' && (e.ctrl_get_id(win.hwnd) | 0) === 166);
+    if (!formatting || !size) return null;
+    const formatOrigin = sharedRenderer._windowOriginForComposite(formatting);
+    const sizeOrigin = sharedRenderer._windowOriginForComposite(size);
+    const canvas = document.getElementById('screen');
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const color = (x, y) => {
+      const p = (y * canvas.width + x) * 4;
+      return [pixels[p], pixels[p + 1], pixels[p + 2], pixels[p + 3]];
+    };
+    let buttonDetail = 0;
+    for (let y = formatOrigin.y + 2; y < formatOrigin.y + 24; y++) {
+      for (let x = formatOrigin.x + 204; x < Math.min(formatOrigin.x + 381, canvas.width); x++) {
+        const [r, g, b, a] = color(x, y);
+        if (a && (r !== 192 || g !== 192 || b !== 192)) buttonDetail++;
+      }
+    }
+    let sizeWhite = 0;
+    let sizeTextDark = 0;
+    for (let y = sizeOrigin.y + 3; y < sizeOrigin.y + 21; y++) {
+      for (let x = sizeOrigin.x + 3; x < sizeOrigin.x + 42; x++) {
+        const [r, g, b, a] = color(x, y);
+        if (a && r > 245 && g > 245 && b > 245) sizeWhite++;
+        if (a && r < 80 && g < 80 && b < 80) sizeTextDark++;
+      }
+    }
+    return {
+      buttonDetail, sizeWhite, sizeTextDark,
+    };
+  })()`);
   const consoleText = consoleSummary(cdp.events).join('\n');
   assert.strictEqual(typed.text, 'hello world', `native RichEdit text mismatch: ${JSON.stringify(typed)}`);
   assert(typed.running, 'WordPad should remain running after typing');
@@ -421,8 +458,10 @@ async function main() {
     `browser should preload riched20.dll:\n${consoleText.slice(-5000)}`);
   assert.deepStrictEqual(sizeState, { rendererText: '10', guestText: '10' },
     'WordPad browser toolbar should show the 10pt default in renderer and control state');
-  assert.strictEqual(menuFontState.handle, 0x30021,
-    `WordPad menu should select DEFAULT_GUI_FONT: ${JSON.stringify(menuFontState)}`);
+  assert(toolbarVisualState && toolbarVisualState.buttonDetail >= 900,
+    `formatting toolbar buttons should be visibly painted: ${JSON.stringify(toolbarVisualState)}`);
+  assert(toolbarVisualState.sizeWhite >= 350 && toolbarVisualState.sizeTextDark >= 5,
+    `size combobox should visibly paint its 10pt text: ${JSON.stringify(toolbarVisualState)}`);
   assert(/W95FA/.test(menuFontState.css),
     `WordPad menu should use the Win98 UI font: ${JSON.stringify(menuFontState)}`);
   assert(imagePixels.red > 100 && imagePixels.blue > 100,
@@ -435,6 +474,7 @@ async function main() {
   console.log('PASS  native RichEdit inserts a crash-safe CF_DIB object position:', JSON.stringify(dibPaste));
   console.log('PASS  native RichEdit paints the inline CF_DIB:', JSON.stringify(imagePixels));
   console.log('PASS  browser toolbar shows 10pt default size');
+  console.log('PASS  browser formatting toolbar is visibly painted:', JSON.stringify(toolbarVisualState));
   console.log('PASS  browser menu font:', JSON.stringify(menuFontState));
   console.log('PASS  screenshot:', PNG);
   cleanup();

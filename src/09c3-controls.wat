@@ -6855,17 +6855,11 @@
     (local.get $wa))
 
   (func $toolbar_repaint_now (param $hwnd i32)
-    ;; ToolbarWindow32 owns a composited child surface. MFC control-bar parents
-    ;; can leave ancestor erase state pending while still expecting the toolbar
-    ;; common-control proc to have drawn its buttons. Paint this surface
-    ;; directly when toolbar layout/state changes so it cannot stay as a blank
-    ;; COLOR_BTNFACE band waiting behind a parent erase that never touches the
-    ;; child surface.
-    (call $update_invalidate_full (local.get $hwnd))
-    (drop (call $toolbar_wndproc
-      (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
-    (call $update_clear_hwnd (local.get $hwnd))
-    (call $paint_flag_clear_hwnd (local.get $hwnd)))
+    ;; Queue the common-control repaint through USER instead of drawing it
+    ;; synchronously during layout. A direct child draw can be overwritten by
+    ;; a still-dirty application-owned control-bar ancestor; the paint pump
+    ;; orders that ancestor first and then drains this native child.
+    (call $paint_flag_set_inv (local.get $hwnd)))
 
   (func $toolbar_autosize (param $hwnd i32)
     (local $idx i32) (local $state i32) (local $sw i32) (local $parent i32)

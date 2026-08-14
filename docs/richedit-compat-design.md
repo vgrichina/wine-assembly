@@ -1081,6 +1081,27 @@ messages, and the 32K/64K/greater-than-64K limit transitions. The real WordPad
 editing regression remains green at 23/23. Exhaustive undocumented DLL-version
 quirks are not part of the non-OLE compatibility target.
 
+### 2026-08-14 browser toolbar revalidation
+
+The browser WordPad gate proves that the native `riched20.dll` is loaded, the
+process remains live after typing `hello world`, the default size combobox
+contains and visibly paints `10`, the menu selects the W95FA Win98 UI font,
+and the complete formatting-button run survives the final MFC layout. The
+captured button band contains 1,306 non-BTNFACE detail pixels without a forced
+`WM_PAINT`; all 14 stored buttons render from the valid 128x16, 32-bpp
+application bitmap strip.
+
+The resolved defect was generic USER/control paint ordering, not missing
+WordPad resources. Visible `DeferWindowPos` operations now create an update
+region as well as a paint bit while preserving `SWP_NOREDRAW` and hidden-window
+suppression. Parent updates propagate recursively before consumption, native
+children wait behind dirty ancestors, and immediate exposure draws retain one
+queued final compositor paint so later non-client or ancestor work cannot
+erase the controls. `ToolbarWindow32` layout/state changes likewise queue USER
+invalidation instead of clearing paint state after a premature direct draw.
+Companion coverage keeps `CBS_DROPDOWN` text synchronized with its inner EDIT
+and installs a fresh client clip for native toolbar painting.
+
 ## Suggested implementation slice
 
 Implement the next part as a bounded probe plus the first failing edit fixes.
@@ -1399,6 +1420,8 @@ Acceptance:
 [x] Empty-document font-size toolbar pixels and `WM_GETTEXT` report 10pt
     instead of rendering the native mixed-size sentinel as `1638.5`
 [x] WordPad formatting toolbar full button run is visible in the narrow row
+[x] Browser final-layout repaint naturally shows the formatting button run
+    without a forced `WM_PAINT` (generic USER parent/child paint ordering)
 [x] ToolbarWindow32 `TB_INSERTBUTTONA` preserves stored TBBUTTON order
 [x] ToolbarWindow32 bounded query/style/image-list/padding/delete messages are asserted
 [x] WordPad first Standard toolbar command route is explicitly covered
