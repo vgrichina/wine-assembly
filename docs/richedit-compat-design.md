@@ -771,11 +771,10 @@ buffers, compares Windows paths case-insensitively with slash equivalence,
 produces equality-consistent hashes, identifies `MKSYS_FILEMONIKER`, and frees
 the path on final release.
 
-`test/test-ole-moniker.js` passes 25/25 through the public OLE API thunk and the
-generated COM vtable. It also locks down deterministic failure semantics:
-unsupported persistence/composition never publishes an output, missing file
-activation reports a moniker error, and an unregistered value reports
-`S_FALSE` from `IsRunning`.
+`test/test-ole-moniker.js` passes 32/32 through the public OLE API thunk and the
+generated COM vtable. It locks down deterministic composition failures,
+missing-file activation, unregistered `IsRunning`, and the interoperable
+file-moniker persistence record described below.
 
 The following bind-context slice replaces the former `CreateBindCtx`
 placeholder with a real 13-slot `IBindCtx`. It stores all BIND_OPTS3 fields,
@@ -802,16 +801,24 @@ the supplied bind context. Local emulator COM objects and DLL-private objects
 both have balanced ownership through the guest callback bridge.
 `test/test-ole-running-object-table.js` passes 28/28.
 
-File-moniker stream persistence, composite/relative monikers, class factories,
-verbs, links, and drag/drop remain after these foundations.
+The milestone-closing persistence slice implements the XP-compatible
+file-moniker stream record: ANSI path bytes, the `0xDEADFFFF` marker and
+padding, and the tagged UTF-16 value when ANSI is lossy or the path names a
+directory. Loading is bounded and transactional, and both local emulator
+streams and DLL-private `IStream::Read`/`Write` callbacks are supported.
+`GetSizeMax` reports the conservative Windows estimate. Exact byte-layout,
+ANSI/Unicode round-trip, guest-callback, and malformed-input checks are part of
+the 32/32 moniker regression.
+
+Composite/relative monikers, class factories, verbs, links, and drag/drop
+remain after these foundations. They are deferred while the next milestone
+returns to GDI fidelity.
 
 In the isolated real-app gate, WordPad Save As created and wrote the file,
 called `CreateFileMoniker`, registered it through the ROT, released the ROT,
 updated its title, preserved editor text, and remained alive. The combined
-Save/New/Open regression currently reports 31/32 only because its checked-in
-assertion still expects the old `sources.md` heading `# DLL Sources`; the
-current fixture begins `# Test Binary Sources`. The unrelated open operation
-did populate 8,191 visible characters and completed without a runtime crash.
+Save/New/Open regression now reports 32/32. The open operation populated 8,191
+visible characters and completed without a runtime crash.
 
 ### 2026-08-13 dialog lifecycle slice
 
@@ -928,6 +935,15 @@ clipboard change, so CF_DIB snapshots remain valid for the WASM instance
 lifetime rather than entering the reusable heap free list. This does not claim
 linked objects, executable OLE
 servers, in-place activation, drag/drop, or arbitrary compound-file fidelity.
+
+Current-tip audit note (2026-08-14): the same gate now reaches both native
+objects but reports 5/17 because its scheduled Save As command does not open a
+dialog after the second object is pasted; export/reopen therefore never run.
+This reproduces in a clean HEAD-plus-file-moniker-persistence overlay before
+any moniker persistence method is called. The dialog/command regression remains
+an explicit WordPad follow-up when work returns from the GDI fidelity milestone;
+the historical 17/17 description above records the coverage the gate is meant
+to restore, not the current result.
 
 The static-image clipboard follow-up is also complete. WordPad Edit Copy and
 Cut preserve the eager `CF_DIB` presentation of a selected inline picture;

@@ -1478,18 +1478,107 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IMoniker_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL: guest IStream callback bridge follows later
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $state i32) (local $ret i32) (local $ctx i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (call $ole_interface_is_local (local.get $arg1))
+      (then
+        (global.set $eax
+          (if (result i32)
+              (i32.eq (call $gl32 (local.get $arg1)) (global.get $DX_VTBL_OLE_STREAM))
+            (then (call $ole_moniker_load_local (local.get $arg0) (local.get $arg1)))
+            (else (i32.const 0x80004002))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (call $ole_guest_method_addr (local.get $arg1) (i32.const 3)))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $state (call $ole_moniker_load_state_create (local.get $arg0) (local.get $arg1)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 28) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 12))
+      (local.get $arg0) (local.get $state) (local.get $arg1)
+      (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke4
+      (local.get $ctx) (local.get $arg1) (i32.const 3)
+      (call $gl32 (i32.add (local.get $state) (i32.const 12)))
+      (call $gl32 (i32.add (local.get $state) (i32.const 16)))
+      (i32.add (local.get $state) (i32.const 20))))
+    (return))
 
   (func $handle_IMoniker_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $blob i32) (local $size i32) (local $written i32)
+    (local $hr i32) (local $ret i32) (local $ctx i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.and
+          (call $ole_interface_is_local (local.get $arg1))
+          (i32.ne (call $gl32 (local.get $arg1)) (global.get $DX_VTBL_OLE_STREAM)))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.and
+          (i32.eqz (call $ole_interface_is_local (local.get $arg1)))
+          (i32.eqz (call $ole_guest_method_addr (local.get $arg1) (i32.const 4))))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $blob (call $ole_moniker_serialized_create (local.get $arg0)))
+    (if (i32.eqz (local.get $blob))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $size (call $gl32 (local.get $blob)))
+    (local.set $written (i32.add (local.get $blob) (i32.add (i32.const 4) (local.get $size))))
+    (if (call $ole_interface_is_local (local.get $arg1))
+      (then
+        (local.set $hr (call $ole_stream_write
+          (local.get $arg1) (i32.add (local.get $blob) (i32.const 4))
+          (local.get $size) (local.get $written)))
+        (if (i32.and (i32.ge_s (local.get $hr) (i32.const 0))
+              (i32.ne (call $gl32 (local.get $written)) (local.get $size)))
+          (then (local.set $hr (i32.const 0x80030070)))) ;; STG_E_MEDIUMFULL
+        (call $heap_free (local.get $blob))
+        (global.set $eax (local.get $hr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 27) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 16))
+      (local.get $arg0) (local.get $blob) (local.get $arg1)
+      (local.get $size) (local.get $written)))
+    (drop (call $ole_guest_callback_invoke4
+      (local.get $ctx) (local.get $arg1) (i32.const 4)
+      (i32.add (local.get $blob) (i32.const 4))
+      (local.get $size) (local.get $written)))
+    (return))
 
   (func $handle_IMoniker_GetSizeMax (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg1)
-      (then (call $gs32 (local.get $arg1) (i32.const 0))
+      (then (call $gs32 (local.get $arg1)
+              (i32.add (i32.const 0x38)
+                (i32.shl (call $guest_wcslen
+                  (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) (i32.const 2))))
             (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
-    (global.set $eax (select (i32.const 0x80004001) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IMoniker_BindToObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1819,6 +1908,231 @@
     (call $gs32 (i32.add (local.get $obj) (i32.const 16))
       (call $ole_moniker_hash_path (local.get $copy)))
     (local.get $obj))
+
+  ;; XP-compatible file-moniker IPersistStream payload. The leading size word
+  ;; is private bookkeeping and is not written to the stream. The persisted
+  ;; bytes are: WORD zero, ANSI byte count/path, DEADFFFF, five zero DWORDs,
+  ;; followed by an optional tagged UTF-16 path when ANSI is not lossless or
+  ;; the value names a directory. The final extra DWORD receives pcbWritten.
+  (func $ole_moniker_serialized_create (param $obj i32) (result i32)
+    (local $path i32) (local $len i32) (local $i i32) (local $ch i32)
+    (local $wide i32) (local $total i32) (local $blob i32)
+    (local $data i32) (local $pos i32)
+    (local.set $path (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (local.set $len (call $guest_wcslen (local.get $path)))
+    (if (local.get $len)
+      (then
+        (local.set $ch (call $gl16 (i32.add (local.get $path)
+          (i32.shl (i32.sub (local.get $len) (i32.const 1)) (i32.const 1)))))
+        (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))
+                    (i32.eq (local.get $ch) (i32.const 0x2F)))
+          (then (local.set $wide (i32.const 1))))))
+    (block $scan_done (loop $scan
+      (br_if $scan_done (i32.ge_u (local.get $i) (local.get $len)))
+      (if (i32.gt_u (call $gl16 (i32.add (local.get $path)
+                    (i32.shl (local.get $i) (i32.const 1)))) (i32.const 0xFF))
+        (then (local.set $wide (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $total (i32.add (i32.const 35) (local.get $len)))
+    (if (local.get $wide)
+      (then (local.set $total (i32.add (local.get $total)
+        (i32.add (i32.const 6) (i32.shl (local.get $len) (i32.const 1)))))))
+    (if (i32.gt_u (local.get $total) (i32.const 0x01000000))
+      (then (return (i32.const 0))))
+    (local.set $blob (call $heap_alloc (i32.add (local.get $total) (i32.const 8))))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $blob))
+      (i32.add (local.get $total) (i32.const 8)))
+    (call $gs32 (local.get $blob) (local.get $total))
+    (local.set $data (i32.add (local.get $blob) (i32.const 4)))
+    (call $gs16 (local.get $data) (i32.const 0))
+    (call $gs32 (i32.add (local.get $data) (i32.const 2))
+      (i32.add (local.get $len) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $ansi_done (loop $ansi
+      (br_if $ansi_done (i32.gt_u (local.get $i) (local.get $len)))
+      (local.set $ch (call $gl16 (i32.add (local.get $path)
+        (i32.shl (local.get $i) (i32.const 1)))))
+      (call $gs8 (i32.add (local.get $data) (i32.add (i32.const 6) (local.get $i)))
+        (select (local.get $ch) (i32.const 0x3F) (i32.le_u (local.get $ch) (i32.const 0xFF))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ansi)))
+    (local.set $pos (i32.add (local.get $data)
+      (i32.add (i32.const 7) (local.get $len))))
+    (call $gs32 (local.get $pos) (i32.const 0xDEADFFFF))
+    ;; The allocation is already zeroed, so skip the five padding DWORDs.
+    (local.set $pos (i32.add (local.get $pos) (i32.const 24)))
+    (if (local.get $wide)
+      (then
+        (call $gs32 (local.get $pos)
+          (i32.add (i32.const 6) (i32.shl (local.get $len) (i32.const 1))))
+        (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
+        (call $gs32 (local.get $pos) (i32.shl (local.get $len) (i32.const 1)))
+        (call $gs16 (i32.add (local.get $pos) (i32.const 4)) (i32.const 3))
+        (if (local.get $len)
+          (then (memory.copy
+            (call $g2w (i32.add (local.get $pos) (i32.const 6)))
+            (call $g2w (local.get $path))
+            (i32.shl (local.get $len) (i32.const 1)))))))
+    (local.get $blob))
+
+  ;; Transactional Load state (56 bytes): moniker, stream, phase, current
+  ;; buffer/size/read count, ANSI body/count, wide body/count, and an inline
+  ;; eight-byte header. The live moniker path changes only after a complete,
+  ;; validated record has produced an independently owned UTF-16 value.
+  (func $ole_moniker_load_state_create (param $obj i32) (param $stream i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $heap_alloc (i32.const 56)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $state)) (i32.const 56))
+    (call $gs32 (local.get $state) (local.get $obj))
+    (call $gs32 (i32.add (local.get $state) (i32.const 4)) (local.get $stream))
+    (call $gs32 (i32.add (local.get $state) (i32.const 12))
+      (i32.add (local.get $state) (i32.const 40)))
+    (call $gs32 (i32.add (local.get $state) (i32.const 16)) (i32.const 6))
+    (local.get $state))
+
+  (func $ole_moniker_load_state_free (param $state i32)
+    (local $buffer i32)
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $buffer (call $gl32 (i32.add (local.get $state) (i32.const 24))))
+    (if (local.get $buffer) (then (call $heap_free (local.get $buffer))))
+    (local.set $buffer (call $gl32 (i32.add (local.get $state) (i32.const 32))))
+    (if (local.get $buffer) (then (call $heap_free (local.get $buffer))))
+    (call $heap_free (local.get $state)))
+
+  (func $ole_moniker_load_commit (param $obj i32) (param $path i32)
+    (local $old i32)
+    (local.set $old (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $path))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16))
+      (call $ole_moniker_hash_path (local.get $path)))
+    (if (local.get $old) (then (call $heap_free (local.get $old)))))
+
+  ;; Return 1 when another Read is required, S_OK when the path was committed,
+  ;; or a failing HRESULT. A nonnegative stream result is accepted only when
+  ;; pcbRead reports the complete requested chunk.
+  (func $ole_moniker_load_step (param $state i32) (param $stream_hr i32) (result i32)
+    (local $phase i32) (local $expected i32) (local $actual i32)
+    (local $header i32) (local $bytes_a i32) (local $body i32)
+    (local $marker i32) (local $bytes_w i32) (local $wide i32)
+    (local $path i32) (local $i i32) (local $value i32)
+    (if (i32.lt_s (local.get $stream_hr) (i32.const 0))
+      (then (return (local.get $stream_hr))))
+    (local.set $expected (call $gl32 (i32.add (local.get $state) (i32.const 16))))
+    (local.set $actual (call $gl32 (i32.add (local.get $state) (i32.const 20))))
+    (if (i32.ne (local.get $actual) (local.get $expected))
+      (then (return (i32.const 0x80004005))))
+    (local.set $phase (call $gl32 (i32.add (local.get $state) (i32.const 8))))
+    (if (i32.eqz (local.get $phase))
+      (then
+        (local.set $header (i32.add (local.get $state) (i32.const 40)))
+        (local.set $bytes_a (call $gl32 (i32.add (local.get $header) (i32.const 2))))
+        (if (i32.or
+              (i32.ne (call $gl16 (local.get $header)) (i32.const 0))
+              (i32.or (i32.eqz (local.get $bytes_a))
+                (i32.gt_u (local.get $bytes_a) (i32.const 0x01000000))))
+          (then (return (i32.const 0x80004005))))
+        (local.set $body (call $heap_alloc (i32.add (local.get $bytes_a) (i32.const 28))))
+        (if (i32.eqz (local.get $body)) (then (return (i32.const 0x8007000E))))
+        (call $gs32 (i32.add (local.get $state) (i32.const 8)) (i32.const 1))
+        (call $gs32 (i32.add (local.get $state) (i32.const 12)) (local.get $body))
+        (call $gs32 (i32.add (local.get $state) (i32.const 16))
+          (i32.add (local.get $bytes_a) (i32.const 28)))
+        (call $gs32 (i32.add (local.get $state) (i32.const 20)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $state) (i32.const 24)) (local.get $body))
+        (call $gs32 (i32.add (local.get $state) (i32.const 28)) (local.get $bytes_a))
+        (return (i32.const 1))))
+    (local.set $body (call $gl32 (i32.add (local.get $state) (i32.const 24))))
+    (local.set $bytes_a (call $gl32 (i32.add (local.get $state) (i32.const 28))))
+    (if (i32.eq (local.get $phase) (i32.const 1))
+      (then
+        (if (i32.or
+              (i32.ne (call $gl8 (i32.add (local.get $body)
+                (i32.sub (local.get $bytes_a) (i32.const 1)))) (i32.const 0))
+              (i32.ne (call $gl32 (i32.add (local.get $body) (local.get $bytes_a)))
+                (i32.const 0xDEADFFFF)))
+          (then (return (i32.const 0x80004005))))
+        (local.set $i (i32.const 0))
+        (block $padding_done (loop $padding
+          (br_if $padding_done (i32.ge_u (local.get $i) (i32.const 5)))
+          (if (call $gl32 (i32.add (local.get $body)
+                (i32.add (local.get $bytes_a)
+                  (i32.add (i32.const 4) (i32.shl (local.get $i) (i32.const 2))))))
+            (then (return (i32.const 0x80004005))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $padding)))
+        (local.set $marker (call $gl32 (i32.add (local.get $body)
+          (i32.add (local.get $bytes_a) (i32.const 24)))))
+        (if (i32.eqz (local.get $marker))
+          (then
+            (local.set $path (call $heap_alloc (i32.shl (local.get $bytes_a) (i32.const 1))))
+            (if (i32.eqz (local.get $path)) (then (return (i32.const 0x8007000E))))
+            (local.set $i (i32.const 0))
+            (block $ansi_path_done (loop $ansi_path
+              (br_if $ansi_path_done (i32.ge_u (local.get $i) (local.get $bytes_a)))
+              (call $gs16 (i32.add (local.get $path)
+                (i32.shl (local.get $i) (i32.const 1)))
+                (call $gl8 (i32.add (local.get $body) (local.get $i))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $ansi_path)))
+            (call $ole_moniker_load_commit
+              (call $gl32 (local.get $state)) (local.get $path))
+            (return (i32.const 0))))
+        (if (i32.or
+              (i32.lt_u (local.get $marker) (i32.const 6))
+              (i32.gt_u (local.get $marker) (i32.const 0x01000006)))
+          (then (return (i32.const 0x80004005))))
+        (local.set $bytes_w (i32.sub (local.get $marker) (i32.const 6)))
+        (if (i32.and (local.get $bytes_w) (i32.const 1))
+          (then (return (i32.const 0x80004005))))
+        (local.set $wide (call $heap_alloc (local.get $marker)))
+        (if (i32.eqz (local.get $wide)) (then (return (i32.const 0x8007000E))))
+        (call $gs32 (i32.add (local.get $state) (i32.const 8)) (i32.const 2))
+        (call $gs32 (i32.add (local.get $state) (i32.const 12)) (local.get $wide))
+        (call $gs32 (i32.add (local.get $state) (i32.const 16)) (local.get $marker))
+        (call $gs32 (i32.add (local.get $state) (i32.const 20)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $state) (i32.const 32)) (local.get $wide))
+        (call $gs32 (i32.add (local.get $state) (i32.const 36)) (local.get $bytes_w))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $phase) (i32.const 2))
+      (then
+        (local.set $wide (call $gl32 (i32.add (local.get $state) (i32.const 32))))
+        (local.set $bytes_w (call $gl32 (i32.add (local.get $state) (i32.const 36))))
+        (if (i32.or
+              (i32.ne (call $gl32 (local.get $wide)) (local.get $bytes_w))
+              (i32.ne (call $gl16 (i32.add (local.get $wide) (i32.const 4))) (i32.const 3)))
+          (then (return (i32.const 0x80004005))))
+        (local.set $path (call $heap_alloc (i32.add (local.get $bytes_w) (i32.const 2))))
+        (if (i32.eqz (local.get $path)) (then (return (i32.const 0x8007000E))))
+        (if (local.get $bytes_w)
+          (then (memory.copy (call $g2w (local.get $path))
+            (call $g2w (i32.add (local.get $wide) (i32.const 6)))
+            (local.get $bytes_w))))
+        (call $gs16 (i32.add (local.get $path) (local.get $bytes_w)) (i32.const 0))
+        (call $ole_moniker_load_commit
+          (call $gl32 (local.get $state)) (local.get $path))
+        (return (i32.const 0))))
+    (i32.const 0x80004005))
+
+  (func $ole_moniker_load_local (param $obj i32) (param $stream i32) (result i32)
+    (local $state i32) (local $hr i32) (local $step i32)
+    (local.set $state (call $ole_moniker_load_state_create
+      (local.get $obj) (local.get $stream)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0x8007000E))))
+    (block $unexpected (loop $read
+      (call $gs32 (i32.add (local.get $state) (i32.const 20)) (i32.const 0))
+      (local.set $hr (call $ole_stream_read (local.get $stream)
+        (call $gl32 (i32.add (local.get $state) (i32.const 12)))
+        (call $gl32 (i32.add (local.get $state) (i32.const 16)))
+        (i32.add (local.get $state) (i32.const 20))))
+      (local.set $step (call $ole_moniker_load_step (local.get $state) (local.get $hr)))
+      (if (i32.eq (local.get $step) (i32.const 1)) (then (br $read)))
+      (call $ole_moniker_load_state_free (local.get $state))
+      (return (local.get $step))))
+    (call $ole_moniker_load_state_free (local.get $state))
+    (i32.const 0x80004005))
 
   ;; IRunningObjectTable wrappers are intentionally short lived. The actual
   ;; process-local table lives in $ole_rot_entries and survives wrapper release.
@@ -6907,6 +7221,27 @@
     (global.set $steps (i32.const 0))
     (i32.const 1))
 
+  (func $ole_guest_callback_invoke4
+        (param $ctx i32) (param $iface i32) (param $method i32)
+        (param $a1 i32) (param $a2 i32) (param $a3 i32) (result i32)
+    (local $fn i32)
+    (local.set $fn (call $ole_guest_method_addr (local.get $iface) (local.get $method)))
+    (if (i32.eqz (local.get $fn)) (then (return (i32.const 0))))
+    (global.set $esp (local.get $ctx))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $a3))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $a2))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $a1))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $iface))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $fn))
+    (global.set $steps (i32.const 0))
+    (i32.const 1))
+
   (func $ole_guest_callback_invoke5
         (param $ctx i32) (param $iface i32) (param $method i32)
         (param $a1 i32) (param $a2 i32) (param $a3 i32) (param $a4 i32)
@@ -7005,6 +7340,7 @@
   ;; 22: IBindCtx GetObjectParam guest AddRef completion;
   ;; 23/24/25: ROT Register/Revoke/GetObject guest ownership;
   ;; 26: file-moniker BindToObject guest QueryInterface/bind ownership.
+  ;; 27/28: file-moniker Save/Load through DLL-private IStream callbacks.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -7339,6 +7675,33 @@
         (call $heap_free (local.get $p2))
         (call $gs32 (i32.add (local.get $root) (i32.const 52)) (i32.const 0))
         (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0x80004002))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 27))
+      (then
+        (local.set $hr (global.get $eax))
+        (if (i32.and
+              (i32.ge_s (local.get $hr) (i32.const 0))
+              (i32.ne (call $gl32 (local.get $p4)) (local.get $p3)))
+          (then (local.set $hr (i32.const 0x80030070)))) ;; STG_E_MEDIUMFULL
+        (call $heap_free (local.get $p1))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 28))
+      (then
+        (local.set $hr (call $ole_moniker_load_step
+          (local.get $p1) (global.get $eax)))
+        (if (i32.eq (local.get $hr) (i32.const 1))
+          (then
+            (call $gs32 (i32.add (local.get $p1) (i32.const 20)) (i32.const 0))
+            (if (call $ole_guest_callback_invoke4
+                  (local.get $ctx) (local.get $p2) (i32.const 3)
+                  (call $gl32 (i32.add (local.get $p1) (i32.const 12)))
+                  (call $gl32 (i32.add (local.get $p1) (i32.const 16)))
+                  (i32.add (local.get $p1) (i32.const 20)))
+              (then (return)))
+            (local.set $hr (i32.const 0x80004002))))
+        (call $ole_moniker_load_state_free (local.get $p1))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then

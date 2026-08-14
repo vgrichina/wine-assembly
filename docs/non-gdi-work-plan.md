@@ -658,8 +658,10 @@ GDI-rejoin concern, but its protocol and state machine can be completed now.
 - [x] Replace the no-op process-local Running Object Table with retained
   registration records, stable cookies, moniker-value lookup, timestamps,
   revocation, and enumeration; then connect file-moniker binding to it.
-- [ ] Add file-moniker `IPersistStream` save/load and supported composition /
-  relative-path behavior after the callback and composite-moniker layers exist.
+- [x] Add file-moniker `IPersistStream` save/load through local and DLL-private
+  streams using the Windows-compatible file-moniker payload.
+- [ ] Add supported composition / relative-path behavior after the
+  composite-moniker layer exists.
 - Persist link source, display name, update policy, and last cached
   presentation independently of server availability.
 - Add class-object registration and activation plumbing sufficient for the
@@ -677,10 +679,10 @@ the owned UTF-16 path. `GetClassID` returns `CLSID_FileMoniker`,
 `GetDisplayName` returns a fresh `CoTaskMem`-compatible buffer, `IsEqual` and
 `Hash` use matching case-insensitive/slash-neutral filename semantics, and
 `IsSystemMoniker` returns `MKSYS_FILEMONIKER`. Simple enumeration and immutable
-dirty state are defined. Binding, persistence callbacks, and composition return
-explicit HRESULTs without publishing fabricated outputs until their generic
-layers land. `test/test-ole-moniker.js` exercises the public API thunk and all
-23 vtable slots and passes 25/25.
+dirty state are defined. Binding consults the retained ROT; unsupported
+composition still returns explicit HRESULTs without publishing fabricated
+outputs. `test/test-ole-moniker.js` exercises the public API thunk and all
+23 vtable slots and passes 32/32 after the persistence slice below.
 
 2026-08-14 bind-context result: `CreateBindCtx` now creates a real 13-slot
 `IBindCtx` with `BIND_OPTS`, `BIND_OPTS2`, and `BIND_OPTS3` state. Bound-object
@@ -713,6 +715,20 @@ with the supplied bind context. `test/test-ole-running-object-table.js`
 exercises the public APIs, all ROT and enumerator slots, duplicate and wrapper
 lifetime, local and guest ownership, timestamps, snapshots, and binding and
 passes 28/28.
+
+2026-08-14 persistence result: file-moniker `IPersistStream::Save` now writes
+the interoperable XP-era payload rather than a private emulator blob: the ANSI
+path record, `0xDEADFFFF` marker and padding, plus the tagged exact UTF-16 path
+when ANSI would be lossy or the value names a directory. `Load` consumes the
+same bounded record incrementally, validates every length/tag/read count, and
+does not replace the live moniker value until a complete new path is owned.
+`GetSizeMax` returns the conservative Windows estimate. Local emulator streams
+run synchronously; DLL-private streams run their real `Read`/`Write` methods
+through the suspended callback continuation. The expanded moniker regression
+locks down exact bytes, ANSI and Unicode round trips, guest callbacks, and
+atomic malformed-input failure and passes 32/32. This closes the current OLE
+milestone; composition, activation, verbs, links, and drag/drop remain deferred
+while work returns to GDI fidelity.
 
 ### P5.2 Drag/drop
 

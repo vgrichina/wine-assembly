@@ -37,6 +37,7 @@ async function main() {
   const guestBase = e.get_guest_base() >>> 0;
   const wa = guest => (guest - imageBase + guestBase) >>> 0;
   const dv = new DataView(memory.buffer);
+  const bytes = new Uint8Array(memory.buffer);
   const alloc = bytes => e.guest_alloc(bytes) >>> 0;
   const read = guest => e.guest_read32(guest) >>> 0;
   const write = (guest, value) => e.guest_write32(guest, value >>> 0);
@@ -181,12 +182,77 @@ async function main() {
     callMethod(created.object, 15, bindCtx, 0, 0) === 1);
   assert.strictEqual(callMethod(bindCtx, 2), 0);
 
+  const sizeOut = alloc(8);
+  check('GetSizeMax returns the Windows-compatible conservative estimate',
+    callMethod(created.object, 7, sizeOut) === 0 &&
+    read(sizeOut) === 0x38 + originalPath.length * 4 && read(sizeOut + 4) === 0);
+
+  const localStream = e.test_ole_create_stream(0, 0) >>> 0;
+  check('Save writes the XP-compatible ANSI file-moniker payload to a local IStream',
+    callMethod(created.object, 6, localStream, 1) === 0 &&
+    e.test_ole_stream_size(localStream) === 35 + originalPath.length);
+  const localSize = e.test_ole_stream_size(localStream) >>> 0;
+  const localBytes = alloc(localSize);
+  const ioCount = alloc(4);
+  e.test_ole_stream_seek(localStream, 0);
+  assert.strictEqual(e.test_ole_stream_read(localStream, localBytes, localSize, ioCount), 0);
+  check('saved bytes carry the zero header, ANSI length, marker, padding, and no wide tail',
+    dv.getUint16(wa(localBytes), true) === 0 &&
+    dv.getUint32(wa(localBytes) + 2, true) === originalPath.length + 1 &&
+    Buffer.from(bytes.subarray(wa(localBytes) + 6, wa(localBytes) + 6 + originalPath.length)).toString('latin1') === originalPath &&
+    dv.getUint32(wa(localBytes) + 7 + originalPath.length, true) === 0xdeadffff &&
+    dv.getUint32(wa(localBytes) + 31 + originalPath.length, true) === 0);
+
+  const loaded = createMoniker('C:\\placeholder.rtf').object;
+  e.test_ole_stream_seek(localStream, 0);
+  assert.strictEqual(callMethod(loaded, 5, localStream), 0);
+  write(displayOut, 0);
+  check('Load atomically replaces the moniker value from a local IStream',
+    callMethod(loaded, 20, 0, 0, displayOut) === 0 && readWide(read(displayOut)) === originalPath);
+  callApi('CoTaskMemFree', read(displayOut));
+
+  const unicodePath = 'C:\\Documents\\日本語\\café.rtf';
+  const unicodeMoniker = createMoniker(unicodePath).object;
+  const guestStream = e.test_ole_create_stream(0, 0) >>> 0;
+  const localStreamVtable = read(guestStream);
+  const guestStreamVtable = alloc(14 * 4);
+  for (let i = 0; i < 14; i++) write(guestStreamVtable + i * 4, read(localStreamVtable + i * 4));
+  write(guestStream, guestStreamVtable);
+  check('Save resumes through a DLL-private IStream Write callback',
+    callMethod(unicodeMoniker, 6, guestStream, 0) === 0 &&
+    e.test_ole_stream_size(guestStream) === 41 + unicodePath.length * 3);
+  const unicodeSize = e.test_ole_stream_size(guestStream) >>> 0;
+  const unicodeBytes = alloc(unicodeSize);
+  e.test_ole_stream_seek(guestStream, 0);
+  assert.strictEqual(e.test_ole_stream_read(guestStream, unicodeBytes, unicodeSize, ioCount), 0);
+  const ansiCount = unicodePath.length + 1;
+  const wideMarkerOffset = 6 + ansiCount + 24;
+  check('lossy ANSI paths append the tagged exact UTF-16 value',
+    dv.getUint32(wa(unicodeBytes) + wideMarkerOffset, true) === unicodePath.length * 2 + 6 &&
+    dv.getUint32(wa(unicodeBytes) + wideMarkerOffset + 4, true) === unicodePath.length * 2 &&
+    dv.getUint16(wa(unicodeBytes) + wideMarkerOffset + 8, true) === 3);
+  const guestLoaded = createMoniker('C:\\guest-placeholder.rtf').object;
+  e.test_ole_stream_seek(guestStream, 0);
+  assert.strictEqual(callMethod(guestLoaded, 5, guestStream), 0);
+  write(displayOut, 0);
+  check('Load resumes through repeated DLL-private IStream Read callbacks',
+    callMethod(guestLoaded, 20, 0, 0, displayOut) === 0 && readWide(read(displayOut)) === unicodePath);
+  callApi('CoTaskMemFree', read(displayOut));
+
+  const malformedStream = e.test_ole_create_stream(0, 0) >>> 0;
+  const malformedBytes = alloc(localSize);
+  bytes.set(bytes.subarray(wa(localBytes), wa(localBytes) + localSize), wa(malformedBytes));
+  dv.setUint32(wa(malformedBytes) + 7 + originalPath.length, 0xbad0bad0, true);
+  assert.strictEqual(e.test_ole_stream_write(malformedStream, malformedBytes, localSize, ioCount), 0);
+  e.test_ole_stream_seek(malformedStream, 0);
+  check('malformed Load fails without changing the existing moniker value',
+    callMethod(loaded, 5, malformedStream) === 0x80004005);
+  write(displayOut, 0);
+  assert.strictEqual(callMethod(loaded, 20, 0, 0, displayOut), 0);
+  assert.strictEqual(readWide(read(displayOut)), originalPath);
+  callApi('CoTaskMemFree', read(displayOut));
+
   const unsupportedOut = alloc(8);
-  write(unsupportedOut, 0xcccccccc);
-  write(unsupportedOut + 4, 0xcccccccc);
-  check('persistence reports explicit E_NOTIMPL without fabricated size',
-    callMethod(created.object, 7, unsupportedOut) === 0x80004001 &&
-    read(unsupportedOut) === 0 && read(unsupportedOut + 4) === 0);
   write(unsupportedOut, 0xcccccccc);
   check('composition reports explicit E_NOTIMPL with a null result',
     callMethod(created.object, 11, different, 0, unsupportedOut) === 0x80004001 && read(unsupportedOut) === 0);
@@ -216,6 +282,12 @@ async function main() {
     callMethod(created.object, 2) === 0 &&
     callMethod(equivalent, 2) === 0 &&
     callMethod(different, 2) === 0);
+  assert.strictEqual(callMethod(loaded, 2), 0);
+  assert.strictEqual(callMethod(unicodeMoniker, 2), 0);
+  assert.strictEqual(callMethod(guestLoaded, 2), 0);
+  assert.strictEqual(e.test_ole_release(localStream), 0);
+  assert.strictEqual(e.test_ole_release(guestStream), 0);
+  assert.strictEqual(e.test_ole_release(malformedStream), 0);
 
   console.log(`\n${checks}/${checks} checks passed`);
 }
