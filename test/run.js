@@ -3594,15 +3594,17 @@ async function main() {
           let ctrlClass = -1;
           let ctrlId = -1;
           let style = 0;
+          let owner = 0;
           try {
             if (we && we.ctrl_get_class) ctrlClass = we.ctrl_get_class(hwnd) | 0;
             if (we && we.ctrl_get_id) ctrlId = we.ctrl_get_id(hwnd) | 0;
             if (we && we.wnd_get_style_export) style = we.wnd_get_style_export(hwnd) >>> 0;
+            if (we && we.wnd_get_owner) owner = we.wnd_get_owner(hwnd) >>> 0;
           } catch (_) {}
           if (!style) style = win.style >>> 0;
           const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
           const enabled = (style & 0x08000000) === 0;
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';
