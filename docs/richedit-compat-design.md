@@ -42,7 +42,11 @@ callbacks, validates the complete release sequence before mutation, and keeps
 malformed media intact. Final `IDataObject` and static-cache destruction now
 use the same guest callback bridge for every transferred medium, validating
 the full teardown before mutation and preserving stream/storage-before-releaser
-order. Guest-media replacement and `IOleCache::Uncache` remain follow-ups.
+order. Mutation-time `IDataObject`/cache replacement and `IOleCache::Uncache`
+now retire displaced media through that bridge as well. Canonical text
+synthesis moves unrelated guest ownership intact and consumes guest-released
+`fRelease` inputs asynchronously. Non-transferring guest `AddRef` during
+copies, snapshots, and render-slot mirroring remains the next lifetime gap.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off
@@ -67,8 +71,8 @@ static misc flags, close state, running state, nested run locks,
 last-unlock-close, and contained state. The expanded focused suite passes
 52/52. DLL-private client-site, live advisory, and advisory snapshot ownership
 now use the guest COM callback bridge. General data objects and static caches
-also use it for final transferred-media destruction; replacement/removal paths
-remain the next bridge users.
+also use it for final destruction and mutation-time replacement/removal of
+transferred media.
 
 Client-site fidelity is covered for both local fixtures and DLL-private guest
 interfaces. Assignment, repeated assignment, retrieval, replacement,
@@ -76,7 +80,7 @@ dirty-close `SaveObject`, and final destruction have explicit reference-count
 assertions. Guest AddRef/Release/SaveObject methods execute as x86 callbacks
 through a stack-resident continuation context, so the original WAT API frame
 resumes without synchronous re-entry. The local suite remains 65/65 and the
-expanded guest callback suite passes 39/39.
+expanded guest callback suite passes 48/48.
 
 Synthetic local advisory sinks now cover the corresponding collection
 contract: monotonic connections, independently retained sinks, targeted and

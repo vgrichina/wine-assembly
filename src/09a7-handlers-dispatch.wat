@@ -3608,9 +3608,32 @@
     (if (i32.eqz (local.get $has_target)) (then (return (i32.const 0x80040065)))) ;; DV_E_DVTARGETDEVICE
     (i32.const 0x80040069)) ;; DV_E_TYMED
 
-  (func $ole_data_set_entry (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
+  ;; Allocate a normal IDataObject whose entry array temporarily owns media
+  ;; displaced by a successful mutation. Its existing final-release bridge can
+  ;; then run DLL-private Release methods after the new state is committed.
+  (func $ole_create_retired_data_entries (param $count i32) (result i32)
+    (local $obj i32) (local $entries i32)
+    (local.set $obj (call $ole_create_data_object (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (if (local.get $count)
+      (then
+        (local.set $entries (call $heap_alloc (i32.shl (local.get $count) (i32.const 5))))
+        (if (i32.eqz (local.get $entries))
+          (then (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0))))
+        (call $zero_memory (call $g2w (local.get $entries))
+          (i32.shl (local.get $count) (i32.const 5)))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $entries))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $count))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $count))))
+    (local.get $obj))
+
+  (func $ole_data_set_entry_with_retired
+      (param $obj i32) (param $formatetc i32) (param $medium i32)
+      (param $take i32) (param $retired_out i32) (result i32)
     (local $entries i32) (local $count i32) (local $capacity i32) (local $entry i32)
-    (local $new_entries i32) (local $new_capacity i32) (local $hr i32) (local $staged i32) (local $is_new i32)
+    (local $new_entries i32) (local $new_capacity i32) (local $hr i32)
+    (local $staged i32) (local $retired i32) (local $retired_entries i32)
+    (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $obj))
           (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
       (then (return (i32.const 0x80004003))))
@@ -3635,7 +3658,6 @@
           (then (call $ole_format_free (local.get $staged)) (call $heap_free (local.get $staged)) (return (local.get $hr))))))
     (if (i32.eqz (local.get $entry))
       (then
-        (local.set $is_new (i32.const 1))
         (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
         (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
         (local.set $capacity (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
@@ -3646,7 +3668,8 @@
             (local.set $new_entries (call $heap_alloc (i32.shl (local.get $new_capacity) (i32.const 5))))
             (if (i32.eqz (local.get $new_entries))
               (then
-                (call $ole_release_medium (i32.add (local.get $staged) (i32.const 20)))
+                (if (i32.eqz (local.get $take))
+                  (then (call $ole_release_medium (i32.add (local.get $staged) (i32.const 20)))))
                 (call $ole_format_free (local.get $staged))
                 (call $heap_free (local.get $staged))
                 (return (i32.const 0x8007000E))))
@@ -3662,12 +3685,44 @@
         (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $count) (i32.const 5))))
         (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (i32.add (local.get $count) (i32.const 1))))
       (else
-        (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))
-        (call $ole_format_free (local.get $entry))))
+        (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 20)))
+          (then
+            (if (i32.or
+                  (i32.eqz (local.get $retired_out))
+                  (i32.eqz (call $ole_medium_guest_releases_valid
+                    (i32.add (local.get $entry) (i32.const 20)))))
+              (then
+                (if (i32.eqz (local.get $take))
+                  (then (call $ole_release_medium (i32.add (local.get $staged) (i32.const 20)))))
+                (call $ole_format_free (local.get $staged))
+                (call $heap_free (local.get $staged))
+                (return (i32.const 0x80004002))))
+            (local.set $retired (call $ole_create_retired_data_entries (i32.const 1)))
+            (if (i32.eqz (local.get $retired))
+              (then
+                (if (i32.eqz (local.get $take))
+                  (then (call $ole_release_medium (i32.add (local.get $staged) (i32.const 20)))))
+                (call $ole_format_free (local.get $staged))
+                (call $heap_free (local.get $staged))
+                (return (i32.const 0x8007000E))))
+            (local.set $retired_entries (call $gl32 (i32.add (local.get $retired) (i32.const 12))))
+            (memory.copy (call $g2w (local.get $retired_entries))
+              (call $g2w (local.get $entry)) (i32.const 32))
+            (call $gs32 (local.get $retired_out) (local.get $retired)))
+          (else
+            (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))
+            (call $ole_format_free (local.get $entry))))))
     (memory.copy (call $g2w (local.get $entry)) (call $g2w (local.get $staged)) (i32.const 32))
     (call $heap_free (local.get $staged))
     (if (local.get $take) (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
     (i32.const 0))
+
+  (func $ole_data_set_entry
+      (param $obj i32) (param $formatetc i32) (param $medium i32)
+      (param $take i32) (result i32)
+    (call $ole_data_set_entry_with_retired
+      (local.get $obj) (local.get $formatetc) (local.get $medium)
+      (local.get $take) (i32.const 0)))
 
   ;; Convert ANSI/OEM or UTF-16 clipboard text into canonical UTF-16 with
   ;; Windows CRLF line endings and one terminating NUL code unit.
@@ -3763,11 +3818,17 @@
     (call $gs8 (i32.add (local.get $dst) (local.get $chars)) (i32.const 0))
     (local.get $dst))
 
-  (func $ole_data_set_with_text_conversions (param $obj i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
+  (func $ole_data_set_with_text_conversions_with_retired
+      (param $obj i32) (param $formatetc i32) (param $medium i32)
+      (param $take i32) (param $retired_out i32) (result i32)
     (local $format i32) (local $is_text i32) (local $unicode i32) (local $ansi i32)
-    (local $temp_format i32) (local $temp_medium i32) (local $staged i32) (local $entries i32)
-    (local $count i32) (local $i i32) (local $old_entries i32) (local $old_count i32)
-    (local $old_capacity i32) (local $hr i32)
+    (local $temp_format i32) (local $temp_medium i32) (local $staged i32)
+    (local $old_entries i32) (local $old_count i32) (local $staged_entries i32) (local $staged_count i32)
+    (local $new_entries i32) (local $new_count i32) (local $new_capacity i32)
+    (local $entry i32) (local $dst i32) (local $i i32) (local $out i32)
+    (local $matched_count i32) (local $retired_count i32) (local $retired_index i32)
+    (local $retired i32) (local $retired_entries i32) (local $input_guest i32) (local $hr i32)
+    (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $obj))
           (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
       (then (return (i32.const 0x80004003))))
@@ -3776,20 +3837,25 @@
       (i32.eq (local.get $format) (i32.const 1))
       (i32.or (i32.eq (local.get $format) (i32.const 7)) (i32.eq (local.get $format) (i32.const 13)))))
     (if (i32.ne (call $gl32 (local.get $medium)) (i32.const 1))
-      (then (return (call $ole_data_set_entry
-        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+      (then (return (call $ole_data_set_entry_with_retired
+        (local.get $obj) (local.get $formatetc) (local.get $medium)
+        (local.get $take) (local.get $retired_out)))))
     (if (i32.eqz (local.get $is_text))
-      (then (return (call $ole_data_set_entry
-        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+      (then (return (call $ole_data_set_entry_with_retired
+        (local.get $obj) (local.get $formatetc) (local.get $medium)
+        (local.get $take) (local.get $retired_out)))))
     (if (i32.ne (call $gl32 (i32.add (local.get $formatetc) (i32.const 8))) (i32.const 1))
-      (then (return (call $ole_data_set_entry
-        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+      (then (return (call $ole_data_set_entry_with_retired
+        (local.get $obj) (local.get $formatetc) (local.get $medium)
+        (local.get $take) (local.get $retired_out)))))
     (if (i32.ne (call $gl32 (i32.add (local.get $formatetc) (i32.const 12))) (i32.const -1))
-      (then (return (call $ole_data_set_entry
-        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+      (then (return (call $ole_data_set_entry_with_retired
+        (local.get $obj) (local.get $formatetc) (local.get $medium)
+        (local.get $take) (local.get $retired_out)))))
     (if (i32.ne (call $gl32 (i32.add (local.get $formatetc) (i32.const 4))) (i32.const 0))
-      (then (return (call $ole_data_set_entry
-        (local.get $obj) (local.get $formatetc) (local.get $medium) (local.get $take)))))
+      (then (return (call $ole_data_set_entry_with_retired
+        (local.get $obj) (local.get $formatetc) (local.get $medium)
+        (local.get $take) (local.get $retired_out)))))
     (local.set $unicode (call $ole_text_to_unicode
       (call $gl32 (i32.add (local.get $medium) (i32.const 4)))
       (i32.eq (local.get $format) (i32.const 13))))
@@ -3812,56 +3878,142 @@
     (call $gs32 (i32.add (local.get $temp_format) (i32.const 16)) (i32.const 1))
     (call $gs32 (local.get $temp_medium) (i32.const 1))
     (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $ansi))
-    ;; Clone the entire collection first. Only swap it into the live object
-    ;; after all three synthesized formats have been copied successfully.
+    ;; Stage the three synthesized formats independently. Existing entries are
+    ;; moved, rather than copied, only after every allocation and guest callback
+    ;; validation succeeds; this preserves unrelated DLL-private ownership.
     (local.set $staged (call $ole_create_data_object (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $staged))
       (then
         (call $heap_free (local.get $temp_medium)) (call $heap_free (local.get $temp_format))
         (call $heap_free (local.get $ansi)) (call $heap_free (local.get $unicode))
         (return (i32.const 0x8007000E))))
-    (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
-    (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
-    (block $cloned (loop $clone
-      (br_if $cloned (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $old_entries (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
-      (local.set $hr (call $ole_data_set_entry
-        (local.get $staged) (local.get $old_entries) (i32.add (local.get $old_entries) (i32.const 20)) (i32.const 0)))
-      (if (local.get $hr) (then (br $cloned)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $clone)))
     (call $gs16 (local.get $temp_format) (i32.const 1))
-    (if (i32.eqz (local.get $hr))
-      (then (local.set $hr (call $ole_data_set_entry
-        (local.get $staged) (local.get $temp_format) (local.get $temp_medium) (i32.const 0)))))
+    (local.set $hr (call $ole_data_set_entry_with_retired
+      (local.get $staged) (local.get $temp_format) (local.get $temp_medium)
+      (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $hr))
       (then
         (call $gs16 (local.get $temp_format) (i32.const 7))
-        (local.set $hr (call $ole_data_set_entry (local.get $staged) (local.get $temp_format) (local.get $temp_medium) (i32.const 0)))))
+        (local.set $hr (call $ole_data_set_entry_with_retired
+          (local.get $staged) (local.get $temp_format) (local.get $temp_medium)
+          (i32.const 0) (i32.const 0)))))
     (if (i32.eqz (local.get $hr))
       (then
         (call $gs16 (local.get $temp_format) (i32.const 13))
         (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $unicode))
-        (local.set $hr (call $ole_data_set_entry (local.get $staged) (local.get $temp_format) (local.get $temp_medium) (i32.const 0)))))
+        (local.set $hr (call $ole_data_set_entry_with_retired
+          (local.get $staged) (local.get $temp_format) (local.get $temp_medium)
+          (i32.const 0) (i32.const 0)))))
     (call $heap_free (local.get $temp_medium)) (call $heap_free (local.get $temp_format))
     (call $heap_free (local.get $ansi)) (call $heap_free (local.get $unicode))
     (if (local.get $hr)
       (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+
     (local.set $old_entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
     (local.set $old_count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
-    (local.set $old_capacity (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 12))
-      (call $gl32 (i32.add (local.get $staged) (i32.const 12))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 16))
-      (call $gl32 (i32.add (local.get $staged) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 20))
-      (call $gl32 (i32.add (local.get $staged) (i32.const 20))))
-    (call $gs32 (i32.add (local.get $staged) (i32.const 12)) (local.get $old_entries))
-    (call $gs32 (i32.add (local.get $staged) (i32.const 16)) (local.get $old_count))
-    (call $gs32 (i32.add (local.get $staged) (i32.const 20)) (local.get $old_capacity))
+    (local.set $staged_entries (call $gl32 (i32.add (local.get $staged) (i32.const 12))))
+    (local.set $staged_count (call $gl32 (i32.add (local.get $staged) (i32.const 16))))
+    ;; Count and validate every displaced guest medium before live mutation.
+    (block $preflight_done (loop $preflight
+      (br_if $preflight_done (i32.ge_u (local.get $i) (local.get $old_count)))
+      (local.set $entry (i32.add (local.get $old_entries) (i32.shl (local.get $i) (i32.const 5))))
+      (if (call $ole_data_find_entry (local.get $staged) (local.get $entry))
+        (then
+          (local.set $matched_count (i32.add (local.get $matched_count) (i32.const 1)))
+          (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 20)))
+            (then
+              (if (i32.eqz (call $ole_medium_guest_releases_valid
+                    (i32.add (local.get $entry) (i32.const 20))))
+                (then (local.set $hr (i32.const 0x80004002)) (br $preflight_done)))
+              (local.set $retired_count (i32.add (local.get $retired_count) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $preflight)))
+    (local.set $input_guest (i32.and (local.get $take)
+      (call $ole_medium_has_guest_release (local.get $medium))))
+    (if (local.get $input_guest)
+      (then
+        (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $medium)))
+          (then (local.set $hr (i32.const 0x80004002))))
+        (local.set $retired_count (i32.add (local.get $retired_count) (i32.const 1)))))
+    (if (i32.and (local.get $retired_count) (i32.eqz (local.get $retired_out)))
+      (then (local.set $hr (i32.const 0x80004002))))
+    (if (local.get $hr)
+      (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+
+    (local.set $new_count (i32.add
+      (i32.sub (local.get $old_count) (local.get $matched_count)) (local.get $staged_count)))
+    (local.set $new_capacity (select (local.get $new_count) (i32.const 1)
+      (i32.ne (local.get $new_count) (i32.const 0))))
+    (local.set $new_entries (call $heap_alloc (i32.shl (local.get $new_capacity) (i32.const 5))))
+    (if (i32.eqz (local.get $new_entries))
+      (then (drop (call $ole_obj_release (local.get $staged))) (return (i32.const 0x8007000E))))
+    (call $zero_memory (call $g2w (local.get $new_entries))
+      (i32.shl (local.get $new_capacity) (i32.const 5)))
+    (if (local.get $retired_count)
+      (then
+        (local.set $retired (call $ole_create_retired_data_entries (local.get $retired_count)))
+        (if (i32.eqz (local.get $retired))
+          (then
+            (call $heap_free (local.get $new_entries))
+            (drop (call $ole_obj_release (local.get $staged)))
+            (return (i32.const 0x8007000E))))
+        (local.set $retired_entries (call $gl32 (i32.add (local.get $retired) (i32.const 12))))))
+
+    ;; Ownership is committed below: retained entries move to the replacement
+    ;; array, local displaced entries release synchronously, and guest entries
+    ;; move intact into the retirement object.
+    (local.set $i (i32.const 0))
+    (block $move_done (loop $move
+      (br_if $move_done (i32.ge_u (local.get $i) (local.get $old_count)))
+      (local.set $entry (i32.add (local.get $old_entries) (i32.shl (local.get $i) (i32.const 5))))
+      (if (call $ole_data_find_entry (local.get $staged) (local.get $entry))
+        (then
+          (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 20)))
+            (then
+              (local.set $dst (i32.add (local.get $retired_entries)
+                (i32.shl (local.get $retired_index) (i32.const 5))))
+              (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $entry)) (i32.const 32))
+              (local.set $retired_index (i32.add (local.get $retired_index) (i32.const 1))))
+            (else
+              (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))
+              (call $ole_format_free (local.get $entry)))))
+        (else
+          (local.set $dst (i32.add (local.get $new_entries) (i32.shl (local.get $out) (i32.const 5))))
+          (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $entry)) (i32.const 32))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $move)))
+    (memory.copy
+      (i32.add (call $g2w (local.get $new_entries)) (i32.shl (local.get $out) (i32.const 5)))
+      (call $g2w (local.get $staged_entries)) (i32.shl (local.get $staged_count) (i32.const 5)))
+    (if (local.get $input_guest)
+      (then
+        (local.set $dst (i32.add (local.get $retired_entries)
+          (i32.shl (local.get $retired_index) (i32.const 5))))
+        (memory.copy (i32.add (call $g2w (local.get $dst)) (i32.const 20))
+          (call $g2w (local.get $medium)) (i32.const 12))
+        (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
+
+    (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $new_entries))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $new_count))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $new_capacity))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 12)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 16)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $staged) (i32.const 20)) (i32.const 0))
     (drop (call $ole_obj_release (local.get $staged)))
-    (if (local.get $take) (then (call $ole_release_medium (local.get $medium))))
+    (if (local.get $staged_entries) (then (call $heap_free (local.get $staged_entries))))
+    (if (local.get $old_entries) (then (call $heap_free (local.get $old_entries))))
+    (if (i32.and (local.get $take) (i32.eqz (local.get $input_guest)))
+      (then (call $ole_release_medium (local.get $medium))))
+    (if (local.get $retired) (then (call $gs32 (local.get $retired_out) (local.get $retired))))
     (i32.const 0))
+
+  (func $ole_data_set_with_text_conversions
+      (param $obj i32) (param $formatetc i32) (param $medium i32)
+      (param $take i32) (result i32)
+    (call $ole_data_set_with_text_conversions_with_retired
+      (local.get $obj) (local.get $formatetc) (local.get $medium)
+      (local.get $take) (i32.const 0)))
 
   ;; Fill storage supplied by the caller without transferring its ownership.
   ;; This intentionally accepts only like-for-like media: format conversion is
@@ -3946,7 +4098,9 @@
           (i32.ne (local.get $formatetc) (i32.const 0))
           (i32.ne (local.get $medium) (i32.const 0)))
       (then
-        (local.set $hr (call $ole_data_set_with_text_conversions (local.get $obj) (local.get $formatetc) (local.get $medium) (i32.const 0)))
+        (local.set $hr (call $ole_data_set_with_text_conversions_with_retired
+          (local.get $obj) (local.get $formatetc) (local.get $medium)
+          (i32.const 0) (i32.const 0)))
         (if (local.get $hr) (then (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0))))
         ))
     (local.get $obj))
@@ -4027,7 +4181,9 @@
       (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
       (local.set $hr (call $ole_snapshot_medium (local.get $medium) (i32.add (local.get $entry) (i32.const 20))))
       (if (local.get $hr) (then (br $done)))
-      (local.set $hr (call $ole_data_set_entry (local.get $copy) (local.get $entry) (local.get $medium) (i32.const 0)))
+      (local.set $hr (call $ole_data_set_entry_with_retired
+        (local.get $copy) (local.get $entry) (local.get $medium)
+        (i32.const 0) (i32.const 0)))
       (call $ole_release_medium (local.get $medium))
       (if (local.get $hr) (then (br $done)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -4172,9 +4328,25 @@
     (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 20))))
     (global.set $eax (i32.const 0x00040130)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_SetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2))) (then (global.set $eax (i32.const 0x80004003)))
-      (else (global.set $eax (call $ole_data_set_with_text_conversions
-        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))))
+    (local $retired_out i32) (local $retired i32) (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (local.set $retired_out (call $heap_alloc (i32.const 4)))
+        (if (i32.eqz (local.get $retired_out))
+          (then (global.set $eax (i32.const 0x8007000E)))
+          (else
+            (call $gs32 (local.get $retired_out) (i32.const 0))
+            (local.set $hr (call $ole_data_set_with_text_conversions_with_retired
+              (local.get $arg0) (local.get $arg1) (local.get $arg2)
+              (local.get $arg3) (local.get $retired_out)))
+            (local.set $retired (call $gl32 (local.get $retired_out)))
+            (call $heap_free (local.get $retired_out))
+            (if (local.get $retired)
+              (then
+                (call $ole_owned_object_release_api (local.get $retired) (i32.const 20))
+                (return)))
+            (global.set $eax (local.get $hr))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IDataObject_EnumFormatEtc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
@@ -5682,8 +5854,12 @@
     (i32.const 0)
   )
 
-  (func $ole_cache_set_data (param $root i32) (param $formatetc i32) (param $medium i32) (param $take i32) (result i32)
+  (func $ole_cache_set_data_with_retired
+      (param $root i32) (param $formatetc i32) (param $medium i32)
+      (param $take i32) (param $retired_out i32) (result i32)
     (local $staged i32) (local $entry i32) (local $connection_out i32) (local $hr i32)
+    (local $retired i32) (local $retired_entries i32)
+    (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
       (then (return (i32.const 0x80004003))))
     (if (i32.eqz (i32.and (call $gl32 (i32.add (local.get $formatetc) (i32.const 16))) (call $gl32 (local.get $medium))))
@@ -5714,7 +5890,35 @@
         (local.set $entry (call $ole_cache_find_connection
           (local.get $root) (call $gl32 (local.get $connection_out))))))
     (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
-      (then (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))
+      (then
+        (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 28)))
+          (then
+            (if (i32.or
+                  (i32.eqz (local.get $retired_out))
+                  (i32.eqz (call $ole_medium_guest_releases_valid
+                    (i32.add (local.get $entry) (i32.const 28)))))
+              (then
+                (if (i32.eqz (local.get $take))
+                  (then (call $ole_release_medium (local.get $staged))))
+                (call $heap_free (local.get $connection_out))
+                (call $heap_free (local.get $staged))
+                (return (i32.const 0x80004002))))
+            (local.set $retired (call $ole_create_retired_data_entries (i32.const 1)))
+            (if (i32.eqz (local.get $retired))
+              (then
+                (if (i32.eqz (local.get $take))
+                  (then (call $ole_release_medium (local.get $staged))))
+                (call $heap_free (local.get $connection_out))
+                (call $heap_free (local.get $staged))
+                (return (i32.const 0x8007000E))))
+            (local.set $retired_entries
+              (call $gl32 (i32.add (local.get $retired) (i32.const 12))))
+            (memory.copy (i32.add (call $g2w (local.get $retired_entries)) (i32.const 20))
+              (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
+            (call $zero_memory
+              (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
+            (call $gs32 (local.get $retired_out) (local.get $retired)))
+          (else (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))))
     (memory.copy (call $g2w (i32.add (local.get $entry) (i32.const 28))) (call $g2w (local.get $staged)) (i32.const 12))
     (if (local.get $take) (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
     (call $heap_free (local.get $connection_out)) (call $heap_free (local.get $staged))
@@ -5723,8 +5927,18 @@
     (i32.const 0)
   )
 
-  (func $ole_cache_uncache (param $root i32) (param $connection i32) (result i32)
+  (func $ole_cache_set_data
+      (param $root i32) (param $formatetc i32) (param $medium i32)
+      (param $take i32) (result i32)
+    (call $ole_cache_set_data_with_retired
+      (local.get $root) (local.get $formatetc) (local.get $medium)
+      (local.get $take) (i32.const 0)))
+
+  (func $ole_cache_uncache_with_retired
+      (param $root i32) (param $connection i32) (param $retired_out i32) (result i32)
     (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
+    (local $retired i32) (local $retired_entries i32)
+    (if (local.get $retired_out) (then (call $gs32 (local.get $retired_out) (i32.const 0))))
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
     (block $found (loop $scan
@@ -5732,9 +5946,27 @@
       (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40))))
       (if (i32.eq (call $gl32 (local.get $entry)) (local.get $connection))
         (then
-          (call $ole_format_free (i32.add (local.get $entry) (i32.const 8)))
-          (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
-            (then (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))
+          (if (call $ole_medium_has_guest_release (i32.add (local.get $entry) (i32.const 28)))
+            (then
+              (if (i32.or
+                    (i32.eqz (local.get $retired_out))
+                    (i32.eqz (call $ole_medium_guest_releases_valid
+                      (i32.add (local.get $entry) (i32.const 28)))))
+                (then (return (i32.const 0x80004002))))
+              (local.set $retired (call $ole_create_retired_data_entries (i32.const 1)))
+              (if (i32.eqz (local.get $retired))
+                (then (return (i32.const 0x8007000E))))
+              (local.set $retired_entries
+                (call $gl32 (i32.add (local.get $retired) (i32.const 12))))
+              (memory.copy (call $g2w (local.get $retired_entries))
+                (call $g2w (i32.add (local.get $entry) (i32.const 8))) (i32.const 20))
+              (memory.copy (i32.add (call $g2w (local.get $retired_entries)) (i32.const 20))
+                (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
+              (call $gs32 (local.get $retired_out) (local.get $retired)))
+            (else
+              (call $ole_format_free (i32.add (local.get $entry) (i32.const 8)))
+              (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
+                (then (call $ole_release_medium (i32.add (local.get $entry) (i32.const 28)))))))
           (if (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $count))
             (then (memory.copy (call $g2w (local.get $entry))
               (i32.add (call $g2w (local.get $entry)) (i32.const 40))
@@ -5749,6 +5981,10 @@
       (br $scan)))
     (i32.const 0x80040004) ;; OLE_E_NOCONNECTION
   )
+
+  (func $ole_cache_uncache (param $root i32) (param $connection i32) (result i32)
+    (call $ole_cache_uncache_with_retired
+      (local.get $root) (local.get $connection) (i32.const 0)))
 
   ;; IEnumSTATDATA uses the same seven-slot IUnknown/enumerator vtable shape as
   ;; IEnumFORMATETC. Kind 8 selects STATDATA[32] snapshot semantics in the
@@ -5928,9 +6164,10 @@
       (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40))))
       (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
         (then
-          (local.set $hr (call $ole_data_set_entry
+          (local.set $hr (call $ole_data_set_entry_with_retired
             (local.get $obj) (i32.add (local.get $entry) (i32.const 8))
-            (i32.add (local.get $entry) (i32.const 28)) (i32.const 0)))
+            (i32.add (local.get $entry) (i32.const 28))
+            (i32.const 0) (i32.const 0)))
           (br_if $copied (local.get $hr))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
@@ -5952,7 +6189,20 @@
       (call $ole_static_root (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IOleCache_Uncache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_cache_uncache (call $ole_static_root (local.get $arg0)) (local.get $arg1)))
+    (local $retired_out i32) (local $retired i32)
+    (local.set $retired_out (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $retired_out))
+      (then (global.set $eax (i32.const 0x8007000E)))
+      (else
+        (call $gs32 (local.get $retired_out) (i32.const 0))
+        (global.set $eax (call $ole_cache_uncache_with_retired
+          (call $ole_static_root (local.get $arg0)) (local.get $arg1) (local.get $retired_out)))
+        (local.set $retired (call $gl32 (local.get $retired_out)))
+        (call $heap_free (local.get $retired_out))
+        (if (local.get $retired)
+          (then
+            (call $ole_owned_object_release_api (local.get $retired) (i32.const 12))
+            (return)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleCache_EnumCache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
@@ -5968,8 +6218,21 @@
   (func $handle_IOleCache_InitCache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleCache_SetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_cache_set_data
-      (call $ole_static_root (local.get $arg0)) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (local $retired_out i32) (local $retired i32)
+    (local.set $retired_out (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $retired_out))
+      (then (global.set $eax (i32.const 0x8007000E)))
+      (else
+        (call $gs32 (local.get $retired_out) (i32.const 0))
+        (global.set $eax (call $ole_cache_set_data_with_retired
+          (call $ole_static_root (local.get $arg0)) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3) (local.get $retired_out)))
+        (local.set $retired (call $gl32 (local.get $retired_out)))
+        (call $heap_free (local.get $retired_out))
+        (if (local.get $retired)
+          (then
+            (call $ole_owned_object_release_api (local.get $retired) (i32.const 20))
+            (return)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IViewObject renders the cached CF_DIB presentation retained by IOleCache.

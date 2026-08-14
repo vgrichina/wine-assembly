@@ -332,8 +332,10 @@ transfer breadth below.
   `pUnkForRelease`, preserving the required release order.
 - [x] Extend final object-owned/transferred media destruction to DLL-private
   interfaces for `IDataObject` and static-handler caches.
-- Extend guest-media cleanup to replacement and `IOleCache::Uncache`; those
-  mutation paths still use the synchronous local-interface helper.
+- [x] Extend guest-media cleanup to `IDataObject::SetData` replacement,
+  `IOleCache::SetData` replacement, and `IOleCache::Uncache`.
+- Add suspended guest `AddRef` completion for `fRelease=FALSE` stream/storage
+  copies, clipboard/cache snapshots, and CF_DIB render-slot mirroring.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -368,10 +370,10 @@ to Windows CRLF, publishes independently owned `CF_TEXT`, `CF_OEMTEXT`, and
 `CF_UNICODETEXT` values, preserves exactly one terminating NUL, and leaves
 registered RTF as an opaque coexisting format. Unicode input retains UTF-16
 code units while the bounded ANSI/OEM fallback maps unrepresentable units to
-`?`. The three-format replacement is failure-atomic through a detached cloned
-collection. The focused suite passes 45/45. The WordPad rich clipboard test
-passes 21/21 and the Paint clipboard test passes 9/9 after restricting Paint's
-delayed bitmap materialization to `mspaint.exe`.
+`?`. The three-format replacement is failure-atomic through a preflighted
+ownership-moving collection rebuild. The focused suite passes 45/45. The
+WordPad rich clipboard test passes 21/21 and the Paint clipboard test passes
+9/9 after restricting Paint's delayed bitmap materialization to `mspaint.exe`.
 
 2026-08-13 clipboard-snapshot result: `OleFlushClipboard` now replaces a local
 owner with a distinct data-object value snapshot. HGLOBAL bytes, IStream
@@ -387,8 +389,20 @@ entry order. Stream/storage interfaces release before `pUnkForRelease`; an
 HGLOBAL delegated to a guest releaser remains untouched by the runtime. The
 guest callback suite passes 39/39, the data-object and static-handler suites
 remain green at 55/55 and 65/65, and WordPad static-DIB Copy/Cut/Paste remains
-green at 13/13. Replacement and `IOleCache::Uncache` guest cleanup remain the
-next lifetime slice.
+green at 13/13. Mutation-time cleanup is covered by the following result.
+
+2026-08-13 guest-media mutation result: `IDataObject::SetData` and
+`IOleCache::SetData` move displaced guest media into a temporary owned data
+object, commit the replacement only after validating every guest `Release`,
+then reuse the suspended final-release continuation. `IOleCache::Uncache` uses
+the same path before removing an entry. Canonical text synthesis now moves
+unrelated guest-owned entries without a fake local `AddRef`, retires replaced
+text media, and asynchronously consumes a guest-released `fRelease` input.
+Malformed methods leave the old entry and caller medium intact. The expanded
+guest callback suite passes 48/48; data-object, static-handler, storage,
+callback-state, and WordPad static-DIB gates remain green at 55/55, 65/65,
+68/68, PASS, and 13/13. DLL-private `AddRef` during non-transferring copies and
+snapshots is the next ownership slice.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage

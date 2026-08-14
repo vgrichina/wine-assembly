@@ -119,6 +119,16 @@ async function main() {
     assert.strictEqual(e.get_eip(), 0, 'ReleaseStgMedium callback continuation must terminate');
   };
 
+  const makeFormat = (id, tymed = 1, aspect = 1, lindex = 0xffffffff) => {
+    const format = alloc(20);
+    write(format, id);
+    write(format + 4, 0);
+    write(format + 8, aspect);
+    write(format + 12, lindex);
+    write(format + 16, tymed);
+    return format;
+  };
+
   let checks = 0;
   const check = (name, condition) => {
     assert(condition, name);
@@ -479,6 +489,178 @@ async function main() {
     callMethod(cacheInterface, 2) === 0 && read(cacheReleaser + 4) === 0 &&
     read(cacheReleaser + 12) === 1 && read(cacheReleaser + 36) === 1 &&
     read(cachePayload) === 0xa5a55a5a);
+
+  const replaceSequence = alloc(4);
+  write(replaceSequence, 0);
+  const replaceObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const replaceFormat = makeFormat(0xc520, 5);
+  const replaceStream = makeGuestSite(replaceSequence);
+  const replaceReleaser = makeGuestSite(replaceSequence);
+  const replaceOldMedium = alloc(12);
+  write(replaceOldMedium, 4);
+  write(replaceOldMedium + 4, replaceStream);
+  write(replaceOldMedium + 8, replaceReleaser);
+  assert.strictEqual(callMethod(replaceObject, 7, replaceFormat, replaceOldMedium, 1), 0);
+  const replacementPayload = alloc(8);
+  write(replacementPayload, 0x1234abcd);
+  const replacementMedium = alloc(12);
+  write(replacementMedium, 1);
+  write(replacementMedium + 4, replacementPayload);
+  write(replacementMedium + 8, 0);
+  check('IDataObject SetData replacement asynchronously retires guest media in COM order',
+    callMethod(replaceObject, 7, replaceFormat, replacementMedium, 1) === 0 &&
+    read(replaceStream + 4) === 0 && read(replaceStream + 36) === 1 &&
+    read(replaceReleaser + 4) === 0 && read(replaceReleaser + 36) === 2 &&
+    read(replacementMedium) === 0 && read(replaceObject + 16) === 1);
+  assert.strictEqual(callMethod(replaceObject, 2), 0);
+
+  const atomicObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const atomicFormat = makeFormat(0xc521);
+  const atomicPayload = alloc(8);
+  write(atomicPayload, 0x0badc0de);
+  const atomicReleaser = makeGuestSite();
+  const atomicOldMedium = alloc(12);
+  write(atomicOldMedium, 1);
+  write(atomicOldMedium + 4, atomicPayload);
+  write(atomicOldMedium + 8, atomicReleaser);
+  assert.strictEqual(callMethod(atomicObject, 7, atomicFormat, atomicOldMedium, 1), 0);
+  const atomicNewPayload = alloc(8);
+  write(atomicNewPayload, 0x55aa55aa);
+  const atomicNewMedium = alloc(12);
+  write(atomicNewMedium, 1);
+  write(atomicNewMedium + 4, atomicNewPayload);
+  write(atomicNewMedium + 8, 0);
+  const atomicVtable = read(atomicReleaser);
+  const atomicRelease = read(atomicVtable + 8);
+  write(atomicVtable + 8, 0);
+  check('IDataObject replacement rejects a malformed retired Release atomically',
+    callMethod(atomicObject, 7, atomicFormat, atomicNewMedium, 1) === 0x80004002 &&
+    read(atomicNewMedium) === 1 && read(atomicNewMedium + 4) === atomicNewPayload &&
+    read(atomicReleaser + 4) === 1 && read(atomicReleaser + 12) === 0 &&
+    read(atomicPayload) === 0x0badc0de && read(atomicObject + 16) === 1);
+  write(atomicVtable + 8, atomicRelease);
+  assert.strictEqual(callMethod(atomicObject, 7, atomicFormat, atomicNewMedium, 1), 0);
+  assert.strictEqual(read(atomicReleaser + 4), 0);
+  assert.strictEqual(callMethod(atomicObject, 2), 0);
+
+  const textSequence = alloc(4);
+  write(textSequence, 0);
+  const textObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const unrelatedTextFormat = makeFormat(0xc524, 4);
+  const unrelatedTextStream = makeGuestSite(textSequence);
+  const unrelatedTextReleaser = makeGuestSite(textSequence);
+  const unrelatedTextMedium = alloc(12);
+  write(unrelatedTextMedium, 4);
+  write(unrelatedTextMedium + 4, unrelatedTextStream);
+  write(unrelatedTextMedium + 8, unrelatedTextReleaser);
+  assert.strictEqual(e.test_ole_data_set(
+    textObject, unrelatedTextFormat, unrelatedTextMedium, 1), 0);
+  const oldTextFormat = makeFormat(1);
+  const oldTextPayload = alloc(8);
+  bytes.set([0x6f, 0x6c, 0x64, 0], wa(oldTextPayload));
+  const oldTextReleaser = makeGuestSite(textSequence);
+  const oldTextMedium = alloc(12);
+  write(oldTextMedium, 1);
+  write(oldTextMedium + 4, oldTextPayload);
+  write(oldTextMedium + 8, oldTextReleaser);
+  assert.strictEqual(e.test_ole_data_set(textObject, oldTextFormat, oldTextMedium, 1), 0);
+  const newTextPayload = alloc(8);
+  bytes.set([0x6e, 0x65, 0x77, 0], wa(newTextPayload));
+  const newTextMedium = alloc(12);
+  write(newTextMedium, 1);
+  write(newTextMedium + 4, newTextPayload);
+  write(newTextMedium + 8, 0);
+  check('canonical text synthesis retires replaced guest media and moves unrelated ownership intact',
+    callMethod(textObject, 7, oldTextFormat, newTextMedium, 1) === 0 &&
+    read(oldTextReleaser + 4) === 0 && read(oldTextReleaser + 12) === 1 &&
+    read(unrelatedTextStream + 4) === 1 && read(unrelatedTextStream + 8) === 0 &&
+    read(unrelatedTextStream + 12) === 0 && read(unrelatedTextReleaser + 4) === 1 &&
+    read(textObject + 16) === 4 && read(newTextMedium) === 0);
+  assert.strictEqual(callMethod(textObject, 2), 0);
+  assert.strictEqual(read(unrelatedTextStream + 4), 0);
+  assert.strictEqual(read(unrelatedTextReleaser + 4), 0);
+
+  const inputTextObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const inputTextFormat = makeFormat(1);
+  const inputTextPayload = alloc(8);
+  bytes.set([0x69, 0x6e, 0x70, 0], wa(inputTextPayload));
+  const inputTextReleaser = makeGuestSite();
+  const inputTextMedium = alloc(12);
+  write(inputTextMedium, 1);
+  write(inputTextMedium + 4, inputTextPayload);
+  write(inputTextMedium + 8, inputTextReleaser);
+  const inputTextVtable = read(inputTextReleaser);
+  const inputTextRelease = read(inputTextVtable + 8);
+  write(inputTextVtable + 8, 0);
+  check('canonical text fRelease validates a guest releaser before publishing formats',
+    callMethod(inputTextObject, 7, inputTextFormat, inputTextMedium, 1) === 0x80004002 &&
+    read(inputTextObject + 16) === 0 && read(inputTextMedium) === 1 &&
+    read(inputTextMedium + 4) === inputTextPayload && read(inputTextReleaser + 4) === 1);
+  write(inputTextVtable + 8, inputTextRelease);
+  check('canonical text fRelease completes its DLL-private input releaser asynchronously',
+    callMethod(inputTextObject, 7, inputTextFormat, inputTextMedium, 1) === 0 &&
+    read(inputTextMedium) === 0 && read(inputTextReleaser + 4) === 0 &&
+    read(inputTextReleaser + 12) === 1 && read(inputTextPayload) === 0x00706e69);
+  assert.strictEqual(callMethod(inputTextObject, 2), 0);
+
+  const cacheMutationSequence = alloc(4);
+  write(cacheMutationSequence, 0);
+  const cacheMutationRoot = e.test_ole_create_static_handler(0) >>> 0;
+  const cacheMutationInterface = cacheMutationRoot + 52;
+  const cacheMutationFormat = makeFormat(0xc522, 5);
+  const cacheMutationStream = makeGuestSite(cacheMutationSequence);
+  const cacheMutationReleaser = makeGuestSite(cacheMutationSequence);
+  const cacheMutationOld = alloc(12);
+  write(cacheMutationOld, 4);
+  write(cacheMutationOld + 4, cacheMutationStream);
+  write(cacheMutationOld + 8, cacheMutationReleaser);
+  assert.strictEqual(callMethod(cacheMutationInterface, 7,
+    cacheMutationFormat, cacheMutationOld, 1), 0);
+  const cacheMutationPayload = alloc(8);
+  write(cacheMutationPayload, 0xcafef00d);
+  const cacheMutationNew = alloc(12);
+  write(cacheMutationNew, 1);
+  write(cacheMutationNew + 4, cacheMutationPayload);
+  write(cacheMutationNew + 8, 0);
+  const cacheMutationVtable = read(cacheMutationReleaser);
+  const cacheMutationRelease = read(cacheMutationVtable + 8);
+  write(cacheMutationVtable + 8, 0);
+  check('IOleCache SetData replacement rejects a malformed guest Release atomically',
+    callMethod(cacheMutationInterface, 7, cacheMutationFormat, cacheMutationNew, 1) === 0x80004002 &&
+    read(cacheMutationNew) === 1 && read(cacheMutationNew + 4) === cacheMutationPayload &&
+    read(cacheMutationStream + 4) === 1 && read(cacheMutationReleaser + 4) === 1 &&
+    read(cacheMutationRoot + 104) === 1);
+  write(cacheMutationVtable + 8, cacheMutationRelease);
+  check('IOleCache SetData replacement asynchronously retires guest media in COM order',
+    callMethod(cacheMutationInterface, 7, cacheMutationFormat, cacheMutationNew, 1) === 0 &&
+    read(cacheMutationStream + 4) === 0 && read(cacheMutationStream + 36) === 1 &&
+    read(cacheMutationReleaser + 4) === 0 && read(cacheMutationReleaser + 36) === 2 &&
+    read(cacheMutationNew) === 0 && read(cacheMutationRoot + 104) === 1);
+
+  const uncacheFormat = makeFormat(0xc523);
+  const uncachePayload = alloc(8);
+  write(uncachePayload, 0xfaceb00c);
+  const uncacheReleaser = makeGuestSite();
+  const uncacheMedium = alloc(12);
+  write(uncacheMedium, 1);
+  write(uncacheMedium + 4, uncachePayload);
+  write(uncacheMedium + 8, uncacheReleaser);
+  assert.strictEqual(callMethod(cacheMutationInterface, 7, uncacheFormat, uncacheMedium, 1), 0);
+  const uncacheEntries = read(cacheMutationRoot + 100);
+  const uncacheConnection = read(uncacheEntries + 40);
+  const uncacheVtable = read(uncacheReleaser);
+  const uncacheRelease = read(uncacheVtable + 8);
+  write(uncacheVtable + 8, 0);
+  check('IOleCache Uncache rejects a malformed guest Release without removing its entry',
+    callMethod(cacheMutationInterface, 4, uncacheConnection) === 0x80004002 &&
+    read(cacheMutationRoot + 104) === 2 && read(uncacheReleaser + 4) === 1 &&
+    read(uncacheReleaser + 12) === 0 && read(uncachePayload) === 0xfaceb00c);
+  write(uncacheVtable + 8, uncacheRelease);
+  check('IOleCache Uncache asynchronously releases and removes guest-owned media',
+    callMethod(cacheMutationInterface, 4, uncacheConnection) === 0 &&
+    read(cacheMutationRoot + 104) === 1 && read(uncacheReleaser + 4) === 0 &&
+    read(uncacheReleaser + 12) === 1 && read(uncachePayload) === 0xfaceb00c);
+  assert.strictEqual(callMethod(cacheMutationInterface, 2), 0);
 
   console.log(`\n${checks}/${checks} guest COM callback checks passed`);
 }
