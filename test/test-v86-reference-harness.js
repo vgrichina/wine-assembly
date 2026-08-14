@@ -74,6 +74,10 @@ assert(iso.includes(Buffer.from("PROBE.EXE;1")));
 assert(iso.includes(Buffer.from("WINMINE.EXE;1")));
 
 const sources = fs.readFileSync(path.join(harnessRoot, "SOURCES.md"), "utf8");
+const captureSource = fs.readFileSync(path.join(harnessRoot, "capture.js"), "utf8");
+const harnessSource = fs.readFileSync(path.join(harnessRoot, "harness.js"), "utf8");
+assert(captureSource.includes("--serial-output"), "reference capture CLI must expose optional serial output");
+assert(harnessSource.includes("serial0-output-byte"), "reference VM must collect COM1 probe output");
 for (const required of [
   "f3d4472a9c934b9ad78a311f5849ba711a296d23",
   "0.5.432+gf3d4472",

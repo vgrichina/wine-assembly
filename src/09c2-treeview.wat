@@ -11,6 +11,8 @@
   ;;   +20: state       (TVIS_* bits; 0x20 = TVIS_EXPANDED)
   ;;   +24: lParam      (app-defined data)
   ;;   +28: pszText     (guest pointer to NUL-terminated text)
+  ;; Per-slot image indexes live in TV_IMAGE_TABLE (32 × 8 bytes):
+  ;;   +0: iImage, +4: iSelectedImage (-1 means no image)
 
   (global $tv_next_handle (mut i32) (i32.const 0xCC000001))
   (global $tv_count (mut i32) (i32.const 0))
@@ -29,6 +31,91 @@
   (global $tv_debug_expand_notify_action (mut i32) (i32.const 0))
   (global $tv_debug_expand_notify_item (mut i32) (i32.const 0))
   (global $tv_debug_expand_notify_children (mut i32) (i32.const 0))
+
+  (func $tv_image_record (param $slot i32) (result i32)
+    (i32.add (global.get $TV_IMAGE_TABLE)
+      (i32.mul (local.get $slot) (i32.const 8))))
+
+  ;; Accept both the emulator's compact 24-byte ImageList record and the
+  ;; authentic Win98 COMCTL32 HIML record. WinHelp ships and runs the latter:
+  ;; signature@0, count@4, cx@16, cy@20, image DC@56, mask DC@60.
+  (func $treeview_draw_image
+    (param $hdc i32) (param $x i32) (param $y i32) (param $index i32) (result i32)
+    (local $himl i32) (local $sw i32) (local $sig i32)
+    (local $count i32) (local $cx i32) (local $cy i32)
+    (local $bmp i32) (local $image_dc i32) (local $mask_dc i32)
+    (local $src_x i32) (local $dst_y i32) (local $memdc i32) (local $ret i32)
+    (local.set $himl (global.get $tv_image_list))
+    (if (i32.or (i32.eqz (local.get $himl)) (i32.lt_s (local.get $index) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $himl) (global.get $image_base))
+      (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $himl)))
+    (if (i32.gt_u
+          (local.get $sw)
+          (i32.sub (i32.shl (memory.size) (i32.const 16)) (i32.const 64)))
+      (then (return (i32.const 0))))
+    (local.set $sig (i32.load (local.get $sw)))
+    (if (i32.eq (local.get $sig) (i32.const 0x4C4D4948)) ;; "HIML"
+      (then
+        (local.set $count (i32.load offset=4 (local.get $sw)))
+        (local.set $cx (i32.load offset=16 (local.get $sw)))
+        (local.set $cy (i32.load offset=20 (local.get $sw)))
+        (local.set $image_dc (i32.load offset=56 (local.get $sw)))
+        (local.set $mask_dc (i32.load offset=60 (local.get $sw))))
+      (else
+        (local.set $cx (local.get $sig))
+        (local.set $cy (i32.load offset=4 (local.get $sw)))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $bmp (i32.load offset=16 (local.get $sw)))))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $cx) (i32.const 0))
+                  (i32.gt_s (local.get $cx) (i32.const 64)))
+          (i32.or (i32.le_s (local.get $cy) (i32.const 0))
+                  (i32.gt_s (local.get $cy) (i32.const 64))))
+      (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $index) (local.get $count))
+      (then (return (i32.const 0))))
+    (local.set $src_x (i32.mul (local.get $index) (local.get $cx)))
+    (local.set $dst_y
+      (i32.add (local.get $y)
+        (i32.div_s (i32.sub (i32.const 16) (local.get $cy)) (i32.const 2))))
+    (if (local.get $image_dc)
+      (then
+        ;; Classic masked ImageList draw: retain the destination through the
+        ;; monochrome mask, then OR in the color image.
+        (if (local.get $mask_dc)
+          (then
+            (drop (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $x) (local.get $dst_y)
+              (local.get $cx) (local.get $cy)
+              (local.get $mask_dc) (local.get $src_x) (i32.const 0)
+              (i32.const 0x008800C6))) ;; SRCAND
+            (local.set $ret (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $x) (local.get $dst_y)
+              (local.get $cx) (local.get $cy)
+              (local.get $image_dc) (local.get $src_x) (i32.const 0)
+              (i32.const 0x00EE0086)))) ;; SRCPAINT
+          (else
+            (local.set $ret (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $x) (local.get $dst_y)
+              (local.get $cx) (local.get $cy)
+              (local.get $image_dc) (local.get $src_x) (i32.const 0)
+              (i32.const 0x00CC0020)))))) ;; SRCCOPY
+      (else
+        (if (local.get $bmp)
+          (then
+            (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+            (if (local.get $memdc)
+              (then
+                (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
+                (local.set $ret (call $host_gdi_transparent_blt
+                  (local.get $hdc) (local.get $x) (local.get $dst_y)
+                  (local.get $cx) (local.get $cy)
+                  (local.get $memdc) (local.get $src_x) (i32.const 0)
+                  (i32.load offset=20 (local.get $sw))))
+                (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
+    (local.get $ret))
 
   ;; Find slot index for a handle, return -1 if not found
   (func $tv_find_slot (param $handle i32) (result i32)
@@ -98,11 +185,13 @@
   ;; lParam_wa = WASM address of TV_INSERTSTRUCT
   ;; TV_INSERTSTRUCT: hParent(+0), hInsertAfter(+4), TVITEMA(+8)
   ;; TVITEMA: mask(+0), hItem(+4), state(+8), stateMask(+12), pszText(+16), ..., lParam(+36)
-  (func $tv_insert (param $lParam_wa i32) (result i32)
+  (func $tv_insert (param $hwnd i32) (param $lParam_wa i32) (result i32)
     (local $slot i32) (local $base i32) (local $handle i32)
+    (local $image_rec i32)
     (local $hParent i32) (local $state i32) (local $mask i32)
     (local $parent_slot i32) (local $sib i32)
     (local $text_g i32) (local $text_w i32) (local $text_len i32) (local $text_copy_g i32)
+    (local $notify_g i32) (local $notify_w i32) (local $notify_parent i32)
     ;; Allocate slot
     (local.set $slot (call $tv_alloc_slot))
     (if (i32.eq (local.get $slot) (i32.const -1))
@@ -113,6 +202,9 @@
     (global.set $tv_count (i32.add (global.get $tv_count) (i32.const 1)))
     ;; Slot base address
     (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $image_rec (call $tv_image_record (local.get $slot)))
+    (i32.store (local.get $image_rec) (i32.const -1))
+    (i32.store offset=4 (local.get $image_rec) (i32.const -1))
     ;; Store handle
     (i32.store (local.get $base) (local.get $handle))
     ;; Read parent from TV_INSERTSTRUCT
@@ -128,6 +220,14 @@
     (i32.store offset=16 (local.get $base) (i32.const 0))  ;; prevSib
     ;; Read TVITEMA fields (at offset +8 in TV_INSERTSTRUCT)
     (local.set $mask (i32.load (i32.add (local.get $lParam_wa) (i32.const 8))))
+    (if (i32.and (local.get $mask) (i32.const 0x2)) ;; TVIF_IMAGE
+      (then
+        (i32.store (local.get $image_rec)
+          (i32.load (i32.add (local.get $lParam_wa) (i32.const 32))))))
+    (if (i32.and (local.get $mask) (i32.const 0x20)) ;; TVIF_SELECTEDIMAGE
+      (then
+        (i32.store offset=4 (local.get $image_rec)
+          (i32.load (i32.add (local.get $lParam_wa) (i32.const 36))))))
     ;; State: if mask includes TVIF_STATE (0x8), use provided state; else keep
     ;; the old minimal-control behavior of showing descendants by default.
     (if (i32.and (local.get $mask) (i32.const 0x8))
@@ -166,7 +266,64 @@
             (i32.store8 (i32.add (call $g2w (local.get $text_copy_g)) (local.get $text_len))
                         (i32.const 0))
             (i32.store offset=28 (local.get $base) (local.get $text_copy_g))))
-        (drop (i32.const 0))))
+        ;; LPSTR_TEXTCALLBACKA: ask the parent for TVIF_TEXT immediately and
+        ;; retain a private copy. This matches the common-control callback
+        ;; contract while keeping WAT painting independent of the caller's
+        ;; temporary NMTVDISPINFO buffer.
+        (if (i32.eq (local.get $text_g) (i32.const -1))
+          (then
+            (local.set $notify_parent (call $wnd_get_parent (local.get $hwnd)))
+            (if (local.get $notify_parent)
+              (then
+                ;; NMTVDISPINFOA (52 bytes) followed by a 260-byte text buffer.
+                (local.set $notify_g (call $heap_alloc (i32.const 312)))
+                (if (local.get $notify_g)
+                  (then
+                    (local.set $notify_w (call $g2w (local.get $notify_g)))
+                    (call $zero_memory (local.get $notify_w) (i32.const 312))
+                    ;; NMHDR
+                    (i32.store          (local.get $notify_w) (local.get $hwnd))
+                    (i32.store offset=4 (local.get $notify_w)
+                      (call $ctrl_table_get_id (local.get $hwnd)))
+                    (i32.store offset=8 (local.get $notify_w) (i32.const -403)) ;; TVN_GETDISPINFOA
+                    ;; TVITEMA at +12
+                    (i32.store offset=12 (local.get $notify_w) (i32.const 0x5)) ;; TVIF_TEXT|TVIF_PARAM
+                    (i32.store offset=16 (local.get $notify_w) (local.get $handle))
+                    (i32.store offset=20 (local.get $notify_w) (local.get $state))
+                    (i32.store offset=28 (local.get $notify_w)
+                      (i32.add (local.get $notify_g) (i32.const 52)))
+                    (i32.store offset=32 (local.get $notify_w) (i32.const 260))
+                    (i32.store offset=44 (local.get $notify_w)
+                      (call $tv_item_has_children (local.get $base)))
+                    (i32.store offset=48 (local.get $notify_w)
+                      (i32.load offset=24 (local.get $base)))
+                    (drop (call $wnd_send_message
+                      (local.get $notify_parent) (i32.const 0x004E)
+                      (call $ctrl_table_get_id (local.get $hwnd))
+                      (local.get $notify_g)))
+                    ;; The parent may fill our buffer or replace pszText with
+                    ;; its own stable pointer. Copy either form before free.
+                    (local.set $text_g (i32.load offset=28 (local.get $notify_w)))
+                    (if (i32.and
+                          (i32.ne (local.get $text_g) (i32.const 0))
+                          (i32.lt_u (local.get $text_g) (i32.const 0xFFFF0000)))
+                      (then
+                        (local.set $text_w (call $g2w (local.get $text_g)))
+                        (local.set $text_len (call $strlen (local.get $text_w)))
+                        (if (local.get $text_len)
+                          (then
+                            (local.set $text_copy_g
+                              (call $heap_alloc (i32.add (local.get $text_len) (i32.const 1))))
+                            (if (local.get $text_copy_g)
+                              (then
+                                (call $memcpy (call $g2w (local.get $text_copy_g))
+                                  (local.get $text_w) (local.get $text_len))
+                                (i32.store8
+                                  (i32.add (call $g2w (local.get $text_copy_g)) (local.get $text_len))
+                                  (i32.const 0))
+                                (i32.store offset=28 (local.get $base) (local.get $text_copy_g)))))))
+                    (call $heap_free (local.get $notify_g))))))))
+        (drop (i32.const 0)))))
     ;; Link into parent's child list.
     (if (local.get $hParent)
       (then
@@ -201,6 +358,13 @@
                     (br $find)))))))))
     (if (i32.eqz (local.get $hParent))
       (then (call $tv_link_root_item (local.get $base) (local.get $handle))))
+    ;; Win98's TreeView gives the first inserted item the caret. WinHelp
+    ;; immediately queries TVGN_CARET and relies on that native default.
+    (if (i32.eqz (global.get $tv_selected_handle))
+      (then
+        (global.set $tv_selected_handle (local.get $handle))
+        (i32.store offset=20 (local.get $base)
+          (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x2)))))
     (local.get $handle))
 
   ;; TVM_GETITEMA handler — read TVITEM, fill requested fields
@@ -252,6 +416,15 @@
       (then
         (i32.store offset=32 (local.get $tvitem_wa)
           (call $tv_item_has_children (local.get $base)))))
+    ;; TVIF_IMAGE / TVIF_SELECTEDIMAGE
+    (if (i32.and (local.get $mask) (i32.const 0x2))
+      (then
+        (i32.store offset=24 (local.get $tvitem_wa)
+          (i32.load (call $tv_image_record (local.get $slot))))))
+    (if (i32.and (local.get $mask) (i32.const 0x20))
+      (then
+        (i32.store offset=28 (local.get $tvitem_wa)
+          (i32.load offset=4 (call $tv_image_record (local.get $slot))))))
     ;; TVIF_PARAM (0x4) — write lParam at TVITEM+36. Winamp 2.x's
     ;; preferences tree asks with mask 0x10 and still reads lParam, so fill
     ;; it for that compatibility path too.
@@ -286,6 +459,14 @@
       (then
         (i32.store offset=24 (local.get $base)
           (i32.load (i32.add (local.get $tvitem_wa) (i32.const 36))))))
+    (if (i32.and (local.get $mask) (i32.const 0x2))
+      (then
+        (i32.store (call $tv_image_record (local.get $slot))
+          (i32.load offset=24 (local.get $tvitem_wa)))))
+    (if (i32.and (local.get $mask) (i32.const 0x20))
+      (then
+        (i32.store offset=4 (call $tv_image_record (local.get $slot))
+          (i32.load offset=28 (local.get $tvitem_wa)))))
     (i32.const 1))
 
   (func $tv_item_visible (param $base i32) (result i32)
@@ -894,18 +1075,22 @@
     ;; TVM_INSERTITEMA (0x1100)
     (if (i32.eq (local.get $msg) (i32.const 0x1100))
       (then
-        (local.set $ret (call $tv_insert (call $g2w (local.get $lParam))))
+        (local.set $ret (call $tv_insert
+          (local.get $hwnd) (call $g2w (local.get $lParam))))
         (call $treeview_paint_wat (local.get $hwnd))
         (return (local.get $ret))))
     ;; TVM_DELETEITEM (0x1101) — simplified: just clear the slot
     (if (i32.eq (local.get $msg) (i32.const 0x1101))
       (then
-        (if (i32.ne (call $tv_find_slot (local.get $lParam)) (i32.const -1))
+        (local.set $ret (call $tv_find_slot (local.get $lParam)))
+        (if (i32.ne (local.get $ret) (i32.const -1))
           (then
             (if (i32.eq (global.get $tv_selected_handle) (local.get $lParam))
               (then (global.set $tv_selected_handle (i32.const 0))))
             (i32.store (i32.add (global.get $TV_TABLE)
-              (i32.mul (call $tv_find_slot (local.get $lParam)) (i32.const 32))) (i32.const 0))
+              (i32.mul (local.get $ret) (i32.const 32))) (i32.const 0))
+            (i32.store (call $tv_image_record (local.get $ret)) (i32.const -1))
+            (i32.store offset=4 (call $tv_image_record (local.get $ret)) (i32.const -1))
             (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))
         (return (i32.const 1))))
     ;; TVM_EXPAND (0x1102)
@@ -966,7 +1151,8 @@
     (local $i i32) (local $base i32) (local $row i32) (local $draw_row i32) (local $y i32)
     (local $hItem i32) (local $slot i32)
     (local $depth i32) (local $x i32) (local $state i32) (local $check i32)
-    (local $style i32) (local $brush i32) (local $folder_brush i32) (local $selected i32) (local $sel_right i32)
+    (local $style i32) (local $brush i32) (local $selected i32) (local $sel_right i32)
+    (local $image_index i32) (local $image_drawn i32)
     (local $text_g i32) (local $text_w i32) (local $text_len i32)
     (local $first_row i32) (local $max_scroll i32) (local $content_right i32)
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
@@ -1001,11 +1187,6 @@
     (drop (call $host_gdi_draw_edge (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
       (i32.const 0x0A) (i32.const 0x0F)))
-    (if (global.get $tv_image_list)
-      (then
-        (local.set $folder_brush
-          (call $host_gdi_create_solid_brush (i32.const 0x0000FFFF)))))
-
     (local.set $i (i32.const 0))
     (local.set $row (i32.const 0))
     (global.set $tv_debug_paint_visible (i32.const 0))
@@ -1100,24 +1281,24 @@
                         (i32.const 0x30014)))))
                   (local.set $x (i32.add (local.get $x) (i32.const 16)))))
 
-              ;; RegEdit and shell trees attach a small image list. Until the
-              ;; image-list bitmap compositor is stateful, paint the canonical
-              ;; 14px closed-folder silhouette and preserve native label spacing.
+              ;; Draw the item's actual image-list glyph. Authentic WinHelp
+              ;; uses image 2 for its white topic/question page.
               (if (global.get $tv_image_list)
                 (then
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (local.get $x) (i32.add (local.get $y) (i32.const 4))
-                    (i32.add (local.get $x) (i32.const 14)) (i32.add (local.get $y) (i32.const 14))
-                    (i32.const 0x30014)))
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.add (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 5))
-                    (i32.add (local.get $x) (i32.const 13)) (i32.add (local.get $y) (i32.const 13))
-                    (local.get $folder_brush)))
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (i32.const 2))
-                    (i32.add (local.get $x) (i32.const 8)) (i32.add (local.get $y) (i32.const 6))
-                    (local.get $folder_brush)))
-                  (local.set $x (i32.add (local.get $x) (i32.const 17)))))
+                  (local.set $image_index
+                    (i32.load (call $tv_image_record (local.get $slot))))
+                  (if (local.get $selected)
+                    (then
+                      (if (i32.ge_s
+                            (i32.load offset=4 (call $tv_image_record (local.get $slot)))
+                            (i32.const 0))
+                        (then
+                          (local.set $image_index
+                            (i32.load offset=4 (call $tv_image_record (local.get $slot))))))))
+                  (local.set $image_drawn (call $treeview_draw_image
+                    (local.get $hdc) (local.get $x) (local.get $y) (local.get $image_index)))
+                  (if (local.get $image_drawn)
+                    (then (local.set $x (i32.add (local.get $x) (i32.const 21)))))))
 
               (local.set $text_g (i32.load offset=28 (local.get $base)))
               (if (local.get $text_g)
@@ -1164,8 +1345,6 @@
           (local.get $first_row) (local.get $max_scroll)
           (select (global.get $sb_pressed_part) (i32.const 0)
                   (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
-    (if (local.get $folder_brush)
-      (then (drop (call $host_gdi_delete_object (local.get $folder_brush)))))
   )
 
   ;; TreeView control wndproc — handles WM_PAINT and TreeView messages

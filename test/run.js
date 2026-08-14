@@ -127,9 +127,12 @@ const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump
 const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save back canvases alongside PNG snapshots
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
+const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
+const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: also preload the EXE directory on D:\
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
+const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
@@ -314,9 +317,8 @@ if (TRACE_EIP_RANGE !== null) {
 
 async function main() {
   let wasmBytes;
-  const prebuilt = path.join(__dirname, '..', 'build', 'wine-assembly.wasm');
-  if (NO_BUILD && fs.existsSync(prebuilt)) {
-    wasmBytes = fs.readFileSync(prebuilt);
+  if (NO_BUILD && fs.existsSync(WASM_PATH)) {
+    wasmBytes = fs.readFileSync(WASM_PATH);
   } else {
     wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
   }
@@ -1953,6 +1955,15 @@ async function main() {
       }
     };
     loadDir(exeDir, 'c:\\');
+    if (VFS_DRIVE) {
+      const drive = VFS_DRIVE.replace(/:$/, '').toLowerCase();
+      if (!/^[a-z]$/.test(drive)) throw new Error(`invalid --vfs-drive: ${VFS_DRIVE}`);
+      const driveRoot = `${drive}:\\`;
+      ctx.vfs.dirs.add(`${drive}:`);
+      ctx.vfs.dirs.add(driveRoot);
+      loadDir(exeDir, driveRoot);
+      ctx.vfs.setDriveReadOnly(drive, true);
+    }
 
     // Plus!98 Organic Art theme SCRs: each theme ships a sibling .SCN with
     // Active=0 (the real installer flips it to 1 when the user picks the
@@ -3293,9 +3304,38 @@ async function main() {
           }
         }
         if (found) {
-          we.send_message(found, 0x0201, 0, 0);
-          we.send_message(found, 0x0202, 0, 0);
-          logs.push(`[input] ctrl-click: id=${ev.ctrlId} hwnd=0x${found.toString(16)} at batch ${batch}`);
+          const parent = we.wnd_get_parent ? (we.wnd_get_parent(found) >>> 0) : 0;
+          const wh = we.ctrl_get_wh ? (we.ctrl_get_wh(found) >>> 0) : 0;
+          let routeNote = '';
+          if (parent && we.dialog_route_mouse_screen &&
+              we.wnd_mouse_msg_origin_x && we.wnd_mouse_msg_origin_y) {
+            const sx = (we.wnd_mouse_msg_origin_x(found) | 0) + ((wh & 0xffff) >> 1);
+            const sy = (we.wnd_mouse_msg_origin_y(found) | 0) + ((wh >>> 16) >> 1);
+            let down = we.dialog_route_mouse_screen(parent, 0x0201, 1, sx, sy) | 0;
+            const routedDown = down !== 0;
+            if (!routedDown) {
+              // Some legacy controls are visible while their private layout
+              // parent remains WS_VISIBLE-clear (WinHelp's MS_WINICON strip).
+              // Route those through the control's real subclass procedure.
+              we.send_message(found, 0x0201, 1, 0);
+              down = 1;
+            }
+            // Finish through the same router so its captured-button state is
+            // consumed and subclassed common-control buttons chain correctly.
+            let up;
+            if (routedDown) {
+              up = we.dialog_route_mouse_screen(parent, 0x0202, 0, sx, sy) | 0;
+            } else {
+              we.send_message(found, 0x0202, 0, 0);
+              up = 1;
+            }
+            routeNote = ` route=${down}/${up}@${sx},${sy}`;
+          } else {
+            // WM_LBUTTONDOWN carries MK_LBUTTON while the button is held.
+            we.send_message(found, 0x0201, 1, 0);
+            we.send_message(found, 0x0202, 0, 0);
+          }
+          logs.push(`[input] ctrl-click: id=${ev.ctrlId} hwnd=0x${found.toString(16)}${routeNote} at batch ${batch}`);
         } else {
           logs.push(`[input] ctrl-click: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
         }
@@ -3538,10 +3578,12 @@ async function main() {
             const cls = we.ctrl_get_class ? (we.ctrl_get_class(hwnd) | 0) : 0;
             const id = we.ctrl_get_id ? (we.ctrl_get_id(hwnd) | 0) : 0;
             const par = we.wnd_get_parent ? (we.wnd_get_parent(hwnd) >>> 0) : 0;
+            const proc = we.wnd_get_proc_export ? (we.wnd_get_proc_export(hwnd) >>> 0) : 0;
             const style = we.wnd_get_style_export ? (we.wnd_get_style_export(hwnd) >>> 0) : 0;
             const xy = we.ctrl_get_xy ? (we.ctrl_get_xy(hwnd) >>> 0) : 0;
             const wh = we.ctrl_get_wh ? (we.ctrl_get_wh(hwnd) >>> 0) : 0;
-            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16}`);
+            const buttonFlags = cls === 1 && we.button_get_flags ? (we.button_get_flags(hwnd) >>> 0) : 0;
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16}`);
             slot++;
           }
         }
@@ -3643,16 +3685,20 @@ async function main() {
           let ctrlId = -1;
           let style = 0;
           let owner = 0;
+          let wndProc = 0;
+          let dialogProc = 0;
           try {
             if (we && we.ctrl_get_class) ctrlClass = we.ctrl_get_class(hwnd) | 0;
             if (we && we.ctrl_get_id) ctrlId = we.ctrl_get_id(hwnd) | 0;
             if (we && we.wnd_get_style_export) style = we.wnd_get_style_export(hwnd) >>> 0;
             if (we && we.wnd_get_owner) owner = we.wnd_get_owner(hwnd) >>> 0;
+            if (we && we.wnd_get_proc_export) wndProc = we.wnd_get_proc_export(hwnd) >>> 0;
+            if (we && we.dialog_get_proc_export) dialogProc = we.dialog_get_proc_export(hwnd) >>> 0;
           } catch (_) {}
           if (!style) style = win.style >>> 0;
           const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
           const enabled = (style & 0x08000000) === 0;
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';
@@ -5000,6 +5046,7 @@ if (VERBOSE) {
   if (SAVE_VFS && ctx.vfs) {
     for (const [k, v] of ctx.vfs.files.entries()) {
       if (k === 'c:\\app.exe') continue;
+      if (SAVE_VFS_SUFFIX && !k.toLowerCase().endsWith(SAVE_VFS_SUFFIX.toLowerCase())) continue;
       const rel = k.replace(/^c:\\/, '');
       const outPath = path.join(SAVE_VFS, ...rel.split('\\'));
       fs.mkdirSync(path.dirname(outPath), { recursive: true });

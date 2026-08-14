@@ -173,6 +173,247 @@
         (i32.and (local.get $slot) (i32.const 7)))
       (i32.const 1)))
 
+  ;; Hybrid SysTabControl32 marker. The real COMCTL32 wndproc remains installed
+  ;; for TCM_ADJUSTRECT, page switching, and hit-testing; WAT mirrors only the
+  ;; short tab labels/selection needed to paint Win98 chrome on the shared
+  ;; parent surface.
+  (func $tab_native_mark_slot (param $slot i32) (param $marked i32)
+    (local $addr i32) (local $mask i32) (local $value i32)
+    (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
+                (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+      (then (return)))
+    (local.set $addr
+      (i32.add (global.get $NATIVE_TAB_BITS)
+        (i32.shr_u (local.get $slot) (i32.const 3))))
+    (local.set $mask
+      (i32.shl (i32.const 1) (i32.and (local.get $slot) (i32.const 7))))
+    (local.set $value (i32.load8_u (local.get $addr)))
+    (i32.store8 (local.get $addr)
+      (if (result i32) (local.get $marked)
+        (then (i32.or (local.get $value) (local.get $mask)))
+        (else (i32.and (local.get $value) (i32.xor (local.get $mask) (i32.const 0xFF)))))))
+
+  (func $tab_native_is (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.and
+      (i32.shr_u
+        (i32.load8_u
+          (i32.add (global.get $NATIVE_TAB_BITS)
+            (i32.shr_u (local.get $slot) (i32.const 3))))
+        (i32.and (local.get $slot) (i32.const 7)))
+      (i32.const 1)))
+
+  ;; COMCTL32 owns the ordinary per-window state pointer. Keep our paint mirror
+  ;; separate so observing TCM_* messages cannot corrupt its WM_CREATE state.
+  (func $tab_native_state_get (param $hwnd i32) (param $create i32) (result i32)
+    (local $i i32) (local $addr i32) (local $empty i32) (local $state i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $addr (i32.add (global.get $TAB_NATIVE_STATE_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+        (then (return (i32.load offset=4 (local.get $addr)))))
+      (if (i32.and (i32.eqz (local.get $empty))
+                   (i32.eqz (i32.load (local.get $addr))))
+        (then (local.set $empty (local.get $addr))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.or (i32.eqz (local.get $create)) (i32.eqz (local.get $empty)))
+      (then (return (i32.const 0))))
+    (local.set $state (call $heap_alloc (i32.const 128)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $state)) (i32.const 128))
+    (i32.store (local.get $empty) (local.get $hwnd))
+    (i32.store offset=4 (local.get $empty) (local.get $state))
+    (local.get $state))
+
+  (func $tab_native_state_release (param $hwnd i32)
+    (local $i i32) (local $addr i32) (local $state i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $addr (i32.add (global.get $TAB_NATIVE_STATE_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+        (then
+          (local.set $state (i32.load offset=4 (local.get $addr)))
+          (if (local.get $state) (then (call $heap_free (local.get $state))))
+          (i64.store (local.get $addr) (i64.const 0))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  ;; Tab mirror state is 128 inline bytes: count@0, selected@4, followed by
+  ;; eight 15-byte records {len:u8, text[14]}. No secondary allocations are
+  ;; needed. It lives in TAB_NATIVE_STATE_TABLE, not COMCTL32's window state.
+  (func $tab_native_note_message
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
+    (local $state i32) (local $sw i32) (local $item_w i32)
+    (local $count i32) (local $index i32) (local $i i32) (local $j i32)
+    (local $src i32) (local $dst i32) (local $text_g i32) (local $text_w i32)
+    (local $len i32) (local $x i32) (local $left i32) (local $right i32)
+    (if (i32.eqz (call $tab_native_is (local.get $hwnd))) (then (return)))
+    ;; Do not allocate while forwarding WM_CREATE or unrelated private traffic.
+    (if (i32.and
+          (i32.ne (local.get $msg) (i32.const 0x1307))
+          (i32.and
+            (i32.ne (local.get $msg) (i32.const 0x1309))
+            (i32.and
+              (i32.ne (local.get $msg) (i32.const 0x130C))
+              (i32.ne (local.get $msg) (i32.const 0x0201)))))
+      (then (return)))
+    (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 1)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $count (i32.load (local.get $sw)))
+    ;; TCM_INSERTITEMA
+    (if (i32.eq (local.get $msg) (i32.const 0x1307))
+      (then
+        (if (i32.ge_u (local.get $count) (i32.const 8)) (then (return)))
+        (local.set $index (local.get $wParam))
+        (if (i32.gt_u (local.get $index) (local.get $count))
+          (then (local.set $index (local.get $count))))
+        ;; Shift later fixed records back one slot. Copy each record from its
+        ;; last byte so the overlapping inline move is safe.
+        (local.set $i (local.get $count))
+        (block $shift_done (loop $shift
+          (br_if $shift_done (i32.le_u (local.get $i) (local.get $index)))
+          (local.set $src (i32.add (i32.add (local.get $sw) (i32.const 8))
+            (i32.mul (i32.sub (local.get $i) (i32.const 1)) (i32.const 15))))
+          (local.set $dst (i32.add (local.get $src) (i32.const 15)))
+          (local.set $j (i32.const 14))
+          (block $bytes_done (loop $bytes
+            (i32.store8 (i32.add (local.get $dst) (local.get $j))
+              (i32.load8_u (i32.add (local.get $src) (local.get $j))))
+            (br_if $bytes_done (i32.eqz (local.get $j)))
+            (local.set $j (i32.sub (local.get $j) (i32.const 1)))
+            (br $bytes)))
+          (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+          (br $shift)))
+        (local.set $dst (i32.add (i32.add (local.get $sw) (i32.const 8))
+          (i32.mul (local.get $index) (i32.const 15))))
+        (call $zero_memory (local.get $dst) (i32.const 15))
+        (if (local.get $lParam)
+          (then
+            (local.set $item_w (call $g2w (local.get $lParam)))
+            (if (i32.and (i32.load (local.get $item_w)) (i32.const 1)) ;; TCIF_TEXT
+              (then
+                (local.set $text_g (i32.load offset=12 (local.get $item_w)))
+                (if (local.get $text_g)
+                  (then
+                    (local.set $text_w (call $g2w (local.get $text_g)))
+                    (local.set $len (call $strlen (local.get $text_w)))
+                    (if (i32.gt_u (local.get $len) (i32.const 14))
+                      (then (local.set $len (i32.const 14))))
+                    (i32.store8 (local.get $dst) (local.get $len))
+                    (if (local.get $len)
+                      (then (call $memcpy (i32.add (local.get $dst) (i32.const 1))
+                        (local.get $text_w) (local.get $len))))))))))
+        (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return)))
+    ;; TCM_DELETEALLITEMS
+    (if (i32.eq (local.get $msg) (i32.const 0x1309))
+      (then
+        (i32.store (local.get $sw) (i32.const 0))
+        (i32.store offset=4 (local.get $sw) (i32.const 0))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return)))
+    ;; TCM_SETCURSEL
+    (if (i32.eq (local.get $msg) (i32.const 0x130C))
+      (then
+        (if (i32.lt_u (local.get $wParam) (local.get $count))
+          (then (i32.store offset=4 (local.get $sw) (local.get $wParam))))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (return)))
+    ;; Mirror direct mouse selection while the guest proc remains authoritative.
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (local.set $i (i32.const 0))
+        (local.set $left (i32.const 0))
+        (block $hit_done (loop $hit
+          (br_if $hit_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $src (i32.add (i32.add (local.get $sw) (i32.const 8))
+            (i32.mul (local.get $i) (i32.const 15))))
+          (local.set $right (i32.add (local.get $left)
+            (i32.add (i32.mul (i32.load8_u (local.get $src)) (i32.const 5)) (i32.const 16))))
+          (if (i32.and (i32.ge_u (local.get $x) (local.get $left))
+                       (i32.lt_u (local.get $x) (local.get $right)))
+            (then
+              (i32.store offset=4 (local.get $sw) (local.get $i))
+              (call $paint_flag_set_inv (local.get $hwnd))
+              (br $hit_done)))
+          (local.set $left (local.get $right))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $hit)))))
+    )
+
+  (func $tab_native_paint (param $hwnd i32) (result i32)
+    (local $state i32) (local $sw i32) (local $hdc i32) (local $sz i32)
+    (local $w i32) (local $h i32) (local $count i32) (local $selected i32)
+    (local $i i32) (local $rec i32) (local $len i32)
+    (local $left i32) (local $right i32) (local $top i32)
+    (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 0)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $count (i32.load (local.get $sw)))
+    (local.set $selected (i32.load offset=4 (local.get $sw)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+      (then (return (i32.const 0))))
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    ;; Only clear the chrome strip. Child pages paint into this common backing
+    ;; surface too, and a late tab repaint must not erase their topic tree.
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+      (i32.const 0) (i32.const 0) (local.get $w) (i32.const 21) (i32.const 0x30011)))
+    ;; Native Win98 tabs use a 20px row and merge the selected tab into the
+    ;; raised page frame beneath it.
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+      (i32.const 0) (i32.const 19) (local.get $w) (local.get $h)
+      (i32.const 0x05) (i32.const 0x0F)))
+    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0)))
+    (local.set $i (i32.const 0))
+    (local.set $left (i32.const 0))
+    (block $done (loop $tabs
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (i32.add (local.get $sw) (i32.const 8))
+        (i32.mul (local.get $i) (i32.const 15))))
+      (local.set $len (i32.load8_u (local.get $rec)))
+      (local.set $right (i32.add (local.get $left)
+        (i32.add (i32.mul (local.get $len) (i32.const 5)) (i32.const 16))))
+      (local.set $top (select (i32.const 0) (i32.const 2)
+        (i32.eq (local.get $i) (local.get $selected))))
+      (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (local.get $left) (local.get $top) (local.get $right) (i32.const 20)
+        (i32.const 0x30011)))
+      (drop (call $host_gdi_draw_edge (local.get $hdc)
+        (local.get $left) (local.get $top) (local.get $right) (i32.const 20)
+        (i32.const 0x05) (i32.const 0x07))) ;; BF_LEFT|TOP|RIGHT
+      (if (i32.eq (local.get $i) (local.get $selected))
+        (then
+          ;; Erase the page's top edge under the selected tab.
+          (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.add (local.get $left) (i32.const 2)) (i32.const 18)
+            (i32.sub (local.get $right) (i32.const 2)) (i32.const 21)
+            (i32.const 0x30011)))))
+      (if (local.get $len)
+        (then
+          (drop (call $host_gdi_text_out (local.get $hdc)
+            (i32.add (local.get $left) (i32.const 8))
+            (i32.add (local.get $top) (i32.const 3))
+            (i32.add (local.get $rec) (i32.const 1)) (local.get $len) (i32.const 0)))))
+      (local.set $left (local.get $right))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $tabs)))
+    (i32.const 1))
+
   ;; Set control class and ID for a window table slot
   (func $ctrl_table_set (param $slot i32) (param $class i32) (param $ctrl_id i32)
     (local $addr i32)
@@ -186,7 +427,9 @@
   ;; Clear per-slot WAT control metadata when WND_RECORDS reuses a slot.
   (func $ctrl_table_reset_slot (param $slot i32)
     (local $addr i32)
+    (call $tab_native_state_release (call $wnd_slot_hwnd (local.get $slot)))
     (call $statusbar_native_mark_slot (local.get $slot) (i32.const 0))
+    (call $tab_native_mark_slot (local.get $slot) (i32.const 0))
     (local.set $addr (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
     (i64.store (local.get $addr) (i64.const 0))
     (i64.store offset=8 (local.get $addr) (i64.const 0))
@@ -11869,6 +12112,12 @@
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
+    (if (call $tab_native_is (local.get $hwnd))
+      (then
+        (call $tab_native_note_message
+          (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam))
+        (if (i32.eq (local.get $msg) (i32.const 0x000F))
+          (then (return (call $tab_native_paint (local.get $hwnd)))))))
     ;; A registered status bar keeps ctrl_class=0 so its guest wndproc can
     ;; perform MFC layout. Its shared-surface paint and WM_SETTEXT invalidation
     ;; are WAT-owned; otherwise Print Preview can leave the old prompt visible

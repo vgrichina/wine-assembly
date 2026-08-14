@@ -2477,6 +2477,16 @@
                 (local.get $arg0) (i32.const 0)))))
     (global.set $focus_hwnd (local.get $arg0))
     (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
+    ;; Dialog HWNDs keep USER's DefDlgProc marker in the window table, while
+    ;; their real guest DLGPROC lives in dialog state.  The marker is below the
+    ;; WAT-native range, so the generic x86 branch would otherwise jump to
+    ;; 0xFFFE0002 and decode emulator-private data as guest instructions.
+    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
+      (then
+        (drop (call $dialog_default_proc
+          (local.get $arg0) (i32.const 0x0007) (local.get $prev) (i32.const 0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; WAT-native wndproc: dispatch inline
     (if (i32.ge_u (local.get $wndproc) (i32.const 0xFFFF0000))
       (then (drop (call $wat_wndproc_dispatch
@@ -7929,26 +7939,31 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
-  ;; 484: GetLogicalDrives() — return bitmask of drives (bit 2 = C:)
+  ;; 484: GetLogicalDrives() — return bitmask of drives (bits 2/3 = C:/D:)
   (func $handle_GetLogicalDrives (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x04))  ;; C: drive only
+    (global.set $eax (i32.const 0x0C))  ;; fixed C: plus CD-ROM D:
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; GetLogicalDriveStringsA(nBufferLength, lpBuffer) — return double-null-terminated drive list "C:\\\0\0"
-  ;; If nBufferLength=0 or too small, returns required buffer size (5). Otherwise writes "C:\\\0\0" and returns 4 (chars excl. final null).
+  ;; GetLogicalDriveStringsA(nBufferLength, lpBuffer) — return "C:\\\0D:\\\0\0".
+  ;; A Win98 installation normally exposes its fixed system disk and CD-ROM;
+  ;; the CLI/reference harness mounts immutable fixture sets on D:.
   (func $handle_GetLogicalDriveStringsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32)
-    (if (i32.lt_u (local.get $arg0) (i32.const 5))
-      (then (global.set $eax (i32.const 5)))
+    (if (i32.lt_u (local.get $arg0) (i32.const 9))
+      (then (global.set $eax (i32.const 9)))
       (else
         (local.set $buf (call $g2w (local.get $arg1)))
         (i32.store8 (local.get $buf) (i32.const 0x43))              ;; 'C'
         (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x3A))  ;; ':'
         (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x5C))  ;; '\\'
         (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 0))
-        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
-        (global.set $eax (i32.const 4))))
+        (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x44))  ;; 'D'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 5)) (i32.const 0x3A))  ;; ':'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0x5C))  ;; '\\'
+        (i32.store8 (i32.add (local.get $buf) (i32.const 7)) (i32.const 0))
+        (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))
+        (global.set $eax (i32.const 8))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -8050,9 +8065,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 490: GetDriveTypeA(lpRootPathName) — return DRIVE_FIXED (3)
+  ;; 490: GetDriveTypeA(lpRootPathName) — C: is fixed, D: is the CD-ROM.
   (func $handle_GetDriveTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 3))  ;; DRIVE_FIXED
+    (local $root i32)
+    (global.set $eax (i32.const 3))  ;; DRIVE_FIXED / current C: drive
+    (if (i32.ne (local.get $arg0) (i32.const 0))
+      (then
+        (local.set $root (call $g2w (local.get $arg0)))
+        (if (i32.and
+              (i32.eq (i32.and (i32.load8_u (local.get $root)) (i32.const 0xDF)) (i32.const 0x44))
+              (i32.eq (i32.load8_u offset=1 (local.get $root)) (i32.const 0x3A)))
+          (then (global.set $eax (i32.const 5))))))  ;; DRIVE_CDROM
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -8094,9 +8117,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 496: GetDriveTypeW — STUB: unimplemented
+  ;; 496: GetDriveTypeW — Unicode counterpart of GetDriveTypeA.
   (func $handle_GetDriveTypeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $root i32)
+    (global.set $eax (i32.const 3))
+    (if (i32.ne (local.get $arg0) (i32.const 0))
+      (then
+        (local.set $root (call $g2w (local.get $arg0)))
+        (if (i32.and
+              (i32.eq (i32.and (i32.load16_u (local.get $root)) (i32.const 0xDF)) (i32.const 0x44))
+              (i32.eq (i32.load16_u offset=2 (local.get $root)) (i32.const 0x3A)))
+          (then (global.set $eax (i32.const 5))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 497: MoveFileA — STUB: unimplemented

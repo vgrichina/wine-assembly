@@ -12455,7 +12455,7 @@
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
     (local $is_ex i32) (local $ctrl_style i32) (local $ctrl_ex i32) (local $ctrl_id i32)
     (local $class_val i32) (local $class_enum i32) (local $class_ptr i32)
-    (local $custom_wndproc i32)
+    (local $custom_wndproc i32) (local $native_tab i32)
     (local $text_ptr i32) (local $text_ord i32) (local $cs i32)
     ;; Find the dialog slot — caller must have inserted it already
     (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
@@ -12601,6 +12601,7 @@
       (local.set $class_enum (i32.const 0))
       (local.set $class_ptr (i32.const 0))
       (local.set $custom_wndproc (i32.const 0))
+      (local.set $native_tab (i32.const 0))
       (if (i32.eq (i32.load16_u (local.get $p)) (i32.const 0xFFFF))
         (then
           (local.set $class_val (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
@@ -12654,6 +12655,19 @@
           (call $dlg_read_text (local.get $p))
           (local.set $class_ptr (global.get $dlg_text_ptr))
           (local.set $p (global.get $dlg_text_wa))
+          ;; Dialog-template common controls bypass CreateWindowExA. Preserve
+          ;; the registered COMCTL32 SysTabControl32 proc, but mark the HWND so
+          ;; WAT can mirror TCM_* state and paint full-height Win98 tab chrome.
+          (if (i32.and
+                (i32.ge_u (local.get $class_ptr) (i32.const 0x10000))
+                (i32.and
+                  (i32.eq
+                    (i32.or (i32.load (call $g2w (local.get $class_ptr))) (i32.const 0x20202020))
+                    (i32.const 0x74737973)) ;; "syst"
+                  (i32.eq
+                    (i32.or (i32.load offset=4 (call $g2w (local.get $class_ptr))) (i32.const 0x20202020))
+                    (i32.const 0x6f636261)))) ;; "abco"
+            (then (local.set $native_tab (i32.const 1))))
           (if (i32.and
                 (i32.eqz (local.get $class_enum))
                 (i32.ne (local.get $class_ptr) (i32.const 0)))
@@ -12687,6 +12701,9 @@
         (then
           (call $ctrl_table_set (local.get $ctrl_slot)
             (local.get $class_enum) (local.get $ctrl_id))
+          (if (local.get $native_tab)
+            (then (call $tab_native_mark_slot
+              (local.get $ctrl_slot) (i32.const 1))))
           (call $ctrl_set_ex_style (local.get $ctrl_hwnd) (local.get $ctrl_ex))
           ;; Per-control text is owned by each wndproc's state struct
           ;; (ButtonState.text_buf_ptr etc.) — populated from

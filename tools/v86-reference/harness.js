@@ -8,6 +8,7 @@ window.startReferenceVm = function startReferenceVm(config) {
   }
 
   return new Promise((resolve, reject) => {
+    window.referenceSerialText = "";
     const emulator = window.emulator = new V86({
       wasm_path: "/runtime/v86.wasm",
       memory_size: config.memorySize,
@@ -23,6 +24,9 @@ window.startReferenceVm = function startReferenceVm(config) {
 
     const fail = error => reject(new Error(String(error && error.message || error)));
     window.addEventListener("error", event => fail(event.error || event.message), { once: true });
+    emulator.add_listener("serial0-output-byte", value => {
+      window.referenceSerialText += typeof value === "number" ? String.fromCharCode(value) : String(value);
+    });
     emulator.add_listener("emulator-loaded", () => {
       const canvas = document.querySelector("#screen_container canvas");
       resolve({ width: canvas.width, height: canvas.height });
@@ -57,5 +61,9 @@ window.referenceVm = {
       display: getComputedStyle(canvas).display,
       running: window.emulator.is_running(),
     };
+  },
+
+  serial() {
+    return window.referenceSerialText || "";
   },
 };

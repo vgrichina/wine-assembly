@@ -7,7 +7,7 @@
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
-    (local $detected_class i32) (local $name_w i32) (local $wat_statusbar i32)
+    (local $detected_class i32) (local $name_w i32) (local $wat_statusbar i32) (local $wat_tab i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
     ;; treating the caller's stack frame as the source of truth.
@@ -218,6 +218,17 @@
               (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                       (i32.const 0x75746174))))) ;; "tatu"
       (then (local.set $wat_statusbar (i32.const 1))))
+    ;; SysTabControl32 keeps the authentic COMCTL32 wndproc for layout and
+    ;; page switching. Mark it for a WAT-only Win98 chrome repaint after the
+    ;; normal registered-class lookup has selected that proc.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x74737973)) ;; "syst"
+            (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x6f636261)))) ;; "abco"
+      (then (local.set $wat_tab (i32.const 1))))
     ;; Store style before any native control WM_CREATE. Edit/Button/etc. read
     ;; style bits during creation just like USER32-created controls on Win98.
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
@@ -493,6 +504,12 @@
         (local.set $v (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ge_s (local.get $v) (i32.const 0))
           (then (call $statusbar_native_mark_slot
+            (local.get $v) (i32.const 1))))))
+    (if (local.get $wat_tab)
+      (then
+        (local.set $v (call $wnd_table_find (local.get $hwnd)))
+        (if (i32.ge_s (local.get $v) (i32.const 0))
+          (then (call $tab_native_mark_slot
             (local.get $v) (i32.const 1))))))
     (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
@@ -1548,6 +1565,7 @@
   ;; Returns 0 = no message available (non-blocking)
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
+    (local $qidx i32) (local $qaddr i32) (local $qmsg i32)
     ;; Deliver pending child WM_CREATE
     (if (global.get $pending_child_create)
     (then
@@ -1693,23 +1711,62 @@
     ;; Check posted message queue (after hardware input — see note above)
     (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
       (then
-        ;; Dequeue into lpMsg
-        (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))                        ;; hwnd
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))  ;; msg
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.load (i32.const 0x408)))  ;; wParam
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.load (i32.const 0x40C))) ;; lParam
-        ;; If PM_REMOVE (arg4 & 1), shift queue
-        (if (i32.and (local.get $arg4) (i32.const 1))
+        ;; Find the first queued message admitted by hWnd and the inclusive
+        ;; message range. A mismatched head entry stays queued; WinHelp relies
+        ;; on PeekMessage(..., 0, 0, WM_USER, PM_REMOVE) returning empty while
+        ;; a private message above WM_USER remains pending.
+        (local.set $qidx (i32.const 0))
+        (block $post_scan_done
+          (loop $post_scan
+            (br_if $post_scan_done
+              (i32.ge_u (local.get $qidx) (global.get $post_queue_count)))
+            (local.set $qaddr
+              (i32.add (i32.const 0x400)
+                (i32.mul (local.get $qidx) (i32.const 16))))
+            (local.set $qmsg (i32.load offset=4 (local.get $qaddr)))
+            (br_if $post_scan_done
+              (i32.and
+                (i32.or
+                  (i32.eqz (local.get $arg1))
+                  (i32.or
+                    (i32.eq (i32.load (local.get $qaddr)) (local.get $arg1))
+                    (i32.and
+                      (i32.eq (local.get $arg1) (i32.const -1))
+                      (i32.eqz (i32.load (local.get $qaddr))))))
+                (i32.or
+                  (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
+                  (i32.and
+                    (i32.ge_u (local.get $qmsg) (local.get $arg2))
+                    (i32.le_u (local.get $qmsg) (local.get $arg3))))))
+            (local.set $qidx (i32.add (local.get $qidx) (i32.const 1)))
+            (br $post_scan)))
+        (if (i32.lt_u (local.get $qidx) (global.get $post_queue_count))
           (then
-            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
-            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
-                (i32.mul (global.get $post_queue_count) (i32.const 16)))))
-          )
-        )
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
-        (return)
+            (local.set $qaddr
+              (i32.add (i32.const 0x400)
+                (i32.mul (local.get $qidx) (i32.const 16))))
+            (call $gs32 (local.get $arg0) (i32.load (local.get $qaddr)))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 4))
+              (i32.load offset=4 (local.get $qaddr)))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
+              (i32.load offset=8 (local.get $qaddr)))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+              (i32.load offset=12 (local.get $qaddr)))
+            (if (i32.and (local.get $arg4) (i32.const 1))
+              (then
+                (global.set $post_queue_count
+                  (i32.sub (global.get $post_queue_count) (i32.const 1)))
+                (if (i32.lt_u (local.get $qidx) (global.get $post_queue_count))
+                  (then
+                    (call $memcpy
+                      (local.get $qaddr)
+                      (i32.add (local.get $qaddr) (i32.const 16))
+                      (i32.mul
+                        (i32.sub (global.get $post_queue_count) (local.get $qidx))
+                        (i32.const 16)))))))
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
       )
     )
     (if (call $shared_post_queue_read
@@ -1812,6 +1869,22 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; callback addr
     (global.set $steps (i32.const 0))
     (return)))
+    ;; Registered tabs likewise keep their guest wndproc for layout and normal
+    ;; messages, but WAT mirrors input/state and owns their shared-surface paint.
+    (if (call $tab_native_is (call $gl32 (local.get $arg0)))
+      (then
+        (call $tab_native_note_message
+          (call $gl32 (local.get $arg0))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+        (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x000F))
+          (then
+            (call $update_clear_hwnd (call $gl32 (local.get $arg0)))
+            (call $paint_flag_clear_hwnd (call $gl32 (local.get $arg0)))
+            (global.set $eax (call $tab_native_paint (call $gl32 (local.get $arg0))))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+            (return)))))
     ;; Registered status bars keep their guest wndproc for layout and normal
     ;; messages, but paint through WAT so their shared parent surface cannot
     ;; expose stale view/scrollbar pixels.
@@ -1985,6 +2058,17 @@
 
   ;; 78: DefWindowProcA
   (func $handle_DefWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; USER's built-in BUTTON class has an internal default procedure. Native
+    ;; comctl32 property sheets temporarily subclass their navigation buttons,
+    ;; then restore a tiny DefWindowProcA thunk; treat that thunk as the class
+    ;; default so mouse-up still emits BN_CLICKED/WM_COMMAND.
+    (if (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 1))
+      (then
+        (global.set $eax (call $control_wndproc_dispatch
+          (local.get $arg0) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; WM_CLOSE (0x10): default close destroys the target. Only closing the
     ;; main window should end the message loop; modeless dialogs are ordinary
     ;; owned windows and closing them must not terminate the app.
@@ -2209,6 +2293,15 @@
     ;; Do not enter an app-installed subclass proc just to chain back to the
     ;; default marker; some NSIS treeview paints unwind with a corrupted frame.
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $arg0)))
+    (if (call $tab_native_is (local.get $arg0))
+      (then
+        (call $tab_native_note_message
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+        (if (i32.eq (local.get $arg1) (i32.const 0x000F))
+          (then
+            (global.set $eax (call $tab_native_paint (local.get $arg0)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
     (if (i32.and (call $statusbar_native_is (local.get $arg0))
                  (i32.eq (local.get $arg1) (i32.const 0x000F)))
       (then

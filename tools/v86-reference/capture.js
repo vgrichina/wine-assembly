@@ -30,6 +30,7 @@ Options:
   --manifest PATH      Alternate app manifest (default: tools/v86-reference/apps.json)
   --output PATH        VGA screenshot path
   --metadata PATH      Capture metadata path
+  --serial-output PATH Save COM1 output emitted by a reference probe
   --online             Load BIOS, Win98 disk chunks, and state from documented URLs
   --bios PATH          Local SeaBIOS image
   --vgabios PATH       Local VGA BIOS image
@@ -57,6 +58,7 @@ function parseArgs(argv) {
     ["--manifest", "manifest"],
     ["--output", "output"],
     ["--metadata", "metadata"],
+    ["--serial-output", "serialOutput"],
     ["--bios", "bios"],
     ["--vgabios", "vgaBios"],
     ["--disk", "disk"],
@@ -411,6 +413,13 @@ async function main() {
     await new Promise(resolve => setTimeout(resolve, waitMs));
 
     const screen = await page.evaluate(() => window.referenceVm.screen());
+    const serialText = await page.evaluate(() => window.referenceVm.serial());
+    if (options.serialOutput) {
+      const serialPath = path.resolve(options.serialOutput);
+      fs.mkdirSync(path.dirname(serialPath), { recursive: true });
+      fs.writeFileSync(serialPath, serialText, "latin1");
+      console.log(`Serial:     ${serialPath} (${Buffer.byteLength(serialText, "latin1")} bytes)`);
+    }
     const canvas = await page.$("#screen_container canvas");
     await canvas.screenshot({ path: output });
     const screenshotHash = sha256File(output);

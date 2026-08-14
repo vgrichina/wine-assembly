@@ -133,6 +133,13 @@ overlap other emulator tables.
 Explicit HDC clip ownership uses `0x07EF0000..0x07EF07FF`, a 256-entry table
 mapping synthetic HDC values to private canonical HRGNs.
 
+TreeView item links/state use `0x07F00000..0x07F003FF`. Their image and
+selected-image indexes are kept separately at `0x07F01100..0x07F011FF` as 32
+eight-byte records. The adjacent `0x07F01200..0x07F012FF` range is a bounded
+32-entry `{hwnd, mirror-state}` table for registered COMCTL32 tabs. Keeping
+the paint mirror separate prevents WAT chrome from aliasing the control's
+private window state; both tables sit between paint flags and synchronization.
+
 Closed GDI path ownership uses `0x07F0F000..0x07F0FFFF`, a 256-entry table of
 `{HDC, HRGN, state, reserved}` records. Each closed path owns a canonical HRGN
 copy independently of the selected clip so `SelectClipPath` can apply any RGN

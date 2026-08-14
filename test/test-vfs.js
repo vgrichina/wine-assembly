@@ -104,6 +104,34 @@ test('createFile OPEN_EXISTING without match returns error', () => {
   assert(!h || h === -1 || h === null, 'should fail when file not found');
 });
 
+test('read-only drive permits reads and rejects every write path', () => {
+  const vfs = makeVFS({ 'd:\\manual.hlp': 50 });
+  vfs.dirs.add('d:');
+  vfs.dirs.add('d:\\');
+  vfs.setDriveReadOnly('D:');
+
+  const readHandle = vfs.createFile('D:\\manual.hlp', 0x80000000, 3);
+  assert(readHandle, 'existing file should remain readable');
+  assert.strictEqual(vfs.getFileAttributes('D:\\manual.hlp'), 0x21,
+    'immutable-media files advertise FILE_ATTRIBUTE_READONLY');
+  assert.strictEqual(vfs.createFile('D:\\cache.tmp', 0x40000000, 2), 0,
+    'CREATE_ALWAYS must fail');
+  assert.strictEqual(vfs.createFile('D:\\manual.hlp', 0x40000000, 3), 0,
+    'GENERIC_WRITE OPEN_EXISTING must fail');
+  assert.deepStrictEqual(vfs.writeFile(readHandle, Uint8Array.of(1), 1),
+    { ok: false, bytesWritten: 0 }, 'writes through a read handle must fail');
+  assert.strictEqual(vfs.setFileAttributes('D:\\manual.hlp', 0x20), false);
+  assert.strictEqual(vfs.deleteFile('D:\\manual.hlp'), false);
+  assert.strictEqual(vfs.createDirectory('D:\\cache'), false);
+  assert.strictEqual(vfs.removeDirectory('D:\\'), false);
+  assert.strictEqual(vfs.moveFile('D:\\manual.hlp', 'C:\\manual.hlp'), false);
+  assert.strictEqual(vfs.copyFile('D:\\manual.hlp', 'D:\\copy.hlp', false), false);
+
+  vfs.setDriveReadOnly('D', false);
+  assert(vfs.createFile('D:\\cache.tmp', 0x40000000, 2),
+    'making the drive writable restores normal creation');
+});
+
 // --- path resolution ---
 
 test('relative path resolves against CWD', () => {

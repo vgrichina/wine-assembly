@@ -927,7 +927,8 @@
   ;; 0x00010670  256B    MAX_TABLE      (256 × 1 byte — per-hwnd maximized flag, ends 0x10770)
   ;; 0x00010770  32B     WINDOW_REGION_BITS (256 × 1 bit — SetWindowRgn state, ends 0x10790)
   ;; 0x00010790  32B     NATIVE_STATUS_BITS (one bit per WND_RECORDS slot)
-  ;; 0x000107B0  80B     Free
+  ;; 0x000107B0  32B     NATIVE_TAB_BITS (one bit per WND_RECORDS slot)
+  ;; 0x000107D0  48B     Free
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
@@ -961,6 +962,8 @@
   ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
+  ;; 0x07F01100  256B    TV_IMAGE_TABLE (32 entries × {image, selected image})
+  ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
   ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
@@ -1252,6 +1255,10 @@
   ;; SetWindowText/DefWindowProc routing and prevents MFC's status bar sizing.
   (global $NATIVE_STATUS_BITS i32 (i32.const 0x00010790))
   (global $NATIVE_STATUS_BITS_SIZE i32 (i32.const 0x00000020))
+  ;; NATIVE_TAB_BITS: registered COMCTL32 tab controls retain their guest
+  ;; layout/message proc while WAT replaces only their shared-surface paint.
+  (global $NATIVE_TAB_BITS i32 (i32.const 0x000107B0))
+  (global $NATIVE_TAB_BITS_SIZE i32 (i32.const 0x00000020))
   ;; CLASS_RECORDS: merged class table + WNDCLASSA storage
   ;;   +0  name_hash (0 = empty slot)
   ;;   +4  atom (assigned at registration)
@@ -1389,6 +1396,10 @@
   ;;   +12: ManualReset (1 for Manual, 0 for Auto)
   (global $TV_TABLE i32 (i32.const 0x07F00000))
   (global $TV_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $TV_IMAGE_TABLE i32 (i32.const 0x07F01100))
+  (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $TAB_NATIVE_STATE_TABLE i32 (i32.const 0x07F01200))
+  (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
   (global $SYNC_TABLE i32 (i32.const 0x07F01400))
   (global $SYNC_TABLE_SIZE i32 (i32.const 0x00000400))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 64))

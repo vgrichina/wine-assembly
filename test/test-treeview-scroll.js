@@ -20,6 +20,7 @@ const TVM_GETCOUNT = 0x1105;
 const TVM_GETNEXTITEM = 0x110A;
 const TVM_SELECTITEM = 0x110B;
 const TVM_GETITEMA = 0x110C;
+const TVM_SETITEMA = 0x110D;
 const TVM_HITTEST = 0x1111;
 const TVGN_FIRSTVISIBLE = 5;
 const TVGN_NEXTVISIBLE = 6;
@@ -73,7 +74,8 @@ async function main() {
     u8[p + s.length] = 0;
     return g;
   }
-  function insertItem(text, parent = 0, state = null, childrenHint = 0, itemParam = 0) {
+  function insertItem(text, parent = 0, state = null, childrenHint = 0, itemParam = 0,
+    image = null, selectedImage = null) {
     const g = e.guest_alloc(56);
     const p = wa(g);
     u8.fill(0, p, p + 56);
@@ -81,6 +83,8 @@ async function main() {
     let mask = 0x0001; // TVIF_TEXT
     if (itemParam) mask |= 0x0004; // TVIF_PARAM
     if (state !== null) mask |= 0x0008; // TVIF_STATE
+    if (image !== null) mask |= 0x0002; // TVIF_IMAGE
+    if (selectedImage !== null) mask |= 0x0020; // TVIF_SELECTEDIMAGE
     if (childrenHint) mask |= 0x0040; // TVIF_CHILDREN
     dv.setUint32(p + 8, mask, true);
     if (state !== null) {
@@ -88,6 +92,8 @@ async function main() {
       dv.setUint32(p + 20, 0x20, true); // TVIS_EXPANDED
     }
     dv.setUint32(p + 24, writeStr(text), true);
+    if (image !== null) dv.setInt32(p + 32, image, true);
+    if (selectedImage !== null) dv.setInt32(p + 36, selectedImage, true);
     dv.setUint32(p + 40, childrenHint, true);
     dv.setUint32(p + 44, itemParam, true);
     return e.send_message(tv, TVM_INSERTITEMA, 0, g) >>> 0;
@@ -105,8 +111,32 @@ async function main() {
   check('create added 2 slots (parent + treeview)', e.wnd_count_used() === baselineSlots + 2);
 
   const handles = [];
-  for (let i = 0; i < 12; i++) handles.push(insertItem(`Node ${i}`));
+  for (let i = 0; i < 12; i++) {
+    handles.push(insertItem(`Node ${i}`, 0, null, 0, 0,
+      i === 0 ? 2 : null, i === 0 ? 3 : null));
+  }
   check('TVM_INSERTITEMA returned handles', handles.every(Boolean));
+  check('first inserted item becomes the native default caret',
+    (e.send_message(tv, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0) === handles[0]);
+  const imageItem = e.guest_alloc(40);
+  const imageItemP = wa(imageItem);
+  u8.fill(0, imageItemP, imageItemP + 40);
+  dv.setUint32(imageItemP, 0x0022, true); // TVIF_IMAGE | TVIF_SELECTEDIMAGE
+  dv.setUint32(imageItemP + 4, handles[0], true);
+  check('TVM_GETITEMA returns normal and selected image indexes',
+    e.send_message(tv, TVM_GETITEMA, 0, imageItem) === 1 &&
+      dv.getInt32(imageItemP + 24, true) === 2 &&
+      dv.getInt32(imageItemP + 28, true) === 3);
+  dv.setInt32(imageItemP + 24, 4, true);
+  dv.setInt32(imageItemP + 28, 5, true);
+  check('TVM_SETITEMA updates both image indexes',
+    e.send_message(tv, TVM_SETITEMA, 0, imageItem) === 1);
+  dv.setInt32(imageItemP + 24, -1, true);
+  dv.setInt32(imageItemP + 28, -1, true);
+  check('TreeView image indexes round-trip after TVM_SETITEMA',
+    e.send_message(tv, TVM_GETITEMA, 0, imageItem) === 1 &&
+      dv.getInt32(imageItemP + 24, true) === 4 &&
+      dv.getInt32(imageItemP + 28, true) === 5);
   check('TVM_GETCOUNT is 12', e.send_message(tv, TVM_GETCOUNT, 0, 0) === 12);
   check('visible count is 12', e.treeview_get_visible_count() === 12);
   check('max scroll is 8 for 4-row viewport', e.treeview_get_max_scroll(tv) === 8);
