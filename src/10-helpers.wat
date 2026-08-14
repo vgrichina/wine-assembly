@@ -9995,6 +9995,7 @@
         (param $start_scan i32) (param $line_count i32)
         (param $bits i32) (param $bmi i32) (param $color_use i32) (result i32)
     (local $dst i32) (local $src i32) (local $mdx i32) (local $mdy i32)
+    (local $band_y i32)
     (local $lines i32) (local $ok i32)
     (if (i32.or (i32.gt_u (local.get $color_use) (i32.const 1))
           (i32.or (i32.le_s (local.get $w) (i32.const 0))
@@ -10019,20 +10020,29 @@
         (i32.sub (i32.load offset=8 (local.get $src)) (local.get $start_scan)))))
     (if (i32.gt_u (local.get $lines) (local.get $h))
       (then (local.set $lines (local.get $h))))
+    ;; lpvBits contains only cLines rows. Place that band within the declared
+    ;; output height instead of always pinning it to yDest. StartScan=0 is the
+    ;; bottom band for both DIB orientations; increasing StartScan walks the
+    ;; band upward toward yDest.
+    (local.set $band_y (i32.add (local.get $mdy)
+      (i32.sub (i32.sub (local.get $h) (local.get $start_scan))
+        (local.get $lines))))
+    (if (i32.lt_s (local.get $band_y) (local.get $mdy))
+      (then (local.set $band_y (local.get $mdy))))
     ;; lpvBits points at the first byte of the scanline slice supplied by this
     ;; call, not necessarily at the first byte of the full biHeight bitmap.
     ;; Winmine uses one 16-line pointer into a 256-line sprite sheet per call.
     (i32.store offset=8 (local.get $src) (local.get $lines))
     (local.set $ok (call $gdi_raster_bitblt
-      (local.get $hdc) (i32.const 0) (local.get $dst) (local.get $mdx) (local.get $mdy)
+      (local.get $hdc) (i32.const 0) (local.get $dst) (local.get $mdx) (local.get $band_y)
       (local.get $w) (local.get $lines) (local.get $src)
       (local.get $sx) (local.get $sy)
       (i32.const 0) (i32.const 0x00CC0020)))
     (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
     (call $gdi_geometry_present (local.get $hdc) (local.get $dst)
-      (local.get $mdx) (local.get $mdy)
+      (local.get $mdx) (local.get $band_y)
       (i32.add (local.get $mdx) (local.get $w))
-      (i32.add (local.get $mdy) (local.get $lines)))
+      (i32.add (local.get $band_y) (local.get $lines)))
     (local.get $lines))
 
   ;; ROP4 combines foreground/background ROP3 bytes using a 1bpp mask. Mask

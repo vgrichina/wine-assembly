@@ -374,6 +374,44 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(canvasRgb(dst, 2, 1), 0x00FF00);
   });
 
+  check('SetDIBitsToDevice positions partial scanline bands within the declared height', () => {
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(16) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 32);
+    wat.guest_write32(bmiGa + 16, 0);
+    // The supplied array contains one two-pixel scanline. Windows positions
+    // StartScan=0,cLines=1 at the lower row of a declared two-row output.
+    bytes.set([0, 0, 255, 0, 0, 255, 0, 0], bitsWa);
+
+    for (const height of [-2, 2]) {
+      const lower = makeDib(2, 2);
+      wat.guest_write32(bmiGa + 8, height);
+      assert.strictEqual(wat.test_call_SetDIBitsToDevice(
+        lower.hdc, 0, 0, 2, 2, 0, 0, 0, 1,
+        bitsGa, bmiGa, 0), 1);
+      assert.deepStrictEqual([
+        packed(lower, 0, 0), packed(lower, 1, 0),
+        packed(lower, 0, 1), packed(lower, 1, 1),
+      ], [0, 0, 0xFF0000, 0x00FF00]);
+      assert.strictEqual(canvasRgb(lower, 0, 1), 0xFF0000);
+
+      const upper = makeDib(2, 2);
+      assert.strictEqual(wat.test_call_SetDIBitsToDevice(
+        upper.hdc, 0, 0, 2, 2, 0, 0, 1, 1,
+        bitsGa, bmiGa, 0), 1);
+      assert.deepStrictEqual([
+        packed(upper, 0, 0), packed(upper, 1, 0),
+        packed(upper, 0, 1), packed(upper, 1, 1),
+      ], [0xFF0000, 0x00FF00, 0, 0]);
+      assert.strictEqual(canvasRgb(upper, 1, 0), 0x00FF00);
+    }
+  });
+
   check('ExtFloodFill owns surface and border modes in WAT', () => {
     const surface = makeDib(6, 6);
     const red = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
