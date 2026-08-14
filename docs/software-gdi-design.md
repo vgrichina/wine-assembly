@@ -180,6 +180,11 @@ rows, and places or zero-fills the band according to the requested top-down or
 bottom-up DIB orientation. The returned scan count is the intersected source
 height and `biSizeImage` continues to describe the complete declared output
 DIB. No Canvas readback participates in bitmap extraction.
+`SetDIBits` performs the inverse declared-source intersection: `StartScan`
+aligns the source DIB against the canonical destination bitmap, top-down and
+bottom-up sources retain their native placement rules, and only intersecting
+rows are written and uploaded. Its return value remains the accepted source
+line count even when destination clipping reduces the number of changed rows.
 
 Tabbed text now uses the same canonical DC-to-text binding as ordinary text.
 WAT parses ANSI or UTF-16 tab characters, measures individual runs, expands

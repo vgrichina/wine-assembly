@@ -576,6 +576,43 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(dv.getUint32(bmiWa + 20, true), 8 * 4);
   });
 
+  check('SetDIBits intersects declared source bands with the destination bitmap', () => {
+    const surface = makeDib(1, 8);
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(16 * 4) >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    const dv = new DataView(memory.buffer);
+    for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmiGa + offset, 0);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 1);
+    wat.guest_write32(bmiGa + 8, 16);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 32);
+    for (let row = 0; row < 16; row++) {
+      dv.setUint32(bitsWa + row * 4, (row + 1) << 16, true);
+    }
+
+    assert.strictEqual(wat.test_gdi_set_dibits(
+      0, surface.bitmap, 1, 12, bitsWa, bmiWa, 0), 12);
+    assert.deepStrictEqual(Array.from({ length: 8 }, (_, y) =>
+      packed(surface, 0, y)), [
+      0, 0, 0,
+      12 << 16, 11 << 16, 10 << 16, 9 << 16, 8 << 16,
+    ]);
+
+    bytes.fill(0, surface.bits, surface.bits + surface.height * surface.stride);
+    wat.guest_write32(bmiGa + 8, -16);
+    assert.strictEqual(wat.test_gdi_set_dibits(
+      0, surface.bitmap, 1, 12, bitsWa, bmiWa, 0), 12);
+    assert.deepStrictEqual(Array.from({ length: 8 }, (_, y) =>
+      packed(surface, 0, y)), [
+      0, 0, 0,
+      1 << 16, 2 << 16, 3 << 16, 4 << 16, 5 << 16,
+    ]);
+  });
+
   check('GetDIBits and SetDIBits preserve explicit 16-bpp channel masks', () => {
     const imageBase = wat.get_image_base() >>> 0;
     const bmiGa = wat.guest_alloc(52) >>> 0;
