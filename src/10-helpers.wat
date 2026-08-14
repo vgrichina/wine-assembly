@@ -1030,6 +1030,77 @@
         (i32.store (local.get $entry) (i32.const 0))
         (i32.store offset=4 (local.get $entry) (i32.const 0)))))
 
+  (func $gdi_dc_path_entry (param $hdc i32) (param $create i32) (result i32)
+    (local $i i32) (local $entry i32) (local $empty i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_PATH_COUNT)))
+      (local.set $entry (i32.add (global.get $GDI_DC_PATH_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_DC_PATH_STRIDE))))
+      (if (i32.eq (i32.load (local.get $entry)) (local.get $hdc))
+        (then (return (local.get $entry))))
+      (if (i32.and (i32.eqz (local.get $empty))
+            (i32.eqz (i32.load (local.get $entry))))
+        (then (local.set $empty (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+          (i32.ne (local.get $empty) (i32.const 0)))
+      (then
+        (memory.fill (local.get $empty) (i32.const 0) (global.get $GDI_DC_PATH_STRIDE))
+        (i32.store (local.get $empty) (local.get $hdc))
+        (return (local.get $empty))))
+    (i32.const 0))
+
+  ;; Install a closed path by value. The caller may delete or mutate the source
+  ;; HRGN without changing the path retained by the DC.
+  (func $gdi_dc_path_set_region (param $hdc i32) (param $source i32) (result i32)
+    (local $entry i32) (local $copy i32) (local $old i32)
+    (if (i32.or
+          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+          (i32.eqz (call $gdi_rgn_record (local.get $source))))
+      (then (return (i32.const 0))))
+    (local.set $copy (call $gdi_rgn_alloc_rect
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_rgn_combine
+          (local.get $copy) (local.get $source) (i32.const 0) (i32.const 5)))
+      (then
+        (drop (call $gdi_rgn_delete (local.get $copy)))
+        (return (i32.const 0))))
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (drop (call $gdi_rgn_delete (local.get $copy)))
+        (return (i32.const 0))))
+    (local.set $old (i32.load offset=4 (local.get $entry)))
+    (i32.store offset=4 (local.get $entry) (local.get $copy))
+    (i32.store offset=8 (local.get $entry) (i32.const 2))
+    (if (local.get $old) (then (drop (call $gdi_rgn_delete (local.get $old)))))
+    (i32.const 1))
+
+  (func $gdi_dc_path_select_clip (param $hdc i32) (param $mode i32) (result i32)
+    (local $entry i32) (local $result i32)
+    (if (i32.or (i32.lt_u (local.get $mode) (i32.const 1))
+          (i32.gt_u (local.get $mode) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.or (i32.eqz (local.get $entry))
+          (i32.or (i32.ne (i32.load offset=8 (local.get $entry)) (i32.const 2))
+            (i32.eqz (call $gdi_rgn_record (i32.load offset=4 (local.get $entry))))))
+      (then (return (i32.const 0))))
+    (local.set $result (call $gdi_dc_clip_ext_select
+      (local.get $hdc) (i32.load offset=4 (local.get $entry)) (local.get $mode)))
+    (i32.ne (local.get $result) (i32.const 0)))
+
+  (func $gdi_dc_path_release (param $hdc i32)
+    (local $entry i32) (local $path i32)
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $entry)
+      (then
+        (local.set $path (i32.load offset=4 (local.get $entry)))
+        (if (local.get $path) (then (drop (call $gdi_rgn_delete (local.get $path)))))
+        (memory.fill (local.get $entry) (i32.const 0) (global.get $GDI_DC_PATH_STRIDE)))))
+
   (func $gdi_dc_clip_select (param $hdc i32) (param $source i32) (result i32)
     (local $entry i32) (local $clip i32) (local $source_record i32)
     (if (i32.eqz (local.get $source)) (then (return (call $gdi_dc_clip_clear (local.get $hdc)))))
@@ -3216,6 +3287,7 @@
     (if (local.get $entry)
       (then (memory.fill (local.get $entry) (i32.const 0) (global.get $GDI_DC_STATE_STRIDE))))
     (call $gdi_dc_aux_release (local.get $hdc))
+    (call $gdi_dc_path_release (local.get $hdc))
     (call $gdi_dc_meta_release (local.get $hdc)))
 
   ;; ---- WAT software line rasterization --------------------------------
@@ -6836,6 +6908,12 @@
     (local.get $result))
   (func (export "test_gdi_dc_clip_release") (param i32)
     (call $gdi_dc_clip_release (local.get 0)))
+  (func (export "test_gdi_dc_path_set_region") (param i32 i32) (result i32)
+    (call $gdi_dc_path_set_region (local.get 0) (local.get 1)))
+  (func (export "test_gdi_dc_path_select_clip") (param i32 i32) (result i32)
+    (call $gdi_dc_path_select_clip (local.get 0) (local.get 1)))
+  (func (export "test_gdi_dc_path_release") (param i32)
+    (call $gdi_dc_path_release (local.get 0)))
 
   (func $gdi_rgn_set_rect (param $hrgn i32) (param $left_in i32) (param $top_in i32) (param $right_in i32) (param $bottom_in i32) (result i32)
     (local $record i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)

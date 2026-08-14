@@ -231,6 +231,11 @@
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_SelectClipPath") (param i32) (param i32) (result i32)
+    (call $handle_SelectClipPath
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_GetObjectType") (param i32) (result i32)
     (call $handle_GetObjectType
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)

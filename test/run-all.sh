@@ -34,6 +34,7 @@ UNIT=(
   test/test-audio-mixer.js
   test/test-core-no-app-fast-paths.js
   test/test-wat-gdi-region.js
+  test/test-wat-gdi-select-clip-path.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
   test/test-wat-gdi-raster-handlers.js
@@ -48,6 +49,7 @@ UNIT=(
   test/test-wat-gdi-bitmap-text-layout.js
   test/test-wat-gdi-bitmap-text-compat.js
   test/test-wat-gdi-multiline-ellipsis.js
+  test/test-wat-gdi-draw-text-ex.js
   test/test-wat-gdi-default-bitmap-font.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-gdi-public-metafile.js

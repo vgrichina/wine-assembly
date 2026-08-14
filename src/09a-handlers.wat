@@ -8805,9 +8805,12 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; 565: SelectClipPath — STUB: unimplemented
+  ;; 565: SelectClipPath(hdc, mode) — 2 args stdcall. The public BOOL hides
+  ;; canonical region complexity.
   (func $handle_SelectClipPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $gdi_dc_path_select_clip
+      (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 566: CreateRectRgn — allocate a WAT-owned rectangle region.

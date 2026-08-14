@@ -133,6 +133,11 @@ overlap other emulator tables.
 Explicit HDC clip ownership uses `0x07EF0000..0x07EF07FF`, a 256-entry table
 mapping synthetic HDC values to private canonical HRGNs.
 
+Closed GDI path ownership uses `0x07F0F000..0x07F0FFFF`, a 256-entry table of
+`{HDC, HRGN, state, reserved}` records. Each closed path owns a canonical HRGN
+copy independently of the selected clip so `SelectClipPath` can apply any RGN
+combine mode without transferring or aliasing caller-owned region state.
+
 Per-HDC raster state uses `0x07EF0800..0x07EF0FFF` for 256 `{HDC, ROP2}`
 entries. A fixed 80-byte line-descriptor scratch record begins at `0x07EF1000`.
 Two adjacent 80-byte blit descriptors occupy `0x07EF1100..0x07EF119F` for

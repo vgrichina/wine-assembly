@@ -965,6 +965,7 @@
   ;; 0x07F0A440 80B      GDI_BITMAP_FONT_DESC (surface scratch)
   ;; 0x07F0A800 1KB      GDI_BITMAP_FONT_TABLE (16 installed FNT strikes)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
+  ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte closed-path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
@@ -1105,6 +1106,12 @@
   ;; Handles use 0x0050GGSS where GG is generation and SS is slot + 1.
   (global $GDI_REGION_TABLE i32 (i32.const 0x07F0D000))
   (global $GDI_REGION_TABLE_SIZE i32 (i32.const 0x00002000))
+  ;; Current path ownership is separate from the selected clip. A closed path
+  ;; owns one canonical HRGN copy until the DC is destroyed or a new path wins.
+  (global $GDI_DC_PATH_TABLE i32 (i32.const 0x07F0F000))
+  (global $GDI_DC_PATH_TABLE_SIZE i32 (i32.const 0x00001000))
+  (global $GDI_DC_PATH_COUNT i32 (i32.const 256))
+  (global $GDI_DC_PATH_STRIDE i32 (i32.const 16))
   ;; Each canonical region owns 208 sorted, disjoint half-open RECTs. Slot 255
   ;; remains reserved and never gets a public handle. Boolean and scanline
   ;; operations use four adjacent alias-safe work buffers.
