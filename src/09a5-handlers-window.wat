@@ -898,6 +898,13 @@
     ;; painting. Coordinate conversion APIs depend on this for child pages
     ;; hosted inside dialog client areas.
     (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    ;; Resource dialogs do not pass through CreateWindowEx's initial
+    ;; non-client paint. Draw their frame synchronously before the modal loop
+    ;; can present child controls, then retain normal NC invalidation for later
+    ;; exposure. Paint Attributes otherwise opens as a bare client-colored
+    ;; sheet because its modal pump does not drain NC_FLAGS before presenting.
+    (call $defwndproc_do_ncpaint (local.get $hwnd))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 3))
     ;; Fill dialog client area with COLOR_BTNFACE (see DialogBoxParamA
     ;; for rationale — template DlgProcs rarely handle WM_PAINT).
     (call $dlg_fill_bkgnd (local.get $hwnd))
