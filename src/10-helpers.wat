@@ -2237,6 +2237,131 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
+  ;; Materialize the Win16 LOGFONT carried by META_CREATEFONTINDIRECT. The
+  ;; public handle is registered with the text provider for scalable fallback,
+  ;; while the canonical object and any installed FNT strike remain WAT-owned.
+  (func $gdi_metafile_wmf_create_font (param $record i32)
+        (param $record_bytes i32) (result i32)
+    (local $handle i32)
+    (if (i32.lt_u (local.get $record_bytes) (i32.const 56))
+      (then (return (i32.const 0))))
+    ;; LOGFONT16 has a fixed 32-byte face field which is not required to end in
+    ;; NUL. Copy it into bounded scratch before the text provider reads it.
+    (memory.copy (global.get $TEXT_SCRATCH)
+      (i32.add (local.get $record) (i32.const 24)) (i32.const 32))
+    (i32.store8 offset=32 (global.get $TEXT_SCRATCH) (i32.const 0))
+    (local.set $handle (call $host_create_font
+      (i32.load16_s offset=6 (local.get $record))
+      (i32.load16_s offset=14 (local.get $record))
+      (i32.load8_u offset=16 (local.get $record))
+      (global.get $TEXT_SCRATCH)))
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_object_adopt (local.get $handle) (i32.const 4)
+          (i32.load16_s offset=6 (local.get $record))
+          (i32.load16_s offset=14 (local.get $record))
+          (i32.load8_u offset=16 (local.get $record)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (call $gdi_bitmap_font_bind (local.get $handle) (global.get $TEXT_SCRATCH))
+    (local.get $handle))
+
+  ;; Parse and replay META_TEXTOUT / META_EXTTEXTOUT directly from the WMF
+  ;; record. WMF uses signed 16-bit Dx entries; the canonical text rasterizer
+  ;; consumes Win32 LONG entries, so widen them into bounded temporary storage.
+  (func $gdi_metafile_wmf_text (param $hdc i32) (param $record i32)
+        (param $record_bytes i32) (param $extended i32) (result i32)
+    (local $count i32) (local $text i32) (local $x i32) (local $y i32)
+    (local $options i32) (local $offset i32) (local $padded i32)
+    (local $required i32) (local $remaining i32) (local $has_rect i32)
+    (local $has_dx i32) (local $workspace_size i32)
+    (local $workspace_g i32) (local $workspace i32)
+    (local $rect i32) (local $dx_array i32) (local $i i32) (local $result i32)
+    (if (local.get $extended)
+      (then
+        (if (i32.lt_u (local.get $record_bytes) (i32.const 14))
+          (then (return (i32.const 0))))
+        (local.set $y (i32.load16_s offset=6 (local.get $record)))
+        (local.set $x (i32.load16_s offset=8 (local.get $record)))
+        (local.set $count (i32.load16_s offset=10 (local.get $record)))
+        (local.set $options (i32.load16_u offset=12 (local.get $record)))
+        (local.set $has_rect (i32.ne
+          (i32.and (local.get $options) (i32.const 6)) (i32.const 0)))
+        (local.set $offset (select (i32.const 22) (i32.const 14)
+          (local.get $has_rect))))
+      (else
+        (if (i32.lt_u (local.get $record_bytes) (i32.const 12))
+          (then (return (i32.const 0))))
+        (local.set $count (i32.load16_s offset=6 (local.get $record)))
+        (local.set $offset (i32.const 8))))
+    (if (i32.lt_s (local.get $count) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $padded (i32.and
+      (i32.add (local.get $count) (i32.const 1)) (i32.const -2)))
+    (local.set $required (i32.add (local.get $offset) (local.get $padded)))
+    (if (i32.gt_u (local.get $required) (local.get $record_bytes))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $extended))
+          (i32.gt_u (i32.add (local.get $required) (i32.const 4))
+            (local.get $record_bytes)))
+      (then (return (i32.const 0))))
+    (local.set $text (i32.add (local.get $record) (local.get $offset)))
+    (if (local.get $extended)
+      (then
+        (local.set $remaining
+          (i32.sub (local.get $record_bytes) (local.get $required)))
+        (if (local.get $remaining)
+          (then
+            (if (i32.ne (local.get $remaining)
+                  (i32.shl (local.get $count) (i32.const 1)))
+              (then (return (i32.const 0))))
+            (local.set $has_dx (i32.const 1))))
+        (local.set $workspace_size (i32.add
+          (select (i32.const 16) (i32.const 0) (local.get $has_rect))
+          (select (i32.shl (local.get $count) (i32.const 2))
+            (i32.const 0) (local.get $has_dx))))
+        (if (local.get $workspace_size)
+          (then
+            (local.set $workspace_g (call $heap_alloc (local.get $workspace_size)))
+            (if (i32.eqz (local.get $workspace_g))
+              (then (return (i32.const 0))))
+            (local.set $workspace (call $g2w (local.get $workspace_g)))))
+        (if (local.get $has_rect)
+          (then
+            (local.set $rect (local.get $workspace))
+            (i32.store (local.get $rect)
+              (i32.load16_s offset=14 (local.get $record)))
+            (i32.store offset=4 (local.get $rect)
+              (i32.load16_s offset=16 (local.get $record)))
+            (i32.store offset=8 (local.get $rect)
+              (i32.load16_s offset=18 (local.get $record)))
+            (i32.store offset=12 (local.get $rect)
+              (i32.load16_s offset=20 (local.get $record)))))
+        (if (local.get $has_dx)
+          (then
+            (local.set $dx_array (i32.add (local.get $workspace)
+              (select (i32.const 16) (i32.const 0) (local.get $has_rect))))
+            (block $dx_done (loop $copy_dx
+              (br_if $dx_done (i32.ge_u (local.get $i) (local.get $count)))
+              (i32.store (i32.add (local.get $dx_array)
+                  (i32.shl (local.get $i) (i32.const 2)))
+                (i32.load16_s (i32.add (local.get $record)
+                  (i32.add (local.get $required)
+                    (i32.shl (local.get $i) (i32.const 1))))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $copy_dx)))))
+        (local.set $result (call $host_gdi_ext_text_out
+          (local.get $hdc) (local.get $x) (local.get $y)
+          (local.get $options) (local.get $rect) (local.get $text)
+          (local.get $count) (local.get $dx_array) (i32.const 0)))
+        (if (local.get $workspace_g)
+          (then (call $heap_free (local.get $workspace_g))))
+        (return (local.get $result))))
+    (local.set $y (i32.load16_s
+      (i32.add (local.get $record) (local.get $required))))
+    (local.set $x (i32.load16_s
+      (i32.add (local.get $record) (i32.add (local.get $required) (i32.const 2)))))
+    (call $host_gdi_text_out (local.get $hdc) (local.get $x) (local.get $y)
+      (local.get $text) (local.get $count) (i32.const 0)))
+
   ;; Parse classic WMF state, object, vector, and bitmap records. Unknown
   ;; well-formed records remain skippable, while malformed supported records
   ;; fail atomically after restoring the caller's DC and deleting temporary
@@ -2375,6 +2500,27 @@
               (i32.eq (local.get $function) (i32.const 0x0209)))
             (i32.and (i32.load offset=6 (local.get $record)) (i32.const 0xFFFFFF))
             (i32.const 0)))))
+      (if (i32.or (i32.eq (local.get $function) (i32.const 0x0108))
+            (i32.eq (local.get $function) (i32.const 0x012E)))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 8))
+            (then (br $finish)))
+          (if (i32.eq (local.get $function) (i32.const 0x0108))
+            (then
+              (drop (call $gdi_dc_aux_set (local.get $hdc) (i32.const 20)
+                (i32.load16_s offset=6 (local.get $record)) (i32.const 0))))
+            (else
+              (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
+                (i32.load16_u offset=6 (local.get $record)) (i32.const 0)))))))
+      (if (i32.eq (local.get $function) (i32.const 0x020A))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 10))
+            (then (br $finish)))
+          ;; WMF stores BreakCount before BreakExtra (reverse API order).
+          (drop (call $gdi_dc_aux_set (local.get $hdc) (i32.const 24)
+            (i32.load16_s offset=8 (local.get $record)) (i32.const 0)))
+          (drop (call $gdi_dc_aux_set (local.get $hdc) (i32.const 28)
+            (i32.load16_s offset=6 (local.get $record)) (i32.const 0)))))
       (if (i32.or
             (i32.or (i32.eq (local.get $function) (i32.const 0x020B))
               (i32.eq (local.get $function) (i32.const 0x020C)))
@@ -2455,6 +2601,16 @@
             (then
               (if (local.get $created) (then (drop (call $gdi_object_delete_full (local.get $created)))))
               (br $finish)))))
+      (if (i32.eq (local.get $function) (i32.const 0x02FB))
+        (then
+          (local.set $created (call $gdi_metafile_wmf_create_font
+            (local.get $record) (local.get $record_bytes)))
+          (if (i32.eqz (call $gdi_metafile_wmf_object_add
+                (local.get $table) (local.get $object_count) (local.get $created)))
+            (then
+              (if (local.get $created)
+                (then (drop (call $gdi_object_delete_full (local.get $created)))))
+              (br $finish)))))
       (if (i32.eq (local.get $function) (i32.const 0x02FC))
         (then
           (if (i32.lt_u (local.get $record_bytes) (i32.const 14)) (then (br $finish)))
@@ -2521,6 +2677,16 @@
             (then (br $finish)))
           (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12) (local.get $to_x) (i32.const 0)))
           (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16) (local.get $to_y) (i32.const 0)))))
+
+      ;; Text records share the public WAT FNT rasterizer and use Canvas only
+      ;; when the selected face has no installed bitmap strike.
+      (if (i32.or (i32.eq (local.get $function) (i32.const 0x0521))
+            (i32.eq (local.get $function) (i32.const 0x0A32)))
+        (then
+          (if (i32.eqz (call $gdi_metafile_wmf_text
+                (local.get $hdc) (local.get $record) (local.get $record_bytes)
+                (i32.eq (local.get $function) (i32.const 0x0A32))))
+            (then (br $finish)))))
 
       ;; Closed shapes use the selected WAT pen, brush, ROP2, and fill mode.
       (if (i32.or (i32.eq (local.get $function) (i32.const 0x0418))

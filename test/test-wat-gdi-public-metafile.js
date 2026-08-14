@@ -8,7 +8,12 @@ const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const { exports: wat, memory } = await bootRenderHarness({
+  const canvasTextCalls = { textOut: 0, extTextOut: 0 };
+  const { exports: wat, memory, hostCtx } = await bootRenderHarness({
+    extraHostOverrides: {
+      gdi_text_out: () => { canvasTextCalls.textOut++; return 1; },
+      gdi_ext_text_out: () => { canvasTextCalls.extTextOut++; return 1; },
+    },
     extraWat: `
   (func (export "test_start_EnumMetaFile")
         (param $hdc i32) (param $hmf i32) (param $callback i32)
@@ -30,6 +35,16 @@ const { bootRenderHarness } = require('./render-helper');
     (global.get $eax))`,
   });
   const root = path.join(__dirname, '..');
+  hostCtx.vfs.dirs.add('c:\\windows');
+  hostCtx.vfs.dirs.add('c:\\windows\\fonts');
+  for (const name of [
+    'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
+  ]) {
+    hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
+      data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
+      attrs: 0x20,
+    });
+  }
   const exe = fs.readFileSync(path.join(root, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(exe, wat.get_staging());
   assert(wat.load_pe(exe.length), 'PE load must initialize callback continuation thunks');
@@ -105,6 +120,59 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write16(record + 4, fn);
     params.forEach((value, index) => wat.guest_write16(record + 6 + index * 2, value));
     return record;
+  };
+  const bytesToWords = input => {
+    const source = Buffer.from(input);
+    const words = [];
+    for (let offset = 0; offset < source.length; offset += 2) {
+      words.push(source[offset] | ((source[offset + 1] || 0) << 8));
+    }
+    return words;
+  };
+  const makeLogFont16 = (face, height = -13, weight = 400) => {
+    const logfont = Buffer.alloc(50);
+    logfont.writeInt16LE(height, 0);
+    logfont.writeInt16LE(weight, 8);
+    logfont.write(face, 18, 32, 'latin1');
+    return bytesToWords(logfont);
+  };
+  const makeTextOutParams = (text, x, y) => {
+    const encoded = Buffer.from(text, 'latin1');
+    const padded = (encoded.length + 1) & ~1;
+    const params = Buffer.alloc(2 + padded + 4);
+    params.writeInt16LE(encoded.length, 0);
+    encoded.copy(params, 2);
+    params.writeInt16LE(y, 2 + padded);
+    params.writeInt16LE(x, 2 + padded + 2);
+    return bytesToWords(params);
+  };
+  const makeExtTextOutParams = (text, x, y, options, rect, dx) => {
+    const encoded = Buffer.from(text, 'latin1');
+    const padded = (encoded.length + 1) & ~1;
+    const hasRect = (options & 6) !== 0;
+    const params = Buffer.alloc(8 + (hasRect ? 8 : 0) + padded + dx.length * 2);
+    params.writeInt16LE(y, 0);
+    params.writeInt16LE(x, 2);
+    params.writeInt16LE(encoded.length, 4);
+    params.writeUInt16LE(options, 6);
+    let offset = 8;
+    if (hasRect) {
+      rect.forEach((value, index) => params.writeInt16LE(value, offset + index * 2));
+      offset += 8;
+    }
+    encoded.copy(params, offset);
+    offset += padded;
+    dx.forEach((value, index) => params.writeInt16LE(value, offset + index * 2));
+    return bytesToWords(params);
+  };
+  const countColor = (hdc, left, top, right, bottom, color) => {
+    let count = 0;
+    for (let y = top; y < bottom; y++) {
+      for (let x = left; x < right; x++) {
+        if ((wat.test_call_GetPixel(hdc, x, y) >>> 0) === color) count++;
+      }
+    }
+    return count;
   };
   const makeEnumCallback = stopAfter => {
     const callback = allocZero(96);
@@ -257,6 +325,82 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
   });
 
+  check('classic WMF text records rasterize installed FON glyphs without Canvas', () => {
+    const { data, size } = makeVectorWmf([
+      { fn: 0x02fb, params: makeLogFont16('MS Sans Serif') }, // create font
+      { fn: 0x012d, params: [0] },                            // select font
+      { fn: 0x0102, params: [1] },                            // transparent background
+      { fn: 0x0209, params: [0x00ff, 0] },                    // red text
+      { fn: 0x012e, params: [0] },                            // top-left alignment
+      { fn: 0x0108, params: [2] },                            // character extra
+      { fn: 0x020a, params: [1, 4] },                         // justification count/extra
+      { fn: 0x0521, params: makeTextOutParams('WMF', 4, 3) },
+      { fn: 0x0201, params: [0xff00, 0] },                    // green background
+      { fn: 0x0a32, params: makeExtTextOutParams(
+        'DX', 4, 24, 6, [4, 22, 30, 40], [20, 20]) },
+      { fn: 0x0000 },
+    ]);
+    const metafile = wat.test_call_SetMetaFileBitsEx(size, data) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 96, 56) >>> 0;
+    const white = wat.test_call_CreateSolidBrush(0x00ffffff) >>> 0;
+    const fill = allocZero(16);
+    wat.guest_write32(fill + 8, 96);
+    wat.guest_write32(fill + 12, 56);
+    assert(metafile && hdc && bitmap && white);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+    assert.strictEqual(wat.test_call_FillRect(hdc, fill, white), 1);
+    wat.test_gdi_dc_set_field(hdc, 32, 6, 0);
+    wat.test_gdi_dc_aux_set(hdc, 20, 7, 0);
+    wat.test_gdi_dc_aux_set(hdc, 24, 9, 0);
+    wat.test_gdi_dc_aux_set(hdc, 28, 3, 0);
+    const callerFont = wat.test_call_GetCurrentObject(hdc, 6) >>> 0;
+    const callerTextColor = wat.test_gdi_dc_get_field(hdc, 20, 0) >>> 0;
+    const callerBkColor = wat.test_gdi_dc_get_field(hdc, 24, 0xffffff) >>> 0;
+    const beforeCanvas = { ...canvasTextCalls };
+
+    assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1);
+    assert.deepStrictEqual(canvasTextCalls, beforeCanvas,
+      'installed Win9x bitmap fonts must not invoke Canvas text imports');
+    assert(countColor(hdc, 4, 3, 40, 20, 0x000000ff) > 20,
+      'META_TEXTOUT must rasterize red bitmap glyphs');
+    assert(countColor(hdc, 4, 24, 13, 37, 0x000000ff) > 3,
+      'first META_EXTTEXTOUT glyph must begin at the requested origin');
+    assert.strictEqual(countColor(hdc, 13, 24, 23, 37, 0x000000ff), 0,
+      'signed WMF Dx advances must leave the requested inter-glyph gap');
+    assert(countColor(hdc, 24, 24, 30, 37, 0x000000ff) > 3,
+      'second glyph must use the widened signed WMF Dx advance');
+    assert(countColor(hdc, 4, 22, 30, 40, 0x0000ff00) > 100,
+      'ETO_OPAQUE must fill the logical rectangle with the WMF background color');
+    assert.strictEqual(countColor(hdc, 30, 22, 38, 40, 0x000000ff), 0,
+      'ETO_CLIPPED must reject glyph pixels outside the logical rectangle');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 31, 23) >>> 0, 0x00ffffff,
+      'ETO_OPAQUE must not fill outside its logical rectangle');
+    assert.strictEqual(wat.test_call_GetCurrentObject(hdc, 6) >>> 0, callerFont,
+      'playback must restore the caller font');
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 20, 0) >>> 0, callerTextColor,
+      'playback must restore the caller text color');
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 24, 0xffffff) >>> 0, callerBkColor,
+      'playback must restore the caller background color');
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 32, 0), 6,
+      'playback must restore the caller text alignment');
+    assert.strictEqual(wat.test_gdi_dc_aux_get(hdc, 20, 0), 7,
+      'playback must restore the caller character spacing');
+    assert.strictEqual(wat.test_gdi_dc_aux_get(hdc, 24, 0), 9,
+      'playback must restore the caller justification extra');
+    assert.strictEqual(wat.test_gdi_dc_aux_get(hdc, 28, 0), 3,
+      'playback must restore the caller justification break count');
+
+    for (let i = 0; i < 20; i++) {
+      assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1,
+        'repeated WMF font playback must recycle temporary font objects');
+    }
+    assert.deepStrictEqual(canvasTextCalls, beforeCanvas,
+      'repeated FON replay must remain entirely on the WAT raster path');
+    assert.strictEqual(wat.test_call_DeleteObject(white), 1);
+    assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
+  });
+
   check('EnumMetaFile invokes guest callbacks for validated records and honors stop', () => {
     const { data, size } = makeVectorWmf([
       { fn: 0x02fa, params: [0, 1, 0, 0x00ff, 0] }, // create red pen
@@ -334,6 +478,12 @@ const { bootRenderHarness } = require('./render-helper');
     const malformed = makeRecord(0x0213, []);
     assert.strictEqual(wat.test_call_PlayMetaFileRecord(hdc, table, malformed, 2), 0,
       'short supported records must fail atomically');
+    const truncatedText = makeRecord(0x0521, [4, 0x4241]);
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(hdc, table, truncatedText, 2), 0,
+      'META_TEXTOUT must reject a string whose coordinates are truncated');
+    const truncatedDx = makeRecord(0x0a32, [10, 10, 2, 0, 0x4241, 8]);
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(hdc, table, truncatedDx, 2), 0,
+      'META_EXTTEXTOUT must reject a partial signed Dx array');
   });
 
   check('enhanced metafile transport supports headers, copy, play, and deletion', () => {

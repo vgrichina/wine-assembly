@@ -11,8 +11,8 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are complete path recording, callback APIs such as object/font
-enumeration, scalable glyph extraction, and metafile and printer compatibility.
+gaps are complete path recording, scalable glyph extraction, remaining vector
+EMF and WMF-region playback, and printer integration.
 The
 checked-in PE corpus has a machine-checked public API inventory in
 `gdi-public-api-status.json`; its exact sorted import-set hash
@@ -72,15 +72,20 @@ the destination rectangle transform supplied to `PlayEnhMetaFile`.
 `GetWinMetaFileBits` and `SetWinMetaFileBits` convert supported bitmap records
 by replaying through a temporary canonical surface and serializing the target
 standard format. Classic WMF playback also interprets common mapping, color,
-ROP2, fill-mode, SaveDC/RestoreDC, pen/brush lifetime, line, rectangle,
-ellipse, round-rectangle, polygon, and polyline records directly in WAT. Its
+ROP2, fill-mode, SaveDC/RestoreDC, pen/brush/font lifetime, line, rectangle,
+ellipse, round-rectangle, polygon, polyline, `META_TEXTOUT`, and
+`META_EXTTEXTOUT` records directly in WAT. Win16 `LOGFONT`, text state,
+length-padded strings, `ETO_OPAQUE`/`ETO_CLIPPED` rectangles, and signed `Dx`
+arrays are validated and converted before replay. Installed FNT faces use the
+same WAT bitmap rasterizer as public text APIs and do not invoke Canvas; only
+unavailable scalable faces cross the text-policy fallback. Its
 object table is bounded by `mtNoObjects`; playback restores the caller DC and
 deletes all surviving temporary objects on success or failure. `EnumMetaFile`
 walks the validated record stream through a resumable guest `MFENUMPROC`, with
 a live bounded `HANDLETABLE`, EOF delivery, early-stop semantics, and caller-DC
 restoration. `PlayMetaFileRecord` routes each callback record through the same
 WAT evaluator so state and object-table mutations persist between callbacks.
-Vector EMF and WMF text/region records remain separate compatibility layers.
+Vector EMF and WMF region records remain separate compatibility layers.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
