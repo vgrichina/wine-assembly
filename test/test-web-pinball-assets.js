@@ -221,7 +221,7 @@ assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winam
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(indexHtml.includes('lib/renderer-input.js?v=187'), 'web host should cache-bust renderer input after classic outline resizing');
-assert(indexHtml.includes('lib/renderer.js?v=174'), 'web host should cache-bust renderer after drawing resize outlines');
+assert(indexHtml.includes('lib/renderer.js?v=175'), 'web host should cache-bust renderer after preserving desktop icons');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(indexHtml.includes('lib/gdi-surface.js?v=1'), 'web host should load the canonical GDI surface module');
