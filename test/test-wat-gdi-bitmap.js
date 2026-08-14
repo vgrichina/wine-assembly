@@ -218,6 +218,10 @@ const SRC = path.join(ROOT, 'src');
     assert(rgb565, 'BI_BITFIELDS 16-bpp resource should materialize');
     assert.strictEqual(wat.test_gdi_raster_desc_from_bitmap(rgb565, desc), 1);
     assert.strictEqual(wat.test_gdi_raster_get_pixel(desc, 0, 1) >>> 0, 0x000000FF);
+    const rgb565Canvas = imports.gdi.surfacePresentations.get(rgb565).canvas.getContext('2d');
+    assert.deepStrictEqual([...rgb565Canvas.getImageData(0, 1, 1, 1).data],
+      [0xFF, 0, 0, 0xFF],
+      'WAT-owned RGB565 masks must reach the host presentation surface');
 
     dv.setUint32(data + 44, 0xF800, true);
     assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 60, plan), 0,

@@ -35,9 +35,6 @@
     "path": [
       "SelectClipPath consumes and combines canonical closed-path regions; general BeginPath/EndPath geometry recording is not exposed by the corpus API table"
     ],
-    "format": [
-      "BI_BITFIELDS and correct 16-bpp BI_RGB 5-5-5 DIB creation"
-    ],
     "visibility": [
       "Derived system/window visibility clipping is not part of the explicit app clip"
     ],

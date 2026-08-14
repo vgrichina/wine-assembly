@@ -11,10 +11,10 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are DIB/pattern brushes in pattern-dependent blits, path selection,
-callback APIs such as `LineDDA` and object/font enumeration, and metafile and
-printer compatibility. The checked-in PE corpus has a machine-checked public
-API inventory in `gdi-public-api-status.json`; its exact sorted import-set hash
+gaps are DIB/pattern brushes in pattern-dependent blits, callback APIs such as
+object/font enumeration, and metafile and printer compatibility. The
+checked-in PE corpus has a machine-checked public API inventory in
+`gdi-public-api-status.json`; its exact sorted import-set hash
 prevents new application dependencies from silently expanding the
 compatibility surface. All explicit gaps in that inventory must be closed
 before this effort can be declared complete.
@@ -61,7 +61,11 @@ strict source/destination bounds. The raster core reads and writes 1-, 4-,
 owned RGBQUAD table (expanding core RGBTRIPLE palettes), and performs cross-format ROP blits before uploading the
 result. This is sufficient for Paint's compressed tool strip and SkiFree's
 indexed sprite-atlas construction, as well as Solitaire's CARDS.dll core
-bitmaps. `BI_BITFIELDS` remains follow-up work. Logical palettes are canonical
+bitmaps. At 16 bpp, `BI_RGB` owns the Win32 RGB555 masks while
+`BI_BITFIELDS` validates and retains arbitrary contiguous, non-overlapping
+channel masks such as RGB565. Those masks drive resource creation, DIB
+sections, pixel access, cross-format blits, geometry, and the derived Canvas
+presentation cache. Logical palettes are canonical
 WAT GDI objects with per-DC selection, mutation, resizing, nearest-color
 lookup, and owned entry storage. `DIB_PAL_COLORS` bitmap creation and transient
 DIB calls resolve WORD indexes through the selected logical palette; pattern
@@ -69,7 +73,7 @@ brushes preserve the indexes and resolve them against the destination DC at
 sample time.
 
 `LineTo` now uses a WAT Bresenham kernel for solid pens up to 64 pixels wide on
-24- and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
+16-, 24-, and 32-bpp DIB sections and software-backed compatible bitmaps. WAT owns logical-to-device mapping, endpoint exclusion,
 canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
 dirty bounds. WAT resolves selected objects and DC state into a canonical
 descriptor; JavaScript only uploads the resulting dirty rectangle to the
@@ -353,7 +357,7 @@ expandMonoSpan(...)
 
 The first implementation may specialize common Paint paths:
 
-- 1, 4, 8, 24, and 32 bpp DIB access;
+- 1, 4, 8, 16, 24, and 32 bpp DIB access;
 - solid cosmetic pens;
 - solid brushes;
 - `R2_COPYPEN`;

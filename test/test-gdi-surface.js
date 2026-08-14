@@ -145,6 +145,17 @@ check('raw presentation uploads canonical DIB bytes without semantic GDI state',
     [0x44, 0x55, 0x66, 0xFF]);
   assert.strictEqual(host.gdi_surface_delete(0x1234), 1);
   assert.strictEqual(gdi.surfacePresentations.has(0x1234), false);
+
+  const bits16 = 0x2000;
+  bytes[bits16] = 0x00;
+  bytes[bits16 + 1] = 0xF8;
+  assert.strictEqual(host.gdi_surface_create(
+    0x2234, 1, 1, 16, bits16, 4, 1, 0, 0, 0xF800, 0x07E0, 0x001F), 1);
+  const canvas16 = gdi.surfacePresentations.get(0x2234).canvas.getContext('2d');
+  assert.deepStrictEqual(Array.from(canvas16.getImageData(0, 0, 1, 1).data),
+    [0xFF, 0, 0, 0xFF],
+    'BI_BITFIELDS masks must reach the derived Canvas presentation cache');
+  assert.strictEqual(host.gdi_surface_delete(0x2234), 1);
 });
 
 console.log(`\n${passed}/${passed} checks passed`);
