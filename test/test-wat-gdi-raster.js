@@ -154,9 +154,12 @@ const SRC = path.join(ROOT, 'src');
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
       reduced.desc, 0, 0, 1, 1, src.desc, 0, 0, 2, 2, 0, 0x00CC0020), 1);
     assert.strictEqual(packed(reduced, 0, 0), 0x110000);
+    const overlap = surface(4, 1, 24);
+    [1, 2, 3, 4].forEach((color, x) => setPacked(overlap, x, 0, color));
     assert.strictEqual(wat.test_gdi_raster_stretch_blt(
-      src.desc, 0, 0, 1, 1, src.desc, 0, 0, 2, 2, 0, 0x00CC0020), 0,
-    'overlapping stretch must reject instead of corrupting source pixels');
+      overlap.desc, 0, 0, 4, 1, overlap.desc, 0, 0, 2, 1, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => packed(overlap, x, 0)), [1, 1, 2, 2],
+      'overlapping expansion must read an immutable source snapshot');
   });
 
   check('StretchBlt mirrors pixels when source and destination extent signs differ', () => {
@@ -178,6 +181,25 @@ const SRC = path.join(ROOT, 'src');
       bothNegative.desc, 3, 2, -3, -2, src.desc, 3, 2, -3, -2, 0, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(bothNegative, x, 0)), [1, 2, 3]);
     assert.deepStrictEqual([...Array(3)].map((_, x) => packed(bothNegative, x, 1)), [4, 5, 6]);
+  });
+
+  check('StretchBlt snapshots an overlapping surface before an in-place mirror', () => {
+    const image = surface(4, 2, 24);
+    [[1, 2, 3, 4], [5, 6, 7, 8]].forEach((row, y) =>
+      row.forEach((color, x) => setPacked(image, x, y, color)));
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      image.desc, 4, 0, -4, 2, image.desc, 0, 0, 4, 2, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => packed(image, x, 0)), [4, 3, 2, 1]);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => packed(image, x, 1)), [8, 7, 6, 5]);
+
+    const paintImage = surface(320, 200, 24);
+    setPacked(paintImage, 0, 100, 0x112233);
+    setPacked(paintImage, 319, 100, 0x445566);
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      paintImage.desc, 320, 0, -320, 200,
+      paintImage.desc, 0, 0, 320, 200, 0, 0x00CC0020), 1);
+    assert.strictEqual(packed(paintImage, 0, 100), 0x445566);
+    assert.strictEqual(packed(paintImage, 319, 100), 0x112233);
   });
 
   check('BITMAPINFO descriptors validate true-color and indexed BI_RGB layouts', () => {

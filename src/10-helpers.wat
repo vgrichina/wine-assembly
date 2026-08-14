@@ -5755,9 +5755,9 @@
   ;; Signed-extent nearest-neighbor blit. A negative source or destination
   ;; extent walks that axis backwards; differing signs mirror it, matching
   ;; StretchBlt. Destination bounds clip. The source descriptor may be zero
-  ;; for pattern/destination-only ROPs. Scaling
-  ;; an overlapping surface is rejected until a WAT scratch-row allocator is
-  ;; connected; equal-size self copies are handled by $gdi_raster_bitblt.
+  ;; for pattern/destination-only ROPs. Overlapping surfaces use one bulk
+  ;; snapshot of the canonical bytes so scaling and mirroring never consume
+  ;; pixels already replaced by this operation.
   (func $gdi_raster_stretch_blt (param $hdc i32) (param $src_hdc i32)
         (param $dst i32) (param $dx i32) (param $dy i32)
         (param $dw i32) (param $dh i32) (param $src i32) (param $sx i32) (param $sy i32)
@@ -5768,6 +5768,9 @@
     (local $dst_x0 i32) (local $dst_y0 i32) (local $src_x0 i32) (local $src_y0 i32)
     (local $dst_x_step i32) (local $dst_y_step i32)
     (local $src_x_step i32) (local $src_y_step i32)
+    (local $same i32) (local $snapshot_guest i32) (local $snapshot i32)
+    (local $snapshot_desc i32) (local $surface_size i32)
+    (local $surface_size64 i64) (local $snapshot_size64 i64)
     (local $brush i32) (local $sample i32) (local $pixel_pattern i32)
     (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $dst)))
           (i32.or (i32.eqz (local.get $dw)) (i32.eqz (local.get $dh))))
@@ -5776,9 +5779,8 @@
           (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $src)))
             (i32.or (i32.eqz (local.get $sw)) (i32.eqz (local.get $sh)))))
       (then (return (i32.const 0))))
-    (if (i32.and (i32.ne (local.get $src) (i32.const 0))
-          (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src))))
-      (then (return (i32.const 0))))
+    (local.set $same (i32.and (i32.ne (local.get $src) (i32.const 0))
+      (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src)))))
     (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
     (if (i32.and (i32.ne (local.get $hdc) (i32.const 0))
           (call $gdi_rop3_uses_pattern (local.get $rop3)))
@@ -5815,6 +5817,34 @@
       (i32.lt_s (local.get $sw) (i32.const 0))))
     (local.set $src_y0 (select (i32.sub (local.get $sy) (i32.const 1)) (local.get $sy)
       (i32.lt_s (local.get $sh) (i32.const 0))))
+    ;; Paint mirrors a selection by selecting the same bitmap into both DCs.
+    ;; Preserve the source surface in the page-backed DIB arena, including a
+    ;; private descriptor whose bits pointer names the snapshot. A bulk copy
+    ;; is substantially cheaper than a second per-pixel pass for large images.
+    (if (local.get $same)
+      (then
+        (local.set $surface_size64 (i64.mul
+          (i64.extend_i32_u (i32.load offset=12 (local.get $src)))
+          (i64.extend_i32_u (i32.load offset=8 (local.get $src)))))
+        (local.set $snapshot_size64
+          (i64.add (local.get $surface_size64) (i64.const 80)))
+        (if (i32.or (i64.eqz (local.get $surface_size64))
+              (i64.gt_u (local.get $snapshot_size64)
+                (i64.extend_i32_u (global.get $DIB_BACKING_BASE_SIZE))))
+          (then (return (i32.const 0))))
+        (local.set $surface_size (i32.wrap_i64 (local.get $surface_size64)))
+        (local.set $snapshot_guest
+          (call $dib_alloc (i32.wrap_i64 (local.get $snapshot_size64))))
+        (if (i32.eqz (local.get $snapshot_guest))
+          (then (return (i32.const 0))))
+        (local.set $snapshot (call $g2w (local.get $snapshot_guest)))
+        (memory.copy (local.get $snapshot) (i32.load (local.get $src))
+          (local.get $surface_size))
+        (local.set $snapshot_desc
+          (i32.add (local.get $snapshot) (local.get $surface_size)))
+        (memory.copy (local.get $snapshot_desc) (local.get $src) (i32.const 80))
+        (i32.store (local.get $snapshot_desc) (local.get $snapshot))
+        (local.set $src (local.get $snapshot_desc))))
     (block $rows_done (loop $rows
       (br_if $rows_done (i32.ge_u (local.get $y) (local.get $dh_abs)))
       (local.set $x (i32.const 0))
@@ -5837,7 +5867,10 @@
                 (local.set $sample (call $gdi_brush_sample
                   (local.get $hdc) (local.get $brush) (local.get $tx) (local.get $ty)))
                 (if (i32.eq (local.get $sample) (i32.const 0x01000000))
-                  (then (return (i32.const 0))))
+                  (then
+                    (if (local.get $snapshot)
+                      (then (call $dib_free_wasm (local.get $snapshot))))
+                    (return (i32.const 0))))
                 (if (i32.eq (local.get $sample) (i32.const 0x01000001))
                   (then
                     (local.set $x (i32.add (local.get $x) (i32.const 1)))
@@ -5857,7 +5890,11 @@
                 (local.set $s (call $gdi_raster_read_blt_source
                   (local.get $hdc) (local.get $src_hdc) (local.get $dst) (local.get $src)
                   (local.get $ux) (local.get $uy)))
-                (if (i32.eq (local.get $s) (i32.const -1)) (then (return (i32.const 0))))))
+                (if (i32.eq (local.get $s) (i32.const -1))
+                  (then
+                    (if (local.get $snapshot)
+                      (then (call $dib_free_wasm (local.get $snapshot))))
+                    (return (i32.const 0))))))
             (drop (call $gdi_raster_write (local.get $dst) (local.get $tx) (local.get $ty)
               (call $gdi_apply_rop3 (local.get $rop3) (local.get $pixel_pattern)
                 (local.get $s) (local.get $d))))))
@@ -5865,6 +5902,8 @@
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $rows)))
+    (if (local.get $snapshot)
+      (then (call $dib_free_wasm (local.get $snapshot))))
     (i32.const 1))
 
   ;; Equal-size copy with memmove traversal for overlapping canonical bytes.

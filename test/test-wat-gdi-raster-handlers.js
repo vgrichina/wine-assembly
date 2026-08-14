@@ -173,6 +173,22 @@ const { bootRenderHarness } = require('./render-helper');
     ]);
   });
 
+  check('StretchBlt snapshots a selected bitmap for an in-place mirror', () => {
+    const image = makeDib(4, 1);
+    wat.test_call_SetPixel(image.hdc, 0, 0, 0x000000FF); // red
+    wat.test_call_SetPixel(image.hdc, 1, 0, 0x0000FF00); // green
+    wat.test_call_SetPixel(image.hdc, 2, 0, 0x00FF0000); // blue
+    wat.test_call_SetPixel(image.hdc, 3, 0, 0x00FFFFFF); // white
+    assert.strictEqual(wat.test_call_StretchBlt(
+      image.hdc, 4, 0, -4, 1, image.hdc, 0, 0, 4, 1, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => packed(image, x, 0)), [
+      0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
+    ]);
+    assert.deepStrictEqual([...Array(4)].map((_, x) => canvasRgb(image, x, 0)), [
+      0xFFFFFF, 0x0000FF, 0x00FF00, 0xFF0000,
+    ]);
+  });
+
   check('color blits expand monochrome DDB bits through destination text and background colors', () => {
     const bits = wat.guest_alloc(2) >>> 0;
     wat.guest_write16(bits, 0x0040); // MSB-first pixels: zero, one.
