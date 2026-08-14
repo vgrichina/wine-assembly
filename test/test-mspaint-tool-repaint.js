@@ -158,7 +158,7 @@ assert(/send-focus-message paint-font:.*msg=0x31 .*ret=0x4000[0-9a-f]+/.test(out
 assert(/window:text .*parent=0x0 .*visible=true .*title="Fonts"/.test(output),
   'Paint Fonts palette is not a visible top-level floating toolbar');
 const paintWindow = output.match(/window:text hwnd=65537 .* z=(\d+) /);
-const fontsWindow = output.match(/window:text .*parent=0x0 owner=0x10001 z=(\d+) .*title="Fonts"/);
+const fontsWindow = output.match(/window:text .*parent=0x0 owner=0x10001 .* z=(\d+) .*title="Fonts"/);
 assert(paintWindow && fontsWindow && Number(fontsWindow[1]) > Number(paintWindow[1]),
   'Paint Fonts palette did not remain above its owner after focus returned to the text edit');
 
