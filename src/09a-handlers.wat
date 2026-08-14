@@ -6852,10 +6852,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 421: SetEndOfFile — STUB: unimplemented
+  ;; 421: SetEndOfFile
   (func $handle_SetEndOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetEndOfFile(hFile) — 1 arg, return TRUE
-    (global.set $eax (i32.const 1))
+    ;; SetEndOfFile(hFile) — truncate or extend at the current file pointer.
+    (global.set $eax (call $host_fs_set_end_of_file (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

@@ -20,6 +20,16 @@ const buffer = new Uint8Array(4);
 assert.deepStrictEqual(vfs.readFile(legacy, buffer, 4), { ok: true, bytesRead: 4 });
 assert.deepStrictEqual([...buffer], [1, 2, 3, 4]);
 assert.strictEqual(vfs.setFilePointer(legacy, 1, 0), 1);
+assert.strictEqual(vfs.setEndOfFile(legacy), true,
+  'SetEndOfFile truncates at the current legacy-handle position');
+assert.deepStrictEqual([...vfs.files.get('c:\\sample.hlp').data], [1]);
+
+assert.strictEqual(vfs.setFilePointer(legacy, 6, 0), 6);
+assert.strictEqual(vfs.setEndOfFile(legacy), true,
+  'SetEndOfFile extends with zero bytes when the pointer is past EOF');
+assert.deepStrictEqual([...vfs.files.get('c:\\sample.hlp').data], [1, 0, 0, 0, 0, 0]);
+assert.strictEqual(vfs.setEndOfFile(0xdead), false,
+  'SetEndOfFile rejects an invalid handle');
 assert.strictEqual(vfs.closeHandle(legacy), true);
 
 console.log('legacy HFILE compatibility: PASS');
