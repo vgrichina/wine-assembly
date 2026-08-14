@@ -282,6 +282,20 @@ Downloaded to profile DirectDraw and Direct3D surfaces. Each SFX/installer extra
 
 MW3 extracted via `unshield x data1.cab`. Other SFX archives extracted with `7z`.
 
+## Candidate corpus (`candidates/`)
+
+The optional CLI-only candidate pool is described by
+`test/candidate-corpus/manifest.json`. That manifest is the authoritative
+provenance record: it pins each recoverable package URL and SHA-1, records the
+upstream or Internet Archive item page, and identifies the expected PE32/i386
+executable. `tools/fetch-candidate-corpus.js` recreates the ignored local
+fixtures beneath `test/binaries/candidates/`.
+
+These candidates are deliberately absent from the main CLI/browser test
+matrices. Entries without pinned packages remain manual, and Archive
+availability does not grant redistribution rights; proprietary shareware and
+freeware are local research fixtures only.
+
 ## Top-level binaries
 
 | Binary | Notes |
