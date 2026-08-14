@@ -168,6 +168,11 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
   on it. Add every update as a new final line with `echo ... >>
   messageboard.txt`; if an earlier entry is wrong, append a dated `CORRECTION`
   entry instead of changing the original text.
+- A context patch anchored to the last line you previously read is still a
+  middle edit: another agent can append between that read and the patch, and
+  may never see the inserted entry while following the tail. Open the board
+  with `>>` for each update so the write targets the actual EOF at write time,
+  then immediately run `tail` to verify that the entry is visible at the end.
 - Before staging, committing, or editing files another agent may own, read recent entries and start a background watcher:
 
   ```sh
