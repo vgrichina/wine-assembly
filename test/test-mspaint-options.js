@@ -47,7 +47,7 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 12 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 12 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
@@ -90,6 +90,25 @@ function inkBounds(image, box) {
   };
 }
 
+function optionWellMargin(image) {
+  let black = 0;
+  let buttonFace = 0;
+  for (let y = 260; y < 328; y++) {
+    for (let x = 23; x < 76; x++) {
+      if (!(x < 31 || x > 71 || y < 262 || y > 326)) continue;
+      const i = (y * image.width + x) * 4;
+      const r = image.data[i];
+      const g = image.data[i + 1];
+      const b = image.data[i + 2];
+      if (r < 20 && g < 20 && b < 20) black++;
+      if (Math.abs(r - 192) <= 2 && Math.abs(g - 192) <= 2 && Math.abs(b - 192) <= 2) {
+        buttonFace++;
+      }
+    }
+  }
+  return { black, buttonFace };
+}
+
 (async () => {
   const screenshotExists = fs.existsSync(shot) && fs.statSync(shot).size > 0;
   const marks = {};
@@ -99,12 +118,14 @@ function inkBounds(image, box) {
     marks.brushSmall = inkBounds(image, { x0: 140, y0: 90, x1: 160, y1: 110 });
     marks.spraySmall = inkBounds(image, { x0: 100, y0: 140, x1: 140, y1: 180 });
     marks.sprayLarge = inkBounds(image, { x0: 145, y0: 125, x1: 215, y1: 195 });
+    marks.optionWell = optionWellMargin(image);
   }
 
   const brushLarge = marks.brushLarge || { count: 0, width: 0, height: 0 };
   const brushSmall = marks.brushSmall || { count: 0, width: 0, height: 0 };
   const spraySmall = marks.spraySmall || { count: 0, width: 0, height: 0 };
   const sprayLarge = marks.sprayLarge || { count: 0, width: 0, height: 0 };
+  const optionWell = marks.optionWell || { black: Infinity, buttonFace: 0 };
   const checks = [
     ['emulator run completed', !runFailed],
     ['tool-options screenshot written', screenshotExists],
@@ -117,6 +138,8 @@ function inkBounds(image, box) {
     [`large airbrush option expanded the spray (${sprayLarge.width}x${sprayLarge.height})`,
       sprayLarge.count > 0 && Math.max(sprayLarge.width, sprayLarge.height) >= 15 &&
         sprayLarge.width * sprayLarge.height >= 150],
+    [`tool-options margin stayed button-face gray (${optionWell.black} black, ${optionWell.buttonFace} gray)`,
+      optionWell.black < 20 && optionWell.buttonFace > 600],
     ['no crash or unimplemented API',
       !/UNIMPLEMENTED API:|RuntimeError|LinkError|CRASH/.test(output)],
   ];
