@@ -322,7 +322,7 @@ async function main() {
     ]);
   });
 
-  check('thick and dashed lines have exact non-antialiased masks', () => {
+  check('native-width and dashed lines have exact non-antialiased masks', () => {
     const thickTarget = target(10, 7);
     const thick = object(1, 0, 3, 0x000000FF);
     assert.strictEqual(wat.test_gdi_line_desc(
@@ -330,9 +330,9 @@ async function main() {
     assert.deepStrictEqual(rows(thickTarget), [
       '..........',
       '..........',
-      '.RRRRRRR..',
-      '.RRRRRRR..',
-      '.RRRRRRR..',
+      '.RRRRRRRR.',
+      '.RRRRRRRR.',
+      '.RRRRRRRR.',
       '..........',
       '..........',
     ]);
@@ -347,11 +347,17 @@ async function main() {
     ]);
   });
 
-  check('unsupported wide Boolean line fails atomically', () => {
+  check('axis-aligned wide Boolean line writes native coverage once', () => {
     const t = target(8, 5);
     const wide = object(1, 0, 3, 0x00FFFFFF);
-    assert.strictEqual(wat.test_gdi_line_desc(t.hdc, t.desc, 1, 2, 7, 2, wide, 7), 0);
-    assert.deepStrictEqual(new Set(rows(t).join('')), new Set(['.']));
+    assert.strictEqual(wat.test_gdi_line_desc(t.hdc, t.desc, 1, 2, 7, 2, wide, 7), 1);
+    assert.deepStrictEqual(rows(t), [
+      '........',
+      'WWWWWWWW',
+      'WWWWWWWW',
+      'WWWWWWWW',
+      '........',
+    ]);
   });
 
   check('polygon fills canonical bands and closes its integer outline', () => {

@@ -3,6 +3,7 @@
 'use strict';
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
@@ -208,40 +209,47 @@ async function main() {
     assert.strictEqual(pixel(dib, 8, 2), 0);
   });
 
-  check('wide solid COPYPEN strokes use exact square integer footprints', () => {
+  check('wide solid strokes include native square endpoint caps', () => {
     const dib = makeDib(10, 8, 24, true);
     const wide = createPen(0, 3, 0x000000FF);
     selectObject(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 2, 3, 7, 3), 1);
     for (let y = 0; y < dib.height; y++) {
       for (let x = 0; x < dib.width; x++) {
-        const expected = x >= 1 && x <= 7 && y >= 2 && y <= 4;
+        const expected = x >= 1 && x <= 8 && y >= 2 && y <= 4;
         assert.strictEqual(pixel(dib, x, y), expected ? 0xFF0000 : 0,
           `unexpected wide-stroke pixel at ${x},${y}`);
       }
     }
   });
 
-  check('even-width strokes use a stable top-left bias and clip at DIB edges', () => {
+  check('even-width native caps use a stable top-left bias and clip at DIB edges', () => {
     const dib = makeDib(7, 6, 32, true);
     const wide = createPen(0, 4, 0x0000FF00);
     selectObject(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 1, 4, 1), 1);
     for (let y = 0; y < dib.height; y++) {
       for (let x = 0; x < dib.width; x++) {
-        const expected = x <= 4 && y <= 2;
+        const expected = x <= 5 && y <= 2;
         assert.strictEqual(pixel(dib, x, y), expected ? 0x00FF00 : 0,
           `unexpected even-width clipped pixel at ${x},${y}`);
       }
     }
   });
 
-  check('wide-line migration fixtures match exact pixels and contain no blended colors', () => {
-    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.kind, 'implementation-regression');
-    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.fidelityClaim, false);
+  check('native Win98 fixtures preserve diagonal references and match exact axis pixels', () => {
+    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.kind, 'native-windows-98-reference');
+    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.fidelityClaim, true);
+    assert.strictEqual(WIDE_LINE_FIXTURES.provenance.source,
+      'tools/v86-reference/probes/gdi-wide-lines.c');
+    const probeSource = fs.readFileSync(path.join(ROOT, WIDE_LINE_FIXTURES.provenance.source));
+    assert.strictEqual(crypto.createHash('sha256').update(probeSource).digest('hex'),
+      WIDE_LINE_FIXTURES.provenance.probeSourceSha256);
+    assert.match(WIDE_LINE_FIXTURES.provenance.serialOutputSha256, /^[0-9a-f]{64}$/);
     const foreground = parseInt(WIDE_LINE_FIXTURES.foregroundPackedBgr, 16);
     const background = parseInt(WIDE_LINE_FIXTURES.background, 16);
     const colorRef = parseInt(WIDE_LINE_FIXTURES.foregroundColorRef, 16);
+    let exactCases = 0;
     for (const fixture of WIDE_LINE_FIXTURES.cases) {
       const [width, height] = fixture.size;
       const [x0, y0, x1, y1] = fixture.line;
@@ -253,26 +261,34 @@ async function main() {
       assert.strictEqual(wat.test_gdi_line_try(dib.hdc, x0, y0, x1, y1), 1,
         `${fixture.name}: WAT must own the supported DIB stroke`);
       const colors = new Set();
+      const actualRows = [];
       for (let y = 0; y < height; y++) {
+        let actualRow = '';
         for (let x = 0; x < width; x++) {
           const actual = pixel(dib, x, y);
           colors.add(actual);
-          const expected = fixture.pixels[y][x] === '#' ? foreground : background;
-          assert.strictEqual(actual, expected,
-            `${fixture.name}: unexpected pixel at ${x},${y}`);
+          actualRow += actual === foreground ? '#' : actual === background ? '.' : '?';
         }
+        actualRows.push(actualRow);
+      }
+      if (fixture.watExact) {
+        exactCases++;
+        assert.deepStrictEqual(actualRows, fixture.pixels, `${fixture.name}: native pixel mask`);
       }
       assert.deepStrictEqual([...colors].sort((a, b) => a - b), [background, foreground],
         `${fixture.name}: output must contain only exact background and pen colors`);
     }
+    assert.strictEqual(exactCases, 5, 'five captured axis cases must be exact');
   });
 
-  check('unsupported wide ROP2, transformed wide, and huge lines fall back while 16bpp draws', () => {
+  check('wide ROP2 uses one coverage write; transformed wide and huge lines still fall back', () => {
     const dib = makeDib(6, 4, 24);
     const wide = createPen(0, 3, 0x000000FF);
     selectObject(dib.hdc, wide);
     assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 7), 13);
-    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 4, 0), 0);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 0, 0, 4, 0), 1);
+    assert.strictEqual(pixel(dib, 1, 0), 0xFF0000,
+      'wide XOR coverage must apply once even where body and caps overlap');
     assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, 13), 7);
     wat.test_gdi_dc_set_field(dib.hdc, 48, 1, 1);
     wat.test_gdi_dc_set_field(dib.hdc, 52, 1, 1);

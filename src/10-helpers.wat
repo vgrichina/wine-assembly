@@ -5321,6 +5321,78 @@
     (call $gdi_focus_rect_desc (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (local.get 4) (local.get 5)))
 
+  ;; Native Windows 98 DIB captures show that CreatePen widths 2..5 use an
+  ;; exact rectangular footprint for horizontal and vertical LineTo calls,
+  ;; including both endpoint caps.  Rasterize that coverage once so every ROP2
+  ;; is safe; larger and diagonal wide strokes retain their existing kernel
+  ;; until their independently captured integer coverage is implemented.
+  (func $gdi_axis_wide_line_desc (param $hdc i32) (param $desc i32)
+        (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32)
+        (param $width i32) (param $color i32) (param $rop2 i32) (result i32)
+    (local $half i32) (local $far i32) (local $left i32) (local $top i32)
+    (local $right i32) (local $bottom i32) (local $x i32) (local $y i32)
+    (local $wrote i32) (local $min_x i32) (local $min_y i32)
+    (local $max_x i32) (local $max_y i32)
+    (if (i32.or (i32.lt_u (local.get $width) (i32.const 2))
+          (i32.gt_u (local.get $width) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $x0) (local.get $x1))
+          (i32.ne (local.get $y0) (local.get $y1)))
+      (then (return (i32.const 0))))
+    (local.set $half (i32.shr_u (local.get $width) (i32.const 1)))
+    (local.set $far (i32.sub (local.get $width) (local.get $half)))
+    (if (i32.eq (local.get $y0) (local.get $y1))
+      (then
+        (local.set $left (i32.sub
+          (select (local.get $x0) (local.get $x1) (i32.lt_s (local.get $x0) (local.get $x1)))
+          (local.get $half)))
+        (local.set $right (i32.add
+          (select (local.get $x1) (local.get $x0) (i32.lt_s (local.get $x0) (local.get $x1)))
+          (local.get $far)))
+        (local.set $top (i32.sub (local.get $y0) (local.get $half)))
+        (local.set $bottom (i32.add (local.get $top) (local.get $width))))
+      (else
+        (local.set $left (i32.sub (local.get $x0) (local.get $half)))
+        (local.set $right (i32.add (local.get $left) (local.get $width)))
+        (local.set $top (i32.sub
+          (select (local.get $y0) (local.get $y1) (i32.lt_s (local.get $y0) (local.get $y1)))
+          (local.get $half)))
+        (local.set $bottom (i32.add
+          (select (local.get $y1) (local.get $y0) (i32.lt_s (local.get $y0) (local.get $y1)))
+          (local.get $far)))))
+    (local.set $min_x (i32.const 0x7FFFFFFF))
+    (local.set $min_y (i32.const 0x7FFFFFFF))
+    (local.set $max_x (i32.const 0x80000000))
+    (local.set $max_y (i32.const 0x80000000))
+    (local.set $y (local.get $top))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $y) (local.get $bottom)))
+      (local.set $x (local.get $left))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_s (local.get $x) (local.get $right)))
+        (if (call $gdi_shape_put_pixel (local.get $hdc) (local.get $desc)
+              (local.get $x) (local.get $y) (local.get $color) (local.get $rop2))
+          (then
+            (local.set $wrote (i32.const 1))
+            (if (i32.lt_s (local.get $x) (local.get $min_x))
+              (then (local.set $min_x (local.get $x))))
+            (if (i32.lt_s (local.get $y) (local.get $min_y))
+              (then (local.set $min_y (local.get $y))))
+            (if (i32.gt_s (local.get $x) (local.get $max_x))
+              (then (local.set $max_x (local.get $x))))
+            (if (i32.gt_s (local.get $y) (local.get $max_y))
+              (then (local.set $max_y (local.get $y))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (if (local.get $wrote)
+      (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+        (local.get $min_x) (local.get $min_y)
+        (i32.add (local.get $max_x) (i32.const 1))
+        (i32.add (local.get $max_y) (i32.const 1)))))
+    (i32.const 1))
+
   (func $gdi_line_desc_can_raster (param $desc i32)
         (param $from_x i32) (param $from_y i32) (param $to_x i32) (param $to_y i32)
         (param $pen i32) (param $rop2 i32) (result i32)
@@ -5335,11 +5407,6 @@
       (then (return (i32.const 0))))
     (local.set $width (call $gdi_object_width (local.get $pen)))
     (if (i32.gt_u (local.get $width) (i32.const 64)) (then (return (i32.const 0))))
-    ;; Repeated square stamps overlap. They are exact for COPYPEN; other
-    ;; Boolean pen modes require a separate coverage mask for wide lines.
-    (if (i32.and (i32.gt_u (local.get $width) (i32.const 1))
-          (i32.ne (local.get $rop2) (i32.const 13)))
-      (then (return (i32.const 0))))
     (local.set $x0 (call $gdi_line_map_x (local.get $desc) (local.get $from_x)))
     (local.set $y0 (call $gdi_line_map_y (local.get $desc) (local.get $from_y)))
     (local.set $x1 (call $gdi_line_map_x (local.get $desc) (local.get $to_x)))
@@ -5350,6 +5417,16 @@
       (i32.sub (local.get $y0) (local.get $y1)) (i32.ge_s (local.get $y1) (local.get $y0))))
     (local.set $span (select (local.get $dx) (local.get $dy)
       (i32.ge_u (local.get $dx) (local.get $dy))))
+    ;; Only the captured axis-aligned width-2..5 coverage has a one-write
+    ;; region for non-idempotent ROP2 modes so far.
+    (if (i32.and (i32.gt_u (local.get $width) (i32.const 1))
+          (i32.and (i32.ne (local.get $rop2) (i32.const 13))
+            (i32.or
+              (i32.or (i32.lt_u (local.get $width) (i32.const 2))
+                (i32.gt_u (local.get $width) (i32.const 5)))
+              (i32.and (i32.ne (local.get $x0) (local.get $x1))
+                (i32.ne (local.get $y0) (local.get $y1))))))
+      (then (return (i32.const 0))))
     (if (i32.gt_u (local.get $span) (i32.const 65536)) (then (return (i32.const 0))))
     (if (i64.gt_u
           (i64.mul (i64.extend_i32_u (local.get $span))
@@ -5385,6 +5462,10 @@
     (local.set $width (call $gdi_object_width (local.get $pen)))
     (local.set $style (call $gdi_object_style (local.get $pen)))
     (local.set $color (call $gdi_object_color (local.get $pen)))
+    (if (call $gdi_axis_wide_line_desc (local.get $hdc) (local.get $desc)
+          (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
+          (local.get $width) (local.get $color) (local.get $rop2))
+      (then (return (i32.const 1))))
     (local.set $min_x (i32.const 0x7FFFFFFF))
     (local.set $min_y (i32.const 0x7FFFFFFF))
     (local.set $max_x (i32.const 0x80000000))
@@ -6319,8 +6400,15 @@
     (if (i32.gt_u (local.get $span) (i32.const 65536))
       (then (return (i32.const 0))))
     (local.set $pen_width (i32.load offset=28 (local.get $desc)))
+    ;; Non-idempotent ROP2 modes are safe for the captured axis-aligned
+    ;; width-2..5 region because that path writes each covered pixel once.
     (if (i32.and (i32.gt_u (local.get $pen_width) (i32.const 1))
-          (i32.ne (call $gdi_dc_get_rop2 (local.get $hdc)) (i32.const 13)))
+          (i32.and (i32.ne (call $gdi_dc_get_rop2 (local.get $hdc)) (i32.const 13))
+            (i32.or
+              (i32.or (i32.lt_u (local.get $pen_width) (i32.const 2))
+                (i32.gt_u (local.get $pen_width) (i32.const 5)))
+              (i32.and (i32.ne (local.get $x0) (local.get $x1))
+                (i32.ne (local.get $y0) (local.get $y1))))))
       (then (return (i32.const 0))))
     (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $span))
           (i64.mul (i64.extend_i32_u (local.get $pen_width))
@@ -6358,6 +6446,11 @@
     (local.set $rop2 (call $gdi_dc_get_rop2 (local.get $hdc)))
     (local.set $pen_width (i32.load offset=28 (local.get $desc)))
     (local.set $pen_style (i32.load offset=64 (local.get $desc)))
+    (if (call $gdi_axis_wide_line_desc (local.get $hdc) (local.get $desc)
+          (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
+          (local.get $pen_width) (i32.load offset=24 (local.get $desc))
+          (local.get $rop2))
+      (then (return (i32.const 1))))
     ;; Repeated square stamps are exact for COPYPEN because the operation is
     ;; idempotent. Other ROP2 modes need a coverage mask before wide strokes
     ;; can safely avoid applying the Boolean operation twice.

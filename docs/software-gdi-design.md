@@ -115,10 +115,19 @@ sample time.
 canonical clip tests, all 16 `ROP2` Boolean modes, native BGR byte writes, and
 dirty bounds. WAT resolves selected objects and DC state into a canonical
 descriptor; JavaScript only uploads the resulting dirty rectangle to the
-presentation Canvas. Wide strokes
-currently use an integer square footprint with `R2_COPYPEN` under 1:1 mapping;
-non-copy or transformed wide operations fail explicitly pending coverage-mask
-and geometric-path kernels. Client and whole-window DCs now resolve to one
+presentation Canvas. Microsoft documents that [`LineTo`](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-lineto)
+excludes the specified centerline endpoint and that [`CreatePen`](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createpen)
+uses logical width and normalizes dash styles wider than one to solid. The
+reusable native Win98 DIB probe in
+`tools/v86-reference/probes/gdi-wide-lines.c` supplies the pixel behavior that
+those API contracts do not define. Captured axis-aligned width-2..5 strokes
+now use exact rectangular coverage, including the observed coverage beyond
+both centerline endpoints, clipping, and one write per pixel for every `ROP2`.
+Diagonal wide strokes and widths above five retain the deterministic integer
+square-stamp approximation under `R2_COPYPEN`; their authentic masks are kept
+as non-exact fixtures for the next geometry slice. Non-copy diagonal or larger
+wide operations and transformed wide operations fail explicitly pending
+coverage-mask and geometric-path kernels. Client and whole-window DCs now resolve to one
 top-level, WAT-owned 32-bpp backing surface with descriptor origins for child,
 client, and non-client coordinates. One-pixel dash, dot, dash-dot, and
 dash-dot-dot pens use fixed
@@ -636,8 +645,11 @@ license text/SPDX identifier, checksum, and generation recipe recorded under
   placement, selected border, and masks of all option glyphs.
 - Add a diagonal-line assertion that permits only foreground and background
   colors. It must fail on intermediate antialiasing colors.
-- Capture fixtures for rectangles, ellipses, curves, polygons, wide lines, and
-  representative ROPs in Node and the browser harness.
+- Extend the checked-in native Win98 wide-line fixtures from axis-aligned
+  widths 2..5 to diagonal coverage, larger widths, geometric caps/joins, and
+  representative ROPs; keep the probe source reusable in the repository.
+- Capture reference fixtures for rectangles, ellipses, curves, and polygons in
+  Node and the browser harness.
 - Preserve the existing all-tools, file round-trip, dirty-New, large-scroll,
   flood-fill, and airbrush-position tests.
 

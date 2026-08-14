@@ -162,6 +162,24 @@ async function main() {
     assert.strictEqual(pixel(dib, 8, 4), 0xFF0000);
   });
 
+  check('LineTo handler matches captured native axis-aligned wide-pen coverage', () => {
+    clear(dib);
+    const widePen = wat.test_call_CreatePen(0, 3, 0x000000FF) >>> 0;
+    assert(widePen);
+    wat.test_call_SelectObject(dib.hdc, widePen);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 3), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 7, 3), 1);
+    for (let y = 0; y < dib.height; y++) {
+      for (let x = 0; x < dib.width; x++) {
+        const expected = x >= 1 && x <= 8 && y >= 2 && y <= 4;
+        assert.strictEqual(pixel(dib, x, y), expected ? 0xFF0000 : 0,
+          `unexpected real-handler wide-stroke pixel at ${x},${y}`);
+      }
+    }
+    wat.test_call_SelectObject(dib.hdc, redPen);
+    assert.strictEqual(wat.test_call_DeleteObject(widePen), 1);
+  });
+
   check('RoundRect, PolyBezier, and Arc use canonical integer pixels', () => {
     clear(dib);
     assert.strictEqual(wat.test_call_RoundRect(dib.hdc, 1, 1, 11, 9, 6, 6), 1);

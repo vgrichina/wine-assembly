@@ -3,25 +3,31 @@
   "foregroundColorRef": "00332211",
   "foregroundPackedBgr": "112233",
   "provenance": {
-    "kind": "implementation-regression",
-    "source": "Wine-Assembly WAT square-stamp rasterizer at commit e7d428d",
-    "generated": "2026-08-12",
-    "fidelityClaim": false,
-    "note": "These masks lock deterministic exact-color behavior during migration. They are not Win98 reference captures and must not be treated as pixel-fidelity evidence."
+    "kind": "native-windows-98-reference",
+    "source": "tools/v86-reference/probes/gdi-wide-lines.c",
+    "capturedAt": "2026-08-14T09:00:58.873Z",
+    "profile": "Windows 98 reference state in pinned v86 0.5.432+gf3d4472",
+    "v86Commit": "f3d4472a9c934b9ad78a311f5849ba711a296d23",
+    "probeSourceSha256": "20bee146982a96dc194b96c1172bd5c538028ea4691c26b61812c5f360c37727",
+    "probeExeSha256": "a55aa491547fc909a52da68a75e82403ea8c8a05789d281d978492d9ceb52002",
+    "serialOutputSha256": "6060052fb6f2887ec35da246c5102d83a9450b5b548920189d4a318af708e89b",
+    "fidelityClaim": true,
+    "note": "The probe draws into top-down 32-bpp DIB sections and emits exact pixel masks over COM1. All marked pixels were the requested solid pen color; no screenshot sampling or scaling was used."
   },
   "cases": [
     {
       "name": "width 2 shallow positive slope",
+      "watExact": false,
       "size": [12, 9],
       "width": 2,
       "line": [2, 2, 9, 5],
       "pixels": [
         "............",
-        ".###........",
+        ".##.........",
         ".#####......",
-        "...#####....",
-        ".....####...",
-        ".......##...",
+        ".#######....",
+        "....######..",
+        "......####..",
         "............",
         "............",
         "............"
@@ -29,6 +35,7 @@
     },
     {
       "name": "width 3 forty-five degree slope",
+      "watExact": false,
       "size": [12, 12],
       "width": 3,
       "line": [2, 2, 9, 9],
@@ -37,18 +44,19 @@
         ".###........",
         ".####.......",
         ".#####......",
-        "..#####.....",
-        "...#####....",
-        "....#####...",
-        ".....#####..",
-        "......####..",
-        ".......###..",
-        "............",
+        ".######.....",
+        "..######....",
+        "...######...",
+        "....######..",
+        ".....######.",
+        "......#####.",
+        ".......####.",
         "............"
       ]
     },
     {
       "name": "width 4 steep positive slope",
+      "watExact": false,
       "size": [11, 12],
       "width": 4,
       "line": [3, 1, 6, 10],
@@ -57,18 +65,19 @@
         ".#####.....",
         ".#####.....",
         ".#####.....",
+        ".######....",
         "..#####....",
         "..#####....",
-        "..#####....",
+        "..######...",
         "...#####...",
         "...#####...",
         "...#####...",
-        "....####...",
-        "..........."
+        "....####..."
       ]
     },
     {
       "name": "width 5 reverse negative slope",
+      "watExact": false,
       "size": [13, 11],
       "width": 5,
       "line": [10, 2, 3, 8],
@@ -78,16 +87,17 @@
         "......#######",
         "....#########",
         "...##########",
-        "..##########.",
-        "..#########..",
-        "..########...",
-        "..######.....",
-        "..#####......",
-        "............."
+        "..###########",
+        ".###########.",
+        ".##########..",
+        ".########....",
+        ".#######.....",
+        ".######......"
       ]
     },
     {
-      "name": "width 3 reverse horizontal endpoint",
+      "name": "width 3 reverse horizontal",
+      "watExact": true,
       "size": [13, 8],
       "width": 3,
       "line": [10, 4, 3, 4],
@@ -95,11 +105,84 @@
         ".............",
         ".............",
         ".............",
-        "...#########.",
-        "...#########.",
-        "...#########.",
+        "..##########.",
+        "..##########.",
+        "..##########.",
         ".............",
         "............."
+      ]
+    },
+    {
+      "name": "width 3 forward horizontal",
+      "watExact": true,
+      "size": [10, 8],
+      "width": 3,
+      "line": [2, 3, 7, 3],
+      "pixels": [
+        "..........",
+        "..........",
+        ".########.",
+        ".########.",
+        ".########.",
+        "..........",
+        "..........",
+        ".........."
+      ]
+    },
+    {
+      "name": "width 4 clipped horizontal",
+      "watExact": true,
+      "size": [7, 6],
+      "width": 4,
+      "line": [0, 1, 4, 1],
+      "pixels": [
+        "######.",
+        "######.",
+        "######.",
+        ".......",
+        ".......",
+        "......."
+      ]
+    },
+    {
+      "name": "width 2 forward vertical",
+      "watExact": true,
+      "size": [8, 11],
+      "width": 2,
+      "line": [4, 2, 4, 8],
+      "pixels": [
+        "........",
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        "...##...",
+        "........",
+        "........"
+      ]
+    },
+    {
+      "name": "width 4 reverse vertical",
+      "watExact": true,
+      "size": [9, 12],
+      "width": 4,
+      "line": [5, 9, 5, 3],
+      "pixels": [
+        ".........",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "...####..",
+        "........."
       ]
     }
   ]

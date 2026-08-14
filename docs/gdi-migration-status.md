@@ -43,6 +43,15 @@ and independent explicit-clip snapshots. This includes `GetDIBits`, `SetDIBits`,
 canonical indexed and true-color bitmap descriptors, plus logical palette
 objects, per-DC palette selection, `DIB_PAL_COLORS` resolution, rounded
 rectangles, Bezier curves, arcs, and window scrolling.
+Native Win98 DIB captures now back the `CreatePen`/`LineTo` wide-line fixture
+set. Axis-aligned solid widths 2 through 5 match those captures exactly in
+both directions, including endpoint-cap coverage, edge clipping, and all
+`ROP2` modes through a one-write coverage region. The reusable source is
+`tools/v86-reference/probes/gdi-wide-lines.c`; its capture provenance and
+exact masks are checked in under `test/fixtures/gdi-wide-line-pixels.json`.
+Captured diagonal cases remain reference-only while the WAT path retains its
+deterministic square-stamp approximation, and widths above five, transformed
+wide lines, and geometric pen cap/join semantics remain future fidelity work.
 Public bitmap access (`CreateBitmapIndirect`, `GetBitmapBits`, and
 `SetBitmapBits`), rounded and multi-polygon regions, `GetRegionData`,
 `PtInRegion`, and ROP4 `MaskBlt` also route through canonical WAT storage.
