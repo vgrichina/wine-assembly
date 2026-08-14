@@ -133,6 +133,8 @@
   (import "host" "arrange_windows" (func $host_arrange_windows (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "get_screen_size" (func $host_get_screen_size (result i32)))
   ;; get_screen_size() → (width | (height << 16))
+  (import "host" "set_wallpaper" (func $host_set_wallpaper (param i32 i32) (result i32)))
+  ;; set_wallpaper(path_wa, tiled) → BOOL; loads a VFS BMP into the desktop layer.
   (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
   ;; create_font(height, weight, italic, facePtr) → handle
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
