@@ -518,9 +518,18 @@ Font matching should reproduce the GDI inputs that affect `CreateFont` and
 `LOGFONT`: face aliases, height versus cell height, width, weight, italic,
 underline, strikeout, charset, pitch/family, escapement, and orientation.
 Point sizes must use the em-height and device DPI rules rather than CSS pixels.
-The stock `SYSTEM_FONT`, `DEFAULT_GUI_FONT`, `ANSI_FIXED_FONT`, and
-`OEM_FIXED_FONT` objects should resolve to explicit configured strikes instead
-of browser fallback chains.
+The browser and CLI preload the tracked `fonts/W95FA.fon` into
+`C:\\WINDOWS\\FONTS`, and the WAT backend installs it lazily on the first text
+operation. `SYSTEM_FONT`, `ANSI_VAR_FONT`, `DEVICE_DEFAULT_FONT`,
+`DEFAULT_GUI_FONT`, and the internal caption font resolve to its closest strike.
+Created `W95FA`, `MS Sans Serif`, `Microsoft Sans Serif`, `Tahoma`, `System`,
+`Helv`, `MS Shell Dlg`, and `MS Shell Dlg 2` faces use the same deterministic
+path. Explicit document faces such as Arial remain on the scalable Canvas
+fallback rather than being silently substituted.
+
+The remaining stock `ANSI_FIXED_FONT`, `OEM_FIXED_FONT`, and
+`SYSTEM_FIXED_FONT` objects should resolve to an explicit bundled Fixedsys
+strike instead of their current browser fallback chain.
 
 Raster output should be monochrome by default for the Win98 look. Glyph origins
 and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,

@@ -970,6 +970,14 @@ async function main() {
     },
   };
   const base = createHostImports(ctx);
+  const bundledUiFon = path.join(ROOT, 'fonts', 'W95FA.fon');
+  if (ctx.vfs && fs.existsSync(bundledUiFon)) {
+    ctx.vfs.dirs.add('c:\\windows');
+    ctx.vfs.dirs.add('c:\\windows\\fonts');
+    ctx.vfs.files.set('c:\\windows\\fonts\\w95fa.fon', {
+      data: new Uint8Array(fs.readFileSync(bundledUiFon)), attrs: 0x20,
+    });
+  }
   const { readStr } = base;
   const h = base.host;
   // Keep the CLI harness instantiable while optional host-side font resource

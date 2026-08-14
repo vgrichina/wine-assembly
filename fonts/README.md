@@ -78,3 +78,9 @@ node test/run.js \
 The generator requires a C compiler plus FreeType development metadata exposed
 as `pkg-config freetype2`. Generated strikes are derived from W95FA and remain
 subject to its SIL Open Font License 1.1 terms.
+
+At runtime, both the browser host and CLI preload the tracked `W95FA.fon` as
+`C:\\WINDOWS\\FONTS\\W95FA.FON`. WAT installs it on the first stock or aliased
+Win9x UI-font request, so normal dialog, control, menu, and caption text uses
+the deterministic one-bit rasterizer rather than Canvas font measurement or
+glyph rendering. Explicit scalable document faces retain the Canvas fallback.

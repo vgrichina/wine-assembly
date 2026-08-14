@@ -659,6 +659,14 @@ class WineAssembly {
     }
     const imports = this.getImports();
 
+    // Make the deterministic Win9x UI font available to every process before
+    // guest code can issue its first GDI text call. WAT lazily installs and
+    // parses this FON when a stock UI font or matching LOGFONT is selected.
+    await this.loadFiles([{
+      url: 'fonts/W95FA.fon',
+      vfsPath: 'c:\\windows\\fonts\\w95fa.fon',
+    }], { required: true });
+
     // Create shared memory externally
     this.memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     imports.host.memory = this.memory;

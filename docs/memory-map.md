@@ -137,7 +137,9 @@ Extended per-DC state occupies `0x07EFC800..0x07EFE7FF` as 256 32-byte
 records for arc direction, brush origin, mapper flags, and text spacing.
 
 The Win16/Win9x bitmap-font backend uses `0x07F0A420..0x07F0A46F` for its
-file-I/O counter and 80-byte surface descriptor, plus
+file-I/O counter and 80-byte surface descriptor. Its default-font VFS path,
+shared install state, and Win9x UI face aliases occupy
+`0x07F0A490..0x07F0A527`, followed by
 `0x07F0A800..0x07F0ABFF` for sixteen 64-byte installed-strike records. The
 validated FNT byte payloads themselves are owned allocations in the DIB arena;
 the static table stores their WAT backing addresses and parsed metrics.

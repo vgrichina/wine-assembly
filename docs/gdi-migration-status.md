@@ -21,6 +21,10 @@ text pixels back to canonical surface storage using WAT-owned clip bands.
 Installed FNT 2.x/3.x strikes bypass all four calls: WAT measures and writes
 their glyphs directly, including `ExtTextOut` rectangle/lpDx behavior and
 `DrawText` wrapping, alignment, clipping, and calculated rectangles.
+The tracked W95FA FON is preloaded into every browser and CLI process and
+installed lazily by WAT. Stock variable UI fonts and common Win9x UI aliases
+therefore use this path without calling the four Canvas text-policy imports;
+explicit scalable/document faces and shaped text retain the fallback.
 Every non-text semantic call removed in the
 flag-day bridge purge now has a WAT implementation; both unsupported-stub
 inventories are empty. Pen, solid-brush, memory-DC,
