@@ -2580,7 +2580,7 @@
           (br_if $advise_done (i32.ge_u (local.get $child)
             (call $gl32 (i32.add (local.get $obj) (i32.const 152)))))
           (local.set $next (i32.add (local.get $data) (i32.mul (local.get $child) (i32.const 12))))
-          (if (call $gl32 (i32.add (local.get $next) (i32.const 8)))
+          (if (i32.eq (call $gl32 (i32.add (local.get $next) (i32.const 8))) (i32.const 1))
             (then (drop (call $ole_obj_release (call $gl32 (i32.add (local.get $next) (i32.const 4)))))))
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $advise_entries)))
@@ -4078,7 +4078,8 @@
 
   ;; CACA0011 enters here after a guest AddRef/Release/SaveObject returns.
   ;; operation 1: SetClientSite; 2: GetClientSite; 3: Close/SaveObject;
-  ;; 4: final static-handler Release.
+  ;; 4: final static-handler Release; 5/6: Advise/Unadvise ownership;
+  ;; 7: IAdviseSink OnSave/OnClose notification sequence.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -4119,11 +4120,41 @@
       (then
         (local.set $hr (global.get $eax))
         (if (i32.ge_s (local.get $hr) (i32.const 0))
-          (then (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 0))))
+          (then
+            (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 32)) (local.get $hr))
+            (if (call $ole_static_guest_notify_start (local.get $ctx) (i32.const 1))
+              (then (return)))))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 5))
+      (then
+        (local.set $hr (call $ole_static_advise_commit
+          (local.get $root) (local.get $p1) (local.get $p2) (i32.const 2)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 6))
+      (then
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 7))
+      (then
+        (if (call $ole_static_guest_notify_next (local.get $ctx))
+          (then (return)))
+        (if (i32.eqz (local.get $stage))
+          (then
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 1))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 24)) (i32.const 7))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (i32.const 0))
+            (if (call $ole_static_guest_notify_next (local.get $ctx))
+              (then (return)))))
+        (call $ole_guest_callback_finish
+          (local.get $ctx) (call $gl32 (i32.add (local.get $ctx) (i32.const 32))))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then
+        (if (call $ole_static_final_guest_advise_next (local.get $ctx))
+          (then (return)))
         (local.set $hr (call $ole_obj_release (local.get $root)))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
         (return)))
@@ -4159,12 +4190,9 @@
       (i32.add (call $gl32 (i32.add (local.get $site) (i32.const 20))) (i32.const 1)))
   )
 
-  (func $ole_static_advise (param $root i32) (param $sink i32) (param $out i32) (result i32)
-    (local $entries i32) (local $count i32) (local $capacity i32) (local $new_capacity i32)
-    (local $new_entries i32) (local $entry i32) (local $connection i32) (local $owned i32)
-    (if (i32.or (i32.eqz (local.get $sink)) (i32.eqz (local.get $out)))
-      (then (return (i32.const 0x80004003))))
-    (call $gs32 (local.get $out) (i32.const 0))
+  (func $ole_static_advise_reserve (param $root i32) (result i32)
+    (local $entries i32) (local $count i32) (local $capacity i32)
+    (local $new_capacity i32) (local $new_entries i32)
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
     (local.set $capacity (call $gl32 (i32.add (local.get $root) (i32.const 156))))
@@ -4180,13 +4208,17 @@
           (then (memory.copy (call $g2w (local.get $new_entries)) (call $g2w (local.get $entries))
             (i32.mul (local.get $count) (i32.const 12)))))
         (if (local.get $entries) (then (call $heap_free (local.get $entries))))
-        (local.set $entries (local.get $new_entries))
-        (call $gs32 (i32.add (local.get $root) (i32.const 148)) (local.get $entries))
+        (call $gs32 (i32.add (local.get $root) (i32.const 148)) (local.get $new_entries))
         (call $gs32 (i32.add (local.get $root) (i32.const 156)) (local.get $new_capacity))))
+    (i32.const 0))
+
+  (func $ole_static_advise_commit
+        (param $root i32) (param $sink i32) (param $out i32) (param $owned i32) (result i32)
+    (local $entries i32) (local $count i32) (local $entry i32) (local $connection i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
     (local.set $connection (call $gl32 (i32.add (local.get $root) (i32.const 160))))
     (if (i32.eqz (local.get $connection)) (then (local.set $connection (i32.const 1))))
-    (local.set $owned (call $ole_is_test_site (local.get $sink)))
-    (if (local.get $owned) (then (drop (call $ole_obj_addref (local.get $sink)))))
     (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $count) (i32.const 12))))
     (call $gs32 (local.get $entry) (local.get $connection))
     (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $sink))
@@ -4197,6 +4229,166 @@
     (i32.const 0)
   )
 
+  (func $ole_static_advise (param $root i32) (param $sink i32) (param $out i32) (result i32)
+    (local $hr i32) (local $owned i32)
+    (if (i32.or (i32.eqz (local.get $sink)) (i32.eqz (local.get $out)))
+      (then (return (i32.const 0x80004003))))
+    (call $gs32 (local.get $out) (i32.const 0))
+    (local.set $hr (call $ole_static_advise_reserve (local.get $root)))
+    (if (local.get $hr) (then (return (local.get $hr))))
+    (local.set $owned (call $ole_is_test_site (local.get $sink)))
+    (if (local.get $owned) (then (drop (call $ole_obj_addref (local.get $sink)))))
+    (call $ole_static_advise_commit
+      (local.get $root) (local.get $sink) (local.get $out) (local.get $owned)))
+
+  (func $ole_static_find_advise (param $root i32) (param $connection i32) (result i32)
+    (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12))))
+      (if (i32.eq (call $gl32 (local.get $entry)) (local.get $connection))
+        (then (return (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_static_has_guest_advise (param $root i32) (result i32)
+    (local $entries i32) (local $count i32) (local $i i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (if (i32.eq
+            (call $gl32 (i32.add
+              (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12)))
+              (i32.const 8)))
+            (i32.const 2))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_static_guest_advise_releases_valid (param $root i32) (result i32)
+    (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12))))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 8))) (i32.const 2))
+            (i32.eqz (call $ole_guest_method_addr
+              (call $gl32 (i32.add (local.get $entry) (i32.const 4))) (i32.const 2))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; Start the next guest advisory Release in a final-handler continuation.
+  ;; ctx p2 stores the last stable connection ID. Each entry is detached before
+  ;; calling out, so reentrant collection compaction cannot skip a later sink
+  ;; and the eventual local destructor cannot release it twice.
+  (func $ole_static_final_guest_advise_next (param $ctx i32) (result i32)
+    (local $root i32) (local $entries i32) (local $count i32)
+    (local $i i32) (local $entry i32) (local $sink i32)
+    (local $last_connection i32) (local $connection i32)
+    (local.set $root (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
+    (local.set $last_connection (call $gl32 (i32.add (local.get $ctx) (i32.const 28))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12))))
+      (local.set $connection (call $gl32 (local.get $entry)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 8))) (i32.const 2))
+            (i32.gt_u (local.get $connection) (local.get $last_connection)))
+        (then
+          (local.set $sink (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+          (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (i32.const 0))
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (local.get $connection))
+          (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $sink) (i32.const 2)))
+          (return (i32.const 1))))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_static_guest_notify_valid
+        (param $root i32) (param $method i32) (result i32)
+    (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12))))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 8))) (i32.const 2))
+            (i32.eqz (call $ole_guest_method_addr
+              (call $gl32 (i32.add (local.get $entry) (i32.const 4))) (local.get $method))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; Notification context uses p1=method index, p2=last connection, p3=Close
+  ;; result, and p4=the highest connection that existed when notification
+  ;; began. Stable connection IDs make removal during a callback safe, while
+  ;; newly advised sinks wait for the next notification sequence.
+  (func $ole_static_guest_notify_next (param $ctx i32) (result i32)
+    (local $root i32) (local $method i32) (local $entries i32)
+    (local $count i32) (local $i i32) (local $entry i32) (local $sink i32)
+    (local $last_connection i32) (local $max_connection i32) (local $connection i32)
+    (local.set $root (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (local.set $method (call $gl32 (i32.add (local.get $ctx) (i32.const 24))))
+    (local.set $last_connection (call $gl32 (i32.add (local.get $ctx) (i32.const 28))))
+    (local.set $max_connection (call $gl32 (i32.add (local.get $ctx) (i32.const 36))))
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 152))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12))))
+      (local.set $connection (call $gl32 (local.get $entry)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 8))) (i32.const 2))
+            (i32.and
+              (i32.gt_u (local.get $connection) (local.get $last_connection))
+              (i32.le_u (local.get $connection) (local.get $max_connection))))
+        (then
+          (local.set $sink (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (local.get $connection))
+          (drop (call $ole_guest_callback_invoke1
+            (local.get $ctx) (local.get $sink) (local.get $method)))
+          (return (i32.const 1))))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Start OnSave (optional) followed by OnClose. Returns 1 if a guest
+  ;; callback was launched, 0 if the collection had no guest sinks.
+  (func $ole_static_guest_notify_start (param $ctx i32) (param $include_save i32) (result i32)
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 4)) (i32.const 7))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 8))
+      (select (i32.const 0) (i32.const 1) (local.get $include_save)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 24))
+      (select (i32.const 6) (i32.const 7) (local.get $include_save)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 36))
+      (i32.sub (call $gl32 (i32.add
+        (call $gl32 (i32.add (local.get $ctx) (i32.const 20))) (i32.const 160)))
+        (i32.const 1)))
+    (if (call $ole_static_guest_notify_next (local.get $ctx))
+      (then (return (i32.const 1))))
+    (if (local.get $include_save)
+      (then
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 1))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 24)) (i32.const 7))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (i32.const 0))
+        (if (call $ole_static_guest_notify_next (local.get $ctx))
+          (then (return (i32.const 1))))))
+    (i32.const 0))
+
   (func $ole_static_unadvise (param $root i32) (param $connection i32) (result i32)
     (local $entries i32) (local $count i32) (local $i i32) (local $entry i32)
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 148))))
@@ -4206,7 +4398,7 @@
       (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.eq (call $gl32 (local.get $entry)) (local.get $connection))
         (then
-          (if (call $gl32 (i32.add (local.get $entry) (i32.const 8)))
+          (if (i32.eq (call $gl32 (i32.add (local.get $entry) (i32.const 8))) (i32.const 1))
             (then (drop (call $ole_obj_release (call $gl32 (i32.add (local.get $entry) (i32.const 4)))))))
           (if (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $count))
             (then (memory.copy (call $g2w (local.get $entry))
@@ -4385,33 +4577,47 @@
       (then (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 24))) (call $g2w (local.get $clsid)) (i32.const 16))))
     (local.get $obj))
 
-  ;; Release a static handler at an API boundary. A final DLL-private client
-  ;; site reference must execute its guest IUnknown::Release before the WAT
-  ;; object storage is destroyed; non-final and WAT-local releases stay fast.
+  ;; Release a static handler at an API boundary. Final DLL-private client-site
+  ;; and advisory references execute guest IUnknown::Release before WAT object
+  ;; storage is destroyed; non-final and WAT-local releases stay fast.
   (func $ole_static_release_api (param $root i32) (param $pop_bytes i32)
-    (local $site i32) (local $ret i32) (local $ctx i32)
+    (local $site i32) (local $site_owned i32) (local $ret i32) (local $ctx i32)
+    (local.set $site_owned (call $gl32 (i32.add (local.get $root) (i32.const 144))))
     (if (i32.and
           (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 8))) (i32.const 6))
           (i32.and
             (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 4))) (i32.const 1))
-            (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 144))) (i32.const 2))))
+            (i32.or
+              (i32.eq (local.get $site_owned) (i32.const 2))
+              (call $ole_static_has_guest_advise (local.get $root)))))
       (then
         (local.set $site (call $gl32 (i32.add (local.get $root) (i32.const 16))))
-        ;; Retain the object if a malformed external interface has no Release
-        ;; slot; freeing it would silently leak a reference and break COM.
-        (if (i32.eqz (call $ole_guest_method_addr (local.get $site) (i32.const 2)))
+        ;; Retain the object if any malformed external interface has no Release
+        ;; slot; partial teardown would silently leak or double-release COM.
+        (if (i32.or
+              (i32.and
+                (i32.eq (local.get $site_owned) (i32.const 2))
+                (i32.eqz (call $ole_guest_method_addr (local.get $site) (i32.const 2))))
+              (i32.eqz (call $ole_static_guest_advise_releases_valid (local.get $root))))
           (then
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes)))
             (return)))
         (local.set $ret (call $gl32 (global.get $esp)))
-        (call $gs32 (i32.add (local.get $root) (i32.const 16)) (i32.const 0))
-        (call $gs32 (i32.add (local.get $root) (i32.const 144)) (i32.const 0))
         (local.set $ctx (call $ole_guest_callback_context
           (i32.const 4) (i32.const 0) (local.get $ret)
           (i32.add (global.get $esp) (local.get $pop_bytes))
           (local.get $root) (local.get $site) (i32.const 0) (i32.const 0) (i32.const 0)))
-        (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $site) (i32.const 2)))
+        (if (i32.eq (local.get $site_owned) (i32.const 2))
+          (then
+            (call $gs32 (i32.add (local.get $root) (i32.const 16)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $root) (i32.const 144)) (i32.const 0))
+            (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $site) (i32.const 2)))
+            (return)))
+        (if (call $ole_static_final_guest_advise_next (local.get $ctx))
+          (then (return)))
+        (call $ole_guest_callback_finish
+          (local.get $ctx) (call $ole_obj_release (local.get $root)))
         (return)))
     (global.set $eax (call $ole_obj_release (local.get $root)))
     (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes))))
@@ -4510,17 +4716,47 @@
     (global.set $eax (call $ole_static_set_host_names (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_Close (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $site i32) (local $ret i32) (local $ctx i32)
-    (if (i32.or
-          (i32.gt_u (local.get $arg1) (i32.const 2))
-          (i32.or
-            (i32.eq (local.get $arg1) (i32.const 1))
-            (i32.or
-              (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 48))))
-              (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 144))) (i32.const 2)))))
+    (local $site i32) (local $ret i32) (local $ctx i32) (local $hr i32)
+    (local $dirty i32) (local $include_save i32) (local $has_guest_advise i32)
+    (if (i32.gt_u (local.get $arg1) (i32.const 2))
       (then
-        (global.set $eax (call $ole_static_close (local.get $arg0) (local.get $arg1)))
+        (global.set $eax (i32.const 0x80070057))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $dirty (call $gl32 (i32.add (local.get $arg0) (i32.const 48))))
+    (local.set $include_save (i32.and
+      (i32.ne (local.get $arg1) (i32.const 1)) (i32.ne (local.get $dirty) (i32.const 0))))
+    (local.set $has_guest_advise (call $ole_static_has_guest_advise (local.get $arg0)))
+    ;; Validate the whole notification sequence before changing lifecycle state
+    ;; or calling the client site, so a malformed sink cannot cause half a Close.
+    (if (i32.and (local.get $has_guest_advise)
+          (i32.or
+            (i32.eqz (call $ole_static_guest_notify_valid (local.get $arg0) (i32.const 7)))
+            (i32.and (local.get $include_save)
+              (i32.eqz (call $ole_static_guest_notify_valid (local.get $arg0) (i32.const 6))))))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.or
+          (i32.eqz (local.get $include_save))
+          (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 144))) (i32.const 2)))
+      (then
+        (local.set $hr (call $ole_static_close (local.get $arg0) (local.get $arg1)))
+        (if (i32.or (local.get $hr) (i32.eqz (local.get $has_guest_advise)))
+          (then
+            (global.set $eax (local.get $hr))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
+        (local.set $ret (call $gl32 (global.get $esp)))
+        (local.set $ctx (call $ole_guest_callback_context
+          (i32.const 7) (i32.const 0) (local.get $ret)
+          (i32.add (global.get $esp) (i32.const 12))
+          (local.get $arg0) (i32.const 0) (i32.const 0)
+          (local.get $hr) (i32.const 0)))
+        (if (call $ole_static_guest_notify_start (local.get $ctx) (local.get $include_save))
+          (then (return)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
         (return)))
     (local.set $site (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))
     (if (i32.eqz (call $ole_guest_method_addr (local.get $site) (i32.const 3)))
@@ -4578,11 +4814,64 @@
     (global.set $eax (call $ole_static_get_extent (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IOleObject_Advise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_static_advise (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $hr i32) (local $ret i32) (local $ctx i32)
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (call $ole_is_test_site (local.get $arg1))
+      (then
+        (global.set $eax (call $ole_static_advise (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.eqz (call $ole_guest_method_addr (local.get $arg1) (i32.const 1)))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $hr (call $ole_static_advise_reserve (local.get $arg0)))
+    (if (local.get $hr)
+      (then
+        (global.set $eax (local.get $hr))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 5) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 16))
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $arg1) (i32.const 1))))
   (func $handle_IOleObject_Unadvise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_static_unadvise (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $entry i32) (local $sink i32) (local $owned i32) (local $ret i32) (local $ctx i32)
+    (local.set $entry (call $ole_static_find_advise (local.get $arg0) (local.get $arg1)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80040004))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $sink (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+    (local.set $owned (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.ne (local.get $owned) (i32.const 2))
+      (then
+        (global.set $eax (call $ole_static_unadvise (local.get $arg0) (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (call $ole_guest_method_addr (local.get $sink) (i32.const 2)))
+      (then
+        (global.set $eax (i32.const 0x80004002))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (drop (call $ole_static_unadvise (local.get $arg0) (local.get $arg1)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 6) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 12))
+      (local.get $arg0) (local.get $sink) (i32.const 0)
+      (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $sink) (i32.const 2))))
   (func $handle_IOleObject_EnumAdvise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
     (if (i32.eqz (local.get $arg1))

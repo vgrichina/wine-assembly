@@ -46,12 +46,14 @@ async function main() {
   const alloc = size => e.guest_alloc(size) >>> 0;
 
   const makeGuestSite = () => {
-    const code = alloc(64);
+    const code = alloc(128);
     const vtable = alloc(32);
-    const site = alloc(24);
+    const site = alloc(32);
     const addRef = code;
     const release = code + 20;
     const saveObject = code + 40;
+    const onSave = code + 64;
+    const onClose = code + 80;
     bytes.set([
       0x8b, 0x44, 0x24, 0x04,       // mov eax,[esp+4]
       0xff, 0x40, 0x04,             // inc dword [eax+4] (refcount)
@@ -72,9 +74,21 @@ async function main() {
       0x8b, 0x40, 0x14,             // mov eax,[eax+20] (configured HRESULT)
       0xc2, 0x04, 0x00,             // ret 4
     ], wa(saveObject));
+    bytes.set([
+      0x8b, 0x44, 0x24, 0x04,       // mov eax,[esp+4]
+      0xff, 0x40, 0x18,             // inc dword [eax+24] (OnSave calls)
+      0xc2, 0x04, 0x00,             // ret 4
+    ], wa(onSave));
+    bytes.set([
+      0x8b, 0x44, 0x24, 0x04,       // mov eax,[esp+4]
+      0xff, 0x40, 0x1c,             // inc dword [eax+28] (OnClose calls)
+      0xc2, 0x04, 0x00,             // ret 4
+    ], wa(onClose));
     write(vtable + 4, addRef);
     write(vtable + 8, release);
     write(vtable + 12, saveObject);
+    write(vtable + 24, onSave);
+    write(vtable + 28, onClose);
     write(site, vtable);
     write(site + 4, 1);
     return site;
@@ -142,12 +156,78 @@ async function main() {
   check('ordinary final Release still destroys a site-free static handler',
     callMethod(object, 2) === 0);
 
+  const adviseObject = e.test_ole_create_static_handler(0) >>> 0;
+  const adviseSinkA = makeGuestSite();
+  const adviseSinkB = makeGuestSite();
+  const connectionA = alloc(4);
+  const connectionB = alloc(4);
+  check('Advise AddRefs DLL-private sinks and assigns stable connections',
+    callMethod(adviseObject, 19, adviseSinkA, connectionA) === 0 &&
+    callMethod(adviseObject, 19, adviseSinkB, connectionB) === 0 &&
+    read(connectionA) === 1 && read(connectionB) === 2 &&
+    read(adviseSinkA + 4) === 2 && read(adviseSinkA + 8) === 1 &&
+    read(adviseSinkB + 4) === 2 && read(adviseSinkB + 8) === 1 &&
+    read(adviseObject + 152) === 2);
+  check('Unadvise removes only its guest sink and calls Release',
+    callMethod(adviseObject, 20, 1) === 0 &&
+    read(adviseSinkA + 4) === 1 && read(adviseSinkA + 12) === 1 &&
+    read(adviseSinkB + 4) === 2 && read(adviseObject + 152) === 1);
+  check('final handler destruction releases every remaining guest sink',
+    callMethod(adviseObject, 2) === 0 &&
+    read(adviseSinkB + 4) === 1 && read(adviseSinkB + 12) === 1);
+
   const finalObject = e.test_ole_create_static_handler(0) >>> 0;
   const finalSite = makeGuestSite();
+  const finalSink = makeGuestSite();
+  const finalConnection = alloc(4);
   assert.strictEqual(callMethod(finalObject, 3, finalSite), 0);
-  check('final static-handler Release calls the owned guest client site first',
+  assert.strictEqual(callMethod(finalObject, 19, finalSink, finalConnection), 0);
+  check('final static-handler Release balances both client-site and sink ownership',
     callMethod(finalObject, 2) === 0 &&
-    read(finalSite + 4) === 1 && read(finalSite + 12) === 1);
+    read(finalSite + 4) === 1 && read(finalSite + 12) === 1 &&
+    read(finalSink + 4) === 1 && read(finalSink + 12) === 1);
+
+  const notifyObject = e.test_ole_create_static_handler(0) >>> 0;
+  const notifySite = makeGuestSite();
+  const notifySinkA = makeGuestSite();
+  const notifySinkB = makeGuestSite();
+  const notifyConnectionA = alloc(4);
+  const notifyConnectionB = alloc(4);
+  assert.strictEqual(callMethod(notifyObject, 3, notifySite), 0);
+  assert.strictEqual(callMethod(notifyObject, 19, notifySinkA, notifyConnectionA), 0);
+  assert.strictEqual(callMethod(notifyObject, 19, notifySinkB, notifyConnectionB), 0);
+  assert.strictEqual(e.test_ole_static_set_extent(notifyObject, 1, extent), 0);
+  check('successful dirty Close notifies every guest sink OnSave then OnClose',
+    callMethod(notifyObject, 6, 0) === 0 &&
+    read(notifySite + 16) === 1 && e.test_ole_persist_dirty(notifyObject) === 0 &&
+    read(notifySinkA + 24) === 1 && read(notifySinkA + 28) === 1 &&
+    read(notifySinkB + 24) === 1 && read(notifySinkB + 28) === 1);
+
+  check('clean Close emits OnClose without a redundant OnSave',
+    callMethod(notifyObject, 6, 0) === 0 &&
+    read(notifySite + 16) === 1 &&
+    read(notifySinkA + 24) === 1 && read(notifySinkA + 28) === 2 &&
+    read(notifySinkB + 24) === 1 && read(notifySinkB + 28) === 2);
+
+  assert.strictEqual(e.test_ole_static_set_extent(notifyObject, 1, extent), 0);
+  write(notifySite + 20, 0x80004005);
+  check('failed guest SaveObject suppresses advisory save/close notifications',
+    callMethod(notifyObject, 6, 0) === 0x80004005 &&
+    e.test_ole_persist_dirty(notifyObject) === 1 &&
+    read(notifySinkA + 24) === 1 && read(notifySinkA + 28) === 2 &&
+    read(notifySinkB + 24) === 1 && read(notifySinkB + 28) === 2);
+
+  check('OLECLOSE_NOSAVE emits only OnClose and preserves dirty state',
+    callMethod(notifyObject, 6, 1) === 0 &&
+    e.test_ole_persist_dirty(notifyObject) === 1 &&
+    read(notifySinkA + 24) === 1 && read(notifySinkA + 28) === 3 &&
+    read(notifySinkB + 24) === 1 && read(notifySinkB + 28) === 3);
+
+  check('notification object final Release balances site and sink references',
+    callMethod(notifyObject, 2) === 0 &&
+    read(notifySite + 4) === 1 && read(notifySite + 12) === 1 &&
+    read(notifySinkA + 4) === 1 && read(notifySinkA + 12) === 1 &&
+    read(notifySinkB + 4) === 1 && read(notifySinkB + 12) === 1);
 
   console.log(`\n${checks}/${checks} guest COM callback checks passed`);
 }

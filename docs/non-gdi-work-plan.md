@@ -440,8 +440,11 @@ cursor semantics. The expanded focused suite passes 38/38.
   `EnumAdvise`/clone ownership for synthetic in-process sinks.
 - [x] Extend client-site ownership to DLL-private interfaces through suspended
   guest AddRef/Release/SaveObject callbacks.
-- Extend advisory ownership and sink notifications to DLL-private interfaces
-  through the same guest COM callback bridge.
+- [x] Extend live advisory ownership and `OnSave`/`OnClose` notifications to
+  DLL-private interfaces through the same guest COM callback bridge.
+- Extend `EnumAdvise` snapshot ownership to DLL-private sinks; live advisory
+  references are complete, but guest enumerator AddRef/Release sequencing is a
+  separate callback-boundary slice.
 - [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
   generalized P3 object rather than DIB-only branches for runtime-owned
   `IDataObject` instances.
@@ -467,8 +470,9 @@ Object` user-type text, and advertises `OLEMISC_RECOMPOSEONRESIZE |
 OLEMISC_STATIC`. It records validated close options, maintains running and
 nested run-lock state, honors last-unlock-close, and tracks whether the object
 is contained. Owned host strings are released with the handler. The later guest
-client-site result below completes DLL-private `SaveObject` and ownership;
-advisory ownership remains the next callback-bridge slice. The focused
+client-site and live-advisory results below complete DLL-private `SaveObject`,
+live sink notifications, and handler ownership. Guest-owned advisory
+enumeration snapshots remain a separate callback-bridge slice. The focused
 static-handler suite passes 52/52 at this milestone.
 
 2026-08-13 guest-client-site result: a stack-resident continuation context now
@@ -489,8 +493,20 @@ connection IDs and retains each synthetic local sink independently.
 stable `IEnumSTATDATA` snapshot whose Next and Clone operations own local sink
 references and preserve independent cursors even after the live collection is
 changed. Final enumerator/object release balances all retained references. The
-focused suite passes 65/65. DLL-private sinks remain borrowed and cannot yet
-receive notifications without the guest callback bridge.
+focused suite passes 65/65. At that local-only milestone, DLL-private sinks
+remained borrowed and could not receive notifications without the guest
+callback bridge.
+
+2026-08-13 guest-advisory result: `IOleObject::Advise` now invokes DLL-private
+sink `AddRef`, `Unadvise` invokes its matching `Release`, and final handler
+destruction balances every remaining guest client-site and advisory reference
+before freeing WAT storage. Successful dirty `Close` calls every live guest
+sink's `OnSave` followed by `OnClose`; clean and `OLECLOSE_NOSAVE` paths emit
+only `OnClose`, while a failing guest `SaveObject` preserves dirty state and
+suppresses both notifications. Traversal is bounded by stable connection IDs,
+so mutation cannot skip a following sink and newly advised sinks wait for the
+next sequence. The real guest-x86 callback suite passes 18/18. Guest-owned
+`EnumAdvise` snapshot references remain the next lifecycle slice.
 
 ### Acceptance
 
