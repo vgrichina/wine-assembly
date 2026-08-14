@@ -163,7 +163,20 @@ assert(paintWindow && fontsWindow && Number(fontsWindow[1]) > Number(paintWindow
   'Paint Fonts palette did not remain above its owner after focus returned to the text edit');
 
 const startImage = PNG.sync.read(fs.readFileSync(shots.start));
+const textEditImage = PNG.sync.read(fs.readFileSync(shots['text-edit']));
 const committedImage = PNG.sync.read(fs.readFileSync(shots['text-committed']));
+let antialiasedTextPixels = 0;
+for (let y = 99; y < 147; y++) {
+  for (let x = 104; x < 217; x++) {
+    const i = (y * textEditImage.width + x) * 4;
+    const r = textEditImage.data[i];
+    const g = textEditImage.data[i + 1];
+    const b = textEditImage.data[i + 2];
+    if (r === g && g === b && r > 0 && r < 255) antialiasedTextPixels++;
+  }
+}
+assert.strictEqual(antialiasedTextPixels, 0,
+  `Paint text edit retained ${antialiasedTextPixels} antialiased gray pixels`);
 let committedInk = 0;
 for (let y = 97; y < 149; y++) {
   for (let x = 102; x < 219; x++) {
@@ -179,4 +192,5 @@ assert(committedInk >= 5, `Paint did not commit typed text to the canvas (${comm
 console.log('PASS  Paint tool glyphs survive brush/airbrush/text/selection repaints');
 console.log('PASS  Paint tool mask remains transparent in all five snapshots');
 console.log('PASS  Paint pressed buttons and tool-option glyphs render correctly');
+console.log('PASS  Paint text glyph coverage is thresholded to Win98-style binary pixels');
 console.log(`PASS  Paint Fonts palette installs its font and commits multiline text (${committedInk} pixels)`);
