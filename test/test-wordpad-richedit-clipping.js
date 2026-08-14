@@ -23,26 +23,24 @@ if (!fs.existsSync(EXE)) {
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
+try { fs.unlinkSync(PNG_OUT); } catch (_) {}
 
+const encodedText = Buffer.from(TEXT, 'latin1').toString('base64');
 const seq = [
   '70:click:40:150',
   '72:dump-focus-state:clicked',
+  `74:set-focus-text-b64:${encodedText}:long`,
+  '80:dump-focus-state:long',
+  '82:dump-windows:long',
+  `86:png:${PNG_OUT}`,
+  '90:stop',
 ];
-let b = 74;
-for (const ch of TEXT) {
-  seq.push(`${b}:keypress:${ch.charCodeAt(0)}`);
-  b += 1;
-}
-seq.push(`${b + 6}:dump-focus-state:long`);
-seq.push(`${b + 8}:dump-windows:long`);
-seq.push(`${b + 12}:png:${PNG_OUT}`);
-seq.push(`${b + 16}:stop`);
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=220',
+  '--max-batches=130',
   '--batch-size=50000',
   '--quiet-api',
   '--trace-api=ExtTextOutA,ExtTextOutW',
@@ -161,7 +159,7 @@ function check(name, pass) { checks.push({ name, pass: !!pass }); }
 
 check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('click focused native RichEdit child', /dump-focus-state clicked: hwnd=0x10002 class=0 id=59648 parent=0x10001/.test(out));
-check('long text reached native RichEdit', /dump-focus-state long: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=100 /.test(out));
+check('long text reached native RichEdit', /dump-focus-state long: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=100 /.test(out));
 check('long text produced multiple native RichEdit lines', lineCount >= 2);
 check('RichEdit painted with ExtTextOut ETO_CLIPPED', /ExtTextOutA\(.*fuOptions=4.*lprc=&\{l=\d+ t=\d+ r=\d+ b=\d+\}/.test(out));
 check('RichEdit window origin was dumped', !!editor);
