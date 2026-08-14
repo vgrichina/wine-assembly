@@ -14,9 +14,10 @@
       "CopyMetaFileW",
       "EnumMetaFile",
       "PlayMetaFileRecord",
-      "CreateMetaFileA/W records into a canonical 640x480 WAT surface; CloseMetaFile serializes a standard META_STRETCHDIB WMF and PlayMetaFile parses and replays that bitmap record through the WAT rasterizer",
+      "CreateMetaFileA/W records into a canonical 640x480 WAT surface; CloseMetaFile serializes a standard META_STRETCHDIB WMF and PlayMetaFile replays supported bitmap and vector records through the WAT rasterizer",
       "PlayEnhMetaFile validates and replays EMR_STRETCHDIBITS; GetWinMetaFileBits and SetWinMetaFileBits preserve supported bitmap content across standard WMF/EMF streams",
-      "General vector WMF/EMF object and state records plus EnumMetaFile callbacks are not preserved; unsupported well-formed records are skipped during playback and raster conversion"
+      "Classic WMF playback supports mapping, colors, ROP2, fill mode, SaveDC/RestoreDC, pen/brush creation-selection-deletion, lines, rectangles, ellipses, round rectangles, polygons, and polylines",
+      "Vector EMF records, WMF text/region records, and EnumMetaFile callbacks are not preserved; unsupported well-formed records are skipped during playback and raster conversion"
     ],
     "printer": [
       "CreateDCA/W and PrintDlg allocate a WAT-owned 2400x3150 32-bpp page; StartDoc/StartPage/EndPage/EndDoc/AbortDoc enforce job ordering and each page begins white",

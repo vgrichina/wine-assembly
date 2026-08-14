@@ -32,6 +32,31 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write32(data + 18, 3);
     return data;
   };
+  const makeVectorWmf = records => {
+    const encoded = records.map(({ fn, params = [] }) => ({
+      fn,
+      params,
+      words: 3 + params.length,
+    }));
+    const totalWords = 9 + encoded.reduce((sum, record) => sum + record.words, 0);
+    const data = allocZero(totalWords * 2);
+    wat.guest_write16(data, 1);
+    wat.guest_write16(data + 2, 9);
+    wat.guest_write16(data + 4, 0x0300);
+    wat.guest_write32(data + 6, totalWords);
+    wat.guest_write16(data + 10, 2);
+    wat.guest_write32(data + 12, Math.max(...encoded.map(record => record.words)));
+    let offset = 18;
+    for (const record of encoded) {
+      wat.guest_write32(data + offset, record.words);
+      wat.guest_write16(data + offset + 4, record.fn);
+      for (let i = 0; i < record.params.length; i++) {
+        wat.guest_write16(data + offset + 6 + i * 2, record.params[i]);
+      }
+      offset += record.words * 2;
+    }
+    return { data, size: totalWords * 2 };
+  };
   const makeEmf = () => {
     const data = allocZero(108);
     wat.guest_write32(data, 1);
@@ -76,16 +101,16 @@ const { bootRenderHarness } = require('./render-helper');
     const metafile = wat.test_call_CloseMetaFile(recording) >>> 0;
     assert(metafile);
     const required = wat.test_call_GetMetaFileBitsEx(metafile, 0, 0) >>> 0;
-    assert.strictEqual(required, 640 * 480 * 4 + 120);
+    assert.strictEqual(required, 640 * 480 * 4 + 130);
     const stream = allocZero(required);
     assert.strictEqual(wat.test_call_GetMetaFileBitsEx(metafile, required, stream), required);
     assert.strictEqual(wat.guest_read32(stream + 6) * 2, required,
       'METAHEADER size must cover the complete stream');
-    assert.strictEqual(read16(stream + 50), 0x0f43,
+    assert.strictEqual(read16(stream + 60), 0x0f43,
       'recording must use the standard META_STRETCHDIB record');
-    assert.strictEqual(wat.guest_read32(stream + 74), 40);
-    assert.strictEqual(wat.guest_read32(stream + 78), 640);
-    assert.strictEqual(wat.guest_read32(stream + 82) | 0, -480);
+    assert.strictEqual(wat.guest_read32(stream + 84), 40);
+    assert.strictEqual(wat.guest_read32(stream + 88), 640);
+    assert.strictEqual(wat.guest_read32(stream + 92) | 0, -480);
 
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     const bitmap = wat.test_call_CreateCompatibleBitmap(0, 640, 480) >>> 0;
@@ -96,6 +121,73 @@ const { bootRenderHarness } = require('./render-helper');
       'replay must restore recorded geometry');
     assert.strictEqual(wat.test_call_GetPixel(hdc, 0, 0) >>> 0, 0x00ffffff,
       'replay must preserve the recording surface background');
+    assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
+  });
+
+  check('classic WMF vector records replay through canonical WAT state and pixels', () => {
+    const { data, size } = makeVectorWmf([
+      { fn: 0x0103, params: [8] },                         // META_SETMAPMODE
+      { fn: 0x020c, params: [48, 64] },                    // META_SETWINDOWEXT
+      { fn: 0x020e, params: [96, 128] },                   // META_SETVIEWPORTEXT
+      { fn: 0x02fa, params: [0, 1, 0, 0x00ff, 0] },       // red pen
+      { fn: 0x02fc, params: [0, 0, 0x00ff, 0] },          // blue brush
+      { fn: 0x012d, params: [0] },                         // select pen
+      { fn: 0x012d, params: [1] },                         // select brush
+      { fn: 0x001e },                                      // save DC
+      { fn: 0x0104, params: [7] },                         // temporary XOR ROP2
+      { fn: 0x0127, params: [0xffff] },                    // restore DC -1
+      { fn: 0x041b, params: [15, 20, 5, 5] },             // rectangle
+      { fn: 0x0418, params: [20, 40, 5, 25] },            // ellipse
+      { fn: 0x061c, params: [4, 4, 35, 60, 25, 40] },     // round rectangle
+      { fn: 0x0324, params: [3, 45, 5, 60, 5, 52, 20] },  // polygon
+      { fn: 0x0325, params: [3, 5, 30, 20, 35, 35, 30] }, // polyline
+      { fn: 0x0214, params: [40, 2] },                     // move to
+      { fn: 0x0213, params: [40, 30] },                    // line to
+      { fn: 0x012d, params: [0x8007] },                    // stock black pen
+      { fn: 0x012d, params: [0x8000] },                    // stock white brush
+      { fn: 0x01f0, params: [0] },                         // delete pen
+      { fn: 0x01f0, params: [1] },                         // delete brush
+      { fn: 0x0000 },                                      // EOF
+    ]);
+    const metafile = wat.test_call_SetMetaFileBitsEx(size, data) >>> 0;
+    assert(metafile);
+
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 128, 96) >>> 0;
+    const callerPen = wat.test_call_CreatePen(0, 1, 0x0000ff00) >>> 0;
+    const callerBrush = wat.test_call_CreateSolidBrush(0x0000ffff) >>> 0;
+    assert(bitmap && callerPen && callerBrush);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+    wat.test_call_SelectObject(hdc, callerPen);
+    wat.test_call_SelectObject(hdc, callerBrush);
+    const reusable = wat.test_call_CreateSolidBrush(0x00010101) >>> 0;
+    assert(reusable);
+    assert.strictEqual(wat.test_call_DeleteObject(reusable), 1);
+
+    assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 10, 10) >>> 0, 0x000000ff,
+      'mapped rectangle edge must use the metafile pen');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 20) >>> 0, 0x00ff0000,
+      'mapped rectangle interior must use the metafile brush');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 65, 25) >>> 0, 0x00ff0000,
+      'ellipse interior must replay through the integer rasterizer');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 100, 60) >>> 0, 0x00ff0000,
+      'round-rectangle interior must replay through the integer rasterizer');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 104, 20) >>> 0, 0x00ff0000,
+      'polygon interior must replay through the integer rasterizer');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 80) >>> 0, 0x000000ff,
+      'MoveTo/LineTo must honor the mapped current position');
+    assert.strictEqual(wat.test_call_GetCurrentObject(hdc, 1) >>> 0, callerPen,
+      'playback must restore the caller pen');
+    assert.strictEqual(wat.test_call_GetCurrentObject(hdc, 2) >>> 0, callerBrush,
+      'playback must restore the caller brush');
+    for (let i = 0; i < 140; i++) {
+      assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1,
+        'repeated playback must not exhaust the WAT object table');
+    }
+    const recycled = wat.test_call_CreateSolidBrush(0x00020202) >>> 0;
+    assert(recycled, 'temporary WMF objects must be released after playback');
+    assert.strictEqual(wat.test_call_DeleteObject(recycled), 1);
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
   });
 
@@ -158,11 +250,11 @@ const { bootRenderHarness } = require('./render-helper');
       'EMR_STRETCHDIBITS replay must preserve recorded color');
 
     const required = wat.test_call_GetWinMetaFileBits(emf, 0, 0, 8, 0) >>> 0;
-    assert.strictEqual(required, 640 * 480 * 4 + 120);
+    assert.strictEqual(required, 640 * 480 * 4 + 130);
     const wmf = allocZero(required);
     assert.strictEqual(wat.test_call_GetWinMetaFileBits(emf, required, wmf, 8, 0), required);
     assert.strictEqual(read16(wmf + 2), 9);
-    assert.strictEqual(read16(wmf + 50), 0x0f43);
+    assert.strictEqual(read16(wmf + 60), 0x0f43);
     const converted = wat.test_call_SetMetaFileBitsEx(required, wmf) >>> 0;
     assert(converted);
     const wmfDc = wat.test_call_CreateCompatibleDC(0) >>> 0;

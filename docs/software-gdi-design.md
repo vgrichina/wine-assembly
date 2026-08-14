@@ -71,8 +71,13 @@ faithful replay of all drawing that reached the recording surface. Native
 the destination rectangle transform supplied to `PlayEnhMetaFile`.
 `GetWinMetaFileBits` and `SetWinMetaFileBits` convert supported bitmap records
 by replaying through a temporary canonical surface and serializing the target
-standard format. Native vector record preservation and enumeration callbacks
-remain separate compatibility layers.
+standard format. Classic WMF playback also interprets common mapping, color,
+ROP2, fill-mode, SaveDC/RestoreDC, pen/brush lifetime, line, rectangle,
+ellipse, round-rectangle, polygon, and polyline records directly in WAT. Its
+object table is bounded by `mtNoObjects`; playback restores the caller DC and
+deletes all surviving temporary objects on success or failure. Vector EMF,
+WMF text/region records, and enumeration callbacks remain separate
+compatibility layers.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
