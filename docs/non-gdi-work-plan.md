@@ -342,8 +342,10 @@ transfer breadth below.
   `IOleObject::GetClipboardData` snapshots cached stream/storage media.
 - [x] Add guest-aware, atomic `IOleObject::InitFromData` cache import and
   retirement of the displaced guest-owned cache.
-- Add durable `OleFlushClipboard` value snapshots for DLL-private
-  streams/storage.
+- [x] Add durable `OleFlushClipboard` value snapshots for DLL-private
+  streams through guest `Clone`/`Seek`/`CopyTo`, preserving the logical seek
+  position and publishing the complete multi-format result atomically.
+- Add the matching DLL-private `IStorage::CopyTo` value-snapshot path.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -455,6 +457,19 @@ new or old callbacks leave the live cache and all reference counts unchanged;
 source and imported cache retain independent balanced ownership. The guest
 callback suite passes 68/68; data-object, static-handler, storage, and WordPad
 gates remain green at 55/55, 65/65, 68/68, and 13/13.
+
+2026-08-13 guest-stream-flush result: public `OleFlushClipboard` now snapshots
+DLL-private `IStream` media by invoking the provider's real `Clone`, querying
+the clone seek position, copying its complete value into a new local stream,
+and restoring that logical position on the durable copy. The source stream is
+never repositioned. Ordinary HGLOBAL/local stream/local storage formats are
+staged beside it in a detached `IDataObject`; no format is published until the
+whole collection succeeds. A malformed later guest stream leaves the original
+clipboard owner and all earlier formats untouched. After publication, a final
+former owner releases its guest media through the existing suspended teardown
+bridge. The guest callback suite passes 74/74, including rejection of a `Clone`
+that aliases the source seek pointer. DLL-private `IStorage::CopyTo`
+is the remaining `OleFlushClipboard` value-lifetime slice.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage

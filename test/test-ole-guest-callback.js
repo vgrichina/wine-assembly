@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
+const apiTable = require('../src/api_table.json');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -113,6 +114,26 @@ async function main() {
     e.call_func(fn, argv[0], argv[1], argv[2], argv[3]);
     for (let i = 0; i < 200 && e.get_eip(); i++) e.run(5000);
     assert.strictEqual(e.get_eip(), 0, `method ${index} callback continuation must terminate`);
+    return e.get_eax() >>> 0;
+  };
+
+  // Reuse one loaded import-thunk slot to exercise a public API handler that
+  // calc.exe does not itself import. The thunk record is restored after the
+  // suspended guest callback chain has completely returned.
+  const callApi = name => {
+    const api = apiTable.find(entry => entry.name === name);
+    assert(api, `${name} must exist in api_table.json`);
+    const thunkWa = 0x07112000;
+    const thunkGuest = (thunkWa - guestBase + imageBase) >>> 0;
+    const view = new DataView(memory.buffer);
+    const savedName = view.getUint32(thunkWa, true);
+    const savedId = view.getUint32(thunkWa + 4, true);
+    view.setUint32(thunkWa + 4, api.id >>> 0, true);
+    e.call_func(thunkGuest, 0, 0, 0, 0);
+    for (let i = 0; i < 400 && e.get_eip(); i++) e.run(5000);
+    view.setUint32(thunkWa, savedName, true);
+    view.setUint32(thunkWa + 4, savedId, true);
+    assert.strictEqual(e.get_eip(), 0, `${name} callback continuation must terminate`);
     return e.get_eax() >>> 0;
   };
 
@@ -917,6 +938,133 @@ async function main() {
     read(cacheMutationRoot + 104) === 1 && read(uncacheReleaser + 4) === 0 &&
     read(uncacheReleaser + 12) === 1 && read(uncachePayload) === 0xfaceb00c);
   assert.strictEqual(callMethod(cacheMutationInterface, 2), 0);
+
+  // Turn a normal emulator stream into a DLL-private-style interface by
+  // copying its API-thunk vtable. Its object layout and method behavior stay
+  // real, while ole_interface_is_local deliberately treats the new vtable as
+  // external and therefore exercises Clone through suspended guest x86.
+  const flushSource = e.test_ole_create_stream(0, 0) >>> 0;
+  const localStreamVtable = read(flushSource);
+  const guestStreamVtable = alloc(14 * 4);
+  for (let i = 0; i < 14; i++) write(guestStreamVtable + i * 4, read(localStreamVtable + i * 4));
+  // Wrap Clone in guest x86 and rewrite its returned local clone to the same
+  // DLL-private-style vtable. Seek, CopyTo, and Release then all resume through
+  // operation 17 instead of taking the local fast path.
+  const guestCloneCode = alloc(40);
+  bytes.set([
+    0x8b, 0x44, 0x24, 0x08,       // mov eax,[esp+8] (ppstm)
+    0x50,                         // push eax
+    0x8b, 0x44, 0x24, 0x08,       // mov eax,[esp+8] (this after push)
+    0x50,                         // push eax
+    0xb8, 0, 0, 0, 0,             // mov eax,local Clone API thunk
+    0xff, 0xd0,                   // call eax
+    0x8b, 0x54, 0x24, 0x08,       // mov edx,[esp+8] (ppstm)
+    0x8b, 0x12,                   // mov edx,[edx] (clone)
+    0x8b, 0x4c, 0x24, 0x04,       // mov ecx,[esp+4] (source)
+    0x8b, 0x09,                   // mov ecx,[ecx] (guest vtable)
+    0x89, 0x0a,                   // mov [edx],ecx
+    0xc2, 0x08, 0x00,             // ret 8
+  ], wa(guestCloneCode));
+  write(guestCloneCode + 11, read(localStreamVtable + 13 * 4));
+  write(guestStreamVtable + 13 * 4, guestCloneCode);
+  write(flushSource, guestStreamVtable);
+  const flushBytes = Buffer.from('hello guest stream');
+  const flushInput = alloc(flushBytes.length);
+  bytes.set(flushBytes, wa(flushInput));
+  const flushCount = alloc(4);
+  assert.strictEqual(e.test_ole_stream_write(flushSource, flushInput, flushBytes.length, flushCount), 0);
+  e.test_ole_stream_seek(flushSource, 6);
+  // Keep one caller reference so the test can prove that final clipboard-owner
+  // retirement releases only its own guest stream reference after publication.
+  assert.strictEqual(e.test_ole_addref(flushSource), 2);
+  const flushFormat = makeFormat(0xc524, 4);
+  const flushMedium = alloc(12);
+  write(flushMedium, 4);
+  write(flushMedium + 4, flushSource);
+  write(flushMedium + 8, 0);
+  const flushOwner = e.test_ole_create_data_object(0, 0) >>> 0;
+  assert.strictEqual(e.test_ole_data_set(flushOwner, flushFormat, flushMedium, 1), 0);
+  e.test_ole_set_clipboard(flushOwner);
+  assert.strictEqual(e.test_ole_release(flushOwner), 1);
+  const flushHr = callApi('OleFlushClipboard');
+  const durableOwner = e.test_ole_get_clipboard() >>> 0;
+  const durableMedium = alloc(12);
+  const durableGetHr = e.test_ole_data_get(durableOwner, flushFormat, durableMedium) >>> 0;
+  const durableStream = read(durableMedium + 4);
+  const durableOutput = alloc(flushBytes.length);
+  e.test_ole_stream_seek(durableStream, 0);
+  const durableReadHr = e.test_ole_stream_read(
+    durableStream, durableOutput, flushBytes.length, flushCount) >>> 0;
+  check('OleFlushClipboard deep-copies a DLL-private stream through Clone/Seek/CopyTo',
+    flushHr === 0 && durableOwner !== flushOwner && durableGetHr === 0 &&
+    durableStream !== flushSource && durableReadHr === 0 &&
+    Buffer.from(bytes.subarray(wa(durableOutput), wa(durableOutput) + flushBytes.length)).equals(flushBytes));
+  check('guest stream snapshot preserves the source position and retires only clipboard ownership',
+    e.test_ole_stream_position(flushSource) === 6 && read(flushSource + 4) === 1);
+  e.test_ole_stream_seek(durableStream, 6);
+  check('durable stream starts at the original logical seek position',
+    e.test_ole_stream_position(durableStream) === 6);
+  const changedByte = alloc(1);
+  bytes[wa(changedByte)] = '!'.charCodeAt(0);
+  e.test_ole_stream_seek(flushSource, 0);
+  assert.strictEqual(e.test_ole_stream_write(flushSource, changedByte, 1, flushCount), 0);
+  e.test_ole_stream_seek(durableStream, 0);
+  assert.strictEqual(e.test_ole_stream_read(
+    durableStream, durableOutput, flushBytes.length, flushCount), 0);
+  check('mutating the provider stream after flush cannot change the durable clipboard value',
+    bytes[wa(durableOutput)] === 'h'.charCodeAt(0));
+  e.test_ole_release_medium(durableMedium);
+  assert.strictEqual(e.test_ole_release(durableOwner), 1);
+  assert.strictEqual(e.test_ole_release(flushSource), 0);
+
+  const rejectedSource = e.test_ole_create_stream(0, 0) >>> 0;
+  const rejectedLocalVtable = read(rejectedSource);
+  const rejectedGuestVtable = alloc(14 * 4);
+  for (let i = 0; i < 14; i++) write(rejectedGuestVtable + i * 4, read(rejectedLocalVtable + i * 4));
+  write(rejectedSource, rejectedGuestVtable);
+  const rejectedClone = read(rejectedGuestVtable + 13 * 4);
+  write(rejectedGuestVtable + 13 * 4, 0);
+  const rejectedOwner = e.test_ole_create_data_object(0, 0) >>> 0;
+  const rejectedGlobalFormat = makeFormat(0xc525, 1);
+  const rejectedGlobalPayload = alloc(8);
+  write(rejectedGlobalPayload, 0x12345678);
+  const rejectedGlobalMedium = alloc(12);
+  write(rejectedGlobalMedium, 1);
+  write(rejectedGlobalMedium + 4, rejectedGlobalPayload);
+  write(rejectedGlobalMedium + 8, 0);
+  assert.strictEqual(e.test_ole_data_set(
+    rejectedOwner, rejectedGlobalFormat, rejectedGlobalMedium, 1), 0);
+  const rejectedStreamFormat = makeFormat(0xc526, 4);
+  const rejectedStreamMedium = alloc(12);
+  write(rejectedStreamMedium, 4);
+  write(rejectedStreamMedium + 4, rejectedSource);
+  write(rejectedStreamMedium + 8, 0);
+  assert.strictEqual(e.test_ole_data_set(
+    rejectedOwner, rejectedStreamFormat, rejectedStreamMedium, 1), 0);
+  e.test_ole_set_clipboard(rejectedOwner);
+  const rejectedHr = callApi('OleFlushClipboard');
+  check('OleFlushClipboard rejects a malformed later guest format without partial publication',
+    rejectedHr === 0x80004002 && e.clipboard_ole_data_object() === rejectedOwner &&
+    e.test_ole_data_count(rejectedOwner) === 2 && read(rejectedGlobalPayload) === 0x12345678);
+  const identityCloneCode = alloc(24);
+  bytes.set([
+    0x8b, 0x44, 0x24, 0x04,       // mov eax,[esp+4] (this)
+    0xff, 0x40, 0x04,             // inc dword [eax+4] (returned reference)
+    0x8b, 0x54, 0x24, 0x08,       // mov edx,[esp+8] (ppstm)
+    0x89, 0x02,                   // mov [edx],eax
+    0x31, 0xc0,                   // xor eax,eax (S_OK)
+    0xc2, 0x08, 0x00,             // ret 8
+  ], wa(identityCloneCode));
+  write(rejectedGuestVtable + 13 * 4, identityCloneCode);
+  e.test_ole_stream_seek(rejectedSource, 7);
+  check('OleFlushClipboard rejects a non-independent Clone without moving or leaking the source',
+    callApi('OleFlushClipboard') === 0x80004002 &&
+    e.clipboard_ole_data_object() === rejectedOwner &&
+    e.test_ole_stream_position(rejectedSource) === 7 && read(rejectedSource + 4) === 1);
+  write(rejectedGuestVtable + 13 * 4, rejectedClone);
+  e.test_ole_set_clipboard(0);
+  assert.strictEqual(read(rejectedOwner + 4), 1);
+  assert.strictEqual(callMethod(rejectedOwner, 2), 0);
 
   console.log(`\n${checks}/${checks} guest COM callback checks passed`);
 }

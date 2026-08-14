@@ -57,8 +57,13 @@ and publishes only the fully owned result. CF_DIB render mirroring is already a
 deep HGLOBAL byte copy. `InitFromData` now performs the inverse operation with a
 detached cache: it retains all new guest media, swaps only after complete
 preflight, and asynchronously retires the displaced guest cache. Durable
-`OleFlushClipboard` value snapshots of DLL-private streams/storage remain the
-next lifetime gap.
+`OleFlushClipboard` now deep-copies DLL-private streams through the provider's
+real guest `Clone`/`Seek`/`CopyTo` methods, preserves the original logical seek
+position without moving the source, publishes multi-format results atomically,
+and retires the former owner only after publication. The real guest callback
+suite passes 74/74, including malformed-later-format rollback and rejection of
+a `Clone` that aliases the source seek pointer. DLL-private
+`IStorage::CopyTo` is the remaining clipboard-flush value-lifetime gap.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off
