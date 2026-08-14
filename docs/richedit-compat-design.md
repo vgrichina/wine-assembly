@@ -47,8 +47,11 @@ now retire displaced media through that bridge as well. Canonical text
 synthesis moves unrelated guest ownership intact and consumes guest-released
 `fRelease` inputs asynchronously. `IDataObject::GetData` now returns guest
 stream/storage media only after a real suspended guest `AddRef`, publishing no
-partial output when that method is missing. Non-transferring guest `AddRef`
-during `SetData`, snapshots, and render-slot mirroring remains the next lifetime
+partial output when that method is missing. Non-transferring `IDataObject` and
+`IOleCache::SetData` now use the same guest `AddRef` bridge, retain the caller's
+input medium unchanged, roll the acquired reference back if mutation fails,
+and retire displaced guest media before return. Guest `AddRef` during
+clipboard/cache snapshots and render-slot mirroring remains the next lifetime
 gap.
 
 The first general embedded-object persistence slice is also complete.

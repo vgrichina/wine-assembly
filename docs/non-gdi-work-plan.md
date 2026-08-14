@@ -336,8 +336,10 @@ transfer breadth below.
   `IOleCache::SetData` replacement, and `IOleCache::Uncache`.
 - [x] Add suspended guest `AddRef` completion when `IDataObject::GetData`
   returns a DLL-private stream or storage interface.
-- Add suspended guest `AddRef` completion for `fRelease=FALSE` `SetData`,
-  clipboard/cache snapshots, and CF_DIB render-slot mirroring.
+- [x] Add suspended guest `AddRef` completion for `fRelease=FALSE`
+  `IDataObject::SetData` and `IOleCache::SetData` stream/storage media.
+- Add suspended guest `AddRef` completion for clipboard/cache snapshots and
+  CF_DIB render-slot mirroring.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -415,6 +417,17 @@ without affecting the stored custom releaser. A missing guest method returns
 `E_NOINTERFACE` with a fully zeroed output. The guest callback suite passes
 52/52; data-object, static-handler, storage, callback-state, and WordPad gates
 remain green at 55/55, 65/65, 68/68, PASS, and 13/13.
+
+2026-08-13 guest-SetData result: non-transferring `IDataObject::SetData` and
+`IOleCache::SetData` now stage DLL-private IStream/IStorage media, suspend for
+their real guest `AddRef`, and publish through the ordinary transfer path only
+after the new reference exists. The caller's `STGMEDIUM` remains unchanged. If
+the later mutation fails, the continuation rolls the new reference back with
+guest `Release`; successful replacement retires displaced guest media before
+returning. Missing callback slots and malformed prior ownership leave both
+object state and caller input intact. The guest callback suite passes 57/57;
+data-object, static-handler, storage, and WordPad gates remain green at 55/55,
+65/65, 68/68, and 13/13.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage

@@ -4347,11 +4347,60 @@
   (func $handle_IDataObject_GetCanonicalFormatEtc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $zero_memory (call $g2w (local.get $arg2)) (i32.const 20))))
     (global.set $eax (i32.const 0x00040130)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; Retain a DLL-private stream/storage for SetData(..., FALSE) without
+  ;; publishing the mutation until its real guest AddRef has completed. The
+  ;; staged medium is later passed through the normal transfer path, keeping
+  ;; the caller's original STGMEDIUM unchanged. kind 0 selects IDataObject;
+  ;; kind 1 selects IOleCache.
+  (func $ole_set_data_guest_addref_api
+      (param $target i32) (param $formatetc i32) (param $medium i32)
+      (param $kind i32) (param $pop_bytes i32) (result i32)
+    (local $iface i32) (local $staged i32) (local $retired_out i32)
+    (local $ret i32) (local $ctx i32)
+    (local.set $iface (call $ole_medium_data_interface (local.get $medium)))
+    ;; Validate both ends of the transaction before AddRef. Release is needed
+    ;; to roll the retained reference back if the subsequent commit fails.
+    (if (i32.or
+          (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 1)))
+          (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 2))))
+      (then (global.set $eax (i32.const 0x80004002)) (return (i32.const 0))))
+    (local.set $staged (call $heap_alloc (i32.const 12)))
+    (local.set $retired_out (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $staged)) (i32.eqz (local.get $retired_out)))
+      (then
+        (if (local.get $staged) (then (call $heap_free (local.get $staged))))
+        (if (local.get $retired_out) (then (call $heap_free (local.get $retired_out))))
+        (global.set $eax (i32.const 0x8007000E))
+        (return (i32.const 0))))
+    (memory.copy (call $g2w (local.get $staged)) (call $g2w (local.get $medium)) (i32.const 12))
+    (call $gs32 (local.get $retired_out) (i32.const 0))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 14) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (local.get $pop_bytes))
+      (local.get $target) (local.get $formatetc) (local.get $staged)
+      (local.get $retired_out) (local.get $kind)))
+    (drop (call $ole_guest_callback_invoke1
+      (local.get $ctx) (local.get $iface) (i32.const 1)))
+    (i32.const 1))
+
   (func $handle_IDataObject_SetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $retired_out i32) (local $retired i32) (local $hr i32)
+    (local $retired_out i32) (local $retired i32) (local $hr i32) (local $data_iface i32)
     (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
       (then (global.set $eax (i32.const 0x80004003)))
       (else
+        (local.set $data_iface (call $ole_medium_data_interface (local.get $arg2)))
+        (if (i32.and
+              (i32.and (i32.eqz (local.get $arg3)) (i32.ne (local.get $data_iface) (i32.const 0)))
+              (i32.eqz (call $ole_interface_is_local (local.get $data_iface))))
+          (then
+            (if (call $ole_set_data_guest_addref_api
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2)
+                  (i32.const 0) (i32.const 20))
+              (then (return)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))
         (local.set $retired_out (call $heap_alloc (i32.const 4)))
         (if (i32.eqz (local.get $retired_out))
           (then (global.set $eax (i32.const 0x8007000E)))
@@ -4641,11 +4690,12 @@
   ;; 8/9/10: EnumAdvise snapshot AddRef, final Release, and Next AddRef;
   ;; 11: ReleaseStgMedium interface and pUnkForRelease sequence;
   ;; 12: final IDataObject-owned guest-media teardown;
-  ;; 13: IDataObject GetData guest AddRef completion.
+  ;; 13: IDataObject GetData guest AddRef completion;
+  ;; 14: IDataObject/IOleCache SetData guest AddRef transaction.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
-    (local $hr i32)
+    (local $hr i32) (local $phase i32) (local $iface i32) (local $retired i32)
     (local.set $ctx (global.get $esp))
     (local.set $operation (call $gl32 (i32.add (local.get $ctx) (i32.const 4))))
     (local.set $stage (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
@@ -4752,6 +4802,60 @@
         (call $gs32 (local.get $p1) (local.get $p2))
         (call $gs32 (i32.add (local.get $p1) (i32.const 4)) (local.get $p3))
         (call $gs32 (i32.add (local.get $p1) (i32.const 8)) (i32.const 0))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 14))
+      (then
+        (local.set $phase (call $gl32 (i32.add (local.get $ctx) (i32.const 44))))
+        (if (i32.eq (local.get $phase) (i32.const 1))
+          (then
+            ;; Finish releasing media displaced by the committed mutation.
+            (if (call $ole_owned_media_release_next (local.get $ctx))
+              (then (return)))
+            (drop (call $ole_obj_release (local.get $root)))
+            (call $ole_guest_callback_finish (local.get $ctx) (local.get $p4))
+            (return)))
+        (if (i32.eq (local.get $phase) (i32.const 2))
+          (then
+            ;; The commit failed after AddRef; its guest Release rollback has
+            ;; now completed, so return the original failure atomically.
+            (call $ole_guest_callback_finish (local.get $ctx) (local.get $p4))
+            (return)))
+        (local.set $iface (call $ole_medium_data_interface (local.get $p2)))
+        (if (i32.eqz (local.get $p4))
+          (then
+            (local.set $hr (call $ole_data_set_with_text_conversions_with_retired
+              (local.get $root) (local.get $p1) (local.get $p2)
+              (i32.const 1) (local.get $p3))))
+          (else
+            (local.set $hr (call $ole_cache_set_data_with_retired
+              (local.get $root) (local.get $p1) (local.get $p2)
+              (i32.const 1) (local.get $p3)))))
+        (local.set $retired (call $gl32 (local.get $p3)))
+        (call $heap_free (local.get $p2))
+        (call $heap_free (local.get $p3))
+        (if (local.get $hr)
+          (then
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 24)) (local.get $iface))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 36)) (local.get $hr))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 44)) (i32.const 2))
+            (drop (call $ole_guest_callback_invoke1
+              (local.get $ctx) (local.get $iface) (i32.const 2)))
+            (return)))
+        (if (local.get $retired)
+          (then
+            ;; Reuse this continuation frame for the normal owned-media
+            ;; teardown bridge. stage=2 discards the completed AddRef state.
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 20)) (local.get $retired))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 32)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 36)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 44)) (i32.const 1))
+            (if (call $ole_owned_media_release_next (local.get $ctx))
+              (then (return)))
+            (drop (call $ole_obj_release (local.get $retired)))))
         (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
@@ -6247,14 +6351,31 @@
   (func $handle_IOleCache_InitCache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
   (func $handle_IOleCache_SetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $retired_out i32) (local $retired i32)
+    (local $retired_out i32) (local $retired i32) (local $root i32) (local $data_iface i32)
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $root (call $ole_static_root (local.get $arg0)))
+    (local.set $data_iface (call $ole_medium_data_interface (local.get $arg2)))
+    (if (i32.and
+          (i32.and (i32.eqz (local.get $arg3)) (i32.ne (local.get $data_iface) (i32.const 0)))
+          (i32.eqz (call $ole_interface_is_local (local.get $data_iface))))
+      (then
+        (if (call $ole_set_data_guest_addref_api
+              (local.get $root) (local.get $arg1) (local.get $arg2)
+              (i32.const 1) (i32.const 20))
+          (then (return)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (local.set $retired_out (call $heap_alloc (i32.const 4)))
     (if (i32.eqz (local.get $retired_out))
       (then (global.set $eax (i32.const 0x8007000E)))
       (else
         (call $gs32 (local.get $retired_out) (i32.const 0))
         (global.set $eax (call $ole_cache_set_data_with_retired
-          (call $ole_static_root (local.get $arg0)) (local.get $arg1)
+          (local.get $root) (local.get $arg1)
           (local.get $arg2) (local.get $arg3) (local.get $retired_out)))
         (local.set $retired (call $gl32 (local.get $retired_out)))
         (call $heap_free (local.get $retired_out))

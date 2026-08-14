@@ -549,6 +549,76 @@ async function main() {
   assert.strictEqual(callMethod(getStorageObject, 2), 0);
   assert.strictEqual(read(getStorageGuest + 4), 0);
 
+  const retainedObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const retainedFormat = makeFormat(0xc51b, 4);
+  const retainedOld = makeGuestSite();
+  const retainedMedium = alloc(12);
+  write(retainedMedium, 4);
+  write(retainedMedium + 4, retainedOld);
+  write(retainedMedium + 8, 0);
+  const retainedOldVtable = read(retainedOld);
+  const retainedOldAddRef = read(retainedOldVtable + 4);
+  write(retainedOldVtable + 4, 0);
+  const malformedRetainHr = callMethod(
+    retainedObject, 7, retainedFormat, retainedMedium, 0);
+  check('IDataObject SetData(FALSE) rejects malformed guest AddRef atomically',
+    malformedRetainHr === 0x80004002 && read(retainedObject + 16) === 0 &&
+    read(retainedMedium) === 4 && read(retainedMedium + 4) === retainedOld &&
+    read(retainedOld + 4) === 1 && read(retainedOld + 8) === 0,
+    `hr=0x${malformedRetainHr.toString(16)} refs=${read(retainedOld + 4)} addrefs=${read(retainedOld + 8)}`);
+  write(retainedOldVtable + 4, retainedOldAddRef);
+  check('IDataObject SetData(FALSE) retains a DLL-private stream through guest AddRef',
+    callMethod(retainedObject, 7, retainedFormat, retainedMedium, 0) === 0 &&
+    read(retainedMedium) === 4 && read(retainedMedium + 4) === retainedOld &&
+    read(retainedMedium + 8) === 0 && read(retainedOld + 4) === 2 &&
+    read(retainedOld + 8) === 1 && read(retainedObject + 16) === 1);
+
+  const retainedNew = makeGuestSite();
+  const retainedNewMedium = alloc(12);
+  write(retainedNewMedium, 4);
+  write(retainedNewMedium + 4, retainedNew);
+  write(retainedNewMedium + 8, 0);
+  const retainedOldRelease = read(retainedOldVtable + 8);
+  write(retainedOldVtable + 8, 0);
+  const retainedRollbackHr = callMethod(
+    retainedObject, 7, retainedFormat, retainedNewMedium, 0);
+  check('failed SetData(FALSE) rolls guest AddRef back and preserves prior ownership',
+    retainedRollbackHr === 0x80004002 && read(retainedObject + 16) === 1 &&
+    read(retainedOld + 4) === 2 && read(retainedOld + 12) === 0 &&
+    read(retainedNew + 4) === 1 && read(retainedNew + 8) === 1 &&
+    read(retainedNew + 12) === 1 && read(retainedNewMedium) === 4 &&
+    read(retainedNewMedium + 4) === retainedNew,
+    `hr=0x${retainedRollbackHr.toString(16)} oldRefs=${read(retainedOld + 4)} newRefs=${read(retainedNew + 4)}`);
+  write(retainedOldVtable + 8, retainedOldRelease);
+  check('SetData(FALSE) replacement retires the old guest ref after retaining the new one',
+    callMethod(retainedObject, 7, retainedFormat, retainedNewMedium, 0) === 0 &&
+    read(retainedOld + 4) === 1 && read(retainedOld + 12) === 1 &&
+    read(retainedNew + 4) === 2 && read(retainedNew + 8) === 2 &&
+    read(retainedNew + 12) === 1 && read(retainedNewMedium) === 4);
+  assert.strictEqual(callMethod(retainedObject, 2), 0);
+  assert.strictEqual(read(retainedNew + 4), 1);
+  assert.strictEqual(callMethod(retainedOld, 2), 0);
+  assert.strictEqual(callMethod(retainedNew, 2), 0);
+
+  const retainedCacheRoot = e.test_ole_create_static_handler(0) >>> 0;
+  const retainedCache = retainedCacheRoot + 52;
+  const retainedCacheFormat = makeFormat(0xc51c, 8);
+  const retainedStorage = makeGuestSite();
+  const retainedStorageMedium = alloc(12);
+  write(retainedStorageMedium, 8);
+  write(retainedStorageMedium + 4, retainedStorage);
+  write(retainedStorageMedium + 8, 0);
+  check('IOleCache SetData(FALSE) retains DLL-private storage without consuming input',
+    callMethod(retainedCache, 7,
+      retainedCacheFormat, retainedStorageMedium, 0) === 0 &&
+    read(retainedStorageMedium) === 8 &&
+    read(retainedStorageMedium + 4) === retainedStorage &&
+    read(retainedStorage + 4) === 2 && read(retainedStorage + 8) === 1 &&
+    read(retainedCacheRoot + 104) === 1);
+  assert.strictEqual(callMethod(retainedCache, 2), 0);
+  assert.strictEqual(read(retainedStorage + 4), 1);
+  assert.strictEqual(callMethod(retainedStorage, 2), 0);
+
   const replaceSequence = alloc(4);
   write(replaceSequence, 0);
   const replaceObject = e.test_ole_create_data_object(0, 0) >>> 0;
