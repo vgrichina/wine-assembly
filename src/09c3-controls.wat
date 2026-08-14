@@ -1744,6 +1744,15 @@
     (local $cmd i32) (local $cc i32) (local $cc_w i32) (local $grid i32)
     (local $sw i32) (local $idx i32)
 
+    ;; CC_ENABLEHOOK lets applications customize the common dialog. Paint's
+    ;; hook changes the stock "Color" caption to "Edit Colors" and expects to
+    ;; observe the normal dialog message stream. A nonzero hook result consumes
+    ;; the message before the common-dialog default behavior.
+    (if (call $colordlg_call_hook
+          (local.get $hwnd) (local.get $msg)
+          (local.get $wParam) (local.get $lParam))
+      (then (return (i32.const 1))))
+
     (if (i32.eq (local.get $msg) (i32.const 0x0085))   ;; WM_NCPAINT
       (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0014))   ;; WM_ERASEBKGND
@@ -1777,6 +1786,30 @@
         (call $modal_done (i32.const 1))
         (return (i32.const 0))))
     (i32.const 0))
+
+  (func $colordlg_call_hook
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cc i32) (local $cc_w i32) (local $flags i32) (local $proc i32)
+    (local $installed i32) (local $result i32)
+    (local.set $cc (call $wnd_get_userdata (local.get $hwnd)))
+    (if (i32.eqz (local.get $cc)) (then (return (i32.const 0))))
+    (local.set $cc_w (call $g2w (local.get $cc)))
+    (local.set $flags (i32.load offset=20 (local.get $cc_w)))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10)))
+      (then (return (i32.const 0))))
+    (local.set $proc (i32.load offset=28 (local.get $cc_w)))
+    (if (i32.eqz (local.get $proc)) (then (return (i32.const 0))))
+    ;; Reuse the bounded synchronous x86 wndproc bridge. The dialog remains a
+    ;; WAT-native common dialog before and after the callback.
+    (local.set $installed (call $wnd_table_get (local.get $hwnd)))
+    (call $wnd_table_set (local.get $hwnd) (local.get $proc))
+    (local.set $result (call $wnd_send_message
+      (local.get $hwnd) (local.get $msg)
+      (local.get $wParam) (local.get $lParam)))
+    (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then (return (i32.const 1))))
+    (call $wnd_table_set (local.get $hwnd) (local.get $installed))
+    (local.get $result))
 
   (func $create_color_dialog (param $dlg i32) (param $owner i32) (param $cc i32)
     (local $grid i32) (local $rgb i32) (local $i i32) (local $sw i32)
@@ -1823,7 +1856,11 @@
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
             (i32.const 130) (i32.const 92) (i32.const 80) (i32.const 24)
             (i32.const 0x50010000)
-            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
+    ;; CCHookProc receives WM_INITDIALOG with lParam pointing at CHOOSECOLOR.
+    ;; Paint uses this to install the expected "Edit Colors" caption.
+    (drop (call $colordlg_call_hook
+      (local.get $dlg) (i32.const 0x0110) (i32.const 0) (local.get $cc))))
 
   ;; ============================================================
   ;; Open / Save common dialog (control class 12)

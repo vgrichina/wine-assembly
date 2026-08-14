@@ -230,8 +230,8 @@ assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host
 assert(indexHtml.includes('lib/host-imports.js?v=200'), 'web host should cache-bust binary text rasterization');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(indexHtml.includes('host.js?v=202'), 'web host should cache-bust host.js after resource-icon fixes');
-assert(hostJs.includes("static SOURCE_VERSION = '202'"), 'web host should cache-bust WAT source compilation');
+assert(indexHtml.includes('host.js?v=204'), 'web host should cache-bust host.js after common-dialog hook fixes');
+assert(hostJs.includes("static SOURCE_VERSION = '204'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
