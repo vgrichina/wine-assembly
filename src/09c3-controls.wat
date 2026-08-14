@@ -6529,11 +6529,9 @@
         (i32.load8_u (i32.add (local.get $src) (local.get $i))))
       (br $copy))))
 
-  (func $toolbar_child_combo_width_by_cmd (param $sw i32) (param $cmd i32) (result i32)
-    (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $wh i32)
-    (local $combo_width i32) (local $parent i32) (local $parent_w i32) (local $cap i32)
-    (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
-    (if (i32.eqz (local.get $toolbar_hwnd)) (then (return (i32.const 0))))
+  (func $toolbar_child_combo_raw_width_by_cmd
+    (param $toolbar_hwnd i32) (param $cmd i32) (result i32)
+    (local $slot i32) (local $ch i32) (local $wh i32)
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $toolbar_hwnd) (local.get $slot)))
@@ -6544,33 +6542,86 @@
             (i32.eq (call $ctrl_table_get_id (local.get $ch)) (local.get $cmd)))
         (then
           (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
-          (local.set $combo_width (i32.and (local.get $wh) (i32.const 0xFFFF)))
-          ;; WordPad creates a 240px font combo even when the whole MFC control
-          ;; bar is only ~394px wide. Native common controls negotiate toolbar
-          ;; item rects tightly enough that trailing format/color buttons still
-          ;; fit. Mirror that bounded behavior by capping only large
-          ;; toolbar-hosted combo item widths, leaving small combos and wider
-          ;; windows unchanged.
-          (if (i32.gt_s (local.get $combo_width) (i32.const 160))
-            (then
-              (local.set $parent (call $wnd_get_parent (local.get $toolbar_hwnd)))
-              (if (local.get $parent)
-                (then
-                  (local.set $parent_w (call $wnd_client_w_for_clip (local.get $parent)))))
-              (if (i32.gt_s (local.get $parent_w) (i32.const 0))
-                (then
-                  ;; Reserve the size combo, separators, and the full trailing
-                  ;; formatting button span so narrow WordPad windows keep the
-                  ;; complete formatting toolbar on one row.
-                  (local.set $cap (i32.sub (local.get $parent_w) (i32.const 268)))
-                  (if (i32.lt_s (local.get $cap) (i32.const 120))
-                    (then (local.set $cap (i32.const 120))))
-                  (if (i32.gt_s (local.get $combo_width) (local.get $cap))
-                    (then (local.set $combo_width (local.get $cap))))))))
-          (return (local.get $combo_width))))
+          (return (i32.and (local.get $wh) (i32.const 0xFFFF)))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  ;; Return an item's unconstrained width without recursing through the
+  ;; large-combo negotiation below. This lets one large embedded control sum
+  ;; any large siblings safely before choosing its own cap.
+  (func $toolbar_button_raw_width (param $sw i32) (param $idx i32) (result i32)
+    (local $count i32) (local $rec i32) (local $width i32) (local $combo_width i32)
+    (local.set $width (i32.load offset=4 (local.get $sw)))
+    (if (i32.le_s (local.get $width) (i32.const 0))
+      (then (local.set $width (i32.const 23))))
+    (local.set $count (i32.load (local.get $sw)))
+    (if (i32.or
+          (i32.eqz (i32.load offset=32 (local.get $sw)))
+          (i32.ge_u (local.get $idx) (local.get $count)))
+      (then (return (local.get $width))))
+    (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $idx)))
+    (if (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01))
+      (then
+        (local.set $combo_width
+          (call $toolbar_child_combo_raw_width_by_cmd
+            (i32.load offset=44 (local.get $sw))
+            (i32.load offset=4 (local.get $rec))))
+        (if (i32.gt_s (local.get $combo_width) (i32.const 0))
+          (then (return (local.get $combo_width))))
+        (local.set $width (i32.load (local.get $rec)))
+        (if (i32.or
+              (i32.lt_s (local.get $width) (i32.const 4))
+              (i32.gt_s (local.get $width) (i32.const 512)))
+          (then (local.set $width (i32.const 8))))))
+    (local.get $width))
+
+  (func $toolbar_child_combo_width_by_cmd (param $sw i32) (param $cmd i32) (result i32)
+    (local $toolbar_hwnd i32) (local $combo_width i32)
+    (local $parent i32) (local $parent_w i32) (local $cap i32)
+    (local $i i32) (local $count i32) (local $rec i32) (local $fixed_width i32)
+    (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
+    (if (i32.eqz (local.get $toolbar_hwnd)) (then (return (i32.const 0))))
+    (local.set $combo_width
+      (call $toolbar_child_combo_raw_width_by_cmd
+        (local.get $toolbar_hwnd) (local.get $cmd)))
+    ;; Some MFC toolbars create a wide combo before the containing control bar
+    ;; receives its final narrow width. Native common controls negotiate the
+    ;; embedded item against its sibling TBBUTTON widths. Do the same for large
+    ;; toolbar-hosted combos, leaving small combos and wide windows unchanged.
+    (if (i32.gt_s (local.get $combo_width) (i32.const 160))
+      (then
+        (local.set $parent (call $wnd_get_parent (local.get $toolbar_hwnd)))
+        (if (local.get $parent)
+          (then
+            (local.set $parent_w (call $wnd_client_w_for_clip (local.get $parent)))))
+        (if (i32.gt_s (local.get $parent_w) (i32.const 0))
+          (then
+            ;; Layout starts at x=2. Sum every raw sibling width, skipping only
+            ;; this combo's separator slot, so the last button remains in bounds.
+            (local.set $fixed_width (i32.const 2))
+            (local.set $count (i32.load (local.get $sw)))
+            (local.set $i (i32.const 0))
+            (block $widths_done (loop $widths
+              (br_if $widths_done (i32.ge_u (local.get $i) (local.get $count)))
+              (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $i)))
+              (if (i32.eqz
+                    (i32.and
+                      (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01))
+                      (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $cmd))))
+                (then
+                  (local.set $fixed_width
+                    (i32.add
+                      (local.get $fixed_width)
+                      (call $toolbar_button_raw_width (local.get $sw) (local.get $i))))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $widths)))
+            (local.set $cap (i32.sub (local.get $parent_w) (local.get $fixed_width)))
+            (if (i32.lt_s (local.get $cap) (i32.const 80))
+              (then (local.set $cap (i32.const 80))))
+            (if (i32.gt_s (local.get $combo_width) (local.get $cap))
+              (then (local.set $combo_width (local.get $cap))))))))
+    (local.get $combo_width))
 
   (func $toolbar_ensure_capacity (param $sw i32) (param $want i32) (result i32)
     (local $cap i32) (local $new_cap i32) (local $new_items i32)

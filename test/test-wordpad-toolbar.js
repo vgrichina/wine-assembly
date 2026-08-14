@@ -82,7 +82,7 @@ for (const l of interesting) console.log('  ' + l);
 function parseWindowByCtrlId(id) {
   const re = new RegExp(
     `window:final hwnd=(\\d+) class=("[^"]*") ctrlClass=(-?\\d+) ctrlId=${id} ` +
-    `parent=(0x[0-9a-f]+)(?: owner=0x[0-9a-f]+)?(?: z=-?\\d+)? pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
+    `parent=(0x[0-9a-f]+)(?: owner=0x[0-9a-f]+)?(?: wndProc=0x[0-9a-f]+)?(?: dialogProc=0x[0-9a-f]+)?(?: z=-?\\d+)? pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
     `client=\\{"x":(-?\\d+),"y":(-?\\d+),"w":(-?\\d+),"h":(-?\\d+)\\} ` +
     `visible=(true|false)(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
     'i');
@@ -264,6 +264,8 @@ const formattingToolbarDump = out.split('\n').find(l => l.includes('toolbar:fina
 const disabledStandardButtonCount = (standardToolbarDump.match(/state=0x0 style=0x0/g) || []).length;
 const formattingButtons = parseToolbarButtons(formattingToolbarDump);
 const formattingRects = formattingButtons.map(button => button.rect);
+const fontComboSlot = formattingButtons.find(button => button.command === 165);
+const sizeComboSlot = formattingButtons.find(button => button.command === 166);
 const formattingRectsBounded =
   formatting &&
   formattingRects.length >= 14 &&
@@ -279,19 +281,25 @@ const disabledStandardIconColorPixels = countColorPixelsInRegions(PNG_OUT, [
   [214, 44, 230, 60],
   [237, 44, 253, 60],
 ]);
-const fontComboWhitePixels = fontCombo
-  ? countWhitePixels(PNG_OUT, fontCombo.clientX + 4, fontCombo.clientY + 4,
-      fontCombo.clientX + fontCombo.clientW - 22, fontCombo.clientY + 18)
+const fontComboWhitePixels = formatting && fontComboSlot
+  ? countWhitePixels(PNG_OUT,
+      formatting.clientX + fontComboSlot.rect[0] + 2,
+      formatting.clientY + fontComboSlot.rect[1] + 2,
+      formatting.clientX + fontComboSlot.rect[2] - 18,
+      formatting.clientY + fontComboSlot.rect[1] + 16)
   : 0;
-const sizeComboWhitePixels = sizeCombo
-  ? countWhitePixels(PNG_OUT, sizeCombo.clientX + 4, sizeCombo.clientY + 4,
-      sizeCombo.clientX + sizeCombo.clientW - 22, sizeCombo.clientY + 18)
+const sizeComboWhitePixels = formatting && sizeComboSlot
+  ? countWhitePixels(PNG_OUT,
+      formatting.clientX + sizeComboSlot.rect[0] + 2,
+      formatting.clientY + sizeComboSlot.rect[1] + 2,
+      formatting.clientX + sizeComboSlot.rect[2] - 18,
+      formatting.clientY + sizeComboSlot.rect[1] + 16)
   : 0;
-const fontComboWhiteTarget = fontCombo
-  ? Math.floor(Math.max(0, fontCombo.clientW - 26) * 14 * 0.55)
+const fontComboWhiteTarget = fontComboSlot
+  ? Math.floor(Math.max(0, fontComboSlot.rect[2] - fontComboSlot.rect[0] - 20) * 14 * 0.55)
   : Infinity;
-const sizeComboWhiteTarget = sizeCombo
-  ? Math.floor(Math.max(0, sizeCombo.clientW - 26) * 14 * 0.55)
+const sizeComboWhiteTarget = sizeComboSlot
+  ? Math.floor(Math.max(0, sizeComboSlot.rect[2] - sizeComboSlot.rect[0] - 20) * 14 * 0.55)
   : Infinity;
 const openedNewDialog =
   /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);

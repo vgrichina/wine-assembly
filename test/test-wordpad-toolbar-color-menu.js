@@ -49,10 +49,11 @@ const seq = [
   '110:menu-dump:color',
   `112:png:${POPUP_PNG}`,
 
-  // Row #12 is #801a / Blue.
-  '120:mousemove:275:345',
+  // Row #12 is #801a / Blue. Aim inside the row rather than at the popup's
+  // one-pixel left border.
+  '120:mousemove:300:345',
   '122:menu-dump:hover-blue',
-  '124:click:275:345',
+  '124:click:300:345',
 
   // Refocus/reselect the document text for a stable CHARFORMAT assertion.
   '142:click:40:150',
