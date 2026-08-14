@@ -14,9 +14,9 @@ The product promise is:
 
 There is no authoritative Internet game service. For Liquid War,
 `lwwinsrv.exe` remains the authoritative server and runs inside the host's
-browser. A lightweight rendezvous service introduces browsers, and an
+browser. Authenticated Berrry public-data records introduce browsers, and an
 encrypted relay may carry opaque bytes when a direct path is impossible.
-Neither understands or simulates Liquid War.
+Neither Berrry nor the relay understands or simulates Liquid War.
 
 ## TL;DR
 
@@ -94,7 +94,8 @@ Choose Liquid War
 │                                                              │
 │ Room name        MOLTEN-MOON                                 │
 │ Teams            6                                          │
-│ Passphrase       optional                                   │
+│ Room type        (●) Private link   ( ) Public listing      │
+│ Public joining   (●) Open           ( ) Approval required   │
 │                                                              │
 │                    [ Create room ]                           │
 └──────────────────────────────────────────────────────────────┘
@@ -107,21 +108,89 @@ Choose Liquid War
 `-private` prevents registration with Liquid War's historical public
 metaserver. Room membership replaces metaserver discovery. `-nobeep` avoids a
 server-console notification sound; the room UI provides a better notification.
+The `Public joining` control is enabled only when `Public listing` is selected.
 
 ### Friend
 
 ```text
-Open invite ──▶ verify room ──▶ choose display name ──▶ join
-                                                        │
-                                                        ▼
-                                               receive 10.77.0.x
-                                                        │
-                                                        ▼
-                                                [ Launch game ]
+PRIVATE                              PUBLIC
+
+Open secret link                     Open public rooms
+      │                                    │
+Verify capability                    Choose room
+      │                                    │
+      │                         ┌───────────┴────────────┐
+      │                         │ open                  │ approval required
+      │                         ▼                       ▼
+      │                    join immediately       request → host accepts
+      │                         │                       │
+      └─────────────────────────┴───────────────────────┘
+                                │
+                         receive 10.77.0.x
+                                │
+                         [ Launch game ]
 ```
 
 The launcher should prefill the host address and port when a safe configuration
 path is available. Until then, the game UI can use `10.77.0.1` and `8035`.
+
+### Room types and admission
+
+There are exactly two room types:
+
+| Room type | Discovery | Initial admission |
+|---|---|---|
+| Private | Unlisted; opened through a secret link | Possession of the capability secret |
+| Public | Listed for logged-in Berrry users | Immediate unless the host enables pre-approval |
+
+All network play requires a Berrry login. Login supplies a stable moderation
+identity; it does not replace the private-room capability. A private link holder
+is admitted without a separate approval queue unless that Berrry user is banned
+or the room is full. A public room has one `approvalRequired` switch: when off,
+eligible users enter immediately; when on, they remain pending until the host
+accepts them.
+
+There is no third `locked public`, password, friends-list, or invite-only public
+mode in version 1. A host who wants capability-gated access creates a private
+room; a host who wants discoverability creates a public room.
+
+### Moderation
+
+The host is the sole moderator in version 1. Both private and public rooms
+support:
+
+- kick, which closes the member's peer link and all virtual sockets;
+- room-lifetime ban by Berrry user ID, which also rejects later joins;
+- capacity enforcement before assigning a virtual IP;
+- closing the room for everyone; and
+- rotating a leaked private capability, invalidating unused old links.
+
+Public rooms additionally support accepting or rejecting pending join requests
+when pre-approval is enabled. Changing the switch affects future requests; it
+does not silently admit or remove existing pending users.
+
+```text
+PRIVATE              PUBLIC / OPEN            PUBLIC / APPROVAL
+
+valid secret         logged in                logged in
+     │                    │                        │
+     ▼                    ▼                        ▼
+ ADMITTED              ADMITTED                  PENDING
+     │                    │                    ┌────┴─────┐
+     ▼                    ▼                 Accept     Reject
+ CONNECTED             CONNECTED                │          │
+                                               ▼          ▼
+                                            ADMITTED   REJECTED
+                                               │
+                                               ▼
+                                            CONNECTED
+
+Any ADMITTED or CONNECTED member ── kick/ban ──▶ REMOVED
+```
+
+Only `ADMITTED` members receive a virtual IP or WebRTC offer. Kick or ban moves
+an admitted/connected member to `REMOVED`, revokes its route, closes its peer
+link, and advances the membership epoch so stale signaling cannot reopen it.
 
 ### Room screen
 
@@ -130,8 +199,9 @@ path is available. Until then, the game UI can use `10.77.0.1` and `8035`.
 │ Liquid War 5.6.2                              [Copy invite] │
 │                                                              │
 │  ● You (host)   10.77.0.1   local        0 ms   SERVER ✓   │
-│  ● Maya         10.77.0.2   direct      28 ms          ✓   │
-│  ● Leo          10.77.0.3   relayed     61 ms          ✓   │
+│  ● Maya         10.77.0.2   direct      28 ms   [Kick] ✓   │
+│  ● Leo          10.77.0.3   relayed     61 ms   [Kick] ✓   │
+│  ◌ Sam          approval pending          [Accept] [Reject] │
 │                                                              │
 │  Game server       10.77.0.1:8035                            │
 │  Players ready     3 / 6                                    │
@@ -152,17 +222,17 @@ log.
 ```text
                          CONTROL PLANE
 
-             HTTPS invite + signaling WebSocket
+           Berrry login + public JSON signaling records
                               │
-                    ┌─────────▼─────────┐
-                    │ Rendezvous service│
-                    │                   │
-                    │ room membership   │
-                    │ SDP/ICE exchange  │
-                    │ short-lived state │
-                    └─────────┬─────────┘
+                  ┌───────────▼───────────┐
+                  │ Berrry public-data API│
+                  │                       │
+                  │ public room directory │
+                  │ join requests         │
+                  │ encrypted SDP/ICE     │
+                  └───────────┬───────────┘
                               │
-                 optional STUN/TURN service
+                    STUN + TURN service
                               │
    ───────────────────────────┼──────────────────────────────
                               │
@@ -199,7 +269,7 @@ The two planes have deliberately different trust and lifetime rules:
 
 | Plane | Contains | Must not contain |
 |---|---|---|
-| Control | Room ID, membership, public keys, SDP, ICE candidates, presence | Game packets, guest memory, room secret, game authority |
+| Control | Room ID, Berrry user IDs, public keys, encrypted SDP/ICE envelopes, presence | Game packets, guest memory, room secret, game authority |
 | Data | Encrypted virtual-socket frames and health probes | Account tokens, arbitrary host-network access |
 
 ### Topology
@@ -539,54 +609,106 @@ healthy encrypted transport while its game is still at the menu. The room UI
 must not claim `SERVER READY` until the virtual listener is actually bound and
 listening on `10.77.0.1:8035`.
 
-### Invite
+### Berrry records
 
-An invite contains a random room identifier and a high-entropy room secret.
-The secret belongs in the URL fragment so it is not sent in the HTTP request:
-
-```text
-https://example.invalid/lan/#room=<room-id>.<room-secret>
-```
-
-The rendezvous service knows the room ID but not the secret. An optional human
-passphrase is an additional admission check; it must not replace the random
-secret or be used directly as an encryption key.
-
-### Join handshake
+The MVP uses authenticated, per-user Berrry public-data records as a polling
+signaling channel. It does not require a separate WebSocket rendezvous service.
+Every record is owned by the logged-in Berrry user who publishes it.
+The required storage, public lookup, and authentication operations are the
+documented [Berrry backend APIs](https://berrry.app/api/nomcp/docs/backend).
 
 ```text
-Friend                         Rendezvous                         Host
-   │ register room ID + nonce       │                              │
-   ├───────────────────────────────▶│                              │
-   │                                ├─ membership request ────────▶│
-   │                                │                              │
-   │◀──────── host public key + WebRTC offer/candidates ──────────┤
-   │                                                              │
-   ├──── public key + room-secret proof + answer/candidates ─────▶│
-   │                                                              │
-   ╞════════════ authenticated encrypted DataChannel ═════════════╡
-   │ HELLO / capability negotiation                               │
-   │◀──────────────── assigned peer ID + 10.77.0.x ────────────────┤
+vln-public-rooms-v1
+  host-owned list of live public room descriptors
+
+vln-room-<room-id>
+  one host descriptor plus one join/presence record per interested user
+
+vln-link-<room-id>-<joining-user-id>
+  host offer and that user's answer/candidates, each in its owner's namespace
 ```
 
-Signaling messages are short-lived, schema-validated, rate-limited, and scoped
-to one room. A monotonically increasing membership epoch prevents a removed
-peer from reusing stale signaling messages.
+The public room browser lists users publishing `vln-public-rooms-v1`, fetches
+their room arrays, and discards expired descriptors. A private room is never
+written to that directory. Each public descriptor includes the room ID, name,
+game, host user ID, capacity, current member count, whether approval is
+required, host ephemeral public key, membership epoch, and expiry.
 
-### Service-free and self-hosted modes
+All signaling payloads carry a schema version, monotonically increasing
+sequence, and expiry. Clients delete them after connection and ignore stale
+records even when cleanup fails. Since the storage API does not document
+server-enforced TTL or atomic message queues, each user only updates records in
+their own namespace; the protocol never depends on two users updating one JSON
+value.
 
-An online room normally needs some Internet bootstrap infrastructure even
-though it has no Internet game server:
+### Private invite
 
-- rendezvous exchanges WebRTC offers and ICE candidates;
-- STUN discovers viable public mappings; and
-- TURN relays encrypted traffic when NAT traversal fails.
+A private invite contains a random room identifier and a 256-bit capability
+secret. The secret belongs in the URL fragment so it is not sent in the HTTP
+request or used as a Berrry storage key:
 
-All three can be self-hosted. A zero-rendezvous mode can exchange offers and
-answers by copy/paste or QR code, but it is less friendly and cannot guarantee
-NAT traversal without STUN/TURN. The distinction shown to users should be
-`game hosted by Alice`, not the misleading claim that no supporting service is
-ever contacted.
+```text
+https://example.invalid/lan/#room=<room-id>.<capability-secret>
+```
+
+The joining user publishes an encrypted join record and a proof of possession.
+The host verifies the proof, checks the user's room-lifetime ban and capacity,
+then creates the per-peer offer. Possession of the capability is the initial
+admission decision; there is no second private-room approval queue.
+
+```text
+Friend                       Berrry public data                    Host
+   │ encrypted JOIN + proof         │                               │
+   ├───────────────────────────────▶│◀────────── poll room key ─────┤
+   │                                │                               │
+   │◀──────── encrypted OFFER ──────┤◀──────── publish offer ───────┤
+   ├──────── encrypted ANSWER ─────▶│                               │
+   │                                                                │
+   ╞════════════ authenticated encrypted DataChannel ═══════════════╡
+   │◀──────────── assigned peer ID and 10.77.0.x ────────────────────┤
+```
+
+Rotating the capability increments the room epoch and rejects new proofs made
+with the old secret. Existing admitted links may remain connected; reconnecting
+members need the new link. A banned user stays rejected even if they still know
+the capability.
+
+### Public join
+
+A public room has no room-wide secret. Its directory descriptor and join key
+are intentionally discoverable. The joining user publishes an ephemeral ECDH
+public key in a Berrry-owned join record. The host checks login identity, ban,
+capacity, and the room's approval policy before publishing an offer encrypted
+for that peer.
+
+```text
+Friend                       Berrry public data                    Host
+   │ JOIN + ephemeral public key    │                               │
+   ├───────────────────────────────▶│◀────────── poll room key ─────┤
+   │                                │                               │
+   │                   open room: admit immediately                 │
+   │                approval room: wait for host Accept             │
+   │                                │                               │
+   │◀──── peer-encrypted OFFER ─────┤◀──────── publish offer ───────┤
+   ├──── peer-encrypted ANSWER ────▶│                               │
+   │                                                                │
+   ╞════════════ authenticated encrypted DataChannel ═══════════════╡
+```
+
+The authenticated Berrry namespace identifies who published each signaling
+record. ECDH supplies per-peer signaling and data keys. Public-room moderation
+does not rely on hiding the room ID.
+
+### STUN and TURN
+
+Berrry public data replaces only signaling. STUN still discovers viable public
+mappings, and TURN still relays encrypted traffic when direct traversal fails.
+TURN and its short-lived credential issuer therefore remain the only separate
+server-side networking infrastructure required for reliable production rooms.
+
+The distinction shown to users is `game hosted by Alice`: Berrry introduces
+the peers, STUN/TURN helps connect them, and Alice's original `lwwinsrv.exe`
+remains the game server.
 
 ## Security and privacy
 
@@ -595,7 +717,7 @@ ever contacted.
 - The room host controls admission and is authoritative because it runs the
   original game server.
 - Admitted members are allowed to exchange game traffic only inside the room.
-- Rendezvous and relay infrastructure are honest-but-curious and may be
+- Berrry signaling and relay infrastructure are honest-but-curious and may be
   unavailable or abusive; they are not trusted with plaintext game traffic.
 - The original game protocol is not assumed to be safe to expose directly to
   the public Internet.
@@ -607,16 +729,18 @@ application-level authenticated encryption so that TURN and any future
 WebSocket relay have the same privacy properties:
 
 1. each browser creates an ephemeral ECDH key pair;
-2. peers authenticate the public keys with a proof derived from the room
-   secret;
-3. ECDH output and the room secret feed HKDF with room/link identities;
+2. a private join authenticates its key with the capability proof, while a
+   public join binds its key to the authenticated Berrry record owner and the
+   host's acceptance decision;
+3. ECDH output feeds HKDF with room, link, peer, and membership-epoch context;
+   private links include the capability secret as additional key material;
 4. each direction receives a separate AES-GCM key and nonce prefix; and
 5. frame headers are authenticated, counters are never reused, and replayed or
    malformed frames close the link.
 
-Do not place the room secret, derived keys, game bytes, full SDP, or guest
-memory in telemetry. Clipboard copies and invite displays should make the
-secret nature of the URL clear.
+Do not place private capability secrets, derived keys, game bytes, plaintext
+SDP, or guest memory in telemetry. Clipboard copies and invite displays should
+make the secret nature of a private URL clear.
 
 ### Isolation and validation
 
@@ -656,6 +780,9 @@ Failures should map predictably to both guest Winsock and room UX:
 | Receive buffer empty, nonblocking | `WSAEWOULDBLOCK` | no alert |
 | Address outside room | `WSAENETUNREACH` | advanced log only |
 | Room capacity reached | connection rejected | `Room is full` |
+| Private capability is invalid or rotated | no socket created | `This invite is no longer valid` |
+| Public pre-approval is pending | no socket created | `Waiting for host approval` |
+| Host rejects or user is banned | no socket created, or active sockets reset on kick | `Host denied access` or `Removed by host` |
 | Direct ICE path fails, TURN works | no guest error | `Relayed — playable` |
 | Host closes room | orderly close where possible, then reset | `Host ended the room` |
 
@@ -788,8 +915,10 @@ bounded delay, reports resets accurately, and never exceeds queue limits.
 
 ### Slice 4: direct online room
 
-- Add room creation, invite parsing, signaling, authentication, IP allocation,
-  and one host/friend WebRTC connection.
+- Require Berrry login and add public-data polling for room/signaling records.
+- Add private capability links and the public room directory.
+- Add public open/pre-approval admission plus shared kick/ban moderation.
+- Add IP allocation and one host/friend WebRTC connection.
 - Expose clear direct-path diagnostics.
 - Run two real browsers on separate networks with no manual port forwarding.
 
@@ -829,6 +958,8 @@ the relay observes only encrypted frame traffic.
   cancellation on process exit;
 - frame encoding/decoding, version rejection, authentication failure, replay,
   length limits, credit accounting, and counter exhaustion.
+- private capability proof/rotation, public listing expiry, public open versus
+  pre-approval admission, capacity, kick, ban, and membership-epoch rejection.
 
 ### Deterministic integration tests
 
@@ -853,7 +984,10 @@ not depend on wall-clock races.
 | Direct | two browsers, direct DataChannel | complete match, direct badge |
 | Relayed | two browsers, forced TURN | complete match, relayed badge |
 | Loss | drop active peer link | guest reset and understandable room state |
-| Rejection | bad secret/full room | no game launch or virtual route |
+| Private rejection | bad/rotated secret, banned user, or full room | no game launch or virtual route |
+| Public open | logged-in eligible user | admission without host interaction |
+| Public approval | require approval, then accept/reject | no IP before accept; no route after reject |
+| Moderation | kick and ban connected user | sockets reset; same Berrry user cannot rejoin |
 | Isolation | guest targets real/private IP | deterministic rejection, no host request |
 
 The decisive acceptance test is concrete: two browsers, zero port forwarding,
@@ -873,6 +1007,13 @@ relay route.
 - Use room-only addresses and deny arbitrary Internet/LAN egress.
 - Implement genuine byte-stream and wait semantics before connecting WebRTC.
 - Treat loss of a live peer link as reset of its existing virtual sockets.
+- Support exactly two room types: private secret-link and public listed.
+- Require Berrry login for both room types.
+- Make both room types host-moderatable with kick and room-lifetime ban.
+- Allow optional pre-approval only for public rooms; private capability holders
+  are admitted unless banned or full.
+- Use Berrry public-data polling for MVP signaling and public-room discovery;
+  retain STUN/TURN as separate connectivity infrastructure.
 
 ### Open questions to resolve during Slice 1 or 2
 
