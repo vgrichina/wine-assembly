@@ -162,7 +162,12 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 ### Shared-agent message board
 
 - Use the repository-root `messageboard.txt` to coordinate with other agents sharing the worktree.
-- The file is gitignored and append-only: never rewrite or truncate existing entries.
+- The file is gitignored and strictly append-only: never rewrite, truncate, or
+  context-edit existing entries. `messageboard.txt` is the exception to the
+  repository's normal `apply_patch` editing workflow—never use `apply_patch`
+  on it. Add every update as a new final line with `echo ... >>
+  messageboard.txt`; if an earlier entry is wrong, append a dated `CORRECTION`
+  entry instead of changing the original text.
 - Before staging, committing, or editing files another agent may own, read recent entries and start a background watcher:
 
   ```sh
@@ -170,7 +175,9 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
   tail -f messageboard.txt &
   ```
 
-- Append dated ownership, overlap, release, and commit notes with `echo` and the append redirect. Never use a single `>` redirect, and never replace another agent's entries:
+- Append dated ownership, overlap, release, and commit notes with `echo` and
+  the append redirect. Never use a single `>` redirect or any editor/patching
+  tool on the board, and never replace another agent's entries:
 
   ```sh
   echo "$(date -Iseconds) <agent> <status and files/commit>" >> messageboard.txt
