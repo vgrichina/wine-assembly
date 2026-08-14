@@ -150,10 +150,10 @@ async function main() {
       '--batch-size=50000',
       '--max-batches=340',
       '--stuck-after=500',
-      '--trace-api=midiStreamOpen,midiStreamOut,midiStreamRestart,midiStreamPause',
+      '--trace-api=midiStreamOpen,midiStreamOut,midiStreamRestart,midiStreamPause,IDirectSound_CreateSoundBuffer,IDirectSound_Release',
       '--trace-host=voice_play_ring',
-      `--input=62:keydown:27,63:keyup:27,120:png-pixels:${menuPng},` +
-        `124:mousedown:320:240,140:mouseup:320:240,220:png-pixels:${readyPng},` +
+      `--input=62:keydown:27,63:keyup:27,120:png-pixels:${menuPng},123:dump-focus:before-gameplay,` +
+        `124:mousedown:320:240,140:mouseup:320:240,180:dump-focus:gameplay,220:png-pixels:${readyPng},` +
         `235:mousedown:320:430,245:mouseup:320:430,255:png-pixels:${ballPngA},` +
         `275:png-pixels:${ballPngB},295:png-pixels:${ballPngC},` +
         `305:mousemove:120:430,325:png-pixels:${paddleLeftPng}`,
@@ -182,10 +182,22 @@ async function main() {
 
     assert(/midiStreamOpen\(/.test(gameOutput) && /midiStreamOut\(/.test(gameOutput) &&
       /midiStreamRestart\(/.test(gameOutput), 'DX-Ball did not initialize and start its MIDI soundtrack');
-    assert(/\[host\] voice_play_ring\(/.test(gameOutput),
-      'DX-Ball did not submit its DirectSound PCM effect buffer for playback');
+    const gameplayStart = gameOutput.indexOf('[input] dump-focus before-gameplay:');
+    const gameplayReady = gameOutput.indexOf('[input] dump-focus gameplay:');
+    assert(gameplayStart >= 0 && gameplayReady > gameplayStart,
+      'DX-Ball run did not emit its gameplay audio phase markers');
+    const afterStart = gameOutput.slice(gameplayStart);
+    const duringGameplay = gameOutput.slice(gameplayReady);
+    assert(!/midiStreamPause\(/.test(afterStart),
+      'starting gameplay incorrectly paused the MIDI soundtrack');
+    assert(!/IDirectSound_Release\(/.test(afterStart),
+      'starting gameplay incorrectly released the DirectSound device');
+    assert(/IDirectSound_CreateSoundBuffer\(/.test(duringGameplay),
+      'DX-Ball did not create its DirectSound effect buffers during gameplay loading');
+    assert(/\[host\] voice_play_ring\(/.test(duringGameplay),
+      'DX-Ball did not submit a DirectSound PCM effect after gameplay started');
     console.log(`PASS game: playable ${gameStats.width}x${gameStats.height} level, ball deltas ${ballDeltaAB}/${ballDeltaBC}, paddle delta ${paddleDelta}`);
-    console.log('PASS audio: queued/restarted MIDI stream and submitted DirectSound PCM');
+    console.log('PASS audio: MIDI stayed active and gameplay created/submitted DirectSound PCM');
     console.log('DX-Ball candidate: PASS 2/2');
   } finally {
     if (process.env.KEEP_DXBALL_CANDIDATE_TMP === '1') {

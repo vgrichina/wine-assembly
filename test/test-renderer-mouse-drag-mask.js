@@ -106,6 +106,35 @@ assert.strictEqual(staleRenderer.checkInput(), 0, 'empty input poll should retur
 staleRenderer.handleMouseDown(70, 80, 1);
 assert.strictEqual(staleRenderer.getAsyncKeyState(0x01), 0x8001, 'new mouse down should not be masked by stale move snapshot');
 
+const focusRenderer = new Win98Renderer(canvas);
+let focusHwnd = 131;
+const focusChanges = [];
+const focusWasm = {
+  exports: {
+    get_focus_hwnd() { return focusHwnd; },
+    set_focus(hwnd) {
+      focusChanges.push(hwnd);
+      focusHwnd = 0; // Native parent wndproc does not update the WAT focus global.
+    },
+    set_focus_hwnd(hwnd) { focusHwnd = hwnd; },
+  },
+};
+focusRenderer.wasm = focusWasm;
+focusRenderer.windows[130] = {
+  hwnd: 130, visible: true, isChild: false,
+  x: 10, y: 10, w: 200, h: 160, hasCaption: false, style: 0, zOrder: 1,
+  wasm: focusWasm,
+};
+focusRenderer.handleMouseDown(40, 60, 1);
+assert.deepStrictEqual(focusChanges, [130],
+  'top-level click should transfer child focus to the parent, never clear it to NULL');
+assert.strictEqual(focusHwnd, 130,
+  'top-level click should synchronize focus when the native parent wndproc does not');
+focusChanges.length = 0;
+focusRenderer.handleMouseDown(40, 60, 1);
+assert.deepStrictEqual(focusChanges, [],
+  'clicking an already-focused game window must not synthesize WM_KILLFOCUS');
+
 const captionRenderer = new Win98Renderer(canvas);
 const captionWasm = {
   exports: {
