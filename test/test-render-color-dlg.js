@@ -58,8 +58,19 @@ runRenderTest('color-dlg', async (h, check) => {
   const red = findById(0x463), green = findById(0x464), blue = findById(0x465);
   const add = findById(0x466);
   check('Define expands RGB editor controls', !!(red && green && blue && add));
+  let spectrum = 0;
+  for (let s = 0; s < 256; s++) {
+    const ch = e.wnd_slot_hwnd(s);
+    if (ch && e.ctrl_get_class(ch) === 23) spectrum = ch;
+  }
+  check('Define creates hue/saturation picker', spectrum !== 0,
+    `hwnd=0x${spectrum.toString(16)}`);
   check('Define widens the visible dialog', h.renderer.windows[dlg].w === 436,
     `width=${h.renderer.windows[dlg].w}`);
+  e.send_message(spectrum, 0x0201, 0, 80 | (20 << 16));
+  check('spectrum click updates CHOOSECOLOR.rgbResult',
+    e.test_color_dialog_result(dlg) !== 0 && e.test_color_dialog_result(dlg) !== 0x00123456,
+    `rgb=0x${e.test_color_dialog_result(dlg).toString(16)}`);
 
   const u8 = new Uint8Array(h.memory.buffer);
   const wa = g => g - e.get_image_base() + e.get_guest_base();

@@ -77,6 +77,15 @@ for (let y = dlgY + 47; y < dlgY + 203; y += 3) {
 }
 assert(leftColors.size >= 20,
   `Paint Define Custom Colors erased the left palette (${leftColors.size} colors)`);
+const spectrumColors = new Set();
+for (let y = dlgY + 37; y < dlgY + 151; y += 4) {
+  for (let x = dlgX + 233; x < dlgX + 389; x += 4) {
+    const i = (y * image.width + x) * 4;
+    spectrumColors.add((image.data[i] << 16) | (image.data[i + 1] << 8) | image.data[i + 2]);
+  }
+}
+assert(spectrumColors.size >= 40,
+  `Paint Define Custom Colors omitted its spectrum (${spectrumColors.size} colors)`);
 assert(/dlg-click: id=2/.test(output), 'Paint Edit Colors Cancel button was not handled');
 assert(!output.split('\n').some(line =>
   line.includes('window:closed') && line.includes('dialog=true')),

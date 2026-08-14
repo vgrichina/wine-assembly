@@ -653,6 +653,9 @@
     ;; Class 22 = StatusBar (msctls_statusbar32)
     (if (i32.eq (local.get $class) (i32.const 22))
       (then (return (call $statusbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 23 = ChooseColor hue/saturation and luminance picker
+    (if (i32.eq (local.get $class) (i32.const 23))
+      (then (return (call $colorspectrum_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -1979,6 +1982,216 @@
       (local.get $hwnd) (i32.const 0x000C) (i32.const 0) (local.get $buf)))
     (call $heap_free (local.get $buf)))
 
+  (func $colordlg_sync_rgb_fields (param $dlg i32) (param $rgb i32)
+    (local $edit i32)
+    (local.set $edit (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x463)))
+    (if (local.get $edit)
+      (then (call $colordlg_set_u8_text
+        (local.get $edit) (i32.and (local.get $rgb) (i32.const 0xFF)))))
+    (local.set $edit (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x464)))
+    (if (local.get $edit)
+      (then (call $colordlg_set_u8_text (local.get $edit)
+        (i32.and (i32.shr_u (local.get $rgb) (i32.const 8)) (i32.const 0xFF)))))
+    (local.set $edit (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x465)))
+    (if (local.get $edit)
+      (then (call $colordlg_set_u8_text (local.get $edit)
+        (i32.and (i32.shr_u (local.get $rgb) (i32.const 16)) (i32.const 0xFF))))))
+
+  ;; Convert classic common-dialog HSL units (0..240) to one RGB channel.
+  (func $colordlg_hue_component
+    (param $p i32) (param $q i32) (param $t i32) (result i32)
+    (local $v i32)
+    (if (i32.lt_s (local.get $t) (i32.const 0))
+      (then (local.set $t (i32.add (local.get $t) (i32.const 240)))))
+    (if (i32.gt_s (local.get $t) (i32.const 240))
+      (then (local.set $t (i32.sub (local.get $t) (i32.const 240)))))
+    (local.set $v
+      (if (result i32) (i32.lt_s (local.get $t) (i32.const 40))
+        (then (i32.add (local.get $p)
+          (i32.div_s
+            (i32.mul (i32.sub (local.get $q) (local.get $p)) (local.get $t))
+            (i32.const 40))))
+        (else (if (result i32) (i32.lt_s (local.get $t) (i32.const 120))
+          (then (local.get $q))
+          (else (if (result i32) (i32.lt_s (local.get $t) (i32.const 160))
+            (then (i32.add (local.get $p)
+              (i32.div_s
+                (i32.mul (i32.sub (local.get $q) (local.get $p))
+                  (i32.sub (i32.const 160) (local.get $t)))
+                (i32.const 40))))
+            (else (local.get $p))))))))
+    (i32.div_s (i32.mul (local.get $v) (i32.const 255)) (i32.const 240)))
+
+  (func $colordlg_hsl_to_rgb
+    (param $h i32) (param $s i32) (param $l i32) (result i32)
+    (local $p i32) (local $q i32)
+    (local $r i32) (local $g i32) (local $b i32)
+    (if (i32.eqz (local.get $s))
+      (then
+        (local.set $r (i32.div_s
+          (i32.mul (local.get $l) (i32.const 255)) (i32.const 240)))
+        (return (i32.or (local.get $r)
+          (i32.or (i32.shl (local.get $r) (i32.const 8))
+                  (i32.shl (local.get $r) (i32.const 16)))))))
+    (local.set $q
+      (if (result i32) (i32.lt_s (local.get $l) (i32.const 120))
+        (then (i32.div_s
+          (i32.mul (local.get $l) (i32.add (i32.const 240) (local.get $s)))
+          (i32.const 240)))
+        (else (i32.sub
+          (i32.add (local.get $l) (local.get $s))
+          (i32.div_s (i32.mul (local.get $l) (local.get $s)) (i32.const 240))))))
+    (local.set $p (i32.sub (i32.mul (local.get $l) (i32.const 2)) (local.get $q)))
+    (local.set $r (call $colordlg_hue_component
+      (local.get $p) (local.get $q) (i32.add (local.get $h) (i32.const 80))))
+    (local.set $g (call $colordlg_hue_component
+      (local.get $p) (local.get $q) (local.get $h)))
+    (local.set $b (call $colordlg_hue_component
+      (local.get $p) (local.get $q) (i32.sub (local.get $h) (i32.const 80))))
+    (i32.or (local.get $r)
+      (i32.or (i32.shl (local.get $g) (i32.const 8))
+              (i32.shl (local.get $b) (i32.const 16)))))
+
+  ;; State: hue, saturation, luminosity (all 0..240).
+  (func $colorspectrum_commit (param $hwnd i32) (param $sw i32)
+    (local $dlg i32) (local $cc i32) (local $rgb i32)
+    (local.set $rgb (call $colordlg_hsl_to_rgb
+      (i32.load (local.get $sw))
+      (i32.load offset=4 (local.get $sw))
+      (i32.load offset=8 (local.get $sw))))
+    (local.set $dlg (call $wnd_get_parent (local.get $hwnd)))
+    (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
+    (if (local.get $cc)
+      (then (i32.store offset=12 (call $g2w (local.get $cc)) (local.get $rgb))))
+    (call $colordlg_sync_rgb_fields (local.get $dlg) (local.get $rgb))
+    (call $invalidate_hwnd (local.get $hwnd)))
+
+  (func $colorspectrum_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $sw i32) (local $hdc i32)
+    (local $x i32) (local $y i32)
+    (local $row i32) (local $seg i32) (local $sat i32) (local $lum i32)
+    (local $x0 i32) (local $x1 i32) (local $c0 i32) (local $c1 i32)
+    (local $mark_x i32) (local $mark_y i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $state (call $heap_alloc (i32.const 12)))
+        (local.set $sw (call $g2w (local.get $state)))
+        (i32.store (local.get $sw) (i32.const 0))
+        (i32.store offset=4 (local.get $sw) (i32.const 0))
+        (i32.store offset=8 (local.get $sw) (i32.const 0))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then (call $heap_free (local.get $state))
+                (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w (local.get $state)))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 196) (i32.const 140)
+          (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.const 0) (i32.const 0) (i32.const 164) (i32.const 124)
+          (i32.const 0x0A) (i32.const 0x0F)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.const 174) (i32.const 0) (i32.const 194) (i32.const 124)
+          (i32.const 0x0A) (i32.const 0x0F)))
+        (local.set $row (i32.const 0))
+        (block $paint_done (loop $paint_rows
+          (br_if $paint_done (i32.ge_u (local.get $row) (i32.const 120)))
+          (local.set $sat (i32.sub (i32.const 240)
+            (i32.div_u (i32.mul (local.get $row) (i32.const 240)) (i32.const 119))))
+          (local.set $seg (i32.const 0))
+          (block $segments_done (loop $paint_segments
+            (br_if $segments_done (i32.ge_u (local.get $seg) (i32.const 6)))
+            (local.set $x0 (i32.add (i32.const 2)
+              (i32.div_u (i32.mul (local.get $seg) (i32.const 160)) (i32.const 6))))
+            (local.set $x1 (i32.add (i32.const 2)
+              (i32.div_u (i32.mul (i32.add (local.get $seg) (i32.const 1)) (i32.const 160)) (i32.const 6))))
+            (local.set $c0 (call $colordlg_hsl_to_rgb
+              (i32.mul (local.get $seg) (i32.const 40)) (local.get $sat) (i32.const 120)))
+            (local.set $c1 (call $colordlg_hsl_to_rgb
+              (i32.mul (i32.add (local.get $seg) (i32.const 1)) (i32.const 40))
+              (local.get $sat) (i32.const 120)))
+            (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
+              (local.get $x0) (i32.add (local.get $row) (i32.const 2))
+              (local.get $x1) (i32.add (local.get $row) (i32.const 3))
+              (local.get $c0) (local.get $c1)))
+            (local.set $seg (i32.add (local.get $seg) (i32.const 1)))
+            (br $paint_segments)))
+          (local.set $lum (i32.sub (i32.const 240)
+            (i32.div_u (i32.mul (local.get $row) (i32.const 240)) (i32.const 119))))
+          (local.set $c0 (call $colordlg_hsl_to_rgb
+            (i32.load (local.get $sw)) (i32.load offset=4 (local.get $sw)) (local.get $lum)))
+          (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
+            (i32.const 176) (i32.add (local.get $row) (i32.const 2))
+            (i32.const 192) (i32.add (local.get $row) (i32.const 3))
+            (local.get $c0) (local.get $c0)))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $paint_rows)))
+        (local.set $mark_x (i32.add (i32.const 2)
+          (i32.div_u (i32.mul (i32.load (local.get $sw)) (i32.const 159)) (i32.const 240))))
+        (local.set $mark_y (i32.add (i32.const 2)
+          (i32.div_u
+            (i32.mul (i32.sub (i32.const 240) (i32.load offset=4 (local.get $sw))) (i32.const 119))
+            (i32.const 240))))
+        (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+          (i32.sub (local.get $mark_x) (i32.const 3))
+          (i32.sub (local.get $mark_y) (i32.const 3))
+          (i32.add (local.get $mark_x) (i32.const 4))
+          (i32.add (local.get $mark_y) (i32.const 4))))
+        (local.set $mark_y (i32.add (i32.const 2)
+          (i32.div_u
+            (i32.mul (i32.sub (i32.const 240) (i32.load offset=8 (local.get $sw))) (i32.const 119))
+            (i32.const 240))))
+        (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+          (i32.const 174) (i32.sub (local.get $mark_y) (i32.const 2))
+          (i32.const 195) (i32.add (local.get $mark_y) (i32.const 3))))
+        (return (i32.const 0))))
+
+    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+      (then
+        (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (local.set $y (i32.and (i32.shr_u (local.get $lParam) (i32.const 16)) (i32.const 0xFFFF)))
+        (if (i32.and
+              (i32.and (i32.ge_u (local.get $x) (i32.const 2))
+                       (i32.lt_u (local.get $x) (i32.const 162)))
+              (i32.and (i32.ge_u (local.get $y) (i32.const 2))
+                       (i32.lt_u (local.get $y) (i32.const 122))))
+          (then
+            (i32.store (local.get $sw)
+              (i32.div_u (i32.mul (i32.sub (local.get $x) (i32.const 2)) (i32.const 240)) (i32.const 159)))
+            (i32.store offset=4 (local.get $sw)
+              (i32.sub (i32.const 240)
+                (i32.div_u (i32.mul (i32.sub (local.get $y) (i32.const 2)) (i32.const 240)) (i32.const 119))))
+            ;; A first spectrum click should produce a visible color even when
+            ;; the caller's initial black selected luminosity zero.
+            (if (i32.eqz (i32.load offset=8 (local.get $sw)))
+              (then (i32.store offset=8 (local.get $sw) (i32.const 120))))
+            (call $colorspectrum_commit (local.get $hwnd) (local.get $sw))))
+        (if (i32.and
+              (i32.and (i32.ge_u (local.get $x) (i32.const 176))
+                       (i32.lt_u (local.get $x) (i32.const 192)))
+              (i32.and (i32.ge_u (local.get $y) (i32.const 2))
+                       (i32.lt_u (local.get $y) (i32.const 122))))
+          (then
+            (i32.store offset=8 (local.get $sw)
+              (i32.sub (i32.const 240)
+                (i32.div_u (i32.mul (i32.sub (local.get $y) (i32.const 2)) (i32.const 240)) (i32.const 119))))
+            (call $colorspectrum_commit (local.get $hwnd) (local.get $sw))))
+        (return (i32.const 0))))
+    (i32.const 0))
+
   (func $colordlg_expand_custom (param $dlg i32)
     (local $rect i32) (local $cc i32) (local $rgb i32)
     (local $label i32) (local $edit i32)
@@ -2001,41 +2214,48 @@
     (if (local.get $cc)
       (then (local.set $rgb (i32.load offset=12 (call $g2w (local.get $cc))))))
 
+    ;; Win98's full ChooseColor pane starts with an interactive hue/saturation
+    ;; square and a luminance strip. The RGB fields sit below this visual
+    ;; picker rather than occupying its space.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 23) (i32.const 0x467)
+      (i32.const 226) (i32.const 10) (i32.const 196) (i32.const 140)
+      (i32.const 0x50000000) (i32.const 0)))
+
     (local.set $label (call $colordlg_make_label (i32.const 0)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
-      (i32.const 244) (i32.const 30) (i32.const 50) (i32.const 18)
+      (i32.const 226) (i32.const 164) (i32.const 50) (i32.const 18)
       (i32.const 0x50000000) (local.get $label)))
     (call $heap_free (local.get $label))
     (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x463)
-      (i32.const 302) (i32.const 26) (i32.const 54) (i32.const 22)
+      (i32.const 284) (i32.const 160) (i32.const 54) (i32.const 22)
       (i32.const 0x50812080) (i32.const 0)))
     (call $colordlg_set_u8_text (local.get $edit) (i32.and (local.get $rgb) (i32.const 0xFF)))
 
     (local.set $label (call $colordlg_make_label (i32.const 1)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
-      (i32.const 244) (i32.const 62) (i32.const 50) (i32.const 18)
+      (i32.const 226) (i32.const 194) (i32.const 50) (i32.const 18)
       (i32.const 0x50000000) (local.get $label)))
     (call $heap_free (local.get $label))
     (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x464)
-      (i32.const 302) (i32.const 58) (i32.const 54) (i32.const 22)
+      (i32.const 284) (i32.const 190) (i32.const 54) (i32.const 22)
       (i32.const 0x50812080) (i32.const 0)))
     (call $colordlg_set_u8_text (local.get $edit)
       (i32.and (i32.shr_u (local.get $rgb) (i32.const 8)) (i32.const 0xFF)))
 
     (local.set $label (call $colordlg_make_label (i32.const 2)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
-      (i32.const 244) (i32.const 94) (i32.const 50) (i32.const 18)
+      (i32.const 226) (i32.const 224) (i32.const 50) (i32.const 18)
       (i32.const 0x50000000) (local.get $label)))
     (call $heap_free (local.get $label))
     (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x465)
-      (i32.const 302) (i32.const 90) (i32.const 54) (i32.const 22)
+      (i32.const 284) (i32.const 220) (i32.const 54) (i32.const 22)
       (i32.const 0x50812080) (i32.const 0)))
     (call $colordlg_set_u8_text (local.get $edit)
       (i32.and (i32.shr_u (local.get $rgb) (i32.const 16)) (i32.const 0xFF)))
 
     (local.set $label (call $colordlg_make_label (i32.const 3)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x466)
-      (i32.const 244) (i32.const 132) (i32.const 174) (i32.const 24)
+      (i32.const 226) (i32.const 258) (i32.const 196) (i32.const 24)
       (i32.const 0x50010000) (local.get $label)))
     (call $heap_free (local.get $label))
     ;; Resizing reallocates and clears the dialog's shared back-canvas. Paint
@@ -2165,7 +2385,7 @@
     (local $idx i32) (local $parent i32) (local $ctrl_id i32)
     (local $hdc i32) (local $sel i32) (local $brush i32)
     (local $cx i32) (local $cy i32) (local $row_count i32)
-    (local $other i32) (local $other_state i32) (local $cc i32)
+    (local $other i32) (local $other_state i32) (local $cc i32) (local $rgb i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -2285,9 +2505,10 @@
             (local.set $cc (call $wnd_get_userdata (local.get $parent)))
             (if (local.get $cc)
               (then
-                (i32.store offset=12 (call $g2w (local.get $cc))
-                  (call $colorgrid_color_for_hwnd
-                    (local.get $hwnd) (local.get $idx)))))
+                (local.set $rgb (call $colorgrid_color_for_hwnd
+                  (local.get $hwnd) (local.get $idx)))
+                (i32.store offset=12 (call $g2w (local.get $cc)) (local.get $rgb))
+                (call $colordlg_sync_rgb_fields (local.get $parent) (local.get $rgb))))
             (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
                     (i32.or (local.get $ctrl_id) (i32.const 0x10000))   ;; HIWORD=1 (LBN_SELCHANGE reused)
                     (local.get $hwnd)))))
