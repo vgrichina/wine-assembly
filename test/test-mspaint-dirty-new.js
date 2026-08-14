@@ -27,20 +27,20 @@ for (const file of Object.values(shots)) {
 }
 
 const input = [
-  '40:click:39:146',
-  '50:mousedown:120:140', '51:mousemove:150:160', '52:mouseup:190:190',
-  `65:png:${shots.dirty}`,
-  '70:0x111:57600',                       // File > New
-  '100:dlg-dump:first-prompt',
-  '110:dlg-cmd:2',                        // Cancel
-  `145:png:${shots.cancelled}`,
-  '146:dump-windows:cancelled',
-  '155:0x111:57600',
-  '185:dlg-dump:second-prompt',
-  '195:dlg-cmd:7',                        // No
-  `235:png:${shots.discarded}`,
-  '236:dump-windows:discarded',
-  '245:stop',
+  '18:click:39:146',
+  '28:mousedown:120:140', '29:mousemove:150:160', '30:mouseup:190:190',
+  `38:png:${shots.dirty}`,
+  '45:0x111:57600',                       // File > New
+  '60:dlg-dump:first-prompt',
+  '62:dlg-cmd:2',                         // Cancel
+  `75:png:${shots.cancelled}`,
+  '75:dump-windows:cancelled',
+  '80:0x111:57600',
+  '95:dlg-dump:second-prompt',
+  '97:dlg-cmd:7',                         // No
+  `110:png:${shots.discarded}`,
+  '110:dump-windows:discarded',
+  '111:stop',
 ].join(',');
 
 let output = '';
@@ -50,13 +50,13 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=280',
+    '--max-batches=115',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
     '--trace-api=MessageBoxA',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
