@@ -17748,5 +17748,82 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4137070816
+  },
+  {
+    "id": 2327,
+    "name": "EnumThreadWindows",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4016057677
+  },
+  {
+    "id": 2328,
+    "name": "EnumSystemCodePagesA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1423181683
+  },
+  {
+    "id": 2329,
+    "name": "LocalSize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 393427289
+  },
+  {
+    "id": 2330,
+    "name": "LoadLibraryExA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 114361440
+  },
+  {
+    "id": 2331,
+    "name": "DdeInitializeA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4224752437
+  },
+  {
+    "id": 2332,
+    "name": "DdeCreateStringHandleA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 279535974
+  },
+  {
+    "id": 2333,
+    "name": "DdeNameService",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2521407766
+  },
+  {
+    "id": 2334,
+    "name": "DdeFreeStringHandle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2784635329
+  },
+  {
+    "id": 2335,
+    "name": "DdeUninitialize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 376808777
+  },
+  {
+    "id": 2336,
+    "name": "DosDateTimeToFileTime",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 643852462
+  },
+  {
+    "id": 2337,
+    "name": "OpenSemaphoreA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3994304424
   }
 ]

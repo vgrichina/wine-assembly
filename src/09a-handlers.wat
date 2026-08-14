@@ -590,6 +590,131 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; LoadLibraryExA(lpFileName, hFile, dwFlags). With dwFlags=0 this is
+  ;; exactly LoadLibraryA; the Wise DX-Ball installer uses that documented
+  ;; form to obtain KERNEL32 before probing an optional procedure.
+  (func $handle_LoadLibraryExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_LoadLibraryA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    ;; LoadLibraryA consumed its return address plus one argument. Consume the
+    ;; two additional Ex arguments without changing its result/yield state.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; DdeInitializeA(pidInst, callback, afCmd, ulRes). Provide the process-local
+  ;; DDE instance used by Wise to register its single-installer service.
+  (func $handle_DdeInitializeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ne (local.get $arg0) (i32.const 0))
+      (then (call $gs32 (local.get $arg0) (i32.const 1))))
+    (global.set $eax (i32.const 0)) ;; DMLERR_NO_ERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; Process-local HSZ handles retain the guest string pointer. That is enough
+  ;; for Wise's single-instance service registration and later free call.
+  (func $handle_DdeCreateStringHandleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_DdeNameService (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  (func $handle_DdeFreeStringHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  (func $handle_DdeUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; DosDateTimeToFileTime(wFatDate, wFatTime, lpFileTime). Convert the FAT
+  ;; local calendar fields to 100ns ticks since 1601-01-01. Timezone
+  ;; conversion, when requested, is handled separately by
+  ;; LocalFileTimeToFileTime.
+  (func $handle_DosDateTimeToFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $year i32) (local $month i32) (local $day i32)
+    (local $hour i32) (local $minute i32) (local $second i32)
+    (local $leap i32) (local $max_day i32) (local $month_days i32)
+    (local $year_minus_one i32) (local $days i32) (local $ticks i64)
+    (local.set $year (i32.add (i32.const 1980)
+      (i32.and (i32.shr_u (local.get $arg0) (i32.const 9)) (i32.const 0x7f))))
+    (local.set $month (i32.and (i32.shr_u (local.get $arg0) (i32.const 5)) (i32.const 0x0f)))
+    (local.set $day (i32.and (local.get $arg0) (i32.const 0x1f)))
+    (local.set $hour (i32.and (i32.shr_u (local.get $arg1) (i32.const 11)) (i32.const 0x1f)))
+    (local.set $minute (i32.and (i32.shr_u (local.get $arg1) (i32.const 5)) (i32.const 0x3f)))
+    (local.set $second (i32.mul (i32.and (local.get $arg1) (i32.const 0x1f)) (i32.const 2)))
+
+    (local.set $leap
+      (i32.or
+        (i32.eq (i32.rem_u (local.get $year) (i32.const 400)) (i32.const 0))
+        (i32.and
+          (i32.eq (i32.rem_u (local.get $year) (i32.const 4)) (i32.const 0))
+          (i32.ne (i32.rem_u (local.get $year) (i32.const 100)) (i32.const 0)))))
+    (local.set $max_day (i32.const 31))
+    (if (i32.eq (local.get $month) (i32.const 2))
+      (then (local.set $max_day (i32.add (i32.const 28) (local.get $leap))))
+      (else
+        (if (i32.or
+              (i32.or (i32.eq (local.get $month) (i32.const 4)) (i32.eq (local.get $month) (i32.const 6)))
+              (i32.or (i32.eq (local.get $month) (i32.const 9)) (i32.eq (local.get $month) (i32.const 11))))
+          (then (local.set $max_day (i32.const 30))))))
+
+    (if
+      (i32.and
+        (i32.and
+          (i32.and (i32.ge_u (local.get $month) (i32.const 1)) (i32.le_u (local.get $month) (i32.const 12)))
+          (i32.and (i32.ge_u (local.get $day) (i32.const 1)) (i32.le_u (local.get $day) (local.get $max_day))))
+        (i32.and
+          (i32.and (i32.le_u (local.get $hour) (i32.const 23)) (i32.le_u (local.get $minute) (i32.const 59)))
+          (i32.ne (local.get $arg2) (i32.const 0))))
+      (then
+        ;; Cumulative days before the selected month in a non-leap year.
+        (if (i32.eq (local.get $month) (i32.const 1)) (then (local.set $month_days (i32.const 0)))
+          (else (if (i32.eq (local.get $month) (i32.const 2)) (then (local.set $month_days (i32.const 31)))
+          (else (if (i32.eq (local.get $month) (i32.const 3)) (then (local.set $month_days (i32.const 59)))
+          (else (if (i32.eq (local.get $month) (i32.const 4)) (then (local.set $month_days (i32.const 90)))
+          (else (if (i32.eq (local.get $month) (i32.const 5)) (then (local.set $month_days (i32.const 120)))
+          (else (if (i32.eq (local.get $month) (i32.const 6)) (then (local.set $month_days (i32.const 151)))
+          (else (if (i32.eq (local.get $month) (i32.const 7)) (then (local.set $month_days (i32.const 181)))
+          (else (if (i32.eq (local.get $month) (i32.const 8)) (then (local.set $month_days (i32.const 212)))
+          (else (if (i32.eq (local.get $month) (i32.const 9)) (then (local.set $month_days (i32.const 243)))
+          (else (if (i32.eq (local.get $month) (i32.const 10)) (then (local.set $month_days (i32.const 273)))
+          (else (if (i32.eq (local.get $month) (i32.const 11)) (then (local.set $month_days (i32.const 304)))
+          (else (local.set $month_days (i32.const 334))))))))))))))))))))))))
+        (if (i32.and (i32.gt_u (local.get $month) (i32.const 2)) (local.get $leap))
+          (then (local.set $month_days (i32.add (local.get $month_days) (i32.const 1)))))
+        (local.set $year_minus_one (i32.sub (local.get $year) (i32.const 1)))
+        (local.set $days
+          (i32.add
+            (i32.sub
+              (i32.add
+                (i32.add
+                  (i32.mul (local.get $year_minus_one) (i32.const 365))
+                  (i32.div_u (local.get $year_minus_one) (i32.const 4)))
+                (i32.div_u (local.get $year_minus_one) (i32.const 400)))
+              (i32.add (i32.div_u (local.get $year_minus_one) (i32.const 100)) (i32.const 584388)))
+            (i32.add (local.get $month_days) (i32.sub (local.get $day) (i32.const 1)))))
+        (local.set $ticks
+          (i64.mul
+            (i64.add
+              (i64.mul (i64.extend_i32_u (local.get $days)) (i64.const 86400))
+              (i64.extend_i32_u
+                (i32.add
+                  (i32.add (i32.mul (local.get $hour) (i32.const 3600)) (i32.mul (local.get $minute) (i32.const 60)))
+                  (local.get $second))))
+            (i64.const 10000000)))
+        (i64.store (call $g2w (local.get $arg2)) (local.get $ticks))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 13: DeleteFileA(lpFileName) — 1 arg stdcall
   (func $handle_DeleteFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 0)))
@@ -3777,6 +3902,19 @@
     (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
   )
 
+  ;; LocalSize(hMem) — LocalAlloc returns a fixed guest pointer whose aligned
+  ;; allocation size is stored in the four-byte heap header immediately before
+  ;; it. Return the usable data bytes, matching the existing GlobalSize path.
+  (func $handle_LocalSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (global.set $eax
+          (i32.sub (call $gl32 (i32.sub (local.get $arg0) (i32.const 4)))
+                   (i32.const 4)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 232: GlobalAlloc
   (func $handle_GlobalAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
@@ -6730,9 +6868,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 428: LocalFileTimeToFileTime — STUB: unimplemented
+  ;; 428: LocalFileTimeToFileTime. The emulator does not model a timezone, so
+  ;; local and UTC FILETIMEs have the same bit representation.
   (func $handle_LocalFileTimeToFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $src i32) (local $dst i32)
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
+      (then
+        (local.set $src (call $g2w (local.get $arg0)))
+        (local.set $dst (call $g2w (local.get $arg1)))
+        (i64.store (local.get $dst) (i64.load (local.get $src)))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 429: SystemTimeToFileTime — STUB: unimplemented
@@ -8259,6 +8406,16 @@
   (func $handle_CreateSemaphoreA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_create_semaphore (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; OpenSemaphoreA(dwDesiredAccess, bInheritHandle, lpName). Named kernel
+  ;; objects are process-local in the current host model, so a new emulator
+  ;; process has no pre-existing semaphore to open. Return the documented
+  ;; not-found result; callers such as DX-Ball then create their instance
+  ;; semaphore through CreateSemaphoreA.
+  (func $handle_OpenSemaphoreA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $last_error (i32.const 2)) ;; ERROR_FILE_NOT_FOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 526: CreateEventW(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -10992,6 +11149,23 @@
   ;; the callback. If a future use case needs real iteration, set up a CACA
   ;; continuation thunk that re-enters this handler to drive the next index.
   (func $handle_EnumWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; EnumThreadWindows(dwThreadId, lpfn, lParam) — the emulator exposes one
+  ;; application thread/window set. Match EnumWindows' current empty-success
+  ;; enumeration until chained guest callbacks are available. WinHelp uses
+  ;; this as a best-effort sweep for secondary windows while rebuilding GID.
+  (func $handle_EnumThreadWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; EnumSystemCodePagesA(lpCodePageEnumProc, dwFlags) — report successful
+  ;; enumeration. The emulator exposes its fixed ANSI/OEM code-page model via
+  ;; GetACP/GetOEMCP; Win98 FTSRCH only requires this startup probe to succeed.
+  (func $handle_EnumSystemCodePagesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

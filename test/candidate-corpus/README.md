@@ -48,6 +48,20 @@ node test/test-cli-candidate-corpus.js --dry-run
 node test/test-cli-candidate-corpus.js --strict
 ```
 
+DX-Ball also has a deliberately separate two-stage candidate gate. It drives
+the original Wise installer through completion, validates the installed
+payload, then launches that payload and requires a visible 640x480 DirectDraw
+frame:
+
+```sh
+node test/test-dxball-candidate.js
+```
+
+This longer test is not included in `test/run-all.sh`. It skips when the local,
+gitignored DX-Ball package has not been fetched. Set
+`KEEP_DXBALL_CANDIDATE_TMP=1` to retain its screenshots and extracted VFS for
+inspection.
+
 The runner rejects DOS, NE, and non-x86 files before invoking Wine-Assembly;
 only PE32/i386 executables enter the survey. It compiles one immutable WAT
 snapshot and reuses that snapshot for every local candidate. The default

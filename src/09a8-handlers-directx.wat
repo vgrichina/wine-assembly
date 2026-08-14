@@ -2279,6 +2279,7 @@
   (func $dx_present (param $entry_wa i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
+    (local $surface_id i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
     (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
@@ -2286,6 +2287,19 @@
     (local.set $dib_wa (i32.load (i32.add (local.get $entry_wa) (i32.const 20))))
     (call $host_dx_trace (i32.const 5) (call $dx_slot_of (local.get $entry_wa))
       (local.get $bpp) (local.get $dib_wa) (global.get $dx_primary_pal_wa))
+    ;; Present DirectDraw's own canonical DIB directly. The host keeps a
+    ;; derived canvas for this 0x200000+slot surface and coalesces repeated
+    ;; Unlock uploads until composition. This avoids copying 640x480 through
+    ;; a second WAT window surface for every scanline of old-school fades.
+    (local.set $surface_id
+      (i32.add (i32.const 0x00200000) (call $dx_slot_of (local.get $entry_wa))))
+    (if (call $gdi_dx_dc_bind (local.get $surface_id))
+      (then
+        (if (call $host_gdi_surface_attach (local.get $surface_id) (global.get $main_hwnd))
+          (then
+            (drop (call $host_gdi_surface_upload (local.get $surface_id)
+              (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
+            (return)))))
     ;; Build BITMAPINFO in a private DirectDraw scratch area. PAINT_SCRATCH
     ;; at 0xAD40 is reused by window/control paint paths during presentation.
     (local.set $bmi_wa (i32.const 0x00011140))
