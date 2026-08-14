@@ -2622,15 +2622,16 @@
 	          (call $invalidate_hwnd (local.get $arg0)))))
 	    (else
 	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-	      (local.set $cx (i32.and (local.get $cs) (i32.const 0xFFFF)))
-	      (local.set $cy (i32.shr_u (local.get $cs) (i32.const 16)))
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (call $invalidate_hwnd (local.get $arg0))
-	          (global.set $movewindow_pending_hwnd (local.get $arg0))
-	          (global.set $movewindow_pending_size
-	            (i32.or (i32.and (local.get $cx) (i32.const 0xFFFF))
-                    (i32.shl (local.get $cy) (i32.const 16))))))))
+              ;; Preserve every resized child instead of overwriting one global
+              ;; pending HWND. Paint resizes its inner canvas during dock-bar
+              ;; layout without calling ShowWindow on it afterward; the old
+              ;; single-slot path therefore never delivered its final WM_SIZE.
+              (drop (call $post_queue_push
+                (local.get $arg0) (i32.const 0x0005)
+                (i32.const 0) (local.get $cs)))))))
     (global.set $eax (i32.const 1))
     (return)
   )
