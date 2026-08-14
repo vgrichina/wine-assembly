@@ -62,14 +62,40 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 0);
   });
 
-  check('classic recording closes to a valid independently owned WMF', () => {
+  check('classic recording serializes and replays canonical pixels', () => {
     const recording = wat.test_call_CreateMetaFileA(0) >>> 0;
     assert(recording);
+    const red = wat.test_call_CreateSolidBrush(0x000000ff) >>> 0;
+    const rect = allocZero(16);
+    wat.guest_write32(rect, 10);
+    wat.guest_write32(rect + 4, 10);
+    wat.guest_write32(rect + 8, 30);
+    wat.guest_write32(rect + 12, 25);
+    assert.strictEqual(wat.test_call_FillRect(recording, rect, red), 1);
+    assert.strictEqual(wat.test_call_GetPixel(recording, 15, 15) >>> 0, 0x000000ff);
     const metafile = wat.test_call_CloseMetaFile(recording) >>> 0;
     assert(metafile);
+    const required = wat.test_call_GetMetaFileBitsEx(metafile, 0, 0) >>> 0;
+    assert.strictEqual(required, 640 * 480 * 4 + 120);
+    const stream = allocZero(required);
+    assert.strictEqual(wat.test_call_GetMetaFileBitsEx(metafile, required, stream), required);
+    assert.strictEqual(wat.guest_read32(stream + 6) * 2, required,
+      'METAHEADER size must cover the complete stream');
+    assert.strictEqual(read16(stream + 50), 0x0f43,
+      'recording must use the standard META_STRETCHDIB record');
+    assert.strictEqual(wat.guest_read32(stream + 74), 40);
+    assert.strictEqual(wat.guest_read32(stream + 78), 640);
+    assert.strictEqual(wat.guest_read32(stream + 82) | 0, -480);
+
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 640, 480) >>> 0;
+    assert(bitmap);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
     assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1);
-    assert.strictEqual(wat.test_call_GetMetaFileBitsEx(metafile, 0, 0), 24);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 15, 15) >>> 0, 0x000000ff,
+      'replay must restore recorded geometry');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 0, 0) >>> 0, 0x00ffffff,
+      'replay must preserve the recording surface background');
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
   });
 

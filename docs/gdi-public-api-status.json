@@ -10,15 +10,13 @@
   "notExposed": [],
   "knownPartialOrUnsupported": {
     "metafile": [
-      "CloseMetaFile",
       "CopyMetaFileA",
       "CopyMetaFileW",
-      "CreateMetaFileA",
-      "CreateMetaFileW",
       "EnumMetaFile",
-      "PlayMetaFile",
       "PlayMetaFileRecord",
-      "WMF/EMF recording and playback preserve valid object/byte contracts but do not capture or replay drawing records",
+      "CreateMetaFileA/W records into a canonical 640x480 WAT surface; CloseMetaFile serializes a standard META_STRETCHDIB WMF and PlayMetaFile parses and replays that bitmap record through the WAT rasterizer",
+      "General vector WMF object/state records and EnumMetaFile callbacks are not preserved; unsupported well-formed records are skipped during playback",
+      "Enhanced metafile transport preserves valid object/header/byte contracts but does not replay EMF drawing records",
       "GetWinMetaFileBits and SetWinMetaFileBits emit valid empty target streams rather than converting drawing records"
     ],
     "printer": [

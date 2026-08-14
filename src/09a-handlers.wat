@@ -5637,11 +5637,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
-  ;; 365: PlayMetaFile(hdc, hmf) — validate WAT-owned opaque WMF transport.
+  ;; 365: PlayMetaFile(hdc, hmf) — parse and replay WAT-owned WMF records.
   (func $handle_PlayMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.and
-      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))
-      (i32.ne (call $gdi_metafile_record (local.get $arg1) (i32.const 6)) (i32.const 0))))
+    (global.set $eax (call $gdi_metafile_play_wmf
+      (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8609,17 +8608,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; Classic metafile recording compatibility. Canvas-backed GDI has no WMF
-  ;; serializer, but RichEdit only needs a drawable recording DC and a stable
-  ;; nonzero HMETAFILE token while assembling its clipboard data object. Keep
-  ;; the compatible DC alive across CloseMetaFile and release it at
-  ;; DeleteMetaFile; drawing operations therefore remain safe and isolated.
+  ;; Classic metafile recording uses a bounded canonical WAT surface. Closing
+  ;; serializes it into an interoperable META_STRETCHDIB WMF stream.
   (func $handle_CreateMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_compat_dc (i32.const 0)))
+    (global.set $eax (call $gdi_metafile_recording_dc_create))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_CreateMetaFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_create_compat_dc (i32.const 0)))
+    (global.set $eax (call $gdi_metafile_recording_dc_create))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9005,13 +9001,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; Finish recording and return a valid empty WMF stream. Geometry recording
-  ;; remains a documented semantic limitation, but the result is an ordinary
-  ;; independently owned metafile object rather than a disguised DC handle.
+  ;; Finish recording, serialize the canonical surface and release the DC.
   (func $handle_CloseMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (call $host_gdi_delete_dc (local.get $arg0)))
-      (then (global.set $eax (i32.const 0)))
-      (else (global.set $eax (call $gdi_metafile_empty_wmf))))
+    (global.set $eax (call $gdi_metafile_snapshot_wmf (local.get $arg0)))
+    (if (call $gdi_metafile_recording_bitmap (local.get $arg0))
+      (then (drop (call $gdi_dc_delete (local.get $arg0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_DeleteMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

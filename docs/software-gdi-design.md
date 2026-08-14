@@ -61,6 +61,15 @@ text then commit to those same bytes. Job ordering and teardown are WAT-owned.
 Persisting every completed page and handing a spool/export stream to the
 browser remain printer-integration work rather than GDI raster ownership work.
 
+Classic metafile recording is also canonical WAT raster work. `CreateMetaFile`
+allocates a bounded 640x480 software surface; `CloseMetaFile` serializes its
+pixels into a standard top-down 32-bpp `META_STRETCHDIB` WMF record, and
+`PlayMetaFile` validates, decodes, maps, clips, and presents that record through
+the shared WAT blitter. This gives independently transportable WMF bytes and
+faithful replay of all drawing that reached the recording surface. Native
+vector record preservation, enumeration callbacks, and EMF record playback
+remain separate compatibility layers.
+
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
 a derived cache: WAT raster writes upload bounded rectangles. The retained
@@ -544,15 +553,15 @@ Font matching should reproduce the GDI inputs that affect `CreateFont` and
 `LOGFONT`: face aliases, height versus cell height, width, weight, italic,
 underline, strikeout, charset, pitch/family, escapement, and orientation.
 Point sizes must use the em-height and device DPI rules rather than CSS pixels.
-The browser and CLI preload the tracked `fonts/W95FA.fon` and
-`fonts/Fixedsys.fon` into `C:\\WINDOWS\\FONTS`, and the WAT backend installs
-each lazily on the first matching text operation. `SYSTEM_FONT`,
-`ANSI_VAR_FONT`, `DEVICE_DEFAULT_FONT`,
-`DEFAULT_GUI_FONT`, and the internal caption font resolve to its closest strike.
-Created `W95FA`, `MS Sans Serif`, `Microsoft Sans Serif`, `Tahoma`, `System`,
-`Helv`, `MS Shell Dlg`, and `MS Shell Dlg 2` faces use the same deterministic
-path. Explicit document faces such as Arial remain on the scalable Canvas
-fallback rather than being silently substituted.
+The browser and CLI preload tracked `System.fon`, `MSSansSerif.fon`,
+`Fixedsys.fon`, and `Courier.fon` files generated from Wine's embedded bitmap
+strikes into `C:\\WINDOWS\\FONTS`; the WAT backend installs each lazily on the
+first matching text operation. `SYSTEM_FONT` uses System, `ANSI_FIXED_FONT`
+uses Courier, and the variable UI stocks use MS Sans Serif. Fixed-system stocks
+use Fixedsys; `OEM_FIXED_FONT` explicitly retains that fallback until a distinct
+redistributable Terminal 8x12 strike is available. Common Win9x UI aliases use
+the deterministic MS Sans Serif path. Explicit document faces such as Arial
+remain on the scalable Canvas fallback rather than being silently substituted.
 
 The stock `ANSI_FIXED_FONT`, `OEM_FIXED_FONT`, and `SYSTEM_FIXED_FONT` objects,
 plus an explicit `Fixedsys` face, resolve to generated public-domain Fixedsys
