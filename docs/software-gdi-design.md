@@ -541,8 +541,10 @@ the three stock handles.
 Raster output should be monochrome by default for the Win98 look. Glyph origins
 and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,
 justification, tabs, opaque backgrounds, `ETO_CLIPPED`, and `ETO_OPAQUE` are
-handled above the font provider. Complex scripts may remain on the Canvas path
-until a shaping engine such as HarfBuzz is introduced.
+handled above the font provider. Single-line overflow and the final vertically
+visible multiline row support end, word, and path ellipsis in that WAT layout
+layer. Complex scripts may remain on the Canvas path until a shaping engine
+such as HarfBuzz is introduced.
 
 Validation requires reference captures from an actual Win98 environment at
 known DPI. Test `GetTextMetrics`, `GetTextExtentPoint32`, ABC widths, dialog

@@ -1193,6 +1193,7 @@
     (local $word_break i32) (local $single_line i32)
     (local $original_text i32) (local $original_wide i32)
     (local $prepared i32) (local $tab_width i32) (local $shortened i32)
+    (local $visible_lines i32) (local $vertical_ellipsis i32)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.eqz (local.get $strike)) (then (return (i32.const -1))))
     (if (i32.or (i32.eqz (local.get $rect)) (i32.eqz (local.get $text)))
@@ -1256,6 +1257,16 @@
       (i32.and (local.get $format) (i32.const 0x10)) (i32.const 0)))
     (local.set $single_line (i32.ne
       (i32.and (local.get $format) (i32.const 0x20)) (i32.const 0)))
+    (if (i32.gt_s (local.get $height) (i32.const 0))
+      (then (local.set $visible_lines (i32.div_s
+        (i32.sub (local.get $bottom_device) (local.get $top_device))
+        (local.get $height)))))
+    (local.set $vertical_ellipsis
+      (i32.and
+        (i32.and (i32.eqz (local.get $single_line))
+          (i32.eqz (i32.and (local.get $format) (i32.const 0x400))))
+        (i32.and (i32.gt_s (local.get $visible_lines) (i32.const 0))
+          (i32.ne (i32.and (local.get $format) (i32.const 0x4C000)) (i32.const 0)))))
     (if (i32.and (local.get $single_line)
           (i32.ne (i32.and (local.get $format) (i32.const 0x4C000)) (i32.const 0)))
       (then
@@ -1278,6 +1289,36 @@
             (local.get $word_break) (local.get $single_line) (local.get $tab_width)))
           (local.set $end (i32.wrap_i64 (local.get $line)))
           (local.set $next (i32.wrap_i64 (i64.shr_u (local.get $line) (i64.const 32))))
+          ;; When more wrapped text exists below the rectangle, append an
+          ;; ellipsis to the final vertically visible row and discard the
+          ;; hidden rows. Feeding the appended dots through the ordinary line
+          ;; ellipsifier also shrinks a full-width row enough to fit them.
+          (if (i32.and (local.get $vertical_ellipsis)
+                (i32.and
+                  (i32.eq (i32.add (local.get $line_count) (i32.const 1))
+                    (local.get $visible_lines))
+                  (i32.lt_u (local.get $next) (local.get $count))))
+            (then
+              (i32.store16 (i32.add (local.get $text)
+                (i32.shl (local.get $end) (i32.const 1))) (i32.const 46))
+              (i32.store16 (i32.add (local.get $text)
+                (i32.shl (i32.add (local.get $end) (i32.const 1)) (i32.const 1)))
+                (i32.const 46))
+              (i32.store16 (i32.add (local.get $text)
+                (i32.shl (i32.add (local.get $end) (i32.const 2)) (i32.const 1)))
+                (i32.const 46))
+              (local.set $shortened (call $gdi_bitmap_text_ellipsify
+                (local.get $hdc)
+                (i32.add (local.get $text) (i32.shl (local.get $pos) (i32.const 1)))
+                (i32.add (i32.sub (local.get $end) (local.get $pos)) (i32.const 3))
+                (local.get $rect_width) (local.get $format) (local.get $tab_width)))
+              (local.set $count (i32.add (local.get $pos) (local.get $shortened)))
+              (local.set $end (local.get $count))
+              (local.set $next (local.get $count))
+              (if (i32.ne (i32.and (local.get $format) (i32.const 0x10000)) (i32.const 0))
+                (then (call $gdi_bitmap_text_copy_modified
+                  (local.get $original_text) (local.get $text) (local.get $count)
+                  (local.get $original_wide))))))
           (local.set $line_width (call $gdi_bitmap_text_layout_measure
             (local.get $hdc) (i32.add (local.get $text) (i32.mul (local.get $pos) (local.get $step)))
             (i32.sub (local.get $end) (local.get $pos)) (local.get $wide)
