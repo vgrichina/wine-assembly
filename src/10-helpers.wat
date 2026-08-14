@@ -10383,6 +10383,7 @@
   ;; update rect is non-empty.
   (func $paint_select_next_dirty (result i32)
     (local $i i32) (local $hwnd i32) (local $style i32) (local $cs i32) (local $ctrl_wh i32)
+    (local $status_fallback i32)
     ;; Main-window invalidation historically used $paint_pending while child
     ;; windows used PAINT_FLAGS. The region-driven selector is the single
     ;; paint source now, so mirror main pending into the same flag table.
@@ -10422,7 +10423,11 @@
                 (else
                   (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
                     (then
-                      (return (local.get $hwnd)))
+                      ;; Native status bars paint after their guest-owned
+                      ;; siblings so late non-client work cannot cover them.
+                      (if (call $statusbar_native_is (local.get $hwnd))
+                        (then (local.set $status_fallback (local.get $hwnd)))
+                        (else (return (local.get $hwnd)))))
                     (else
                       ;; A stale paint bit without an update rect must not
                       ;; keep the message pump spinning.
@@ -10431,7 +10436,7 @@
                         (then (global.set $paint_pending (i32.const 0))))))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (i32.const 0))
+    (local.get $status_fallback))
 
   ;; $paint_seed_child_paints(parent): WAT-owned propagation of a parent's
   ;; update region into descendant children. This replaces host JS child-paint
