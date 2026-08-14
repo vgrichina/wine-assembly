@@ -566,7 +566,9 @@
     ;; window is created without WS_VISIBLE, then sized through private extra
     ;; LONGs before visible Button children are added; on Win98 the resulting
     ;; bar is presented with the document. Preserve that legacy container
-    ;; contract once its distinctive 18px private layout state is complete.
+    ;; contract once its private layout height matches the visible Button
+    ;; being added. The archived WinHelp computes 21px with the Win98 system
+    ;; font; fixed pixel checks break when the font metrics differ.
     ;; Requiring a custom WS_CHILD parent, a state pointer, and the private
     ;; height slot keeps ordinary hidden dialog pages hidden.
     (if (i32.and
@@ -583,12 +585,13 @@
                   (i32.eqz (i32.and (call $wnd_get_style (local.get $parent_hwnd)) (i32.const 0x10000000)))
                   (i32.and
                     (i32.ne (call $wnd_extra_get (local.get $parent_hwnd) (i32.const 0)) (i32.const 0))
-                    (i32.eq (call $wnd_extra_get (local.get $parent_hwnd) (i32.const 8)) (i32.const 18))))))))
+                    (i32.eq
+                      (call $wnd_extra_get (local.get $parent_hwnd) (i32.const 8))
+                      (call $gl32 (i32.add (global.get $esp) (i32.const 32))))))))))
       (then
         (drop (call $wnd_set_style (local.get $parent_hwnd)
           (i32.or (call $wnd_get_style (local.get $parent_hwnd)) (i32.const 0x10000000))))
-        (drop (call $host_show_window (local.get $parent_hwnd) (i32.const 5)))
-        (call $nc_flags_set (local.get $parent_hwnd) (i32.const 2))))
+        (drop (call $host_show_window (local.get $parent_hwnd) (i32.const 5)))))
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.
     (if (local.get $arg2)
       (then (call $title_table_set (local.get $hwnd)

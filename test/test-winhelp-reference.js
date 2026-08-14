@@ -115,9 +115,37 @@ if (!fs.existsSync(screenshot) || fs.statSync(screenshot).size < 1000) failures.
 if (!/window:winhelp[^\n]*class="MS_WINTOPIC"[^\n]*size=\d+x([1-9]\d{2,})[^\n]*visible=true/.test(output)) {
   failures.push('Help topic child is not visible with a usable height');
 }
+if (!/window:winhelp[^\n]*class="MS_WINICON"[^\n]*size=\d+x([1-9]\d*)[^\n]*visible=true/.test(output)) {
+  failures.push('WinHelp command-button bar is not visible');
+}
+for (const caption of ['Help &Topics', '&Back', '&Options']) {
+  const line = output.split('\n').find(entry =>
+    entry.includes('window:winhelp') && /class="button"/i.test(entry) &&
+    entry.includes(`title="${caption}"`) && entry.includes('visible=true'));
+  if (!line) {
+    failures.push(`WinHelp command button is not visible: ${caption}`);
+  }
+}
 if (fs.existsSync(screenshot)) {
   const png = PNG.sync.read(fs.readFileSync(screenshot));
   let darkTopicPixels = 0;
+  let darkCommandBarPixels = 0;
+  // The archived viewer restores this reference window at (115,18), placing
+  // its 21px command bar at screen y=59. A hidden MS_WINICON parent leaves
+  // this whole strip flat gray (zero dark pixels); the three rendered Button
+  // borders and captions provide a stable visual assertion.
+  for (let y = 59; y < Math.min(80, png.height); y++) {
+    for (let x = 118; x < Math.min(313, png.width); x++) {
+      const offset = (y * png.width + x) * 4;
+      if (png.data[offset] < 100 && png.data[offset + 1] < 100 &&
+          png.data[offset + 2] < 100 && png.data[offset + 3] !== 0) {
+        darkCommandBarPixels++;
+      }
+    }
+  }
+  if (darkCommandBarPixels < 400) {
+    failures.push(`WinHelp command buttons were not rendered (${darkCommandBarPixels} dark pixels)`);
+  }
   // The standalone HLP opens its one real embedded topic. Restrict the count
   // to that topic surface so window chrome cannot satisfy the assertion.
   for (let y = 84; y < Math.min(130, png.height); y++) {
