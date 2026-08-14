@@ -5444,20 +5444,60 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; Win9x comctl32 can route an ANSI status-bar string through ExtTextOutW
+  ;; as packed byte pairs. Recognize only a printable byte string terminated
+  ;; within the supplied UTF-16 span; ordinary UTF-16 ASCII has zero high
+  ;; bytes and cannot match. The count can extend past the ANSI terminator
+  ;; because the control obtained it by running lstrlenW over the byte buffer.
+  (func $gdi_ext_text_out_w_packed_ansi_len (param $text i32) (param $count i32) (result i32)
+    (local $i i32) (local $limit i32) (local $ch i32)
+    (if (i32.or (i32.eqz (local.get $text))
+          (i32.or (i32.le_s (local.get $count) (i32.const 0))
+            (i32.gt_u (local.get $count) (i32.const 0x7FFF))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load8_u offset=1 (local.get $text)))
+      (then (return (i32.const 0))))
+    (local.set $limit (i32.shl (local.get $count) (i32.const 1)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $text) (local.get $i))))
+      (if (i32.eqz (local.get $ch))
+        (then (return (local.get $i))))
+      (if (i32.and
+            (i32.or (i32.lt_u (local.get $ch) (i32.const 0x20))
+              (i32.gt_u (local.get $ch) (i32.const 0x7E)))
+            (i32.and (i32.ne (local.get $ch) (i32.const 9))
+              (i32.and (i32.ne (local.get $ch) (i32.const 10))
+                (i32.ne (local.get $ch) (i32.const 13)))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (i32.load8_u (i32.add (local.get $text) (local.get $limit))))
+      (then (return (local.get $limit))))
+    (i32.const 0))
+
   ;; 364: ExtTextOutW(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
   ;; Host draws UTF-16 text and honors ETO_OPAQUE/ETO_CLIPPED; lpDx is ignored.
   (func $handle_ExtTextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
+    (local $packed_ansi_len i32) (local $wide i32)
     (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
     (local.set $count    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; arg6 (wchar count)
     (if (local.get $arg4)
       (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
     (if (local.get $lpString)
       (then (local.set $text_wa (call $g2w (local.get $lpString)))))
+    (local.set $wide (i32.const 1))
+    (local.set $packed_ansi_len
+      (call $gdi_ext_text_out_w_packed_ansi_len (local.get $text_wa) (local.get $count)))
+    (if (local.get $packed_ansi_len)
+      (then
+        (local.set $count (local.get $packed_ansi_len))
+        (local.set $wide (i32.const 0))))
     (global.set $eax (call $host_gdi_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $rect_wa)
-      (local.get $text_wa) (local.get $count) (i32.const 1)))
+      (local.get $text_wa) (local.get $count) (local.get $wide)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
