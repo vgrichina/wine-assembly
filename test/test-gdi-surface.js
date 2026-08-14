@@ -92,11 +92,14 @@ check('raw presentation uploads canonical DIB bytes without semantic GDI state',
   const bytes = new Uint8Array(memory);
   const bits = 0x1000;
   const { host, gdi } = createHostImports({ getMemory: () => memory, exports: {} });
-  assert.strictEqual(host.gdi_surface_create(0x1234, 3, 2, 24, bits, 12, 0, 0, 0), 1);
   bytes.set([0x66, 0x55, 0x44], bits); // bottom row, first pixel
   bytes.set([0x33, 0x22, 0x11], bits + 12 + 3); // top row, second pixel
-  assert.strictEqual(host.gdi_surface_upload(0x1234, 0, 0, 3, 2), 1);
+  assert.strictEqual(host.gdi_surface_create(0x1234, 3, 2, 24, bits, 12, 0, 0, 0), 1);
   const canvas = gdi.surfacePresentations.get(0x1234).canvas.getContext('2d');
+  assert.deepStrictEqual(Array.from(canvas.getImageData(1, 0, 1, 1).data),
+    [0x11, 0x22, 0x33, 0xFF],
+    'new presentation cache must start from canonical pixels');
+  assert.strictEqual(host.gdi_surface_upload(0x1234, 0, 0, 3, 2), 1);
   assert.deepStrictEqual(Array.from(canvas.getImageData(1, 0, 1, 1).data),
     [0x11, 0x22, 0x33, 0xFF]);
   assert.deepStrictEqual(Array.from(canvas.getImageData(0, 1, 1, 1).data),

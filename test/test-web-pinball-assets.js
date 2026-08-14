@@ -220,14 +220,14 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/renderer-input.js?v=187'), 'web host should cache-bust renderer input after classic outline resizing');
+assert(indexHtml.includes('lib/renderer-input.js?v=188'), 'web host should cache-bust renderer input after Paint palette routing');
 assert(indexHtml.includes('lib/renderer.js?v=175'), 'web host should cache-bust renderer after preserving desktop icons');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(indexHtml.includes('lib/gdi-surface.js?v=1'), 'web host should load the canonical GDI surface module');
-assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host-imports.js?v=198'),
+assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host-imports.js?v=199'),
   'web host should load the GDI surface module before host imports');
-assert(indexHtml.includes('lib/host-imports.js?v=198'), 'web host should cache-bust host imports after sparse window-surface uploads');
+assert(indexHtml.includes('lib/host-imports.js?v=199'), 'web host should cache-bust initial canonical surface uploads');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(indexHtml.includes('host.js?v=198'), 'web host should cache-bust host.js after Paint font rendering');

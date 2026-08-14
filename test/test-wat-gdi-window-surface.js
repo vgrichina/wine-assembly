@@ -106,6 +106,10 @@ async function main() {
   ], [40, 30, 3, 5], 'client DC should resolve into the full window backing with client origin');
   const surfaceId = dv.getUint32(desc + 68, true);
   assert(base.gdi.surfacePresentations.has(surfaceId));
+  assert.deepStrictEqual(
+    [...canvas.getContext('2d').getImageData(3, 5, 1, 1).data],
+    [192, 192, 192, 255],
+    'attached presentation must expose untouched canonical window pixels');
 
   const redBrush = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
   const rect = wat.guest_alloc(16) >>> 0;
