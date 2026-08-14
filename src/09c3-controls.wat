@@ -3509,10 +3509,20 @@
         ;; through instead of painting an opaque white box behind every word.
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        ;; Win9x's mixer uses ordinal SS_ICON resources 301 and 302 for the
-        ;; speakers flanking each balance slider. Until DrawIcon decodes PE
-        ;; icon groups, render faithful compact monochrome fallbacks keyed by
-        ;; the preserved resource ordinal instead of fragile control IDs.
+        ;; SS_ICON dialog controls preserve their RT_GROUP_ICON ordinal in the
+        ;; static state. Decode the color plane and transparency mask through
+        ;; the canonical WAT raster path.
+        (if (i32.and
+              (i32.eq (local.get $style) (i32.const 3))
+              (i32.ne (i32.load offset=12 (local.get $state_w)) (i32.const 0)))
+          (then
+            (if (call $gdi_icon_draw_resource
+                  (local.get $hdc)
+                  (i32.load offset=12 (local.get $state_w))
+                  (local.get $w) (local.get $h))
+              (then (return (i32.const 0))))))
+        ;; A few mixer builds reference absent speaker resources 301/302.
+        ;; Preserve the compact monochrome fallback for those missing icons.
         (if (i32.and
               (i32.eq (local.get $style) (i32.const 3))
               (i32.and

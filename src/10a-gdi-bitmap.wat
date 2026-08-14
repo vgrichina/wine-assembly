@@ -788,6 +788,179 @@
       (i32.load offset=28 (global.get $GDI_BITMAP_PLAN))
       (i32.const 1) (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
 
+  ;; Paint an RT_GROUP_ICON resource into an HDC without routing pixels through
+  ;; Canvas. Classic icon DIBs contain a color (XOR) plane followed by a 1-bpp
+  ;; transparency (AND) mask, and report twice their visible height. Static
+  ;; SS_ICON controls use this path directly from their dialog resource ordinal.
+  (func $gdi_icon_draw_resource (param $hdc i32) (param $resource_id i32)
+        (param $control_w i32) (param $control_h i32) (result i32)
+    (local $group i32) (local $group_size i32) (local $entry i32)
+    (local $image i32) (local $image_size i32) (local $image_id i32)
+    (local $header_size i32) (local $width i32) (local $stored_h i32)
+    (local $height i32) (local $bpp i32) (local $palette_count i32)
+    (local $color_stride i32) (local $mask_stride i32)
+    (local $color_offset i32) (local $mask_offset i32)
+    (local $src i32) (local $dst i32) (local $src_x i32) (local $src_y i32)
+    (local $dst_x i32) (local $dst_y i32) (local $draw_w i32) (local $draw_h i32)
+    (local $x i32) (local $y i32) (local $mask_row i32) (local $mask_bit i32)
+    (local $source_color i32) (local $dest_color i32)
+    (if (i32.or (i32.eqz (local.get $resource_id))
+          (i32.or (i32.le_s (local.get $control_w) (i32.const 0))
+            (i32.le_s (local.get $control_h) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (local.set $group (call $rsrc_find_data_wa (i32.const 14) (local.get $resource_id)))
+    (local.set $group_size (global.get $rsrc_last_size))
+    (if (i32.or (i32.eqz (local.get $group))
+          (i32.or (i32.lt_u (local.get $group_size) (i32.const 20))
+            (i32.or (i32.ne (i32.load16_u offset=2 (local.get $group)) (i32.const 1))
+              (i32.eqz (i32.load16_u offset=4 (local.get $group))))))
+      (then (return (i32.const 0))))
+    ;; A group entry is 14 bytes. The first entry is the Win9x dialog icon;
+    ;; multi-size groups put their default small image first as well.
+    (local.set $entry (i32.add (local.get $group) (i32.const 6)))
+    (local.set $image_id (i32.load16_u offset=12 (local.get $entry)))
+    (local.set $image (call $rsrc_find_data_wa (i32.const 3) (local.get $image_id)))
+    (local.set $image_size (global.get $rsrc_last_size))
+    (if (i32.or (i32.eqz (local.get $image))
+          (i32.lt_u (local.get $image_size) (i32.const 40)))
+      (then (return (i32.const 0))))
+    (local.set $header_size (i32.load (local.get $image)))
+    (local.set $width (i32.load offset=4 (local.get $image)))
+    (local.set $stored_h (i32.load offset=8 (local.get $image)))
+    (local.set $bpp (i32.load16_u offset=14 (local.get $image)))
+    (if (i32.lt_s (local.get $stored_h) (i32.const 0))
+      (then (local.set $height (i32.sub (i32.const 0) (local.get $stored_h))))
+      (else (local.set $height (local.get $stored_h))))
+    (local.set $height (i32.shr_u (local.get $height) (i32.const 1)))
+    ;; Bound dimensions before stride arithmetic and accept only the packed
+    ;; BI_RGB formats supported by the shared software raster reader.
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $header_size) (i32.const 40))
+            (i32.gt_u (local.get $header_size) (local.get $image_size)))
+          (i32.or
+            (i32.or (i32.le_s (local.get $width) (i32.const 0))
+              (i32.gt_s (local.get $width) (i32.const 256)))
+            (i32.or (i32.le_s (local.get $height) (i32.const 0))
+              (i32.gt_s (local.get $height) (i32.const 256)))))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.ne (i32.load offset=16 (local.get $image)) (i32.const 0))
+          (i32.and
+            (i32.and (i32.ne (local.get $bpp) (i32.const 1))
+              (i32.ne (local.get $bpp) (i32.const 4)))
+            (i32.and (i32.ne (local.get $bpp) (i32.const 8))
+              (i32.and (i32.ne (local.get $bpp) (i32.const 24))
+                (i32.ne (local.get $bpp) (i32.const 32))))))
+      (then (return (i32.const 0))))
+    (if (i32.le_u (local.get $bpp) (i32.const 8))
+      (then
+        (local.set $palette_count (i32.load offset=32 (local.get $image)))
+        (if (i32.eqz (local.get $palette_count))
+          (then (local.set $palette_count
+            (i32.shl (i32.const 1) (local.get $bpp)))))
+        (if (i32.gt_u (local.get $palette_count) (i32.const 256))
+          (then (return (i32.const 0))))))
+    (local.set $color_stride (i32.shl
+      (i32.shr_u (i32.add (i32.mul (local.get $width) (local.get $bpp))
+        (i32.const 31)) (i32.const 5)) (i32.const 2)))
+    (local.set $mask_stride (i32.shl
+      (i32.shr_u (i32.add (local.get $width) (i32.const 31)) (i32.const 5))
+      (i32.const 2)))
+    (local.set $color_offset (i32.add (local.get $header_size)
+      (i32.shl (local.get $palette_count) (i32.const 2))))
+    (local.set $mask_offset (i32.add (local.get $color_offset)
+      (i32.mul (local.get $color_stride) (local.get $height))))
+    (if (i32.gt_u (i32.add (local.get $mask_offset)
+          (i32.mul (local.get $mask_stride) (local.get $height)))
+        (local.get $image_size))
+      (then (return (i32.const 0))))
+
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $dst)))
+      (then (return (i32.const 0))))
+    (memory.fill (local.get $src) (i32.const 0) (i32.const 80))
+    (i32.store (local.get $src) (i32.add (local.get $image) (local.get $color_offset)))
+    (i32.store offset=4 (local.get $src) (local.get $width))
+    (i32.store offset=8 (local.get $src) (local.get $height))
+    (i32.store offset=12 (local.get $src) (local.get $color_stride))
+    (i32.store offset=16 (local.get $src) (local.get $bpp))
+    (i32.store offset=20 (local.get $src)
+      (i32.lt_s (local.get $stored_h) (i32.const 0)))
+    (i32.store offset=24 (local.get $src) (i32.add (local.get $image) (local.get $header_size)))
+    (i32.store offset=28 (local.get $src) (local.get $palette_count))
+
+    ;; Center the icon, clipping its edges when the resource is larger than
+    ;; the static control (the same layout behavior as Win9x SS_ICON).
+    (local.set $draw_w (local.get $width))
+    (if (i32.gt_s (local.get $draw_w) (local.get $control_w))
+      (then
+        (local.set $src_x (i32.div_s
+          (i32.sub (local.get $width) (local.get $control_w)) (i32.const 2)))
+        (local.set $draw_w (local.get $control_w)))
+      (else (local.set $dst_x (i32.div_s
+        (i32.sub (local.get $control_w) (local.get $width)) (i32.const 2)))))
+    (local.set $draw_h (local.get $height))
+    (if (i32.gt_s (local.get $draw_h) (local.get $control_h))
+      (then
+        (local.set $src_y (i32.div_s
+          (i32.sub (local.get $height) (local.get $control_h)) (i32.const 2)))
+        (local.set $draw_h (local.get $control_h)))
+      (else (local.set $dst_y (i32.div_s
+        (i32.sub (local.get $control_h) (local.get $height)) (i32.const 2)))))
+    (local.set $dst_x (call $gdi_line_map_x (local.get $dst) (local.get $dst_x)))
+    (local.set $dst_y (call $gdi_line_map_y (local.get $dst) (local.get $dst_y)))
+
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $draw_h)))
+      (local.set $mask_row (i32.add (local.get $src_y) (local.get $y)))
+      (if (i32.ge_s (local.get $stored_h) (i32.const 0))
+        (then (local.set $mask_row
+          (i32.sub (i32.sub (local.get $height) (local.get $mask_row)) (i32.const 1)))))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $draw_w)))
+        (if (call $gdi_raster_clip_visible (local.get $hdc) (local.get $dst)
+              (i32.add (local.get $dst_x) (local.get $x))
+              (i32.add (local.get $dst_y) (local.get $y)))
+          (then
+            (local.set $mask_bit (i32.and
+              (i32.shr_u (i32.load8_u (i32.add (local.get $image)
+                    (i32.add (local.get $mask_offset)
+                      (i32.add (i32.mul (local.get $mask_row) (local.get $mask_stride))
+                        (i32.shr_u (i32.add (local.get $src_x) (local.get $x)) (i32.const 3))))))
+                (i32.sub (i32.const 7)
+                  (i32.and (i32.add (local.get $src_x) (local.get $x)) (i32.const 7))))
+              (i32.const 1)))
+            (local.set $source_color (call $gdi_raster_read (local.get $src)
+              (i32.add (local.get $src_x) (local.get $x))
+              (i32.add (local.get $src_y) (local.get $y))))
+            (if (i32.eqz (local.get $mask_bit))
+              (then (drop (call $gdi_raster_write (local.get $dst)
+                (i32.add (local.get $dst_x) (local.get $x))
+                (i32.add (local.get $dst_y) (local.get $y))
+                (local.get $source_color))))
+              (else
+                ;; AND=1 preserves the destination, then XOR applies any
+                ;; inverse pixel carried by the color plane.
+                (if (local.get $source_color)
+                  (then
+                    (local.set $dest_color (call $gdi_raster_read (local.get $dst)
+                      (i32.add (local.get $dst_x) (local.get $x))
+                      (i32.add (local.get $dst_y) (local.get $y))))
+                    (drop (call $gdi_raster_write (local.get $dst)
+                      (i32.add (local.get $dst_x) (local.get $x))
+                      (i32.add (local.get $dst_y) (local.get $y))
+                      (i32.xor (local.get $dest_color) (local.get $source_color))))))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (call $gdi_geometry_present (local.get $hdc) (local.get $dst)
+      (local.get $dst_x) (local.get $dst_y)
+      (i32.add (local.get $dst_x) (local.get $draw_w))
+      (i32.add (local.get $dst_y) (local.get $draw_h)))
+    (i32.const 1))
+
   ;; Convert a bounded LoadBitmapW name to the ASCII-compatible resource-name
   ;; form understood by the shared PE resource walker. Integer IDs pass through.
   (func $gdi_bitmap_resource_name (param $name i32) (param $wide i32) (result i32)
