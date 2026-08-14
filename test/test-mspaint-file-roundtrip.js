@@ -90,12 +90,24 @@ function countDiff(a, b, box) {
   return count;
 }
 
+function countNonDesktop(image, box) {
+  let count = 0;
+  for (let y = box.y0; y < Math.min(box.y1, image.height); y++) {
+    for (let x = box.x0; x < Math.min(box.x1, image.width); x++) {
+      const i = (y * image.width + x) * 4;
+      if (image.data[i] !== 0 || image.data[i + 1] !== 128 || image.data[i + 2] !== 128) count++;
+    }
+  }
+  return count;
+}
+
 (async () => {
   const screenshotsExist = Object.values(shots).every(file => fs.existsSync(file) && fs.statSync(file).size > 0);
   const bmpExists = fs.existsSync(bmpPath) && fs.statSync(bmpPath).size >= 54;
   let savedVsNew = -1;
   let savedVsReopened = -1;
   let reopenedVsResaved = -1;
+  let minimumFrameCoverage = -1;
   if (screenshotsExist) {
     const [saved, fresh, reopened, resaved] = await Promise.all(
       [shots.saved, shots.new, shots.reopened, shots.resaved].map(pixels),
@@ -104,6 +116,9 @@ function countDiff(a, b, box) {
     savedVsNew = countDiff(saved, fresh, canvasBox);
     savedVsReopened = countDiff(saved, reopened, canvasBox);
     reopenedVsResaved = countDiff(reopened, resaved, canvasBox);
+    const frameBox = { x0: 20, y0: 20, x1: 295, y1: 420 };
+    minimumFrameCoverage = Math.min(...[saved, fresh, reopened, resaved]
+      .map(image => countNonDesktop(image, frameBox)));
   }
 
   let header = null;
@@ -129,16 +144,20 @@ function countDiff(a, b, box) {
   }
 
   const saveDialogCalls = (output.match(/GetSaveFileNameA/g) || []).length;
+  const expectedInkPixels = Math.max(1, savedVsNew + reopenedVsResaved - 2);
   const checks = [
     ['emulator run completed', !runFailed],
     ['all four workflow screenshots written', screenshotsExist],
+    [`Paint frame stayed fully composited (${minimumFrameCoverage} non-desktop px minimum)`,
+      minimumFrameCoverage >= 50000],
     ['saved BMP exported from the virtual filesystem', bmpExists],
     [`New cleared the saved drawing (${savedVsNew} px changed)`, savedVsNew >= 30],
     [`Open restored the saved drawing (${savedVsReopened} px changed)`, savedVsReopened <= 5],
     [`drawing after Open changed the document (${reopenedVsResaved} px changed)`, reopenedVsResaved >= 20],
     ['BMP file header and stored size are valid', !!header && header.magic === 'BM' && header.fileSize === fs.statSync(bmpPath).size],
     ['BMP is an uncompressed 320x240 24-bit image', !!header && !!dib && header.pixelOffset === 54 && header.infoSize === 40 && header.planes === 1 && header.compression === 0 && dib.w === 320 && dib.h === 240 && dib.bpp === 24],
-    [`resaved BMP contains drawing pixels (${inkPixels})`, inkPixels >= 70],
+    [`resaved BMP retained both scripted strokes (${inkPixels}/${expectedInkPixels} px)`,
+      inkPixels >= expectedInkPixels],
     ['Save As and Open dialogs both completed', /GetSaveFileNameA/.test(output) && /GetOpenFileNameA/.test(output) && !/open-dlg-pick: no /.test(output)],
     ['Save reused the selected filename without a second Save As dialog', saveDialogCalls === 1],
     ['file titles transitioned through saved, new, reopened, and resaved states',
