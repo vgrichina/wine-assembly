@@ -43,6 +43,7 @@ UNIT=(
   test/test-gdi-migration-status.js
   test/test-gdi-public-api-status.js
   test/test-wat-gdi-public-bitmap-region.js
+  test/test-wat-gdi-public-state-format.js
   test/test-compatible-bitmap-wat.js
   test/test-gdi-surface.js
   test/test-wat-memory-map.js

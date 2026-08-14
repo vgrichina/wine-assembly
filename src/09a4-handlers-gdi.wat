@@ -860,3 +860,92 @@
             (i32.add (local.get $dy) (local.get $arg4)))))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))))
+
+  (func $handle_AnimatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_palette_animate
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_GetGraphicsMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select
+      (call $gdi_dc_meta_get (local.get $arg0) (i32.const 8) (i32.const 1))
+      (i32.const 0)
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_SetGraphicsMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
+          (i32.gt_u (local.get $arg1) (i32.const 2)))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $gdi_dc_meta_set
+        (local.get $arg0) (i32.const 8) (local.get $arg1) (i32.const 1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetSystemPaletteUse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select
+      (call $gdi_dc_meta_get (local.get $arg0) (i32.const 12) (i32.const 1))
+      (i32.const 0)
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GdiSetBatchLimit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $gdi_batch_limit))
+    (global.set $gdi_batch_limit
+      (select (local.get $arg0) (i32.const 310) (i32.ne (local.get $arg0) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_SetDeviceGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_gamma_ramp_set (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_ChoosePixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_pixel_format_choose (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_DescribePixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or
+          (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+          (i32.ne (local.get $arg1) (i32.const 1)))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (if (local.get $arg3)
+          (then (drop (call $gdi_pixel_format_write
+            (call $g2w (local.get $arg3)) (local.get $arg2)))))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_SetPixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_pixel_format_set
+      (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetPixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select
+      (call $gdi_dc_meta_get (local.get $arg0) (i32.const 16) (i32.const 0))
+      (i32.const 0)
+      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_SwapBuffers (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $desc i32) (local $ok i32)
+    (local.set $desc (global.get $GDI_BLIT_DST_DESC))
+    (if (i32.and
+          (i32.eq (call $gdi_dc_meta_get (local.get $arg0) (i32.const 16)
+            (i32.const 0)) (i32.const 1))
+          (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc)))
+      (then
+        (call $gdi_geometry_present (local.get $arg0) (local.get $desc)
+          (i32.const 0) (i32.const 0)
+          (i32.load offset=4 (local.get $desc))
+          (i32.load offset=8 (local.get $desc)))
+        (local.set $ok (i32.const 1))))
+    (global.set $eax (local.get $ok))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))

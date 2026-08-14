@@ -1159,6 +1159,10 @@
   ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
+  ;; GDI batching is synchronous in this emulator, but the public limit and
+  ;; display gamma ramp remain observable process state.
+  (global $gdi_batch_limit (mut i32) (i32.const 310))
+  (global $gdi_gamma_ramp_guest (mut i32) (i32.const 0))
   ;; Screen-coordinate popup menus use an ordinary WAT bitmap selected into
   ;; this persistent memory DC. JavaScript only attaches its derived Canvas
   ;; presentation as the compositor overlay; it never rasterizes menu chrome.

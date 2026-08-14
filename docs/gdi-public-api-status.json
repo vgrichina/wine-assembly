@@ -5,40 +5,30 @@
     "peFileCount": 183,
     "importCount": 218,
     "sortedImportSha256": "e12833e9e0e671014fc3eb8a97c7299d53867fe97d3827eef5e4632e80c481a6",
-    "representedInApiTable": 187
+    "representedInApiTable": 197
   },
   "notExposed": [
     "AddFontResourceA",
-    "AnimatePalette",
-    "ChoosePixelFormat",
     "CopyEnhMetaFileA",
     "DeleteEnhMetaFile",
-    "DescribePixelFormat",
     "EnumFontsA",
-    "GdiSetBatchLimit",
     "GetCharABCWidthsA",
     "GetEnhMetaFileBits",
     "GetEnhMetaFileHeader",
     "GetEnhMetaFilePaletteEntries",
     "GetFontData",
     "GetGlyphOutlineA",
-    "GetGraphicsMode",
     "GetICMProfileA",
     "GetMetaFileBitsEx",
-    "GetSystemPaletteUse",
     "GetTextExtentExPointA",
     "GetTextExtentExPointW",
     "GetWinMetaFileBits",
     "PlayEnhMetaFile",
     "RemoveFontResourceA",
     "ResetDCA",
-    "SetDeviceGammaRamp",
     "SetEnhMetaFileBits",
-    "SetGraphicsMode",
     "SetMetaFileBitsEx",
-    "SetPixelFormat",
-    "SetWinMetaFileBits",
-    "SwapBuffers"
+    "SetWinMetaFileBits"
   ],
   "knownPartialOrUnsupported": {
     "metafile": [
@@ -70,6 +60,10 @@
     ],
     "visibility": [
       "Derived system/window visibility clipping is not part of the explicit app clip"
+    ],
+    "presentation": [
+      "SetDeviceGammaRamp state round-trips but the LUT is not applied by the browser compositor",
+      "Pixel-format APIs expose one software RGBA format; OpenGL command rendering is outside GDI"
     ]
   }
 }

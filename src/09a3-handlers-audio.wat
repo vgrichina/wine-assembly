@@ -761,7 +761,11 @@
 
   ;; 811: SetSystemPaletteUse(hdc, uUsage) — 2 args stdcall
   (func $handle_SetSystemPaletteUse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))  ;; SYSPAL_NOSTATIC
+    (if (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
+          (i32.gt_u (local.get $arg1) (i32.const 3)))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $gdi_dc_meta_set
+        (local.get $arg0) (i32.const 12) (local.get $arg1) (i32.const 1)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

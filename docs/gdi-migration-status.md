@@ -33,6 +33,11 @@ rectangles, Bezier curves, arcs, and window scrolling.
 Public bitmap access (`CreateBitmapIndirect`, `GetBitmapBits`, and
 `SetBitmapBits`), rounded and multi-polygon regions, `GetRegionData`,
 `PtInRegion`, and ROP4 `MaskBlt` also route through canonical WAT storage.
+Graphics mode, system-palette policy, palette animation, GDI batch-limit
+state, gamma-ramp bytes, and the single software RGBA pixel-format contract
+are likewise WAT-owned. Pixel-format selection is immutable after the first
+successful `SetPixelFormat`, and `SwapBuffers` uses only the raw surface
+presentation boundary.
 DirectDraw HDCs now address native WAT DIB bytes,
 screen DCs select a persistent WAT bitmap, and JS no longer owns DC handles,
 semantic DC records, HDC target resolution, or Canvas-to-DIB synchronization.

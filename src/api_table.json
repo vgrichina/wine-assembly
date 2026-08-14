@@ -17139,5 +17139,82 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2322223040
+  },
+  {
+    "id": 2240,
+    "name": "AnimatePalette",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3756997263
+  },
+  {
+    "id": 2241,
+    "name": "ChoosePixelFormat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1867974379
+  },
+  {
+    "id": 2242,
+    "name": "DescribePixelFormat",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2680520403
+  },
+  {
+    "id": 2243,
+    "name": "GdiSetBatchLimit",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4151768924
+  },
+  {
+    "id": 2244,
+    "name": "GetGraphicsMode",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3160631945
+  },
+  {
+    "id": 2245,
+    "name": "GetPixelFormat",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3615803402
+  },
+  {
+    "id": 2246,
+    "name": "GetSystemPaletteUse",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 141363448
+  },
+  {
+    "id": 2247,
+    "name": "SetDeviceGammaRamp",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 115763842
+  },
+  {
+    "id": 2248,
+    "name": "SetGraphicsMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4257062381
+  },
+  {
+    "id": 2249,
+    "name": "SetPixelFormat",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4050401086
+  },
+  {
+    "id": 2250,
+    "name": "SwapBuffers",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3666440497
   }
 ]

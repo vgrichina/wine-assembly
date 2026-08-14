@@ -8041,10 +8041,11 @@
     (global.set $eax (i32.const 28))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; GetDeviceGammaRamp(hdc, lpRamp) — gamma not supported, return FALSE.
-  ;; SDL probes this at startup and falls back to software gamma when it fails.
+  ;; GetDeviceGammaRamp(hdc, lpRamp) — retrieve WAT-owned display LUT state.
   (func $handle_GetDeviceGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $gdi_gamma_ramp_get (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 533: FindResourceExW — STUB: unimplemented

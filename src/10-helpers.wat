@@ -1387,6 +1387,35 @@
       (local.get $src) (i32.shl (local.get $count) (i32.const 2)))
     (local.get $count))
 
+  (func $gdi_palette_animate (param $handle i32) (param $start i32)
+        (param $count i32) (param $src i32) (result i32)
+    (local $record i32) (local $total i32) (local $entries i32)
+    (local $i i32) (local $old i32) (local $replacement i32)
+    (local.set $record (call $gdi_palette_record (local.get $handle)))
+    (if (i32.or (i32.eqz (local.get $record)) (i32.eqz (local.get $src)))
+      (then (return (i32.const 0))))
+    (local.set $total (i32.load offset=8 (local.get $record)))
+    (if (i32.or (i32.gt_u (local.get $start) (local.get $total))
+          (i32.gt_u (local.get $count) (i32.sub (local.get $total) (local.get $start))))
+      (then (return (i32.const 0))))
+    (local.set $entries (i32.load offset=24 (local.get $record)))
+    (block $done (loop $animate
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $old (i32.load (i32.add (local.get $entries)
+        (i32.shl (i32.add (local.get $start) (local.get $i)) (i32.const 2)))))
+      (if (i32.ne (i32.and (i32.shr_u (local.get $old) (i32.const 24))
+            (i32.const 1)) (i32.const 0))
+        (then
+          (local.set $replacement (i32.load (i32.add (local.get $src)
+            (i32.shl (local.get $i) (i32.const 2)))))
+          (i32.store (i32.add (local.get $entries)
+              (i32.shl (i32.add (local.get $start) (local.get $i)) (i32.const 2)))
+            (i32.or (i32.and (local.get $replacement) (i32.const 0x00FFFFFF))
+              (i32.and (local.get $old) (i32.const 0xFF000000))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $animate)))
+    (i32.const 1))
+
   (func $gdi_palette_resize (param $handle i32) (param $count i32) (result i32)
     (local $record i32) (local $old i32) (local $entries i32)
     (if (i32.gt_u (local.get $count) (i32.const 256))
@@ -1435,9 +1464,10 @@
     (local.get $best))
 
   ;; Per-DC cold metadata uses the former raster-mirror table. Each fixed
-  ;; entry owns an eight-byte heap record: selected palette at +0 and the
-  ;; SaveDC stack head guest pointer at +4. ROP2 already lives in the canonical
-  ;; hot DC record, so no separate raster mirror remains.
+  ;; entry owns a 20-byte heap record: selected palette at +0, SaveDC stack
+  ;; head guest pointer at +4, graphics mode at +8, system palette use at +12,
+  ;; and the immutable-once-set pixel format index at +16. ROP2 already lives
+  ;; in the canonical hot DC record, so no separate raster mirror remains.
   (func $gdi_dc_meta_entry (param $hdc i32) (param $create i32) (result i32)
     (local $i i32) (local $p i32) (local $empty i32)
     (local $meta_g i32)
@@ -1459,9 +1489,11 @@
       (br $scan)))
     (if (i32.or (i32.eqz (local.get $create)) (i32.eqz (local.get $empty)))
       (then (return (i32.const 0))))
-    (local.set $meta_g (call $heap_alloc (i32.const 8)))
+    (local.set $meta_g (call $heap_alloc (i32.const 20)))
     (if (i32.eqz (local.get $meta_g)) (then (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $meta_g)) (i32.const 0) (i32.const 8))
+    (memory.fill (call $g2w (local.get $meta_g)) (i32.const 0) (i32.const 20))
+    (i32.store offset=8 (call $g2w (local.get $meta_g)) (i32.const 1))
+    (i32.store offset=12 (call $g2w (local.get $meta_g)) (i32.const 1))
     (i32.store (local.get $empty) (local.get $hdc))
     (i32.store offset=4 (local.get $empty) (local.get $meta_g))
     (call $g2w (local.get $meta_g)))
@@ -1485,6 +1517,26 @@
     (i32.store (local.get $meta) (local.get $palette))
     (select (local.get $previous) (i32.const 0x3001F)
       (i32.ne (local.get $previous) (i32.const 0))))
+
+  (func $gdi_dc_meta_get (param $hdc i32) (param $offset i32)
+        (param $default i32) (result i32)
+    (local $meta i32)
+    (local.set $meta (call $gdi_dc_meta_entry (local.get $hdc) (i32.const 0)))
+    (if (result i32) (local.get $meta)
+      (then (i32.load (i32.add (local.get $meta) (local.get $offset))))
+      (else (local.get $default))))
+
+  (func $gdi_dc_meta_set (param $hdc i32) (param $offset i32)
+        (param $value i32) (param $default i32) (result i32)
+    (local $meta i32) (local $previous i32)
+    (if (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $meta (call $gdi_dc_meta_entry (local.get $hdc) (i32.const 1)))
+    (if (i32.eqz (local.get $meta)) (then (return (i32.const 0))))
+    (local.set $previous (i32.load (i32.add (local.get $meta) (local.get $offset))))
+    (if (i32.eqz (local.get $previous)) (then (local.set $previous (local.get $default))))
+    (i32.store (i32.add (local.get $meta) (local.get $offset)) (local.get $value))
+    (local.get $previous))
 
   (func $gdi_bitmap_alloc (param $width i32) (param $height i32) (param $bpp i32)
         (param $flags i32) (param $bits i32) (param $stride i32)
@@ -1857,9 +1909,104 @@
     (memory.copy (local.get $dst) (local.get $entry) (i32.const 24))
     (i32.const 1))
 
-  ;; A SaveDC node is 168 bytes in the guest heap:
+  (func $gdi_gamma_ramp_set (param $hdc i32) (param $src i32) (result i32)
+    (local $guest i32)
+    (if (i32.or (i32.eqz (local.get $src))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $gdi_gamma_ramp_guest))
+      (then
+        (local.set $guest (call $heap_alloc (i32.const 1536)))
+        (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+        (global.set $gdi_gamma_ramp_guest (local.get $guest))))
+    (memory.copy (call $g2w (global.get $gdi_gamma_ramp_guest))
+      (local.get $src) (i32.const 1536))
+    (i32.const 1))
+
+  (func $gdi_gamma_ramp_get (param $hdc i32) (param $dst i32) (result i32)
+    (local $channel i32) (local $index i32)
+    (if (i32.or (i32.eqz (local.get $dst))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (if (global.get $gdi_gamma_ramp_guest)
+      (then
+        (memory.copy (local.get $dst) (call $g2w (global.get $gdi_gamma_ramp_guest))
+          (i32.const 1536))
+        (return (i32.const 1))))
+    (block $channels_done (loop $channels
+      (br_if $channels_done (i32.ge_u (local.get $channel) (i32.const 3)))
+      (local.set $index (i32.const 0))
+      (block $entries_done (loop $entries
+        (br_if $entries_done (i32.ge_u (local.get $index) (i32.const 256)))
+        (i32.store16 (i32.add (local.get $dst)
+            (i32.add (i32.mul (local.get $channel) (i32.const 512))
+              (i32.shl (local.get $index) (i32.const 1))))
+          (i32.mul (local.get $index) (i32.const 257)))
+        (local.set $index (i32.add (local.get $index) (i32.const 1)))
+        (br $entries)))
+      (local.set $channel (i32.add (local.get $channel) (i32.const 1)))
+      (br $channels)))
+    (i32.const 1))
+
+  (func $gdi_pixel_format_write (param $dst i32) (param $bytes i32)
+        (result i32)
+    (local $copy i32)
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 1))))
+    (local.set $copy (local.get $bytes))
+    (if (i32.gt_u (local.get $copy) (i32.const 40))
+      (then (local.set $copy (i32.const 40))))
+    (memory.fill (local.get $dst) (i32.const 0) (local.get $copy))
+    (if (i32.ge_u (local.get $copy) (i32.const 2))
+      (then (i32.store16 (local.get $dst) (i32.const 40))))
+    (if (i32.ge_u (local.get $copy) (i32.const 4))
+      (then (i32.store16 offset=2 (local.get $dst) (i32.const 1))))
+    (if (i32.ge_u (local.get $copy) (i32.const 8))
+      (then (i32.store offset=4 (local.get $dst) (i32.const 0x00000025))))
+    (if (i32.ge_u (local.get $copy) (i32.const 10))
+      (then
+        (i32.store8 offset=8 (local.get $dst) (i32.const 0))
+        (i32.store8 offset=9 (local.get $dst) (i32.const 32))))
+    (if (i32.ge_u (local.get $copy) (i32.const 18))
+      (then
+        (i32.store8 offset=10 (local.get $dst) (i32.const 8))
+        (i32.store8 offset=11 (local.get $dst) (i32.const 16))
+        (i32.store8 offset=12 (local.get $dst) (i32.const 8))
+        (i32.store8 offset=13 (local.get $dst) (i32.const 8))
+        (i32.store8 offset=14 (local.get $dst) (i32.const 8))
+        (i32.store8 offset=15 (local.get $dst) (i32.const 0))
+        (i32.store8 offset=16 (local.get $dst) (i32.const 8))
+        (i32.store8 offset=17 (local.get $dst) (i32.const 24))))
+    (if (i32.ge_u (local.get $copy) (i32.const 25))
+      (then
+        (i32.store8 offset=23 (local.get $dst) (i32.const 24))
+        (i32.store8 offset=24 (local.get $dst) (i32.const 8))))
+    (i32.const 1))
+
+  (func $gdi_pixel_format_choose (param $hdc i32) (param $pfd i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $pfd))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.ne (i32.load16_u (local.get $pfd)) (i32.const 40))
+          (i32.ne (i32.load16_u offset=2 (local.get $pfd)) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
+  (func $gdi_pixel_format_set (param $hdc i32) (param $format i32)
+        (param $pfd i32) (result i32)
+    (if (i32.or (i32.ne (local.get $format) (i32.const 1))
+          (i32.eqz (call $gdi_pixel_format_choose (local.get $hdc) (local.get $pfd))))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gdi_dc_meta_get (local.get $hdc) (i32.const 16)
+          (i32.const 0)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (drop (call $gdi_dc_meta_set (local.get $hdc) (i32.const 16)
+      (i32.const 1) (i32.const 0)))
+    (i32.const 1))
+
+  ;; A SaveDC node is 176 bytes in the guest heap:
   ;; next guest pointer, level, 96-byte hot state, 32-byte auxiliary state,
-  ;; 24-byte COLORADJUSTMENT, selected palette, and an owned clip snapshot.
+  ;; 24-byte COLORADJUSTMENT, selected palette, an owned clip snapshot,
+  ;; graphics mode, and system-palette use.
   (func $gdi_dc_save_node_free (param $node_g i32)
     (local $node i32) (local $clip i32)
     (if (i32.eqz (local.get $node_g)) (then (return)))
@@ -1921,14 +2068,14 @@
             (if (local.get $clip_copy)
               (then (drop (call $gdi_rgn_delete (local.get $clip_copy)))))
             (return (i32.const 0))))))
-    (local.set $node_g (call $heap_alloc (i32.const 168)))
+    (local.set $node_g (call $heap_alloc (i32.const 176)))
     (if (i32.eqz (local.get $node_g))
       (then
         (if (local.get $clip_copy)
           (then (drop (call $gdi_rgn_delete (local.get $clip_copy)))))
         (return (i32.const 0))))
     (local.set $node (call $g2w (local.get $node_g)))
-    (memory.fill (local.get $node) (i32.const 0) (i32.const 168))
+    (memory.fill (local.get $node) (i32.const 0) (i32.const 176))
     (i32.store (local.get $node) (local.get $head_g))
     (i32.store offset=4 (local.get $node) (local.get $level))
     (memory.copy (i32.add (local.get $node) (i32.const 8))
@@ -1943,6 +2090,8 @@
         (local.get $color) (i32.const 24))))
     (i32.store offset=160 (local.get $node) (call $gdi_dc_selected_palette (local.get $hdc)))
     (i32.store offset=164 (local.get $node) (local.get $clip_copy))
+    (i32.store offset=168 (local.get $node) (i32.load offset=8 (local.get $meta)))
+    (i32.store offset=172 (local.get $node) (i32.load offset=12 (local.get $meta)))
     (i32.store offset=4 (local.get $meta) (local.get $node_g))
     (local.get $level))
 
@@ -2002,6 +2151,8 @@
       (then (memory.copy (local.get $color) (i32.add (local.get $target) (i32.const 136))
         (i32.const 24))))
     (i32.store (local.get $meta) (i32.load offset=160 (local.get $target)))
+    (i32.store offset=8 (local.get $meta) (i32.load offset=168 (local.get $target)))
+    (i32.store offset=12 (local.get $meta) (i32.load offset=172 (local.get $target)))
     (i32.store offset=4 (local.get $meta) (i32.load (local.get $target)))
     ;; The restored node and every newer node are discarded.
     (local.set $node_g (local.get $head_g))

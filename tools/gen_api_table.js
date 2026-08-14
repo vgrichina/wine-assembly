@@ -850,6 +850,18 @@ const extra = [
   { name: 'MaskBlt', nargs: 12 },
   { name: 'PtInRegion', nargs: 3 },
   { name: 'SetBitmapBits', nargs: 3 },
+  // GDI32 public state/palette/pixel-format surface.
+  { name: 'AnimatePalette', nargs: 4 },
+  { name: 'ChoosePixelFormat', nargs: 2 },
+  { name: 'DescribePixelFormat', nargs: 4 },
+  { name: 'GdiSetBatchLimit', nargs: 1 },
+  { name: 'GetGraphicsMode', nargs: 1 },
+  { name: 'GetPixelFormat', nargs: 1 },
+  { name: 'GetSystemPaletteUse', nargs: 1 },
+  { name: 'SetDeviceGammaRamp', nargs: 2 },
+  { name: 'SetGraphicsMode', nargs: 2 },
+  { name: 'SetPixelFormat', nargs: 3 },
+  { name: 'SwapBuffers', nargs: 1 },
   // OLE32 — structured-storage element enumerator.
   { name: 'IEnumSTATSTG_QueryInterface', nargs: 3 },
   { name: 'IEnumSTATSTG_AddRef', nargs: 1 },
