@@ -157,6 +157,22 @@ async function main() {
   assert.strictEqual(wat.test_gdi_map_coordinate(3, 1, -4, 20, 8), 16,
     'negative extents must invert an axis');
 
+  assert.strictEqual(wat.test_call_SetMapMode(hdcA, 8), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 48, 0x4000, 1), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 52, 0x4000, 1), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 64, 0x147B, 1), 1);
+  assert.strictEqual(wat.test_gdi_dc_set_field(hdcA, 68, 0x147B, 1), 1);
+  assert.strictEqual(wat.test_call_SetMapMode(hdcA, 1), 8,
+    'switching a preview DC to MM_TEXT returns the anisotropic mode');
+  for (const offset of [48, 52, 64, 68]) {
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdcA, offset, 0), 1,
+      'MM_TEXT must replace stale anisotropic extents with identity mapping');
+  }
+  assert.strictEqual(wat.test_gdi_map_coordinate(
+    253, 0, wat.test_gdi_dc_get_field(hdcA, 48, 0),
+    0, wat.test_gdi_dc_get_field(hdcA, 64, 0)), 253,
+  'Paint preview page coordinates must remain device pixels in MM_TEXT');
+
   const bitmap = wat.test_call_CreateCompatibleBitmap(hdcA, 17, 9) >>> 0;
   assert(bitmap, 'WAT should allocate compatible bitmap storage');
   assert.strictEqual(wat.test_gdi_object_type(bitmap), 3);

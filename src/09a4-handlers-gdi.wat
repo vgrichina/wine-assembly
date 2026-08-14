@@ -626,8 +626,22 @@
   (func $handle_SetMapMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 1))
           (i32.le_u (local.get $arg1) (i32.const 8)))
-      (then (global.set $eax (call $gdi_dc_set_field
-        (local.get $arg0) (i32.const 36) (local.get $arg1) (i32.const 1))))
+      (then
+        (global.set $eax (call $gdi_dc_set_field
+          (local.get $arg0) (i32.const 36) (local.get $arg1) (i32.const 1)))
+        ;; MM_TEXT is device-pixel identity mapping. Switching from an
+        ;; anisotropic preview transform must stop applying its old extents;
+        ;; MFC does exactly this while drawing the physical page frame.
+        (if (i32.eq (local.get $arg1) (i32.const 1))
+          (then
+            (drop (call $gdi_dc_set_field
+              (local.get $arg0) (i32.const 48) (i32.const 1) (i32.const 1)))
+            (drop (call $gdi_dc_set_field
+              (local.get $arg0) (i32.const 52) (i32.const 1) (i32.const 1)))
+            (drop (call $gdi_dc_set_field
+              (local.get $arg0) (i32.const 64) (i32.const 1) (i32.const 1)))
+            (drop (call $gdi_dc_set_field
+              (local.get $arg0) (i32.const 68) (i32.const 1) (i32.const 1))))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
