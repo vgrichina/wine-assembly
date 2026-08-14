@@ -206,16 +206,18 @@
             (i32.add (local.get $cx) (local.get $cs)) (local.get $cy)))
     (drop (call $host_gdi_line_to (local.get $hdc)
             (local.get $cx) (i32.add (local.get $cy) (local.get $cs))))
-    ;; Second pass for thickness (offset 1px)
+    ;; Second pass for thickness. Offset the descending stroke right and the
+    ;; ascending stroke left: that produces USER's symmetric 8x7 close glyph.
+    ;; Offsetting both strokes right makes the X 9px wide and skews its centre.
     (drop (call $host_gdi_move_to (local.get $hdc)
             (i32.add (local.get $cx) (i32.const 1)) (local.get $cy)))
     (drop (call $host_gdi_line_to (local.get $hdc)
             (i32.add (local.get $cx) (i32.add (local.get $cs) (i32.const 1)))
             (i32.add (local.get $cy) (local.get $cs))))
     (drop (call $host_gdi_move_to (local.get $hdc)
-            (i32.add (local.get $cx) (i32.add (local.get $cs) (i32.const 1))) (local.get $cy)))
+            (i32.add (local.get $cx) (i32.sub (local.get $cs) (i32.const 1))) (local.get $cy)))
     (drop (call $host_gdi_line_to (local.get $hdc)
-            (i32.add (local.get $cx) (i32.const 1)) (i32.add (local.get $cy) (local.get $cs))))
+            (i32.sub (local.get $cx) (i32.const 1)) (i32.add (local.get $cy) (local.get $cs))))
 
     ;; Dialog style: only the close button.
     (if (local.get $is_dialog)

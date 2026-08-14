@@ -130,6 +130,28 @@ if (fs.existsSync(screenshot)) {
   const png = PNG.sync.read(fs.readFileSync(screenshot));
   let darkTopicPixels = 0;
   let darkCommandBarPixels = 0;
+  const expectedCloseGlyph = [
+    '##....##',
+    '.##..##.',
+    '..####..',
+    '...##...',
+    '..####..',
+    '.##..##.',
+    '##....##',
+  ];
+  const actualCloseGlyph = [];
+  for (let y = 26; y < 33; y++) {
+    let row = '';
+    for (let x = 448; x < 456; x++) {
+      const offset = (y * png.width + x) * 4;
+      row += png.data[offset] < 70 && png.data[offset + 1] < 70 &&
+        png.data[offset + 2] < 70 && png.data[offset + 3] !== 0 ? '#' : '.';
+    }
+    actualCloseGlyph.push(row);
+  }
+  if (actualCloseGlyph.join('/') !== expectedCloseGlyph.join('/')) {
+    failures.push(`WinHelp close glyph differs from Win98 (${actualCloseGlyph.join('/')})`);
+  }
   // The archived viewer restores this reference window at (115,18), placing
   // its 21px command bar at screen y=59. A hidden MS_WINICON parent leaves
   // this whole strip flat gray (zero dark pixels); the three rendered Button
