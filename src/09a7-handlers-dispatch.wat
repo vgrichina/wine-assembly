@@ -3081,6 +3081,8 @@
     (if (i32.eqz (local.get $iface)) (then (return (i32.const 0))))
     (local.set $vtbl (call $gl32 (local.get $iface)))
     (local.set $root (local.get $iface))
+    (if (call $ole_is_test_site (local.get $iface))
+      (then (return (call $ole_obj_release (local.get $root)))))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_PERSISTSTORAGE))
       (then (local.set $root (i32.sub (local.get $iface) (i32.const 12)))))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_CACHE))
@@ -3111,6 +3113,105 @@
       (then (return (call $ole_obj_release (local.get $root)))))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2))
       (then (return (call $ole_obj_release (local.get $root)))))
+    (i32.const 0))
+
+  (func $ole_interface_is_local (param $iface i32) (result i32)
+    (local $vtbl i32)
+    (if (i32.eqz (local.get $iface)) (then (return (i32.const 0))))
+    (if (call $ole_is_test_site (local.get $iface))
+      (then (return (i32.const 1))))
+    (local.set $vtbl (call $gl32 (local.get $iface)))
+    (i32.or
+      (i32.or
+        (i32.or
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_LOCKBYTES))
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_STREAM)))
+        (i32.or
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_STORAGE))
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_DATAOBJECT))))
+      (i32.or
+        (i32.or
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMFORMATETC))
+          (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_ENUMSTATSTG)))
+        (i32.or
+          (i32.or
+            (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_OBJECT))
+            (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_PERSISTSTORAGE)))
+          (i32.or
+            (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_CACHE))
+            (i32.or
+              (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT))
+              (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2))))))))
+
+  (func $ole_medium_data_interface (param $medium i32) (result i32)
+    (local $tymed i32)
+    (if (i32.eqz (local.get $medium)) (then (return (i32.const 0))))
+    (local.set $tymed (call $gl32 (local.get $medium)))
+    (if (i32.or
+          (i32.eq (local.get $tymed) (i32.const 4))
+          (i32.eq (local.get $tymed) (i32.const 8)))
+      (then (return (call $gl32 (i32.add (local.get $medium) (i32.const 4))))))
+    (i32.const 0))
+
+  (func $ole_medium_has_guest_release (param $medium i32) (result i32)
+    (local $data_iface i32) (local $unk i32)
+    (if (i32.eqz (local.get $medium)) (then (return (i32.const 0))))
+    (local.set $data_iface (call $ole_medium_data_interface (local.get $medium)))
+    (local.set $unk (call $gl32 (i32.add (local.get $medium) (i32.const 8))))
+    (i32.or
+      (i32.and (i32.ne (local.get $data_iface) (i32.const 0))
+        (i32.eqz (call $ole_interface_is_local (local.get $data_iface))))
+      (i32.and (i32.ne (local.get $unk) (i32.const 0))
+        (i32.eqz (call $ole_interface_is_local (local.get $unk))))))
+
+  (func $ole_medium_guest_releases_valid (param $medium i32) (result i32)
+    (local $data_iface i32) (local $unk i32)
+    (if (i32.eqz (local.get $medium)) (then (return (i32.const 1))))
+    (local.set $data_iface (call $ole_medium_data_interface (local.get $medium)))
+    (local.set $unk (call $gl32 (i32.add (local.get $medium) (i32.const 8))))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $data_iface) (i32.const 0))
+            (i32.eqz (call $ole_interface_is_local (local.get $data_iface))))
+          (i32.eqz (call $ole_guest_method_addr (local.get $data_iface) (i32.const 2))))
+      (then (return (i32.const 0))))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $unk) (i32.const 0))
+            (i32.eqz (call $ole_interface_is_local (local.get $unk))))
+          (i32.eqz (call $ole_guest_method_addr (local.get $unk) (i32.const 2))))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
+  ;; ReleaseStgMedium callback context uses p1=IStream/IStorage, p2=releaser,
+  ;; and p4=the caller's otherwise unspecified EAX value. The medium is cleared
+  ;; before calling out, while the two retained interface pointers live here.
+  (func $ole_medium_release_callback_next (param $ctx i32) (result i32)
+    (local $stage i32) (local $iface i32)
+    (local.set $stage (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+    (if (i32.eqz (local.get $stage))
+      (then
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 1))
+        (local.set $iface (call $gl32 (i32.add (local.get $ctx) (i32.const 24))))
+        (if (local.get $iface)
+          (then
+            (if (call $ole_interface_is_local (local.get $iface))
+              (then (drop (call $ole_release_local_interface (local.get $iface))))
+              (else
+                (drop (call $ole_guest_callback_invoke1
+                  (local.get $ctx) (local.get $iface) (i32.const 2)))
+                (return (i32.const 1))))))))
+    (local.set $stage (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+    (if (i32.eq (local.get $stage) (i32.const 1))
+      (then
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+        (local.set $iface (call $gl32 (i32.add (local.get $ctx) (i32.const 28))))
+        (if (local.get $iface)
+          (then
+            (if (call $ole_interface_is_local (local.get $iface))
+              (then (drop (call $ole_release_local_interface (local.get $iface))))
+              (else
+                (drop (call $ole_guest_callback_invoke1
+                  (local.get $ctx) (local.get $iface) (i32.const 2)))
+                (return (i32.const 1))))))))
     (i32.const 0))
 
   (func $ole_release_medium (param $medium i32)
@@ -4141,7 +4242,8 @@
   ;; operation 1: SetClientSite; 2: GetClientSite; 3: Close/SaveObject;
   ;; 4: final static-handler Release; 5/6: Advise/Unadvise ownership;
   ;; 7: IAdviseSink OnSave/OnClose notification sequence;
-  ;; 8/9/10: EnumAdvise snapshot AddRef, final Release, and Next AddRef.
+  ;; 8/9/10: EnumAdvise snapshot AddRef, final Release, and Next AddRef;
+  ;; 11: ReleaseStgMedium interface and pUnkForRelease sequence.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -4230,6 +4332,12 @@
     (if (i32.eq (local.get $operation) (i32.const 10))
       (then
         (if (call $ole_enum_output_guest_addref_next (local.get $ctx))
+          (then (return)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $p4))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 11))
+      (then
+        (if (call $ole_medium_release_callback_next (local.get $ctx))
           (then (return)))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $p4))
         (return)))
@@ -5804,8 +5912,52 @@
 
   ;; ReleaseStgMedium(pmedium) — release owned HGLOBAL/IStream/IStorage media.
   (func $handle_ReleaseStgMedium (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $ole_release_medium (local.get $arg0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (local $tymed i32) (local $data i32) (local $unk i32) (local $data_iface i32)
+    (local $ret i32) (local $ctx i32)
+    (if (i32.or
+          (i32.eqz (local.get $arg0))
+          (i32.eqz (call $ole_medium_has_guest_release (local.get $arg0))))
+      (then
+        (call $ole_release_medium (local.get $arg0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; ReleaseStgMedium is void. If a DLL-private interface is malformed, keep
+    ;; the entire medium intact rather than performing an unreportable partial
+    ;; release or silently losing the caller's only cleanup handle.
+    (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $arg0)))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $tymed (call $gl32 (local.get $arg0)))
+    (local.set $data (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (local.set $unk (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (local.set $data_iface (call $ole_medium_data_interface (local.get $arg0)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 11) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 8))
+      (local.get $arg0) (local.get $data_iface) (local.get $unk)
+      (i32.const 0) (global.get $eax)))
+    ;; TYMED_FILE always owns its allocated name. HGLOBAL is freed directly
+    ;; only when no custom releaser delegates responsibility to the provider.
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+          (i32.eq (local.get $tymed) (i32.const 2)))
+      (then (call $heap_free (local.get $data))))
+    (if (i32.and
+          (i32.and (i32.eqz (local.get $unk))
+            (i32.and (i32.ne (local.get $data) (i32.const 0))
+              (i32.eq (local.get $tymed) (i32.const 1))))
+          (i32.and
+            (i32.ne (local.get $data) (global.get $clipboard_ptr))
+            (i32.and
+              (i32.ne (local.get $data) (global.get $clipboard_rtf_ptr))
+              (i32.ne (local.get $data) (global.get $clipboard_binary_ptr)))))
+      (then (call $heap_free (local.get $data))))
+    (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 12))
+    (if (call $ole_medium_release_callback_next (local.get $ctx))
+      (then (return)))
+    (call $ole_guest_callback_finish
+      (local.get $ctx) (call $gl32 (i32.add (local.get $ctx) (i32.const 36))))
   )
 
   ;; OLE clipboard ownership over the bounded IDataObject implementation.

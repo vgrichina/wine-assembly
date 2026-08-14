@@ -2209,6 +2209,16 @@
     (call $ole_format_free (local.get $formatetc)))
   (func (export "test_ole_release_medium") (param $medium i32)
     (call $ole_release_medium (local.get $medium)))
+  (func (export "test_start_ReleaseStgMedium") (param $medium i32) (result i32)
+    (local $start_esp i32)
+    (local.set $start_esp (global.get $esp))
+    ;; Direct handler tests provide the return address normally installed by
+    ;; the stdcall API thunk. Guest interface releases then resume at EIP 0.
+    (call $gs32 (local.get $start_esp) (i32.const 0))
+    (call $handle_ReleaseStgMedium
+      (local.get $medium) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eip))
   (func (export "test_ole_set_clipboard") (param $obj i32)
     (if (global.get $clipboard_ole_data_object)
       (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))

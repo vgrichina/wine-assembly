@@ -45,15 +45,19 @@ async function main() {
   const write = (guest, value) => e.guest_write32(guest, value >>> 0);
   const alloc = size => e.guest_alloc(size) >>> 0;
 
-  const makeGuestSite = () => {
+  const makeGuestSite = (releaseSequence = 0) => {
+    if (!releaseSequence) {
+      releaseSequence = alloc(4);
+      write(releaseSequence, 0);
+    }
     const code = alloc(128);
     const vtable = alloc(32);
-    const site = alloc(32);
+    const site = alloc(40);
     const addRef = code;
     const release = code + 20;
-    const saveObject = code + 40;
-    const onSave = code + 64;
-    const onClose = code + 80;
+    const saveObject = code + 48;
+    const onSave = code + 72;
+    const onClose = code + 88;
     bytes.set([
       0x8b, 0x44, 0x24, 0x04,       // mov eax,[esp+4]
       0xff, 0x40, 0x04,             // inc dword [eax+4] (refcount)
@@ -65,6 +69,10 @@ async function main() {
       0x8b, 0x44, 0x24, 0x04,       // mov eax,[esp+4]
       0xff, 0x48, 0x04,             // dec dword [eax+4]
       0xff, 0x40, 0x0c,             // inc dword [eax+12] (Release calls)
+      0x8b, 0x50, 0x20,             // mov edx,[eax+32] (sequence counter)
+      0xff, 0x02,                   // inc dword [edx]
+      0x8b, 0x0a,                   // mov ecx,[edx]
+      0x89, 0x48, 0x24,             // mov [eax+36],ecx (observed order)
       0x8b, 0x40, 0x04,             // mov eax,[eax+4]
       0xc2, 0x04, 0x00,             // ret 4
     ], wa(release));
@@ -91,6 +99,7 @@ async function main() {
     write(vtable + 28, onClose);
     write(site, vtable);
     write(site + 4, 1);
+    write(site + 32, releaseSequence);
     return site;
   };
 
@@ -102,6 +111,12 @@ async function main() {
     for (let i = 0; i < 200 && e.get_eip(); i++) e.run(5000);
     assert.strictEqual(e.get_eip(), 0, `method ${index} callback continuation must terminate`);
     return e.get_eax() >>> 0;
+  };
+
+  const releaseMedium = medium => {
+    e.test_start_ReleaseStgMedium(medium);
+    for (let i = 0; i < 200 && e.get_eip(); i++) e.run(5000);
+    assert.strictEqual(e.get_eip(), 0, 'ReleaseStgMedium callback continuation must terminate');
   };
 
   let checks = 0;
@@ -129,8 +144,9 @@ async function main() {
     callMethod(siteA, 2) === 2 && read(siteA + 12) === 1);
 
   const siteB = makeGuestSite();
+  const replacementHr = callMethod(object, 3, siteB);
   check('client-site replacement AddRefs new before releasing old',
-    callMethod(object, 3, siteB) === 0 &&
+    replacementHr === 0 &&
     read(siteB + 4) === 2 && read(siteB + 8) === 1 &&
     read(siteA + 4) === 1 && read(siteA + 12) === 2 &&
     read(object + 16) === siteB && read(object + 144) === 2);
@@ -320,6 +336,71 @@ async function main() {
     callMethod(adviseClone, 2) === 0 && callMethod(enumObject, 2) === 0 &&
     read(enumSinkA + 4) === 1 && read(enumSinkA + 8) === 5 && read(enumSinkA + 12) === 5 &&
     read(enumSinkB + 4) === 1 && read(enumSinkB + 8) === 5 && read(enumSinkB + 12) === 5);
+
+  const hglobalSequence = alloc(4);
+  write(hglobalSequence, 0);
+  const hglobalPayload = alloc(8);
+  const hglobalReleaser = makeGuestSite(hglobalSequence);
+  const hglobalMedium = alloc(12);
+  write(hglobalPayload, 0x44332211);
+  write(hglobalMedium, 1);
+  write(hglobalMedium + 4, hglobalPayload);
+  write(hglobalMedium + 8, hglobalReleaser);
+  releaseMedium(hglobalMedium);
+  check('ReleaseStgMedium delegates guest-released HGLOBAL cleanup without freeing payload',
+    read(hglobalPayload) === 0x44332211 &&
+    read(hglobalReleaser + 4) === 0 && read(hglobalReleaser + 12) === 1 &&
+    read(hglobalReleaser + 36) === 1 &&
+    read(hglobalMedium) === 0 && read(hglobalMedium + 4) === 0 && read(hglobalMedium + 8) === 0);
+
+  const dualSequence = alloc(4);
+  write(dualSequence, 0);
+  const guestStream = makeGuestSite(dualSequence);
+  const guestStreamReleaser = makeGuestSite(dualSequence);
+  const dualGuestMedium = alloc(12);
+  write(dualGuestMedium, 4);
+  write(dualGuestMedium + 4, guestStream);
+  write(dualGuestMedium + 8, guestStreamReleaser);
+  releaseMedium(dualGuestMedium);
+  check('ReleaseStgMedium releases guest IStream before guest pUnkForRelease',
+    read(guestStream + 4) === 0 && read(guestStream + 12) === 1 && read(guestStream + 36) === 1 &&
+    read(guestStreamReleaser + 4) === 0 && read(guestStreamReleaser + 12) === 1 &&
+    read(guestStreamReleaser + 36) === 2 && read(dualGuestMedium) === 0);
+
+  const mixedLocalStream = e.test_ole_create_stream(0, 0) >>> 0;
+  assert.strictEqual(e.test_ole_addref(mixedLocalStream), 2);
+  const mixedGuestReleaser = makeGuestSite();
+  const mixedMedium = alloc(12);
+  write(mixedMedium, 4);
+  write(mixedMedium + 4, mixedLocalStream);
+  write(mixedMedium + 8, mixedGuestReleaser);
+  releaseMedium(mixedMedium);
+  check('ReleaseStgMedium preserves local-interface behavior beside a guest releaser',
+    read(mixedLocalStream + 4) === 1 &&
+    read(mixedGuestReleaser + 4) === 0 && read(mixedGuestReleaser + 12) === 1 &&
+    read(mixedMedium) === 0);
+  assert.strictEqual(e.test_ole_release(mixedLocalStream), 0);
+
+  const malformedSequence = alloc(4);
+  write(malformedSequence, 0);
+  const malformedStream = makeGuestSite(malformedSequence);
+  const malformedReleaser = makeGuestSite(malformedSequence);
+  const malformedMedium = alloc(12);
+  const malformedReleaseVtable = read(malformedReleaser);
+  const malformedReleaseMethod = read(malformedReleaseVtable + 8);
+  write(malformedMedium, 8);
+  write(malformedMedium + 4, malformedStream);
+  write(malformedMedium + 8, malformedReleaser);
+  write(malformedReleaseVtable + 8, 0);
+  releaseMedium(malformedMedium);
+  check('ReleaseStgMedium leaves the whole medium intact if a guest Release slot is malformed',
+    read(malformedMedium) === 8 && read(malformedMedium + 4) === malformedStream &&
+    read(malformedMedium + 8) === malformedReleaser && read(malformedSequence) === 0 &&
+    read(malformedStream + 4) === 1 && read(malformedReleaser + 4) === 1);
+  write(malformedReleaseVtable + 8, malformedReleaseMethod);
+  releaseMedium(malformedMedium);
+  assert.strictEqual(read(malformedStream + 4), 0);
+  assert.strictEqual(read(malformedReleaser + 4), 0);
 
   console.log(`\n${checks}/${checks} guest COM callback checks passed`);
 }

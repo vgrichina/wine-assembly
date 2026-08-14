@@ -36,8 +36,11 @@ transfers, exact `FORMATETC` negotiation errors, and coexisting canonical
 ANSI/OEM/Unicode text beside opaque RTF. Clipboard flush creates deep durable
 value snapshots independent of subsequent owner mutation. Runtime-owned
 `pUnkForRelease` media also follow the HGLOBAL delegation and dual
-stream/storage-plus-releaser lifetime rules; DLL-private releasers remain a
-guest-callback follow-up only if traced.
+stream/storage-plus-releaser lifetime rules. The public `ReleaseStgMedium` API
+now applies those rules to DLL-private interfaces through suspended guest
+callbacks, validates the complete release sequence before mutation, and keeps
+malformed media intact. Internal object-owned guest media teardown remains a
+separate follow-up.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off
@@ -70,7 +73,7 @@ dirty-close `SaveObject`, and final destruction have explicit reference-count
 assertions. Guest AddRef/Release/SaveObject methods execute as x86 callbacks
 through a stack-resident continuation context, so the original WAT API frame
 resumes without synchronous re-entry. The local suite remains 65/65 and the
-expanded guest callback suite passes 29/29.
+expanded guest callback suite passes 33/33.
 
 Synthetic local advisory sinks now cover the corresponding collection
 contract: monotonic connections, independently retained sinks, targeted and

@@ -327,9 +327,12 @@ transfer breadth below.
   `tymed` masks with accurate `DV_E_*` errors.
 - [x] Support `TYMED_HGLOBAL`, `TYMED_ISTREAM`, and `TYMED_ISTORAGE` ownership,
   duplication, local `pUnkForRelease`, and `ReleaseStgMedium` behavior.
-- Add suspended guest-callback completion for a DLL-private
-  `pUnkForRelease` only after a traced consumer requires it; runtime-owned OLE
-  releasers are complete without that callback bridge.
+- [x] Add suspended guest-callback completion to the public
+  `ReleaseStgMedium` path for DLL-private IStream/IStorage interfaces and
+  `pUnkForRelease`, preserving the required release order.
+- Extend object-owned/transferred media destruction to DLL-private interfaces;
+  the public release contract is complete, while final `IDataObject`/cache
+  teardown still uses the local-only internal helper.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -381,8 +384,19 @@ object. The focused suite passes 50/50.
 media release both their interface reference and a distinct custom releaser.
 `GetData` still returns independent caller-owned copies, and successful
 `SetData(..., TRUE)` clears all caller medium fields only after ownership has
-transferred. The focused suite passes 55/55. DLL-private releasers need a
-suspended guest callback and remain deferred until a real consumer is traced.
+transferred. At this 55/55 milestone, DLL-private releasers still needed the
+suspended guest callback completed by the public-release result below.
+
+2026-08-13 public-release result: `ReleaseStgMedium` now suspends its API frame
+for DLL-private guest interfaces. HGLOBAL with `pUnkForRelease` preserves the
+delegated payload and releases only its provider; IStream/IStorage media release
+the data interface first and the custom releaser second, including mixed
+runtime-local/guest pairs. Every guest Release slot is validated before the
+medium is cleared, so malformed inputs remain wholly intact instead of being
+partially released by a void API. The guest-x86 callback suite passes 33/33,
+the local data-object suite remains 55/55, and native WordPad object clipboard
+coverage remains 13/13. Internal object-owned guest media teardown remains the
+next medium-lifetime slice.
 
 ### Acceptance
 
