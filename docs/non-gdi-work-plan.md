@@ -345,7 +345,8 @@ transfer breadth below.
 - [x] Add durable `OleFlushClipboard` value snapshots for DLL-private
   streams through guest `Clone`/`Seek`/`CopyTo`, preserving the logical seek
   position and publishing the complete multi-format result atomically.
-- Add the matching DLL-private `IStorage::CopyTo` value-snapshot path.
+- [x] Add the matching DLL-private `IStorage::Stat`/`CopyTo` value-snapshot
+  path, including recursive contents, root CLSID, and state bits.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -467,9 +468,18 @@ staged beside it in a detached `IDataObject`; no format is published until the
 whole collection succeeds. A malformed later guest stream leaves the original
 clipboard owner and all earlier formats untouched. After publication, a final
 former owner releases its guest media through the existing suspended teardown
-bridge. The guest callback suite passes 74/74, including rejection of a `Clone`
-that aliases the source seek pointer. DLL-private `IStorage::CopyTo`
-is the remaining `OleFlushClipboard` value-lifetime slice.
+bridge. The guest callback suite first passed 74/74, including rejection of a
+`Clone` that aliases the source seek pointer.
+
+2026-08-13 guest-storage-flush result: DLL-private `IStorage` clipboard media
+now complete the same detached transaction through real guest
+`Stat(STATFLAG_NONAME)` and recursive `CopyTo` calls. The local durable storage
+retains root CLSID and state bits as well as independent nested storages,
+streams, and bytes. Provider mutation after flush cannot affect the snapshot;
+the original storage stays alive and unchanged until atomic publication, then
+the former final owner releases its guest reference through the shared bridge.
+The guest callback suite passes 78/78. This closes the remaining
+`OleFlushClipboard` stream/storage value-lifetime gap.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage

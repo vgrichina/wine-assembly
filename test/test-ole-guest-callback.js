@@ -153,6 +153,14 @@ async function main() {
     return format;
   };
 
+  const makeWide = text => {
+    const value = alloc((text.length + 1) * 2);
+    const view = new DataView(memory.buffer);
+    for (let i = 0; i < text.length; i++) view.setUint16(wa(value) + i * 2, text.charCodeAt(i), true);
+    view.setUint16(wa(value) + text.length * 2, 0, true);
+    return value;
+  };
+
   let checks = 0;
   const check = (name, condition, detail = '') => {
     assert(condition, detail ? `${name}: ${detail}` : name);
@@ -1065,6 +1073,102 @@ async function main() {
   e.test_ole_set_clipboard(0);
   assert.strictEqual(read(rejectedOwner + 4), 1);
   assert.strictEqual(callMethod(rejectedOwner, 2), 0);
+
+  const flushStorageSource = e.test_ole_create_storage(0) >>> 0;
+  const localStorageVtable = read(flushStorageSource);
+  const guestStorageVtable = alloc(18 * 4);
+  for (let i = 0; i < 18; i++) write(guestStorageVtable + i * 4, read(localStorageVtable + i * 4));
+  write(flushStorageSource, guestStorageVtable);
+  const rootStreamName = makeWide('RootData');
+  const rootStream = e.test_ole_create_stream(flushStorageSource, rootStreamName) >>> 0;
+  const rootStorageBytes = Buffer.from('root-storage-value');
+  const rootStorageInput = alloc(rootStorageBytes.length);
+  bytes.set(rootStorageBytes, wa(rootStorageInput));
+  assert.strictEqual(e.test_ole_stream_write(
+    rootStream, rootStorageInput, rootStorageBytes.length, flushCount), 0);
+  assert.strictEqual(e.test_ole_release(rootStream), 1);
+  const childName = makeWide('Nested');
+  const leafName = makeWide('Leaf');
+  const childStorage = e.test_ole_create_child_storage(flushStorageSource, childName) >>> 0;
+  const leafStream = e.test_ole_create_stream(childStorage, leafName) >>> 0;
+  const leafBytes = Buffer.from('recursive-leaf');
+  const leafInput = alloc(leafBytes.length);
+  bytes.set(leafBytes, wa(leafInput));
+  assert.strictEqual(e.test_ole_stream_write(leafStream, leafInput, leafBytes.length, flushCount), 0);
+  assert.strictEqual(e.test_ole_release(leafStream), 1);
+  assert.strictEqual(e.test_ole_release(childStorage), 1);
+  const storageClsid = alloc(16);
+  write(storageClsid, 0x89abcdef);
+  write(storageClsid + 4, 0x01234567);
+  write(storageClsid + 8, 0x76543210);
+  write(storageClsid + 12, 0xfedcba98);
+  e.test_ole_set_class(flushStorageSource, storageClsid);
+  assert.strictEqual(e.test_ole_storage_set_state_bits(
+    flushStorageSource, 0x13579bdf, 0xffffffff), 0);
+  assert.strictEqual(e.test_ole_addref(flushStorageSource), 2);
+  const flushStorageFormat = makeFormat(0xc527, 8);
+  const flushStorageMedium = alloc(12);
+  write(flushStorageMedium, 8);
+  write(flushStorageMedium + 4, flushStorageSource);
+  write(flushStorageMedium + 8, 0);
+  const flushStorageOwner = e.test_ole_create_data_object(0, 0) >>> 0;
+  assert.strictEqual(e.test_ole_data_set(
+    flushStorageOwner, flushStorageFormat, flushStorageMedium, 1), 0);
+  e.test_ole_set_clipboard(flushStorageOwner);
+  assert.strictEqual(e.test_ole_release(flushStorageOwner), 1);
+  const flushStorageHr = callApi('OleFlushClipboard');
+  const durableStorageOwner = e.test_ole_get_clipboard() >>> 0;
+  const durableStorageMedium = alloc(12);
+  assert.strictEqual(e.test_ole_data_get(
+    durableStorageOwner, flushStorageFormat, durableStorageMedium), 0);
+  const durableStorage = read(durableStorageMedium + 4);
+  const durableRootStream = e.test_ole_find_stream(durableStorage, rootStreamName) >>> 0;
+  const durableRootOutput = alloc(rootStorageBytes.length);
+  e.test_ole_stream_seek(durableRootStream, 0);
+  const durableRootReadHr = e.test_ole_stream_read(
+    durableRootStream, durableRootOutput, rootStorageBytes.length, flushCount) >>> 0;
+  const durableChild = e.test_ole_find_storage(durableStorage, childName) >>> 0;
+  const durableLeaf = e.test_ole_find_stream(durableChild, leafName) >>> 0;
+  const durableLeafOutput = alloc(leafBytes.length);
+  e.test_ole_stream_seek(durableLeaf, 0);
+  const durableLeafReadHr = e.test_ole_stream_read(
+    durableLeaf, durableLeafOutput, leafBytes.length, flushCount) >>> 0;
+  check('OleFlushClipboard recursively copies a DLL-private storage through guest Stat/CopyTo',
+    flushStorageHr === 0 && durableStorageOwner !== flushStorageOwner &&
+    durableStorage !== flushStorageSource && durableRootReadHr === 0 && durableLeafReadHr === 0 &&
+    Buffer.from(bytes.subarray(
+      wa(durableRootOutput), wa(durableRootOutput) + rootStorageBytes.length)).equals(rootStorageBytes) &&
+    Buffer.from(bytes.subarray(
+      wa(durableLeafOutput), wa(durableLeafOutput) + leafBytes.length)).equals(leafBytes));
+  const durableStorageClsid = alloc(16);
+  const durableStorageStat = alloc(72);
+  e.test_ole_get_class(durableStorage, durableStorageClsid);
+  assert.strictEqual(e.test_ole_fill_stat(durableStorage, durableStorageStat, 1), 0);
+  check('guest storage flush preserves root CLSID and state bits',
+    read(durableStorageClsid) === 0x89abcdef &&
+    read(durableStorageClsid + 4) === 0x01234567 &&
+    read(durableStorageClsid + 8) === 0x76543210 &&
+    read(durableStorageClsid + 12) === 0xfedcba98 &&
+    read(durableStorageStat + 64) === 0x13579bdf);
+  check('guest storage owner retirement balances only its source reference',
+    read(flushStorageSource + 4) === 1);
+  const changedStorageByte = alloc(1);
+  bytes[wa(changedStorageByte)] = '?'.charCodeAt(0);
+  const mutableRootStream = e.test_ole_find_stream(flushStorageSource, rootStreamName) >>> 0;
+  e.test_ole_stream_seek(mutableRootStream, 0);
+  assert.strictEqual(e.test_ole_stream_write(mutableRootStream, changedStorageByte, 1, flushCount), 0);
+  assert.strictEqual(e.test_ole_release(mutableRootStream), 1);
+  e.test_ole_stream_seek(durableRootStream, 0);
+  assert.strictEqual(e.test_ole_stream_read(
+    durableRootStream, durableRootOutput, rootStorageBytes.length, flushCount), 0);
+  check('mutating the provider storage after flush cannot change the durable tree',
+    bytes[wa(durableRootOutput)] === 'r'.charCodeAt(0));
+  assert.strictEqual(e.test_ole_release(durableLeaf), 1);
+  assert.strictEqual(e.test_ole_release(durableChild), 1);
+  assert.strictEqual(e.test_ole_release(durableRootStream), 1);
+  e.test_ole_release_medium(durableStorageMedium);
+  assert.strictEqual(e.test_ole_release(durableStorageOwner), 1);
+  assert.strictEqual(e.test_ole_release(flushStorageSource), 0);
 
   console.log(`\n${checks}/${checks} guest COM callback checks passed`);
 }

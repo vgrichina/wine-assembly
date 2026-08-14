@@ -62,8 +62,11 @@ real guest `Clone`/`Seek`/`CopyTo` methods, preserves the original logical seek
 position without moving the source, publishes multi-format results atomically,
 and retires the former owner only after publication. The real guest callback
 suite passes 74/74, including malformed-later-format rollback and rejection of
-a `Clone` that aliases the source seek pointer. DLL-private
-`IStorage::CopyTo` is the remaining clipboard-flush value-lifetime gap.
+a `Clone` that aliases the source seek pointer. DLL-private storage now follows
+the same durable transaction through guest `Stat(STATFLAG_NONAME)` and
+recursive `CopyTo`, preserving root CLSID/state bits and independent nested
+contents. The expanded guest suite passes 78/78. This closes the remaining
+clipboard-flush stream/storage value-lifetime gap.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off

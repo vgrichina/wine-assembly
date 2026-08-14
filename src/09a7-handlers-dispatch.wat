@@ -4340,9 +4340,10 @@
   ;; detached state below accumulates a complete local IDataObject and publishes
   ;; it only after Clone/Seek/CopyTo succeeds for every guest stream.
   ;;
-  ;; State (96 bytes): owner, snapshot, source entries/count/cursor, phase,
+  ;; State (176 bytes): owner, snapshot, source entries/count/cursor, phase,
   ;; source stream, clone, destination stream, pending HRESULT, saved/scratch
-  ;; seek positions, CopyTo read/written counts, and a temporary STGMEDIUM.
+  ;; seek positions, CopyTo read/written counts, a temporary STGMEDIUM, and a
+  ;; 72-byte STATSTG used to preserve guest storage CLSID/state metadata.
   (func $ole_flush_guest_stream_validate (param $owner i32) (result i32)
     (local $entries i32) (local $count i32) (local $i i32)
     (local $medium i32) (local $tymed i32) (local $iface i32)
@@ -4370,8 +4371,12 @@
             (i32.ne (local.get $iface) (i32.const 0))
             (i32.eqz (call $ole_interface_is_local (local.get $iface))))
         (then
-          (if (i32.eq (local.get $tymed) (i32.const 8))
-            (then (return (i32.const 0x80004001)))) ;; storage slice follows
+          (if (i32.and
+                (i32.eq (local.get $tymed) (i32.const 8))
+                (i32.or
+                  (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 7)))
+                  (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 17)))))
+            (then (return (i32.const 0x80004002))))
           (if (i32.and
                 (i32.eq (local.get $tymed) (i32.const 4))
                 (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 13))))
@@ -4382,9 +4387,9 @@
 
   (func $ole_flush_guest_stream_state_create (param $owner i32) (result i32)
     (local $state i32) (local $snapshot i32)
-    (local.set $state (call $heap_alloc (i32.const 96)))
+    (local.set $state (call $heap_alloc (i32.const 176)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $state)) (i32.const 96))
+    (call $zero_memory (call $g2w (local.get $state)) (i32.const 176))
     (local.set $snapshot (call $ole_create_data_object (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $snapshot))
       (then (call $heap_free (local.get $state)) (return (i32.const 0))))
@@ -4397,7 +4402,7 @@
     (local.get $state))
 
   (func $ole_flush_guest_stream_state_dispose (param $state i32)
-    (local $medium i32) (local $iface i32) (local $medium_iface i32)
+    (local $medium i32) (local $iface i32) (local $medium_iface i32) (local $name i32)
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $iface (call $gl32 (i32.add (local.get $state) (i32.const 32))))
     (local.set $medium (i32.add (local.get $state) (i32.const 72)))
@@ -4411,6 +4416,8 @@
       (then (drop (call $ole_release_local_interface (local.get $iface)))))
     (local.set $iface (call $gl32 (i32.add (local.get $state) (i32.const 4))))
     (if (local.get $iface) (then (drop (call $ole_obj_release (local.get $iface)))))
+    (local.set $name (call $gl32 (i32.add (local.get $state) (i32.const 96))))
+    (if (local.get $name) (then (call $heap_free (local.get $name))))
     (call $heap_free (local.get $state)))
 
   (func $ole_flush_guest_stream_continue (param $ctx i32) (result i32)
@@ -4620,8 +4627,70 @@
             (local.get $ctx) (call $gl32 (i32.add (local.get $state) (i32.const 28))) (i32.const 2)))
           (return (i32.const 1))))
 
+      ;; Guest IStorage has no Clone operation. Capture root metadata through
+      ;; Stat(STATFLAG_NONAME), then ask the provider to recursively CopyTo a
+      ;; new local memory storage while the original owner remains live.
+      (if (i32.eq (local.get $phase) (i32.const 6))
+        (then
+          (local.set $hr (global.get $eax))
+          (if (i32.and
+                (i32.ge_s (local.get $hr) (i32.const 0))
+                (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 100))) (i32.const 1)))
+            (then (local.set $hr (i32.const 0x800300FB)))) ;; STG_E_INVALIDHEADER
+          (if (i32.lt_s (local.get $hr) (i32.const 0))
+            (then
+              (call $ole_flush_guest_stream_state_dispose (local.get $state))
+              (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+              (return (i32.const 0))))
+          ;; STATFLAG_NONAME requires NULL, but release a nonconforming task
+          ;; allocation rather than carrying it into the durable value.
+          (if (call $gl32 (i32.add (local.get $state) (i32.const 96)))
+            (then
+              (call $heap_free (call $gl32 (i32.add (local.get $state) (i32.const 96))))
+              (call $gs32 (i32.add (local.get $state) (i32.const 96)) (i32.const 0))))
+          (local.set $dest (call $gl32 (i32.add (local.get $state) (i32.const 32))))
+          (memory.copy
+            (call $g2w (i32.add (local.get $dest) (i32.const 20)))
+            (call $g2w (i32.add (local.get $state) (i32.const 144)))
+            (i32.const 16))
+          (call $gs32 (i32.add (local.get $dest) (i32.const 56))
+            (call $gl32 (i32.add (local.get $state) (i32.const 160))))
+          (call $gs32 (i32.add (local.get $state) (i32.const 20)) (i32.const 7))
+          (drop (call $ole_guest_callback_invoke5
+            (local.get $ctx) (call $gl32 (i32.add (local.get $state) (i32.const 24))) (i32.const 7)
+            (i32.const 0) (i32.const 0) (i32.const 0) (local.get $dest)))
+          (return (i32.const 1))))
+
+      (if (i32.eq (local.get $phase) (i32.const 7))
+        (then
+          (local.set $hr (global.get $eax))
+          (if (i32.ge_s (local.get $hr) (i32.const 0))
+            (then
+              (local.set $entry (i32.add
+                (call $gl32 (i32.add (local.get $state) (i32.const 8)))
+                (i32.shl (call $gl32 (i32.add (local.get $state) (i32.const 16))) (i32.const 5))))
+              (local.set $medium (i32.add (local.get $state) (i32.const 72)))
+              (call $gs32 (local.get $medium) (i32.const 8))
+              (call $gs32 (i32.add (local.get $medium) (i32.const 4))
+                (call $gl32 (i32.add (local.get $state) (i32.const 32))))
+              (local.set $hr (call $ole_data_set_entry_with_retired
+                (call $gl32 (i32.add (local.get $state) (i32.const 4)))
+                (local.get $entry) (local.get $medium) (i32.const 1) (i32.const 0)))
+              (if (i32.eqz (local.get $hr))
+                (then (call $gs32 (i32.add (local.get $state) (i32.const 32)) (i32.const 0))))))
+          (if (i32.lt_s (local.get $hr) (i32.const 0))
+            (then
+              (call $ole_flush_guest_stream_state_dispose (local.get $state))
+              (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+              (return (i32.const 0))))
+          (call $gs32 (i32.add (local.get $state) (i32.const 16))
+            (i32.add (call $gl32 (i32.add (local.get $state) (i32.const 16))) (i32.const 1)))
+          (call $gs32 (i32.add (local.get $state) (i32.const 20)) (i32.const 0))
+          (local.set $phase (i32.const 0))
+          (br $advance)))
+
       ;; phase 0 copies ordinary media immediately and starts Clone for the
-      ;; next guest stream. The owner remains untouched throughout this scan.
+      ;; next guest stream/storage. The owner remains untouched throughout.
       (local.set $owner (call $gl32 (local.get $state)))
       (local.set $snapshot (call $gl32 (i32.add (local.get $state) (i32.const 4))))
       (local.set $entries (call $gl32 (i32.add (local.get $state) (i32.const 8))))
@@ -4669,6 +4738,25 @@
           (drop (call $ole_guest_callback_invoke2
             (local.get $ctx) (local.get $source) (i32.const 13)
             (i32.add (local.get $state) (i32.const 28))))
+          (return (i32.const 1))))
+      (if (i32.and
+            (i32.eq (local.get $tymed) (i32.const 8))
+            (i32.and (i32.ne (local.get $source) (i32.const 0))
+              (i32.eqz (call $ole_interface_is_local (local.get $source)))))
+        (then
+          (local.set $dest (call $ole_create_storage (i32.const 0)))
+          (if (i32.eqz (local.get $dest))
+            (then
+              (call $ole_flush_guest_stream_state_dispose (local.get $state))
+              (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0x8007000E))
+              (return (i32.const 0))))
+          (call $gs32 (i32.add (local.get $state) (i32.const 24)) (local.get $source))
+          (call $gs32 (i32.add (local.get $state) (i32.const 32)) (local.get $dest))
+          (call $zero_memory (call $g2w (i32.add (local.get $state) (i32.const 96))) (i32.const 72))
+          (call $gs32 (i32.add (local.get $state) (i32.const 20)) (i32.const 6))
+          (drop (call $ole_guest_callback_invoke3
+            (local.get $ctx) (local.get $source) (i32.const 17)
+            (i32.add (local.get $state) (i32.const 96)) (i32.const 1)))
           (return (i32.const 1))))
       (local.set $hr (call $ole_snapshot_medium
         (i32.add (local.get $state) (i32.const 72)) (local.get $medium)))
@@ -5179,6 +5267,25 @@
     (local.set $fn (call $ole_guest_method_addr (local.get $iface) (local.get $method)))
     (if (i32.eqz (local.get $fn)) (then (return (i32.const 0))))
     (global.set $esp (local.get $ctx))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $a1))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $iface))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $fn))
+    (global.set $steps (i32.const 0))
+    (i32.const 1))
+
+  (func $ole_guest_callback_invoke3
+        (param $ctx i32) (param $iface i32) (param $method i32)
+        (param $a1 i32) (param $a2 i32) (result i32)
+    (local $fn i32)
+    (local.set $fn (call $ole_guest_method_addr (local.get $iface) (local.get $method)))
+    (if (i32.eqz (local.get $fn)) (then (return (i32.const 0))))
+    (global.set $esp (local.get $ctx))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $a2))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $a1))
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
