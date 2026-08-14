@@ -598,8 +598,6 @@
       (then
         (call $dib_free_wasm (local.get $storage))
         (return (i32.const 0))))
-    (drop (call $host_gdi_surface_upload (local.get $handle) (i32.const 0)
-      (i32.const 0) (local.get $width) (local.get $height)))
     (local.get $handle))
 
   (func $gdi_bitmap_create_bitmap (param $width i32) (param $height i32)

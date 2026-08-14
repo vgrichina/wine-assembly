@@ -81,10 +81,14 @@ compatibility layers.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
-a derived cache: WAT raster writes upload bounded rectangles. The retained
-Canvas text rasterizer receives an opaque WAT surface ID and canonical DC state,
-then copies its bounded output back into canonical native storage before
-returning. Deletion returns the private pages to the arena.
+a derived cache: WAT raster writes only union a dirty rectangle in the canonical
+surface. Memory DCs perform no Canvas conversion. Attached window, desktop, and
+menu surfaces convert the accumulated rectangle immediately before compositor
+use; explicit Canvas reads and captures are synchronization boundaries as well.
+The retained Canvas text rasterizer flushes older WAT writes, receives an opaque
+WAT surface ID and canonical DC state, then copies its bounded output back into
+canonical native storage before returning. Deletion returns the private pages
+to the arena.
 
 `LoadBitmapA/W` now materialize uncompressed `BITMAPCOREHEADER` and
 `BITMAPINFOHEADER` resources plus bounded `BI_RLE4`/`BI_RLE8`
@@ -563,23 +567,23 @@ Font matching should reproduce the GDI inputs that affect `CreateFont` and
 underline, strikeout, charset, pitch/family, escapement, and orientation.
 Point sizes must use the em-height and device DPI rules rather than CSS pixels.
 The browser and CLI preload tracked `System.fon`, `MSSansSerif.fon`,
-`Fixedsys.fon`, and `Courier.fon` files generated from Wine's embedded bitmap
-strikes into `C:\\WINDOWS\\FONTS`; the WAT backend installs each lazily on the
-first matching text operation. `SYSTEM_FONT` uses System, `ANSI_FIXED_FONT`
-uses Courier, and the variable UI stocks use MS Sans Serif. Fixed-system stocks
-use Fixedsys; `OEM_FIXED_FONT` explicitly retains that fallback until a distinct
-redistributable Terminal 8x12 strike is available. Common Win9x UI aliases use
-the deterministic MS Sans Serif path. Explicit document faces such as Arial
-remain on the scalable Canvas fallback rather than being silently substituted.
+`Fixedsys.fon`, `Courier.fon`, and `Terminal.fon` files into
+`C:\\WINDOWS\\FONTS`; the WAT backend installs each lazily on the first matching
+text operation. The first four are generated from Wine's embedded bitmap
+strikes. Terminal is generated from ANAKRON's OFL-licensed native 8x12 bitmap,
+maps bytes through CP437, and declares `OEM_CHARSET`. `SYSTEM_FONT` uses System,
+`ANSI_FIXED_FONT` uses Courier, `SYSTEM_FIXED_FONT` uses Fixedsys,
+`OEM_FIXED_FONT` uses Terminal, and the variable UI stocks use MS Sans Serif.
+Common Win9x UI aliases use deterministic MS Sans Serif. Explicit document
+faces such as Arial remain on the scalable Canvas fallback rather than being
+silently substituted.
 
-The stock `ANSI_FIXED_FONT`, `OEM_FIXED_FONT`, and `SYSTEM_FIXED_FONT` objects,
-plus an explicit `Fixedsys` face, resolve to generated public-domain Fixedsys
-Excelsior strikes. The bundled FON has native 16, 18, 21, 24, 32, 48, 64, and
-80-pixel cell heights, matching the Win98 Font Viewer's requests instead of
-fractionally scaling one 8x16 bitmap. Their measurement and glyph writes stay
-entirely on the WAT pixel surface. Exact OEM code-page mapping remains separate
-matching work; the bundled substitute currently shares its byte-to-glyph table
-across the three stock handles.
+The fixed stock objects therefore retain distinct native roles instead of
+sharing an outline-derived substitute: Courier 8x13 for `ANSI_FIXED_FONT`,
+ANAKRON-derived Terminal 8x12 for `OEM_FIXED_FONT`, and Wine Fixedsys 8x15 for
+`SYSTEM_FIXED_FONT`. Integer-scaled bitmap strikes handle larger matching
+requests without antialiasing. Their measurement and glyph writes stay entirely
+on the WAT pixel surface.
 
 Raster output should be monochrome by default for the Win98 look. Glyph origins
 and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,
@@ -721,8 +725,9 @@ the same machine.
 - Use typed-array loops over contiguous spans, not per-pixel object allocation.
 - Specialize solid fills and common ROPs; bulk operations should dominate Paint
   workloads.
-- Coalesce dirty rectangles and cap their count before falling back to a full
-  surface upload.
+- Coalesce each surface's dirty bounds and convert them once at compositor,
+  capture, or Canvas-text synchronization boundaries. An unattached memory DC
+  must not perform presentation conversion.
 - Keep the current direct guest-memory translation fast path. DIB stores need
   no instrumentation because the DIB bytes are canonical.
 - Profile before moving code into WASM. JavaScript typed arrays may be adequate
