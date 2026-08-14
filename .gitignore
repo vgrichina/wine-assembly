@@ -27,6 +27,7 @@ binaries
 *.WAV
 *.mid
 *.MID
+messageboard.txt
 *.DAT
 *.bmp
 *.mp3
