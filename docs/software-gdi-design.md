@@ -173,6 +173,14 @@ Pattern pixels repeat in device coordinates with the canonical brush origin
 and are sampled by every brush-dependent WAT path. Palette-index patterns are
 resolved through each destination DC's selected logical palette when sampled.
 
+`GetDIBits` preserves the caller's declared output dimensions when a pixel
+buffer is present. WAT constructs the native partial-scan intersection in
+bottom-origin `StartScan` units, converts only the intersecting canonical
+rows, and places or zero-fills the band according to the requested top-down or
+bottom-up DIB orientation. The returned scan count is the intersected source
+height and `biSizeImage` continues to describe the complete declared output
+DIB. No Canvas readback participates in bitmap extraction.
+
 Tabbed text now uses the same canonical DC-to-text binding as ordinary text.
 WAT parses ANSI or UTF-16 tab characters, measures individual runs, expands
 default, repeating single, or explicit multiple tab stops relative to the tab

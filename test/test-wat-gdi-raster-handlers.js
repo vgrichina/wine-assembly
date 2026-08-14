@@ -533,6 +533,49 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(copy, 2, 2), 0x0000FF);
   });
 
+  check('GetDIBits positions partial bands in the declared DIB orientation', () => {
+    const surface = makeDib(1, 8);
+    for (let y = 0; y < 8; y++) {
+      assert.strictEqual(wat.test_call_SetPixel(
+        surface.hdc, 0, y, y + 1), y + 1);
+    }
+
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const outGa = wat.guest_alloc(16 * 4) >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const outWa = 0x12000 + (outGa - imageBase);
+    for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmiGa + offset, 0);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 1);
+    wat.guest_write32(bmiGa + 8, 16);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 32);
+    bytes.fill(0xAA, outWa, outWa + 16 * 4);
+
+    assert.strictEqual(wat.test_gdi_get_dibits(
+      0, surface.bitmap, 1, 12, outWa, bmiWa, 0), 5);
+    const dv = new DataView(memory.buffer);
+    assert.deepStrictEqual(Array.from({ length: 16 }, (_, row) =>
+      dv.getUint32(outWa + row * 4, true)), [
+      0, 0, 0, 0, 0, 0, 0,
+      8 << 16, 7 << 16, 6 << 16, 5 << 16, 4 << 16,
+      0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA,
+    ]);
+    assert.strictEqual(dv.getUint32(bmiWa + 20, true), 16 * 4);
+
+    wat.guest_write32(bmiGa + 8, -8);
+    bytes.fill(0xAA, outWa, outWa + 16 * 4);
+    assert.strictEqual(wat.test_gdi_get_dibits(
+      0, surface.bitmap, 1, 5, outWa, bmiWa, 0), 5);
+    assert.deepStrictEqual(Array.from({ length: 8 }, (_, row) =>
+      dv.getUint32(outWa + row * 4, true)), [
+      3 << 16, 4 << 16, 5 << 16, 6 << 16, 7 << 16,
+      0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA,
+    ]);
+    assert.strictEqual(dv.getUint32(bmiWa + 20, true), 8 * 4);
+  });
+
   check('GetDIBits and SetDIBits preserve explicit 16-bpp channel masks', () => {
     const imageBase = wat.get_image_base() >>> 0;
     const bmiGa = wat.guest_alloc(52) >>> 0;

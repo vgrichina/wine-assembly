@@ -9702,6 +9702,9 @@
     (local $header_size i32) (local $palette_count i32) (local $table i32)
     (local $selected_palette i32) (local $index i32) (local $desired i32)
     (local $requested_bpp i32) (local $compression i32) (local $masks i32)
+    (local $dst_height i32) (local $dst_top i32) (local $dst_bottom i32)
+    (local $src_top i32) (local $src_bottom i32) (local $offset i32)
+    (local $out_bottom i32) (local $pad_lines i32) (local $stride i32)
     (if (i32.or (i32.gt_u (local.get $color_use) (i32.const 1))
           (i32.eqz (local.get $bmi)))
       (then (return (i32.const 0))))
@@ -9716,9 +9719,16 @@
     (local.set $header_size (i32.load (local.get $bmi)))
     (if (i32.lt_u (local.get $header_size) (i32.const 40))
       (then (return (i32.const 0))))
-    (i32.store offset=4 (local.get $bmi) (local.get $width))
-    (if (i32.eqz (i32.load offset=8 (local.get $bmi)))
-      (then (i32.store offset=8 (local.get $bmi) (local.get $height))))
+    ;; A format query receives the bitmap dimensions. With an output buffer,
+    ;; the caller's dimensions describe the destination DIB and must remain
+    ;; intact because partial scanline bands are positioned within that image.
+    (if (i32.or (i32.eqz (local.get $bits))
+          (i32.le_s (i32.load offset=4 (local.get $bmi)) (i32.const 0)))
+      (then
+        (i32.store offset=4 (local.get $bmi) (local.get $width))
+        (if (i32.and (i32.eqz (local.get $bits))
+              (i32.eqz (i32.load offset=8 (local.get $bmi))))
+          (then (i32.store offset=8 (local.get $bmi) (local.get $height))))))
     (i32.store16 offset=12 (local.get $bmi) (i32.const 1))
     (local.set $requested_bpp (i32.load16_u offset=14 (local.get $bmi)))
     (if (i32.eqz (local.get $requested_bpp))
@@ -9809,20 +9819,78 @@
               (local.set $x (i32.add (local.get $x) (i32.const 1)))
               (br $pal_table)))))))
     (if (i32.eqz (local.get $bits)) (then (return (local.get $height))))
-    (if (i32.ge_u (local.get $start_scan) (local.get $height))
-      (then (return (i32.const 0))))
-    (local.set $lines (local.get $scan_count))
-    (if (i32.gt_u (local.get $lines) (i32.sub (local.get $height) (local.get $start_scan)))
-      (then (local.set $lines (i32.sub (local.get $height) (local.get $start_scan)))))
     (if (i32.eqz (call $gdi_raster_desc_from_bmi_usage
           (local.get $dst) (local.get $bits) (local.get $bmi)
           (local.get $color_use) (local.get $hdc)))
       (then (return (i32.const 0))))
+    (local.set $dst_height (i32.load offset=8 (local.get $dst)))
+    (if (i32.or (i32.eqz (local.get $scan_count))
+          (i32.ge_u (local.get $start_scan) (local.get $dst_height)))
+      (then (return (i32.const 0))))
+    (local.set $lines (local.get $scan_count))
+    (local.set $dst_bottom (local.get $dst_height))
+    ;; Match the native rectangle construction used before format conversion.
+    ;; StartScan is measured from the bottom even when the output DIB is
+    ;; top-down. The intersection with the source bitmap determines both the
+    ;; returned line count and any zero-filled gap in the caller's DIB.
+    (if (i32.eqz (i32.load offset=20 (local.get $dst)))
+      (then
+        (if (i32.gt_u (local.get $lines)
+              (i32.sub (local.get $dst_height) (local.get $start_scan)))
+          (then (local.set $lines
+            (i32.sub (local.get $dst_height) (local.get $start_scan)))))
+        (local.set $dst_top (i32.sub (local.get $dst_height) (local.get $lines)))
+        (local.set $offset (i32.sub (i32.const 0) (local.get $start_scan))))
+      (else
+        (if (i32.gt_u (local.get $lines)
+              (i32.sub (local.get $dst_height) (local.get $start_scan)))
+          (then
+            (local.set $lines
+              (i32.sub (local.get $dst_height) (local.get $start_scan)))
+            (local.set $offset (i32.const 0)))
+          (else
+            (local.set $offset (i32.sub
+              (i32.sub (local.get $dst_height) (local.get $lines))
+              (local.get $start_scan)))))
+        (if (i32.lt_u (local.get $lines) (local.get $dst_height))
+          (then (local.set $dst_bottom (local.get $lines))))))
+    (local.set $src_top (i32.add (local.get $dst_top) (local.get $offset)))
+    (if (i32.lt_s (local.get $src_top) (i32.const 0))
+      (then (local.set $src_top (i32.const 0))))
+    (local.set $src_bottom (i32.add (local.get $dst_bottom) (local.get $offset)))
+    (if (i32.gt_s (local.get $src_bottom) (local.get $height))
+      (then (local.set $src_bottom (local.get $height))))
+    (if (i32.le_s (local.get $src_bottom) (local.get $src_top))
+      (then (return (i32.const 0))))
+    (local.set $out_bottom (i32.sub (local.get $src_bottom) (local.get $offset)))
+    (local.set $stride (i32.load offset=12 (local.get $dst)))
+    (i32.store offset=20 (local.get $bmi)
+      (i32.mul (local.get $stride) (local.get $dst_height)))
+    (if (i32.eqz (i32.load offset=20 (local.get $dst)))
+      (then
+        (local.set $pad_lines (i32.sub (local.get $dst_height) (local.get $out_bottom)))
+        (if (i32.gt_u (local.get $pad_lines) (local.get $lines))
+          (then (local.set $pad_lines (local.get $lines))))
+        (if (local.get $pad_lines)
+          (then (memory.fill (local.get $bits) (i32.const 0)
+            (i32.mul (local.get $pad_lines) (local.get $stride)))))
+        (i32.store (local.get $dst) (i32.add (local.get $bits)
+          (i32.mul (local.get $pad_lines) (local.get $stride)))))
+      (else
+        (if (i32.lt_u (local.get $out_bottom) (local.get $lines))
+          (then (memory.fill
+            (i32.add (local.get $bits)
+              (i32.mul (local.get $out_bottom) (local.get $stride)))
+            (i32.const 0)
+            (i32.mul (i32.sub (local.get $lines) (local.get $out_bottom))
+              (local.get $stride)))))))
+    (local.set $lines (i32.sub (local.get $src_bottom) (local.get $src_top)))
     (i32.store offset=8 (local.get $dst) (local.get $lines))
+    (if (i32.gt_u (local.get $width) (i32.load offset=4 (local.get $dst)))
+      (then (local.set $width (i32.load offset=4 (local.get $dst)))))
     (block $rows_done (loop $rows
       (br_if $rows_done (i32.ge_u (local.get $y) (local.get $lines)))
-      (local.set $source_y (i32.sub (i32.sub (local.get $height) (local.get $start_scan))
-        (i32.add (local.get $y) (i32.const 1))))
+      (local.set $source_y (i32.add (local.get $src_top) (local.get $y)))
       (local.set $x (i32.const 0))
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.ge_u (local.get $x) (local.get $width)))
@@ -9830,8 +9898,7 @@
           (local.get $src) (local.get $x) (local.get $source_y)))
         (if (i32.eq (local.get $color) (i32.const -1)) (then (return (i32.const 0))))
         (drop (call $gdi_raster_write (local.get $dst) (local.get $x)
-          (i32.sub (i32.sub (local.get $lines) (local.get $y)) (i32.const 1))
-          (local.get $color)))
+          (local.get $y) (local.get $color)))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
