@@ -102,6 +102,14 @@ run-lock, last-unlock-close, and contained state. The expanded focused suite
 passes 52/52. DLL-private client-site and advisory AddRef/Release callbacks are
 still intentionally deferred.
 
+A synthetic local client site now verifies the missing ownership contract:
+`SetClientSite` retains exactly one reference, repeated assignment is neutral,
+`GetClientSite` AddRefs its result, final handler release drops ownership, and
+SAVEIFDIRTY/PROMPTSAVE close invokes local `SaveObject` before clearing dirty
+state. The focused suite passes 58/58. RichEdit's DLL-private site keeps the
+existing borrowed compatibility path until guest COM callbacks can suspend and
+resume safely.
+
 ## Remaining Work
 
 The everyday non-OLE WordPad target is complete. Remaining work is narrower.

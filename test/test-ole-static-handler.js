@@ -115,6 +115,25 @@ async function main() {
     dv.getUint32(wa(extentOut) + 4, true) === 480 &&
     e.test_ole_persist_dirty(object) === 1);
 
+  const testSite = e.test_ole_create_test_site() >>> 0;
+  const clientSiteOut = alloc(4);
+  check('SetClientSite owns one reference to a local in-process client site',
+    testSite !== 0 && e.test_ole_static_set_client_site(object, testSite) === 0 &&
+    dv.getUint32(wa(testSite) + 4, true) === 2 &&
+    dv.getUint32(wa(testSite) + 12, true) === 1 &&
+    dv.getUint32(wa(object) + 144, true) === 1);
+  check('setting the same client site is reference-count neutral',
+    e.test_ole_static_set_client_site(object, testSite) === 0 &&
+    dv.getUint32(wa(testSite) + 4, true) === 2 &&
+    dv.getUint32(wa(testSite) + 12, true) === 1);
+  check('GetClientSite returns an independently referenced local interface',
+    e.test_ole_static_get_client_site(object, clientSiteOut) === 0 &&
+    dv.getUint32(wa(clientSiteOut), true) === testSite &&
+    dv.getUint32(wa(testSite) + 4, true) === 3 &&
+    dv.getUint32(wa(testSite) + 12, true) === 2 &&
+    e.test_ole_release(testSite) === 2 &&
+    dv.getUint32(wa(testSite) + 16, true) === 1);
+
   const userTypeOut = alloc(4);
   check('GetUserType returns caller-owned static-object text',
     e.test_ole_static_get_user_type(0, userTypeOut) === 0 &&
@@ -125,6 +144,12 @@ async function main() {
   check('Close rejects invalid save options without changing lifecycle state',
     (e.test_ole_static_close(object, 3) >>> 0) === 0x80070057 &&
     dv.getUint32(wa(object) + 124, true) === 0);
+  check('SAVEIFDIRTY close invokes the local client site and clears dirty state',
+    e.test_ole_static_close(object, 0) === 0 &&
+    dv.getUint32(wa(testSite) + 20, true) === 1 &&
+    e.test_ole_persist_dirty(object) === 0 &&
+    dv.getUint32(wa(object) + 124, true) === 1);
+  e.test_ole_static_set_extent(object, 1, extent);
   e.test_ole_static_run(object);
   e.test_ole_static_lock_running(object, 1, 0);
   e.test_ole_static_lock_running(object, 1, 0);
@@ -374,6 +399,10 @@ async function main() {
   e.test_ole_static_set_storage(object, storage);
   check('static handler owns its persistence storage', e.test_ole_release(storage) === 1);
   check('final handler release drops the storage reference', e.test_ole_release(object) === 0);
+  check('final handler release drops its owned local client-site reference',
+    dv.getUint32(wa(testSite) + 4, true) === 1 &&
+    dv.getUint32(wa(testSite) + 16, true) === 2);
+  check('caller client-site reference remains independently releasable', e.test_ole_release(testSite) === 0);
   check('caller lockbytes reference remains independently releasable', e.test_ole_release(lockbytes) === 0);
 
   console.log(`\n${pass}/${pass + fail} checks passed`);

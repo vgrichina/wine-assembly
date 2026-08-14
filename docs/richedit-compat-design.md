@@ -63,6 +63,13 @@ last-unlock-close, and contained state. The expanded focused suite passes
 52/52. Client-site and advisory ownership still need the guest COM callback
 bridge because RichEdit supplies DLL-private interfaces.
 
+The local half of client-site fidelity is now covered by a synthetic
+in-process fixture. Assignment, repeated assignment, retrieval, replacement,
+dirty-close SaveObject, and final destruction have explicit reference-count
+assertions; the focused suite passes 58/58. This deliberately does not call a
+DLL-private RichEdit vtable synchronously from a WAT API frame—the continuation
+bridge remains required for that half and for native advisory sinks.
+
 ## ASCII TLDR
 
 ```text

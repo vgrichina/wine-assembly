@@ -434,8 +434,11 @@ cursor semantics. The expanded focused suite passes 38/38.
 - [x] Complete owned host names, close/running transitions, run locks,
   contained state, validated dirty extents, static user type, and misc-status
   bookkeeping.
-- Complete client-site ownership and advisory connections after the guest COM
-  callback bridge can safely AddRef/Release DLL-private interfaces.
+- [x] Complete client-site ownership, `GetClientSite` AddRef behavior, and
+  dirty-close `SaveObject` calls for the synthetic in-process site fixture.
+- Complete advisory connections and extend client-site ownership to
+  DLL-private interfaces after the guest COM callback bridge can safely invoke
+  AddRef/Release/SaveObject.
 - [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
   generalized P3 object rather than DIB-only branches for runtime-owned
   `IDataObject` instances.
@@ -464,6 +467,15 @@ is contained. Owned host strings are released with the handler. Close requests
 do not yet invoke a DLL-private client site's `SaveObject`; client-site and
 advisory ownership remain explicitly deferred to the callback bridge. The
 focused static-handler suite passes 52/52.
+
+2026-08-13 local-client-site result: a synthetic in-process site fixture now
+records AddRef, Release, and SaveObject activity. `SetClientSite` retains and
+atomically replaces local sites, repeated assignment is neutral,
+`GetClientSite` returns a separately referenced interface, handler destruction
+releases its ownership, and SAVEIFDIRTY/PROMPTSAVE close clears dirty state
+only after the local SaveObject callback succeeds. Native RichEdit's
+DLL-private site remains borrowed pending continuation-based guest callbacks;
+its existing compatibility path is unchanged. The focused suite passes 58/58.
 
 ### Acceptance
 
