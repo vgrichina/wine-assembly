@@ -2,14 +2,26 @@
 
 **Binary:** `test/binaries/win98-apps/wordpad.exe`  
 **Status (2026-08-14):** FUNCTIONAL for the bounded non-OLE scope plus static
-`CF_DIB` image paste, Copy/Cut/Paste, rendering, and RTF save. Fresh-process
-reopen is implemented and has passed, but needs current-tip bounded
-revalidation after the recent GDI/DIB changes (see **Remaining Work**).
+`CF_DIB` image paste, Copy/Cut/Paste, rendering, and RTF save. The bounded
+non-OLE target is current-tip verified. The optional static-image OLE
+fresh-process reopen is implemented and has passed previously, but its bounded
+current-tip revalidation remains deferred after the recent GDI/DIB changes
+(see **Remaining Work**).
+
+Current-tip non-OLE verification includes all 13 menu-dialog lifecycles,
+advanced RTF save/reopen (17/17), printing/Page Setup/preview (17/17),
+large-document resize/edit stress (10/10), advanced ruler/dialog commands (9/9),
+selection painting (8/8), Undo/Find single dispatch (11/11), wheel and real
+scrollbar-thumb routing (11/11), clipped long-line painting with zero desktop
+spill (11/11), toolbar layout/icons/commands (23/23), and toolbar color-menu
+application (13/13). Plain text/RTF clipboard snapshots are durable without
+depending on transient RichEdit OLE data objects.
 
 Advanced RTF runs/paragraphs/tables, physical printing, Page Setup, multi-page
 pagination, Print Preview navigation, large-document resize/edit stress,
 advanced ruler/dialog commands, international UTF-16/IME commit input, and
-representative complex-script behavior now have focused app-level regressions.
+representative complex-script behavior have focused app-level regressions.
+Broader bidi/IME/complex-script editing remains optional deferred breadth.
 Suspended-thread behavior has scheduler coverage and a bounded app-level trace
 now proves WordPad's real startup uses that path.
 Bounded RichEdit 1.0/2.0 class, selection-message, and text-limit differences

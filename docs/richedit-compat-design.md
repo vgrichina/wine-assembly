@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-13.
+Last updated: 2026-08-14.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -11,9 +11,12 @@ The ordered repository work that can proceed without waiting for software-GDI
 changes is tracked in the [non-GDI work plan](non-gdi-work-plan.md). That plan
 separates state/protocol completion from the retained visual rejoin tests.
 
-The bounded non-OLE program is implemented. Advanced RTF, printing/preview,
-layout stress, secondary WordPad UI, representative international text, and
-RichEdit-version probes all have focused coverage. Remaining work is:
+The bounded non-OLE program is implemented and current-tip verified. The final
+representative gates cover all 13 menu-dialog lifecycles, advanced RTF (17/17),
+printing/preview (17/17), layout stress (10/10), secondary UI (9/9), selection
+(8/8), Undo/Find (11/11), scroll/thumb routing (11/11), clipping (11/11), and
+toolbar layout/color (23/23 and 13/13). Remaining work is optional or broader
+fidelity rather than a blocker for everyday WordPad:
 
 - finish bounded current-tip revalidation of the two-static-DIB fresh-process
   reopen path after recent GDI/DIB changes; save output again contains two
@@ -23,8 +26,10 @@ RichEdit-version probes all have focused coverage. Remaining work is:
   presentations, compound-file serialization, object verbs, in-place
   activation, general object clipboard transfer, and drag/drop;
 - breadth beyond representative fixtures: arbitrary nested/overlapping RTF,
-  exact printer layout, more scripts/fonts/IME cases, uncommon toolbar/ruler
-  state, and exhaustive undocumented RichEdit quirks;
+  exact printer layout, uncommon toolbar/ruler state, and exhaustive
+  undocumented RichEdit quirks;
+- international breadth is deliberately paused: more scripts and fonts,
+  composition UI, bidi editing, and complex-cluster editing;
 - general OLE and high-fidelity breadth remain after the thread-fidelity item;
   the real WordPad `CREATE_SUSPENDED`/`ResumeThread` path now has bounded
   app-level coverage in `test/test-wordpad-thread-startup.js`.
@@ -143,23 +148,21 @@ Win app / installer -->| native RichEdit code |
 ```
 
 ```text
-Implement now                                 Postpone later
+Completed bounded non-OLE                    Deferred optional / breadth
 
-+--------------------------------+            +-------------------------------+
-| bounded WordPad/RichEdit probe |            | images / tables / OLE objs   |
-| delete / enter / movement      |            | advanced RTF layout          |
-| selection replacement          |            | IME / bidi / complex shaping |
-| plain-text Ctrl+A/C/X/V bridge |            | print pagination             |
-| non-OLE RTF clipboard data     |            | embedded/OLE clipboard objs  |
-| mouse selection / wheel scroll |            | TOM/COM / accessibility / D&D|
-| plain text stream I/O          |            | exact version quirks         |
-| basic RTF + basic formatting   |            | image/table clipboard data   |
-| simple paragraph alignment     |            | indents / tabs / numbering   |
-| basic toolbar command fidelity |            | advanced toolbar UI state    |
-| clipped ExtTextOut rendering   |            | full resize/wrap edge cases  |
-| native scrollbar thumb routing |            |                               |
-| bounded resize/wrap clamp      |            |                               |
-+--------------------------------+            +-------------------------------+
++----------------------------------+          +--------------------------------+
+| typing, movement, selection      |          | linked/activated OLE servers   |
+| durable text + RTF clipboard     |          | general OLE/drag/drop/verbs    |
+| multi-run/paragraph/table RTF    |          | arbitrary nested RTF/layout    |
+| save/reopen and format roundtrip |          | exact printer/device fidelity  |
+| printing, preview, pagination    |          | uncommon toolbar/ruler states  |
+| large docs, resize, wrap, undo   |          | undocumented version quirks    |
+| mouse, wheel, shared thumb drag  |          | broader IME/bidi/script editing |
+| clipped painting and caret       |          | TOM/accessibility breadth      |
+| toolbar icons/state/color menu   |          | current-tip static-OLE reopen  |
+| all 13 menu dialog lifecycles    |          | non-DIB object presentations   |
+| CREATE_SUSPENDED startup path    |          |                                |
++----------------------------------+          +--------------------------------+
 ```
 
 ## Current baseline
