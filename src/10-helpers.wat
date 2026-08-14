@@ -2233,9 +2233,174 @@
       (local.set $handle (i32.load
         (i32.add (local.get $table) (i32.shl (local.get $i) (i32.const 2)))))
       (if (local.get $handle)
-        (then (drop (call $gdi_object_delete_full (local.get $handle)))))
+        (then
+          (if (call $gdi_rgn_record (local.get $handle))
+            (then (drop (call $gdi_rgn_delete (local.get $handle))))
+            (else (drop (call $gdi_object_delete_full (local.get $handle)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
+
+  (func $gdi_metafile_wmf_delete_object (param $handle i32) (result i32)
+    (if (result i32) (call $gdi_rgn_record (local.get $handle))
+      (then (call $gdi_rgn_delete (local.get $handle)))
+      (else (call $gdi_object_delete_full (local.get $handle)))))
+
+  ;; Decode the Win16 Region Object carried by META_CREATEREGION. Each Scan
+  ;; contains one y band and an even list of left/right endpoints. Validate the
+  ;; duplicated count and all bounds before publishing a canonical WAT HRGN.
+  (func $gdi_metafile_wmf_create_region (param $record i32)
+        (param $record_bytes i32) (result i32)
+    (local $region_size i32) (local $scan_count i32) (local $max_scan i32)
+    (local $cursor i32) (local $limit i32) (local $scan_index i32)
+    (local $coord_count i32) (local $coord_index i32) (local $scan_bytes i32)
+    (local $top i32) (local $bottom i32) (local $left i32) (local $right i32)
+    (local $prev_bottom i32) (local $prev_right i32)
+    (local $out_count i32) (local $out i32) (local $previous i32)
+    (local $handle i32) (local $region i32)
+    (if (i32.lt_u (local.get $record_bytes) (i32.const 28))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.load16_s offset=8 (local.get $record)) (i32.const 6))
+      (then (return (i32.const 0))))
+    (local.set $region_size (i32.load16_s offset=14 (local.get $record)))
+    (local.set $scan_count (i32.load16_s offset=16 (local.get $record)))
+    (local.set $max_scan (i32.load16_s offset=18 (local.get $record)))
+    (if (i32.or
+          (i32.or (i32.lt_s (local.get $region_size) (i32.const 22))
+            (i32.ne (local.get $region_size)
+              (i32.sub (local.get $record_bytes) (i32.const 6))))
+          (i32.or
+            (i32.or (i32.lt_s (local.get $scan_count) (i32.const 0))
+              (i32.lt_s (local.get $max_scan) (i32.const 0)))
+            (i32.gt_u (local.get $scan_count) (global.get $GDI_REGION_MAX_RECTS))))
+      (then (return (i32.const 0))))
+    (local.set $cursor (i32.add (local.get $record) (i32.const 28)))
+    (local.set $limit (i32.add (local.get $record) (local.get $record_bytes)))
+    (local.set $out (global.get $GDI_REGION_WORK))
+    (block $scans_done (loop $scans
+      (br_if $scans_done (i32.ge_u (local.get $scan_index) (local.get $scan_count)))
+      (if (i32.gt_u (i32.add (local.get $cursor) (i32.const 8)) (local.get $limit))
+        (then (return (i32.const 0))))
+      (local.set $coord_count (i32.load16_u (local.get $cursor)))
+      (local.set $top (i32.load16_u offset=2 (local.get $cursor)))
+      (local.set $bottom (i32.load16_u offset=4 (local.get $cursor)))
+      (if (i32.or
+            (i32.or (i32.lt_u (local.get $coord_count) (i32.const 2))
+              (i32.ne (i32.and (local.get $coord_count) (i32.const 1)) (i32.const 0)))
+            (i32.or (i32.gt_u (local.get $coord_count) (local.get $max_scan))
+              (i32.ge_u (local.get $top) (local.get $bottom))))
+        (then (return (i32.const 0))))
+      (local.set $scan_bytes
+        (i32.add (i32.const 8) (i32.shl (local.get $coord_count) (i32.const 1))))
+      (if (i32.gt_u (local.get $scan_bytes)
+            (i32.sub (local.get $limit) (local.get $cursor)))
+        (then (return (i32.const 0))))
+      (if (i32.and (i32.ne (local.get $scan_index) (i32.const 0))
+            (i32.lt_u (local.get $top) (local.get $prev_bottom)))
+        (then (return (i32.const 0))))
+      (local.set $coord_index (i32.const 0))
+      (local.set $prev_right (i32.const 0))
+      (block $coords_done (loop $coords
+        (br_if $coords_done
+          (i32.ge_u (local.get $coord_index) (local.get $coord_count)))
+        (local.set $left (i32.load16_u (i32.add (local.get $cursor)
+          (i32.add (i32.const 6) (i32.shl (local.get $coord_index) (i32.const 1))))))
+        (local.set $right (i32.load16_u (i32.add (local.get $cursor)
+          (i32.add (i32.const 8) (i32.shl (local.get $coord_index) (i32.const 1))))))
+        (if (i32.or (i32.ge_u (local.get $left) (local.get $right))
+              (i32.and (i32.ne (local.get $coord_index) (i32.const 0))
+                (i32.lt_u (local.get $left) (local.get $prev_right))))
+          (then (return (i32.const 0))))
+        ;; Adjacent spans describe one canonical rectangle.
+        (if (i32.and (i32.ne (local.get $coord_index) (i32.const 0))
+              (i32.eq (local.get $left) (local.get $prev_right)))
+          (then
+            (i32.store offset=8 (local.get $previous) (local.get $right)))
+          (else
+            (if (i32.ge_u (local.get $out_count) (global.get $GDI_REGION_MAX_RECTS))
+              (then (return (i32.const 0))))
+            (local.set $previous (i32.add (local.get $out)
+              (i32.shl (local.get $out_count) (i32.const 4))))
+            (i32.store (local.get $previous) (local.get $left))
+            (i32.store offset=4 (local.get $previous) (local.get $top))
+            (i32.store offset=8 (local.get $previous) (local.get $right))
+            (i32.store offset=12 (local.get $previous) (local.get $bottom))
+            (local.set $out_count (i32.add (local.get $out_count) (i32.const 1)))))
+        (local.set $prev_right (local.get $right))
+        (local.set $coord_index (i32.add (local.get $coord_index) (i32.const 2)))
+        (br $coords)))
+      (if (i32.ne (i32.load16_u (i32.add (local.get $cursor)
+              (i32.add (i32.const 6) (i32.shl (local.get $coord_count) (i32.const 1)))))
+            (local.get $coord_count))
+        (then (return (i32.const 0))))
+      (local.set $prev_bottom (local.get $bottom))
+      (local.set $cursor (i32.add (local.get $cursor) (local.get $scan_bytes)))
+      (local.set $scan_index (i32.add (local.get $scan_index) (i32.const 1)))
+      (br $scans)))
+    (if (i32.ne (local.get $cursor) (local.get $limit))
+      (then (return (i32.const 0))))
+    (local.set $handle (call $gdi_rgn_alloc_rect
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (local.set $region (call $gdi_rgn_record (local.get $handle)))
+    (if (i32.eqz (call $gdi_rgn_set_buffer
+          (local.get $region) (local.get $out) (local.get $out_count)))
+      (then
+        (drop (call $gdi_rgn_delete (local.get $handle)))
+        (return (i32.const 0))))
+    (local.get $handle))
+
+  ;; WMF regions remain logical objects so Fill/Frame/Paint can use current
+  ;; mapping. Explicit DC clips are retained in device coordinates, therefore
+  ;; selecting a WMF region maps a temporary union before copying it into the DC.
+  (func $gdi_metafile_wmf_select_clip_region (param $hdc i32)
+        (param $handle i32) (result i32)
+    (local $source i32) (local $bands i32) (local $count i32) (local $i i32)
+    (local $band i32) (local $mapped i32) (local $rect i32) (local $result i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $swap i32)
+    (local.set $source (call $gdi_rgn_record (local.get $handle)))
+    (if (i32.eqz (local.get $source)) (then (return (i32.const 0))))
+    (local.set $mapped (call $gdi_rgn_alloc_rect
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $mapped)) (then (return (i32.const 0))))
+    (local.set $bands (call $gdi_rgn_bands (local.get $source)))
+    (local.set $count (i32.load offset=28 (local.get $source)))
+    (block $done (loop $rectangles
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $band (i32.add (local.get $bands) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $left (call $gdi_dc_clip_map_x
+        (local.get $hdc) (i32.load (local.get $band))))
+      (local.set $top (call $gdi_dc_clip_map_y
+        (local.get $hdc) (i32.load offset=4 (local.get $band))))
+      (local.set $right (call $gdi_dc_clip_map_x
+        (local.get $hdc) (i32.load offset=8 (local.get $band))))
+      (local.set $bottom (call $gdi_dc_clip_map_y
+        (local.get $hdc) (i32.load offset=12 (local.get $band))))
+      (if (i32.gt_s (local.get $left) (local.get $right))
+        (then (local.set $swap (local.get $left))
+          (local.set $left (local.get $right)) (local.set $right (local.get $swap))))
+      (if (i32.gt_s (local.get $top) (local.get $bottom))
+        (then (local.set $swap (local.get $top))
+          (local.set $top (local.get $bottom)) (local.set $bottom (local.get $swap))))
+      (if (i32.and (i32.lt_s (local.get $left) (local.get $right))
+            (i32.lt_s (local.get $top) (local.get $bottom)))
+        (then
+          (local.set $rect (call $gdi_rgn_alloc_rect
+            (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)))
+          (if (i32.eqz (local.get $rect))
+            (then (drop (call $gdi_rgn_delete (local.get $mapped)))
+              (return (i32.const 0))))
+          (local.set $result (call $gdi_rgn_combine
+            (local.get $mapped) (local.get $mapped) (local.get $rect) (i32.const 2)))
+          (drop (call $gdi_rgn_delete (local.get $rect)))
+          (if (i32.eqz (local.get $result))
+            (then (drop (call $gdi_rgn_delete (local.get $mapped)))
+              (return (i32.const 0))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $rectangles)))
+    (local.set $result (call $gdi_dc_clip_select (local.get $hdc) (local.get $mapped)))
+    (drop (call $gdi_rgn_delete (local.get $mapped)))
+    (local.get $result))
 
   ;; Materialize the Win16 LOGFONT carried by META_CREATEFONTINDIRECT. The
   ;; public handle is registered with the text provider for scalable fallback,
@@ -2550,6 +2715,30 @@
             (then
               (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 64) (local.get $to_x) (i32.const 1)))
               (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 68) (local.get $to_y) (i32.const 1)))))))
+      (if (i32.eq (local.get $function) (i32.const 0x0220))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 10)) (then (br $finish)))
+          (if (i32.eqz (call $gdi_dc_clip_offset (local.get $hdc)
+                (i32.load16_s offset=8 (local.get $record))
+                (i32.load16_s offset=6 (local.get $record))))
+            (then (br $finish)))))
+      (if (i32.or (i32.eq (local.get $function) (i32.const 0x0415))
+            (i32.eq (local.get $function) (i32.const 0x0416)))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 14)) (then (br $finish)))
+          (if (i32.eqz
+                (if (result i32) (i32.eq (local.get $function) (i32.const 0x0415))
+                  (then (call $gdi_dc_clip_exclude_rect (local.get $hdc)
+                    (i32.load16_s offset=12 (local.get $record))
+                    (i32.load16_s offset=10 (local.get $record))
+                    (i32.load16_s offset=8 (local.get $record))
+                    (i32.load16_s offset=6 (local.get $record))))
+                  (else (call $gdi_dc_clip_intersect_rect (local.get $hdc)
+                    (i32.load16_s offset=12 (local.get $record))
+                    (i32.load16_s offset=10 (local.get $record))
+                    (i32.load16_s offset=8 (local.get $record))
+                    (i32.load16_s offset=6 (local.get $record))))))
+            (then (br $finish)))))
       (if (i32.eq (local.get $function) (i32.const 0x001E))
         (then
           (if (i32.eqz (call $gdi_dc_save (local.get $hdc))) (then (br $finish)))
@@ -2628,6 +2817,16 @@
             (then
               (if (local.get $created) (then (drop (call $gdi_object_delete_full (local.get $created)))))
               (br $finish)))))
+      (if (i32.eq (local.get $function) (i32.const 0x06FF))
+        (then
+          (local.set $created (call $gdi_metafile_wmf_create_region
+            (local.get $record) (local.get $record_bytes)))
+          (if (i32.eqz (call $gdi_metafile_wmf_object_add
+                (local.get $table) (local.get $object_count) (local.get $created)))
+            (then
+              (if (local.get $created)
+                (then (drop (call $gdi_rgn_delete (local.get $created)))))
+              (br $finish)))))
       (if (i32.eq (local.get $function) (i32.const 0x012D))
         (then
           (if (i32.lt_u (local.get $record_bytes) (i32.const 8)) (then (br $finish)))
@@ -2643,6 +2842,16 @@
                 (i32.eq (call $gdi_dc_select_owned_object
                   (local.get $hdc) (local.get $selected)) (i32.const -1)))
             (then (br $finish)))))
+      (if (i32.eq (local.get $function) (i32.const 0x012C))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 8)) (then (br $finish)))
+          (local.set $index (i32.load16_u offset=6 (local.get $record)))
+          (if (i32.ge_u (local.get $index) (local.get $object_count)) (then (br $finish)))
+          (local.set $selected (i32.load (i32.add (local.get $table)
+            (i32.shl (local.get $index) (i32.const 2)))))
+          (if (i32.eqz (call $gdi_metafile_wmf_select_clip_region
+                (local.get $hdc) (local.get $selected)))
+            (then (br $finish)))))
       (if (i32.eq (local.get $function) (i32.const 0x01F0))
         (then
           (if (i32.lt_u (local.get $record_bytes) (i32.const 8)) (then (br $finish)))
@@ -2652,9 +2861,60 @@
             (i32.shl (local.get $index) (i32.const 2))))
           (local.set $selected (i32.load (local.get $point)))
           (if (i32.eqz (local.get $selected)) (then (br $finish)))
-          (if (i32.eqz (call $gdi_object_delete_full (local.get $selected)))
+          (if (i32.eqz (call $gdi_metafile_wmf_delete_object (local.get $selected)))
             (then (br $finish)))
           (i32.store (local.get $point) (i32.const 0))))
+
+      ;; WMF region drawing records address the region and optional brush by
+      ;; object-table index; PAINTREGION uses the brush selected in the DC.
+      (if (i32.eq (local.get $function) (i32.const 0x0228))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 10)) (then (br $finish)))
+          (local.set $index (i32.load16_u offset=6 (local.get $record)))
+          (local.set $count (i32.load16_u offset=8 (local.get $record)))
+          (if (i32.or (i32.ge_u (local.get $index) (local.get $object_count))
+                (i32.ge_u (local.get $count) (local.get $object_count)))
+            (then (br $finish)))
+          (local.set $selected (i32.load (i32.add (local.get $table)
+            (i32.shl (local.get $index) (i32.const 2)))))
+          (local.set $created (i32.load (i32.add (local.get $table)
+            (i32.shl (local.get $count) (i32.const 2)))))
+          (if (i32.or (i32.eqz (call $gdi_rgn_record (local.get $selected)))
+                (i32.eqz (call $gdi_hdc_fill_rgn
+                  (local.get $hdc) (local.get $selected) (local.get $created))))
+            (then (br $finish)))))
+      (if (i32.eq (local.get $function) (i32.const 0x0429))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 14)) (then (br $finish)))
+          (local.set $index (i32.load16_u offset=6 (local.get $record)))
+          (local.set $count (i32.load16_u offset=8 (local.get $record)))
+          (if (i32.or (i32.ge_u (local.get $index) (local.get $object_count))
+                (i32.ge_u (local.get $count) (local.get $object_count)))
+            (then (br $finish)))
+          (local.set $selected (i32.load (i32.add (local.get $table)
+            (i32.shl (local.get $index) (i32.const 2)))))
+          (local.set $created (i32.load (i32.add (local.get $table)
+            (i32.shl (local.get $count) (i32.const 2)))))
+          (if (i32.or (i32.eqz (call $gdi_rgn_record (local.get $selected)))
+                (i32.eqz (call $gdi_hdc_frame_rgn
+                  (local.get $hdc) (local.get $selected) (local.get $created)
+                  (i32.load16_s offset=12 (local.get $record))
+                  (i32.load16_s offset=10 (local.get $record)))))
+            (then (br $finish)))))
+      (if (i32.or (i32.eq (local.get $function) (i32.const 0x012A))
+            (i32.eq (local.get $function) (i32.const 0x012B)))
+        (then
+          (if (i32.lt_u (local.get $record_bytes) (i32.const 8)) (then (br $finish)))
+          (local.set $index (i32.load16_u offset=6 (local.get $record)))
+          (if (i32.ge_u (local.get $index) (local.get $object_count)) (then (br $finish)))
+          (local.set $selected (i32.load (i32.add (local.get $table)
+            (i32.shl (local.get $index) (i32.const 2)))))
+          (if (i32.eqz
+                (if (result i32) (i32.eq (local.get $function) (i32.const 0x012A))
+                  (then (call $gdi_hdc_invert_rgn (local.get $hdc) (local.get $selected)))
+                  (else (call $gdi_hdc_fill_rgn
+                    (local.get $hdc) (local.get $selected) (i32.const 0)))))
+            (then (br $finish)))))
 
       ;; Current-position line records.
       (if (i32.eq (local.get $function) (i32.const 0x0214))

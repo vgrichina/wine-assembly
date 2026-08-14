@@ -73,7 +73,7 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write32(data + 18, 3);
     return data;
   };
-  const makeVectorWmf = records => {
+  const makeVectorWmf = (records, objectCount = 2) => {
     const encoded = records.map(({ fn, params = [] }) => ({
       fn,
       params,
@@ -85,7 +85,7 @@ const { bootRenderHarness } = require('./render-helper');
     wat.guest_write16(data + 2, 9);
     wat.guest_write16(data + 4, 0x0300);
     wat.guest_write32(data + 6, totalWords);
-    wat.guest_write16(data + 10, 2);
+    wat.guest_write16(data + 10, objectCount);
     wat.guest_write32(data + 12, Math.max(...encoded.map(record => record.words)));
     let offset = 18;
     for (const record of encoded) {
@@ -164,6 +164,33 @@ const { bootRenderHarness } = require('./render-helper');
     offset += padded;
     dx.forEach((value, index) => params.writeInt16LE(value, offset + index * 2));
     return bytesToWords(params);
+  };
+  const makeRegionParams = scans => {
+    const scanBytes = scans.reduce((sum, scan) => sum + 8 + scan.x.length * 2, 0);
+    const region = Buffer.alloc(22 + scanBytes);
+    const xs = scans.flatMap(scan => scan.x);
+    const left = xs.length ? Math.min(...xs) : 0;
+    const right = xs.length ? Math.max(...xs) : 0;
+    const top = scans.length ? Math.min(...scans.map(scan => scan.top)) : 0;
+    const bottom = scans.length ? Math.max(...scans.map(scan => scan.bottom)) : 0;
+    region.writeInt16LE(6, 2);
+    region.writeInt16LE(region.length, 8);
+    region.writeInt16LE(scans.length, 10);
+    region.writeInt16LE(scans.reduce((max, scan) => Math.max(max, scan.x.length), 0), 12);
+    region.writeInt16LE(left, 14);
+    region.writeInt16LE(top, 16);
+    region.writeInt16LE(right, 18);
+    region.writeInt16LE(bottom, 20);
+    let offset = 22;
+    for (const scan of scans) {
+      region.writeUInt16LE(scan.x.length, offset);
+      region.writeUInt16LE(scan.top, offset + 2);
+      region.writeUInt16LE(scan.bottom, offset + 4);
+      scan.x.forEach((value, index) => region.writeUInt16LE(value, offset + 6 + index * 2));
+      region.writeUInt16LE(scan.x.length, offset + 6 + scan.x.length * 2);
+      offset += 8 + scan.x.length * 2;
+    }
+    return bytesToWords(region);
   };
   const countColor = (hdc, left, top, right, bottom, color) => {
     let count = 0;
@@ -398,6 +425,143 @@ const { bootRenderHarness } = require('./render-helper');
     assert.deepStrictEqual(canvasTextCalls, beforeCanvas,
       'repeated FON replay must remain entirely on the WAT raster path');
     assert.strictEqual(wat.test_call_DeleteObject(white), 1);
+    assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
+  });
+
+  check('classic WMF regions replay canonical drawing and mapped clipping', () => {
+    const region = makeRegionParams([
+      { top: 5, bottom: 15, x: [5, 15, 25, 35] },
+      { top: 15, bottom: 25, x: [10, 30] },
+    ]);
+    const { data, size } = makeVectorWmf([
+      { fn: 0x0103, params: [8] },                         // META_SETMAPMODE
+      { fn: 0x020c, params: [48, 64] },                    // META_SETWINDOWEXT
+      { fn: 0x020e, params: [96, 128] },                   // META_SETVIEWPORTEXT
+      { fn: 0x02fc, params: [0, 0x00ff, 0, 0] },          // red brush, slot 0
+      { fn: 0x02fc, params: [0, 0x0000, 0x00ff, 0] },     // blue brush, slot 1
+      { fn: 0x02fc, params: [0, 0xff00, 0, 0] },          // green brush, slot 2
+      { fn: 0x06ff, params: region },                      // region, slot 3
+      { fn: 0x0228, params: [3, 0] },                     // fill region red
+      { fn: 0x0429, params: [3, 1, 1, 1] },               // frame region blue
+      { fn: 0x012a, params: [3] },                         // invert region
+      { fn: 0x012d, params: [2] },                         // select green brush
+      { fn: 0x012b, params: [3] },                         // paint region green
+      { fn: 0x012c, params: [3] },                         // select clip region
+      { fn: 0x0416, params: [25, 30, 5, 10] },            // intersect clip rect
+      { fn: 0x0415, params: [15, 20, 5, 10] },            // exclude clip rect
+      { fn: 0x0220, params: [2, 3] },                      // offset clip y,x
+      { fn: 0x012d, params: [0] },                         // select red brush
+      { fn: 0x041b, params: [30, 40, 0, 0] },             // clipped rectangle
+      { fn: 0x01f0, params: [3] },                         // delete region
+      { fn: 0x06ff, params: makeRegionParams([
+        { top: 7, bottom: 9, x: [28, 33] },
+      ]) },                                                // reuse slot 3
+      { fn: 0x0000 },
+    ], 4);
+    const metafile = wat.test_call_SetMetaFileBitsEx(size, data) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 128, 96) >>> 0;
+    const white = wat.test_call_CreateSolidBrush(0x00ffffff) >>> 0;
+    const cyan = wat.test_call_CreateSolidBrush(0x00ffff00) >>> 0;
+    const fill = allocZero(16);
+    wat.guest_write32(fill + 8, 128);
+    wat.guest_write32(fill + 12, 96);
+    assert(metafile && hdc && bitmap && white && cyan);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+    assert.strictEqual(wat.test_call_FillRect(hdc, fill, white), 1);
+    assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 24, 20) >>> 0, 0x0000ff00,
+      'PaintRegion must use the selected brush before later clipped output');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 40, 20) >>> 0, 0x00ffffff,
+      'disjoint scan spans must preserve the hole in a complex region');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 60, 20) >>> 0, 0x000000ff,
+      'mapped selected clip must retain the shifted upper band');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 30, 40) >>> 0, 0x000000ff,
+      'intersect/exclude/offset clip mutations must retain the lower band');
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 20) >>> 0, 0x0000ff00,
+      'excluded clip pixels must remain from PaintRegion');
+
+    const outside = allocZero(16);
+    wat.guest_write32(outside, 80);
+    wat.guest_write32(outside + 4, 70);
+    wat.guest_write32(outside + 8, 90);
+    wat.guest_write32(outside + 12, 80);
+    assert.strictEqual(wat.test_call_FillRect(hdc, outside, cyan), 1);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 85, 75) >>> 0, 0x00ffff00,
+      'PlayMetaFile must restore the caller clip after region playback');
+
+    for (let i = 0; i < 140; i++) {
+      assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1,
+        'created and selected WMF regions must recycle after playback');
+    }
+
+    const operationDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const operationBitmap = wat.test_call_CreateCompatibleBitmap(0, 48, 32) >>> 0;
+    const operationFill = allocZero(16);
+    wat.guest_write32(operationFill + 8, 48);
+    wat.guest_write32(operationFill + 12, 32);
+    assert(operationDc && operationBitmap);
+    assert.notStrictEqual(wat.test_call_SelectObject(operationDc, operationBitmap) | 0, -1);
+    assert.strictEqual(wat.test_call_FillRect(operationDc, operationFill, white), 1);
+    const table = allocZero(16);
+    const operationRecords = [
+      makeRecord(0x02fc, [0, 0x00ff, 0, 0]),
+      makeRecord(0x02fc, [0, 0x0000, 0x00ff, 0]),
+      makeRecord(0x02fc, [0, 0xff00, 0, 0]),
+      makeRecord(0x06ff, region),
+    ];
+    for (const record of operationRecords) {
+      assert.strictEqual(wat.test_call_PlayMetaFileRecord(operationDc, table, record, 4), 1);
+    }
+    const handle = wat.guest_read32(table + 12) >>> 0;
+    assert((handle & 0xffff0000) === 0x00500000,
+      'PlayMetaFileRecord must publish a canonical HRGN in the handle table');
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(
+      operationDc, table, makeRecord(0x0228, [3, 0]), 4), 1);
+    assert.strictEqual(wat.test_call_GetPixel(operationDc, 7, 7) >>> 0, 0x000000ff,
+      'META_FILLREGION must fill each region band with its indexed brush');
+    assert.strictEqual(wat.test_call_GetPixel(operationDc, 20, 10) >>> 0, 0x00ffffff,
+      'META_FILLREGION must not bridge disjoint spans');
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(
+      operationDc, table, makeRecord(0x0429, [3, 1, 1, 1]), 4), 1);
+    assert.strictEqual(wat.test_call_GetPixel(operationDc, 5, 5) >>> 0, 0x00ff0000,
+      'META_FRAMEREGION must rasterize its indexed brush on the boundary');
+    assert.strictEqual(wat.test_call_GetPixel(operationDc, 7, 7) >>> 0, 0x000000ff,
+      'META_FRAMEREGION must preserve the region interior');
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(
+      operationDc, table, makeRecord(0x012a, [3]), 4), 1);
+    assert.strictEqual(wat.test_call_GetPixel(operationDc, 7, 7) >>> 0, 0x00ffff00,
+      'META_INVERTREGION must apply DSTINVERT to canonical pixels');
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(
+      operationDc, table, makeRecord(0x012d, [2]), 4), 1);
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(
+      operationDc, table, makeRecord(0x012b, [3]), 4), 1);
+    assert.strictEqual(wat.test_call_GetPixel(operationDc, 7, 7) >>> 0, 0x0000ff00,
+      'META_PAINTREGION must use the currently selected brush');
+    for (let index = 0; index < 4; index++) {
+      assert.strictEqual(wat.test_call_PlayMetaFileRecord(
+        operationDc, table, makeRecord(0x01f0, [index]), 4), 1);
+    }
+    assert.strictEqual(wat.guest_read32(table + 12), 0,
+      'META_DELETEOBJECT must delete and clear a region slot');
+
+    const odd = Buffer.from(region.flatMap(word => [word & 0xff, word >>> 8]));
+    odd.writeUInt16LE(3, 22);
+    const oddRecord = makeRecord(0x06ff, bytesToWords(odd));
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(operationDc, table, oddRecord, 4), 0,
+      'odd scan coordinate counts must fail atomically');
+    const mismatch = Buffer.from(region.flatMap(word => [word & 0xff, word >>> 8]));
+    mismatch.writeUInt16LE(2, 22 + 6 + 4 * 2);
+    const mismatchRecord = makeRecord(0x06ff, bytesToWords(mismatch));
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(operationDc, table, mismatchRecord, 4), 0,
+      'Count2 mismatches must fail atomically');
+    const shortRegion = region.slice(0, -1);
+    const shortRecord = makeRecord(0x06ff, shortRegion);
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(operationDc, table, shortRecord, 4), 0,
+      'truncated region scan data must fail atomically');
+
+    assert.strictEqual(wat.test_call_DeleteObject(white), 1);
+    assert.strictEqual(wat.test_call_DeleteObject(cyan), 1);
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
   });
 
