@@ -8,6 +8,7 @@
   (global $HELP_MAX_DIRECTORY_ENTRIES i32 (i32.const 4096))
   (global $HELP_MAX_BTREE_DEPTH i32 (i32.const 16))
   (global $HELP_MAX_BTREE_PAGES i32 (i32.const 65536))
+  (global $HELP_MAX_TOPICS i32 (i32.const 65536))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -18,6 +19,10 @@
   (global $HELP_ERROR_DIRECTORY_BTREE i32 (i32.const 5))
   (global $HELP_ERROR_CAPACITY i32 (i32.const 6))
   (global $HELP_ERROR_VFS i32 (i32.const 7))
+  (global $HELP_ERROR_MISSING_INTERNAL i32 (i32.const 8))
+  (global $HELP_ERROR_SYSTEM i32 (i32.const 9))
+  (global $HELP_ERROR_TOPIC_INDEX i32 (i32.const 10))
+  (global $HELP_ERROR_CONTEXT_INDEX i32 (i32.const 11))
 
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
@@ -29,6 +34,24 @@
   (global $help_doc_directory_ga (mut i32) (i32.const 0))
   (global $help_doc_directory_wa (mut i32) (i32.const 0))
   (global $help_doc_directory_count (mut i32) (i32.const 0))
+  (global $help_doc_topics_ga (mut i32) (i32.const 0))
+  (global $help_doc_topics_wa (mut i32) (i32.const 0))
+  (global $help_doc_topic_count (mut i32) (i32.const 0))
+  (global $help_doc_contexts_ga (mut i32) (i32.const 0))
+  (global $help_doc_contexts_wa (mut i32) (i32.const 0))
+  (global $help_doc_context_count (mut i32) (i32.const 0))
+  (global $help_doc_maps_ga (mut i32) (i32.const 0))
+  (global $help_doc_maps_wa (mut i32) (i32.const 0))
+  (global $help_doc_map_count (mut i32) (i32.const 0))
+  (global $help_doc_system_minor (mut i32) (i32.const 0))
+  (global $help_doc_system_major (mut i32) (i32.const 0))
+  (global $help_doc_system_flags (mut i32) (i32.const 0))
+  (global $help_doc_system_date (mut i32) (i32.const 0))
+  (global $help_doc_title_off (mut i32) (i32.const 0))
+  (global $help_doc_title_len (mut i32) (i32.const 0))
+  (global $help_doc_contents_ref (mut i32) (i32.const -1))
+  (global $help_doc_cnt_off (mut i32) (i32.const 0))
+  (global $help_doc_cnt_len (mut i32) (i32.const 0))
   (global $help_last_error (mut i32) (i32.const 0))
   (global $help_last_error_offset (mut i32) (i32.const 0))
 
@@ -36,6 +59,14 @@
   ;;   hash:u32, name_off:u32, name_len:u16, flags:u16,
   ;;   data_off:u32, data_len:u32.
   (global $HELP_INTERNAL_FILE_SIZE i32 (i32.const 20))
+
+  ;; HelpTopic is 32 bytes:
+  ;;   topic_ref, topic_record_off, title_off, title_len, context_hash,
+  ;;   browse_prev_ref, browse_next_ref, flags.
+  ;; Context hash and numeric-map records are both {key:u32, topic_ref:u32}.
+  (global $HELP_TOPIC_SIZE i32 (i32.const 32))
+  (global $HELP_CONTEXT_SIZE i32 (i32.const 8))
+  (global $HELP_TOPIC_HAS_CONTEXT i32 (i32.const 1))
 
   ;; HelpSlice is 16 bytes:
   ;;   base_wa:u32, file_size:u32, offset:u32, length:u32.
@@ -47,6 +78,12 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_maps_ga)
+      (then (call $heap_free (global.get $help_doc_maps_ga))))
+    (if (global.get $help_doc_contexts_ga)
+      (then (call $heap_free (global.get $help_doc_contexts_ga))))
+    (if (global.get $help_doc_topics_ga)
+      (then (call $heap_free (global.get $help_doc_topics_ga))))
     (if (global.get $help_doc_directory_ga)
       (then (call $heap_free (global.get $help_doc_directory_ga))))
     (if (global.get $help_doc_meta_ga)
@@ -60,7 +97,25 @@
     (global.set $help_doc_meta_wa (i32.const 0))
     (global.set $help_doc_directory_ga (i32.const 0))
     (global.set $help_doc_directory_wa (i32.const 0))
-    (global.set $help_doc_directory_count (i32.const 0)))
+    (global.set $help_doc_directory_count (i32.const 0))
+    (global.set $help_doc_topics_ga (i32.const 0))
+    (global.set $help_doc_topics_wa (i32.const 0))
+    (global.set $help_doc_topic_count (i32.const 0))
+    (global.set $help_doc_contexts_ga (i32.const 0))
+    (global.set $help_doc_contexts_wa (i32.const 0))
+    (global.set $help_doc_context_count (i32.const 0))
+    (global.set $help_doc_maps_ga (i32.const 0))
+    (global.set $help_doc_maps_wa (i32.const 0))
+    (global.set $help_doc_map_count (i32.const 0))
+    (global.set $help_doc_system_minor (i32.const 0))
+    (global.set $help_doc_system_major (i32.const 0))
+    (global.set $help_doc_system_flags (i32.const 0))
+    (global.set $help_doc_system_date (i32.const 0))
+    (global.set $help_doc_title_off (i32.const 0))
+    (global.set $help_doc_title_len (i32.const 0))
+    (global.set $help_doc_contents_ref (i32.const -1))
+    (global.set $help_doc_cnt_off (i32.const 0))
+    (global.set $help_doc_cnt_len (i32.const 0)))
 
   (func $help_document_reset
     (call $help_document_release_storage)
@@ -205,6 +260,58 @@
       (br $loop)))
     (i32.const -1))
 
+  ;; Resolve the fixed semantic internal files without reserving another
+  ;; low-memory string table. The document metadata has sixteen bytes of
+  ;; parser scratch beginning at +32.
+  (func $help_find_internal_literal (param $kind i32) (result i32)
+    (local $scratch i32) (local $length i32)
+    (local.set $scratch (i32.add (global.get $help_doc_meta_wa) (i32.const 32)))
+    (memory.fill (local.get $scratch) (i32.const 0) (i32.const 16))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x004D45545359537C))
+        (local.set $length (i32.const 7)))
+      (else (if (i32.eq (local.get $kind) (i32.const 2))
+        (then
+          (i64.store (local.get $scratch) (i64.const 0x00004349504F547C))
+          (local.set $length (i32.const 6)))
+        (else (if (i32.eq (local.get $kind) (i32.const 3))
+          (then
+            (i64.store (local.get $scratch) (i64.const 0x455254424C54547C))
+            (i32.store8 offset=8 (local.get $scratch) (i32.const 0x45))
+            (local.set $length (i32.const 9)))
+          (else (if (i32.eq (local.get $kind) (i32.const 4))
+            (then
+              (i64.store (local.get $scratch) (i64.const 0x545845544E4F437C))
+              (local.set $length (i32.const 8)))
+            (else (if (i32.eq (local.get $kind) (i32.const 5))
+              (then
+                (i64.store (local.get $scratch) (i64.const 0x50414D4F5854437C))
+                (local.set $length (i32.const 8)))
+              (else (return (i32.const -1))))))))))))
+    (call $help_find_internal_file (local.get $scratch) (local.get $length)))
+
+  (func $help_find_topic_index_in
+    (param $topics_wa i32) (param $count i32) (param $topic_ref i32)
+    (result i32)
+    (local $lo i32) (local $hi i32) (local $mid i32) (local $value i32)
+    (local.set $hi (local.get $count))
+    (block $missing (loop $search
+      (br_if $missing (i32.ge_u (local.get $lo) (local.get $hi)))
+      (local.set $mid
+        (i32.add (local.get $lo)
+          (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 1))))
+      (local.set $value
+        (i32.load (i32.add (local.get $topics_wa)
+          (i32.mul (local.get $mid) (global.get $HELP_TOPIC_SIZE)))))
+      (if (i32.eq (local.get $value) (local.get $topic_ref))
+        (then (return (local.get $mid))))
+      (if (i32.lt_u (local.get $value) (local.get $topic_ref))
+        (then (local.set $lo (i32.add (local.get $mid) (i32.const 1))))
+        (else (local.set $hi (local.get $mid))))
+      (br $search)))
+    (i32.const -1))
+
   ;; Focused parser/inspection exports. They expose immutable WAT-owned
   ;; records and never introduce an alternate host semantic path.
   (func (export "test_help_reset") (call $help_document_reset))
@@ -221,3 +328,66 @@
   (func (export "test_help_find_internal")
     (param $name_wa i32) (param $name_length i32) (result i32)
     (call $help_find_internal_file (local.get $name_wa) (local.get $name_length)))
+  (func (export "get_help_system_minor") (result i32) (global.get $help_doc_system_minor))
+  (func (export "get_help_system_major") (result i32) (global.get $help_doc_system_major))
+  (func (export "get_help_system_flags") (result i32) (global.get $help_doc_system_flags))
+  (func (export "get_help_system_date") (result i32) (global.get $help_doc_system_date))
+  (func (export "get_help_title_ptr") (result i32)
+    (if (result i32) (global.get $help_doc_title_off)
+      (then (i32.add (global.get $help_doc_file_wa) (global.get $help_doc_title_off)))
+      (else (i32.const 0))))
+  (func (export "get_help_title_len") (result i32) (global.get $help_doc_title_len))
+  (func (export "get_help_contents_ref") (result i32) (global.get $help_doc_contents_ref))
+  (func (export "get_help_cnt_ptr") (result i32)
+    (if (result i32) (global.get $help_doc_cnt_off)
+      (then (i32.add (global.get $help_doc_file_wa) (global.get $help_doc_cnt_off)))
+      (else (i32.const 0))))
+  (func (export "get_help_cnt_len") (result i32) (global.get $help_doc_cnt_len))
+  (func (export "get_help_topic_count") (result i32) (global.get $help_doc_topic_count))
+  (func (export "get_help_topic_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_topic_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_topics_wa)
+      (i32.mul (local.get $index) (global.get $HELP_TOPIC_SIZE))))
+  (func (export "get_help_context_count") (result i32) (global.get $help_doc_context_count))
+  (func (export "get_help_context_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_context_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_contexts_wa)
+      (i32.mul (local.get $index) (global.get $HELP_CONTEXT_SIZE))))
+  (func (export "get_help_map_count") (result i32) (global.get $help_doc_map_count))
+  (func (export "get_help_map_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_map_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_maps_wa)
+      (i32.mul (local.get $index) (global.get $HELP_CONTEXT_SIZE))))
+  (func (export "test_help_resolve_context_id") (param $map_id i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_doc_map_count)))
+      (local.set $record (i32.add (global.get $help_doc_maps_wa)
+        (i32.mul (local.get $i) (global.get $HELP_CONTEXT_SIZE))))
+      (if (i32.eq (i32.load (local.get $record)) (local.get $map_id))
+        (then (return (i32.load offset=4 (local.get $record)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+  (func (export "test_help_resolve_context_hash") (param $hash i32) (result i32)
+    (local $lo i32) (local $hi i32) (local $mid i32)
+    (local $record i32) (local $value i32)
+    (local.set $hi (global.get $help_doc_context_count))
+    (block $missing (loop $search
+      (br_if $missing (i32.ge_u (local.get $lo) (local.get $hi)))
+      (local.set $mid
+        (i32.add (local.get $lo)
+          (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 1))))
+      (local.set $record (i32.add (global.get $help_doc_contexts_wa)
+        (i32.mul (local.get $mid) (global.get $HELP_CONTEXT_SIZE))))
+      (local.set $value (i32.load (local.get $record)))
+      (if (i32.eq (local.get $value) (local.get $hash))
+        (then (return (i32.load offset=4 (local.get $record)))))
+      (if (i32.lt_s (local.get $value) (local.get $hash))
+        (then (local.set $lo (i32.add (local.get $mid) (i32.const 1))))
+        (else (local.set $hi (local.get $mid))))
+      (br $search)))
+    (i32.const -1))

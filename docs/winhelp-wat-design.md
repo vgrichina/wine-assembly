@@ -1,9 +1,10 @@
 # WAT-native WinHelp design
 
 Status: **implementation in progress**. Phase 1's WAT-owned file buffer,
-bounded-reader foundation, directory B+tree parser, raw VFS load path, and
-malformed-input tests are implemented. Topic parsing and runtime UI cutover
-have not started.
+bounded-reader foundation, directory B+tree parser, and raw VFS load path are
+implemented. Phase 2 now parses `|SYSTEM`, canonical `|TTLBTREE` topics,
+`|CONTEXT`, and `|CTXOMAP`, including two-level B+trees and referential
+validation. Phrase and topic-body decoding and the runtime UI cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -803,6 +804,12 @@ Exit criterion: WAT enumerates the exact internal-file directory for every
 checked-in HLP with no call to `HlpParser`.
 
 ### Phase 2: titles, phrases, topics, and context maps
+
+Status: **partially implemented**. Document metadata, canonical topic/title
+records, signed context-hash indexes, and numeric context maps are WAT-owned.
+All checked-in fixtures have exact topic-reference and context-resolution
+coverage, supplemented by synthetic two-level trees and malformed semantic
+indexes. Phrase tables and `|TOPIC` record/token decoding are next.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.
