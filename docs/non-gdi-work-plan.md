@@ -653,7 +653,7 @@ GDI-rejoin concern, but its protocol and state machine can be completed now.
   file-moniker value object: full inherited 23-slot vtable, COM identity and
   lifetime, exact class ID/display-name ownership, normalized equality/hash,
   system-moniker type, and deterministic unsupported results.
-- [ ] Implement `CreateBindCtx` and the needed `IBindCtx` option, bound-object,
+- [x] Implement `CreateBindCtx` and the needed `IBindCtx` option, bound-object,
   object-parameter, and ROT-access contracts.
 - [ ] Replace the no-op process-local Running Object Table with retained
   registration records, stable cookies, moniker-value lookup, timestamps,
@@ -681,6 +681,23 @@ dirty state are defined. Binding, persistence callbacks, and composition return
 explicit HRESULTs without publishing fabricated outputs until their generic
 layers land. `test/test-ole-moniker.js` exercises the public API thunk and all
 23 vtable slots and passes 25/25.
+
+2026-08-14 bind-context result: `CreateBindCtx` now creates a real 13-slot
+`IBindCtx` with `BIND_OPTS`, `BIND_OPTS2`, and `BIND_OPTS3` state. Bound-object
+registrations retain one reference per call, revoke one matching reference,
+and release the complete bound set on request or final context destruction.
+The case-sensitive object-parameter table AddRefs values, replaces equal keys
+only after the new reference is owned, releases displaced values, and returns
+independently AddRefed results. `EnumObjectParam` returns a seven-slot
+`IEnumString` over an independently owned key snapshot with exact
+Next/Skip/Reset/Clone cursor semantics and caller-owned string buffers.
+Emulator-local objects use their canonical COM root while DLL-private objects
+run their real guest AddRef/Release methods through the suspended callback
+bridge. `GetRunningObjectTable` returns a correctly reference-counted ROT
+interface; retained ROT registration state remains the next P5.1 slice.
+`test/test-ole-bind-context.js` exercises the public API/vtables, options,
+duplicate ownership, replacement ordering, snapshots, guest callbacks, final
+teardown, and malformed-interface atomicity and passes 33/33.
 
 ### P5.2 Drag/drop
 

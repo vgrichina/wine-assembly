@@ -4178,13 +4178,20 @@
                     (call $wnd_client_screen_y (local.get $view))))
                 (local.set $view_sz (call $ctrl_get_wh_packed (local.get $view)))
                 (if (i32.and
-                      (i32.and (i32.ge_s (local.get $coord_x) (i32.const 0))
-                               (i32.ge_s (local.get $coord_y) (i32.const 0)))
+                      ;; Paint's visible image view carries WS_CLIPCHILDREN;
+                      ;; MFC's print-preview replacement reuses ID 0xE900
+                      ;; without it and is not an image coordinate space.
+                      (i32.eq
+                        (i32.and (call $wnd_get_style (local.get $view)) (i32.const 0x12000000))
+                        (i32.const 0x12000000))
                       (i32.and
-                        (i32.lt_s (local.get $coord_x)
-                          (i32.sub (i32.and (local.get $view_sz) (i32.const 0xFFFF)) (i32.const 16)))
-                        (i32.lt_s (local.get $coord_y)
-                          (i32.sub (i32.shr_u (local.get $view_sz) (i32.const 16)) (i32.const 16)))))
+                        (i32.and (i32.ge_s (local.get $coord_x) (i32.const 0))
+                                 (i32.ge_s (local.get $coord_y) (i32.const 0)))
+                        (i32.and
+                          (i32.lt_s (local.get $coord_x)
+                            (i32.sub (i32.and (local.get $view_sz) (i32.const 0xFFFF)) (i32.const 16)))
+                          (i32.lt_s (local.get $coord_y)
+                            (i32.sub (i32.shr_u (local.get $view_sz) (i32.const 16)) (i32.const 16))))))
                   (then
                     (local.set $slot (call $wnd_table_find (local.get $view)))
                     (if (i32.ne (local.get $slot) (i32.const -1))
@@ -11863,9 +11870,13 @@
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
     ;; A registered status bar keeps ctrl_class=0 so its guest wndproc can
-    ;; perform MFC layout. Only its shared-surface paint is WAT-owned.
+    ;; perform MFC layout. Its shared-surface paint and WM_SETTEXT invalidation
+    ;; are WAT-owned; otherwise Print Preview can leave the old prompt visible
+    ;; after MFC changes the status title to "Page 1".
     (if (i32.and (call $statusbar_native_is (local.get $hwnd))
-                 (i32.eq (local.get $msg) (i32.const 0x000F)))
+                 (i32.or
+                   (i32.eq (local.get $msg) (i32.const 0x000F))
+                   (i32.eq (local.get $msg) (i32.const 0x000C))))
       (then (return (call $statusbar_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Keep the exported/test-driver path consistent with SendMessageA and

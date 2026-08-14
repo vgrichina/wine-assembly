@@ -17559,5 +17559,145 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2401850844
+  },
+  {
+    "id": 2300,
+    "name": "IBindCtx_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3692316422
+  },
+  {
+    "id": 2301,
+    "name": "IBindCtx_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3459565413
+  },
+  {
+    "id": 2302,
+    "name": "IBindCtx_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 488457442
+  },
+  {
+    "id": 2303,
+    "name": "IBindCtx_RegisterObjectBound",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3548998721
+  },
+  {
+    "id": 2304,
+    "name": "IBindCtx_RevokeObjectBound",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2975181372
+  },
+  {
+    "id": 2305,
+    "name": "IBindCtx_ReleaseBoundObjects",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2149295502
+  },
+  {
+    "id": 2306,
+    "name": "IBindCtx_SetBindOptions",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 830077726
+  },
+  {
+    "id": 2307,
+    "name": "IBindCtx_GetBindOptions",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 380931202
+  },
+  {
+    "id": 2308,
+    "name": "IBindCtx_GetRunningObjectTable",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2031237107
+  },
+  {
+    "id": 2309,
+    "name": "IBindCtx_RegisterObjectParam",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2967694680
+  },
+  {
+    "id": 2310,
+    "name": "IBindCtx_GetObjectParam",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1695278297
+  },
+  {
+    "id": 2311,
+    "name": "IBindCtx_EnumObjectParam",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3830963288
+  },
+  {
+    "id": 2312,
+    "name": "IBindCtx_RevokeObjectParam",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2383636749
+  },
+  {
+    "id": 2313,
+    "name": "IEnumString_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4026975150
+  },
+  {
+    "id": 2314,
+    "name": "IEnumString_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2120706077
+  },
+  {
+    "id": 2315,
+    "name": "IEnumString_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 365628730
+  },
+  {
+    "id": 2316,
+    "name": "IEnumString_Next",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4070412612
+  },
+  {
+    "id": 2317,
+    "name": "IEnumString_Skip",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3143660358
+  },
+  {
+    "id": 2318,
+    "name": "IEnumString_Reset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 44143156
+  },
+  {
+    "id": 2319,
+    "name": "IEnumString_Clone",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3945360142
   }
 ]

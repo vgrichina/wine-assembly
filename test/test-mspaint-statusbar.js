@@ -17,6 +17,7 @@ const RUN = path.join(__dirname, 'run.js');
 const EXE = process.env.MSPAINT_EXE || path.join(__dirname, 'binaries', 'mspaint.exe');
 const SHOT = path.join(ROOT, 'scratch', 'mspaint-statusbar.png');
 const CLEAR_SHOT = path.join(ROOT, 'scratch', 'mspaint-statusbar-clear.png');
+const PREVIEW_SHOT = path.join(ROOT, 'scratch', 'mspaint-statusbar-preview.png');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  mspaint.exe not found at', EXE);
@@ -25,14 +26,15 @@ if (!fs.existsSync(EXE)) {
 
 try { fs.unlinkSync(SHOT); } catch (_) {}
 try { fs.unlinkSync(CLEAR_SHOT); } catch (_) {}
+try { fs.unlinkSync(PREVIEW_SHOT); } catch (_) {}
 
 let output = '';
 try {
   output = execFileSync(process.execPath, [
     RUN,
     `--exe=${EXE}`,
-    `--input=20:dump-windows:status,21:mousemove:180:180,23:png:${SHOT},24:mousemove:39:146,26:png:${CLEAR_SHOT},27:stop`,
-    '--max-batches=30',
+    `--input=20:dump-windows:status,21:mousemove:180:180,23:png:${SHOT},24:mousemove:39:146,26:png:${CLEAR_SHOT},28:0x111:57609,36:png:${PREVIEW_SHOT},37:stop`,
+    '--max-batches=45',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
@@ -47,8 +49,11 @@ assert(fs.existsSync(SHOT) && fs.statSync(SHOT).size > 0,
   'Paint status-bar screenshot was not written');
 assert(fs.existsSync(CLEAR_SHOT) && fs.statSync(CLEAR_SHOT).size > 0,
   'Paint cleared-status screenshot was not written');
+assert(fs.existsSync(PREVIEW_SHOT) && fs.statSync(PREVIEW_SHOT).size > 0,
+  'Paint preview-status screenshot was not written');
 const image = PNG.sync.read(fs.readFileSync(SHOT));
 const clearImage = PNG.sync.read(fs.readFileSync(CLEAR_SHOT));
+const previewImage = PNG.sync.read(fs.readFileSync(PREVIEW_SHOT));
 const statusLine = output.split('\n').find(line =>
   line.includes('window:status') && line.includes('class="msctls_statusbar32"')) || '';
 assert(statusLine.includes('ctrlClass=0'),
@@ -97,6 +102,8 @@ for (let y = 407; y <= 414; y++) {
 
 let coordinateInk = 0;
 let clearedCoordinateInk = 0;
+let previewCoordinateInk = 0;
+let previewPromptDiff = 0;
 for (let y = 399; y <= 410; y++) {
   for (let x = 196; x <= 250; x++) {
     const p = (y * image.width + x) * 4;
@@ -104,6 +111,17 @@ for (let y = 399; y <= 410; y++) {
     if (clearImage.data[p] < 80 && clearImage.data[p + 1] < 80 && clearImage.data[p + 2] < 80) {
       clearedCoordinateInk++;
     }
+    if (previewImage.data[p] < 80 && previewImage.data[p + 1] < 80 && previewImage.data[p + 2] < 80) {
+      previewCoordinateInk++;
+    }
+  }
+}
+for (let y = 399; y <= 410; y++) {
+  for (let x = 27; x <= 188; x++) {
+    const p = (y * image.width + x) * 4;
+    if (previewImage.data[p] !== clearImage.data[p] ||
+        previewImage.data[p + 1] !== clearImage.data[p + 1] ||
+        previewImage.data[p + 2] !== clearImage.data[p + 2]) previewPromptDiff++;
   }
 }
 
@@ -114,6 +132,10 @@ assert(coordinateInk >= 15,
   `Paint status bar did not render live canvas coordinates (${coordinateInk} pixels)`);
 assert(clearedCoordinateInk < 5,
   `Paint status bar retained stale coordinates outside the canvas (${clearedCoordinateInk} pixels)`);
+assert(previewCoordinateInk < 5,
+  `Paint Print Preview retained stale image coordinates (${previewCoordinateInk} pixels)`);
+assert(previewPromptDiff >= 30,
+  `Paint Print Preview did not replace the normal status prompt (${previewPromptDiff} pixels)`);
 assert(gripShadow >= 12,
   `Paint status bar is missing its Win98 resize grip (${gripShadow} shadow pixels)`);
 assert(rightArrowInk < 8,

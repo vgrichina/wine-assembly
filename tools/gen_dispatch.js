@@ -97,6 +97,8 @@ const comInterfaces = [
   { prefix: 'IMalloc',              global: 'DX_VTBL_IMALLOC' },
   { prefix: 'IRunningObjectTable',   global: 'DX_VTBL_OLE_ROT' },
   { prefix: 'IMoniker',             global: 'DX_VTBL_OLE_MONIKER' },
+  { prefix: 'IBindCtx',             global: 'DX_VTBL_OLE_BINDCTX' },
+  { prefix: 'IEnumString',          global: 'DX_VTBL_OLE_ENUMSTRING' },
   { prefix: 'ILockBytes',           global: 'DX_VTBL_OLE_LOCKBYTES' },
   { prefix: 'IStream',              global: 'DX_VTBL_OLE_STREAM' },
   { prefix: 'IStorage',             global: 'DX_VTBL_OLE_STORAGE' },

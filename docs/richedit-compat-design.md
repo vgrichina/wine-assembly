@@ -468,7 +468,9 @@ native-editing path is alive.
   structured storage, moniker binding, or embedded OLE object support.
   The `CreateFileMoniker` placeholder described at this historical stage was
   replaced by the generic file-moniker implementation documented in the
-  2026-08-14 section below; the no-op ROT and `CreateBindCtx` placeholder remain.
+  2026-08-14 section below. `CreateBindCtx` was subsequently replaced by the
+  generic bind-context implementation documented there; retained ROT state
+  remains.
 - Extended the same bounded regression to cover WordPad File New and File Open.
   `SetWindowTextA/W` now forwards `WM_SETTEXT` to native child windows with real
   wndprocs, which lets WordPad's New document-type dialog clear the RichEdit
@@ -772,10 +774,26 @@ the path on final release.
 generated COM vtable. It also locks down deterministic failure semantics:
 unsupported persistence/composition never publishes an output, missing file
 activation reports a moniker error, and an unregistered value reports
-`S_FALSE` from `IsRunning`. The next generic slices are a real `IBindCtx`, a
-retaining process-local ROT keyed by moniker value, and binding through that
-ROT. File-moniker stream persistence, composite/relative monikers, class
-factories, verbs, links, and drag/drop remain after those foundations.
+`S_FALSE` from `IsRunning`.
+
+The following bind-context slice replaces the former `CreateBindCtx`
+placeholder with a real 13-slot `IBindCtx`. It stores all BIND_OPTS3 fields,
+retains duplicate bound-object references, supports individual and bulk
+revocation, and maintains a case-sensitive replaceable object-parameter table.
+Parameter lookup AddRefs its result, replacement owns the new value before
+releasing the displaced value, and final context destruction balances every
+remaining reference. `EnumObjectParam` returns a real seven-slot `IEnumString`
+with an independently owned key snapshot, caller-owned output strings, exact
+Next/Skip/Reset behavior, and independent Clone cursors. Both emulator-local
+and DLL-private COM values are supported; private AddRef/Release methods run
+through the existing suspended guest-callback continuation rather than being
+treated as local heap objects. `test/test-ole-bind-context.js` passes 33/33
+through the public API and generated vtables.
+
+The next generic slices are a retaining process-local ROT keyed by moniker
+value and binding through that ROT. File-moniker stream persistence,
+composite/relative monikers, class factories, verbs, links, and drag/drop
+remain after those foundations.
 
 In the isolated real-app gate, WordPad Save As created and wrote the file,
 called `CreateFileMoniker`, registered it through the ROT, released the ROT,

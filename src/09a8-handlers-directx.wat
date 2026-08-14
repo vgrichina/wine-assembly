@@ -62,6 +62,8 @@
   (global $DX_VTBL_IMALLOC    (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_ROT    (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_MONIKER (mut i32) (i32.const 0))
+  (global $DX_VTBL_OLE_BINDCTX (mut i32) (i32.const 0))
+  (global $DX_VTBL_OLE_ENUMSTRING (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_LOCKBYTES (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_STREAM    (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_STORAGE   (mut i32) (i32.const 0))

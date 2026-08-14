@@ -26,6 +26,16 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_call_GetWindowLongA_id")
+    (param $hwnd i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWindowLongA
+      (local.get $hwnd) (i32.const -12) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
   (func (export "test_call_GetDlgItem_id")
     (param $parent i32) (param $id i32) (result i32)
     (local $saved_esp i32)
@@ -44,6 +54,8 @@ const extraWat = String.raw`
 
   assert.strictEqual(e.test_call_GetDlgCtrlID(child), 100,
     'new child starts with its creation-time control ID');
+  assert.strictEqual(e.test_call_GetWindowLongA_id(child), 100,
+    'GetWindowLongA(GWL_ID) returns the creation-time control ID');
   assert.strictEqual(e.test_call_GetDlgItem_id(parent, 100) >>> 0, child,
     'parent resolves the original child ID');
 
@@ -51,6 +63,8 @@ const extraWat = String.raw`
     'SetWindowLongA(GWL_ID) returns the previous child ID');
   assert.strictEqual(e.test_call_GetDlgCtrlID(child), 0xEA21,
     'GetDlgCtrlID observes the replacement child ID');
+  assert.strictEqual(e.test_call_GetWindowLongA_id(child), 0xEA21,
+    'GetWindowLongA(GWL_ID) observes the replacement child ID');
   assert.strictEqual(e.test_call_GetDlgItem_id(parent, 100), 0,
     'the old child ID no longer resolves');
   assert.strictEqual(e.test_call_GetDlgItem_id(parent, 0xEA21) >>> 0, child,
@@ -58,6 +72,8 @@ const extraWat = String.raw`
 
   assert.strictEqual(e.test_call_SetWindowLongA_id(0x7FFFFFFF, 1), 0,
     'an invalid window is not assigned a control ID');
+  assert.strictEqual(e.test_call_GetWindowLongA_id(0x7FFFFFFF), 0,
+    'an invalid window returns zero without inventing a control ID');
 
   console.log('PASS  SetWindowLongA(GWL_ID) updates child lookup atomically');
 })().catch(err => {
