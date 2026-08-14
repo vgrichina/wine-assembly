@@ -18,10 +18,10 @@ current major regions; the memory-map comment and sized globals in
            │  High private tables   │  API hashes, regions, COM/DX state
 0x07E00000 ├────────────────────────┤
            │  File mapping zone     │  MapViewOfFile allocations
-0x07392400 ├────────────────────────┤
+0x07992400 ├────────────────────────┤
            │  DLL metadata          │  DLL and resource tables
-0x07392000 ├────────────────────────┤
-           │  PE staging (2MB)      │  Temporary PE/DLL load buffer
+0x07992000 ├────────────────────────┤
+           │  PE staging (8MB)      │  Temporary PE/DLL load buffer
 0x07192000 ├────────────────────────┤
            │  Cache indexes (256KB) │  8 x 4096 decoded-block indexes
 0x07152000 ├────────────────────────┤

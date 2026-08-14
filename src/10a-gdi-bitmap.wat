@@ -513,8 +513,11 @@
         (else
           (local.set $color (call $gdi_palette_colorref
             (local.get $palette_handle) (local.get $index)))
+          ;; Missing logical-palette slots are legal in a larger identity
+          ;; DIB_PAL_COLORS table. Win9x resolves the usable prefix and leaves
+          ;; the unused entries harmless; black is the deterministic fallback.
           (if (i32.eq (local.get $color) (i32.const -1))
-            (then (return (i32.const 0))))
+            (then (local.set $color (i32.const 0))))
           (i32.store (i32.add (local.get $dst)
             (i32.shl (local.get $i) (i32.const 2)))
             (call $gdi_raster_swap_rb (local.get $color)))))

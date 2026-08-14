@@ -1218,6 +1218,32 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
+  ;; joyGetDevCapsA(uJoyID, lpCaps, cbCaps) — no joystick driver installed.
+  ;; Returning MMSYSERR_NODRIVER lets legacy games retain keyboard/mouse input.
+  (func $handle_joyGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 6))  ;; MMSYSERR_NODRIVER
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
+  ;; joySetCapture(hwnd, uJoyID, period, changed) — 4 args.
+  (func $handle_joySetCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 167))  ;; JOYERR_UNPLUGGED
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+  )
+
+  ;; joyReleaseCapture(uJoyID) is harmless when no capture exists.
+  (func $handle_joyReleaseCapture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; SetProcessWorkingSetSize(hProcess, min, max) — fixed WASM memory cannot
+  ;; be trimmed by the host OS, so accept the advisory request as a no-op.
+  (func $handle_SetProcessWorkingSetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))  ;; TRUE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
   ;; 853: waveInOpen(lphWaveIn, device, format, callback, instance, flags)
   (func $handle_waveInOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $fmt_wa i32) (local $rate i32) (local $ch i32) (local $bits i32)

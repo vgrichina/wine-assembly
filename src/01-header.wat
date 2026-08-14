@@ -793,6 +793,9 @@
   (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
+  ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
+  ;; supported ordinals to these normal API-table names.
+  (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -995,10 +998,10 @@
   ;; 0x07012000  1MB     Main guest stack (ESP starts at top 0x07112000)
   ;; 0x07112000 256KB    IAT thunk zone
   ;; 0x07152000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
-  ;; 0x07192000  2MB     PE staging area (supports PEs up to 2MB)
-  ;; 0x07392000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x07392200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
-  ;; 0x07392400  ...     File mapping zone (MapViewOfFile allocations)
+  ;; 0x07192000  8MB     PE staging area (supports PEs up to 8MB)
+  ;; 0x07992000  512B    DLL table (16 DLLs × 32 bytes)
+  ;; 0x07992200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
   ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
   ;; 0x1C000000  64MB    Page-aligned CreateDIBSection pixel arena
   ;; Total: 8192 pages = 512MB
@@ -1006,7 +1009,7 @@
   ;; Memory region bases. Fixed regions with a companion *_SIZE global are
   ;; checked by test/test-wat-memory-map.js.
   (global $PE_STAGING   i32 (i32.const 0x07192000))
-  (global $PE_STAGING_SIZE i32 (i32.const 0x00200000))
+  (global $PE_STAGING_SIZE i32 (i32.const 0x00800000))
   (global $GUEST_BASE   i32 (i32.const 0x00012000))
   (global $GUEST_BASE_SIZE i32 (i32.const 0x03C00000))
   (global $GUEST_STACK  i32 (i32.const 0x07012000))
@@ -1595,9 +1598,9 @@
   (global $bsearch_thunk   (mut i32) (i32.const 0))  ;; guest addr of CACA000C thunk
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
-  (global $DLL_TABLE i32 (i32.const 0x07392000))  ;; 32 bytes x 16 DLLs = 512 bytes
+  (global $DLL_TABLE i32 (i32.const 0x07992000))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
-  (global $DLL_RSRC_TABLE i32 (i32.const 0x07392200))
+  (global $DLL_RSRC_TABLE i32 (i32.const 0x07992200))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.

@@ -42,7 +42,7 @@
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2346))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2350))
       (then
         (call $dispatch_api_table_page_9 (i32.sub (local.get $api_id) (i32.const 2304)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -9338,8 +9338,12 @@
   )
 
   (func $dispatch_api_table_page_9 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2304..2345
+    ;; api ids 2304..2349
     (block $fallback
+    (block $api_45
+    (block $api_44
+    (block $api_43
+    (block $api_42
     (block $api_41
     (block $api_40
     (block $api_39
@@ -9382,7 +9386,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $fallback (local.get $api_id))
     ) ;; 2304: IBindCtx_RevokeObjectBound
       (call $handle_IBindCtx_RevokeObjectBound (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -9508,6 +9512,18 @@
       (return)
     ) ;; 2345: midiStreamRestart
       (call $handle_midiStreamRestart (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2346: joyGetDevCapsA
+      (call $handle_joyGetDevCapsA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2347: joySetCapture
+      (call $handle_joySetCapture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2348: joyReleaseCapture
+      (call $handle_joyReleaseCapture (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2349: SetProcessWorkingSetSize
+      (call $handle_SetProcessWorkingSetSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2304)))

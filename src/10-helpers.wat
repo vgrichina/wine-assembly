@@ -8261,8 +8261,12 @@
         (i32.add (local.get $table) (i32.shl (local.get $i) (i32.const 1)))))
       (local.set $color (call $gdi_palette_colorref
         (local.get $palette) (local.get $index)))
+      ;; Win9x accepts DIB_PAL_COLORS tables that name slots beyond the
+      ;; selected logical palette. Treat those unused slots as black instead
+      ;; of rejecting an otherwise valid DIB (QBob supplies 256 identity
+      ;; indexes with the system palette's 236 usable entries).
       (if (i32.eq (local.get $color) (i32.const -1))
-        (then (return (i32.const 0))))
+        (then (local.set $color (i32.const 0))))
       (i32.store (i32.add (global.get $GDI_PALETTE_RESOLVE)
           (i32.shl (local.get $i) (i32.const 2)))
         (call $gdi_raster_swap_rb (local.get $color)))

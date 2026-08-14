@@ -249,6 +249,29 @@
       (then (return (call $lookup_api_id (i32.const 0x312)))))
     (i32.const -1))
 
+  ;; WinSock 1.1 commonly imports WSOCK32 by ordinal. Resolve ordinals for
+  ;; APIs already handled by the normal dispatch table; leave unsupported
+  ;; ordinals explicit so they still produce the diagnostic marker below.
+  (func $system_ordinal_api_id (param $dll_name_ga i32) (param $ordinal i32) (result i32)
+    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11300))
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 115)) (then (return (call $lookup_api_id (i32.const 0x1130C))))) ;; WSAStartup
+        (if (i32.eq (local.get $ordinal) (i32.const 116)) (then (return (call $lookup_api_id (i32.const 0x11317))))) ;; WSACleanup
+        (if (i32.eq (local.get $ordinal) (i32.const 111)) (then (return (call $lookup_api_id (i32.const 0x11322))))) ;; WSAGetLastError
+        (if (i32.eq (local.get $ordinal) (i32.const 23))  (then (return (call $lookup_api_id (i32.const 0x11332))))) ;; socket
+        (if (i32.eq (local.get $ordinal) (i32.const 3))   (then (return (call $lookup_api_id (i32.const 0x11339))))) ;; closesocket
+        (if (i32.eq (local.get $ordinal) (i32.const 4))   (then (return (call $lookup_api_id (i32.const 0x11345))))) ;; connect
+        (if (i32.eq (local.get $ordinal) (i32.const 19))  (then (return (call $lookup_api_id (i32.const 0x1134D))))) ;; send
+        (if (i32.eq (local.get $ordinal) (i32.const 16))  (then (return (call $lookup_api_id (i32.const 0x11352))))) ;; recv
+        (if (i32.eq (local.get $ordinal) (i32.const 52))  (then (return (call $lookup_api_id (i32.const 0x11357))))) ;; gethostbyname
+        (if (i32.eq (local.get $ordinal) (i32.const 9))   (then (return (call $lookup_api_id (i32.const 0x11365))))) ;; htons
+        (if (i32.eq (local.get $ordinal) (i32.const 10))  (then (return (call $lookup_api_id (i32.const 0x1136B))))) ;; inet_addr
+        (if (i32.eq (local.get $ordinal) (i32.const 18))  (then (return (call $lookup_api_id (i32.const 0x11375))))) ;; select
+        (if (i32.eq (local.get $ordinal) (i32.const 21))  (then (return (call $lookup_api_id (i32.const 0x1137C))))) ;; setsockopt
+        (if (i32.eq (local.get $ordinal) (i32.const 12))  (then (return (call $lookup_api_id (i32.const 0x11387))))) ;; ioctlsocket
+      ))
+    (i32.const -1))
+
   ;; Process a loaded DLL's imports — create thunks for system DLLs,
   ;; resolve against other loaded DLLs if found.
   (func $process_dll_imports (param $load_addr i32) (param $import_rva i32)
@@ -329,13 +352,21 @@
                           (i32.add (local.get $load_addr)
                             (i32.add (local.get $entry) (i32.const 2)))))))))
               (else
-                ;; Ordinal import from system DLL — store marker + real ordinal.
-                ;; $win32_dispatch catches the marker and reports a clear
-                ;; "unimplemented KERNEL32 ordinal N" error instead of OOB.
-                (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-                  (i32.const 0x4F524400)) ;; "ORD\0" marker
-                (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-                  (i32.and (local.get $entry) (i32.const 0xFFFF)))))
+                (local.set $api_id (call $system_ordinal_api_id
+                  (local.get $dll_name_ptr) (i32.and (local.get $entry) (i32.const 0xFFFF))))
+                (if (i32.ne (local.get $api_id) (i32.const -1))
+                  (then
+                    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (i32.or (i32.const 0x80000000) (i32.and (local.get $entry) (i32.const 0xFFFF))))
+                    (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
+                      (local.get $api_id)))
+                  (else
+                    ;; Unknown ordinal: retain a clear diagnostic instead of
+                    ;; treating the raw ordinal as an API-table index.
+                    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+                      (i32.const 0x4F524400)) ;; "ORD\0" marker
+                    (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
+                      (i32.and (local.get $entry) (i32.const 0xFFFF)))))))
             (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
             (call $update_thunk_end)))
         (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))

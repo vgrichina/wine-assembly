@@ -597,6 +597,10 @@ const extra = [
   { name: 'OpenSemaphoreA', nargs: 3 },
   { name: 'joyGetPos', nargs: 2 },
   { name: 'joyGetNumDevs', nargs: 0 },
+  { name: 'joyGetDevCapsA', nargs: 3 },
+  { name: 'joySetCapture', nargs: 4 },
+  { name: 'joyReleaseCapture', nargs: 1 },
+  { name: 'SetProcessWorkingSetSize', nargs: 3 },
   { name: 'WaitMessage', nargs: 0 },
   // VERSION.DLL APIs
   { name: 'GetFileVersionInfoSizeA', nargs: 2 },

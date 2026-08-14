@@ -17881,5 +17881,33 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1685217255
+  },
+  {
+    "id": 2346,
+    "name": "joyGetDevCapsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1963353722
+  },
+  {
+    "id": 2347,
+    "name": "joySetCapture",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3171549331
+  },
+  {
+    "id": 2348,
+    "name": "joyReleaseCapture",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1503308548
+  },
+  {
+    "id": 2349,
+    "name": "SetProcessWorkingSetSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3154411128
   }
 ]

@@ -142,6 +142,44 @@ const { bootRenderHarness } = require('./render-helper');
     ]);
   });
 
+  check('DIB_PAL_COLORS tolerates identity slots beyond a logical palette', () => {
+    const colors = Array.from({ length: 236 }, (_, i) =>
+      i === 0 ? 0x00112233 : (i === 235 ? 0x00A0B0C0 : i));
+    const palette = createPalette(colors);
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert.strictEqual(wat.test_call_SelectPalette(hdc, palette) >>> 0, 0x3001F);
+
+    const indexes = Array.from({ length: 256 }, (_, i) => i);
+    const bmi = makeBmi(4, -1, 8, indexes, 1);
+    const out = wat.guest_alloc(4) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSectionUsage(hdc, bmi, 1, out) >>> 0;
+    assert(bitmap, 'a 256-slot identity table must accept a 236-entry palette');
+    const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
+    assert.deepStrictEqual([...bytes.slice(storage + 4, storage + 8)],
+      [0x11, 0x22, 0x33, 0], 'valid logical palette slots retain their colors');
+    assert.deepStrictEqual([...bytes.slice(storage + 4 + 235 * 4, storage + 4 + 237 * 4)], [
+      0xA0, 0xB0, 0xC0, 0,
+      0, 0, 0, 0,
+    ], 'the first missing logical slot resolves deterministically to black');
+    assert.deepStrictEqual([...bytes.slice(storage + 4 + 255 * 4, storage + 4 + 256 * 4)],
+      [0, 0, 0, 0], 'the final missing identity slot also resolves to black');
+
+    const surface = makeSurface32(4, 1);
+    wat.test_call_SelectPalette(surface.hdc, palette);
+    const bits = wat.guest_alloc(4) >>> 0;
+    bytes.set([0, 235, 236, 255], wa(bits));
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 0, 4, 1, 0, 0, 4, 1,
+      wa(bits), wa(bmi), 1, 0x00CC0020), 1,
+    'transient DIB conversion must tolerate the same unused slots');
+    assert.deepStrictEqual([...bytes.slice(surface.bits, surface.bits + 16)], [
+      0x11, 0x22, 0x33, 0,
+      0xA0, 0xB0, 0xC0, 0,
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+    ]);
+  });
+
   check('SetDIBColorTable recolors indexed pixels without changing their bits', () => {
     const bmi = makeBmi(1, -1, 8, [0x00000000, 0x00FFFFFF]);
     const out = wat.guest_alloc(4) >>> 0;
