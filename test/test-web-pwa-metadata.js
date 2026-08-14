@@ -18,7 +18,7 @@ assert(html.includes('apple-mobile-web-app-status-bar-style" content="black-tran
 assert(html.includes('rel="apple-touch-icon" href="icons/apple-touch-icon.png"'), 'iOS Home Screen should have a touch icon');
 
 assert.strictEqual(manifest.display, 'standalone', 'manifest should request standalone display');
-assert.deepStrictEqual(manifest.display_override, ['fullscreen', 'standalone'], 'manifest should request fullscreen with standalone fallback');
+assert.deepStrictEqual(manifest.display_override, ['standalone'], 'installed app should use a dedicated window without forcing fullscreen');
 assert.strictEqual(manifest.background_color, '#008080', 'manifest background should match desktop teal');
 assert.strictEqual(manifest.theme_color, '#008080', 'manifest theme should match desktop teal');
 assert(manifest.icons.some(i => i.src === 'icons/icon-192.png' && i.sizes === '192x192'), 'manifest should include a 192px icon');

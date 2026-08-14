@@ -136,6 +136,33 @@
       pointer-events: none;
       z-index: -1;
     }
+    #browser-fullscreen-consent {
+      display: none;
+      position: relative;
+      order: -1;
+      flex: 0 0 34px;
+      width: 100%;
+      z-index: 20;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 4px 8px;
+      padding: 4px max(8px, env(safe-area-inset-right)) 4px max(8px, env(safe-area-inset-left));
+      color: #fff;
+      background: #000080;
+      border-bottom: 2px outset #dfdfdf;
+      font-size: 11px;
+      pointer-events: auto;
+    }
+    #browser-fullscreen-consent button {
+      padding: 3px 8px;
+      color: #000;
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      font: inherit;
+      cursor: pointer;
+    }
+    #browser-fullscreen-consent button:active { border-style: inset; }
     #log {
       width: 320px;
       min-height: 0;
@@ -322,17 +349,21 @@
       inset: 0;
       max-width: none;
       max-height: none;
+      flex-direction: column;
     }
     body.exclusive-fullscreen #titlebar,
     body.exclusive-fullscreen #toolbar,
     body.exclusive-fullscreen #log,
     body.exclusive-fullscreen #taskbar,
     body.exclusive-fullscreen #desktop-icons { display: none !important; }
+    body.exclusive-fullscreen #browser-fullscreen-consent { display: flex; }
     body.exclusive-fullscreen canvas {
-      position: fixed !important;
-      inset: 0 !important;
-      width: 100vw !important;
-      height: 100vh !important;
+      position: relative !important;
+      inset: auto !important;
+      flex: 1 1 0;
+      min-height: 0;
+      width: 100% !important;
+      height: 0 !important;
       max-width: none !important;
       max-height: none !important;
     }
@@ -364,6 +395,10 @@
       inset: 0 !important;
       width: 100% !important;
       height: 100% !important;
+    }
+    #screen-wrap:fullscreen #browser-fullscreen-consent,
+    #screen-wrap:-webkit-full-screen #browser-fullscreen-consent {
+      display: none;
     }
   </style>
 </head>
@@ -544,6 +579,10 @@
       <div id="screen-wrap">
         <div id="desktop-icons"></div>
         <canvas id="screen"></canvas>
+        <div id="browser-fullscreen-consent" role="group" aria-label="Browser fullscreen option">
+          <span>App is using the full page</span>
+          <button type="button" onclick="approveBrowserFullscreen(event)">Use browser fullscreen</button>
+        </div>
         <textarea id="mobile-keyboard-proxy" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true"></textarea>
       </div>
       <div id="log">Wine-Assembly v0.2
@@ -604,7 +643,7 @@ Resource-aware Win98 emulator
   <script src="lib/gdi-surface.js?v=1"></script>
   <script src="lib/resources-icon.js?v=168"></script>
   <script src="lib/renderer-input.js?v=188"></script>
-  <script src="lib/renderer.js?v=176"></script>
+  <script src="lib/renderer.js?v=177"></script>
   <script src="lib/dll-loader.js?v=168"></script>
   <script src="lib/storage.js?v=169"></script>
   <script src="lib/filesystem.js?v=169"></script>
@@ -623,6 +662,27 @@ Resource-aware Win98 emulator
     let sharedWasmModule = null;
     const sharedAudioMixer = {};
     let inputWired = false;
+
+    async function approveBrowserFullscreen(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const target = document.getElementById('screen-wrap');
+      const current = document.fullscreenElement || document.webkitFullscreenElement;
+      if (!target || current === target) return;
+      const request = target.requestFullscreen || target.webkitRequestFullscreen;
+      if (!request) return;
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer) renderer._requestedBrowserFullscreen = true;
+      try {
+        const result = request.call(target);
+        if (result && result.then) await result;
+        resizeCanvas();
+      } catch (_) {
+        if (renderer) renderer._requestedBrowserFullscreen = false;
+      }
+    }
 
     function unregisterRunningApp(wine) {
       const index = runningApps.findIndex(running => running && running.wine === wine);
@@ -1573,16 +1633,6 @@ Resource-aware Win98 emulator
           try { keyboardProxy.focus(); } catch (_) {}
         }
       }
-      function requestBrowserFullscreen() {
-        const target = document.getElementById('screen-wrap') || canvas;
-        if (!document.fullscreenElement && target && target.requestFullscreen) {
-          renderer._requestedBrowserFullscreen = true;
-          try {
-            const p = target.requestFullscreen();
-            if (p && p.then) p.then(resizeCanvas).catch(() => {});
-          } catch (_) {}
-        }
-      }
       function unlockRunningAudio() {
         if (!runningApps || !runningApps.length) return;
         for (const app of runningApps) {
@@ -1694,7 +1744,6 @@ Resource-aware Win98 emulator
         e.preventDefault();
         canvas.focus();
         unlockRunningAudio();
-        if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
         const { x: cx, y: cy } = eventPoint(e);
         if (forwardEmptyDesktopClick(e.clientX, e.clientY, cx, cy)) return;
         renderer.handleMouseDown(cx, cy, e.button, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
@@ -1721,7 +1770,6 @@ Resource-aware Win98 emulator
         e.preventDefault();
         canvas.focus();
         unlockRunningAudio();
-        if (renderer._exclusiveFullscreen) requestBrowserFullscreen();
         const { x: cx, y: cy } = eventPointFromClient(t.clientX, t.clientY);
         if (forwardEmptyDesktopClick(t.clientX, t.clientY, cx, cy)) return;
         activeTouchId = t.identifier;
@@ -1828,9 +1876,6 @@ Resource-aware Win98 emulator
         if (shouldIgnorePageKey(e)) return;
         const vk = e.keyCode;
         unlockRunningAudio();
-        if (renderer._exclusiveFullscreen || (vk === 115 && !e.altKey && !e.ctrlKey && !e.metaKey)) {
-          requestBrowserFullscreen();
-        }
         renderer.handleKeyDown(vk);
         suppressTextInputEvents = 0;
         if (!keepForBrowser(e)) {
@@ -2109,13 +2154,6 @@ Resource-aware Win98 emulator
       };
 
       const canvas = document.getElementById('screen');
-      const wrap = document.getElementById('screen-wrap');
-      if (app.args === '/s' && !document.fullscreenElement && wrap.requestFullscreen) {
-        try {
-          const p = wrap.requestFullscreen();
-          if (p && p.then) await p.then(resizeCanvas).catch(() => {});
-        } catch (_) {}
-      }
       const size = screenCanvasSize();
       canvas.width = size.w;
       canvas.height = size.h;
@@ -2253,6 +2291,7 @@ Resource-aware Win98 emulator
       const MIN_BACKING_HEIGHT = 480;
       const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
       const fullscreen = fsElement === wrap || fsElement === canvas;
+      const dedicatedPage = document.body.classList.contains('exclusive-fullscreen');
       const fsRect = fsElement && fsElement.getBoundingClientRect ? fsElement.getBoundingClientRect() : null;
       const vv = window.visualViewport;
       const displayW = Math.floor(fullscreen ? Math.max(
@@ -2261,14 +2300,14 @@ Resource-aware Win98 emulator
         window.innerWidth || 0,
         wrap.clientWidth || 0,
         canvas.clientWidth || 0
-      ) : wrap.clientWidth);
+      ) : (dedicatedPage ? canvas.clientWidth : wrap.clientWidth));
       const displayH = Math.floor(fullscreen ? Math.max(
         (fsRect && fsRect.height) || 0,
         (vv && vv.height) || 0,
         window.innerHeight || 0,
         wrap.clientHeight || 0,
         canvas.clientHeight || 0
-      ) : wrap.clientHeight);
+      ) : (dedicatedPage ? canvas.clientHeight : wrap.clientHeight));
       const scale = displayW > 0 ? Math.max(1, MIN_BACKING_WIDTH / displayW) : 1;
       const w = Math.max(MIN_BACKING_WIDTH, displayW | 0);
       const h = Math.max(MIN_BACKING_HEIGHT, Math.round((displayH || 1) * scale));

@@ -73,6 +73,7 @@ UNIT=(
   test/test-web-pinball-assets.js
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
+  test/test-web-fullscreen-consent.js
   test/test-web-pwa-metadata.js
   test/test-radio-mutex.js
   test/test-listbox.js
