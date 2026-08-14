@@ -75,6 +75,22 @@ Reviewed captures live under `screenshots/v86-reference/reviewed/`. Their JSON
 sidecars retain the complete provenance and are checked against the PNG digest
 by `test/test-v86-reference-harness.js`.
 
+Mouse-driven Paint references use a separate workflow manifest so experiments
+do not enlarge the reviewed launch-screen corpus until their output has been
+inspected and deliberately promoted. The current composite reproduces the
+representative brush and airbrush size checks plus all five line widths in one
+VM boot:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/paint-apps.json \
+  --app paint98-tools
+```
+
+The capture driver first synchronizes v86's relative guest pointer with the
+browser coordinate origin. Manifest mouse coordinates therefore refer directly
+to the 640x480 Windows 98 screen.
+
 The first geometry probe on the pinned profile reported a `154x235` outer
 Minesweeper window, `148x191` client area, and client origin `(3,41)` relative
 to the outer window. Keep the generated PNG and JSON together when using that

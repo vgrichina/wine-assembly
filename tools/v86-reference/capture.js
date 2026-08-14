@@ -403,10 +403,34 @@ async function main() {
     await page.evaluate(() => window.referenceVm.insertCd("/payload.iso"));
     await new Promise(resolve => setTimeout(resolve, 1000));
     await page.evaluate(command => window.referenceVm.run(command), entry.launch);
+    let mouseSynchronized = false;
     for (const action of entry.postLaunch || []) {
       await new Promise(resolve => setTimeout(resolve, action.waitMs || 0));
       if (action.scancodes) {
         await page.evaluate(scancodes => window.emulator.keyboard_send_scancodes(scancodes, 20), action.scancodes);
+      }
+      if (action.mouse) {
+        const mouse = action.mouse;
+        if (!mouseSynchronized) {
+          // v86 consumes relative DOM pointer motion. Drive both axes against
+          // their lower-right clamps, then back to zero so following browser
+          // coordinates and Win98 screen coordinates have the same origin.
+          await page.mouse.move(639, 479);
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await page.mouse.move(0, 0);
+          await new Promise(resolve => setTimeout(resolve, 50));
+          mouseSynchronized = true;
+        }
+        if (mouse.type === "click") {
+          await page.mouse.click(mouse.x, mouse.y, { button: mouse.button || "left" });
+        } else if (mouse.type === "drag") {
+          await page.mouse.move(mouse.x, mouse.y);
+          await page.mouse.down({ button: mouse.button || "left" });
+          await page.mouse.move(mouse.toX, mouse.toY, { steps: mouse.steps || 1 });
+          await page.mouse.up({ button: mouse.button || "left" });
+        } else {
+          throw new Error(`unsupported mouse action: ${mouse.type}`);
+        }
       }
     }
     const waitMs = options.waitMs === undefined ? (entry.waitMs || 8000) : options.waitMs;
