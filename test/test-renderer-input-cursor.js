@@ -54,6 +54,14 @@ const edge = renderer('nwse-resize', 17);
 edge.handleMouseMove(319, 319);
 check('cursor remains while pointer is on resize edge', edge.canvas.style.cursor, 'nwse-resize');
 
+const rightEdge = renderer('default', 11);
+rightEdge.handleMouseMove(319, 150);
+check('right-edge hover applies resize cursor immediately', rightEdge.canvas.style.cursor, 'ew-resize');
+
+const bottomEdge = renderer('ew-resize', 15);
+bottomEdge.handleMouseMove(150, 319);
+check('moving between edges synchronizes resize cursor', bottomEdge.canvas.style.cursor, 'ns-resize');
+
 const posted = [];
 const dispatched = [];
 const childWasm = {
