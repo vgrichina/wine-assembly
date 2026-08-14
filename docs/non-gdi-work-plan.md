@@ -340,8 +340,10 @@ transfer breadth below.
   `IDataObject::SetData` and `IOleCache::SetData` stream/storage media.
 - [x] Add atomic multi-entry guest `AddRef` completion when
   `IOleObject::GetClipboardData` snapshots cached stream/storage media.
-- Add guest-aware `IOleObject::InitFromData` cache import and durable
-  `OleFlushClipboard` value snapshots for DLL-private streams/storage.
+- [x] Add guest-aware, atomic `IOleObject::InitFromData` cache import and
+  retirement of the displaced guest-owned cache.
+- Add durable `OleFlushClipboard` value snapshots for DLL-private
+  streams/storage.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -442,6 +444,17 @@ CF_DIB render-slot mirroring already deep-copies its HGLOBAL bytes and clears
 `pUnkForRelease`, so it has no interface-reference gap. The guest callback
 suite passes 63/63; data-object, static-handler, storage, and WordPad gates
 remain green at 55/55, 65/65, 68/68, and 13/13.
+
+2026-08-13 guest-cache-import result: `IOleObject::InitFromData` now constructs
+a detached complete cache, prevalidates every imported guest `AddRef`/`Release`
+and every displaced guest `Release`, and retains the new stream/storage media
+before atomically swapping cache collections. The detached handler becomes the
+retired owner of the old collection, allowing its DLL-private media to release
+asynchronously after commit without exposing a half-imported cache. Malformed
+new or old callbacks leave the live cache and all reference counts unchanged;
+source and imported cache retain independent balanced ownership. The guest
+callback suite passes 68/68; data-object, static-handler, storage, and WordPad
+gates remain green at 55/55, 65/65, 68/68, and 13/13.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage

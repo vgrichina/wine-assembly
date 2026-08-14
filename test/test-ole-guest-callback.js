@@ -681,6 +681,71 @@ async function main() {
     read(clipboardStream + 4) === 0 && read(clipboardStream + 12) === 2 &&
     read(clipboardStorage + 4) === 0 && read(clipboardStorage + 12) === 2);
 
+  const initSource = e.test_ole_create_data_object(0, 0) >>> 0;
+  const initStreamFormat = makeFormat(0xc51f, 4);
+  const initStorageFormat = makeFormat(0xc525, 8);
+  const initStream = makeGuestSite();
+  const initStorage = makeGuestSite();
+  const initStreamMedium = alloc(12);
+  const initStorageMedium = alloc(12);
+  write(initStreamMedium, 4);
+  write(initStreamMedium + 4, initStream);
+  write(initStreamMedium + 8, 0);
+  write(initStorageMedium, 8);
+  write(initStorageMedium + 4, initStorage);
+  write(initStorageMedium + 8, 0);
+  assert.strictEqual(callMethod(
+    initSource, 7, initStreamFormat, initStreamMedium, 1), 0);
+  assert.strictEqual(callMethod(
+    initSource, 7, initStorageFormat, initStorageMedium, 1), 0);
+
+  const initTarget = e.test_ole_create_static_handler(0) >>> 0;
+  const initTargetCache = initTarget + 52;
+  const initOldFormat = makeFormat(0xc526, 4);
+  const initOld = makeGuestSite();
+  const initOldMedium = alloc(12);
+  write(initOldMedium, 4);
+  write(initOldMedium + 4, initOld);
+  write(initOldMedium + 8, 0);
+  assert.strictEqual(callMethod(
+    initTargetCache, 7, initOldFormat, initOldMedium, 1), 0);
+
+  const initStorageVtable = read(initStorage);
+  const initStorageAddRef = read(initStorageVtable + 4);
+  write(initStorageVtable + 4, 0);
+  check('InitFromData preflights every imported guest AddRef before changing cache state',
+    callMethod(initTarget, 9, initSource, 0, 0) === 0x80004002 &&
+    read(initTarget + 104) === 1 && read(initOld + 4) === 1 &&
+    read(initStream + 4) === 1 && read(initStream + 8) === 0 &&
+    read(initStorage + 4) === 1 && read(initStorage + 8) === 0);
+  write(initStorageVtable + 4, initStorageAddRef);
+
+  const initOldVtable = read(initOld);
+  const initOldRelease = read(initOldVtable + 8);
+  write(initOldVtable + 8, 0);
+  check('InitFromData validates old guest cleanup before retaining new media',
+    callMethod(initTarget, 9, initSource, 0, 0) === 0x80004002 &&
+    read(initTarget + 104) === 1 && read(initOld + 4) === 1 &&
+    read(initStream + 8) === 0 && read(initStorage + 8) === 0);
+  write(initOldVtable + 8, initOldRelease);
+
+  check('InitFromData retains all guest media, swaps atomically, and retires the old cache',
+    callMethod(initTarget, 9, initSource, 0, 0) === 0 &&
+    read(initTarget + 104) === 2 && read(initOld + 4) === 0 &&
+    read(initOld + 12) === 1 && read(initStream + 4) === 2 &&
+    read(initStream + 8) === 1 && read(initStorage + 4) === 2 &&
+    read(initStorage + 8) === 1);
+  const initEntries = read(initTarget + 100);
+  check('InitFromData publishes normal independently releasable cache media',
+    read(initEntries + 28) === 4 && read(initEntries + 32) === initStream &&
+    read(initEntries + 36) === 0 && read(initEntries + 68) === 8 &&
+    read(initEntries + 72) === initStorage && read(initEntries + 76) === 0);
+  check('source and imported cache own balanced independent guest references',
+    callMethod(initSource, 2) === 0 && read(initStream + 4) === 1 &&
+    read(initStorage + 4) === 1 && callMethod(initTarget, 2) === 0 &&
+    read(initStream + 4) === 0 && read(initStream + 12) === 2 &&
+    read(initStorage + 4) === 0 && read(initStorage + 12) === 2);
+
   const replaceSequence = alloc(4);
   write(replaceSequence, 0);
   const replaceObject = e.test_ole_create_data_object(0, 0) >>> 0;

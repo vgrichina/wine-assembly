@@ -54,8 +54,11 @@ and retire displaced guest media before return. Guest `AddRef` during
 `IOleObject::GetClipboardData` cache snapshots now preflights the complete
 multi-entry callback set, retains every DLL-private stream/storage in guest x86,
 and publishes only the fully owned result. CF_DIB render mirroring is already a
-deep HGLOBAL byte copy. Guest-aware `InitFromData` import and durable
-`OleFlushClipboard` value snapshots remain the next lifetime gap.
+deep HGLOBAL byte copy. `InitFromData` now performs the inverse operation with a
+detached cache: it retains all new guest media, swaps only after complete
+preflight, and asynchronously retires the displaced guest cache. Durable
+`OleFlushClipboard` value snapshots of DLL-private streams/storage remain the
+next lifetime gap.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off

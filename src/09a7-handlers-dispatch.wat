@@ -3465,6 +3465,74 @@
       (br $scan)))
     (i32.const 0))
 
+  (func $ole_static_cache_guest_addrefs_valid (param $root i32) (result i32)
+    (local $entries i32) (local $count i32) (local $i i32)
+    (local $medium i32) (local $iface i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $medium (i32.add
+        (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40)))
+        (i32.const 28)))
+      (local.set $iface (call $ole_medium_data_interface (local.get $medium)))
+      (if (i32.and
+            (i32.ne (local.get $iface) (i32.const 0))
+            (i32.eqz (call $ole_interface_is_local (local.get $iface))))
+        (then
+          (if (i32.or
+                (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 1)))
+                (i32.eqz (call $ole_guest_method_addr (local.get $iface) (i32.const 2))))
+            (then (return (i32.const 0))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  (func $ole_static_cache_detach_unretained_guest_media (param $root i32)
+    (local $entries i32) (local $count i32) (local $i i32)
+    (local $medium i32) (local $iface i32)
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $medium (i32.add
+        (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40)))
+        (i32.const 28)))
+      (local.set $iface (call $ole_medium_data_interface (local.get $medium)))
+      (if (i32.and
+            (i32.ne (local.get $iface) (i32.const 0))
+            (i32.eqz (call $ole_interface_is_local (local.get $iface))))
+        (then (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  ;; InitFromData AddRef continuation uses root=staged static handler,
+  ;; p1=live destination, and reserved0 as the staged cache-entry cursor.
+  (func $ole_static_cache_guest_addref_next (param $ctx i32) (result i32)
+    (local $root i32) (local $entries i32) (local $count i32) (local $i i32)
+    (local $medium i32) (local $iface i32)
+    (local.set $root (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
+    (local.set $i (call $gl32 (i32.add (local.get $ctx) (i32.const 40))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $medium (i32.add
+        (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40)))
+        (i32.const 28)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $i))
+      (local.set $iface (call $ole_medium_data_interface (local.get $medium)))
+      (if (i32.and
+            (i32.ne (local.get $iface) (i32.const 0))
+            (i32.eqz (call $ole_interface_is_local (local.get $iface))))
+        (then
+          (drop (call $ole_guest_callback_invoke1
+            (local.get $ctx) (local.get $iface) (i32.const 1)))
+          (return (i32.const 1))))
+      (br $scan)))
+    (i32.const 0))
+
   (func $ole_owned_object_release_api (param $obj i32) (param $pop_bytes i32)
     (local $ret i32) (local $ctx i32)
     (if (i32.and
@@ -4756,6 +4824,30 @@
     (global.set $esp (call $gl32 (i32.add (local.get $ctx) (i32.const 16))))
     (global.set $eax (local.get $result)))
 
+  ;; Complete an InitFromData transaction. phase 0 retains every guest medium
+  ;; in the detached cache, commits the array swap, and converts the detached
+  ;; handler into the retired owner. phase 1 resumes old-cache guest releases.
+  (func $ole_init_from_data_continue (param $ctx i32) (result i32)
+    (local $phase i32) (local $staged i32) (local $target i32)
+    (local.set $phase (call $gl32 (i32.add (local.get $ctx) (i32.const 44))))
+    (local.set $staged (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (local.set $target (call $gl32 (i32.add (local.get $ctx) (i32.const 24))))
+    (if (i32.eqz (local.get $phase))
+      (then
+        (if (call $ole_static_cache_guest_addref_next (local.get $ctx))
+          (then (return (i32.const 1))))
+        (call $ole_static_commit_staged_data (local.get $target) (local.get $staged))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 28)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 32)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 44)) (i32.const 1))))
+    (if (call $ole_owned_media_release_next (local.get $ctx))
+      (then (return (i32.const 1))))
+    (drop (call $ole_obj_release (local.get $staged)))
+    (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+    (i32.const 0))
+
   ;; CACA0011 enters here after a guest AddRef/Release/SaveObject returns.
   ;; operation 1: SetClientSite; 2: GetClientSite; 3: Close/SaveObject;
   ;; 4: final static-handler Release; 5/6: Advise/Unadvise ownership;
@@ -4765,7 +4857,8 @@
   ;; 12: final IDataObject-owned guest-media teardown;
   ;; 13: IDataObject GetData guest AddRef completion;
   ;; 14: IDataObject/IOleCache SetData guest AddRef transaction;
-  ;; 15: IOleObject GetClipboardData multi-medium guest AddRef completion.
+  ;; 15: IOleObject GetClipboardData multi-medium guest AddRef completion;
+  ;; 16: IOleObject InitFromData guest AddRef/old-cache Release transaction.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -4940,6 +5033,10 @@
         ;; independent snapshot reference.
         (call $gs32 (local.get $p1) (local.get $root))
         (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 16))
+      (then
+        (drop (call $ole_init_from_data_continue (local.get $ctx)))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then
@@ -5722,7 +5819,42 @@
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0x80004001)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IOleObject_InitFromData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_static_init_from_data (local.get $arg0) (local.get $arg1)))
+    (local $staged_out i32) (local $staged i32) (local $hr i32)
+    (local $ret i32) (local $ctx i32)
+    (local.set $staged_out (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $staged_out))
+      (then (global.set $eax (i32.const 0x8007000E)))
+      (else
+        (local.set $hr (call $ole_static_stage_from_data
+          (local.get $arg0) (local.get $arg1) (local.get $staged_out)))
+        (local.set $staged (call $gl32 (local.get $staged_out)))
+        (call $heap_free (local.get $staged_out))
+        (if (local.get $hr)
+          (then (global.set $eax (local.get $hr)))
+          (else
+            ;; Old guest releases must also be valid before any new AddRef or
+            ;; live cache mutation, preserving whole-operation atomicity.
+            (if (i32.eqz (call $ole_owned_media_guest_releases_valid (local.get $arg0)))
+              (then
+                (call $ole_static_cache_detach_unretained_guest_media (local.get $staged))
+                (drop (call $ole_obj_release (local.get $staged)))
+                (global.set $eax (i32.const 0x80004002)))
+              (else
+                (if (i32.or
+                      (call $ole_owned_media_has_guest (local.get $staged))
+                      (call $ole_owned_media_has_guest (local.get $arg0)))
+                  (then
+                    (local.set $ret (call $gl32 (global.get $esp)))
+                    (local.set $ctx (call $ole_guest_callback_context
+                      (i32.const 16) (i32.const 0) (local.get $ret)
+                      (i32.add (global.get $esp) (i32.const 20))
+                      (local.get $staged) (local.get $arg0)
+                      (i32.const 0) (i32.const 0) (i32.const 0)))
+                    (drop (call $ole_init_from_data_continue (local.get $ctx)))
+                    (return)))
+                (call $ole_static_commit_staged_data (local.get $arg0) (local.get $staged))
+                (drop (call $ole_obj_release (local.get $staged)))
+                (global.set $eax (i32.const 0))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
   (func $handle_IOleObject_GetClipboardData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32) (local $staged_out i32) (local $hr i32)
@@ -6343,31 +6475,69 @@
     (local.get $obj)
   )
 
-  ;; Convert only this runtime's bounded IDataObject representation. Native
-  ;; DLL-private implementations still require guest COM callbacks, while the
-  ;; local path can copy every presentation atomically without re-entering x86.
-  (func $ole_static_init_from_data (param $root i32) (param $data_object i32) (result i32)
+  ;; Stage a complete cache import before any guest AddRef or live-object
+  ;; mutation. DLL-private stream/storage pointers are transferred into the
+  ;; detached handler without claiming ownership until the API continuation.
+  (func $ole_static_stage_from_data
+      (param $root i32) (param $data_object i32) (param $out i32) (result i32)
     (local $staged i32) (local $entries i32) (local $count i32) (local $i i32)
-    (local $entry i32) (local $hr i32) (local $old_entries i32)
-    (local $old_count i32) (local $old_capacity i32) (local $old_next i32)
+    (local $entry i32) (local $source_medium i32) (local $temp_medium i32)
+    (local $iface i32) (local $hr i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
+    (call $gs32 (local.get $out) (i32.const 0))
     (if (i32.or (i32.eqz (local.get $root)) (i32.eqz (local.get $data_object)))
       (then (return (i32.const 0x80004003))))
     (if (i32.ne (call $gl32 (i32.add (local.get $data_object) (i32.const 8))) (i32.const 4))
       (then (return (i32.const 0x80004002))))
     (local.set $staged (call $ole_create_static_handler (i32.add (local.get $root) (i32.const 24))))
     (if (i32.eqz (local.get $staged)) (then (return (i32.const 0x8007000E))))
+    (local.set $temp_medium (call $heap_alloc (i32.const 12)))
+    (if (i32.eqz (local.get $temp_medium))
+      (then (drop (call $ole_obj_release (local.get $staged))) (return (i32.const 0x8007000E))))
+    (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
     (local.set $entries (call $gl32 (i32.add (local.get $data_object) (i32.const 12))))
     (local.set $count (call $gl32 (i32.add (local.get $data_object) (i32.const 16))))
     (block $copied (loop $copy
       (br_if $copied (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
-      (local.set $hr (call $ole_cache_set_data
-        (local.get $staged) (local.get $entry) (i32.add (local.get $entry) (i32.const 20)) (i32.const 0)))
+      (local.set $source_medium (i32.add (local.get $entry) (i32.const 20)))
+      (local.set $iface (call $ole_medium_data_interface (local.get $source_medium)))
+      (if (i32.and
+            (i32.ne (local.get $iface) (i32.const 0))
+            (i32.eqz (call $ole_interface_is_local (local.get $iface))))
+        (then
+          (call $zero_memory (call $g2w (local.get $temp_medium)) (i32.const 12))
+          (call $gs32 (local.get $temp_medium) (call $gl32 (local.get $source_medium)))
+          (call $gs32 (i32.add (local.get $temp_medium) (i32.const 4)) (local.get $iface))
+          (local.set $hr (call $ole_cache_set_data_with_retired
+            (local.get $staged) (local.get $entry) (local.get $temp_medium)
+            (i32.const 1) (i32.const 0))))
+        (else
+          (local.set $hr (call $ole_cache_set_data_with_retired
+            (local.get $staged) (local.get $entry) (local.get $source_medium)
+            (i32.const 0) (i32.const 0)))))
       (br_if $copied (local.get $hr))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
+    (call $heap_free (local.get $temp_medium))
     (if (local.get $hr)
-      (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
+      (then
+        (call $ole_static_cache_detach_unretained_guest_media (local.get $staged))
+        (drop (call $ole_obj_release (local.get $staged)))
+        (return (local.get $hr))))
+    (if (i32.eqz (call $ole_static_cache_guest_addrefs_valid (local.get $staged)))
+      (then
+        (call $ole_static_cache_detach_unretained_guest_media (local.get $staged))
+        (drop (call $ole_obj_release (local.get $staged)))
+        (return (i32.const 0x80004002))))
+    (call $gs32 (local.get $out) (local.get $staged))
+    (i32.const 0))
+
+  ;; Atomically exchange cache collections. The detached handler becomes the
+  ;; retired owner of the former collection and is released by the caller.
+  (func $ole_static_commit_staged_data (param $root i32) (param $staged i32)
+    (local $old_entries i32) (local $old_count i32)
+    (local $old_capacity i32) (local $old_next i32)
     (local.set $old_entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $old_count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
     (local.set $old_capacity (call $gl32 (i32.add (local.get $root) (i32.const 108))))
@@ -6386,9 +6556,29 @@
     (call $gs32 (i32.add (local.get $staged) (i32.const 112)) (local.get $old_next))
     (call $ole_cache_sync_render_slot (local.get $root))
     (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1))
-    (drop (call $ole_obj_release (local.get $staged)))
-    (i32.const 0)
   )
+
+  ;; Synchronous internal helper remains valid when neither side requires guest
+  ;; callbacks. The public IOleObject handler covers the general case.
+  (func $ole_static_init_from_data (param $root i32) (param $data_object i32) (result i32)
+    (local $out i32) (local $staged i32) (local $hr i32)
+    (local.set $out (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x8007000E))))
+    (local.set $hr (call $ole_static_stage_from_data
+      (local.get $root) (local.get $data_object) (local.get $out)))
+    (local.set $staged (call $gl32 (local.get $out)))
+    (call $heap_free (local.get $out))
+    (if (local.get $hr) (then (return (local.get $hr))))
+    (if (i32.or
+          (call $ole_owned_media_has_guest (local.get $root))
+          (call $ole_owned_media_has_guest (local.get $staged)))
+      (then
+        (call $ole_static_cache_detach_unretained_guest_media (local.get $staged))
+        (drop (call $ole_obj_release (local.get $staged)))
+        (return (i32.const 0x80004002))))
+    (call $ole_static_commit_staged_data (local.get $root) (local.get $staged))
+    (drop (call $ole_obj_release (local.get $staged)))
+    (i32.const 0))
 
   ;; Build a complete clipboard IDataObject before retaining any DLL-private
   ;; media. Guest stream/storage pointers are staged with pUnkForRelease=NULL,
