@@ -2415,19 +2415,52 @@
     (local.get $buf)
   )
 
-  ;; Clear the "checked" bit on every BS_AUTORADIOBUTTON sibling of $hwnd
-  ;; (same parent), then set the checked bit on $hwnd itself. Win32 radio
-  ;; mutex behavior. Group boundaries (WS_GROUP) are not yet honored — we
-  ;; treat all sibling autoradios as one group, which is correct for every
-  ;; dialog with a single radio group and incorrect only when a parent
-  ;; contains two independent radio groups (none of our test apps do today).
+  ;; Clear the "checked" bit on every BS_AUTORADIOBUTTON in $hwnd's WS_GROUP,
+  ;; then let the caller set $hwnd itself. A group begins at the nearest
+  ;; preceding sibling (including self) with WS_GROUP and ends before the next
+  ;; WS_GROUP sibling. Paint's Flip/Rotate dialog has an operation group and a
+  ;; nested angle group under the same parent; treating all sibling radios as
+  ;; one mutex makes choosing 180 degrees clear "Rotate by angle".
   (func $autoradio_clear_siblings (param $hwnd i32)
     (local $parent i32) (local $i i32) (local $rec i32)
     (local $other i32) (local $st i32) (local $stw i32) (local $flags i32)
+    (local $target_slot i32) (local $group_start i32) (local $group_end i32)
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $target_slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $target_slot) (i32.const 0)) (then (return)))
+    ;; Locate the nearest WS_GROUP boundary at or before the target.
+    (local.set $i (i32.const 0))
+    (block $start_done (loop $start_scan
+      (br_if $start_done (i32.gt_u (local.get $i) (local.get $target_slot)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (if (i32.and
+            (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent))
+            (i32.ne
+              (i32.and (i32.load offset=16 (local.get $rec)) (i32.const 0x00020000))
+              (i32.const 0)))
+        (then (local.set $group_start (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $start_scan)))
+    ;; The next WS_GROUP sibling starts a different mutex group.
+    (local.set $group_end (global.get $MAX_WINDOWS))
+    (local.set $i (i32.add (local.get $target_slot) (i32.const 1)))
+    (block $end_done (loop $end_scan
+      (br_if $end_done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (if (i32.and
+            (i32.eq (i32.load offset=8 (local.get $rec)) (local.get $parent))
+            (i32.ne
+              (i32.and (i32.load offset=16 (local.get $rec)) (i32.const 0x00020000))
+              (i32.const 0)))
+        (then
+          (local.set $group_end (local.get $i))
+          (br $end_done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $end_scan)))
+    (local.set $i (local.get $group_start))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $group_end)))
       (local.set $rec (call $wnd_record_addr (local.get $i)))
       (local.set $other (i32.load (local.get $rec)))
       (if (i32.and
