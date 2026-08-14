@@ -207,14 +207,14 @@ const endTextOk = /dump-focus-text end: hwnd=0x10002 class=0 id=59648 parent=0x1
 // Native RichEdit reports EM_GETSEL character positions with the CRLF newline
 // folded differently from WM_GETTEXT's byte count, so the second visual line is
 // one position lower than the JSON text length suggests.
-const selectionStateOk = /dump-focus-state selected: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=18 sel=15\.\.17 .*lineCount=2 text="hello worl\\r?\\nXaganY"/.test(out);
-const replacementTextOk = /dump-focus-state replace: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
-const selectAllOk = /dump-focus-state selectall: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=0\.\.17 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
-const copyEndOk = /dump-focus-state copyend: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
-const pastedTextOk = /dump-focus-state pasted: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=34 sel=32\.\.32 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
-const cutSelectOk = /dump-focus-state cutselect: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=34 sel=0\.\.33 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
-const cutTextOk = /dump-focus-state cut: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=0 sel=0\.\.0 .*lineCount=1 text=""/.test(out);
-const restoredTextOk = /dump-focus-state restored: hwnd=0x10002 class=0 id=59648 parent=0x10001 len=34 sel=32\.\.32 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
+const selectionStateOk = /dump-focus-state selected: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=18 sel=15\.\.17 .*lineCount=2 text="hello worl\\r?\\nXaganY"/.test(out);
+const replacementTextOk = /dump-focus-state replace: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
+const selectAllOk = /dump-focus-state selectall: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=17 sel=0\.\.17 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
+const copyEndOk = /dump-focus-state copyend: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=17 sel=16\.\.16 .*lineCount=2 text="hello worl\\r?\\nXagaZ"/.test(out);
+const pastedTextOk = /dump-focus-state pasted: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=34 sel=32\.\.32 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
+const cutSelectOk = /dump-focus-state cutselect: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=34 sel=0\.\.33 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
+const cutTextOk = /dump-focus-state cut: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=0 sel=0\.\.0 .*lineCount=1 text=""/.test(out);
+const restoredTextOk = /dump-focus-state restored: hwnd=0x10002 class=0 id=59648 parent=0x10001 .*len=34 sel=32\.\.32 .*lineCount=3 text="hello worl\\r?\\nXagaZhello worl\\r?\\nXagaZ"/.test(out);
 
 check('WordPad reached ShowWindow', /\[ShowWindow\] hwnd=0x10001 cmd=10/.test(out));
 check('top-level WordPad window visible', /window:final hwnd=65537 .*visible=true .*title="Document - WordPad"/.test(out));

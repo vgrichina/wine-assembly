@@ -3,9 +3,10 @@
 //
 // WordPad/MFC uses standard edit command ids (ID_EDIT_COPY/CUT/PASTE/
 // SELECT_ALL). The emulator's WAT menu activation bridges those ids to
-// focused native RichEdit clipboard messages. The durable emulator clipboard
-// stores selected document text, excluding RichEdit's implicit terminal
-// paragraph marker.
+// focused native RichEdit clipboard messages. Plain/rich text stays on the
+// durable emulator-owned CF_TEXT/RTF path and excludes RichEdit's implicit
+// terminal paragraph marker; it must not enter the transient OLE data-object
+// path used for embedded objects.
 
 const fs = require('fs');
 const path = require('path');
@@ -144,8 +145,8 @@ check('menu Cut cleared selected text', /len=0 .*text=""/.test(line(cutOut, 'aft
 check('menu Paste restored cut document text', commandRet(cutOut, 'paste', ID_EDIT_PASTE) && /len=4 .*text="menu"/.test(line(cutOut, 'after-cut-paste')));
 check('cut/paste screenshot written', fs.existsSync(CUT_PNG) && fs.statSync(CUT_PNG).size > 0);
 
-check('native RichEdit clipboard used structured storage without crashing',
-  /CreateILockBytesOnHGlobal|StgCreateDocfileOnILockBytes/.test(combined));
+check('plain/rich text clipboard avoids transient OLE structured storage',
+  !/CreateILockBytesOnHGlobal|StgCreateDocfileOnILockBytes/.test(combined));
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(combined));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(combined));
 

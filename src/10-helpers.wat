@@ -13045,13 +13045,18 @@
     (if (i32.lt_u (local.get $b) (local.get $a))
       (then (local.set $b (local.get $a))))
     (local.set $len (i32.sub (local.get $b) (local.get $a)))
-    (if (i32.and
-          (i32.ne (local.get $saved_dib) (i32.const 0))
-          (i32.eq (local.get $len) (i32.const 1)))
+    (if (i32.eq (local.get $len) (i32.const 1))
       (then
         (local.set $selected_object
           (call $wordpad_richedit_selection_is_object (local.get $hwnd)))))
-    (if (i32.eqz (local.get $saved_dib))
+    ;; Plain/rich text is captured directly below. Do not invoke RichEdit's
+    ;; OLE-backed WM_COPY path for it: the native IDataObject is transient and
+    ;; the emulator-owned CF_TEXT/RTF snapshots are the durable clipboard.
+    ;; Keep native WM_COPY only for a non-DIB inline object, whose data formats
+    ;; cannot be represented by the text snapshot.
+    (if (i32.and
+          (i32.eqz (local.get $saved_dib))
+          (local.get $selected_object))
       (then
         (drop (call $wnd_send_message
           (local.get $hwnd) (i32.const 0x0301) (i32.const 0) (i32.const 0))) ;; WM_COPY
