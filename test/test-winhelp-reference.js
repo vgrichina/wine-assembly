@@ -51,21 +51,35 @@ if (!fs.existsSync(screenshot) || fs.statSync(screenshot).size < 1000) failures.
 if (!/window:winhelp[^\n]*class="MS_WINTOPIC"[^\n]*size=\d+x([1-9]\d{2,})[^\n]*visible=true/.test(output)) {
   failures.push('Help topic child is not visible with a usable height');
 }
+if (!/window:winhelp[^\n]*class="MS_WINICON"[^\n]*size=\d+x([1-9]\d+)[^\n]*visible=true/.test(output)) {
+  failures.push('Help command bar is not visible');
+}
 if (fs.existsSync(screenshot)) {
   const png = PNG.sync.read(fs.readFileSync(screenshot));
   let darkTopicPixels = 0;
+  let authoredBackgroundPixels = 0;
   // The reference fixture opens at a stable Win98 layout. Exclude chrome and
   // scrollbars so a blank gray topic pane cannot satisfy the image assertion.
-  for (let y = 84; y < Math.min(320, png.height); y++) {
+  for (let y = 84; y < Math.min(410, png.height); y++) {
     for (let x = 126; x < Math.min(440, png.width); x++) {
       const offset = (y * png.width + x) * 4;
       if (png.data[offset] < 100 && png.data[offset + 1] < 100 &&
           png.data[offset + 2] < 100 && png.data[offset + 3] !== 0) {
         darkTopicPixels++;
       }
+      // notepad.hlp authors its topic window as COLORREF 0x00E2FFFF.
+      // WinHelp applies that color from WM_ERASEBKGND before painting text.
+      if (png.data[offset] > 245 && png.data[offset + 1] > 245 &&
+          png.data[offset + 2] >= 215 && png.data[offset + 2] <= 240 &&
+          png.data[offset + 3] !== 0) {
+        authoredBackgroundPixels++;
+      }
     }
   }
   if (darkTopicPixels < 500) failures.push(`Help topic text was not rendered (${darkTopicPixels} dark pixels)`);
+  if (authoredBackgroundPixels < 50000) {
+    failures.push(`Help topic background was not erased with its authored color (${authoredBackgroundPixels} pixels)`);
+  }
 }
 if (/UNIMPLEMENTED API|R6018|\*\*\* CRASH|FATAL:/.test(output)) failures.push('viewer hit a fatal compatibility path');
 if (run.error && run.error.code !== 'ETIMEDOUT') failures.push(run.error.message);

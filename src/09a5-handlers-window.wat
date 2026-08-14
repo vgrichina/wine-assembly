@@ -518,6 +518,33 @@
                           (i32.const 1))))))))) ;; CBS_SIMPLE keeps full height
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
+    ;; WinHelp 4.x uses a private child container for its command buttons. Its
+    ;; window is created without WS_VISIBLE, then sized through private extra
+    ;; LONGs before visible Button children are added; on Win98 the resulting
+    ;; bar is presented with the document. Preserve that legacy container
+    ;; contract once its distinctive 18px private layout state is complete.
+    ;; Requiring a custom WS_CHILD parent, a state pointer, and the private
+    ;; height slot keeps ordinary hidden dialog pages hidden.
+    (if (i32.and
+          (i32.eq (local.get $detected_class) (i32.const 1))
+          (i32.and
+            (i32.ne (i32.and (local.get $arg3) (i32.const 0x10000000)) (i32.const 0))
+            (i32.and
+              (i32.ne (local.get $parent_hwnd) (i32.const 0))
+              (i32.and
+                (i32.ne
+                  (i32.and (call $wnd_get_style (local.get $parent_hwnd)) (i32.const 0x40000000))
+                  (i32.const 0))
+                (i32.and
+                  (i32.eqz (i32.and (call $wnd_get_style (local.get $parent_hwnd)) (i32.const 0x10000000)))
+                  (i32.and
+                    (i32.ne (call $wnd_extra_get (local.get $parent_hwnd) (i32.const 0)) (i32.const 0))
+                    (i32.eq (call $wnd_extra_get (local.get $parent_hwnd) (i32.const 8)) (i32.const 18))))))))
+      (then
+        (drop (call $wnd_set_style (local.get $parent_hwnd)
+          (i32.or (call $wnd_get_style (local.get $parent_hwnd)) (i32.const 0x10000000))))
+        (drop (call $host_show_window (local.get $parent_hwnd) (i32.const 5)))
+        (call $nc_flags_set (local.get $parent_hwnd) (i32.const 2))))
     ;; Seed TITLE_TABLE from lpWindowName (arg2). Title may be NULL; handled by set.
     (if (local.get $arg2)
       (then (call $title_table_set (local.get $hwnd)
@@ -1068,8 +1095,17 @@
     ;; control bar that relies on CreateWindow-without-WS_VISIBLE + ShowWindow
     ;; (mspaint's Tools/Colors palettes) is filtered out of dock layout.
     (if (local.get $arg1)
-      (then (drop (call $wnd_set_style (local.get $arg0)
-              (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)))))
+      (then
+        (drop (call $wnd_set_style (local.get $arg0)
+          (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))))
+        ;; A hidden child has no visible region, so CreateWindowEx correctly
+        ;; defers its initial erase work. Showing it must re-arm that work
+        ;; before the first WM_PAINT. Custom Win9x controls commonly handle
+        ;; WM_ERASEBKGND themselves (WinHelp's topic pane fills its authored
+        ;; yellow background from window-extra state); queueing only WM_PAINT
+        ;; leaves stale parent/default pixels behind.
+        (if (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
+          (then (call $nc_flags_set (local.get $arg0) (i32.const 2)))))
       (else
         (drop (call $wnd_set_style (local.get $arg0)
               (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))
