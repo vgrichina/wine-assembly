@@ -9,6 +9,8 @@
   (global $HELP_MAX_BTREE_DEPTH i32 (i32.const 16))
   (global $HELP_MAX_BTREE_PAGES i32 (i32.const 65536))
   (global $HELP_MAX_TOPICS i32 (i32.const 65536))
+  (global $HELP_MAX_PHRASES i32 (i32.const 65536))
+  (global $HELP_MAX_PHRASE_BYTES i32 (i32.const 65536))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -23,6 +25,8 @@
   (global $HELP_ERROR_SYSTEM i32 (i32.const 9))
   (global $HELP_ERROR_TOPIC_INDEX i32 (i32.const 10))
   (global $HELP_ERROR_CONTEXT_INDEX i32 (i32.const 11))
+  (global $HELP_ERROR_PHRASE_TABLE i32 (i32.const 12))
+  (global $HELP_ERROR_TOPIC_RECORD i32 (i32.const 13))
 
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
@@ -43,6 +47,12 @@
   (global $help_doc_maps_ga (mut i32) (i32.const 0))
   (global $help_doc_maps_wa (mut i32) (i32.const 0))
   (global $help_doc_map_count (mut i32) (i32.const 0))
+  (global $help_doc_phrase_offsets_ga (mut i32) (i32.const 0))
+  (global $help_doc_phrase_offsets_wa (mut i32) (i32.const 0))
+  (global $help_doc_phrase_image_ga (mut i32) (i32.const 0))
+  (global $help_doc_phrase_image_wa (mut i32) (i32.const 0))
+  (global $help_doc_phrase_count (mut i32) (i32.const 0))
+  (global $help_doc_phrase_image_size (mut i32) (i32.const 0))
   (global $help_doc_system_minor (mut i32) (i32.const 0))
   (global $help_doc_system_major (mut i32) (i32.const 0))
   (global $help_doc_system_flags (mut i32) (i32.const 0))
@@ -78,6 +88,10 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_phrase_image_ga)
+      (then (call $heap_free (global.get $help_doc_phrase_image_ga))))
+    (if (global.get $help_doc_phrase_offsets_ga)
+      (then (call $heap_free (global.get $help_doc_phrase_offsets_ga))))
     (if (global.get $help_doc_maps_ga)
       (then (call $heap_free (global.get $help_doc_maps_ga))))
     (if (global.get $help_doc_contexts_ga)
@@ -107,6 +121,12 @@
     (global.set $help_doc_maps_ga (i32.const 0))
     (global.set $help_doc_maps_wa (i32.const 0))
     (global.set $help_doc_map_count (i32.const 0))
+    (global.set $help_doc_phrase_offsets_ga (i32.const 0))
+    (global.set $help_doc_phrase_offsets_wa (i32.const 0))
+    (global.set $help_doc_phrase_image_ga (i32.const 0))
+    (global.set $help_doc_phrase_image_wa (i32.const 0))
+    (global.set $help_doc_phrase_count (i32.const 0))
+    (global.set $help_doc_phrase_image_size (i32.const 0))
     (global.set $help_doc_system_minor (i32.const 0))
     (global.set $help_doc_system_major (i32.const 0))
     (global.set $help_doc_system_flags (i32.const 0))
@@ -270,25 +290,39 @@
     (if (i32.eq (local.get $kind) (i32.const 1))
       (then
         (i64.store (local.get $scratch) (i64.const 0x004D45545359537C))
-        (local.set $length (i32.const 7)))
-      (else (if (i32.eq (local.get $kind) (i32.const 2))
-        (then
-          (i64.store (local.get $scratch) (i64.const 0x00004349504F547C))
-          (local.set $length (i32.const 6)))
-        (else (if (i32.eq (local.get $kind) (i32.const 3))
-          (then
-            (i64.store (local.get $scratch) (i64.const 0x455254424C54547C))
-            (i32.store8 offset=8 (local.get $scratch) (i32.const 0x45))
-            (local.set $length (i32.const 9)))
-          (else (if (i32.eq (local.get $kind) (i32.const 4))
-            (then
-              (i64.store (local.get $scratch) (i64.const 0x545845544E4F437C))
-              (local.set $length (i32.const 8)))
-            (else (if (i32.eq (local.get $kind) (i32.const 5))
-              (then
-                (i64.store (local.get $scratch) (i64.const 0x50414D4F5854437C))
-                (local.set $length (i32.const 8)))
-              (else (return (i32.const -1))))))))))))
+        (local.set $length (i32.const 7))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x00004349504F547C))
+        (local.set $length (i32.const 6))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x455254424C54547C))
+        (i32.store8 offset=8 (local.get $scratch) (i32.const 0x45))
+        (local.set $length (i32.const 9))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x545845544E4F437C))
+        (local.set $length (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 5))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x50414D4F5854437C))
+        (local.set $length (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 6))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x65646E497268507C))
+        (i32.store8 offset=8 (local.get $scratch) (i32.const 0x78))
+        (local.set $length (i32.const 9))))
+    (if (i32.eq (local.get $kind) (i32.const 7))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x67616D497268507C))
+        (i32.store8 offset=8 (local.get $scratch) (i32.const 0x65))
+        (local.set $length (i32.const 9))))
+    (if (i32.eq (local.get $kind) (i32.const 8))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x736573617268507C))
+        (local.set $length (i32.const 8))))
+    (if (i32.eqz (local.get $length)) (then (return (i32.const -1))))
     (call $help_find_internal_file (local.get $scratch) (local.get $length)))
 
   (func $help_find_topic_index_in
@@ -361,6 +395,22 @@
       (then (return (i32.const 0))))
     (i32.add (global.get $help_doc_maps_wa)
       (i32.mul (local.get $index) (global.get $HELP_CONTEXT_SIZE))))
+  (func (export "get_help_phrase_count") (result i32) (global.get $help_doc_phrase_count))
+  (func (export "get_help_phrase_image_size") (result i32)
+    (global.get $help_doc_phrase_image_size))
+  (func (export "get_help_phrase_ptr") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_phrase_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_phrase_image_wa)
+      (i32.load (i32.add (global.get $help_doc_phrase_offsets_wa)
+        (i32.mul (local.get $index) (i32.const 4))))))
+  (func (export "get_help_phrase_len") (param $index i32) (result i32)
+    (local $offsets i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_phrase_count))
+      (then (return (i32.const 0))))
+    (local.set $offsets (i32.add (global.get $help_doc_phrase_offsets_wa)
+      (i32.mul (local.get $index) (i32.const 4))))
+    (i32.sub (i32.load offset=4 (local.get $offsets)) (i32.load (local.get $offsets))))
   (func (export "test_help_resolve_context_id") (param $map_id i32) (result i32)
     (local $i i32) (local $record i32)
     (block $missing (loop $scan

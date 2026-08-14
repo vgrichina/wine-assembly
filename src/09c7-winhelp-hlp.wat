@@ -5,6 +5,13 @@
   (global $help_semantic_result_ga (mut i32) (i32.const 0))
   (global $help_semantic_result_wa (mut i32) (i32.const 0))
   (global $help_semantic_result_count (mut i32) (i32.const 0))
+  (global $help_phrase_result_offsets_ga (mut i32) (i32.const 0))
+  (global $help_phrase_result_offsets_wa (mut i32) (i32.const 0))
+  (global $help_phrase_result_image_ga (mut i32) (i32.const 0))
+  (global $help_phrase_result_image_wa (mut i32) (i32.const 0))
+  (global $help_phrase_result_count (mut i32) (i32.const 0))
+  (global $help_phrase_result_image_size (mut i32) (i32.const 0))
+  (global $help_phrase_bit_position (mut i32) (i32.const 0))
 
   (func $help_mark_btree_page
     (param $visited i32) (param $page i32) (result i32)
@@ -810,12 +817,242 @@
     (global.set $help_semantic_result_count (local.get $count))
     (i32.const 1))
 
+  (func $help_phrase_get_bit
+    (param $stream i32) (param $stream_len i32) (result i32)
+    (local $position i32) (local $value i32)
+    (local.set $position (global.get $help_phrase_bit_position))
+    (if (i32.ge_u (i32.shr_u (local.get $position) (i32.const 3)) (local.get $stream_len))
+      (then (return (i32.const -1))))
+    (local.set $value
+      (i32.and
+        (i32.shr_u
+          (i32.load8_u (i32.add (local.get $stream)
+            (i32.shr_u (local.get $position) (i32.const 3))))
+          (i32.and (local.get $position) (i32.const 7)))
+        (i32.const 1)))
+    (global.set $help_phrase_bit_position (i32.add (local.get $position) (i32.const 1)))
+    (local.get $value))
+
+  ;; Windows Help LZ77 uses one LSB-first control byte for up to eight
+  ;; tokens. A back-reference packs a 12-bit backward distance and a 4-bit
+  ;; length-minus-three into the following little-endian word.
+  (func $help_lz77_expand
+    (param $source i32) (param $source_len i32)
+    (param $dest i32) (param $dest_len i32) (result i32)
+    (local $source_pos i32) (local $dest_pos i32) (local $control i32)
+    (local $bit i32) (local $word i32) (local $distance i32)
+    (local $length i32) (local $i i32)
+    (block $complete (loop $controls
+      (br_if $complete (i32.ge_u (local.get $dest_pos) (local.get $dest_len)))
+      (if (i32.ge_u (local.get $source_pos) (local.get $source_len))
+        (then (return (i32.const 0))))
+      (local.set $control (i32.load8_u (i32.add (local.get $source) (local.get $source_pos))))
+      (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
+      (local.set $bit (i32.const 0))
+      (block $control_done (loop $tokens
+        (br_if $control_done (i32.ge_u (local.get $bit) (i32.const 8)))
+        (br_if $complete (i32.ge_u (local.get $dest_pos) (local.get $dest_len)))
+        (if (i32.eqz (i32.and (local.get $control)
+                    (i32.shl (i32.const 1) (local.get $bit))))
+          (then
+            (if (i32.ge_u (local.get $source_pos) (local.get $source_len))
+              (then (return (i32.const 0))))
+            (i32.store8 (i32.add (local.get $dest) (local.get $dest_pos))
+              (i32.load8_u (i32.add (local.get $source) (local.get $source_pos))))
+            (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
+            (local.set $dest_pos (i32.add (local.get $dest_pos) (i32.const 1))))
+          (else
+            (if (i32.gt_u (i32.const 2) (i32.sub (local.get $source_len) (local.get $source_pos)))
+              (then (return (i32.const 0))))
+            (local.set $word (i32.load16_u (i32.add (local.get $source) (local.get $source_pos))))
+            (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 2)))
+            (local.set $distance (i32.and (local.get $word) (i32.const 0x0FFF)))
+            (local.set $length (i32.add (i32.shr_u (local.get $word) (i32.const 12)) (i32.const 3)))
+            (if (i32.or
+                  (i32.ge_u (local.get $distance) (local.get $dest_pos))
+                  (i32.gt_u (local.get $length) (i32.sub (local.get $dest_len) (local.get $dest_pos))))
+              (then (return (i32.const 0))))
+            (local.set $i (i32.const 0))
+            (block $copy_done (loop $copy
+              (br_if $copy_done (i32.ge_u (local.get $i) (local.get $length)))
+              (i32.store8 (i32.add (local.get $dest) (local.get $dest_pos))
+                (i32.load8_u (i32.sub
+                  (i32.add (local.get $dest) (local.get $dest_pos))
+                  (i32.add (local.get $distance) (i32.const 1)))))
+              (local.set $dest_pos (i32.add (local.get $dest_pos) (i32.const 1)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $copy)))))
+        (local.set $bit (i32.add (local.get $bit) (i32.const 1)))
+        (br $tokens)))
+      (br $controls)))
+    (i32.and
+      (i32.eq (local.get $source_pos) (local.get $source_len))
+      (i32.eq (local.get $dest_pos) (local.get $dest_len))))
+
+  (func $help_parse_hall_phrases
+    (param $index_internal i32) (param $image_internal i32) (result i32)
+    (local $index_record i32) (local $image_record i32)
+    (local $index_off i32) (local $index_len i32) (local $index_data i32)
+    (local $image_off i32) (local $image_len i32) (local $image_data i32)
+    (local $count i32) (local $index_size i32) (local $decoded_size i32)
+    (local $compressed_size i32) (local $bit_count i32)
+    (local $bit_stream i32) (local $bit_stream_len i32)
+    (local $offsets_ga i32) (local $offsets_wa i32)
+    (local $decoded_ga i32) (local $decoded_wa i32)
+    (local $i i32) (local $b i32) (local $bit i32)
+    (local $length i32) (local $increment i32) (local $offset i32)
+    (local $ok i32)
+    (global.set $help_phrase_result_offsets_ga (i32.const 0))
+    (global.set $help_phrase_result_offsets_wa (i32.const 0))
+    (global.set $help_phrase_result_image_ga (i32.const 0))
+    (global.set $help_phrase_result_image_wa (i32.const 0))
+    (global.set $help_phrase_result_count (i32.const 0))
+    (global.set $help_phrase_result_image_size (i32.const 0))
+    (local.set $index_record (i32.add (global.get $help_doc_directory_wa)
+      (i32.mul (local.get $index_internal) (global.get $HELP_INTERNAL_FILE_SIZE))))
+    (local.set $image_record (i32.add (global.get $help_doc_directory_wa)
+      (i32.mul (local.get $image_internal) (global.get $HELP_INTERNAL_FILE_SIZE))))
+    (local.set $index_off (i32.load offset=12 (local.get $index_record)))
+    (local.set $index_len (i32.load offset=16 (local.get $index_record)))
+    (local.set $image_off (i32.load offset=12 (local.get $image_record)))
+    (local.set $image_len (i32.load offset=16 (local.get $image_record)))
+    (block $done
+      (if (i32.lt_u (local.get $index_len) (i32.const 28))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $index_off))
+          (br $done)))
+      (local.set $index_data (i32.add (global.get $help_doc_file_wa) (local.get $index_off)))
+      (local.set $image_data (i32.add (global.get $help_doc_file_wa) (local.get $image_off)))
+      (if (i32.ne (i32.load (local.get $index_data)) (i32.const 1))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $index_off))
+          (br $done)))
+      (local.set $count (i32.load offset=4 (local.get $index_data)))
+      (local.set $index_size (i32.load offset=8 (local.get $index_data)))
+      (local.set $decoded_size (i32.load offset=12 (local.get $index_data)))
+      (local.set $compressed_size (i32.load offset=16 (local.get $index_data)))
+      (local.set $bit_count (i32.and (i32.load16_u offset=24 (local.get $index_data)) (i32.const 15)))
+      (if (i32.or
+            (i32.gt_u (local.get $count) (global.get $HELP_MAX_PHRASES))
+            (i32.gt_u (local.get $decoded_size) (global.get $HELP_MAX_FILE_BYTES)))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (i32.add (local.get $index_off) (i32.const 4)))
+          (br $done)))
+      (if (i32.or
+            (i32.or (i32.lt_u (local.get $index_size) (i32.const 4))
+                    (i32.ne (local.get $index_len) (i32.add (local.get $index_size) (i32.const 24))))
+            (i32.or (i32.ne (i32.load offset=20 (local.get $index_data)) (i32.const 0))
+                    (i32.or (i32.eqz (local.get $bit_count))
+                            (i32.gt_u (local.get $bit_count) (i32.const 15)))))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (i32.add (local.get $index_off) (i32.const 8)))
+          (br $done)))
+      (if (i32.ne (local.get $compressed_size) (local.get $image_len))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $image_off))
+          (br $done)))
+      (local.set $offsets_ga (call $heap_alloc
+        (i32.mul (i32.add (local.get $count) (i32.const 1)) (i32.const 4))))
+      (if (i32.eqz (local.get $offsets_ga))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+          (br $done)))
+      (local.set $offsets_wa (call $g2w (local.get $offsets_ga)))
+      (i32.store (local.get $offsets_wa) (i32.const 0))
+      (if (local.get $decoded_size)
+        (then
+          (local.set $decoded_ga (call $heap_alloc (local.get $decoded_size)))
+          (if (i32.eqz (local.get $decoded_ga))
+            (then
+              (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+              (br $done)))
+          (local.set $decoded_wa (call $g2w (local.get $decoded_ga)))))
+      (local.set $bit_stream (i32.add (local.get $index_data) (i32.const 28)))
+      (local.set $bit_stream_len (i32.sub (local.get $index_size) (i32.const 4)))
+      (global.set $help_phrase_bit_position (i32.const 0))
+      (local.set $i (i32.const 0))
+      (block $offsets_done (loop $offsets
+        (br_if $offsets_done (i32.ge_u (local.get $i) (local.get $count)))
+        (local.set $length (i32.const 1))
+        (local.set $increment (i32.shl (i32.const 1) (local.get $bit_count)))
+        (block $unary_done (loop $unary
+          (local.set $bit (call $help_phrase_get_bit
+            (local.get $bit_stream) (local.get $bit_stream_len)))
+          (if (i32.lt_s (local.get $bit) (i32.const 0))
+            (then
+              (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $index_off))
+              (br $done)))
+          (br_if $unary_done (i32.eqz (local.get $bit)))
+          (if (i32.gt_u (local.get $length)
+                (i32.sub (global.get $HELP_MAX_PHRASE_BYTES) (local.get $increment)))
+            (then
+              (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (local.get $index_off))
+              (br $done)))
+          (local.set $length (i32.add (local.get $length) (local.get $increment)))
+          (br $unary)))
+        (local.set $b (i32.const 0))
+        (block $bits_done (loop $bits
+          (br_if $bits_done (i32.ge_u (local.get $b) (local.get $bit_count)))
+          (local.set $bit (call $help_phrase_get_bit
+            (local.get $bit_stream) (local.get $bit_stream_len)))
+          (if (i32.lt_s (local.get $bit) (i32.const 0))
+            (then
+              (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $index_off))
+              (br $done)))
+          (if (local.get $bit)
+            (then (local.set $length
+              (i32.add (local.get $length) (i32.shl (i32.const 1) (local.get $b))))))
+          (local.set $b (i32.add (local.get $b) (i32.const 1)))
+          (br $bits)))
+        (if (i32.or
+              (i32.gt_u (local.get $length) (global.get $HELP_MAX_PHRASE_BYTES))
+              (i32.gt_u (local.get $length) (i32.sub (local.get $decoded_size) (local.get $offset))))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $index_off))
+            (br $done)))
+        (local.set $offset (i32.add (local.get $offset) (local.get $length)))
+        (i32.store (i32.add (local.get $offsets_wa)
+          (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4))) (local.get $offset))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $offsets)))
+      (if (i32.ne (local.get $offset) (local.get $decoded_size))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $index_off))
+          (br $done)))
+      (if (i32.eq (local.get $compressed_size) (local.get $decoded_size))
+        (then
+          (if (local.get $decoded_size)
+            (then (memory.copy (local.get $decoded_wa) (local.get $image_data) (local.get $decoded_size)))))
+        (else
+          (if (i32.eqz (call $help_lz77_expand
+                (local.get $image_data) (local.get $compressed_size)
+                (local.get $decoded_wa) (local.get $decoded_size)))
+            (then
+              (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $image_off))
+              (br $done)))))
+      (global.set $help_phrase_result_offsets_ga (local.get $offsets_ga))
+      (global.set $help_phrase_result_offsets_wa (local.get $offsets_wa))
+      (global.set $help_phrase_result_image_ga (local.get $decoded_ga))
+      (global.set $help_phrase_result_image_wa (local.get $decoded_wa))
+      (global.set $help_phrase_result_count (local.get $count))
+      (global.set $help_phrase_result_image_size (local.get $decoded_size))
+      (local.set $ok (i32.const 1)))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (local.get $decoded_ga) (then (call $heap_free (local.get $decoded_ga))))
+        (if (local.get $offsets_ga) (then (call $heap_free (local.get $offsets_ga))))))
+    (local.get $ok))
+
   (func $help_parse_semantic_indexes (result i32)
     (local $topic_internal i32) (local $title_internal i32)
     (local $context_internal i32) (local $map_internal i32)
+    (local $phrase_index_internal i32) (local $phrase_image_internal i32)
     (local $topics_ga i32) (local $topics_wa i32) (local $topic_count i32)
     (local $contexts_ga i32) (local $contexts_wa i32) (local $context_count i32)
     (local $maps_ga i32) (local $maps_wa i32) (local $map_count i32)
+    (local $phrase_offsets_ga i32) (local $phrase_offsets_wa i32)
+    (local $phrase_image_ga i32) (local $phrase_image_wa i32)
+    (local $phrase_count i32) (local $phrase_image_size i32)
     (local $ok i32)
     (block $done
       (if (i32.eqz (call $help_parse_system)) (then (br $done)))
@@ -860,6 +1097,28 @@
           (local.set $map_count (global.get $help_semantic_result_count))
           (global.set $help_semantic_result_ga (i32.const 0))))
 
+      (local.set $phrase_index_internal (call $help_find_internal_literal (i32.const 6)))
+      (local.set $phrase_image_internal (call $help_find_internal_literal (i32.const 7)))
+      (if (i32.ne
+            (i32.ge_s (local.get $phrase_index_internal) (i32.const 0))
+            (i32.ge_s (local.get $phrase_image_internal) (i32.const 0)))
+        (then
+          (call $help_set_error (global.get $HELP_ERROR_MISSING_INTERNAL) (i32.const 0))
+          (br $done)))
+      (if (i32.ge_s (local.get $phrase_index_internal) (i32.const 0))
+        (then
+          (if (i32.eqz (call $help_parse_hall_phrases
+                (local.get $phrase_index_internal) (local.get $phrase_image_internal)))
+            (then (br $done)))
+          (local.set $phrase_offsets_ga (global.get $help_phrase_result_offsets_ga))
+          (local.set $phrase_offsets_wa (global.get $help_phrase_result_offsets_wa))
+          (local.set $phrase_image_ga (global.get $help_phrase_result_image_ga))
+          (local.set $phrase_image_wa (global.get $help_phrase_result_image_wa))
+          (local.set $phrase_count (global.get $help_phrase_result_count))
+          (local.set $phrase_image_size (global.get $help_phrase_result_image_size))
+          (global.set $help_phrase_result_offsets_ga (i32.const 0))
+          (global.set $help_phrase_result_image_ga (i32.const 0))))
+
       (global.set $help_doc_topics_ga (local.get $topics_ga))
       (global.set $help_doc_topics_wa (local.get $topics_wa))
       (global.set $help_doc_topic_count (local.get $topic_count))
@@ -869,10 +1128,18 @@
       (global.set $help_doc_maps_ga (local.get $maps_ga))
       (global.set $help_doc_maps_wa (local.get $maps_wa))
       (global.set $help_doc_map_count (local.get $map_count))
+      (global.set $help_doc_phrase_offsets_ga (local.get $phrase_offsets_ga))
+      (global.set $help_doc_phrase_offsets_wa (local.get $phrase_offsets_wa))
+      (global.set $help_doc_phrase_image_ga (local.get $phrase_image_ga))
+      (global.set $help_doc_phrase_image_wa (local.get $phrase_image_wa))
+      (global.set $help_doc_phrase_count (local.get $phrase_count))
+      (global.set $help_doc_phrase_image_size (local.get $phrase_image_size))
       (local.set $ok (i32.const 1)))
     (if (i32.eqz (local.get $ok))
       (then
         (if (local.get $maps_ga) (then (call $heap_free (local.get $maps_ga))))
+        (if (local.get $phrase_image_ga) (then (call $heap_free (local.get $phrase_image_ga))))
+        (if (local.get $phrase_offsets_ga) (then (call $heap_free (local.get $phrase_offsets_ga))))
         (if (local.get $contexts_ga) (then (call $heap_free (local.get $contexts_ga))))
         (if (local.get $topics_ga) (then (call $heap_free (local.get $topics_ga))))))
     (local.get $ok))

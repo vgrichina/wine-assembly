@@ -3,8 +3,10 @@
 Status: **implementation in progress**. Phase 1's WAT-owned file buffer,
 bounded-reader foundation, directory B+tree parser, and raw VFS load path are
 implemented. Phase 2 now parses `|SYSTEM`, canonical `|TTLBTREE` topics,
-`|CONTEXT`, and `|CTXOMAP`, including two-level B+trees and referential
-validation. Phrase and topic-body decoding and the runtime UI cutover remain.
+`|CONTEXT`, `|CTXOMAP`, and Hall `|PhrIndex`/`|PhrImage` phrase tables,
+including two-level B+trees, bounded LZ77 expansion, and referential
+validation. Old-style phrases, topic-body decoding, and the runtime UI cutover
+remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -806,10 +808,11 @@ checked-in HLP with no call to `HlpParser`.
 ### Phase 2: titles, phrases, topics, and context maps
 
 Status: **partially implemented**. Document metadata, canonical topic/title
-records, signed context-hash indexes, and numeric context maps are WAT-owned.
-All checked-in fixtures have exact topic-reference and context-resolution
-coverage, supplemented by synthetic two-level trees and malformed semantic
-indexes. Phrase tables and `|TOPIC` record/token decoding are next.
+records, signed context-hash indexes, numeric context maps, and Hall phrase
+tables are WAT-owned. All checked-in fixtures have exact topic-reference,
+context-resolution, and decompressed-phrase coverage, supplemented by
+synthetic two-level trees and malformed semantic indexes. Old-style phrase
+tables and `|TOPIC` record/token decoding are next.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.

@@ -29,12 +29,14 @@ const EXPECTED_SEMANTICS = {
     hashes: [[2443218355,208],[2135795120,715]],
     maps: [[119,33194],[65,65536],[81,0]],
     mapCount: 66,
+    phraseCount: 199, phraseSize: 940, phrases: [[0,'+'],[5,'all'],[198,'yth']],
   },
   'freecell.hlp': {
     title: 'Free Cell', cnt: '', topics: [0,115,383,421],
     contextCount: 3,
     hashes: [[2535747381,0],[3742568226,383],[1048560214,115]],
     maps: [], mapCount: 0,
+    phraseCount: 17, phraseSize: 66, phrases: [[0,'.'],[4,'card'],[16,'to']],
   },
   'mspaint.hlp': {
     title: 'Paint Help', cnt: 'mspaint.cnt', topics: [0,38,187,313,376,437,514,700,884,1051,1229,1285,1341,1424,1511,1593,1661,1833,1933,1992,2056,2117,2182,2236,2377,2509,2580,2725,2763],
@@ -42,18 +44,21 @@ const EXPECTED_SEMANTICS = {
     hashes: [[2162765496,376],[2099753053,2182]],
     maps: [[30050,1933],[30300,0],[30000,1229]],
     mapCount: 23,
+    phraseCount: 82, phraseSize: 424, phrases: [[0,'%'],[5,'100'],[81,'your']],
   },
   'notepad.hlp': {
     title: 'Notepad Help', cnt: '', topics: [0,495,994,1032],
     contextCount: 3,
     hashes: [[3742568226,994],[1037673951,0]],
     maps: [[1000,495],[1001,0]], mapCount: 2,
+    phraseCount: 62, phraseSize: 254, phrases: [[0,'"('],[7,'Align'],[61,'your']],
   },
   'sol.hlp': {
     title: 'Solitaire Help', cnt: 'sol.cnt', topics: [0,155,331,1047,1273,1311],
     contextCount: 5,
     hashes: [[2713696239,0],[1807483151,1047]],
     maps: [], mapCount: 0,
+    phraseCount: 52, phraseSize: 197, phrases: [[0,','],[5,'after'],[51,'You']],
   },
   'wordpad.hlp': {
     title: 'WordPad Help', cnt: '', topics: [0,30,63,91,242,311,409,557,643,712,781,855,923,968,1175,1245,1314,1461,1495,1528,1563,1729,2204,2289,2386,2509,2657,2692,2730,2891,3054,32768,32914,33299,33689,33727],
@@ -61,6 +66,7 @@ const EXPECTED_SEMANTICS = {
     hashes: [[2162146575,32768],[2116727712,1245]],
     maps: [[1004,1461],[1031,0],[1029,712]],
     mapCount: 29,
+    phraseCount: 116, phraseSize: 565, phrases: [[0,'('],[6,'Aligns'],[115,'your']],
   },
 };
 
@@ -395,6 +401,17 @@ async function main() {
       check(`${file} resolves numeric context ${id}`, e.test_help_resolve_context_id(id) === ref);
     }
     check(`${file} missing numeric context is explicit`, e.test_help_resolve_context_id(0x7fffffff) === -1);
+
+    check(`${file} exact Hall phrase table dimensions`,
+      e.get_help_phrase_count() === semantic.phraseCount &&
+      e.get_help_phrase_image_size() === semantic.phraseSize);
+    for (const [index, phrase] of semantic.phrases) {
+      check(`${file} exact phrase ${index}`,
+        readLatin1(e.get_help_phrase_ptr(index), e.get_help_phrase_len(index)) === phrase);
+    }
+    check(`${file} phrase lookup is bounded`,
+      e.get_help_phrase_ptr(semantic.phraseCount) === 0 &&
+      e.get_help_phrase_len(semantic.phraseCount) === 0);
   }
 
   for (const indexed of [false, true]) {
@@ -558,11 +575,47 @@ async function main() {
   check('topic titles cannot scan past their leaf page',
     load(unterminatedTopicTitle.file) === 0 && e.get_help_last_error() === 10);
 
+  const badPhraseMagic = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
+  const freecellPhraseIndex = fixtureInternalOffset('freecell.hlp', '|PhrIndex') + 9;
+  badPhraseMagic.writeUInt32LE(0, freecellPhraseIndex);
+  check('bad Hall phrase-index magic fails',
+    load(badPhraseMagic) === 0 && e.get_help_last_error() === 12);
+
+  const phraseCapacity = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
+  phraseCapacity.writeUInt32LE(65537, freecellPhraseIndex + 4);
+  check('phrase count cap is enforced',
+    load(phraseCapacity) === 0 && e.get_help_last_error() === 6);
+
+  const badPhraseIndexSize = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
+  badPhraseIndexSize.writeUInt32LE(15, freecellPhraseIndex + 8);
+  check('phrase bitstream size must match its internal slice',
+    load(badPhraseIndexSize) === 0 && e.get_help_last_error() === 12);
+
+  const badPhraseTotal = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
+  badPhraseTotal.writeUInt32LE(67, freecellPhraseIndex + 12);
+  check('phrase offsets must end at decompressed image size',
+    load(badPhraseTotal) === 0 && e.get_help_last_error() === 12);
+
+  const missingPhraseImage = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
+  const phraseImageName = missingPhraseImage.indexOf(Buffer.from('|PhrImage\0', 'latin1'));
+  missingPhraseImage[phraseImageName + 8] = 'f'.charCodeAt(0);
+  check('half of a Hall phrase pair is a missing-internal error',
+    load(missingPhraseImage) === 0 && e.get_help_last_error() === 8);
+
+  const badPhraseLz = Buffer.from(fs.readFileSync(path.join(HELP, 'calc.hlp')));
+  const calcPhraseImage = fixtureInternalOffset('calc.hlp', '|PhrImage') + 9;
+  badPhraseLz[calcPhraseImage] = 1;
+  badPhraseLz.writeUInt16LE(0x0fff, calcPhraseImage + 1);
+  check('invalid LZ77 back-reference fails before publication',
+    load(badPhraseLz) === 0 && e.get_help_last_error() === 12 &&
+    e.get_help_phrase_count() === 0);
+
   e.test_help_reset();
   check('reset releases parser state',
     e.get_help_file_ptr() === 0 && e.get_help_directory_count() === 0 &&
     e.get_help_topic_count() === 0 && e.get_help_context_count() === 0 &&
-    e.get_help_map_count() === 0 && e.get_help_last_error() === 0);
+    e.get_help_map_count() === 0 && e.get_help_phrase_count() === 0 &&
+    e.get_help_last_error() === 0);
 
   console.log(`--- winhelp-wat-parser: ${passed} passed, ${failed} failed`);
   if (failed) process.exit(1);
