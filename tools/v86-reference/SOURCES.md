@@ -76,3 +76,12 @@ The first geometry probe on the pinned profile reported a `154x235` outer
 Minesweeper window, `148x191` client area, and client origin `(3,41)` relative
 to the outer window. Keep the generated PNG and JSON together when using that
 measurement to change emulator metrics.
+
+## Profile exclusions
+
+`apps.json` marks profile-specific exclusions with `skip`. The official Win98
+state uses the basic 640x480x4 VGA driver. Marbles needs a 256-color display
+with working DirectDraw, so it is not a valid reference target on this state.
+The app itself is compatible with Windows 98; the exclusion is about this VM
+profile. The XP-targeted `mplay32.exe` is also not used: the Media Player entry
+uses the OS 4.0 `mplayer.exe` binary instead.

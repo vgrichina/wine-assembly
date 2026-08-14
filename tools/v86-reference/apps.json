@@ -45,7 +45,11 @@
     "paint98": {
       "title": "Paint (Windows 98)",
       "launch": "D:\\MSPAINT.EXE",
-      "files": ["test/binaries/entertainment-pack/mspaint.exe"]
+      "files": [
+        "test/binaries/mspaint.exe",
+        "test/binaries/dlls/mfc42.dll",
+        "test/binaries/dlls/msvcrt.dll"
+      ]
     },
     "regedit": {
       "title": "Registry Editor",
@@ -54,8 +58,10 @@
     },
     "notepad98": {
       "title": "Notepad (Windows 98)",
-      "launch": "D:\\NOTEPAD98.EXE",
-      "files": ["test/binaries/win98-apps/notepad98.exe"]
+      "launch": "D:\\NOTEPAD.EXE",
+      "files": [
+        { "path": "test/binaries/win98-apps/notepad98.exe", "name": "NOTEPAD.EXE" }
+      ]
     },
     "wordpad": {
       "title": "WordPad",
@@ -78,9 +84,12 @@
       "files": ["test/binaries/win98-apps/taskman.exe"]
     },
     "media-player": {
-      "title": "Windows Media Player",
-      "launch": "D:\\MPLAY32.EXE",
-      "files": ["test/binaries/win98-apps/mplay32.exe"]
+      "title": "Media Player (Windows 98)",
+      "launch": "D:\\MPLAYER.EXE",
+      "postLaunch": [
+        { "waitMs": 2000, "scancodes": [28, 156] }
+      ],
+      "files": ["test/binaries/win98-apps/mplayer.exe"]
     },
     "ski": {
       "title": "SkiFree",
@@ -105,6 +114,7 @@
     },
     "marbles": {
       "title": "Marbles",
+      "skip": "The official v86 Win98 state is 640x480x4; Marbles requires a 256-color DirectDraw-capable display driver.",
       "launch": "D:\\MARBLES.EXE",
       "files": ["test/binaries/plus98/MARBLES.EXE"]
     }

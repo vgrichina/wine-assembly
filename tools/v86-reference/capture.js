@@ -296,12 +296,15 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) return usage();
   if (options.list) {
-    for (const [id, app] of Object.entries(APPS)) console.log(`${id.padEnd(20)} ${app.title}`);
+    for (const [id, app] of Object.entries(APPS)) {
+      console.log(`${id.padEnd(20)} ${app.skip ? "[skip] " : "       "}${app.title}`);
+    }
     return;
   }
 
   const entry = APPS[options.app];
   if (!entry) throw new Error(`unknown app ${options.app}; use --list`);
+  if (entry.skip) throw new Error(`${options.app} is excluded from this profile: ${entry.skip}`);
   entry.id = options.app;
   const output = path.resolve(options.output || path.join(
     REPO_ROOT,
@@ -392,6 +395,12 @@ async function main() {
     await page.evaluate(() => window.referenceVm.insertCd("/payload.iso"));
     await new Promise(resolve => setTimeout(resolve, 1000));
     await page.evaluate(command => window.referenceVm.run(command), entry.launch);
+    for (const action of entry.postLaunch || []) {
+      await new Promise(resolve => setTimeout(resolve, action.waitMs || 0));
+      if (action.scancodes) {
+        await page.evaluate(scancodes => window.emulator.keyboard_send_scancodes(scancodes, 20), action.scancodes);
+      }
+    }
     const waitMs = options.waitMs === undefined ? (entry.waitMs || 8000) : options.waitMs;
     await new Promise(resolve => setTimeout(resolve, waitMs));
 

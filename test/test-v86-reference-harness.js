@@ -31,6 +31,10 @@ assert(Object.keys(manifest.apps).length >= 15, "expected the tracked desktop ap
 
 for (const [id, app] of Object.entries(manifest.apps)) {
   assert(app.title && app.launch, `${id} needs title and launch`);
+  if (app.skip) assert.equal(typeof app.skip, "string", `${id} skip reason must be text`);
+  for (const action of app.postLaunch || []) {
+    assert(Array.isArray(action.scancodes), `${id} post-launch action needs scancodes`);
+  }
   if (app.probeSource) assert(fs.existsSync(path.join(root, app.probeSource)), `${id} probe source is missing`);
   for (const specification of app.files) {
     const relative = typeof specification === "string" ? specification : specification.path;
