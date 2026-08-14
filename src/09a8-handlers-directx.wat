@@ -198,6 +198,17 @@
   ;; returns it so apps like flip3dtl can navigate from RT surface back to DDraw.
   (global $dx_ddraw_this (mut i32) (i32.const 0))
 
+  ;; HWND supplied through IDirectDraw::SetCooperativeLevel (or the ddrawex
+  ;; factory). VCL games commonly create a hidden TApplication window first
+  ;; and give DirectDraw their later visible form. Rendering through main_hwnd
+  ;; in that case puts the primary surface at the desktop's top-left instead
+  ;; of in the game window.
+  (global $dx_coop_hwnd (mut i32) (i32.const 0))
+  (func $dx_target_hwnd (result i32)
+    (if (result i32) (global.get $dx_coop_hwnd)
+      (then (global.get $dx_coop_hwnd))
+      (else (global.get $main_hwnd))))
+
   ;; DirectInput mouse tracking (for relative dx/dy)
   (global $di_mouse_last_x (mut i32) (i32.const 0))
   (global $di_mouse_last_y (mut i32) (i32.const 0))
@@ -540,6 +551,7 @@
     ;; *lplpDD = obj_guest
     (call $gs32 (local.get $arg1) (local.get $obj_guest))
     (global.set $dx_ddraw_this (local.get $obj_guest))
+    (global.set $dx_coop_hwnd (i32.const 0))
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; stdcall 3 args
 
@@ -584,6 +596,7 @@
         (return)))
     (call $gs32 (local.get $arg1) (local.get $obj_guest))
     (global.set $dx_ddraw_this (local.get $obj_guest))
+    (global.set $dx_coop_hwnd (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -885,12 +898,14 @@
     (i32.store (i32.add (local.get $entry) (i32.const 28)) (local.get $flags))
     ;; *lplpDDSurface = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
-    ;; Primary surface → resize main window so back-canvas matches primary dims.
+    ;; Primary surface → resize the cooperative window so its back-canvas
+    ;; matches the primary dimensions. Fall back to main_hwnd for callers that
+    ;; never selected a cooperative window.
     ;; Apps like donut create a WS_POPUP window at size 0,0 and never call
     ;; SetDisplayMode — without this, SetDIBitsToDevice clips to the 1x1 back-canvas.
     (if (i32.and (local.get $caps) (i32.const 0x200))
-      (then (if (global.get $main_hwnd) (then
-        (call $host_move_window (global.get $main_hwnd)
+      (then (if (call $dx_target_hwnd) (then
+        (call $host_move_window (call $dx_target_hwnd)
           (i32.const 0) (i32.const 0)
           (local.get $w) (local.get $h) (i32.const 0))))))
     ;; If primary with back buffer count > 0, create back buffer and link it
@@ -1555,11 +1570,12 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; SetCooperativeLevel(this, hwnd, dwFlags) — no-op, store hwnd
+  ;; SetCooperativeLevel(this, hwnd, dwFlags) — store the presentation owner.
   (func $handle_IDirectDraw_SetCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $arg1)) ;; store hwnd
+    (global.set $dx_coop_hwnd (local.get $arg1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -1604,23 +1620,24 @@
     (global.set $dx_primary_pal_wa (local.get $pal_wa)))
 
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vtbl i32)
+    (local $vtbl i32) (local $target_hwnd i32)
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
     (if (i32.le_u (local.get $arg3) (i32.const 8))
       (then (call $install_default_dx_palette)))
-    ;; Resize the main window to match the display mode so the back-canvas
+    ;; Resize the cooperative window to match the display mode so the back-canvas
     ;; matches the primary-surface dims. Without this, fullscreen DDraw apps
     ;; (MCM) that issued an earlier SetWindowPos to a chrome-only size end up
     ;; with an 8×47 back-canvas and nothing visible lands on it.
     ;; flags=0: apply both position (0,0) and size (arg1, arg2) — earlier
     ;; code passed 1 (SWP_NOSIZE) which actively dropped the size update.
-    (if (global.get $main_hwnd) (then
-      (call $host_move_window (global.get $main_hwnd)
+    (local.set $target_hwnd (call $dx_target_hwnd))
+    (if (local.get $target_hwnd) (then
+      (call $host_move_window (local.get $target_hwnd)
         (i32.const 0) (i32.const 0)
         (local.get $arg1) (local.get $arg2) (i32.const 0))
-      (call $defwndproc_do_nccalcsize (global.get $main_hwnd))))
+      (call $defwndproc_do_nccalcsize (local.get $target_hwnd))))
     (global.set $eax (i32.const 0))
     (local.set $vtbl (call $gl32 (local.get $arg0)))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
@@ -2453,7 +2470,7 @@
   (func $dx_present (param $entry_wa i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
-    (local $surface_id i32)
+    (local $surface_id i32) (local $target_hwnd i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
     (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
@@ -2467,9 +2484,10 @@
     ;; a second WAT window surface for every scanline of old-school fades.
     (local.set $surface_id
       (i32.add (i32.const 0x00200000) (call $dx_slot_of (local.get $entry_wa))))
+    (local.set $target_hwnd (call $dx_target_hwnd))
     (if (call $gdi_dx_dc_bind (local.get $surface_id))
       (then
-        (if (call $host_gdi_surface_attach (local.get $surface_id) (global.get $main_hwnd))
+        (if (call $host_gdi_surface_attach (local.get $surface_id) (local.get $target_hwnd))
           (then
             (drop (call $host_gdi_surface_upload (local.get $surface_id)
               (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
@@ -2510,7 +2528,7 @@
         (i32.store (i32.add (local.get $bmi_wa) (i32.const 44)) (i32.const 0x07E0))   ;; G mask
         (i32.store (i32.add (local.get $bmi_wa) (i32.const 48)) (i32.const 0x001F)))) ;; B mask
     (call $host_gdi_set_dib_to_device
-      (i32.add (global.get $main_hwnd) (i32.const 0x40000)) ;; hdc = client DC
+      (i32.add (local.get $target_hwnd) (i32.const 0x40000)) ;; hdc = client DC
       (i32.const 0) (i32.const 0) ;; xDest, yDest
       (local.get $w) (local.get $h) ;; w, h
       (i32.const 0) (i32.const 0) ;; xSrc, ySrc
@@ -4040,6 +4058,8 @@
     ;; Stash hWnd in misc0 (DDraw entry layout: +8 = hwnd)
     (local.set $entry_wa (call $dx_from_this (local.get $obj_guest)))
     (i32.store (i32.add (local.get $entry_wa) (i32.const 8)) (local.get $arg2))
+    (global.set $dx_ddraw_this (local.get $obj_guest))
+    (global.set $dx_coop_hwnd (local.get $arg2))
     (call $gs32 (local.get $pp_dd) (local.get $obj_guest))
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
