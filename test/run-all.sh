@@ -139,6 +139,7 @@ E2E=(
   test/test-mspaint-dirty-new.js
   test/test-mspaint-clipboard.js
   test/test-mspaint-large-scroll.js
+  test/test-mspaint-thumbnail.js
   test/test-mplay32-dual-mode.js
   test/test-statusbar-surface.js
   test/test-regedit-deep.js

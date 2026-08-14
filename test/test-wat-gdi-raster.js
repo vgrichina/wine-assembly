@@ -181,6 +181,24 @@ const SRC = path.join(ROOT, 'src');
     assert.strictEqual(packed(dst, 3, 1), 0);
   });
 
+  check('BitBlt clips source pixels outside the bitmap without aborting the transfer', () => {
+    const src = surface(4, 3, 24, false);
+    const dst = surface(5, 4, 32, true);
+    for (let y = 0; y < src.height; y++) {
+      for (let x = 0; x < src.width; x++) setPacked(src, x, y, 0x010000 * y + x + 1);
+    }
+    for (let y = 0; y < dst.height; y++) {
+      for (let x = 0; x < dst.width; x++) setPacked(dst, x, y, 0xA0B0C0);
+    }
+
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      dst.desc, 0, 0, 4, 3, src.desc, -1, -1, 0, 0x00CC0020), 1);
+    assert.strictEqual(packed(dst, 0, 0), 0xA0B0C0,
+      'out-of-source destination pixels must remain unchanged');
+    assert.strictEqual(packed(dst, 1, 1), packed(src, 0, 0));
+    assert.strictEqual(packed(dst, 3, 2), packed(src, 2, 1));
+  });
+
   check('BitBlt evaluates source/destination ROP3 and pattern-only PatBlt modes', () => {
     const src = surface(2, 1, 32);
     const dst = surface(3, 1, 24);

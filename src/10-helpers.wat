@@ -7792,7 +7792,14 @@
               (then (local.set $s (call $gdi_raster_read_blt_source
                 (local.get $hdc) (local.get $src_hdc) (local.get $dst) (local.get $src)
                 (i32.add (local.get $sx) (local.get $x)) (i32.add (local.get $sy) (local.get $y))))
-                (if (i32.eq (local.get $s) (i32.const -1)) (then (return (i32.const 0))))))
+                ;; BitBlt clips a source rectangle that extends beyond its
+                ;; bitmap instead of rejecting the entire transfer. Paint's
+                ;; thumbnail deliberately copies from (-3,-3), leaving a
+                ;; three-pixel border before the in-bounds preview pixels.
+                (if (i32.eq (local.get $s) (i32.const -1))
+                  (then
+                    (local.set $x (i32.add (local.get $x) (local.get $step)))
+                    (br $cols)))))
             (drop (call $gdi_raster_write (local.get $dst)
               (i32.add (local.get $dx) (local.get $x)) (i32.add (local.get $dy) (local.get $y))
               (call $gdi_apply_rop3 (local.get $rop3) (local.get $pixel_pattern)
