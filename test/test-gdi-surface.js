@@ -4,6 +4,7 @@
 
 const assert = require('assert');
 const { GdiSurface, defaultStride } = require('../lib/gdi-surface');
+const { parseDIB } = require('../lib/dib');
 const { createHostImports } = require('../lib/host-imports');
 
 let passed = 0;
@@ -58,9 +59,23 @@ check('quantizes indexed pixels against the supplied palette', () => {
   assert.strictEqual(bytes[0], 1);
 });
 
-check('round-trips RGB565 and RGBA32 storage', () => {
-  const rgb565 = new GdiSurface({ width: 1, height: 1, bpp: 16, storage: new Uint8Array(4) });
+check('round-trips default RGB555, explicit RGB565, and RGBA32 storage', () => {
+  const rgb555Bytes = new Uint8Array(4);
+  const rgb555 = new GdiSurface({ width: 1, height: 1, bpp: 16, storage: rgb555Bytes });
+  assert.strictEqual(rgb555.writePixel(0, 0, 0x000000FF), 0x000000FF);
+  assert.deepStrictEqual(Array.from(rgb555Bytes.slice(0, 2)), [0x00, 0x7C]);
+
+  const rgb565Bytes = new Uint8Array(4);
+  const rgb565 = new GdiSurface({
+    width: 1, height: 1, bpp: 16, storage: rgb565Bytes,
+    masks: [0xF800, 0x07E0, 0x001F],
+  });
   assert.strictEqual(rgb565.writePixel(0, 0, 0x0000FF00), 0x0000FF00);
+  assert.deepStrictEqual(Array.from(rgb565Bytes.slice(0, 2)), [0xE0, 0x07]);
+  assert.throws(() => new GdiSurface({
+    width: 1, height: 1, bpp: 16, storage: new Uint8Array(4),
+    masks: [0xF800, 0xF800, 0x001F],
+  }), /overlap/);
 
   const rgbaBytes = new Uint8Array(4);
   const rgba = new GdiSurface({
@@ -69,6 +84,30 @@ check('round-trips RGB565 and RGBA32 storage', () => {
   rgba.writePixel(0, 0, 0x00563412);
   assert.deepStrictEqual(Array.from(rgbaBytes), [0x12, 0x34, 0x56, 0xFF]);
   assert.strictEqual(rgba.readPixel(0, 0), 0x00563412);
+});
+
+check('raw DIB conversion distinguishes RGB555 BI_RGB and RGB565 BI_BITFIELDS', () => {
+  function dib16(compression, masks, pixel) {
+    const maskBytes = compression === 3 ? 12 : 0;
+    const dib = new Uint8Array(40 + maskBytes + 4);
+    const dv = new DataView(dib.buffer);
+    dv.setUint32(0, 40, true);
+    dv.setInt32(4, 1, true);
+    dv.setInt32(8, 1, true);
+    dv.setUint16(12, 1, true);
+    dv.setUint16(14, 16, true);
+    dv.setUint32(16, compression, true);
+    if (masks) masks.forEach((mask, index) => dv.setUint32(40 + index * 4, mask, true));
+    dv.setUint16(40 + maskBytes, pixel, true);
+    return dib;
+  }
+  const rgb555 = parseDIB(dib16(0, null, 0x7C00));
+  assert.deepStrictEqual(Array.from(rgb555.pixels), [255, 0, 0, 255]);
+  assert.deepStrictEqual(rgb555.masks, [0x7C00, 0x03E0, 0x001F]);
+  const rgb565 = parseDIB(dib16(3, [0xF800, 0x07E0, 0x001F], 0x07E0));
+  assert.deepStrictEqual(Array.from(rgb565.pixels), [0, 255, 0, 255]);
+  assert.deepStrictEqual(rgb565.masks, [0xF800, 0x07E0, 0x001F]);
+  assert.strictEqual(parseDIB(dib16(3, [0xF800, 0xF800, 0x001F], 0)), null);
 });
 
 check('clips fills and coalesces dirty rectangles', () => {

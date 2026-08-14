@@ -65,6 +65,11 @@ async function main() {
     return bytes[p] | (bytes[p + 1] << 8) | (bytes[p + 2] << 16);
   }
 
+  function raw16At(t, x, y) {
+    const row = t.topDown ? y : t.height - 1 - y;
+    return dv.getUint16(t.bits + row * t.stride + x * 2, true);
+  }
+
   function rows(t) {
     const chars = new Map([[0, '.'], [0xFFFFFF, 'W'], [0xFF0000, 'R'], [0x00FF00, 'G']]);
     return Array.from({ length: t.height }, (_, y) =>
@@ -100,6 +105,21 @@ async function main() {
       '..RWWWWR.',
       '..RRRRRR.',
       '.........',
+    ]);
+  });
+
+  check('16-bpp rectangle fill and outline share the RGB555 raster codec', () => {
+    const t = target(5, 4, 16, true);
+    const redPen = object(1, 0, 1, 0x000000FF);
+    const greenBrush = object(2, 0, 0, 0x0000FF00);
+    assert.strictEqual(wat.test_gdi_rectangle_desc(
+      t.hdc, t.desc, 1, 1, 4, 4, redPen, greenBrush, 13), 1);
+    assert.deepStrictEqual(Array.from({ length: 4 }, (_, y) =>
+      Array.from({ length: 5 }, (_, x) => raw16At(t, x, y))), [
+      [0, 0, 0, 0, 0],
+      [0, 0x7C00, 0x7C00, 0x7C00, 0],
+      [0, 0x7C00, 0x03E0, 0x7C00, 0],
+      [0, 0x7C00, 0x7C00, 0x7C00, 0],
     ]);
   });
 

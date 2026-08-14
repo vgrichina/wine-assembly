@@ -1626,7 +1626,16 @@
           (local.get $handle) (local.get $width) (local.get $height)
           (local.get $bpp) (local.get $bits) (local.get $stride)
           (i32.and (i32.shr_u (local.get $flags) (i32.const 1)) (i32.const 1))
-          (local.get $palette) (local.get $palette_count)))
+          (local.get $palette) (local.get $palette_count)
+          (select (i32.load (local.get $palette)) (i32.const 0)
+            (i32.and (i32.eq (local.get $bpp) (i32.const 16))
+              (i32.eq (local.get $palette_count) (i32.const 3))))
+          (select (i32.load offset=4 (local.get $palette)) (i32.const 0)
+            (i32.and (i32.eq (local.get $bpp) (i32.const 16))
+              (i32.eq (local.get $palette_count) (i32.const 3))))
+          (select (i32.load offset=8 (local.get $palette)) (i32.const 0)
+            (i32.and (i32.eq (local.get $bpp) (i32.const 16))
+              (i32.eq (local.get $palette_count) (i32.const 3))))))
       (then
         (drop (call $gdi_object_delete (local.get $handle)))
         (return (i32.const 0))))
@@ -2737,7 +2746,8 @@
     (if (i32.eqz (call $host_gdi_surface_create
           (local.get $id) (local.get $w) (local.get $h) (i32.const 32)
           (local.get $bits) (i32.load offset=20 (local.get $p)) (i32.const 1)
-          (i32.const 0) (i32.const 0)))
+          (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0)))
       (then
         (call $dib_free_wasm (local.get $bits))
         (i32.store offset=8 (local.get $p) (i32.const 0))
@@ -2808,7 +2818,13 @@
       (local.get $bpp)
       (i32.load offset=20 (local.get $entry))
       (i32.load16_u offset=18 (local.get $entry))
-      (i32.const 1) (local.get $palette) (local.get $count)))
+      (i32.const 1) (local.get $palette) (local.get $count)
+      (select (i32.const 0xF800) (i32.const 0)
+        (i32.eq (local.get $bpp) (i32.const 16)))
+      (select (i32.const 0x07E0) (i32.const 0)
+        (i32.eq (local.get $bpp) (i32.const 16)))
+      (select (i32.const 0x001F) (i32.const 0)
+        (i32.eq (local.get $bpp) (i32.const 16)))))
 
   (func $gdi_dx_dc_release (param $hdc i32)
     (call $gdi_dc_clip_release (local.get $hdc))
@@ -3245,9 +3261,10 @@
 
   (func $gdi_line_descriptor_supported (param $desc i32) (result i32)
     (local $style i32) (local $width i32) (local $unit_mapping i32)
-    (if (i32.and
-          (i32.ne (i32.load offset=16 (local.get $desc)) (i32.const 24))
-          (i32.ne (i32.load offset=16 (local.get $desc)) (i32.const 32)))
+    (if (i32.and (i32.ne (i32.load offset=16 (local.get $desc)) (i32.const 16))
+          (i32.and
+            (i32.ne (i32.load offset=16 (local.get $desc)) (i32.const 24))
+            (i32.ne (i32.load offset=16 (local.get $desc)) (i32.const 32))))
       (then (return (i32.const 0))))
     (local.set $style (i32.load offset=64 (local.get $desc)))
     (local.set $width (i32.load offset=28 (local.get $desc)))
@@ -3456,8 +3473,7 @@
 
   (func $gdi_line_put_pixel (param $hdc i32) (param $desc i32)
         (param $x i32) (param $y i32) (param $rop2 i32) (result i32)
-    (local $row i32) (local $pixel i32) (local $dst i32) (local $value i32)
-    (local $bpp i32) (local $pen i32)
+    (local $dst i32) (local $value i32) (local $pen i32)
     (if (i32.or
           (i32.or (i32.lt_s (local.get $x) (i32.const 0))
             (i32.ge_s (local.get $x) (i32.load offset=4 (local.get $desc))))
@@ -3469,18 +3485,9 @@
           (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
           (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
       (then (return (i32.const 0))))
-    (local.set $row (select
-      (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
-      (local.get $y) (i32.eqz (i32.load offset=20 (local.get $desc)))))
-    (local.set $pixel (i32.add (i32.load (local.get $desc))
-      (i32.mul (local.get $row) (i32.load offset=12 (local.get $desc)))))
-    (local.set $bpp (i32.load offset=16 (local.get $desc)))
-    (local.set $pixel (i32.add (local.get $pixel)
-      (i32.mul (local.get $x) (select (i32.const 3) (i32.const 4)
-        (i32.eq (local.get $bpp) (i32.const 24))))))
-    (local.set $dst (i32.or (i32.load8_u (local.get $pixel))
-      (i32.or (i32.shl (i32.load8_u offset=1 (local.get $pixel)) (i32.const 8))
-        (i32.shl (i32.load8_u offset=2 (local.get $pixel)) (i32.const 16)))))
+    (local.set $dst (call $gdi_raster_read
+      (local.get $desc) (local.get $x) (local.get $y)))
+    (if (i32.eq (local.get $dst) (i32.const -1)) (then (return (i32.const 0))))
     ;; Convert COLORREF 0x00BBGGRR to the DIB byte-packed 0x00RRGGBB value.
     (local.set $pen (i32.load offset=24 (local.get $desc)))
     (local.set $pen (i32.or
@@ -3489,12 +3496,8 @@
       (i32.and (i32.shr_u (local.get $pen) (i32.const 16)) (i32.const 0xFF))))
     (local.set $value (call $gdi_apply_rop2
       (local.get $rop2) (local.get $pen) (local.get $dst)))
-    (i32.store8 (local.get $pixel) (local.get $value))
-    (i32.store8 offset=1 (local.get $pixel) (i32.shr_u (local.get $value) (i32.const 8)))
-    (i32.store8 offset=2 (local.get $pixel) (i32.shr_u (local.get $value) (i32.const 16)))
-    (if (i32.eq (local.get $bpp) (i32.const 32))
-      (then (i32.store8 offset=3 (local.get $pixel) (i32.const 0))))
-    (i32.const 1))
+    (call $gdi_raster_write
+      (local.get $desc) (local.get $x) (local.get $y) (local.get $value)))
 
   ;; Format-neutral pixel write for filled geometry. color is a COLORREF and
   ;; desc uses the line descriptor's surface/mapping layout. Geometry callers
@@ -3565,8 +3568,7 @@
 
   (func $gdi_shape_put_pixel (param $hdc i32) (param $desc i32)
         (param $x i32) (param $y i32) (param $color i32) (param $rop2 i32) (result i32)
-    (local $row i32) (local $pixel i32) (local $dst i32) (local $value i32)
-    (local $bpp i32) (local $packed i32)
+    (local $dst i32) (local $value i32) (local $packed i32)
     (if (i32.or
           (i32.or (i32.lt_s (local.get $x) (i32.const 0))
             (i32.ge_s (local.get $x) (i32.load offset=4 (local.get $desc))))
@@ -3578,30 +3580,17 @@
           (call $gdi_shape_unmap_x (local.get $desc) (local.get $x))
           (call $gdi_shape_unmap_y (local.get $desc) (local.get $y))))
       (then (return (i32.const 0))))
-    (local.set $row (select
-      (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
-      (local.get $y) (i32.eqz (i32.load offset=20 (local.get $desc)))))
-    (local.set $bpp (i32.load offset=16 (local.get $desc)))
-    (local.set $pixel (i32.add
-      (i32.add (i32.load (local.get $desc))
-        (i32.mul (local.get $row) (i32.load offset=12 (local.get $desc))))
-      (i32.mul (local.get $x) (select (i32.const 3) (i32.const 4)
-        (i32.eq (local.get $bpp) (i32.const 24))))))
-    (local.set $dst (i32.or (i32.load8_u (local.get $pixel))
-      (i32.or (i32.shl (i32.load8_u offset=1 (local.get $pixel)) (i32.const 8))
-        (i32.shl (i32.load8_u offset=2 (local.get $pixel)) (i32.const 16)))))
+    (local.set $dst (call $gdi_raster_read
+      (local.get $desc) (local.get $x) (local.get $y)))
+    (if (i32.eq (local.get $dst) (i32.const -1)) (then (return (i32.const 0))))
     (local.set $packed (i32.or
       (i32.or (i32.shl (i32.and (local.get $color) (i32.const 0xFF)) (i32.const 16))
         (i32.and (local.get $color) (i32.const 0xFF00)))
       (i32.and (i32.shr_u (local.get $color) (i32.const 16)) (i32.const 0xFF))))
     (local.set $value (call $gdi_apply_rop2
       (local.get $rop2) (local.get $packed) (local.get $dst)))
-    (i32.store8 (local.get $pixel) (local.get $value))
-    (i32.store8 offset=1 (local.get $pixel) (i32.shr_u (local.get $value) (i32.const 8)))
-    (i32.store8 offset=2 (local.get $pixel) (i32.shr_u (local.get $value) (i32.const 16)))
-    (if (i32.eq (local.get $bpp) (i32.const 32))
-      (then (i32.store8 offset=3 (local.get $pixel) (i32.const 0))))
-    (i32.const 1))
+    (call $gdi_raster_write
+      (local.get $desc) (local.get $x) (local.get $y) (local.get $value)))
 
   (func $gdi_shape_desc_valid (param $desc i32) (result i32)
     (i32.and
@@ -3615,12 +3604,15 @@
           (i32.and (i32.ne (i32.load offset=56 (local.get $desc)) (i32.const 0))
             (i32.ne (i32.load offset=60 (local.get $desc)) (i32.const 0)))))
       (i32.and
-        (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))
-          (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32)))
+        (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 16))
+          (i32.or (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))
+            (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32))))
         (i32.ge_u (i32.load offset=12 (local.get $desc))
           (i32.mul (i32.load offset=4 (local.get $desc))
-            (select (i32.const 3) (i32.const 4)
-              (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24))))))))
+            (select (i32.const 2)
+              (select (i32.const 3) (i32.const 4)
+                (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24)))
+              (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 16))))))))
 
   (func $gdi_shape_fill_span (param $hdc i32) (param $desc i32)
         (param $y i32) (param $left i32) (param $right i32)
@@ -5522,8 +5514,88 @@
         (i32.and (local.get $color) (i32.const 0xFF00)))
       (i32.and (i32.shr_u (local.get $color) (i32.const 16)) (i32.const 0xFF))))
 
+  (func $gdi_color_mask_contiguous (param $mask i32) (result i32)
+    (local $low i32)
+    (if (i32.or (i32.eqz (local.get $mask))
+          (i32.ne (i32.and (local.get $mask) (i32.const 0xFFFF0000)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $low (i32.and (local.get $mask)
+      (i32.sub (i32.const 0) (local.get $mask))))
+    (i32.eqz (i32.and (i32.add (local.get $mask) (local.get $low))
+      (local.get $mask))))
+
+  (func $gdi_color_masks_valid (param $masks i32) (result i32)
+    (local $r i32) (local $g i32) (local $b i32)
+    (if (i32.eqz (local.get $masks)) (then (return (i32.const 0))))
+    (local.set $r (i32.load (local.get $masks)))
+    (local.set $g (i32.load offset=4 (local.get $masks)))
+    (local.set $b (i32.load offset=8 (local.get $masks)))
+    (i32.and
+      (i32.and (call $gdi_color_mask_contiguous (local.get $r))
+        (call $gdi_color_mask_contiguous (local.get $g)))
+      (i32.and (call $gdi_color_mask_contiguous (local.get $b))
+        (i32.eqz (i32.or
+          (i32.and (local.get $r) (local.get $g))
+          (i32.or (i32.and (local.get $r) (local.get $b))
+            (i32.and (local.get $g) (local.get $b))))))))
+
+  ;; Resolve one RGB channel mask for a 16-bpp descriptor. Bitmap-backed DIBs
+  ;; own a three-DWORD table in record +32/+36. Transient BITMAPINFO sources
+  ;; use descriptor +24/+28/+64. DirectDraw is explicitly RGB565; all other
+  ;; maskless 16-bpp DIB descriptors use Win32 BI_RGB RGB555.
+  (func $gdi_raster_channel_mask (param $desc i32) (param $channel i32) (result i32)
+    (local $record i32) (local $masks i32) (local $surface i32)
+    (local.set $surface (i32.load offset=68 (local.get $desc)))
+    (local.set $record (call $gdi_object_record (local.get $surface)))
+    (if (i32.and (i32.ne (local.get $record) (i32.const 0))
+          (i32.and (i32.eq (i32.load offset=16 (local.get $record)) (i32.const 16))
+            (i32.eq (i32.load offset=36 (local.get $record)) (i32.const 3))))
+      (then
+        (local.set $masks (i32.load offset=32 (local.get $record)))
+        (if (call $gdi_color_masks_valid (local.get $masks))
+          (then (return (i32.load (i32.add (local.get $masks)
+            (i32.shl (local.get $channel) (i32.const 2)))))))))
+    (if (i32.and (i32.eqz (local.get $surface))
+          (i32.and (i32.ne (i32.load offset=24 (local.get $desc)) (i32.const 0))
+            (i32.and (i32.ne (i32.load offset=28 (local.get $desc)) (i32.const 0))
+              (i32.ne (i32.load offset=64 (local.get $desc)) (i32.const 0)))))
+      (then
+        (return (select (i32.load offset=64 (local.get $desc))
+          (select (i32.load offset=24 (local.get $desc))
+            (i32.load offset=28 (local.get $desc))
+            (i32.eq (local.get $channel) (i32.const 0)))
+          (i32.eq (local.get $channel) (i32.const 2))))))
+    (if (i32.and (i32.ge_u (local.get $surface) (i32.const 0x00200000))
+          (i32.lt_u (local.get $surface) (i32.const 0x00300000)))
+      (then (return (select (i32.const 0x001F)
+        (select (i32.const 0xF800) (i32.const 0x07E0)
+          (i32.eq (local.get $channel) (i32.const 0)))
+        (i32.eq (local.get $channel) (i32.const 2))))))
+    (i32.load (i32.add (global.get $GDI_RGB555_MASKS)
+      (i32.shl (local.get $channel) (i32.const 2)))))
+
+  (func $gdi_raster_unpack_channel (param $value i32) (param $mask i32) (result i32)
+    (local $shift i32) (local $max i32) (local $channel i32)
+    (local.set $shift (i32.ctz (local.get $mask)))
+    (local.set $max (i32.sub (i32.shl (i32.const 1) (i32.popcnt (local.get $mask)))
+      (i32.const 1)))
+    (local.set $channel (i32.shr_u (i32.and (local.get $value) (local.get $mask))
+      (local.get $shift)))
+    (i32.div_u (i32.add (i32.mul (local.get $channel) (i32.const 255))
+      (i32.shr_u (local.get $max) (i32.const 1))) (local.get $max)))
+
+  (func $gdi_raster_pack_channel (param $channel i32) (param $mask i32) (result i32)
+    (local $max i32)
+    (local.set $max (i32.sub (i32.shl (i32.const 1) (i32.popcnt (local.get $mask)))
+      (i32.const 1)))
+    (i32.and (i32.shl
+      (i32.div_u (i32.add (i32.mul (i32.and (local.get $channel) (i32.const 0xFF))
+        (local.get $max)) (i32.const 127)) (i32.const 255))
+      (i32.ctz (local.get $mask))) (local.get $mask)))
+
   (func $gdi_raster_read (param $desc i32) (param $x i32) (param $y i32) (result i32)
     (local $p i32) (local $bpp i32) (local $value i32)
+    (local $r_mask i32) (local $g_mask i32) (local $b_mask i32)
     (local.set $p (call $gdi_raster_pixel_ptr (local.get $desc) (local.get $x) (local.get $y)))
     (if (i32.eqz (local.get $p)) (then (return (i32.const -1))))
     (local.set $bpp (i32.load offset=16 (local.get $desc)))
@@ -5544,14 +5616,17 @@
     (if (i32.eq (local.get $bpp) (i32.const 16))
       (then
         (local.set $value (i32.load16_u (local.get $p)))
+        (local.set $r_mask (call $gdi_raster_channel_mask (local.get $desc) (i32.const 0)))
+        (local.set $g_mask (call $gdi_raster_channel_mask (local.get $desc) (i32.const 1)))
+        (local.set $b_mask (call $gdi_raster_channel_mask (local.get $desc) (i32.const 2)))
         (return (i32.or
-          (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $value) (i32.const 11))
-            (i32.const 31)) (i32.const 255)) (i32.const 31)) (i32.const 16))
+          (i32.shl (call $gdi_raster_unpack_channel
+            (local.get $value) (local.get $r_mask)) (i32.const 16))
           (i32.or
-            (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $value) (i32.const 5))
-              (i32.const 63)) (i32.const 255)) (i32.const 63)) (i32.const 8))
-            (i32.div_u (i32.mul (i32.and (local.get $value) (i32.const 31))
-              (i32.const 255)) (i32.const 31)))))))
+            (i32.shl (call $gdi_raster_unpack_channel
+              (local.get $value) (local.get $g_mask)) (i32.const 8))
+            (call $gdi_raster_unpack_channel
+              (local.get $value) (local.get $b_mask)))))))
     (i32.or (i32.load8_u (local.get $p))
       (i32.or (i32.shl (i32.load8_u offset=1 (local.get $p)) (i32.const 8))
         (i32.shl (i32.load8_u offset=2 (local.get $p)) (i32.const 16)))))
@@ -5608,6 +5683,7 @@
   (func $gdi_raster_write (param $desc i32) (param $x i32) (param $y i32)
         (param $color i32) (result i32)
     (local $p i32) (local $bpp i32) (local $index i32) (local $old i32)
+    (local $r_mask i32) (local $g_mask i32) (local $b_mask i32)
     (local.set $p (call $gdi_raster_pixel_ptr (local.get $desc) (local.get $x) (local.get $y)))
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
     (local.set $bpp (i32.load offset=16 (local.get $desc)))
@@ -5635,14 +5711,16 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $bpp) (i32.const 16))
       (then
+        (local.set $r_mask (call $gdi_raster_channel_mask (local.get $desc) (i32.const 0)))
+        (local.set $g_mask (call $gdi_raster_channel_mask (local.get $desc) (i32.const 1)))
+        (local.set $b_mask (call $gdi_raster_channel_mask (local.get $desc) (i32.const 2)))
         (i32.store16 (local.get $p) (i32.or
-          (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $color) (i32.const 16))
-            (i32.const 0xFF)) (i32.const 31)) (i32.const 255)) (i32.const 11))
-          (i32.or
-            (i32.shl (i32.div_u (i32.mul (i32.and (i32.shr_u (local.get $color) (i32.const 8))
-              (i32.const 0xFF)) (i32.const 63)) (i32.const 255)) (i32.const 5))
-            (i32.div_u (i32.mul (i32.and (local.get $color) (i32.const 0xFF))
-              (i32.const 31)) (i32.const 255)))))
+          (call $gdi_raster_pack_channel
+            (i32.shr_u (local.get $color) (i32.const 16)) (local.get $r_mask))
+          (i32.or (call $gdi_raster_pack_channel
+              (i32.shr_u (local.get $color) (i32.const 8)) (local.get $g_mask))
+            (call $gdi_raster_pack_channel
+              (local.get $color) (local.get $b_mask)))))
         (return (i32.const 1))))
     (i32.store8 (local.get $p) (local.get $color))
     (i32.store8 offset=1 (local.get $p) (i32.shr_u (local.get $color) (i32.const 8)))
@@ -6397,7 +6475,8 @@
   (func $gdi_raster_desc_from_bmi (param $desc i32) (param $bits i32) (param $bmi i32)
         (result i32)
     (local $header_size i32) (local $w i32) (local $h i32) (local $bpp i32)
-    (local $top_down i32) (local $palette_count i32)
+    (local $compression i32) (local $top_down i32) (local $palette_count i32)
+    (local $masks i32)
     (if (i32.or (i32.eqz (local.get $desc))
           (i32.or (i32.eqz (local.get $bits)) (i32.eqz (local.get $bmi))))
       (then (return (i32.const 0))))
@@ -6408,6 +6487,7 @@
     (local.set $w (i32.load offset=4 (local.get $bmi)))
     (local.set $h (i32.load offset=8 (local.get $bmi)))
     (local.set $bpp (i32.load16_u offset=14 (local.get $bmi)))
+    (local.set $compression (i32.load offset=16 (local.get $bmi)))
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
           (i32.or (i32.eqz (local.get $h))
             (i32.and
@@ -6415,10 +6495,13 @@
                 (i32.and (i32.ne (local.get $bpp) (i32.const 4))
                   (i32.ne (local.get $bpp) (i32.const 8))))
               (i32.and (i32.ne (local.get $bpp) (i32.const 24))
-                (i32.ne (local.get $bpp) (i32.const 32))))))
+                (i32.and (i32.ne (local.get $bpp) (i32.const 16))
+                  (i32.ne (local.get $bpp) (i32.const 32)))))))
       (then (return (i32.const 0))))
     (if (i32.or (i32.ne (i32.load16_u offset=12 (local.get $bmi)) (i32.const 1))
-          (i32.ne (i32.load offset=16 (local.get $bmi)) (i32.const 0)))
+          (i32.and (i32.ne (local.get $compression) (i32.const 0))
+            (i32.or (i32.ne (local.get $compression) (i32.const 3))
+              (i32.ne (local.get $bpp) (i32.const 16)))))
       (then (return (i32.const 0))))
     (local.set $top_down (i32.lt_s (local.get $h) (i32.const 0)))
     (if (local.get $top_down) (then (local.set $h (i32.sub (i32.const 0) (local.get $h)))))
@@ -6443,6 +6526,20 @@
         (i32.store offset=24 (local.get $desc)
           (i32.add (local.get $bmi) (local.get $header_size)))
         (i32.store offset=28 (local.get $desc) (local.get $palette_count))))
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then
+        (if (i32.eq (local.get $compression) (i32.const 3))
+          (then
+            (if (i32.and (i32.ne (local.get $header_size) (i32.const 40))
+                  (i32.lt_u (local.get $header_size) (i32.const 52)))
+              (then (return (i32.const 0))))
+            (local.set $masks (i32.add (local.get $bmi) (i32.const 40)))
+            (if (i32.eqz (call $gdi_color_masks_valid (local.get $masks)))
+              (then (return (i32.const 0)))))
+          (else (local.set $masks (global.get $GDI_RGB555_MASKS))))
+        (i32.store offset=24 (local.get $desc) (i32.load (local.get $masks)))
+        (i32.store offset=28 (local.get $desc) (i32.load offset=4 (local.get $masks)))
+        (i32.store offset=64 (local.get $desc) (i32.load offset=8 (local.get $masks)))))
     (i32.const 1))
 
   ;; Build a transient source descriptor for APIs that accept a DIB color-use
@@ -6847,6 +6944,8 @@
 
   (func (export "test_gdi_raster_desc_from_bmi") (param i32 i32 i32) (result i32)
     (call $gdi_raster_desc_from_bmi (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "test_gdi_raster_desc_from_bitmap") (param i32 i32) (result i32)
+    (call $gdi_raster_desc_from_bitmap (local.get 0) (local.get 1)))
   (func (export "test_gdi_raster_mask_blt")
         (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_raster_mask_blt (local.get 0) (local.get 1) (local.get 2) (local.get 3)

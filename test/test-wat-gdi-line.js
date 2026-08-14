@@ -267,7 +267,7 @@ async function main() {
     }
   });
 
-  check('unsupported wide ROP2, transformed wide, huge, and 16bpp lines fall back', () => {
+  check('unsupported wide ROP2, transformed wide, and huge lines fall back while 16bpp draws', () => {
     const dib = makeDib(6, 4, 24);
     const wide = createPen(0, 3, 0x000000FF);
     selectObject(dib.hdc, wide);
@@ -288,7 +288,12 @@ async function main() {
     assert(bitmap16 && dc16, 'failed to create 16bpp DDB/DC');
     assert.strictEqual(selectObject(dc16, bitmap16), 0x30007);
     selectObject(dc16, thin);
-    assert.strictEqual(wat.test_gdi_line_try(dc16, 0, 0, 4, 0), 0);
+    assert.strictEqual(wat.test_gdi_line_try(dc16, 0, 0, 4, 0), 1);
+    const storage16 = wat.test_gdi_bitmap_storage(bitmap16) >>> 0;
+    assert.deepStrictEqual([0, 1, 2, 3, 4].map(x =>
+      dv.getUint16(storage16 + 36 + x * 2, true)),
+    [0x7C00, 0x7C00, 0x7C00, 0x7C00, 0],
+    '16-bpp BI_RGB lines use RGB555 and preserve endpoint exclusion');
   });
 
   check('wide dash requests normalize to solid and PS_NULL never draws', () => {

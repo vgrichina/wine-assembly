@@ -92,7 +92,7 @@
     (local $header_size i32) (local $width i32) (local $height i32)
     (local $bpp i32) (local $compression i32) (local $top_down i32)
     (local $palette_count i32) (local $palette_bytes i32) (local $bits_offset i32)
-    (local $stride i32) (local $image_size i64)
+    (local $stride i32) (local $masks i32) (local $image_size i64)
     (if (i32.or (i32.eqz (local.get $data))
           (i32.or (i32.eqz (local.get $plan)) (i32.lt_u (local.get $size) (i32.const 12))))
       (then (return (i32.const 0))))
@@ -155,24 +155,29 @@
                   (i32.and (i32.ne (local.get $bpp) (i32.const 4))
                     (i32.ne (local.get $bpp) (i32.const 8))))
                 (i32.and (i32.ne (local.get $bpp) (i32.const 24))
-                  (i32.ne (local.get $bpp) (i32.const 32)))))))
+                  (i32.and (i32.ne (local.get $bpp) (i32.const 16))
+                    (i32.ne (local.get $bpp) (i32.const 32))))))))
       (then (return (i32.const 0))))
     ;; BI_RLE8 is valid only for 8-bpp and BI_RLE4 only for 4-bpp. Compressed
     ;; top-down DIBs are not defined by Win32.
     (if (i32.and (i32.ne (local.get $compression) (i32.const 0))
-          (i32.and
-            (i32.ne (local.get $compression) (i32.const 1))
-            (i32.ne (local.get $compression) (i32.const 2))))
+          (i32.and (i32.ne (local.get $compression) (i32.const 1))
+            (i32.and (i32.ne (local.get $compression) (i32.const 2))
+              (i32.ne (local.get $compression) (i32.const 3)))))
       (then (return (i32.const 0))))
     (if (i32.or
           (i32.and (i32.eq (local.get $compression) (i32.const 1))
             (i32.ne (local.get $bpp) (i32.const 8)))
-          (i32.and (i32.eq (local.get $compression) (i32.const 2))
-            (i32.ne (local.get $bpp) (i32.const 4))))
+          (i32.or
+            (i32.and (i32.eq (local.get $compression) (i32.const 2))
+              (i32.ne (local.get $bpp) (i32.const 4)))
+            (i32.and (i32.eq (local.get $compression) (i32.const 3))
+              (i32.ne (local.get $bpp) (i32.const 16)))))
       (then (return (i32.const 0))))
     (local.set $top_down (i32.lt_s (local.get $height) (i32.const 0)))
     (if (i32.and (i32.ne (local.get $top_down) (i32.const 0))
-          (i32.ne (local.get $compression) (i32.const 0)))
+          (i32.and (i32.ne (local.get $compression) (i32.const 0))
+            (i32.ne (local.get $compression) (i32.const 3))))
       (then (return (i32.const 0))))
     (if (local.get $top_down)
       (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
@@ -183,7 +188,26 @@
           (then (local.set $palette_count (i32.shl (i32.const 1) (local.get $bpp)))))
         (if (i32.gt_u (local.get $palette_count) (i32.shl (i32.const 1) (local.get $bpp)))
           (then (return (i32.const 0))))))
-    (local.set $palette_bytes (i32.mul (local.get $palette_count) (i32.const 4)))
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then
+        (local.set $palette_count (i32.const 3))
+        (if (i32.eq (local.get $compression) (i32.const 3))
+          (then
+            (local.set $masks (i32.add (local.get $data) (i32.const 40)))
+            (if (i32.eq (local.get $header_size) (i32.const 40))
+              (then
+                (if (i32.lt_u (local.get $size) (i32.const 52))
+                  (then (return (i32.const 0))))
+                (local.set $palette_bytes (i32.const 12)))
+              (else
+                (if (i32.lt_u (local.get $header_size) (i32.const 52))
+                  (then (return (i32.const 0))))))
+            (if (i32.eqz (call $gdi_color_masks_valid (local.get $masks)))
+              (then (return (i32.const 0)))))
+          (else (local.set $masks (global.get $GDI_RGB555_MASKS))))))
+    (if (i32.le_u (local.get $bpp) (i32.const 8))
+      (then (local.set $palette_bytes
+        (i32.mul (local.get $palette_count) (i32.const 4)))))
     (local.set $bits_offset (i32.add (local.get $header_size) (local.get $palette_bytes)))
     (if (i32.gt_u (local.get $bits_offset) (local.get $size))
       (then (return (i32.const 0))))
@@ -192,7 +216,8 @@
         (i32.const 5)) (i32.const 2)))
     (local.set $image_size (i64.mul (i64.extend_i32_u (local.get $stride))
       (i64.extend_i32_u (local.get $height))))
-    (if (i32.eqz (local.get $compression))
+    (if (i32.or (i32.eqz (local.get $compression))
+          (i32.eq (local.get $compression) (i32.const 3)))
       (then
         (if (i64.gt_u (local.get $image_size)
               (i64.extend_i32_u (i32.sub (local.get $size) (local.get $bits_offset))))
@@ -204,13 +229,17 @@
     (i32.store offset=12 (local.get $plan) (i32.shl (local.get $top_down) (i32.const 1)))
     (i32.store offset=16 (local.get $plan) (local.get $stride))
     (if (local.get $palette_count)
-      (then (i32.store offset=20 (local.get $plan) (i32.add (local.get $data) (local.get $header_size)))))
+      (then (i32.store offset=20 (local.get $plan)
+        (select (local.get $masks)
+          (i32.add (local.get $data) (local.get $header_size))
+          (i32.eq (local.get $bpp) (i32.const 16))))))
     (i32.store offset=24 (local.get $plan) (local.get $palette_count))
     (i32.store offset=28 (local.get $plan) (i32.add (local.get $data) (local.get $bits_offset)))
     (i32.store offset=32 (local.get $plan) (i32.wrap_i64 (local.get $image_size)))
     (i32.store offset=36 (local.get $plan) (local.get $header_size))
     (i32.store offset=40 (local.get $plan) (local.get $compression))
-    (if (local.get $compression)
+    (if (i32.or (i32.eq (local.get $compression) (i32.const 1))
+          (i32.eq (local.get $compression) (i32.const 2)))
       (then
         (local.set $palette_bytes (i32.load offset=20 (local.get $data)))
         (if (i32.or (i32.eqz (local.get $palette_bytes))
@@ -255,7 +284,8 @@
   ;; this validates metadata without assuming bytes follow the color table.
   (func $gdi_bitmap_plan_info (param $info i32) (param $plan i32) (result i32)
     (local $header_size i32) (local $width i32) (local $height i32)
-    (local $bpp i32) (local $top_down i32) (local $palette_count i32)
+    (local $bpp i32) (local $compression i32) (local $top_down i32)
+    (local $palette_count i32) (local $masks i32)
     (local $stride i32) (local $image_size i64)
     (if (i32.or (i32.eqz (local.get $info)) (i32.eqz (local.get $plan)))
       (then (return (i32.const 0))))
@@ -263,19 +293,25 @@
     (local.set $width (i32.load offset=4 (local.get $info)))
     (local.set $height (i32.load offset=8 (local.get $info)))
     (local.set $bpp (i32.load16_u offset=14 (local.get $info)))
+    (local.set $compression (i32.load offset=16 (local.get $info)))
     (if (i32.or
           (i32.or (i32.lt_u (local.get $header_size) (i32.const 40))
             (i32.gt_u (local.get $header_size) (i32.const 124)))
           (i32.or (i32.le_s (local.get $width) (i32.const 0))
             (i32.or (i32.eqz (local.get $height))
               (i32.or (i32.ne (i32.load16_u offset=12 (local.get $info)) (i32.const 1))
-                (i32.or (i32.ne (i32.load offset=16 (local.get $info)) (i32.const 0))
+                (i32.or (i32.and (i32.ne (local.get $compression) (i32.const 0))
+                      (i32.ne (local.get $compression) (i32.const 3)))
                   (i32.and
                     (i32.and (i32.ne (local.get $bpp) (i32.const 1))
                       (i32.and (i32.ne (local.get $bpp) (i32.const 4))
                         (i32.ne (local.get $bpp) (i32.const 8))))
-                    (i32.and (i32.ne (local.get $bpp) (i32.const 24))
-                      (i32.ne (local.get $bpp) (i32.const 32)))))))))
+                    (i32.and (i32.ne (local.get $bpp) (i32.const 16))
+                      (i32.and (i32.ne (local.get $bpp) (i32.const 24))
+                        (i32.ne (local.get $bpp) (i32.const 32))))))))))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.eq (local.get $compression) (i32.const 3))
+          (i32.ne (local.get $bpp) (i32.const 16)))
       (then (return (i32.const 0))))
     (local.set $top_down (i32.lt_s (local.get $height) (i32.const 0)))
     (if (local.get $top_down)
@@ -287,6 +323,18 @@
           (then (local.set $palette_count (i32.shl (i32.const 1) (local.get $bpp)))))
         (if (i32.gt_u (local.get $palette_count) (i32.shl (i32.const 1) (local.get $bpp)))
           (then (return (i32.const 0))))))
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then
+        (local.set $palette_count (i32.const 3))
+        (if (i32.eq (local.get $compression) (i32.const 3))
+          (then
+            (if (i32.and (i32.ne (local.get $header_size) (i32.const 40))
+                  (i32.lt_u (local.get $header_size) (i32.const 52)))
+              (then (return (i32.const 0))))
+            (local.set $masks (i32.add (local.get $info) (i32.const 40)))
+            (if (i32.eqz (call $gdi_color_masks_valid (local.get $masks)))
+              (then (return (i32.const 0)))))
+          (else (local.set $masks (global.get $GDI_RGB555_MASKS))))))
     (local.set $stride (i32.shl
       (i32.shr_u (i32.add (i32.mul (local.get $width) (local.get $bpp)) (i32.const 31))
         (i32.const 5)) (i32.const 2)))
@@ -302,10 +350,13 @@
     (i32.store offset=16 (local.get $plan) (local.get $stride))
     (if (local.get $palette_count)
       (then (i32.store offset=20 (local.get $plan)
-        (i32.add (local.get $info) (local.get $header_size)))))
+        (select (local.get $masks)
+          (i32.add (local.get $info) (local.get $header_size))
+          (i32.eq (local.get $bpp) (i32.const 16))))))
     (i32.store offset=24 (local.get $plan) (local.get $palette_count))
     (i32.store offset=32 (local.get $plan) (i32.wrap_i64 (local.get $image_size)))
     (i32.store offset=36 (local.get $plan) (local.get $header_size))
+    (i32.store offset=40 (local.get $plan) (local.get $compression))
     (i32.const 1))
 
   ;; Store one palette index into canonical packed DIB storage. RLE streams
@@ -510,7 +561,8 @@
     (local.set $storage (call $g2w (local.get $storage_ga)))
     (if (local.get $copy_pixels)
       (then
-        (if (local.get $compression)
+        (if (i32.or (i32.eq (local.get $compression) (i32.const 1))
+              (i32.eq (local.get $compression) (i32.const 2)))
           (then
             (if (i32.eqz (call $gdi_bitmap_decode_rle
                   (local.get $pixels) (local.get $encoded_size) (local.get $storage)
@@ -524,14 +576,18 @@
             (i32.ne (local.get $palette_src) (i32.const 0))))
       (then
         (local.set $palette (i32.add (local.get $storage) (local.get $image_size)))
-        (if (i32.eqz (call $gdi_bitmap_copy_palette
-              (local.get $palette) (local.get $palette_src) (local.get $palette_count)
-              (local.get $flags) (local.get $palette_mode) (local.get $palette_handle)))
-          (then
-            (call $dib_free_wasm (local.get $storage))
-            (return (i32.const 0))))))
-    (if (i32.or (i32.eq (local.get $palette_mode) (i32.const 2))
-          (i32.eq (local.get $palette_mode) (i32.const 3)))
+        (if (i32.eq (local.get $bpp) (i32.const 16))
+          (then (memory.copy (local.get $palette) (local.get $palette_src) (i32.const 12)))
+          (else
+            (if (i32.eqz (call $gdi_bitmap_copy_palette
+                  (local.get $palette) (local.get $palette_src) (local.get $palette_count)
+                  (local.get $flags) (local.get $palette_mode) (local.get $palette_handle)))
+              (then
+                (call $dib_free_wasm (local.get $storage))
+                (return (i32.const 0))))))))
+    (if (i32.and (i32.le_u (local.get $bpp) (i32.const 8))
+          (i32.or (i32.eq (local.get $palette_mode) (i32.const 2))
+            (i32.eq (local.get $palette_mode) (i32.const 3))))
       (then (local.set $object_flags
         (i32.or (local.get $object_flags) (i32.const 0x10)))))
     (local.set $handle (call $gdi_bitmap_alloc
@@ -772,7 +828,13 @@
           (then (i32.and (i32.add
             (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 1))
             (i32.const 3)) (i32.const -4)))
-          (else (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 2)))))))
+          (else
+            (select (i32.const 12)
+              (i32.shl (i32.load offset=24 (local.get $plan)) (i32.const 2))
+              (i32.and
+                (i32.eq (i32.load offset=8 (local.get $plan)) (i32.const 16))
+                (i32.and (i32.eq (i32.load offset=40 (local.get $plan)) (i32.const 3))
+                  (i32.eq (i32.load offset=36 (local.get $plan)) (i32.const 40))))))))))
     (local.set $bitmap (call $gdi_bitmap_create_owned
       (local.get $plan) (local.get $pixels) (i32.const 1) (i32.const 1)
       (i32.const 0) (select (i32.const 2) (i32.const 0)

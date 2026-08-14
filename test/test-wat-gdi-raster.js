@@ -36,7 +36,7 @@ const SRC = path.join(ROOT, 'src');
     console.log(`PASS  ${name}`);
   }
 
-  function surface(width, height, bpp = 32, topDown = true) {
+  function surface(width, height, bpp = 32, topDown = true, masks = null) {
     const desc = nextDesc;
     const bits = nextBits;
     const stride = ((width * bpp + 31) >> 5) << 2;
@@ -48,6 +48,11 @@ const SRC = path.join(ROOT, 'src');
     dv.setInt32(desc + 12, stride, true);
     dv.setInt32(desc + 16, bpp, true);
     dv.setInt32(desc + 20, topDown ? 1 : 0, true);
+    if (masks) {
+      dv.setUint32(desc + 24, masks[0], true);
+      dv.setUint32(desc + 28, masks[1], true);
+      dv.setUint32(desc + 64, masks[2], true);
+    }
     return { desc, bits, width, height, bpp, stride, topDown };
   }
 
@@ -81,6 +86,37 @@ const SRC = path.join(ROOT, 'src');
         assert.strictEqual(wat.test_gdi_raster_set_pixel(s.desc, -1, 0, 0), -1);
       }
     }
+  });
+
+  check('16-bpp pixels distinguish BI_RGB RGB555 from explicit RGB565 masks', () => {
+    const rgb555 = surface(2, 1, 16);
+    assert.strictEqual(wat.test_gdi_raster_set_pixel(rgb555.desc, 0, 0, 0x000000FF), 0x000000FF);
+    assert.strictEqual(dv.getUint16(address(rgb555, 0, 0), true), 0x7C00);
+    assert.strictEqual(wat.test_gdi_raster_set_pixel(rgb555.desc, 1, 0, 0x0000FF00), 0x0000FF00);
+    assert.strictEqual(dv.getUint16(address(rgb555, 1, 0), true), 0x03E0);
+    assert.strictEqual(wat.test_gdi_raster_get_pixel(rgb555.desc, 0, 0) >>> 0, 0x000000FF);
+
+    const rgb565 = surface(2, 1, 16, true, [0xF800, 0x07E0, 0x001F]);
+    assert.strictEqual(wat.test_gdi_raster_set_pixel(rgb565.desc, 0, 0, 0x000000FF), 0x000000FF);
+    assert.strictEqual(dv.getUint16(address(rgb565, 0, 0), true), 0xF800);
+    assert.strictEqual(wat.test_gdi_raster_set_pixel(rgb565.desc, 1, 0, 0x0000FF00), 0x0000FF00);
+    assert.strictEqual(dv.getUint16(address(rgb565, 1, 0), true), 0x07E0);
+
+    const rgb444 = surface(1, 1, 16, true, [0x0F00, 0x00F0, 0x000F]);
+    assert.strictEqual(wat.test_gdi_raster_set_pixel(rgb444.desc, 0, 0, 0x00FFFFFF), 0x00FFFFFF);
+    assert.strictEqual(dv.getUint16(address(rgb444, 0, 0), true), 0x0FFF);
+  });
+
+  check('BitBlt converts colors between RGB555 and RGB565 surfaces', () => {
+    const src = surface(3, 1, 16);
+    const dst = surface(3, 1, 16, true, [0xF800, 0x07E0, 0x001F]);
+    [0x000000FF, 0x0000FF00, 0x00FF0000].forEach((color, x) => {
+      assert.strictEqual(wat.test_gdi_raster_set_pixel(src.desc, x, 0, color), color);
+    });
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      dst.desc, 0, 0, 3, 1, src.desc, 0, 0, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([0, 1, 2].map(x => dv.getUint16(address(dst, x, 0), true)),
+      [0xF800, 0x07E0, 0x001F]);
   });
 
   check('all 256 ROP3 truth tables match bitwise P:S:D evaluation', () => {
@@ -233,6 +269,22 @@ const SRC = path.join(ROOT, 'src');
       dv.getInt32(desc + 16, true), dv.getUint32(desc + 24, true),
       dv.getInt32(desc + 28, true),
     ], [8, bmi + 40, 256]);
+
+    dv.setUint16(bmi + 14, 16, true);
+    dv.setUint32(bmi + 16, 0, true);
+    assert.strictEqual(wat.test_gdi_raster_desc_from_bmi(desc, nextBits, bmi), 1);
+    assert.deepStrictEqual([24, 28, 64].map(offset => dv.getUint32(desc + offset, true)),
+      [0x7C00, 0x03E0, 0x001F]);
+    dv.setUint32(bmi + 16, 3, true);
+    dv.setUint32(bmi + 40, 0xF800, true);
+    dv.setUint32(bmi + 44, 0x07E0, true);
+    dv.setUint32(bmi + 48, 0x001F, true);
+    assert.strictEqual(wat.test_gdi_raster_desc_from_bmi(desc, nextBits, bmi), 1);
+    assert.deepStrictEqual([24, 28, 64].map(offset => dv.getUint32(desc + offset, true)),
+      [0xF800, 0x07E0, 0x001F]);
+    dv.setUint32(bmi + 44, 0xF800, true);
+    assert.strictEqual(wat.test_gdi_raster_desc_from_bmi(desc, nextBits, bmi), 0,
+      'overlapping BI_BITFIELDS masks must be rejected');
   });
 
   check('MaskBlt selects foreground/background ROP3 bytes from exact mono mask bits', () => {

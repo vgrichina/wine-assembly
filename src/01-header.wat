@@ -361,7 +361,7 @@
       (call $gdi_line_descriptor_supported (local.get $desc))))
   ;; gdi_get_line_descriptor(hdc, desc_wa) -> 1 for a supported DIB/solid-pen target.
   (import "host" "gdi_surface_create" (func $host_gdi_surface_create
-    (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+    (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_surface_upload" (func $host_gdi_surface_upload
     (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_surface_delete" (func $host_gdi_surface_delete (param i32) (result i32)))
@@ -889,6 +889,9 @@
   (data (i32.const 0x3260) "msctls_statusbar32\00")
   (data (i32.const 0x3274) "ToolbarWindow32\00")
   (data (i32.const 0x3288) "MS Sans Serif\00")
+  ;; Default 16-bpp BI_RGB channel masks (RGB555). BI_BITFIELDS callers carry
+  ;; their own validated mask triplet; DirectDraw explicitly requests RGB565.
+  (data (i32.const 0x32A0) "\00\7c\00\00\e0\03\00\00\1f\00\00\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -1141,6 +1144,7 @@
   ;; plan and an ANSI conversion buffer for LoadBitmapW resource names.
   (global $GDI_BITMAP_PLAN i32 (i32.const 0x07EF11A0))
   (global $GDI_BITMAP_PLAN_SIZE i32 (i32.const 0x00000030))
+  (global $GDI_RGB555_MASKS i32 (i32.const 0x000032A0))
   (global $GDI_BITMAP_NAME i32 (i32.const 0x07EF11D0))
   (global $GDI_BITMAP_NAME_SIZE i32 (i32.const 0x00000100))
   ;; Window-coordinate resolution can run while a painter owns PAINT_SCRATCH.

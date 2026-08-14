@@ -182,10 +182,50 @@ const SRC = path.join(ROOT, 'src');
       'BI_RLE4 must reject non-4bpp input');
     writeInfoHeader(data, { width: 2, height: 2, bpp: 8, clrUsed: 257 });
     assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
-    writeInfoHeader(data, { width: 2, height: 2, bpp: 16 });
-    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
     writeInfoHeader(data, { width: -2, height: 2, bpp: 24 });
     assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 1100, plan), 0);
+  });
+
+  check('16-bpp DIBs preserve RGB555 BI_RGB and validated BI_BITFIELDS masks', () => {
+    const data = alloc();
+    const plan = alloc();
+    const desc = alloc();
+
+    writeInfoHeader(data, { width: 2, height: 2, bpp: 16 });
+    dv.setUint16(data + 40, 0x7C00, true);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 48, plan), 1);
+    assert.deepStrictEqual([
+      dv.getUint32(plan + 8, true), dv.getUint32(plan + 16, true),
+      dv.getUint32(plan + 20, true), dv.getUint32(plan + 24, true),
+      dv.getUint32(plan + 28, true), dv.getUint32(plan + 40, true),
+    ], [16, 4, 0x32A0, 3, data + 40, 0]);
+    const rgb555 = wat.test_gdi_bitmap_create_resource(data, 48) >>> 0;
+    assert(rgb555, 'BI_RGB 16-bpp resource should materialize');
+    assert.strictEqual(wat.test_gdi_raster_desc_from_bitmap(rgb555, desc), 1);
+    assert.strictEqual(wat.test_gdi_raster_get_pixel(desc, 0, 1) >>> 0, 0x000000FF);
+
+    writeInfoHeader(data, { width: 2, height: 2, bpp: 16, compression: 3 });
+    dv.setUint32(data + 40, 0xF800, true);
+    dv.setUint32(data + 44, 0x07E0, true);
+    dv.setUint32(data + 48, 0x001F, true);
+    dv.setUint16(data + 52, 0xF800, true);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 60, plan), 1);
+    assert.deepStrictEqual([
+      dv.getUint32(plan + 20, true), dv.getUint32(plan + 24, true),
+      dv.getUint32(plan + 28, true), dv.getUint32(plan + 40, true),
+    ], [data + 40, 3, data + 52, 3]);
+    const rgb565 = wat.test_gdi_bitmap_create_resource(data, 60) >>> 0;
+    assert(rgb565, 'BI_BITFIELDS 16-bpp resource should materialize');
+    assert.strictEqual(wat.test_gdi_raster_desc_from_bitmap(rgb565, desc), 1);
+    assert.strictEqual(wat.test_gdi_raster_get_pixel(desc, 0, 1) >>> 0, 0x000000FF);
+
+    dv.setUint32(data + 44, 0xF800, true);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 60, plan), 0,
+      'overlapping masks must fail atomically');
+    dv.setUint32(data + 40, 0xA000, true);
+    dv.setUint32(data + 44, 0x07E0, true);
+    assert.strictEqual(wat.test_gdi_bitmap_parse_dib(data, 60, plan), 0,
+      'non-contiguous masks must be rejected');
   });
 
   check('BI_RLE4 resource decoding produces exact packed bottom-up rows', () => {
