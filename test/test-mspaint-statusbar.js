@@ -70,10 +70,34 @@ for (let y = 397; y < 412; y++) {
   }
 }
 
+// Paint's MFC CStatusBar has a fixed help pane followed by a second recessed
+// coordinate pane. Its lower-right resize grip is a six-segment 3D staircase,
+// not the empty strip produced by treating it as a generic common control.
+let paneSeparator = 0;
+for (let y = 397; y <= 412; y++) {
+  for (let x = 191; x <= 193; x++) {
+    const p = (y * image.width + x) * 4;
+    if (image.data[p] < 160 && image.data[p + 1] < 160 && image.data[p + 2] < 160) paneSeparator++;
+  }
+}
+
+let gripShadow = 0;
+for (let y = 407; y <= 414; y++) {
+  for (let x = 278; x <= 290; x++) {
+    const p = (y * image.width + x) * 4;
+    const r = image.data[p];
+    if (r >= 32 && r < 112 && image.data[p + 1] < 112 && image.data[p + 2] < 112) gripShadow++;
+  }
+}
+
 assert(promptInk >= 30, `Paint status prompt did not render (${promptInk} dark pixels)`);
+assert(paneSeparator >= 12,
+  `Paint status bar is missing its coordinate-pane separator (${paneSeparator} pixels)`);
+assert(gripShadow >= 12,
+  `Paint status bar is missing its Win98 resize grip (${gripShadow} shadow pixels)`);
 assert(rightArrowInk < 8,
   `Paint status bar still exposes the stale right scrollbar arrow (${rightArrowInk} pixels)`);
 assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|CRASH/.test(output),
   'Paint status-bar paint triggered an emulator failure');
 
-console.log(`PASS  Paint status bar replaces stale MDI scrollbar pixels (${promptInk} prompt pixels)`);
+console.log(`PASS  Paint status bar renders prompt/coordinate panes and Win98 grip (${promptInk}/${gripShadow} pixels)`);

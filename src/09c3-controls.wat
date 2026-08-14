@@ -4004,9 +4004,53 @@
   ;; status bar.  The title table is the authoritative text store because MFC
   ;; updates its prompt with SetWindowTextA.
 
+  ;; Paint's MFC status bar is distinguishable without inspecting its title:
+  ;; ID 0xE801 is accompanied by the 0xE900 scroll view in the same frame.
+  ;; Other applications keep the generic one-pane common-control rendering.
+  (func $statusbar_is_paint (param $hwnd i32) (result i32)
+    (local $parent i32)
+    (if (i32.ne (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xE801))
+      (then (return (i32.const 0))))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (i32.ne (call $ctrl_find_by_id (local.get $parent) (i32.const 0xE900)) (i32.const 0)))
+
+  ;; MFC's CStatusBar draws a six-segment diagonal size grip inside the last
+  ;; pane. Use light/shadow stock brushes to match the Win98 staircase.
+  (func $statusbar_draw_size_grip (param $hdc i32) (param $w i32) (param $h i32)
+    (local $row i32) (local $col i32) (local $x i32) (local $y i32)
+    (local.set $row (i32.const 0))
+    (block $rows_done
+      (loop $rows
+        (br_if $rows_done (i32.ge_u (local.get $row) (i32.const 3)))
+        (local.set $col (i32.const 0))
+        (block $cols_done
+          (loop $cols
+            (br_if $cols_done
+              (i32.ge_u (local.get $col) (i32.sub (i32.const 3) (local.get $row))))
+            (local.set $x
+              (i32.add
+                (i32.sub (local.get $w) (i32.const 13))
+                (i32.mul (i32.add (local.get $row) (local.get $col)) (i32.const 4))))
+            (local.set $y
+              (i32.sub (i32.sub (local.get $h) (i32.const 3))
+                       (i32.mul (local.get $row) (i32.const 4))))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (local.get $x) (local.get $y)
+              (i32.add (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 1))
+              (i32.const 0x30010))) ;; WHITE_BRUSH
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (i32.add (local.get $x) (i32.const 1)) (local.get $y)
+              (i32.add (local.get $x) (i32.const 3)) (i32.add (local.get $y) (i32.const 2))
+              (i32.const 0x30013))) ;; DKGRAY_BRUSH
+            (local.set $col (i32.add (local.get $col) (i32.const 1)))
+            (br $cols)))
+        (local.set $row (i32.add (local.get $row) (i32.const 1)))
+        (br $rows))))
+
   (func $statusbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $text_w i32) (local $text_len i32) (local $right i32)
+    (local $is_paint i32)
     ;; WM_SETTEXT and SB_SETTEXTA. Paint uses the former for its help prompt;
     ;; accepting part zero/simple-mode SB_SETTEXTA also covers common callers.
     (if (i32.or
@@ -4047,18 +4091,25 @@
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (local.set $is_paint (call $statusbar_is_paint (local.get $hwnd)))
         (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                      (i32.gt_s (local.get $h) (i32.const 0)))
           (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
               (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
               (i32.const 0x30011))) ;; COLOR_3DFACE
-            ;; SBARS_SIZEGRIP (0x100) reserves the classic 16px grip at right.
+            ;; Paint's MFC bar has a fixed 166px help pane and a coordinate
+            ;; pane extending beneath its size grip. Generic status bars keep
+            ;; the SBARS_SIZEGRIP reservation used by comctl32.
             (local.set $right
               (if (result i32)
-                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
-                (then (i32.sub (local.get $w) (i32.const 17)))
-                (else (i32.sub (local.get $w) (i32.const 2)))))
+                  (local.get $is_paint)
+                (then (i32.const 167))
+                (else
+                  (if (result i32)
+                      (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
+                    (then (i32.sub (local.get $w) (i32.const 17)))
+                    (else (i32.sub (local.get $w) (i32.const 2)))))))
             (if (i32.gt_s (local.get $right) (i32.const 3))
               (then
                 (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -4077,24 +4128,22 @@
                     (drop (call $host_gdi_draw_text
                       (local.get $hdc) (local.get $text_w) (local.get $text_len)
                       (global.get $PAINT_SCRATCH) (i32.const 0x824) (i32.const 0)))))))
-            ;; Minimal Win9x size-grip dots: highlight up-left, shadow down-right.
-            (if (i32.and
-                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
-                  (i32.and (i32.ge_s (local.get $w) (i32.const 16))
-                           (i32.ge_s (local.get $h) (i32.const 12))))
+            (if (i32.and (local.get $is_paint) (i32.gt_s (local.get $w) (i32.const 171)))
               (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
-                  (i32.sub (local.get $w) (i32.const 5)) (i32.sub (local.get $h) (i32.const 5))
-                  (i32.sub (local.get $w) (i32.const 3)) (i32.sub (local.get $h) (i32.const 3))
-                  (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
-                  (i32.sub (local.get $w) (i32.const 9)) (i32.sub (local.get $h) (i32.const 5))
-                  (i32.sub (local.get $w) (i32.const 7)) (i32.sub (local.get $h) (i32.const 3))
-                  (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
-                  (i32.sub (local.get $w) (i32.const 5)) (i32.sub (local.get $h) (i32.const 9))
-                  (i32.sub (local.get $w) (i32.const 3)) (i32.sub (local.get $h) (i32.const 7))
-                  (i32.const 0x30014)))))))
+                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                  (i32.const 169) (i32.const 2) (i32.sub (local.get $w) (i32.const 2))
+                  (i32.sub (local.get $h) (i32.const 2))
+                  (i32.const 0x0A) (i32.const 0x0F)))
+                (call $statusbar_draw_size_grip (local.get $hdc) (local.get $w) (local.get $h)))
+              (else
+                ;; Minimal generic Win9x size grip for SBARS_SIZEGRIP bars.
+                (if (i32.and
+                      (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
+                      (i32.and (i32.ge_s (local.get $w) (i32.const 16))
+                               (i32.ge_s (local.get $h) (i32.const 12))))
+                  (then
+                    (call $statusbar_draw_size_grip
+                      (local.get $hdc) (local.get $w) (local.get $h))))))))))
         (return (i32.const 0))))
     (i32.const 0))
 
