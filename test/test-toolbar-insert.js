@@ -199,6 +199,23 @@ async function main() {
   check('toolbar hwnd allocated', toolbar !== 0, 'hwnd=0x' + toolbar.toString(16));
   check('create added 2 slots (parent + toolbar)', e.wnd_count_used() === baselineSlots + 2);
 
+  // Reproduce the retained empty-clip state that can follow MFC control-bar
+  // layout. A native WM_PAINT begins with a fresh application clip and a
+  // USER-derived client/system clip, so a valid interior point becomes
+  // paintable again.
+  const toolbarParent = e.wnd_get_parent(toolbar);
+  e.wnd_set_style_export(toolbarParent,
+    (e.wnd_get_style_export(toolbarParent) | 0x10000000) >>> 0);
+  const toolbarHdc = (toolbar + 0x40000) >>> 0;
+  const emptyClip = e.test_gdi_rgn_alloc_rect(0, 0, 0, 0);
+  check('test setup selects an empty retained toolbar clip',
+    e.test_gdi_dc_clip_select(toolbarHdc, emptyClip) === 1 &&
+      e.test_gdi_dc_clip_point_visible(toolbarHdc, 1, 1) === 0);
+  e.test_gdi_rgn_delete(emptyClip);
+  e.send_message(toolbar, 0x000F, 0, 0);
+  check('ToolbarWindow32 WM_PAINT restores a fresh visible client clip',
+    e.test_gdi_dc_clip_point_visible(toolbarHdc, 1, 1) === 1);
+
   check('TB_BUTTONSTRUCTSIZE accepts 20-byte TBBUTTON',
     e.send_message(toolbar, TB_BUTTONSTRUCTSIZE, 20, 0) === 1);
   check('TB_ADDBITMAP loads HINST_COMMCTRL standard small-color strip',

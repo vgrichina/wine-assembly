@@ -3512,13 +3512,19 @@
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
                 (local.set $cmd_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
+                (global.set $dialog_last_proc_handled (i32.const 0))
                 (drop (call $wnd_send_message
                   (local.get $parent)
                   (i32.const 0x0111)  ;; WM_COMMAND
                   ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
                   (local.get $cmd_id)
                   (local.get $hwnd))) ;; lParam = button hwnd
-                (if (i32.eq (local.get $cmd_id) (i32.const 1))
+                ;; USER's default IDOK close applies only when the dialog proc
+                ;; did not handle the command itself. A handled command may
+                ;; intentionally post follow-up work while keeping the dialog.
+                (if (i32.and
+                      (i32.eq (local.get $cmd_id) (i32.const 1))
+                      (i32.eqz (global.get $dialog_last_proc_handled)))
                   (then (call $dialog_default_idok_close (local.get $parent))))))
             ))
         (return (i32.const 0))))
@@ -4592,11 +4598,6 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        ;; Native toolbar paints should start from an unclipped BeginPaint-style
-        ;; DC. The synthetic hwnd+0x40000 DC can retain stale/empty clip state
-        ;; from prior MFC/control-bar drawing, which erases the row but clips
-        ;; out the button edges and glyph placeholders.
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
@@ -7445,6 +7446,11 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        ;; Native toolbar paints start with a fresh BeginPaint-style clip.
+        ;; Synthetic hwnd+0x40000 DCs can retain an empty clip from prior MFC
+        ;; control-bar drawing, erasing the row while clipping every button.
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
@@ -9434,6 +9440,7 @@
     (local $px i32) (local $py i32)
     (local $scan_slot i32) (local $sibling_hwnd i32)
     (local $combo_max_x i32) (local $sibling_right i32)
+    (local $paint_state_w i32)
 
     (local.set $field_h (i32.const 21))
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
@@ -10076,7 +10083,18 @@
                     (i32.const 0x30014)))
             (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
             (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-            (if (i32.load (local.get $state_w))
+            ;; CBS_DROPDOWN delegates text ownership to its inner EDIT. Paint
+            ;; from that same state so WM_PAINT agrees with WM_GETTEXT.
+            (local.set $paint_state_w (local.get $state_w))
+            (if (i32.eq (local.get $variant) (i32.const 2))
+              (then
+                (local.set $paint_state_w
+                  (call $wnd_get_state_ptr (i32.load offset=28 (local.get $state_w))))
+                (if (local.get $paint_state_w)
+                  (then (local.set $paint_state_w (call $g2w (local.get $paint_state_w)))))))
+            (if (i32.and
+                  (i32.ne (local.get $paint_state_w) (i32.const 0))
+                  (i32.ne (i32.load (local.get $paint_state_w)) (i32.const 0)))
               (then
                 (i32.store          (global.get $PAINT_SCRATCH) (i32.const 4))
                 (i32.store offset=4 (global.get $PAINT_SCRATCH) (i32.const 2))
@@ -10085,8 +10103,8 @@
                 (i32.store offset=12 (global.get $PAINT_SCRATCH)
                   (i32.sub (local.get $h) (i32.const 2)))
                 (drop (call $host_gdi_draw_text (local.get $hdc)
-                        (call $g2w (i32.load (local.get $state_w)))
-                        (i32.load offset=4 (local.get $state_w))
+                        (call $g2w (i32.load (local.get $paint_state_w)))
+                        (i32.load offset=4 (local.get $paint_state_w))
                         (global.get $PAINT_SCRATCH)
                         (i32.const 0x24) (i32.const 0)))))))
         (return (i32.const 0))))
@@ -12248,6 +12266,12 @@
     (local.get $result)
   )
 
+  ;; The most recent dialog-procedure handled BOOL is separate from the
+  ;; message LRESULT returned by DefDlgProc. In particular, a DLGPROC can
+  ;; handle WM_COMMAND (TRUE) while leaving DWL_MSGRESULT at zero. Control-side
+  ;; default behavior must consult this immediately after synchronous dispatch.
+  (global $dialog_last_proc_handled (mut i32) (i32.const 0))
+
   ;; Minimal DefDlgProc semantics around the stored per-window DLGPROC.
   ;; The DLGPROC returns BOOL; when TRUE, the actual message result comes from
   ;; DWL_MSGRESULT. Temporarily exposing the guest proc lets the established
@@ -12256,6 +12280,7 @@
   (func $dialog_default_proc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $installed i32) (local $proc i32) (local $handled i32)
+    (global.set $dialog_last_proc_handled (i32.const 0))
     (local.set $installed (call $wnd_table_get (local.get $hwnd)))
     (local.set $proc (call $dialog_proc_get (local.get $hwnd)))
     (if (i32.eqz (local.get $proc)) (then (return (i32.const 0))))
@@ -12263,6 +12288,9 @@
     (local.set $handled (call $wnd_send_message
       (local.get $hwnd) (local.get $msg)
       (local.get $wParam) (local.get $lParam)))
+    ;; Set this after the callback returns so any nested dialog dispatch cannot
+    ;; overwrite the outer message's handled state.
+    (global.set $dialog_last_proc_handled (i32.ne (local.get $handled) (i32.const 0)))
     (if (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
       (then (call $wnd_table_set (local.get $hwnd) (local.get $installed))))
     (if (local.get $handled)

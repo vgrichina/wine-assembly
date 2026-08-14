@@ -39,6 +39,13 @@ async function main() {
     onExit: () => {},
   };
   const base = createHostImports(ctx);
+  const paintedText = [];
+  const drawText = base.host.gdi_draw_text;
+  base.host.gdi_draw_text = (hdc, textPtr, nCount, rectWA, uFormat, isWide) => {
+    const bytes = new Uint8Array(memory.buffer, textPtr, Math.max(0, nCount));
+    paintedText.push(String.fromCharCode(...bytes));
+    return drawText(hdc, textPtr, nCount, rectWA, uFormat, isWide);
+  };
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread   = () => 0;
@@ -286,7 +293,7 @@ async function main() {
   // CBS_DROPDOWN (variant=2): editable field via inner edit child
   // ===================================================================
   const CBS_DROPDOWN = 2;
-  const WM_SETTEXT = 0x000C, WM_GETTEXT = 0x000D, WM_GETTEXTLENGTH = 0x000E;
+  const WM_SETTEXT = 0x000C, WM_GETTEXT = 0x000D, WM_GETTEXTLENGTH = 0x000E, WM_PAINT = 0x000F;
   const CB_LIMITTEXT = 0x0141, CB_GETEDITSEL = 0x0140, CB_SETEDITSEL = 0x0142;
   const EM_GETLIMITTEXT = 0x00D5;
 
@@ -321,6 +328,10 @@ async function main() {
     n === 5 && readStr(dest) === 'hello', `n=${n} text="${readStr(dest)}"`);
   check('WM_GETTEXTLENGTH agrees',
     e.send_message(cb2, WM_GETTEXTLENGTH, 0, 0) === 5);
+  paintedText.length = 0;
+  e.send_message(cb2, WM_PAINT, 0, 0);
+  check('CBS_DROPDOWN paint uses the inner edit text',
+    paintedText.includes('hello'), `painted=${JSON.stringify(paintedText)}`);
 
   // CB_LIMITTEXT → EM_SETLIMITTEXT round-trip via EM_GETLIMITTEXT
   e.send_message(cb2, CB_LIMITTEXT, 32, 0);
