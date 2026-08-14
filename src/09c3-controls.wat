@@ -1692,6 +1692,7 @@
   (func $colordlg_expand_custom (param $dlg i32)
     (local $rect i32) (local $cc i32) (local $rgb i32)
     (local $label i32) (local $edit i32)
+    (local $slot i32) (local $child i32)
     ;; Presence of the first RGB edit is also the expanded-state flag.
     (if (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x463)) (then (return)))
     (local.set $rect (global.get $PAINT_SCRATCH))
@@ -1701,7 +1702,6 @@
       (i32.load (local.get $rect)) (i32.load offset=4 (local.get $rect))
       (i32.const 436) (i32.const 330) (i32.const 0))
     (call $defwndproc_do_nccalcsize (local.get $dlg))
-    (call $dlg_fill_bkgnd (local.get $dlg))
     ;; Allocate/fill the resized back-canvas now. If its first allocation is
     ;; deferred until a newly-created right-pane child paints, that resize
     ;; clears the left palette children that were already painted this pass.
@@ -1748,6 +1748,19 @@
       (i32.const 244) (i32.const 132) (i32.const 174) (i32.const 24)
       (i32.const 0x50010000) (local.get $label)))
     (call $heap_free (local.get $label))
+    ;; Resizing reallocates and clears the dialog's shared back-canvas. Paint
+    ;; every child now so the existing left palette is restored along with the
+    ;; new RGB controls; invalidating only the parent leaves a blank gray pane.
+    (local.set $slot (i32.const 0))
+    (block $paint_done (loop $paint_children
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $paint_done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $child (call $wnd_slot_hwnd (local.get $slot)))
+      (if (local.get $child)
+        (then (drop (call $wnd_send_message
+          (local.get $child) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $paint_children)))
     (call $invalidate_hwnd (local.get $dlg)))
 
   (func $colordlg_add_custom (param $dlg i32)
