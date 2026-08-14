@@ -137,9 +137,10 @@ as a separate GDI rejoin gate there.
 3. **High-fidelity RichEdit/RTF breadth.** Expand beyond the bounded fixtures
    to arbitrary nested styles/tables, overlapping edits, fields, picture/object
    combinations, exact printer layout, and undocumented RichEdit DLL quirks.
-4. **UI polish.** Implement true disabled/hot toolbar image-list remapping and
-   broader uncommon toolbar/menu/ruler state. Current fallback dimming and
-   focused command coverage are functional, not exact common-controls parity.
+4. **UI polish.** Expand uncommon toolbar/menu/ruler state beyond the bounded
+   common-control path. Normal, hot, and disabled toolbar image lists now
+   remap correctly, mouse hover drives `TB_GETHOTITEM`/`TB_SETHOTITEM`, and
+   toolbars without a disabled list retain classic embossed fallback dimming.
 5. **International breadth.** Add more scripts, font-fallback combinations,
    composition UI, bidi editing, and complex-cluster editing. Current tests
    cover representative input, readback, and visible shaping.
@@ -566,9 +567,13 @@ Current evidence from the 2026-08-11 follow-up probe:
   `TransparentBlt`-style `RGB(192,192,192)` color-key path from
   `TBBUTTON.iBitmap`; minimal synthetic `HINST_COMMCTRL` standard/view/history
   strips are also available for common-control toolbar callers. Checked
-  toolbar buttons now render sunken/offset from `TBSTATE_CHECKED`; true
-  disabled/highlight image-list remapping and broader advanced toolbar UI state
-  remain follow-up fidelity.
+  toolbar buttons now render sunken/offset from `TBSTATE_CHECKED`. Normal, hot,
+  and disabled image-list handles now select their own bitmap/mask geometry;
+  disabled images are not embossed twice, flat hot buttons gain the raised
+  edge, and mouse movement plus `TB_GETHOTITEM`/`TB_SETHOTITEM` maintain the
+  active hot index. Broader advanced toolbar UI state remains follow-up
+  fidelity. The focused WordPad toolbar regression passes 23/23 and the
+  standalone common-control regression passes 46/46.
 - The formatting toolbar now caps oversized toolbar-hosted combo item rects
   against the containing 394px control bar and resizes hosted combo HWNDs to
   their computed item rects. This keeps the size combo plus Bold / Italic /

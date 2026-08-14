@@ -5547,7 +5547,7 @@
   ;; +32 buttons_guest (20-byte TBBUTTON snapshots), +36 capacity,
   ;; +40 pressed_index, +44 hwnd, +48 bitmap_handle,
   ;; +52 image_list, +56 hot_image_list, +60 disabled_image_list,
-  ;; +64 style, +68 extended_style, +72 padding packed, +76 reserved.
+  ;; +64 style, +68 extended_style, +72 padding packed, +76 hot_index.
 
   (func $toolbar_ensure_state (param $hwnd i32) (result i32)
     (local $state i32) (local $sw i32)
@@ -5564,6 +5564,7 @@
         (i32.store offset=20 (local.get $sw) (i32.const 1))  ;; one row
         (i32.store offset=24 (local.get $sw) (i32.const 20)) ;; sizeof(TBBUTTON)
         (i32.store offset=40 (local.get $sw) (i32.const -1))
+        (i32.store offset=76 (local.get $sw) (i32.const -1))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
     (local.set $sw (call $g2w (local.get $state)))
     (i32.store offset=44 (local.get $sw) (local.get $hwnd))
@@ -5903,6 +5904,30 @@
       (br $scan)))
     (i32.const -1))
 
+  ;; Image-list handles in this runtime are guest pointers to the bounded
+  ;; 24-byte ImageList record created by ImageList_Create/LoadImage. Toolbar
+  ;; messages are also used by probes that pass opaque sentinel handles, so
+  ;; validate both the translated address and record geometry before painting.
+  (func $toolbar_imagelist_ptr (param $himl i32) (result i32)
+    (local $wa i32) (local $cx i32) (local $cy i32)
+    (if (i32.eqz (local.get $himl)) (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $himl) (global.get $image_base))
+      (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $himl)))
+    (if (i32.gt_u
+          (local.get $wa)
+          (i32.sub (i32.shl (memory.size) (i32.const 16)) (i32.const 24)))
+      (then (return (i32.const 0))))
+    (local.set $cx (i32.load (local.get $wa)))
+    (local.set $cy (i32.load offset=4 (local.get $wa)))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $cx) (i32.const 0))
+                  (i32.gt_s (local.get $cx) (i32.const 256)))
+          (i32.or (i32.le_s (local.get $cy) (i32.const 0))
+                  (i32.gt_s (local.get $cy) (i32.const 256))))
+      (then (return (i32.const 0))))
+    (local.get $wa))
+
   (func $toolbar_repaint_now (param $hwnd i32)
     ;; ToolbarWindow32 owns a composited child surface. MFC control-bar parents
     ;; can leave ancestor erase state pending while still expecting the toolbar
@@ -5981,7 +6006,8 @@
     (local $bmp i32) (local $bmp_w i32) (local $bmp_h i32)
     (local $bmp_draw_w i32) (local $bmp_draw_h i32) (local $bmp_src_x i32)
     (local $bmp_dst_x i32) (local $bmp_dst_y i32) (local $memdc i32)
-    (local $drawn i32)
+    (local $drawn i32) (local $image_list i32) (local $image_sw i32)
+    (local $mask_color i32) (local $use_disabled_effect i32) (local $is_hot i32)
 
     ;; WM_DESTROY
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
@@ -6261,6 +6287,7 @@
       (then
         (local.set $old (i32.load offset=52 (local.get $sw)))
         (i32.store offset=52 (local.get $sw) (local.get $lParam))
+        (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0431))
       (then (return (i32.load offset=52 (local.get $sw)))))
@@ -6268,6 +6295,7 @@
       (then
         (local.set $old (i32.load offset=56 (local.get $sw)))
         (i32.store offset=56 (local.get $sw) (local.get $lParam))
+        (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0435))
       (then (return (i32.load offset=56 (local.get $sw)))))
@@ -6275,9 +6303,28 @@
       (then
         (local.set $old (i32.load offset=60 (local.get $sw)))
         (i32.store offset=60 (local.get $sw) (local.get $lParam))
+        (call $toolbar_repaint_now (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0437))
       (then (return (i32.load offset=60 (local.get $sw)))))
+
+    ;; TB_GETHOTITEM / TB_SETHOTITEM. The hot item is an index, not a command
+    ;; id. Return the previous index exactly as the common-control contract
+    ;; requires and repaint so flat toolbar edges/image lists switch at once.
+    (if (i32.eq (local.get $msg) (i32.const 0x0447))
+      (then (return (i32.load offset=76 (local.get $sw)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0448))
+      (then
+        (local.set $old (i32.load offset=76 (local.get $sw)))
+        (local.set $idx (local.get $wParam))
+        (if (i32.and
+              (i32.ne (local.get $idx) (i32.const -1))
+              (i32.ge_u (local.get $idx) (i32.load (local.get $sw))))
+          (then (local.set $idx (i32.const -1))))
+        (i32.store offset=76 (local.get $sw) (local.get $idx))
+        (if (i32.ne (local.get $idx) (local.get $old))
+          (then (call $toolbar_repaint_now (local.get $hwnd))))
+        (return (local.get $old))))
 
     ;; TB_SETSTYLE / TB_GETSTYLE / TB_SETEXTENDEDSTYLE / TB_GETEXTENDEDSTYLE.
     (if (i32.eq (local.get $msg) (i32.const 0x0438))
@@ -6392,6 +6439,31 @@
             (i32.load (local.get $rect))
             (i32.load offset=4 (local.get $rect))))))
 
+    ;; WM_MOUSEMOVE / WM_MOUSELEAVE maintain the hot index used by flat edges
+    ;; and the optional hot image list. Disabled buttons do not become hot.
+    (if (i32.eq (local.get $msg) (i32.const 0x0200))
+      (then
+        (local.set $x (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+        (local.set $y (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (local.set $hit (call $toolbar_hit_test (local.get $sw) (local.get $x) (local.get $y)))
+        (if (i32.ge_s (local.get $hit) (i32.const 0))
+          (then
+            (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $hit)))
+            (if (i32.eqz (i32.and (i32.load8_u offset=8 (local.get $rec)) (i32.const 0x04)))
+              (then (local.set $hit (i32.const -1))))))
+        (if (i32.ne (local.get $hit) (i32.load offset=76 (local.get $sw)))
+          (then
+            (i32.store offset=76 (local.get $sw) (local.get $hit))
+            (call $toolbar_repaint_now (local.get $hwnd))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x02A3))
+      (then
+        (if (i32.ne (i32.load offset=76 (local.get $sw)) (i32.const -1))
+          (then
+            (i32.store offset=76 (local.get $sw) (i32.const -1))
+            (call $toolbar_repaint_now (local.get $hwnd))))
+        (return (i32.const 0))))
+
     ;; WM_LBUTTONDOWN: remember the pressed button by hit-tested index.
     (if (i32.eq (local.get $msg) (i32.const 0x0201))
       (then
@@ -6491,6 +6563,8 @@
                 (i32.ne
                   (i32.and (local.get $state_byte) (i32.const 0x03)) ;; CHECKED | PRESSED
                   (i32.const 0)))
+              (local.set $is_hot
+                (i32.eq (local.get $i) (i32.load offset=76 (local.get $sw))))
               (if (i32.and (local.get $state_byte) (i32.const 0x08))
                 (then
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -6512,11 +6586,10 @@
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $buttons)))
               ;; TBSTYLE_FLAT keeps idle/disabled button faces borderless.
-              ;; The Win98 common control only raises a flat button while it
-              ;; is hot and sinks it while pressed/checked; we do not model a
-              ;; separate hot state yet, so draw the edge only for the latter.
+              ;; The Win98 common control raises a flat button while it is hot
+              ;; and sinks it while pressed/checked.
               (if (i32.or
-                    (local.get $hit)
+                    (i32.or (local.get $hit) (local.get $is_hot))
                     (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0800))))
                 (then
                   (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -6527,6 +6600,38 @@
                           (i32.const 0x0F))))) ;; EDGE_RAISED/SUNKEN | BF_RECT
               (local.set $drawn (i32.const 0))
               (local.set $bmp (i32.load offset=48 (local.get $sw)))
+              (local.set $bmp_draw_w (i32.load offset=12 (local.get $sw)))
+              (local.set $bmp_draw_h (i32.load offset=16 (local.get $sw)))
+              (local.set $mask_color (i32.const 0x00C0C0C0))
+              (local.set $use_disabled_effect
+                (i32.eqz (i32.and (local.get $state_byte) (i32.const 0x04))))
+              ;; Prefer a state-specific image list, then the normal image
+              ;; list, then the legacy TB_ADDBITMAP strip. A disabled image
+              ;; list already contains its intended pixels and must not be
+              ;; embossed a second time.
+              (local.set $image_list (i32.const 0))
+              (if (local.get $use_disabled_effect)
+                (then (local.set $image_list (i32.load offset=60 (local.get $sw))))
+                (else
+                  (if (local.get $is_hot)
+                    (then (local.set $image_list (i32.load offset=56 (local.get $sw)))))))
+              (local.set $image_sw
+                (call $toolbar_imagelist_ptr (local.get $image_list)))
+              (if (i32.eqz (local.get $image_sw))
+                (then
+                  (local.set $image_list (i32.load offset=52 (local.get $sw)))
+                  (local.set $image_sw
+                    (call $toolbar_imagelist_ptr (local.get $image_list)))))
+              (if (local.get $image_sw)
+                (then
+                  (local.set $bmp (i32.load offset=16 (local.get $image_sw)))
+                  (local.set $bmp_draw_w (i32.load (local.get $image_sw)))
+                  (local.set $bmp_draw_h (i32.load offset=4 (local.get $image_sw)))
+                  (local.set $mask_color (i32.load offset=20 (local.get $image_sw)))
+                  (if (i32.ne
+                        (local.get $image_list)
+                        (i32.load offset=52 (local.get $sw)))
+                    (then (local.set $use_disabled_effect (i32.const 0))))))
               (if (i32.and
                     (i32.and
                       (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0))
@@ -6537,8 +6642,6 @@
                 (then
                   (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
                   (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bmp)))
-                  (local.set $bmp_draw_w (i32.load offset=12 (local.get $sw)))
-                  (local.set $bmp_draw_h (i32.load offset=16 (local.get $sw)))
                   (if (i32.le_s (local.get $bmp_draw_w) (i32.const 0))
                     (then (local.set $bmp_draw_w (i32.const 16))))
                   (if (i32.le_s (local.get $bmp_draw_h) (i32.const 0))
@@ -6575,7 +6678,7 @@
                           (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
                           (local.set $drawn
                             (if (result i32)
-                              (i32.and (local.get $state_byte) (i32.const 0x04))
+                              (i32.eqz (local.get $use_disabled_effect))
                               (then
                                 (call $host_gdi_transparent_blt
                                   (local.get $hdc)
@@ -6583,7 +6686,7 @@
                                   (local.get $bmp_draw_w) (local.get $bmp_draw_h)
                                   (local.get $memdc)
                                   (local.get $bmp_src_x) (i32.const 0)
-                                  (i32.const 0x00C0C0C0)))
+                                  (local.get $mask_color)))
                               (else
                                 (call $host_gdi_disabled_blt
                                   (local.get $hdc)
@@ -6591,7 +6694,7 @@
                                   (local.get $bmp_draw_w) (local.get $bmp_draw_h)
                                   (local.get $memdc)
                                   (local.get $bmp_src_x) (i32.const 0)
-                                  (i32.const 0x00C0C0C0))))) ;; RGB(192,192,192) toolbar color key
+                                  (local.get $mask_color)))))
                           (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
               (if (i32.eqz (local.get $drawn))
                 (then

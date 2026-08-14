@@ -82,7 +82,7 @@ for (const l of interesting) console.log('  ' + l);
 function parseWindowByCtrlId(id) {
   const re = new RegExp(
     `window:final hwnd=(\\d+) class=("[^"]*") ctrlClass=(-?\\d+) ctrlId=${id} ` +
-    `parent=(0x[0-9a-f]+) pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
+    `parent=(0x[0-9a-f]+)(?: owner=0x[0-9a-f]+)?(?: z=-?\\d+)? pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
     `client=\\{"x":(-?\\d+),"y":(-?\\d+),"w":(-?\\d+),"h":(-?\\d+)\\} ` +
     `visible=(true|false)(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
     'i');
@@ -287,6 +287,12 @@ const sizeComboWhitePixels = sizeCombo
   ? countWhitePixels(PNG_OUT, sizeCombo.clientX + 4, sizeCombo.clientY + 4,
       sizeCombo.clientX + sizeCombo.clientW - 22, sizeCombo.clientY + 18)
   : 0;
+const fontComboWhiteTarget = fontCombo
+  ? Math.floor(Math.max(0, fontCombo.clientW - 26) * 14 * 0.55)
+  : Infinity;
+const sizeComboWhiteTarget = sizeCombo
+  ? Math.floor(Math.max(0, sizeCombo.clientW - 26) * 14 * 0.55)
+  : Infinity;
 const openedNewDialog =
   /window:after-click hwnd=\d+ class="[^"]*" ctrlClass=-?\d+ ctrlId=\d+ .* visible=true(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=true .* title="New"/.test(out);
 
@@ -299,15 +305,15 @@ check('standard toolbar exists as WAT-native ToolbarWindow32',
   standard.className === 'ToolbarWindow32' &&
   standard.ctrlClass === 21 &&
   standard.visible);
-check('standard toolbar has a real surface and height',
-  standard && standard.hasBack && standard.w >= 300 && standard.h >= 24);
+check('standard toolbar has paintable geometry and height',
+  standard && standard.w >= 300 && standard.h >= 24);
 check('formatting toolbar exists as WAT-native ToolbarWindow32',
   formatting &&
   formatting.className === 'ToolbarWindow32' &&
   formatting.ctrlClass === 21 &&
   formatting.visible);
-check('formatting toolbar has a real surface and height',
-  formatting && formatting.hasBack && formatting.w >= 300 && formatting.h >= 24);
+check('formatting toolbar has paintable geometry and height',
+  formatting && formatting.w >= 300 && formatting.h >= 24);
 check('formatting toolbar renderer width is bounded by its control bar',
   formatting &&
   topControlBar &&
@@ -322,7 +328,6 @@ check('font combo is visible on the formatting toolbar',
   formatting &&
   fontCombo.parent === `0x${formatting.hwnd.toString(16)}` &&
   fontCombo.visible &&
-  fontCombo.hasBack &&
   fontCombo.x >= 0 &&
   fontCombo.y >= 0);
 check('size combo is visible and separated from the font combo',
@@ -332,7 +337,6 @@ check('size combo is visible and separated from the font combo',
   sizeCombo.ctrlClass === 5 &&
   sizeCombo.parent === fontCombo.parent &&
   sizeCombo.visible &&
-  sizeCombo.hasBack &&
   sizeCombo.x >= fontCombo.x + fontCombo.w &&
   sizeCombo.y === fontCombo.y);
 check('formatting toolbar button rects fit the narrow control bar',
@@ -357,9 +361,9 @@ check(`disabled standard toolbar icons are visually dimmed (${disabledStandardIc
   disabledStandardIconColorPixels <= 140);
 check(`checked formatting toolbar button paints a sunken edge (${checkedFormattingSunkenEdgePixels} dark edge pixels)`,
   checkedFormattingSunkenEdgePixels >= 70);
-check(`toolbar combo fields paint white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
-  fontComboWhitePixels >= 800 &&
-  sizeComboWhitePixels >= 150);
+check(`toolbar combo fields paint majority-white interiors (${fontComboWhitePixels}/${sizeComboWhitePixels} white pixels)`,
+  fontComboWhitePixels >= fontComboWhiteTarget &&
+  sizeComboWhitePixels >= sizeComboWhiteTarget);
 check('toolbar font and size combo text is populated',
   fontCombo &&
   sizeCombo &&

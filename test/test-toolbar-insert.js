@@ -54,6 +54,8 @@ const TB_SETSTYLE = 0x0438;
 const TB_GETSTYLE = 0x0439;
 const TB_GETBUTTONSIZE = 0x043A;
 const TB_HITTEST = 0x0445;
+const TB_GETHOTITEM = 0x0447;
+const TB_SETHOTITEM = 0x0448;
 const TB_SETEXTENDEDSTYLE = 0x0454;
 const TB_GETEXTENDEDSTYLE = 0x0455;
 const TB_GETPADDING = 0x0456;
@@ -306,6 +308,15 @@ async function main() {
   check('TB_SETDISABLEDIMAGELIST stores disabled image-list handle',
     e.send_message(toolbar, TB_SETDISABLEDIMAGELIST, 0, 0x12340003) === 0 &&
       e.send_message(toolbar, TB_GETDISABLEDIMAGELIST, 0, 0) === 0x12340003);
+  check('TB_SETHOTITEM returns the old index and TB_GETHOTITEM tracks the new index',
+    (e.send_message(toolbar, TB_GETHOTITEM, 0, 0) | 0) === -1 &&
+      (e.send_message(toolbar, TB_SETHOTITEM, 2, 0) | 0) === -1 &&
+      e.send_message(toolbar, TB_GETHOTITEM, 0, 0) === 2 &&
+      e.send_message(toolbar, TB_SETHOTITEM, -1, 0) === 2 &&
+      (e.send_message(toolbar, TB_GETHOTITEM, 0, 0) | 0) === -1);
+  check('TB_SETHOTITEM rejects an out-of-range index',
+    (e.send_message(toolbar, TB_SETHOTITEM, 999, 0) | 0) === -1 &&
+      (e.send_message(toolbar, TB_GETHOTITEM, 0, 0) | 0) === -1);
   check('TB_SETSTYLE/TB_GETSTYLE round-trip style bits',
     e.send_message(toolbar, TB_SETSTYLE, 0, 0x00000800) === 0 &&
       e.send_message(toolbar, TB_GETSTYLE, 0, 0) === 0x00000800);
