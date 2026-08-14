@@ -230,6 +230,59 @@ function buildSyntheticTopic(topicCount = 4) {
   return Buffer.concat([header, encodeLiteralLz77(links)]);
 }
 
+function buildSyntheticOldTopic(compressed = true) {
+  const positions = [12, 61, 87, 136, 185];
+  const types = [2, 0x20, 2, 2, 2];
+  const sizes = [49, 26, 49, 49, 49];
+  const links = Buffer.alloc(sizes.reduce((sum, size) => sum + size, 0));
+  let raw = 0;
+  for (let i = 0; i < positions.length; i++) {
+    const source = i === 1 ? Buffer.from([1, 0, 1, 3, '!'.charCodeAt(0)]) : Buffer.alloc(0);
+    links.writeUInt32LE(sizes[i], raw);
+    links.writeUInt32LE(i === 1 ? 12 : 0, raw + 4);
+    links.writeInt32LE(i === 0 ? -1 : positions[i - 1], raw + 8);
+    links.writeInt32LE(i + 1 === positions.length ? -1 : positions[i + 1], raw + 12);
+    links.writeUInt32LE(i === 1 ? 21 : 49, raw + 16);
+    links[raw + 20] = types[i];
+    source.copy(links, raw + 21);
+    raw += sizes[i];
+  }
+  const header = Buffer.alloc(12);
+  header.writeInt32LE(-1, 0);
+  header.writeUInt32LE(12, 4);
+  header.writeUInt32LE(0, 8);
+  return Buffer.concat([header, compressed ? encodeLiteralLz77(links) : links]);
+}
+
+function buildOldPhrases(values, variant = 'hc31') {
+  const image = Buffer.concat(values.map(value => Buffer.from(value, 'latin1')));
+  const tableSize = (values.length + 1) * 2;
+  const headerSize = variant === 'hc30' ? 4 : variant === 'mvb' ? 40 : 8;
+  const imageBytes = variant === 'hc30' ? image : encodeLiteralLz77(image);
+  const result = Buffer.alloc(headerSize + tableSize + imageBytes.length);
+  let offsetsStart;
+  if (variant === 'mvb') {
+    result.writeUInt16LE(0x0800, 0);
+    result.writeUInt16LE(values.length, 2);
+    result.writeUInt16LE(0x0100, 4);
+    result.writeUInt32LE(image.length, 6);
+    offsetsStart = 40;
+  } else {
+    result.writeUInt16LE(values.length, 0);
+    result.writeUInt16LE(0x0100, 2);
+    if (variant === 'hc31') result.writeUInt32LE(image.length, 4);
+    offsetsStart = headerSize;
+  }
+  let offset = tableSize;
+  result.writeUInt16LE(offset, offsetsStart);
+  for (let i = 0; i < values.length; i++) {
+    offset += Buffer.byteLength(values[i], 'latin1');
+    result.writeUInt16LE(offset, offsetsStart + (i + 1) * 2);
+  }
+  imageBytes.copy(result, offsetsStart + tableSize);
+  return result;
+}
+
 function writeSyntheticTopicRaw(document, rawOffset, value, byteLength = 4) {
   const compressed = document.offsets['|TOPIC'] + 9 + 12;
   for (let i = 0; i < byteLength; i++) {
@@ -239,11 +292,11 @@ function writeSyntheticTopicRaw(document, rawOffset, value, byteLength = 4) {
   }
 }
 
-function buildSyntheticSemanticHelp() {
+function buildSyntheticSemanticHelp({ systemMinor = 33, topic = null, oldPhrases = null } = {}) {
   const title = Buffer.from('Synthetic Help\0', 'latin1');
   const system = Buffer.alloc(12 + 4 + title.length + 8);
   system.writeUInt16LE(0x036c, 0);
-  system.writeUInt16LE(33, 2);
+  system.writeUInt16LE(systemMinor, 2);
   system.writeUInt16LE(1, 4);
   system.writeUInt16LE(4, 10);
   system.writeUInt16LE(1, 12);
@@ -265,9 +318,10 @@ function buildSyntheticSemanticHelp() {
     ['|CONTEXT', buildSemanticBtree('contexts')],
     ['|CTXOMAP', map],
     ['|SYSTEM', system],
-    ['|TOPIC', buildSyntheticTopic()],
+    ['|TOPIC', topic || buildSyntheticTopic()],
     ['|TTLBTREE', buildSemanticBtree('titles')],
   ]);
+  if (oldPhrases) contentsByName.set('|Phrases', oldPhrases);
   const names = [...contentsByName.keys()].sort();
   const dirContent = Buffer.alloc(38 + 1024);
   dirContent.writeUInt16LE(0x293b, 0);
@@ -538,6 +592,33 @@ async function main() {
   check('synthetic header-only topics decode to empty raw streams',
     [0,1,2,3].every(index => e.test_help_decode_topic_raw(index, topicOutWA, topicOutCapacity) === 0));
 
+  for (const [variant, minor, compressedTopic] of [
+    ['hc30', 15, false],
+    ['hc31', 16, true],
+    ['mvb', 27, true],
+  ]) {
+    const oldPhraseHelp = buildSyntheticSemanticHelp({
+      systemMinor: minor,
+      topic: buildSyntheticOldTopic(compressedTopic),
+      oldPhrases: buildOldPhrases(['hello', 'world', '!'], variant),
+    });
+    check(`${variant} old-style phrase table parses`, load(oldPhraseHelp.file) === 1,
+      `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
+    check(`${variant} old-style phrases publish exact offsets and bytes`,
+      e.get_help_phrase_count() === 3 && e.get_help_phrase_image_size() === 11 &&
+      readLatin1(e.get_help_phrase_ptr(0), e.get_help_phrase_len(0)) === 'hello' &&
+      readLatin1(e.get_help_phrase_ptr(1), e.get_help_phrase_len(1)) === 'world' &&
+      readLatin1(e.get_help_phrase_ptr(2), e.get_help_phrase_len(2)) === '!');
+    const oldLength = e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity);
+    check(`${variant} topic stream uses old-style phrase references and spacing`,
+      oldLength === 12 && readLatin1(topicOutWA, oldLength) === 'helloworld !');
+  }
+
+  const emptyOldPhrases = buildSyntheticSemanticHelp({ oldPhrases: buildOldPhrases([]) });
+  check('empty old-style phrase table is represented canonically',
+    load(emptyOldPhrases.file) === 1 && e.get_help_phrase_count() === 0 &&
+    e.get_help_phrase_image_size() === 0);
+
   const mounted = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
   ctx.vfs.files.set('c:\\fixture.hlp', { data: new Uint8Array(mounted), attrs: 0x20 });
   const mountedPath = Buffer.from('c:\\fixture.hlp\0', 'latin1');
@@ -705,6 +786,63 @@ async function main() {
   check('invalid LZ77 back-reference fails before publication',
     load(badPhraseLz) === 0 && e.get_help_last_error() === 12 &&
     e.get_help_phrase_count() === 0);
+
+  const badOldMarker = buildSyntheticSemanticHelp({
+    oldPhrases: buildOldPhrases(['old', 'phrase']),
+  });
+  badOldMarker.file.writeUInt16LE(0,
+    badOldMarker.offsets['|Phrases'] + 9 + 2);
+  check('old-style phrase marker is validated',
+    load(badOldMarker.file) === 0 && e.get_help_last_error() === 12 &&
+    e.get_help_phrase_count() === 0);
+
+  const badOldFirstOffset = buildSyntheticSemanticHelp({
+    oldPhrases: buildOldPhrases(['old', 'phrase']),
+  });
+  badOldFirstOffset.file.writeUInt16LE(7,
+    badOldFirstOffset.offsets['|Phrases'] + 9 + 8);
+  check('old-style first offset must equal its table size',
+    load(badOldFirstOffset.file) === 0 && e.get_help_last_error() === 12);
+
+  const descendingOldOffsets = buildSyntheticSemanticHelp({
+    oldPhrases: buildOldPhrases(['old', 'phrase']),
+  });
+  descendingOldOffsets.file.writeUInt16LE(5,
+    descendingOldOffsets.offsets['|Phrases'] + 9 + 8 + 2);
+  check('old-style phrase offsets must be monotonic',
+    load(descendingOldOffsets.file) === 0 && e.get_help_last_error() === 12);
+
+  const badOldTotal = buildSyntheticSemanticHelp({
+    oldPhrases: buildOldPhrases(['old', 'phrase']),
+  });
+  badOldTotal.file.writeUInt32LE(10,
+    badOldTotal.offsets['|Phrases'] + 9 + 4);
+  check('old-style final offset must equal decompressed size',
+    load(badOldTotal.file) === 0 && e.get_help_last_error() === 12);
+
+  const badOldLz = buildSyntheticSemanticHelp({
+    oldPhrases: buildOldPhrases(['old', 'phrase']),
+  });
+  const badOldLzData = badOldLz.offsets['|Phrases'] + 9 + 8 + 6;
+  badOldLz.file[badOldLzData] = 1;
+  badOldLz.file.writeUInt16LE(0x0fff, badOldLzData + 1);
+  check('invalid old-style phrase LZ77 fails before publication',
+    load(badOldLz.file) === 0 && e.get_help_last_error() === 12 &&
+    e.get_help_phrase_count() === 0);
+
+  const oldPhraseCapacity = buildSyntheticSemanticHelp({
+    oldPhrases: buildOldPhrases(['old']),
+  });
+  oldPhraseCapacity.file.writeUInt16LE(32767,
+    oldPhraseCapacity.offsets['|Phrases'] + 9);
+  check('old-style representable phrase count is bounded',
+    load(oldPhraseCapacity.file) === 0 && e.get_help_last_error() === 6);
+
+  const truncatedMvbPhrases = buildSyntheticSemanticHelp({
+    oldPhrases: Buffer.from([0x00, 0x08, 0x01, 0x00]),
+  });
+  check('truncated MVB old-style phrase header fails',
+    load(truncatedMvbPhrases.file) === 0 && e.get_help_last_error() === 12);
 
   const shortTopicBlock = buildSyntheticSemanticHelp();
   shortTopicBlock.file.writeUInt32LE(11, shortTopicBlock.offsets['|TOPIC'] + 4);

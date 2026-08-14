@@ -55,6 +55,8 @@
   (global $help_doc_phrase_image_wa (mut i32) (i32.const 0))
   (global $help_doc_phrase_count (mut i32) (i32.const 0))
   (global $help_doc_phrase_image_size (mut i32) (i32.const 0))
+  ;; 0=no phrase table, 1=Hall |PhrIndex/|PhrImage, 2=legacy |Phrases.
+  (global $help_doc_phrase_mode (mut i32) (i32.const 0))
   (global $help_doc_system_minor (mut i32) (i32.const 0))
   (global $help_doc_system_major (mut i32) (i32.const 0))
   (global $help_doc_system_flags (mut i32) (i32.const 0))
@@ -129,6 +131,7 @@
     (global.set $help_doc_phrase_image_wa (i32.const 0))
     (global.set $help_doc_phrase_count (i32.const 0))
     (global.set $help_doc_phrase_image_size (i32.const 0))
+    (global.set $help_doc_phrase_mode (i32.const 0))
     (global.set $help_doc_system_minor (i32.const 0))
     (global.set $help_doc_system_major (i32.const 0))
     (global.set $help_doc_system_flags (i32.const 0))

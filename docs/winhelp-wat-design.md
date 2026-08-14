@@ -7,8 +7,8 @@ implemented. Phase 2 now parses `|SYSTEM`, canonical `|TTLBTREE` topics,
 including two-level B+trees, bounded LZ77 expansion, and referential
 validation. It also validates the complete `|TOPIC` link chain, binds canonical
 topics to their type-2 records, and decodes phrase-expanded raw `LinkData2`
-streams. Old-style phrases, formatted topic tokens, and the runtime UI cutover
-remain.
+streams. Legacy `|Phrases` tables are supported in HC30, HC31, and MVB forms.
+Formatted topic tokens and the runtime UI cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -817,8 +817,10 @@ canonical title entry to its type-2 record, and phrase-expands each topic's raw
 `LinkData2` stream while preserving paragraph-control bytes. All checked-in
 fixtures have exact topic-reference, context-resolution, decompressed-phrase,
 raw-topic-length, and full-corpus hash coverage, supplemented by synthetic
-two-level trees and malformed semantic/topic inputs. Old-style phrase tables
-and formatted topic-token decoding are next.
+two-level trees and malformed semantic/topic inputs. The canonical phrase
+interface also covers uncompressed HC30 `|Phrases`, LZ77-compressed HC31
+tables, and the extended MVB layout, including legacy topic-reference spacing
+semantics and malformed-table cleanup. Formatted topic-token decoding is next.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.
