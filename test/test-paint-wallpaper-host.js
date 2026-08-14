@@ -47,6 +47,11 @@ assert.strictEqual(hostCtx.desktopWallpaper.path, path);
 
 const screen = createCanvas(8, 6);
 const renderer = new Win98Renderer(screen);
+const desktopSurface = createCanvas(8, 6);
+const desktopCtx = desktopSurface.getContext('2d');
+desktopCtx.fillStyle = '#008080';
+desktopCtx.fillRect(0, 0, 8, 6);
+assert(renderer.attachDesktopSurface(desktopSurface));
 assert(renderer.setDesktopWallpaper(applied.dib, false));
 renderer._repaintOnce();
 let pixels = screen.getContext('2d').getImageData(0, 0, 8, 6).data;
@@ -77,6 +82,6 @@ assert.strictEqual(createHostImports(invalidCtx).host.set_wallpaper(64, 0), 0,
   'invalid wallpaper file unexpectedly succeeded');
 
 console.log('PASS  wallpaper host decodes a VFS BMP and preserves centered/tiled mode');
-console.log('PASS  renderer composites centered and tiled wallpaper pixels without smoothing');
+console.log('PASS  renderer composites centered and tiled wallpaper through an attached desktop surface');
 console.log('PASS  transparent browser desktop keeps wallpaper below its icon layer');
 console.log('PASS  invalid wallpaper data fails cleanly');
