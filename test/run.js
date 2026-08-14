@@ -970,21 +970,20 @@ async function main() {
     },
   };
   const base = createHostImports(ctx);
-  const bundledUiFon = path.join(ROOT, 'fonts', 'W95FA.fon');
-  if (ctx.vfs && fs.existsSync(bundledUiFon)) {
+  if (ctx.vfs) {
     ctx.vfs.dirs.add('c:\\windows');
     ctx.vfs.dirs.add('c:\\windows\\fonts');
-    ctx.vfs.files.set('c:\\windows\\fonts\\w95fa.fon', {
-      data: new Uint8Array(fs.readFileSync(bundledUiFon)), attrs: 0x20,
-    });
-  }
-  const bundledFixedFon = path.join(ROOT, 'fonts', 'Fixedsys.fon');
-  if (ctx.vfs && fs.existsSync(bundledFixedFon)) {
-    ctx.vfs.dirs.add('c:\\windows');
-    ctx.vfs.dirs.add('c:\\windows\\fonts');
-    ctx.vfs.files.set('c:\\windows\\fonts\\fixedsys.fon', {
-      data: new Uint8Array(fs.readFileSync(bundledFixedFon)), attrs: 0x20,
-    });
+    for (const name of [
+      'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
+    ]) {
+      const bundledFon = path.join(ROOT, 'fonts', name);
+      if (!fs.existsSync(bundledFon)) {
+        throw new Error(`missing bundled bitmap font: ${bundledFon}`);
+      }
+      ctx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
+        data: new Uint8Array(fs.readFileSync(bundledFon)), attrs: 0x20,
+      });
+    }
   }
   const { readStr } = base;
   const h = base.host;
