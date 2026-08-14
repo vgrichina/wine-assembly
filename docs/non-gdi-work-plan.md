@@ -334,8 +334,10 @@ transfer breadth below.
   interfaces for `IDataObject` and static-handler caches.
 - [x] Extend guest-media cleanup to `IDataObject::SetData` replacement,
   `IOleCache::SetData` replacement, and `IOleCache::Uncache`.
-- Add suspended guest `AddRef` completion for `fRelease=FALSE` stream/storage
-  copies, clipboard/cache snapshots, and CF_DIB render-slot mirroring.
+- [x] Add suspended guest `AddRef` completion when `IDataObject::GetData`
+  returns a DLL-private stream or storage interface.
+- Add suspended guest `AddRef` completion for `fRelease=FALSE` `SetData`,
+  clipboard/cache snapshots, and CF_DIB render-slot mirroring.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -403,6 +405,16 @@ guest callback suite passes 48/48; data-object, static-handler, storage,
 callback-state, and WordPad static-DIB gates remain green at 55/55, 65/65,
 68/68, PASS, and 13/13. DLL-private `AddRef` during non-transferring copies and
 snapshots is the next ownership slice.
+
+2026-08-13 guest-GetData result: public `IDataObject::GetData` now detects a
+DLL-private IStream/IStorage presentation, validates its guest `AddRef`, and
+suspends the API frame until the x86 callback returns. The output STGMEDIUM is
+published only after the independent receiver reference exists and uses a NULL
+`pUnkForRelease`, so ordinary `ReleaseStgMedium` balances that reference
+without affecting the stored custom releaser. A missing guest method returns
+`E_NOINTERFACE` with a fully zeroed output. The guest callback suite passes
+52/52; data-object, static-handler, storage, callback-state, and WordPad gates
+remain green at 55/55, 65/65, 68/68, PASS, and 13/13.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage

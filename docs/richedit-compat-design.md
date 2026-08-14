@@ -45,8 +45,11 @@ the full teardown before mutation and preserving stream/storage-before-releaser
 order. Mutation-time `IDataObject`/cache replacement and `IOleCache::Uncache`
 now retire displaced media through that bridge as well. Canonical text
 synthesis moves unrelated guest ownership intact and consumes guest-released
-`fRelease` inputs asynchronously. Non-transferring guest `AddRef` during
-copies, snapshots, and render-slot mirroring remains the next lifetime gap.
+`fRelease` inputs asynchronously. `IDataObject::GetData` now returns guest
+stream/storage media only after a real suspended guest `AddRef`, publishing no
+partial output when that method is missing. Non-transferring guest `AddRef`
+during `SetData`, snapshots, and render-slot mirroring remains the next lifetime
+gap.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off
@@ -80,7 +83,7 @@ dirty-close `SaveObject`, and final destruction have explicit reference-count
 assertions. Guest AddRef/Release/SaveObject methods execute as x86 callbacks
 through a stack-resident continuation context, so the original WAT API frame
 resumes without synchronous re-entry. The local suite remains 65/65 and the
-expanded guest callback suite passes 48/48.
+expanded guest callback suite passes 52/52.
 
 Synthetic local advisory sinks now cover the corresponding collection
 contract: monotonic connections, independently retained sinks, targeted and

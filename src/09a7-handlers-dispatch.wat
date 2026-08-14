@@ -4305,7 +4305,8 @@
   (func $handle_IDataObject_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $ole_owned_object_release_api (local.get $arg0) (i32.const 8)))
   (func $handle_IDataObject_GetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $hr i32)
+    (local $entry i32) (local $source_medium i32) (local $data_iface i32)
+    (local $ret i32) (local $ctx i32) (local $hr i32)
     (if (i32.eqz (local.get $arg2))
       (then (global.set $eax (i32.const 0x80004003)))
       (else
@@ -4315,8 +4316,27 @@
           (then (global.set $eax (local.get $hr)))
           (else
             (local.set $entry (call $ole_data_find_entry (local.get $arg0) (local.get $arg1)))
-            (global.set $eax (call $ole_copy_medium
-              (local.get $arg2) (i32.add (local.get $entry) (i32.const 20))))))))
+            (local.set $source_medium (i32.add (local.get $entry) (i32.const 20)))
+            (local.set $data_iface (call $ole_medium_data_interface (local.get $source_medium)))
+            (if (i32.and (i32.ne (local.get $data_iface) (i32.const 0))
+                  (i32.eqz (call $ole_interface_is_local (local.get $data_iface))))
+              (then
+                (if (i32.eqz (call $ole_guest_method_addr (local.get $data_iface) (i32.const 1)))
+                  (then (global.set $eax (i32.const 0x80004002)))
+                  (else
+                    (local.set $ret (call $gl32 (global.get $esp)))
+                    (local.set $ctx (call $ole_guest_callback_context
+                      (i32.const 13) (i32.const 0) (local.get $ret)
+                      (i32.add (global.get $esp) (i32.const 16))
+                      (i32.const 0) (local.get $arg2)
+                      (call $gl32 (local.get $source_medium))
+                      (local.get $data_iface) (i32.const 0)))
+                    (drop (call $ole_guest_callback_invoke1
+                      (local.get $ctx) (local.get $data_iface) (i32.const 1)))
+                    (return))))
+              (else
+                (global.set $eax (call $ole_copy_medium
+                  (local.get $arg2) (local.get $source_medium)))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_IDataObject_GetDataHere (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_data_get_here (local.get $arg0) (local.get $arg1) (local.get $arg2)))
@@ -4620,7 +4640,8 @@
   ;; 7: IAdviseSink OnSave/OnClose notification sequence;
   ;; 8/9/10: EnumAdvise snapshot AddRef, final Release, and Next AddRef;
   ;; 11: ReleaseStgMedium interface and pUnkForRelease sequence;
-  ;; 12: final IDataObject-owned guest-media teardown.
+  ;; 12: final IDataObject-owned guest-media teardown;
+  ;; 13: IDataObject GetData guest AddRef completion.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -4724,6 +4745,14 @@
           (then (return)))
         (local.set $hr (call $ole_obj_release (local.get $root)))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 13))
+      (then
+        ;; Publish only after the DLL-private interface owns the returned ref.
+        (call $gs32 (local.get $p1) (local.get $p2))
+        (call $gs32 (i32.add (local.get $p1) (i32.const 4)) (local.get $p3))
+        (call $gs32 (i32.add (local.get $p1) (i32.const 8)) (i32.const 0))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then

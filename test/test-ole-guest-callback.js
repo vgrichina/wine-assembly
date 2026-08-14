@@ -53,6 +53,9 @@ async function main() {
     const code = alloc(128);
     const vtable = alloc(32);
     const site = alloc(40);
+    bytes.fill(0, wa(code), wa(code) + 128);
+    bytes.fill(0, wa(vtable), wa(vtable) + 32);
+    bytes.fill(0, wa(site), wa(site) + 40);
     const addRef = code;
     const release = code + 20;
     const saveObject = code + 48;
@@ -130,10 +133,10 @@ async function main() {
   };
 
   let checks = 0;
-  const check = (name, condition) => {
-    assert(condition, name);
+  const check = (name, condition, detail = '') => {
+    assert(condition, detail ? `${name}: ${detail}` : name);
     checks++;
-    console.log(`PASS  ${name}`);
+    console.log(`PASS  ${name}${detail ? `  ${detail}` : ''}`);
   };
 
   const object = e.test_ole_create_static_handler(0) >>> 0;
@@ -489,6 +492,62 @@ async function main() {
     callMethod(cacheInterface, 2) === 0 && read(cacheReleaser + 4) === 0 &&
     read(cacheReleaser + 12) === 1 && read(cacheReleaser + 36) === 1 &&
     read(cachePayload) === 0xa5a55a5a);
+
+  const getDataObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const getDataFormat = makeFormat(0xc519, 4);
+  const getDataStream = makeGuestSite();
+  const getDataReleaser = makeGuestSite();
+  const getDataStoredMedium = alloc(12);
+  write(getDataStoredMedium, 4);
+  write(getDataStoredMedium + 4, getDataStream);
+  write(getDataStoredMedium + 8, getDataReleaser);
+  assert.strictEqual(callMethod(
+    getDataObject, 7, getDataFormat, getDataStoredMedium, 1), 0);
+  const getDataOut = alloc(12);
+  write(getDataOut, 0xcccccccc);
+  write(getDataOut + 4, 0xcccccccc);
+  write(getDataOut + 8, 0xcccccccc);
+  const getDataVtable = read(getDataStream);
+  const getDataAddRef = read(getDataVtable + 4);
+  write(getDataVtable + 4, 0);
+  const malformedGetDataHr = callMethod(getDataObject, 3, getDataFormat, getDataOut);
+  check('IDataObject GetData rejects a malformed guest AddRef before publishing output',
+    malformedGetDataHr === 0x80004002 &&
+    read(getDataOut) === 0 && read(getDataOut + 4) === 0 && read(getDataOut + 8) === 0 &&
+    read(getDataStream + 4) === 1 && read(getDataStream + 8) === 0,
+    `hr=0x${malformedGetDataHr.toString(16)} out=${read(getDataOut)},${read(getDataOut + 4)},${read(getDataOut + 8)} refs=${read(getDataStream + 4)} addrefs=${read(getDataStream + 8)}`);
+  write(getDataVtable + 4, getDataAddRef);
+  check('IDataObject GetData returns a DLL-private stream with a real guest AddRef',
+    callMethod(getDataObject, 3, getDataFormat, getDataOut) === 0 &&
+    read(getDataOut) === 4 && read(getDataOut + 4) === getDataStream &&
+    read(getDataOut + 8) === 0 && read(getDataStream + 4) === 2 &&
+    read(getDataStream + 8) === 1 && read(getDataReleaser + 4) === 1);
+  releaseMedium(getDataOut);
+  check('the returned guest stream reference releases independently of stored media',
+    read(getDataStream + 4) === 1 && read(getDataStream + 12) === 1 &&
+    read(getDataReleaser + 4) === 1 && read(getDataOut) === 0);
+  assert.strictEqual(callMethod(getDataObject, 2), 0);
+  assert.strictEqual(read(getDataStream + 4), 0);
+  assert.strictEqual(read(getDataReleaser + 4), 0);
+
+  const getStorageObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const getStorageFormat = makeFormat(0xc51a, 8);
+  const getStorageGuest = makeGuestSite();
+  const getStorageStoredMedium = alloc(12);
+  write(getStorageStoredMedium, 8);
+  write(getStorageStoredMedium + 4, getStorageGuest);
+  write(getStorageStoredMedium + 8, 0);
+  assert.strictEqual(callMethod(
+    getStorageObject, 7, getStorageFormat, getStorageStoredMedium, 1), 0);
+  const getStorageOut = alloc(12);
+  check('IDataObject GetData applies the same guest AddRef contract to IStorage',
+    callMethod(getStorageObject, 3, getStorageFormat, getStorageOut) === 0 &&
+    read(getStorageOut) === 8 && read(getStorageOut + 4) === getStorageGuest &&
+    read(getStorageGuest + 4) === 2 && read(getStorageGuest + 8) === 1);
+  releaseMedium(getStorageOut);
+  assert.strictEqual(read(getStorageGuest + 4), 1);
+  assert.strictEqual(callMethod(getStorageObject, 2), 0);
+  assert.strictEqual(read(getStorageGuest + 4), 0);
 
   const replaceSequence = alloc(4);
   write(replaceSequence, 0);
