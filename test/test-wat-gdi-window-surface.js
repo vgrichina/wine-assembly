@@ -166,6 +166,25 @@ async function main() {
   assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 56, 0, 0), 2);
   assert.strictEqual(wat.test_gdi_dc_set_field(hdc, 60, 0, 0), 1);
 
+  const edgeBrush = wat.test_call_CreateSolidBrush(0x00FF00FF) >>> 0;
+  const oldBrush = wat.test_call_SelectObject(hdc, edgeBrush) >>> 0;
+  wat.test_gdi_fast_reset();
+  assert.strictEqual(wat.test_call_PatBlt(hdc, 33, 20, 4, 4, 0x00F00021), 1);
+  assert(wat.test_gdi_fast_count(1) > 0,
+    'client-edge PatBlt must enter the canonical 32-bpp bulk path');
+  const edgePixels = canvas.getContext('2d').getImageData(36, 25, 2, 3).data;
+  const edgeRgb = (x, y) => [...edgePixels.subarray((y * 2 + x) * 4, (y * 2 + x) * 4 + 3)];
+  assert.deepStrictEqual(edgeRgb(0, 0), [255, 0, 255],
+    'bulk drawing must apply the client origin');
+  assert.deepStrictEqual(edgeRgb(0, 1), [255, 0, 255],
+    'bulk drawing must include the last client row');
+  assert.deepStrictEqual(edgeRgb(1, 0), [192, 192, 192],
+    'bulk drawing must not overwrite the right nonclient border');
+  assert.deepStrictEqual(edgeRgb(0, 2), [192, 192, 192],
+    'bulk drawing must not overwrite the bottom nonclient border');
+  assert.strictEqual(wat.test_call_SelectObject(hdc, oldBrush) >>> 0, edgeBrush);
+  assert.strictEqual(wat.test_call_DeleteObject(edgeBrush), 1);
+
   const redBrush = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
   const rect = wat.guest_alloc(16) >>> 0;
   wat.guest_write32(rect, 1);

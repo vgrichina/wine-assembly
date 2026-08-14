@@ -118,7 +118,7 @@ function formatNumber(value) {
       verify() { assert.strictEqual(pixel(target, 64, 64), 0x0000FF); },
     },
     {
-      name: 'Rectangle 64x48', count: 300, pixels: 64 * 48, minRate: 25,
+      name: 'Rectangle 64x48', count: 300, pixels: 64 * 48, minRate: 25, fastPath: 0,
       run(count) {
         for (let i = 0; i < count; i++) {
           const x = i & 31;
@@ -129,7 +129,7 @@ function formatNumber(value) {
       verify() { assert.strictEqual(pixel(target, 32, 32), 0x00FF00); },
     },
     {
-      name: 'PatBlt 64x64', count: 200, pixels: 64 * 64, minRate: 20,
+      name: 'PatBlt 64x64', count: 200, pixels: 64 * 64, minRate: 20, fastPath: 1,
       run(count) {
         for (let i = 0; i < count; i++) {
           wat.test_call_PatBlt(target.hdc, i & 31, (i * 5) & 31, 64, 64, 0x00F00021);
@@ -138,7 +138,7 @@ function formatNumber(value) {
       verify() { assert.strictEqual(pixel(target, 32, 32), 0x00FF00); },
     },
     {
-      name: 'BitBlt 128x128', count: 150, pixels: 128 * 128, minRate: 8,
+      name: 'BitBlt 128x128', count: 150, pixels: 128 * 128, minRate: 8, fastPath: 1,
       run(count) {
         for (let i = 0; i < count; i++) {
           wat.test_call_BitBlt(target.hdc, i & 31, (i * 3) & 31, 128, 128,
@@ -148,7 +148,7 @@ function formatNumber(value) {
       verify() { assert.strictEqual(pixel(target, 64, 64), 0xFF0000); },
     },
     {
-      name: 'StretchBlt 64->128', count: 60, pixels: 128 * 128, minRate: 8,
+      name: 'StretchBlt 64->128', count: 60, pixels: 128 * 128, minRate: 8, fastPath: 2,
       run(count) {
         for (let i = 0; i < count; i++) {
           wat.test_call_StretchBlt(target.hdc, 0, 0, 128, 128,
@@ -181,6 +181,8 @@ function formatNumber(value) {
   for (const workload of workloads) {
     const count = Math.max(1, Math.round(workload.count * SCALE));
     if (workload.before) workload.before();
+    const fastBefore = workload.fastPath === undefined
+      ? 0 : wat.test_gdi_fast_count(workload.fastPath);
     workload.run(Math.max(1, Math.round(count / 10)));
     const samples = [];
     for (let sample = 0; sample < SAMPLE_COUNT; sample++) {
@@ -189,6 +191,10 @@ function formatNumber(value) {
       samples.push(Number(process.hrtime.bigint() - started) / 1e6);
     }
     workload.verify();
+    if (workload.fastPath !== undefined) {
+      assert(wat.test_gdi_fast_count(workload.fastPath) > fastBefore,
+        `${workload.name} did not enter its canonical 32-bpp fast path`);
+    }
     const elapsedMs = median(samples);
     const rate = count * 1000 / elapsedMs;
     assert(rate >= workload.minRate,

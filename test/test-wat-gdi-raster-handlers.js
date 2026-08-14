@@ -65,7 +65,9 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_gdi_rop3_uses_pattern(0xF0), 1);
     assert.strictEqual(wat.test_gdi_dc_get_field(dst.hdc, 8, 0), green);
     assert.strictEqual(wat.test_gdi_brush_sample(dst.hdc, green, 2, 2), 0x0000FF00);
+    wat.test_gdi_fast_reset();
     assert.strictEqual(wat.test_call_PatBlt(dst.hdc, 1, 1, 3, 2, 0x00F00021), 1);
+    assert(wat.test_gdi_fast_count(1) > 0, 'solid PatBlt did not enter the 32-bpp bulk path');
     assert.strictEqual(packed(dst, 2, 2), 0x00FF00);
     assert.strictEqual(canvasRgb(dst, 2, 2), 0x00FF00);
     assert.strictEqual(packed(dst, 0, 0), 0);
@@ -132,27 +134,57 @@ const { bootRenderHarness } = require('./render-helper');
   });
 
   check('BitBlt applies SRCCOPY between canonical WAT surfaces', () => {
+    wat.test_gdi_fast_reset();
     assert.strictEqual(wat.test_call_BitBlt(
       dst.hdc, 4, 1, 2, 3, src.hdc, 0, 1, 0x00CC0020), 1);
+    assert(wat.test_gdi_fast_count(1) > 0, 'SRCCOPY did not enter the 32-bpp bulk path');
     assert.strictEqual(packed(dst, 5, 2), 0x112233);
     assert.strictEqual(canvasRgb(dst, 5, 2), 0x112233);
   });
 
-  check('BitBlt preserves destination pixels outside the WAT DC clip region', () => {
+  check('BitBlt accelerates and respects a rectangular WAT DC clip region', () => {
     const clipped = makeDib(4, 4);
     const clip = wat.test_gdi_rgn_alloc_rect(1, 1, 3, 3) >>> 0;
     assert(clip);
     assert.strictEqual(wat.test_gdi_dc_clip_select(clipped.hdc, clip), 2);
+    wat.test_gdi_fast_reset();
     assert.strictEqual(wat.test_call_BitBlt(
       clipped.hdc, 0, 0, 4, 4, src.hdc, 0, 0, 0x00CC0020), 1);
+    assert(wat.test_gdi_fast_count(1) > 0,
+      'single-rectangle clipping must enter the bounded 32-bpp path');
     assert.strictEqual(packed(clipped, 1, 2), 0x112233);
     assert.strictEqual(packed(clipped, 0, 2), 0);
     assert.strictEqual(canvasRgb(clipped, 0, 2), 0);
   });
 
+  check('BitBlt retains exact region membership for a complex clip', () => {
+    const clipped = makeDib(4, 4);
+    const source = makeDib(4, 4);
+    const ink = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;
+    assert(ink);
+    wat.test_call_SelectObject(source.hdc, ink);
+    assert.strictEqual(wat.test_call_PatBlt(source.hdc, 0, 0, 4, 4, 0x00F00021), 1);
+    const left = wat.test_gdi_rgn_alloc_rect(0, 0, 1, 4) >>> 0;
+    const right = wat.test_gdi_rgn_alloc_rect(3, 0, 4, 4) >>> 0;
+    const clip = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0) >>> 0;
+    assert(left && right && clip);
+    assert.strictEqual(wat.test_gdi_rgn_combine(clip, left, right, 2), 3);
+    assert.strictEqual(wat.test_gdi_dc_clip_select(clipped.hdc, clip), 3);
+    wat.test_gdi_fast_reset();
+    assert.strictEqual(wat.test_call_BitBlt(
+      clipped.hdc, 0, 0, 4, 4, source.hdc, 0, 0, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_gdi_fast_count(1), 0,
+      'complex clipping must retain the region-aware generic path');
+    assert.strictEqual(packed(clipped, 0, 2), 0xFF0000);
+    assert.strictEqual(packed(clipped, 1, 2), 0);
+    assert.strictEqual(packed(clipped, 3, 2), 0xFF0000);
+  });
+
   check('StretchBlt expands pixels with deterministic nearest-neighbor sampling', () => {
+    wat.test_gdi_fast_reset();
     assert.strictEqual(wat.test_call_StretchBlt(
       dst.hdc, 0, 3, 4, 2, src.hdc, 0, 2, 2, 1, 0x00CC0020), 1);
+    assert(wat.test_gdi_fast_count(2) > 0, 'StretchBlt did not enter the 32-bpp bulk path');
     assert.strictEqual(packed(dst, 2, 4), 0x112233);
     assert.strictEqual(canvasRgb(dst, 2, 4), 0x112233);
   });

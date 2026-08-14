@@ -133,6 +133,40 @@ const SRC = path.join(ROOT, 'src');
     }
   });
 
+  check('32-bpp bulk paths preserve clipping, orientation, ROPs, and XRGB bytes', () => {
+    const src = surface(5, 3, 32, false);
+    const dst = surface(6, 4, 32, true);
+    for (let y = 0; y < src.height; y++) {
+      for (let x = 0; x < src.width; x++) setPacked(src, x, y, 0x10000 * (y + 1) + x + 1);
+    }
+    wat.test_gdi_fast_reset();
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      dst.desc, -1, 1, 5, 3, src.desc, 0, 0, 0, 0x00CC0020), 1);
+    assert(wat.test_gdi_fast_count(1) > 0, 'SRCCOPY did not use the 32-bpp bulk path');
+    assert.strictEqual(packed(dst, 0, 1), packed(src, 1, 0));
+    assert.strictEqual(packed(dst, 3, 3), packed(src, 4, 2));
+    assert.strictEqual(packed(dst, 4, 1), 0);
+    assert.strictEqual(bytes[address(dst, 0, 1) + 3], 0,
+      'bulk SRCCOPY must retain canonical XRGB reserved-byte behavior');
+
+    setPacked(dst, 2, 0, 0x0F0F0F);
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      dst.desc, 2, 0, 1, 1, src.desc, 0, 0, 0, 0x00660046), 1); // SRCINVERT
+    assert.strictEqual(packed(dst, 2, 0), (packed(src, 0, 0) ^ 0x0F0F0F) & 0xFFFFFF);
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      dst.desc, 1, 0, 3, 1, 0, 0, 0, 0x123456, 0x00F00021), 1); // PATCOPY
+    assert.deepStrictEqual([1, 2, 3].map(x => packed(dst, x, 0)),
+      [0x123456, 0x123456, 0x123456]);
+
+    const scaled = surface(10, 6, 32, false);
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      scaled.desc, 0, 0, 10, 6, src.desc, 0, 0, 5, 3, 0, 0x00CC0020), 1);
+    assert(wat.test_gdi_fast_count(2) > 0, 'StretchBlt did not use the 32-bpp bulk path');
+    assert.strictEqual(packed(scaled, 0, 0), packed(src, 0, 0));
+    assert.strictEqual(packed(scaled, 9, 5), packed(src, 4, 2));
+    assert.strictEqual(bytes[address(scaled, 9, 5) + 3], 0);
+  });
+
   check('BitBlt copies exact pixels across 24/32-bit orientations and clips destination', () => {
     const src = surface(4, 3, 24, false);
     const dst = surface(5, 4, 32, true);
