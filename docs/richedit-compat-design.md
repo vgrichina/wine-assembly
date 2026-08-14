@@ -39,8 +39,10 @@ value snapshots independent of subsequent owner mutation. Runtime-owned
 stream/storage-plus-releaser lifetime rules. The public `ReleaseStgMedium` API
 now applies those rules to DLL-private interfaces through suspended guest
 callbacks, validates the complete release sequence before mutation, and keeps
-malformed media intact. Internal object-owned guest media teardown remains a
-separate follow-up.
+malformed media intact. Final `IDataObject` and static-cache destruction now
+use the same guest callback bridge for every transferred medium, validating
+the full teardown before mutation and preserving stream/storage-before-releaser
+order. Guest-media replacement and `IOleCache::Uncache` remain follow-ups.
 
 The first general embedded-object persistence slice is also complete.
 `IPersistStorage` now models initialization, normal, no-scribble, and hands-off
@@ -64,8 +66,9 @@ content extents with persistent dirty tracking, caller-owned user-type text,
 static misc flags, close state, running state, nested run locks,
 last-unlock-close, and contained state. The expanded focused suite passes
 52/52. DLL-private client-site, live advisory, and advisory snapshot ownership
-now use the guest COM callback bridge; general data objects remain the next
-bridge users.
+now use the guest COM callback bridge. General data objects and static caches
+also use it for final transferred-media destruction; replacement/removal paths
+remain the next bridge users.
 
 Client-site fidelity is covered for both local fixtures and DLL-private guest
 interfaces. Assignment, repeated assignment, retrieval, replacement,
@@ -73,7 +76,7 @@ dirty-close `SaveObject`, and final destruction have explicit reference-count
 assertions. Guest AddRef/Release/SaveObject methods execute as x86 callbacks
 through a stack-resident continuation context, so the original WAT API frame
 resumes without synchronous re-entry. The local suite remains 65/65 and the
-expanded guest callback suite passes 33/33.
+expanded guest callback suite passes 39/39.
 
 Synthetic local advisory sinks now cover the corresponding collection
 contract: monotonic connections, independently retained sinks, targeted and

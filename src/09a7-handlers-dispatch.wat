@@ -3214,6 +3214,210 @@
                 (return (i32.const 1))))))))
     (i32.const 0))
 
+  (func $ole_owned_media_guest_releases_valid (param $obj i32) (result i32)
+    (local $kind i32) (local $entries i32) (local $count i32)
+    (local $i i32) (local $medium i32)
+    (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then
+        (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+        (block $data_done (loop $data_scan
+          (br_if $data_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $medium (i32.add
+            (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 32)))
+            (i32.const 20)))
+          (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $medium)))
+            (then (return (i32.const 0))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $data_scan)))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $kind) (i32.const 6))
+      (then
+        (if (i32.and
+              (call $gl32 (i32.add (local.get $obj) (i32.const 92)))
+              (i32.eqz (call $ole_medium_guest_releases_valid
+                (i32.add (local.get $obj) (i32.const 60)))))
+          (then (return (i32.const 0))))
+        (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 100))))
+        (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 104))))
+        (block $cache_done (loop $cache_scan
+          (br_if $cache_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $medium (i32.add
+            (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40)))
+            (i32.const 28)))
+          (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $medium)))
+            (then (return (i32.const 0))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $cache_scan)))))
+    (i32.const 1))
+
+  (func $ole_owned_media_has_guest (param $obj i32) (result i32)
+    (local $kind i32) (local $entries i32) (local $count i32)
+    (local $i i32) (local $medium i32)
+    (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then
+        (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))))
+    (if (i32.eq (local.get $kind) (i32.const 6))
+      (then
+        (if (i32.and
+              (call $gl32 (i32.add (local.get $obj) (i32.const 92)))
+              (call $ole_medium_has_guest_release (i32.add (local.get $obj) (i32.const 60))))
+          (then (return (i32.const 1))))
+        (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 100))))
+        (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 104))))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $medium
+        (if (result i32) (i32.eq (local.get $kind) (i32.const 4))
+          (then (i32.add
+            (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 32)))
+            (i32.const 20)))
+          (else (i32.add
+            (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40)))
+            (i32.const 28)))))
+      (if (call $ole_medium_has_guest_release (local.get $medium))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Owned-media context uses root=owner, stage=pair stage, p2=data interface,
+  ;; p3=releaser, reserved0=collection cursor, and reserved1=owner phase.
+  (func $ole_owned_media_find_next (param $ctx i32) (result i32)
+    (local $obj i32) (local $kind i32) (local $cursor i32)
+    (local $entries i32) (local $count i32) (local $medium i32)
+    (local.set $obj (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
+    (local.set $cursor (call $gl32 (i32.add (local.get $ctx) (i32.const 40))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then
+        (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
+        (block $data_done (loop $data_scan
+          (br_if $data_done (i32.ge_u (local.get $cursor) (local.get $count)))
+          (local.set $medium (i32.add
+            (i32.add (local.get $entries) (i32.mul (local.get $cursor) (i32.const 32)))
+            (i32.const 20)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
+          (if (call $ole_medium_has_guest_release (local.get $medium))
+            (then (return (local.get $medium))))
+          (br $data_scan)))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $kind) (i32.const 6))
+      (then
+        (if (i32.eqz (local.get $cursor))
+          (then
+            (local.set $cursor (i32.const 1))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
+            (local.set $medium (i32.add (local.get $obj) (i32.const 60)))
+            (if (i32.and
+                  (call $gl32 (i32.add (local.get $obj) (i32.const 92)))
+                  (call $ole_medium_has_guest_release (local.get $medium)))
+              (then (return (local.get $medium))))))
+        (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 100))))
+        (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 104))))
+        (block $cache_done (loop $cache_scan
+          (br_if $cache_done (i32.gt_u (local.get $cursor) (local.get $count)))
+          (local.set $medium (i32.add
+            (i32.add (local.get $entries)
+              (i32.mul (i32.sub (local.get $cursor) (i32.const 1)) (i32.const 40)))
+            (i32.const 28)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
+          (if (call $ole_medium_has_guest_release (local.get $medium))
+            (then (return (local.get $medium))))
+          (br $cache_scan)))))
+    (i32.const 0))
+
+  (func $ole_owned_media_prepare (param $ctx i32) (param $medium i32)
+    (local $tymed i32) (local $data i32) (local $unk i32)
+    (local.set $tymed (call $gl32 (local.get $medium)))
+    (local.set $data (call $gl32 (i32.add (local.get $medium) (i32.const 4))))
+    (local.set $unk (call $gl32 (i32.add (local.get $medium) (i32.const 8))))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 28))
+      (call $ole_medium_data_interface (local.get $medium)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 32)) (local.get $unk))
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+          (i32.eq (local.get $tymed) (i32.const 2)))
+      (then (call $heap_free (local.get $data))))
+    (if (i32.and
+          (i32.and (i32.eqz (local.get $unk))
+            (i32.and (i32.ne (local.get $data) (i32.const 0))
+              (i32.eq (local.get $tymed) (i32.const 1))))
+          (i32.and
+            (i32.ne (local.get $data) (global.get $clipboard_ptr))
+            (i32.and
+              (i32.ne (local.get $data) (global.get $clipboard_rtf_ptr))
+              (i32.ne (local.get $data) (global.get $clipboard_binary_ptr)))))
+      (then (call $heap_free (local.get $data))))
+    (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12)))
+
+  (func $ole_owned_media_release_next (param $ctx i32) (result i32)
+    (local $stage i32) (local $iface i32) (local $medium i32)
+    (block $done (loop $again
+      (local.set $stage (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+      (if (i32.eqz (local.get $stage))
+        (then
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 1))
+          (local.set $iface (call $gl32 (i32.add (local.get $ctx) (i32.const 28))))
+          (if (local.get $iface)
+            (then
+              (if (call $ole_interface_is_local (local.get $iface))
+                (then (drop (call $ole_release_local_interface (local.get $iface))))
+                (else
+                  (drop (call $ole_guest_callback_invoke1
+                    (local.get $ctx) (local.get $iface) (i32.const 2)))
+                  (return (i32.const 1))))))))
+      (local.set $stage (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+      (if (i32.eq (local.get $stage) (i32.const 1))
+        (then
+          (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+          (local.set $iface (call $gl32 (i32.add (local.get $ctx) (i32.const 32))))
+          (if (local.get $iface)
+            (then
+              (if (call $ole_interface_is_local (local.get $iface))
+                (then (drop (call $ole_release_local_interface (local.get $iface))))
+                (else
+                  (drop (call $ole_guest_callback_invoke1
+                    (local.get $ctx) (local.get $iface) (i32.const 2)))
+                  (return (i32.const 1))))))))
+      (local.set $medium (call $ole_owned_media_find_next (local.get $ctx)))
+      (br_if $done (i32.eqz (local.get $medium)))
+      (call $ole_owned_media_prepare (local.get $ctx) (local.get $medium))
+      (br $again)))
+    (i32.const 0))
+
+  (func $ole_owned_object_release_api (param $obj i32) (param $pop_bytes i32)
+    (local $ret i32) (local $ctx i32)
+    (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 8))) (i32.const 4))
+          (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 4))) (i32.const 1))
+            (call $ole_owned_media_has_guest (local.get $obj))))
+      (then
+        (if (i32.eqz (call $ole_owned_media_guest_releases_valid (local.get $obj)))
+          (then
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes)))
+            (return)))
+        (local.set $ret (call $gl32 (global.get $esp)))
+        (local.set $ctx (call $ole_guest_callback_context
+          (i32.const 12) (i32.const 2) (local.get $ret)
+          (i32.add (global.get $esp) (local.get $pop_bytes))
+          (local.get $obj) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (if (call $ole_owned_media_release_next (local.get $ctx))
+          (then (return)))
+        (call $ole_guest_callback_finish
+          (local.get $ctx) (call $ole_obj_release (local.get $obj)))
+        (return)))
+    (global.set $eax (call $ole_obj_release (local.get $obj)))
+    (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes))))
+
   (func $ole_release_medium (param $medium i32)
     (local $tymed i32) (local $data i32) (local $unk i32)
     (if (i32.eqz (local.get $medium)) (then (return)))
@@ -3943,7 +4147,7 @@
   (func $handle_IDataObject_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_obj_addref (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
   (func $handle_IDataObject_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $ole_obj_release (local.get $arg0))) (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+    (call $ole_owned_object_release_api (local.get $arg0) (i32.const 8)))
   (func $handle_IDataObject_GetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $hr i32)
     (if (i32.eqz (local.get $arg2))
@@ -4243,7 +4447,8 @@
   ;; 4: final static-handler Release; 5/6: Advise/Unadvise ownership;
   ;; 7: IAdviseSink OnSave/OnClose notification sequence;
   ;; 8/9/10: EnumAdvise snapshot AddRef, final Release, and Next AddRef;
-  ;; 11: ReleaseStgMedium interface and pUnkForRelease sequence.
+  ;; 11: ReleaseStgMedium interface and pUnkForRelease sequence;
+  ;; 12: final IDataObject-owned guest-media teardown.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -4341,9 +4546,23 @@
           (then (return)))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $p4))
         (return)))
+    (if (i32.eq (local.get $operation) (i32.const 12))
+      (then
+        (if (call $ole_owned_media_release_next (local.get $ctx))
+          (then (return)))
+        (local.set $hr (call $ole_obj_release (local.get $root)))
+        (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then
-        (if (call $ole_static_final_guest_advise_next (local.get $ctx))
+        (if (i32.eqz (call $gl32 (i32.add (local.get $ctx) (i32.const 44))))
+          (then
+            (if (call $ole_static_final_guest_advise_next (local.get $ctx))
+              (then (return)))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 44)) (i32.const 1))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (i32.const 0))))
+        (if (call $ole_owned_media_release_next (local.get $ctx))
           (then (return)))
         (local.set $hr (call $ole_obj_release (local.get $root)))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
@@ -4905,9 +5124,9 @@
       (then (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 24))) (call $g2w (local.get $clsid)) (i32.const 16))))
     (local.get $obj))
 
-  ;; Release a static handler at an API boundary. Final DLL-private client-site
-  ;; and advisory references execute guest IUnknown::Release before WAT object
-  ;; storage is destroyed; non-final and WAT-local releases stay fast.
+  ;; Release a static handler at an API boundary. Final DLL-private client-site,
+  ;; advisory, and transferred-media references execute guest IUnknown::Release
+  ;; before WAT object storage is destroyed; non-final/local releases stay fast.
   (func $ole_static_release_api (param $root i32) (param $pop_bytes i32)
     (local $site i32) (local $site_owned i32) (local $ret i32) (local $ctx i32)
     (local.set $site_owned (call $gl32 (i32.add (local.get $root) (i32.const 144))))
@@ -4916,8 +5135,10 @@
           (i32.and
             (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 4))) (i32.const 1))
             (i32.or
-              (i32.eq (local.get $site_owned) (i32.const 2))
-              (call $ole_static_has_guest_advise (local.get $root)))))
+              (i32.or
+                (i32.eq (local.get $site_owned) (i32.const 2))
+                (call $ole_static_has_guest_advise (local.get $root)))
+              (call $ole_owned_media_has_guest (local.get $root)))))
       (then
         (local.set $site (call $gl32 (i32.add (local.get $root) (i32.const 16))))
         ;; Retain the object if any malformed external interface has no Release
@@ -4926,7 +5147,9 @@
               (i32.and
                 (i32.eq (local.get $site_owned) (i32.const 2))
                 (i32.eqz (call $ole_guest_method_addr (local.get $site) (i32.const 2))))
-              (i32.eqz (call $ole_static_guest_advise_releases_valid (local.get $root))))
+              (i32.or
+                (i32.eqz (call $ole_static_guest_advise_releases_valid (local.get $root)))
+                (i32.eqz (call $ole_owned_media_guest_releases_valid (local.get $root)))))
           (then
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (local.get $pop_bytes)))
@@ -4943,6 +5166,11 @@
             (drop (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $site) (i32.const 2)))
             (return)))
         (if (call $ole_static_final_guest_advise_next (local.get $ctx))
+          (then (return)))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 44)) (i32.const 1))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 2))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (i32.const 0))
+        (if (call $ole_owned_media_release_next (local.get $ctx))
           (then (return)))
         (call $ole_guest_callback_finish
           (local.get $ctx) (call $ole_obj_release (local.get $root)))

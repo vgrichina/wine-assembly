@@ -402,6 +402,84 @@ async function main() {
   assert.strictEqual(read(malformedStream + 4), 0);
   assert.strictEqual(read(malformedReleaser + 4), 0);
 
+  const ownedSequence = alloc(4);
+  write(ownedSequence, 0);
+  const ownedObject = e.test_ole_create_data_object(0, 0) >>> 0;
+  const ownedStreamFormat = alloc(20);
+  write(ownedStreamFormat, 0xc510);
+  write(ownedStreamFormat + 4, 0);
+  write(ownedStreamFormat + 8, 1);
+  write(ownedStreamFormat + 12, 0xffffffff);
+  write(ownedStreamFormat + 16, 4);
+  const ownedStream = makeGuestSite(ownedSequence);
+  const ownedStreamReleaser = makeGuestSite(ownedSequence);
+  const ownedStreamMedium = alloc(12);
+  write(ownedStreamMedium, 4);
+  write(ownedStreamMedium + 4, ownedStream);
+  write(ownedStreamMedium + 8, ownedStreamReleaser);
+  check('IDataObject SetData transfers DLL-private stream and releaser ownership',
+    callMethod(ownedObject, 7, ownedStreamFormat, ownedStreamMedium, 1) === 0 &&
+    read(ownedStreamMedium) === 0 && read(ownedStreamMedium + 4) === 0 &&
+    read(ownedStreamMedium + 8) === 0 &&
+    read(ownedStream + 4) === 1 && read(ownedStreamReleaser + 4) === 1);
+
+  const ownedHglobalFormat = alloc(20);
+  write(ownedHglobalFormat, 0xc511);
+  write(ownedHglobalFormat + 4, 0);
+  write(ownedHglobalFormat + 8, 1);
+  write(ownedHglobalFormat + 12, 0xffffffff);
+  write(ownedHglobalFormat + 16, 1);
+  const ownedHglobalPayload = alloc(8);
+  write(ownedHglobalPayload, 0x78563412);
+  const ownedHglobalReleaser = makeGuestSite(ownedSequence);
+  const ownedHglobalMedium = alloc(12);
+  write(ownedHglobalMedium, 1);
+  write(ownedHglobalMedium + 4, ownedHglobalPayload);
+  write(ownedHglobalMedium + 8, ownedHglobalReleaser);
+  check('IDataObject owns multiple transferred DLL-private media entries',
+    callMethod(ownedObject, 7, ownedHglobalFormat, ownedHglobalMedium, 1) === 0 &&
+    read(ownedHglobalMedium) === 0 && read(ownedHglobalReleaser + 4) === 1);
+
+  const ownedStreamReleaserVtable = read(ownedStreamReleaser);
+  const ownedStreamReleaserRelease = read(ownedStreamReleaserVtable + 8);
+  write(ownedStreamReleaserVtable + 8, 0);
+  check('final IDataObject Release validates every guest callback before teardown',
+    callMethod(ownedObject, 2) === 1 && read(ownedObject + 4) === 1 &&
+    read(ownedSequence) === 0 && read(ownedStream + 4) === 1 &&
+    read(ownedStreamReleaser + 4) === 1 && read(ownedHglobalReleaser + 4) === 1);
+  write(ownedStreamReleaserVtable + 8, ownedStreamReleaserRelease);
+  check('final IDataObject Release tears down guest media in entry and COM order',
+    callMethod(ownedObject, 2) === 0 &&
+    read(ownedStream + 4) === 0 && read(ownedStream + 36) === 1 &&
+    read(ownedStreamReleaser + 4) === 0 && read(ownedStreamReleaser + 36) === 2 &&
+    read(ownedHglobalReleaser + 4) === 0 && read(ownedHglobalReleaser + 36) === 3 &&
+    read(ownedHglobalPayload) === 0x78563412);
+
+  const cacheSequence = alloc(4);
+  write(cacheSequence, 0);
+  const cacheRoot = e.test_ole_create_static_handler(0) >>> 0;
+  const cacheInterface = cacheRoot + 52;
+  const cacheFormat = alloc(20);
+  write(cacheFormat, 0xc512);
+  write(cacheFormat + 4, 0);
+  write(cacheFormat + 8, 1);
+  write(cacheFormat + 12, 0xffffffff);
+  write(cacheFormat + 16, 1);
+  const cachePayload = alloc(8);
+  write(cachePayload, 0xa5a55a5a);
+  const cacheReleaser = makeGuestSite(cacheSequence);
+  const cacheMedium = alloc(12);
+  write(cacheMedium, 1);
+  write(cacheMedium + 4, cachePayload);
+  write(cacheMedium + 8, cacheReleaser);
+  check('IOleCache SetData transfers a DLL-private presentation releaser',
+    callMethod(cacheInterface, 7, cacheFormat, cacheMedium, 1) === 0 &&
+    read(cacheMedium) === 0 && read(cacheReleaser + 4) === 1);
+  check('final static-handler Release runs guest cached-media teardown without an advise sink',
+    callMethod(cacheInterface, 2) === 0 && read(cacheReleaser + 4) === 0 &&
+    read(cacheReleaser + 12) === 1 && read(cacheReleaser + 36) === 1 &&
+    read(cachePayload) === 0xa5a55a5a);
+
   console.log(`\n${checks}/${checks} guest COM callback checks passed`);
 }
 

@@ -330,9 +330,10 @@ transfer breadth below.
 - [x] Add suspended guest-callback completion to the public
   `ReleaseStgMedium` path for DLL-private IStream/IStorage interfaces and
   `pUnkForRelease`, preserving the required release order.
-- Extend object-owned/transferred media destruction to DLL-private interfaces;
-  the public release contract is complete, while final `IDataObject`/cache
-  teardown still uses the local-only internal helper.
+- [x] Extend final object-owned/transferred media destruction to DLL-private
+  interfaces for `IDataObject` and static-handler caches.
+- Extend guest-media cleanup to replacement and `IOleCache::Uncache`; those
+  mutation paths still use the synchronous local-interface helper.
 - [x] Implement `GetDataHere` for compatible caller-provided global memory,
   streams, and storage.
 - [x] Complete `IEnumFORMATETC::Next/Skip/Reset/Clone` for more than one entry.
@@ -378,6 +379,16 @@ backing, recursive IStorage trees, target-device metadata, and format
 enumeration remain independent if the former owner mutates or adds data. The
 bounded external Paint path wraps its already rendered CF_DIB in a local data
 object. The focused suite passes 50/50.
+
+2026-08-13 guest-media teardown result: final `IDataObject` and static-handler
+cache destruction now scan all transferred media, validate every DLL-private
+`Release` callback before mutation, and resume asynchronous guest callbacks in
+entry order. Stream/storage interfaces release before `pUnkForRelease`; an
+HGLOBAL delegated to a guest releaser remains untouched by the runtime. The
+guest callback suite passes 39/39, the data-object and static-handler suites
+remain green at 55/55 and 65/65, and WordPad static-DIB Copy/Cut/Paste remains
+green at 13/13. Replacement and `IOleCache::Uncache` guest cleanup remain the
+next lifetime slice.
 
 2026-08-13 medium-ownership result: transferred HGLOBAL media honor a local
 `pUnkForRelease` without freeing the delegated payload, while stream/storage
