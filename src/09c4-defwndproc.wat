@@ -437,26 +437,29 @@
             (local.get $range))))))
     (if (local.get $vert)
       (then
+        ;; Win98 standard thumbs span the complete 16px scrollbar strip. The
+        ;; raised edge itself supplies the chrome; a cross-axis inset leaves
+        ;; exposed track rails and makes the thumb look only 12px wide.
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-          (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (local.get $thumb_pos))
-          (i32.sub (i32.add (local.get $x) (local.get $w)) (i32.const 2))
+          (local.get $x) (i32.add (local.get $y) (local.get $thumb_pos))
+          (i32.add (local.get $x) (local.get $w))
           (i32.add (i32.add (local.get $y) (local.get $thumb_pos)) (local.get $thumb))
           (i32.const 0x30011)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
-          (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (local.get $thumb_pos))
-          (i32.sub (i32.add (local.get $x) (local.get $w)) (i32.const 2))
+          (local.get $x) (i32.add (local.get $y) (local.get $thumb_pos))
+          (i32.add (local.get $x) (local.get $w))
           (i32.add (i32.add (local.get $y) (local.get $thumb_pos)) (local.get $thumb))
           (i32.const 0x05) (i32.const 0x0F))))
       (else
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-          (i32.add (local.get $x) (local.get $thumb_pos)) (i32.add (local.get $y) (i32.const 2))
+          (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $y)
           (i32.add (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $thumb))
-          (i32.sub (i32.add (local.get $y) (local.get $h)) (i32.const 2))
+          (i32.add (local.get $y) (local.get $h))
           (i32.const 0x30011)))
         (drop (call $host_gdi_draw_edge (local.get $hdc)
-          (i32.add (local.get $x) (local.get $thumb_pos)) (i32.add (local.get $y) (i32.const 2))
+          (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $y)
           (i32.add (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $thumb))
-          (i32.sub (i32.add (local.get $y) (local.get $h)) (i32.const 2))
+          (i32.add (local.get $y) (local.get $h))
           (i32.const 0x05) (i32.const 0x0F))))))
 
   (func $defwndproc_do_ncpaint (param $hwnd i32)
