@@ -601,23 +601,23 @@ Safari, Chromium, and Node when the same deterministic strike is selected.
 
 ### Font sources and licensing
 
-The repository already bundles two open substitutes:
+The deterministic stock resources have pinned, redistributable inputs:
 
-- **W95FA** is an OFL-licensed recreation used for MS Sans Serif/Tahoma-like UI
-  text. It is an outline/web font, not the original Microsoft bitmap strikes.
-- **Fixedsys Excelsior** is reported as public domain and provides the source
-  for both the outline fallback and the generated multi-strike fixed-pitch FON.
+- **Wine System, MS Sans Serif, Fixedsys, and Courier** preserve Wine's native
+  embedded monochrome strikes and remain under LGPL-2.1-or-later.
+- **ANAKRON-derived Terminal** preserves ANAKRON v0.3.3's native 8x12 BDF
+  pixels, is renamed for the compatibility role, and remains under OFL-1.1.
+- **W95FA** and **Fixedsys Excelsior** remain legacy outline/web fallbacks for
+  shell CSS and unsupported scalable Canvas faces; they no longer generate or
+  back the covered stock GDI bitmap resources.
 
-Both can be rasterized once at build time into bundled strike files for the
-exact pixel sizes the emulator supports. Generated strikes remain subject to
-the source font's license and attribution/renaming requirements. This makes
-output deterministic, but it does not make their glyphs identical to
-Microsoft's originals.
-
-Other viable open bitmap sources include Terminus (SIL OFL, fixed pitch) and
-GNU Unifont (SIL OFL or GPL with font exception, broad Unicode coverage). They
-are useful fallbacks for terminal text and missing scripts, not close visual
-substitutes for proportional MS Sans Serif.
+Generated strikes remain subject to their source font's license and
+attribution/renaming requirements. Deterministic output does not make an open
+substitute's artwork identical to Microsoft's original. The complete candidate
+comparison, including ReactOS, unix4lyfe CP437, Kakwa, Terminus, W95FA, and
+Fixedsys Excelsior, is in
+[`bitmap-font-review.md`](bitmap-font-review.md); pinned sources, hashes, and
+license copies are recorded under `fonts/`.
 
 Do not bundle original Microsoft `SSERIFE.FON`, `VGASYS.FON`, `VGAOEM.FON`,
 Tahoma, Microsoft Sans Serif, or extracted bitmap strikes without a verified
