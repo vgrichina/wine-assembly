@@ -12,6 +12,7 @@
   (global $HELP_MAX_PHRASES i32 (i32.const 65536))
   (global $HELP_MAX_PHRASE_BYTES i32 (i32.const 65536))
   (global $HELP_MAX_TOPIC_LINKS i32 (i32.const 262144))
+  (global $HELP_MAX_TOPIC_TOKENS i32 (i32.const 262144))
   (global $HELP_MAX_DECOMPRESSED_TOPIC_BYTES i32 (i32.const 0x00400000))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
@@ -81,6 +82,13 @@
   (global $HELP_TOPIC_SIZE i32 (i32.const 32))
   (global $HELP_CONTEXT_SIZE i32 (i32.const 8))
   (global $HELP_TOPIC_HAS_CONTEXT i32 (i32.const 1))
+
+  ;; HelpTopicToken is 16 bytes. The initial topic-string layer emits TEXT
+  ;; and END; LinkData1 decoding will interleave the remaining format kinds.
+  ;;   kind:u32, text_off:u32, text_len:u32, value:u32.
+  (global $HELP_TOPIC_TOKEN_SIZE i32 (i32.const 16))
+  (global $HELP_TOKEN_TEXT i32 (i32.const 1))
+  (global $HELP_TOKEN_END_TOPIC i32 (i32.const 13))
 
   ;; HelpSlice is 16 bytes:
   ;;   base_wa:u32, file_size:u32, offset:u32, length:u32.

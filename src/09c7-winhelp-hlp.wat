@@ -1372,6 +1372,101 @@
     (if (i32.eqz (local.get $ok)) (then (return (i32.const -1))))
     (local.get $total))
 
+  ;; Preserve the NUL-delimited LinkData2 string boundaries as the stable
+  ;; base layer for formatted-topic decoding. TEXT offsets are relative to
+  ;; raw_out; the final record is END_TOPIC. Empty strings are formatting
+  ;; boundaries and therefore do not fabricate empty text tokens.
+  (func $help_decode_topic_strings
+    (param $topic_index i32) (param $raw_out i32) (param $raw_capacity i32)
+    (param $tokens_out i32) (param $token_capacity i32) (result i32)
+    (local $memory_bytes i32) (local $raw_len i32) (local $i i32)
+    (local $token_count i32) (local $in_string i32) (local $start i32)
+    (local $token i32) (local $token_bytes i32) (local $ch i32)
+    (local.set $memory_bytes (i32.shl (memory.size) (i32.const 16)))
+    (if (i32.or
+          (i32.gt_u (local.get $token_capacity) (global.get $HELP_MAX_TOPIC_TOKENS))
+          (i32.or
+            (i32.gt_u (local.get $tokens_out) (local.get $memory_bytes))
+            (i32.gt_u (local.get $token_capacity)
+              (i32.div_u (i32.sub (local.get $memory_bytes) (local.get $tokens_out))
+                (global.get $HELP_TOPIC_TOKEN_SIZE)))))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
+        (return (i32.const -1))))
+    (local.set $raw_len (call $help_decode_topic_raw
+      (local.get $topic_index) (local.get $raw_out) (local.get $raw_capacity)))
+    (if (i32.lt_s (local.get $raw_len) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.set $token_count (i32.const 1))
+    (block $counted (loop $count
+      (br_if $counted (i32.ge_u (local.get $i) (local.get $raw_len)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $raw_out) (local.get $i))))
+      (if (i32.eqz (local.get $ch))
+        (then (local.set $in_string (i32.const 0)))
+        (else
+          (if (i32.eqz (local.get $in_string))
+            (then
+              (if (i32.ge_u (local.get $token_count) (global.get $HELP_MAX_TOPIC_TOKENS))
+                (then
+                  (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (i32.const 0))
+                  (return (i32.const -1))))
+              (local.set $token_count (i32.add (local.get $token_count) (i32.const 1)))
+              (local.set $in_string (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $count)))
+    (if (i32.gt_u (local.get $token_count) (local.get $token_capacity))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (i32.const 0))
+        (return (i32.const -1))))
+    (local.set $token_bytes
+      (i32.mul (local.get $token_count) (global.get $HELP_TOPIC_TOKEN_SIZE)))
+    (if (i32.and
+          (i32.lt_u (local.get $raw_out) (i32.add (local.get $tokens_out) (local.get $token_bytes)))
+          (i32.lt_u (local.get $tokens_out) (i32.add (local.get $raw_out) (local.get $raw_len))))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
+        (return (i32.const -1))))
+    (local.set $i (i32.const 0))
+    (local.set $start (i32.const -1))
+    (local.set $token_count (i32.const 0))
+    (block $emitted (loop $emit
+      (if (i32.eq (local.get $i) (local.get $raw_len))
+        (then
+          (if (i32.ge_s (local.get $start) (i32.const 0))
+            (then
+              (local.set $token (i32.add (local.get $tokens_out)
+                (i32.mul (local.get $token_count) (global.get $HELP_TOPIC_TOKEN_SIZE))))
+              (i32.store (local.get $token) (global.get $HELP_TOKEN_TEXT))
+              (i32.store offset=4 (local.get $token) (local.get $start))
+              (i32.store offset=8 (local.get $token) (i32.sub (local.get $i) (local.get $start)))
+              (i32.store offset=12 (local.get $token) (i32.const 0))
+              (local.set $token_count (i32.add (local.get $token_count) (i32.const 1)))))
+          (br $emitted)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $raw_out) (local.get $i))))
+      (if (i32.eqz (local.get $ch))
+        (then
+          (if (i32.ge_s (local.get $start) (i32.const 0))
+            (then
+              (local.set $token (i32.add (local.get $tokens_out)
+                (i32.mul (local.get $token_count) (global.get $HELP_TOPIC_TOKEN_SIZE))))
+              (i32.store (local.get $token) (global.get $HELP_TOKEN_TEXT))
+              (i32.store offset=4 (local.get $token) (local.get $start))
+              (i32.store offset=8 (local.get $token) (i32.sub (local.get $i) (local.get $start)))
+              (i32.store offset=12 (local.get $token) (i32.const 0))
+              (local.set $token_count (i32.add (local.get $token_count) (i32.const 1)))
+              (local.set $start (i32.const -1)))))
+        (else
+          (if (i32.lt_s (local.get $start) (i32.const 0))
+            (then (local.set $start (local.get $i))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $emit)))
+    (local.set $token (i32.add (local.get $tokens_out)
+      (i32.mul (local.get $token_count) (global.get $HELP_TOPIC_TOKEN_SIZE))))
+    (i32.store (local.get $token) (global.get $HELP_TOKEN_END_TOPIC))
+    (i32.store offset=4 (local.get $token) (local.get $raw_len))
+    (i64.store offset=8 (local.get $token) (i64.const 0))
+    (i32.add (local.get $token_count) (i32.const 1)))
+
   (func $help_parse_hall_phrases
     (param $index_internal i32) (param $image_internal i32) (result i32)
     (local $index_record i32) (local $image_record i32)
@@ -1946,3 +2041,9 @@
     (param $topic_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
     (call $help_decode_topic_raw
       (local.get $topic_index) (local.get $out_wa) (local.get $capacity)))
+  (func (export "test_help_decode_topic_strings")
+    (param $topic_index i32) (param $raw_out i32) (param $raw_capacity i32)
+    (param $tokens_out i32) (param $token_capacity i32) (result i32)
+    (call $help_decode_topic_strings
+      (local.get $topic_index) (local.get $raw_out) (local.get $raw_capacity)
+      (local.get $tokens_out) (local.get $token_capacity)))

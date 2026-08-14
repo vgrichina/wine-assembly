@@ -398,6 +398,8 @@ async function main() {
   const nameWA = staging + 0x10000;
   const topicOutWA = staging + 0x20000;
   const topicOutCapacity = 0x10000;
+  const topicTokensWA = staging + 0x40000;
+  const topicTokenCapacity = 4096;
 
   let passed = 0;
   let failed = 0;
@@ -526,6 +528,7 @@ async function main() {
       e.get_help_phrase_len(semantic.phraseCount) === 0);
 
     const rawParts = [];
+    const rawTopics = [];
     const rawLengths = [];
     let rawBytes = 0;
     let rawOk = true;
@@ -538,7 +541,9 @@ async function main() {
       }
       const lengthPrefix = Buffer.alloc(4);
       lengthPrefix.writeUInt32LE(length);
-      rawParts.push(lengthPrefix, Buffer.from(bytes.subarray(topicOutWA, topicOutWA + length)));
+      const rawTopic = Buffer.from(bytes.subarray(topicOutWA, topicOutWA + length));
+      rawTopics.push(rawTopic);
+      rawParts.push(lengthPrefix, rawTopic);
       rawBytes += length;
     }
     const rawHash = rawOk
@@ -550,6 +555,48 @@ async function main() {
     check(`${file} exact raw topic corpus`,
       rawOk && rawBytes === semantic.rawTopicBytes && rawHash === semantic.rawTopicHash,
       `bytes=${rawBytes} hash=${rawHash}`);
+
+    let stringTokensOk = rawOk;
+    let stringTokenDetail = '';
+    for (let topicIndex = 0; topicIndex < rawTopics.length && stringTokensOk; topicIndex++) {
+      const rawTopic = rawTopics[topicIndex];
+      const expectedStrings = [];
+      let start = -1;
+      for (let i = 0; i <= rawTopic.length; i++) {
+        if (i === rawTopic.length || rawTopic[i] === 0) {
+          if (start >= 0) expectedStrings.push([start, i - start]);
+          start = -1;
+        } else if (start < 0) {
+          start = i;
+        }
+      }
+      const tokenCount = e.test_help_decode_topic_strings(
+        topicIndex, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity);
+      if (tokenCount !== expectedStrings.length + 1) {
+        stringTokensOk = false;
+        stringTokenDetail = `topic=${topicIndex} count=${tokenCount} expected=${expectedStrings.length + 1}`;
+        break;
+      }
+      for (let i = 0; i < expectedStrings.length; i++) {
+        const token = topicTokensWA + i * 16;
+        if (dv.getUint32(token, true) !== 1 ||
+            dv.getUint32(token + 4, true) !== expectedStrings[i][0] ||
+            dv.getUint32(token + 8, true) !== expectedStrings[i][1] ||
+            dv.getUint32(token + 12, true) !== 0) {
+          stringTokensOk = false;
+          stringTokenDetail = `topic=${topicIndex} token=${i}`;
+          break;
+        }
+      }
+      const end = topicTokensWA + expectedStrings.length * 16;
+      if (stringTokensOk && (dv.getUint32(end, true) !== 13 ||
+          dv.getUint32(end + 4, true) !== rawTopic.length ||
+          dv.getBigUint64(end + 8, true) !== 0n)) {
+        stringTokensOk = false;
+        stringTokenDetail = `topic=${topicIndex} bad END_TOPIC`;
+      }
+    }
+    check(`${file} exact NUL-delimited topic string tokens`, stringTokensOk, stringTokenDetail);
   }
 
   const capacityFixture = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
@@ -558,6 +605,19 @@ async function main() {
     e.test_help_decode_topic_raw(0, topicOutWA, 114) === -1 && e.get_help_last_error() === 6);
   check('topic decoder rejects an out-of-range topic index',
     e.test_help_decode_topic_raw(e.get_help_topic_count(), topicOutWA, topicOutCapacity) === -1);
+  check('topic string-token builder fixture reloads', load(capacityFixture) === 1);
+  bytes.fill(0xaa, topicTokensWA, topicTokensWA + 16);
+  check('topic string-token builder preflights output capacity',
+    e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity, topicTokensWA, 0) === -1 &&
+    e.get_help_last_error() === 6 && bytes.subarray(topicTokensWA, topicTokensWA + 16).every(byte => byte === 0xaa));
+  check('topic string-token builder validates output memory bounds',
+    load(capacityFixture) === 1 &&
+    e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity, memory.buffer.byteLength - 8, 1) === -1 &&
+    e.get_help_last_error() === 1);
+  check('topic string-token builder rejects overlapping raw and token buffers',
+    load(capacityFixture) === 1 &&
+    e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity, topicOutWA, topicTokenCapacity) === -1 &&
+    e.get_help_last_error() === 1);
 
   for (const indexed of [false, true]) {
     const data = buildSyntheticDirectory({ indexed });
@@ -591,6 +651,9 @@ async function main() {
     e.test_help_resolve_context_id(7) === 20 && e.test_help_resolve_context_id(8) === 0);
   check('synthetic header-only topics decode to empty raw streams',
     [0,1,2,3].every(index => e.test_help_decode_topic_raw(index, topicOutWA, topicOutCapacity) === 0));
+  check('empty synthetic topic emits only END_TOPIC',
+    e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity) === 1 &&
+    dv.getUint32(topicTokensWA, true) === 13 && dv.getUint32(topicTokensWA + 4, true) === 0);
 
   for (const [variant, minor, compressedTopic] of [
     ['hc30', 15, false],
@@ -612,6 +675,12 @@ async function main() {
     const oldLength = e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity);
     check(`${variant} topic stream uses old-style phrase references and spacing`,
       oldLength === 12 && readLatin1(topicOutWA, oldLength) === 'helloworld !');
+    check(`${variant} old-style stream emits TEXT then END_TOPIC`,
+      e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity,
+        topicTokensWA, topicTokenCapacity) === 2 &&
+      dv.getUint32(topicTokensWA, true) === 1 && dv.getUint32(topicTokensWA + 4, true) === 0 &&
+      dv.getUint32(topicTokensWA + 8, true) === 12 &&
+      dv.getUint32(topicTokensWA + 16, true) === 13);
   }
 
   const emptyOldPhrases = buildSyntheticSemanticHelp({ oldPhrases: buildOldPhrases([]) });

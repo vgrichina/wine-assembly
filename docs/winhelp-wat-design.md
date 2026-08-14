@@ -8,7 +8,10 @@ including two-level B+trees, bounded LZ77 expansion, and referential
 validation. It also validates the complete `|TOPIC` link chain, binds canonical
 topics to their type-2 records, and decodes phrase-expanded raw `LinkData2`
 streams. Legacy `|Phrases` tables are supported in HC30, HC31, and MVB forms.
-Formatted topic tokens and the runtime UI cutover remain.
+The first bounded topic-IR layer now preserves every non-empty, NUL-delimited
+text string as a `TEXT` token followed by `END_TOPIC`, retaining offsets into
+the exact decoded bytes for later `LinkData1` command interleaving. Formatted
+commands and the runtime UI cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -821,6 +824,10 @@ two-level trees and malformed semantic/topic inputs. The canonical phrase
 interface also covers uncompressed HC30 `|Phrases`, LZ77-compressed HC31
 tables, and the extended MVB layout, including legacy topic-reference spacing
 semantics and malformed-table cleanup. Formatted topic-token decoding is next.
+The initial token builder preflights its token arena, preserves the exact
+`LinkData2` string boundaries, rejects overlapping arenas, and emits a terminal
+`END_TOPIC`; it deliberately does not guess paragraph breaks from NUL bytes.
+Parsing and interleaving `LinkData1` paragraph/font/hotspot commands is next.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.
