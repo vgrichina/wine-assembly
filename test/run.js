@@ -2625,6 +2625,8 @@ async function main() {
         const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
         const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
         const parent = (h && we.wnd_get_parent) ? (we.wnd_get_parent(h) | 0) : 0;
+        const style = (h && we.wnd_get_style_export) ? (we.wnd_get_style_export(h) >>> 0) : 0;
+        const editFlags = (h && we.get_edit_flags) ? (we.get_edit_flags(h) >>> 0) : 0;
         const tag = ev.label ? ` ${ev.label}` : '';
         if (!h) {
           logs.push(`[input] dump-focus-state${tag}: NO FOCUS at batch ${batch}`);
@@ -2647,7 +2649,7 @@ async function main() {
           const selEnd = dv.getUint32(g2w(endG), true) >>> 0;
           const lineCount = we.send_message(h, 0x00BA, 0, 0) | 0; // EM_GETLINECOUNT
           const firstVisible = we.send_message(h, 0x00CE, 0, 0) | 0; // EM_GETFIRSTVISIBLELINE
-          logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
+          logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} style=0x${style.toString(16)} flags=0x${editFlags.toString(16)} len=${n} sel=${selStart}..${selEnd} selRet=0x${selRet.toString(16)} firstVisible=${firstVisible} lineCount=${lineCount} text=${JSON.stringify(txt)} at batch ${batch}`);
         } else {
           logs.push(`[input] dump-focus-state${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO STATE API at batch ${batch}`);
         }

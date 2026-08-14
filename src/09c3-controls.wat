@@ -11047,7 +11047,7 @@
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32)
-    (local $result i32)
+    (local $result i32) (local $edit_state i32) (local $edit_len_before i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
@@ -11075,6 +11075,24 @@
       (then (return (call $wat_wndproc_dispatch
                       (local.get $hwnd) (local.get $msg)
                       (local.get $wParam) (local.get $lParam)))))
+    ;; Paint subclasses its multiline text EDIT and handles WM_CHAR before
+    ;; chaining. Its wrapper consumes Return without reaching the built-in
+    ;; EDIT proc, so remember the native state and supply the standard newline
+    ;; only if the subclass leaves it unchanged. Subclasses that already chain
+    ;; get exactly one newline.
+    (if (i32.and
+          (i32.and (i32.eq (local.get $ctrl_class) (i32.const 2))
+                   (i32.eq (local.get $msg) (i32.const 0x0102)))
+          (i32.and
+            (i32.eq (local.get $wParam) (i32.const 0x0D))
+            (i32.ne
+              (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000004))
+              (i32.const 0))))
+      (then
+        (local.set $edit_state (call $wnd_get_state_ptr (local.get $hwnd)))
+        (if (local.get $edit_state)
+          (then (local.set $edit_len_before
+            (i32.load offset=4 (call $g2w (local.get $edit_state))))))))
     ;; x86 wndproc — synchronous dispatch via recursive $run.
     ;; Save full guest register context: this is invoked between message-pump
     ;; iterations (often via JS test driver or WAT control-side $wnd_send_message
@@ -11125,6 +11143,15 @@
     (global.set $steps (local.get $old_steps))
     (global.set $yield_reason (local.get $old_yield_reason))
     (global.set $yield_flag (local.get $old_yield_flag))
+    (if (i32.and
+          (i32.ne (local.get $edit_state) (i32.const 0))
+          (i32.eq
+            (i32.load offset=4 (call $g2w (local.get $edit_state)))
+            (local.get $edit_len_before)))
+      (then
+        (drop (call $control_wndproc_dispatch
+          (local.get $hwnd) (local.get $msg)
+          (local.get $wParam) (local.get $lParam)))))
     (local.get $result)
   )
 

@@ -38,12 +38,16 @@ const input = [
   '17:click:38:71', `19:png:${shots.select}`,
   '20:click:63:170',
   '21:mousedown:105:100', '22:mousemove:210:140', '23:mouseup:210:140',
-  '25:keydown:72', '25:keypress:72', '25:keyup:72',
-  '26:keydown:73', '26:keypress:105', '26:keyup:73',
-  '27:dump-focus-state:paint-text', '27:dump-windows:text',
-  `28:png:${shots['text-edit']}`,
-  '29:click:250:250', `31:png:${shots['text-committed']}`,
-  '32:stop',
+  '25:keydown:65', '25:keypress:65', '25:keyup:65',
+  '26:keydown:66', '26:keypress:98', '26:keyup:66',
+  '27:keydown:13', '27:keypress:13', '27:keyup:13',
+  '28:keydown:67', '28:keypress:99', '28:keyup:67',
+  '29:keydown:8', '29:keyup:8',
+  '30:keydown:68', '30:keypress:100', '30:keyup:68',
+  '31:dump-focus-state:paint-text', '31:dump-windows:text',
+  `32:png:${shots['text-edit']}`,
+  '33:click:63:145', `35:png:${shots['text-committed']}`,
+  '36:stop',
 ].join(',');
 
 let output = '';
@@ -53,7 +57,7 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=33',
+    '--max-batches=37',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
@@ -143,8 +147,8 @@ assert(/Draws using a brush/.test(output) && /Draws using an airbrush/.test(outp
   /Inserts text/.test(output) && /Selects a free-form part/.test(output),
 'tool clicks did not reach all four native controls');
 
-assert(/dump-focus-state paint-text:.*class=2 id=114 .*text="Hi"/.test(output),
-  'Paint text entry did not focus its native EDIT control');
+assert(/dump-focus-state paint-text:.*class=2 id=114 .*len=4 .*lineCount=2 text="Ab\\nd"/.test(output),
+  'Paint text entry did not preserve multiline typing and Backspace in its native EDIT control');
 assert(/window:text .*parent=0x0 .*visible=true .*title="Fonts"/.test(output),
   'Paint Fonts palette is not a visible top-level floating toolbar');
 
@@ -165,4 +169,4 @@ assert(committedInk >= 5, `Paint did not commit typed text to the canvas (${comm
 console.log('PASS  Paint tool glyphs survive brush/airbrush/text/selection repaints');
 console.log('PASS  Paint tool mask remains transparent in all five snapshots');
 console.log('PASS  Paint pressed buttons and tool-option glyphs render correctly');
-console.log(`PASS  Paint floating Fonts toolbar keeps focus in EDIT and commits text (${committedInk} pixels)`);
+console.log(`PASS  Paint floating Fonts toolbar keeps focus in EDIT and commits multiline text (${committedInk} pixels)`);

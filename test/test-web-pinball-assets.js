@@ -220,7 +220,7 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!indexHtml.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!indexHtml.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(indexHtml.includes('lib/renderer-input.js?v=184'), 'web host should cache-bust renderer input after Paint scrollbar input changes');
+assert(indexHtml.includes('lib/renderer-input.js?v=185'), 'web host should cache-bust renderer input after de-duplicating edit keydown');
 assert(indexHtml.includes('lib/renderer.js?v=172'), 'web host should cache-bust renderer after status bar surface reconstruction changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(indexHtml.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
@@ -230,8 +230,8 @@ assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host
 assert(indexHtml.includes('lib/host-imports.js?v=197'), 'web host should cache-bust host imports after WAT polyline support');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(indexHtml.includes('host.js?v=196'), 'web host should cache-bust host.js after scoping EDIT scrollbar painting');
-assert(hostJs.includes("static SOURCE_VERSION = '196'"), 'web host should cache-bust WAT source compilation');
+assert(indexHtml.includes('host.js?v=197'), 'web host should cache-bust host.js after Paint multiline text input');
+assert(hostJs.includes("static SOURCE_VERSION = '197'"), 'web host should cache-bust WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
