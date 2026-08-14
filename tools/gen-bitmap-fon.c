@@ -140,7 +140,7 @@ static uint8_t mono_source_bit(const FT_Bitmap *bitmap, int x, int y) {
 }
 
 static void render_glyph(FT_Face face, unsigned byte, int cell_height,
-                         int ascent, Glyph *glyph) {
+                         int ascent, int fixed_width, Glyph *glyph) {
   FT_Error error;
   FT_GlyphSlot slot;
   int advance;
@@ -164,6 +164,7 @@ static void render_glyph(FT_Face face, unsigned byte, int cell_height,
   advance = round_26_6(slot->advance.x);
   if (advance < 1) advance = 1;
   if (advance > 255) advance = 255;
+  if (fixed_width) advance = fixed_width;
   glyph->width = advance;
   width_bytes = (advance + 7) / 8;
   glyph->bits_len = (size_t)width_bytes * (size_t)cell_height;
@@ -188,7 +189,8 @@ static void render_glyph(FT_Face face, unsigned byte, int cell_height,
 }
 
 static Strike make_strike(FT_Face face, int requested_height,
-                          const char *face_name) {
+                          const char *face_name, int force_fixed,
+                          const char *copyright) {
   enum { FIRST_CHAR = 32, LAST_CHAR = 255, GLYPH_COUNT = LAST_CHAR - FIRST_CHAR + 1 };
   Strike strike;
   Glyph glyphs[GLYPH_COUNT];
@@ -201,6 +203,7 @@ static Strike make_strike(FT_Face face, int requested_height,
   long printable_width = 0;
   int printable_count = 0;
   int width_bytes = 0;
+  int fixed_width = 0;
   size_t char_table;
   size_t bits_offset;
   size_t face_offset;
@@ -228,9 +231,17 @@ static Strike make_strike(FT_Face face, int requested_height,
   if (ascent < 1) ascent = height;
   if (ascent > height) ascent = height;
 
+  if (force_fixed) {
+    error = FT_Load_Char(face, 'M', FT_LOAD_DEFAULT | FT_LOAD_FORCE_AUTOHINT);
+    if (error) die_ft("FT_Load_Char", error);
+    fixed_width = round_26_6(face->glyph->advance.x);
+    if (fixed_width < 1) fixed_width = 1;
+    if (fixed_width > 255) fixed_width = 255;
+  }
+
   for (i = 0; i < GLYPH_COUNT; i++) {
     int byte = FIRST_CHAR + i;
-    render_glyph(face, (unsigned)byte, height, ascent, &glyphs[i]);
+    render_glyph(face, (unsigned)byte, height, ascent, fixed_width, &glyphs[i]);
     if (glyphs[i].width > max_width) max_width = glyphs[i].width;
     width_bytes += (glyphs[i].width + 7) / 8;
     if (byte >= 32 && byte <= 126) {
@@ -257,7 +268,6 @@ static Strike make_strike(FT_Face face, int requested_height,
   put_u16(&strike.bytes, 0, 0x0300);
   put_u32(&strike.bytes, 2, (uint32_t)strike.bytes.len);
   {
-    const char *copyright = "W95FA bitmap derivative; SIL Open Font License 1.1";
     size_t n = strlen(copyright);
     if (n > 60) n = 60;
     memcpy(strike.bytes.data + 6, copyright, n);
@@ -274,9 +284,10 @@ static Strike make_strike(FT_Face face, int requested_height,
   put_u8(&strike.bytes, 82, 0);
   put_u16(&strike.bytes, 83, 400);
   put_u8(&strike.bytes, 85, 0); /* ANSI_CHARSET */
-  put_u16(&strike.bytes, 86, 0); /* proportional */
+  put_u16(&strike.bytes, 86, (uint16_t)fixed_width);
   put_u16(&strike.bytes, 88, (uint16_t)height);
-  put_u8(&strike.bytes, 90, 0x21); /* variable-pitch Swiss */
+  put_u8(&strike.bytes, 90,
+         (uint8_t)(force_fixed ? 0x30 : 0x21)); /* fixed Modern / variable Swiss */
   put_u16(&strike.bytes, 91,
           (uint16_t)(printable_count ? (printable_width + printable_count / 2) / printable_count : 1));
   put_u16(&strike.bytes, 93, (uint16_t)max_width);
@@ -289,7 +300,7 @@ static Strike make_strike(FT_Face face, int requested_height,
   put_u32(&strike.bytes, 105, (uint32_t)face_offset);
   put_u32(&strike.bytes, 109, 0); /* in-memory bits pointer */
   put_u32(&strike.bytes, 113, (uint32_t)bits_offset);
-  put_u32(&strike.bytes, 118, 1); /* DFF_PROPORTIONAL */
+  put_u32(&strike.bytes, 118, 1); /* one-color fixed/proportional raster data */
   put_u16(&strike.bytes, 122, 0);
   put_u16(&strike.bytes, 124, 0);
   put_u16(&strike.bytes, 126, 0);
@@ -437,9 +448,14 @@ static int parse_height(const char *text) {
 
 int main(int argc, char **argv) {
   static const int defaults[] = {11, 12, 16, 24, 32, 48, 64};
+  static const char default_copyright[] =
+    "W95FA bitmap derivative; SIL Open Font License 1.1";
   const char *input;
   const char *output;
   const char *face_name;
+  const char *copyright = default_copyright;
+  int force_fixed = 0;
+  int first_height = 4;
   int *heights;
   int count;
   FT_Library library;
@@ -452,7 +468,8 @@ int main(int argc, char **argv) {
 
   if (argc < 4) {
     fprintf(stderr,
-      "usage: %s INPUT.otf OUTPUT.fon FACE [PIXEL_HEIGHT ...]\n"
+      "usage: %s INPUT.otf OUTPUT.fon FACE [--fixed] [--copyright=TEXT]"
+      " [PIXEL_HEIGHT ...]\n"
       "default heights: 11 12 16 24 32 48 64\n", argv[0]);
     return 2;
   }
@@ -462,11 +479,23 @@ int main(int argc, char **argv) {
   if (!*face_name || strlen(face_name) >= 32)
     die("face name must contain 1 through 31 bytes");
 
-  if (argc > 4) {
-    count = argc - 4;
+  while (first_height < argc && strncmp(argv[first_height], "--", 2) == 0) {
+    if (strcmp(argv[first_height], "--fixed") == 0) {
+      force_fixed = 1;
+    } else if (strncmp(argv[first_height], "--copyright=", 12) == 0) {
+      copyright = argv[first_height] + 12;
+      if (!*copyright) die("copyright text must not be empty");
+    } else {
+      die("unknown option");
+    }
+    first_height++;
+  }
+
+  if (argc > first_height) {
+    count = argc - first_height;
     heights = (int *)calloc((size_t)count, sizeof(int));
     if (!heights) die("out of memory");
-    for (i = 0; i < count; i++) heights[i] = parse_height(argv[i + 4]);
+    for (i = 0; i < count; i++) heights[i] = parse_height(argv[i + first_height]);
   } else {
     count = (int)(sizeof(defaults) / sizeof(defaults[0]));
     heights = (int *)calloc((size_t)count, sizeof(int));
@@ -485,7 +514,7 @@ int main(int argc, char **argv) {
   strikes = (Strike *)calloc((size_t)count, sizeof(Strike));
   if (!strikes) die("out of memory");
   for (i = 0; i < count; i++) {
-    strikes[i] = make_strike(face, heights[i], face_name);
+    strikes[i] = make_strike(face, heights[i], face_name, force_fixed, copyright);
     fprintf(stderr, "strike request=%dpx cell=%dpx em=%dpx ascent=%d avg=%d max=%d bytes=%zu\n",
       heights[i], strikes[i].height, strikes[i].raster_height, strikes[i].ascent,
       strikes[i].average_width, strikes[i].maximum_width, strikes[i].bytes.len);

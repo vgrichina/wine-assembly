@@ -978,6 +978,14 @@ async function main() {
       data: new Uint8Array(fs.readFileSync(bundledUiFon)), attrs: 0x20,
     });
   }
+  const bundledFixedFon = path.join(ROOT, 'fonts', 'Fixedsys.fon');
+  if (ctx.vfs && fs.existsSync(bundledFixedFon)) {
+    ctx.vfs.dirs.add('c:\\windows');
+    ctx.vfs.dirs.add('c:\\windows\\fonts');
+    ctx.vfs.files.set('c:\\windows\\fonts\\fixedsys.fon', {
+      data: new Uint8Array(fs.readFileSync(bundledFixedFon)), attrs: 0x20,
+    });
+  }
   const { readStr } = base;
   const h = base.host;
   // Keep the CLI harness instantiable while optional host-side font resource

@@ -14,10 +14,13 @@
   (global $GDI_BITMAP_FONT_DESC_SIZE i32 (i32.const 0x00000050))
   (global $GDI_BITMAP_FONT_DEFAULT_PATH i32 (i32.const 0x07F0A490))
   (global $GDI_BITMAP_FONT_DEFAULT_STATE i32 (i32.const 0x07F0A4AC))
+  (global $GDI_BITMAP_FONT_FIXED_PATH i32 (i32.const 0x07F0A528))
+  (global $GDI_BITMAP_FONT_FIXED_STATE i32 (i32.const 0x07F0A54C))
 
   ;; Browser and CLI hosts preload this tracked file into the process VFS.
   ;; The state word is shared across worker instances: 0=untried, 1=loading,
-  ;; 2=installed, 3=unavailable. Remaining strings are W95FA UI aliases.
+  ;; 2=installed, 3=unavailable. Remaining strings are bundled face names and
+  ;; W95FA UI aliases.
   (data (i32.const 0x07F0A490) "C:\\WINDOWS\\FONTS\\W95FA.FON\00")
   (data (i32.const 0x07F0A4B0) "W95FA\00")
   (data (i32.const 0x07F0A4B8) "MS Sans Serif\00")
@@ -28,6 +31,8 @@
   (data (i32.const 0x07F0A4F8) "sans-serif\00")
   (data (i32.const 0x07F0A508) "MS Shell Dlg\00")
   (data (i32.const 0x07F0A518) "MS Shell Dlg 2\00")
+  (data (i32.const 0x07F0A528) "C:\\WINDOWS\\FONTS\\FIXEDSYS.FON\00")
+  (data (i32.const 0x07F0A550) "Fixedsys\00")
 
   (func $gdi_bitmap_font_record (param $index i32) (result i32)
     (i32.add (global.get $GDI_BITMAP_FONT_TABLE)
@@ -348,6 +353,22 @@
       (select (i32.const 2) (i32.const 3) (i32.gt_s (local.get $loaded) (i32.const 0))))
     (i32.gt_s (local.get $loaded) (i32.const 0)))
 
+  (func $gdi_bitmap_font_ensure_fixed (result i32)
+    (local $state i32) (local $loaded i32)
+    (local.set $state (i32.load (global.get $GDI_BITMAP_FONT_FIXED_STATE)))
+    (if (i32.eq (local.get $state) (i32.const 2))
+      (then (return (i32.const 1))))
+    (if (i32.eq (local.get $state) (i32.const 1))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $state) (i32.const 3))
+      (then (return (i32.const 0))))
+    (i32.store (global.get $GDI_BITMAP_FONT_FIXED_STATE) (i32.const 1))
+    (local.set $loaded (call $gdi_bitmap_font_add_resource
+      (call $w2g (global.get $GDI_BITMAP_FONT_FIXED_PATH))))
+    (i32.store (global.get $GDI_BITMAP_FONT_FIXED_STATE)
+      (select (i32.const 2) (i32.const 3) (i32.gt_s (local.get $loaded) (i32.const 0))))
+    (i32.gt_s (local.get $loaded) (i32.const 0)))
+
   (func $gdi_bitmap_font_best (param $face i32) (param $request i32) (result i32)
     (local $i i32) (local $strike i32) (local $best i32)
     (local $distance i32) (local $best_distance i32)
@@ -378,6 +399,7 @@
   (func $gdi_bitmap_font_bind (param $handle i32) (param $face i32)
     (local $object i32) (local $best i32)
     (drop (call $gdi_bitmap_font_ensure_default))
+    (drop (call $gdi_bitmap_font_ensure_fixed))
     (local.set $object (call $gdi_object_record (local.get $handle)))
     (if (i32.eqz (local.get $object)) (then (return)))
     (local.set $best (call $gdi_bitmap_font_best
@@ -402,16 +424,24 @@
         (if (i32.and (i32.ne (local.get $strike) (i32.const 0))
               (i32.ne (i32.load (local.get $strike)) (i32.const 0)))
           (then (return (local.get $strike))))))
-    ;; Variable stock UI fonts resolve directly to W95FA. Fixed stock fonts
-    ;; deliberately remain on their existing scalable fallback until a
-    ;; bundled Fixedsys FON is available.
+    ;; Fixed stock fonts use the public-domain Fixedsys substitute.
+    (if (i32.or (i32.eq (local.get $handle) (i32.const 0x3001A))
+          (i32.or (i32.eq (local.get $handle) (i32.const 0x3001B))
+            (i32.eq (local.get $handle) (i32.const 0x30020))))
+      (then
+        (drop (call $gdi_bitmap_font_ensure_fixed))
+        (return (call $gdi_bitmap_font_best
+          (i32.const 0x07F0A550) (call $gdi_font_height (local.get $handle))))))
+    ;; Variable stock UI fonts resolve directly to W95FA.
     (if (i32.or (i32.eq (local.get $handle) (i32.const 0x3001C))
           (i32.or (i32.eq (local.get $handle) (i32.const 0x3001D))
             (i32.or (i32.eq (local.get $handle) (i32.const 0x3001E))
               (i32.or (i32.eq (local.get $handle) (i32.const 0x30021))
                 (i32.eq (local.get $handle) (i32.const 0x30022))))))
-      (then (return (call $gdi_bitmap_font_best
-        (i32.const 0x07F0A4B0) (call $gdi_font_height (local.get $handle))))))
+      (then
+        (drop (call $gdi_bitmap_font_ensure_default))
+        (return (call $gdi_bitmap_font_best
+          (i32.const 0x07F0A4B0) (call $gdi_font_height (local.get $handle))))))
     (i32.const 0))
 
   (func $gdi_bitmap_font_height (param $hdc i32) (param $strike i32) (result i32)

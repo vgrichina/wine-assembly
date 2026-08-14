@@ -10,6 +10,7 @@ do not contain the original Win98 bitmap strikes.
 | `w95fa.woff2` | W95FA web build | same | SIL OFL 1.1 | same upstream | `d81cbd6c15b9695e614fe1674bc1f43fa79c820afd0cd4acf49955d065e71644` |
 | `W95FA.fon` | W95FA bitmap build | same | SIL OFL 1.1 | generated from `W95FA.otf` as described below | `080b1b49cba19b355cf9800419c15f652016309d2edffe6ba2dd54f342e945bb` |
 | `FSEX302.ttf` | Fixedsys Excelsior 3.02 | Fixedsys, Terminal, OEM/SYSTEM_FIXED_FONT | Public domain | https://github.com/kika/fixedsys/releases | `842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899` |
+| `Fixedsys.fon` | Fixedsys bitmap build | ANSI/OEM/SYSTEM fixed stock fonts | Public domain | generated from `FSEX302.ttf` as described below | `3dc3b77f2811815c360c57e9d88902253a8eeaaa46ac84bf9a4edb1f3b3a26df` |
 
 Before replacing any artifact, record the exact upstream release/tag and add
 its license text beside the font. The labels above describe upstream's stated
@@ -39,13 +40,13 @@ Loaded two ways:
 
 Sizes: W95FA looks crispest at 11–12px; Fixedsys Excelsior at 16px.
 
-The future deterministic text path is specified in
-`docs/software-gdi-design.md`. It may generate fixed monochrome strikes from
-these open fonts at build time. Original Microsoft `.FON`/`.FNT` resources must
-not be committed without a verified redistribution license; users may provide
-their own installed Win98 font files for exact local rendering.
+The deterministic text path is specified in `docs/software-gdi-design.md` and
+uses generated monochrome strikes from these open fonts at runtime. Original
+Microsoft `.FON`/`.FNT` resources must not be committed without a verified
+redistribution license; users may provide their own installed Win98 font files
+for exact local rendering.
 
-## Generated W95FA bitmap FON
+## Generated bitmap FONs
 
 `tools/gen-w95fa-fon.sh` uses FreeType at build time to auto-hint W95FA into
 one-bit FNT 3.0 strikes and packages them in a resource-only Windows 3.x NE
@@ -79,8 +80,15 @@ The generator requires a C compiler plus FreeType development metadata exposed
 as `pkg-config freetype2`. Generated strikes are derived from W95FA and remain
 subject to its SIL Open Font License 1.1 terms.
 
-At runtime, both the browser host and CLI preload the tracked `W95FA.fon` as
-`C:\\WINDOWS\\FONTS\\W95FA.FON`. WAT installs it on the first stock or aliased
-Win9x UI-font request, so normal dialog, control, menu, and caption text uses
-the deterministic one-bit rasterizer rather than Canvas font measurement or
-glyph rendering. Explicit scalable document faces retain the Canvas fallback.
+`tools/gen-fixedsys-fon.sh` uses the same generator's fixed-cell mode to create
+the tracked 8x16 `Fixedsys.fon` from public-domain Fixedsys Excelsior 3.02:
+
+```sh
+bash tools/gen-fixedsys-fon.sh fonts/Fixedsys.fon
+```
+
+At runtime, both the browser host and CLI preload the tracked FONs as
+`C:\\WINDOWS\\FONTS\\W95FA.FON` and `FIXEDSYS.FON`. WAT installs them lazily,
+so normal UI text and all three fixed stock fonts use the deterministic one-bit
+rasterizer rather than Canvas font measurement or glyph rendering. Explicit
+scalable document faces retain the Canvas fallback.

@@ -521,18 +521,22 @@ Font matching should reproduce the GDI inputs that affect `CreateFont` and
 `LOGFONT`: face aliases, height versus cell height, width, weight, italic,
 underline, strikeout, charset, pitch/family, escapement, and orientation.
 Point sizes must use the em-height and device DPI rules rather than CSS pixels.
-The browser and CLI preload the tracked `fonts/W95FA.fon` into
-`C:\\WINDOWS\\FONTS`, and the WAT backend installs it lazily on the first text
-operation. `SYSTEM_FONT`, `ANSI_VAR_FONT`, `DEVICE_DEFAULT_FONT`,
+The browser and CLI preload the tracked `fonts/W95FA.fon` and
+`fonts/Fixedsys.fon` into `C:\\WINDOWS\\FONTS`, and the WAT backend installs
+each lazily on the first matching text operation. `SYSTEM_FONT`,
+`ANSI_VAR_FONT`, `DEVICE_DEFAULT_FONT`,
 `DEFAULT_GUI_FONT`, and the internal caption font resolve to its closest strike.
 Created `W95FA`, `MS Sans Serif`, `Microsoft Sans Serif`, `Tahoma`, `System`,
 `Helv`, `MS Shell Dlg`, and `MS Shell Dlg 2` faces use the same deterministic
 path. Explicit document faces such as Arial remain on the scalable Canvas
 fallback rather than being silently substituted.
 
-The remaining stock `ANSI_FIXED_FONT`, `OEM_FIXED_FONT`, and
-`SYSTEM_FIXED_FONT` objects should resolve to an explicit bundled Fixedsys
-strike instead of their current browser fallback chain.
+The stock `ANSI_FIXED_FONT`, `OEM_FIXED_FONT`, and `SYSTEM_FIXED_FONT` objects,
+plus an explicit `Fixedsys` face, resolve to the generated 8x16 public-domain
+Fixedsys Excelsior strike. Their measurement and glyph writes stay entirely on
+the WAT pixel surface. Exact OEM code-page mapping remains separate matching
+work; the bundled substitute currently shares its byte-to-glyph table across
+the three stock handles.
 
 Raster output should be monochrome by default for the Win98 look. Glyph origins
 and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,
@@ -552,9 +556,8 @@ The repository already bundles two open substitutes:
 
 - **W95FA** is an OFL-licensed recreation used for MS Sans Serif/Tahoma-like UI
   text. It is an outline/web font, not the original Microsoft bitmap strikes.
-- **Fixedsys Excelsior** is reported as public domain and provides a strong
-  Fixedsys-style fixed-pitch fallback. It is also distributed here as an
-  outline font.
+- **Fixedsys Excelsior** is reported as public domain and provides the source
+  for both the outline fallback and the generated 8x16 fixed-pitch FON.
 
 Both can be rasterized once at build time into bundled strike files for the
 exact pixel sizes the emulator supports. Generated strikes remain subject to
