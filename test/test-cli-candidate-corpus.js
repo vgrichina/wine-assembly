@@ -30,33 +30,6 @@ function fixtureId(candidate) {
   return candidate.fixture || candidate.id;
 }
 
-const TABLE_COLUMNS = [
-  { key: 'status', label: 'Status', max: 7 },
-  { key: 'candidate', label: 'Candidate', max: 32 },
-  { key: 'detail', label: 'Detail', max: 64 },
-];
-
-function printableCell(value, maximum) {
-  const clean = String(value || '').replace(/[^\x20-\x7e]/g, '?').replace(/\s+/g, ' ').trim();
-  return clean.length <= maximum ? clean : `${clean.slice(0, maximum - 3)}...`;
-}
-
-function printStatusTable(rows) {
-  const widths = TABLE_COLUMNS.map(column => Math.min(column.max, Math.max(
-    column.label.length,
-    ...rows.map(row => printableCell(row[column.key], column.max).length),
-  )));
-  const border = `+${widths.map(width => '-'.repeat(width + 2)).join('+')}+`;
-  const render = row => `|${TABLE_COLUMNS.map((column, index) => (
-    ` ${printableCell(row[column.key], column.max).padEnd(widths[index])} `
-  )).join('|')}|`;
-  console.log(border);
-  console.log(render(Object.fromEntries(TABLE_COLUMNS.map(column => [column.key, column.label]))));
-  console.log(border);
-  for (const row of rows) console.log(render(row));
-  console.log(border);
-}
-
 function walkFiles(directory, output = []) {
   if (!fs.existsSync(directory)) return output;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -152,18 +125,10 @@ async function main() {
 
   const candidates = manifest.candidates.filter(candidate => !selectedIds || selectedIds.has(candidate.id));
   if (listOnly) {
-    const rows = [];
     for (const candidate of candidates) {
       const executable = resolveExecutable(candidate);
-      rows.push({
-        status: executable ? 'LOCAL' : 'MISSING',
-        candidate: candidate.id,
-        detail: executable
-          ? path.relative(ROOT, executable)
-          : candidate.manual || `fetch fixture ${fixtureId(candidate)}`,
-      });
+      console.log(`${executable ? 'LOCAL ' : 'MISSING'} ${candidate.id}\t${candidate.kind}\t${candidate.name} ${candidate.version}`);
     }
-    printStatusTable(rows);
     return 0;
   }
 
@@ -186,35 +151,22 @@ async function main() {
   let blocked = 0;
   let skipped = 0;
   let harness = 0;
-  const rows = [];
   try {
     for (const candidate of candidates) {
       const executable = resolveExecutable(candidate);
       if (!executable) {
         skipped++;
         const note = candidate.manual || `run tools/fetch-candidate-corpus.js --id=${fixtureId(candidate)}`;
-        rows.push({
-          status: 'SKIP',
-          candidate: candidate.id,
-          detail: note,
-        });
+        console.log(`SKIP    ${candidate.id}: ${note}`);
         continue;
       }
       if (dryRun) {
         ready++;
-        rows.push({
-          status: 'LOCAL',
-          candidate: candidate.id,
-          detail: path.relative(ROOT, executable),
-        });
+        console.log(`LOCAL   ${candidate.id}: ${path.relative(ROOT, executable)}`);
         continue;
       }
       const result = runCandidate(candidate, executable, wasmPath);
-      rows.push({
-        status: result.status,
-        candidate: candidate.id,
-        detail: result.reason,
-      });
+      console.log(`${result.status.padEnd(7)} ${candidate.id}: ${result.reason}`);
       if (result.status === 'READY') ready++;
       else if (result.status === 'BLOCKED') blocked++;
       else harness++;
@@ -223,7 +175,6 @@ async function main() {
     if (wasmDirectory) fs.rmSync(wasmDirectory, { recursive: true, force: true });
   }
 
-  printStatusTable(rows);
   console.log(`candidate CLI corpus: ${ready} ready/local, ${blocked} blocked, ${skipped} skipped, ${harness} harness failures`);
   return harness || (strict && blocked) ? 1 : 0;
 }

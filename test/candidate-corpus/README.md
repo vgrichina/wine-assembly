@@ -51,12 +51,10 @@ node test/test-cli-candidate-corpus.js --strict
 The runner rejects DOS, NE, and non-x86 files before invoking Wine-Assembly;
 only PE32/i386 executables enter the survey. It compiles one immutable WAT
 snapshot and reuses that snapshot for every local candidate. The default
-survey prints an ASCII status table with `READY`, `BLOCKED`, `SKIP`, or
-`HARNESS` rows and exits successfully when applications merely hit expected
-compatibility gaps. `--list` and `--dry-run` use the same table with
-`LOCAL`/`MISSING` status. `--strict` turns `BLOCKED` into a failing result.
-Harness/build failures always fail because they mean the survey itself could
-not produce useful evidence.
+survey reports `READY`, `BLOCKED`, `SKIP`, or `HARNESS` and exits successfully
+when applications merely hit expected compatibility gaps. `--strict` turns
+`BLOCKED` into a failing result. Harness/build failures always fail because
+they mean the survey itself could not produce useful evidence.
 Each launch is bounded to 20 seconds by default; a manifest entry can override
 that when a candidate needs a longer startup window.
 
