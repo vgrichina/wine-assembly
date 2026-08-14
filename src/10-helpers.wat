@@ -10028,7 +10028,7 @@
     (i32.const 0))
 
   ;; $paint_seed_child_paints(parent): WAT-owned propagation of a parent's
-  ;; update region into direct children. This replaces host JS child-paint
+  ;; update region into descendant children. This replaces host JS child-paint
   ;; policy; JS only stores region geometry and receives primitive draw calls.
   (func $paint_seed_child_paints (param $parent i32) (result i32)
     (local $slot i32) (local $ch i32) (local $style i32)
@@ -10072,7 +10072,12 @@
                     (local.get $il) (local.get $it) (local.get $ir) (local.get $ib))
                   (call $paint_flag_set (local.get $ch))
                   (call $host_invalidate (local.get $ch))
-                  (local.set $n (i32.add (local.get $n) (i32.const 1)))))))))
+                  (local.set $n (i32.add (local.get $n) (i32.const 1)))
+                  ;; A parent paint can cover any depth of WS_CHILD windows.
+                  ;; Seed the child's newly-created update region into its own
+                  ;; children before dispatch starts selecting dirty windows.
+                  (local.set $n (i32.add (local.get $n)
+                    (call $paint_seed_child_paints (local.get $ch))))))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan)))
     (local.get $n))
@@ -10107,9 +10112,12 @@
                     (br $found)))
                 (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
                   (then
+                    ;; Descendants inherit this update before it is consumed.
+                    ;; Clearing first loses the geometry needed to intersect
+                    ;; nested controls such as toolbar-hosted combo boxes.
+                    (drop (call $paint_seed_child_paints (local.get $hwnd)))
                     (call $paint_flag_clear_hwnd (local.get $hwnd))
                     (call $update_clear_hwnd (local.get $hwnd))
-                    (drop (call $paint_seed_child_paints (local.get $hwnd)))
                     (drop (call $control_wndproc_dispatch
                       (local.get $hwnd) (i32.const 0x000F)
                       (i32.const 0) (i32.const 0)))
