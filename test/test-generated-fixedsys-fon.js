@@ -39,7 +39,7 @@ try {
       if (type === 8) strikes.push(bytes.readUInt16LE(cursor) << shift);
     }
   }
-  assert.strictEqual(strikes.length, 8, 'RT_FONT strike count');
+  assert.strictEqual(strikes.length, 1, 'RT_FONT strike count');
   const metrics = strikes.map(strike => {
     assert.strictEqual(bytes.readUInt16LE(strike), 0x0300, 'FNT 3.0 version');
     const width = bytes.readUInt16LE(strike + 86);
@@ -60,10 +60,26 @@ try {
     assert.strictEqual(face, 'Fixedsys');
     return { width, height };
   });
-  assert.deepStrictEqual(metrics.map(({ height }) => height),
-    [16, 18, 21, 24, 32, 48, 64, 80], 'native Fixedsys cell heights');
-  console.log(`PASS  generated NE FON contains native Fixedsys strikes ${
-    metrics.map(({ width, height }) => `${width}x${height}`).join(', ')}`);
+  assert.deepStrictEqual(metrics, [{ width: 8, height: 15 }],
+    'Wine Fixedsys native embedded strike');
+
+  const invalid = spawnSync('bash', [path.join(ROOT, 'tools', 'gen-fixedsys-fon.sh'),
+    path.join(temp, 'invalid.fon'), '16'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  assert.notStrictEqual(invalid.status, 0, 'non-native size override should fail');
+  assert.match(invalid.stderr, /contains one native 15px strike/);
+
+  const benchmark = path.join(temp, 'benchmark.pgm');
+  execFileSync(process.execPath,
+    [path.join(ROOT, 'tools', 'render-fon-benchmark.js'), output, benchmark, '15'], {
+      cwd: ROOT,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+  assert.match(fs.readFileSync(benchmark).subarray(0, 32).toString('ascii'),
+    /^P5\n\d+ \d+\n255\n/, 'benchmark PGM header');
+  console.log('PASS  generated NE FON preserves Wine Fixedsys native 8x15 bitmap strike');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

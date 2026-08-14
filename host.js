@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '206';
+  static SOURCE_VERSION = '207';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -659,16 +659,24 @@ class WineAssembly {
     // every ordinal call crashes as "<ord> unimplemented".
     const imports = this.getImports();
 
-    // Make deterministic Win9x UI and fixed fonts available before guest code
+    // Make deterministic Wine bitmap stock fonts available before guest code
     // can issue its first GDI text call. WAT installs each FON lazily.
     await this.loadFiles([
       {
-        url: 'fonts/W95FA.fon',
-        vfsPath: 'c:\\windows\\fonts\\w95fa.fon',
+        url: 'fonts/System.fon',
+        vfsPath: 'c:\\windows\\fonts\\system.fon',
+      },
+      {
+        url: 'fonts/MSSansSerif.fon',
+        vfsPath: 'c:\\windows\\fonts\\mssansserif.fon',
       },
       {
         url: 'fonts/Fixedsys.fon',
         vfsPath: 'c:\\windows\\fonts\\fixedsys.fon',
+      },
+      {
+        url: 'fonts/Courier.fon',
+        vfsPath: 'c:\\windows\\fonts\\courier.fon',
       },
     ], { required: true });
 

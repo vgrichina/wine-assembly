@@ -24,12 +24,14 @@ const { bootRenderHarness } = require('./render-helper');
   });
   const { exports: wat, memory, hostCtx } = harness;
   const root = path.join(__dirname, '..');
-  const fon = fs.readFileSync(path.join(root, 'fonts', 'W95FA.fon'));
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  hostCtx.vfs.files.set('c:\\windows\\fonts\\w95fa.fon', {
-    data: new Uint8Array(fon), attrs: 0x20,
-  });
+  for (const name of ['System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon']) {
+    hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
+      data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
+      attrs: 0x20,
+    });
+  }
 
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
@@ -72,24 +74,27 @@ const { bootRenderHarness } = require('./render-helper');
 
   assert.strictEqual(wat.test_gdi_bitmap_font_count(), 0);
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 10), 1);
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 7,
-    'first stock-font draw should lazily install all bundled strikes');
-  assert(wat.test_gdi_bitmap_font_selected(hdc), 'SYSTEM_FONT should select W95FA');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 2,
+    'first stock-font draw should lazily install Wine System strikes');
+  assert(wat.test_gdi_bitmap_font_selected(hdc), 'SYSTEM_FONT should select Wine System');
   assert.strictEqual(wat.test_call_GetTextExtentExPointA(
     hdc, text, 10, 0x7fffffff, 0, 0, size), 1);
-  assert(wat.guest_read32(size) > 0 && wat.guest_read32(size + 4) === 12);
+  assert(wat.guest_read32(size) > 0 && wat.guest_read32(size + 4) === 16);
   assert.strictEqual(wat.test_call_ExtTextOutA(hdc, 2, 16, 0, 0, text, 10), 1);
-  assert.strictEqual(wat.test_call_DrawTextA(hdc, text, 10, rect, 0x20), 12);
+  assert.strictEqual(wat.test_call_DrawTextA(hdc, text, 10, rect, 0x20), 16);
   assertNoCanvasText('SYSTEM_FONT text and measurements must remain in WAT');
 
   assert.strictEqual(wat.test_call_SelectObject(hdc, 0x30021) >>> 0, 0x3001d);
-  assert(wat.test_gdi_bitmap_font_selected(hdc), 'DEFAULT_GUI_FONT should select W95FA');
+  assert(wat.test_gdi_bitmap_font_selected(hdc), 'DEFAULT_GUI_FONT should select Wine MS Sans Serif');
+  assert.strictEqual(wat.test_call_GetTextExtentExPointA(
+    hdc, text, 10, 0x7fffffff, 0, 0, size), 1);
+  assert.strictEqual(wat.guest_read32(size + 4), 13, 'Win98 dialog font cell height');
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 30, text, 10), 1);
   assertNoCanvasText('DEFAULT_GUI_FONT must remain in WAT');
 
   const uiFont = wat.test_call_CreateFontW(-12, 400, 0, writeWide('MS Sans Serif')) >>> 0;
   assert(uiFont && wat.test_gdi_bitmap_font_bound(uiFont),
-    'MS Sans Serif alias should bind to a bundled W95FA strike');
+    'MS Sans Serif should bind to its bundled Wine bitmap strike');
   assert.strictEqual(wat.test_call_SelectObject(hdc, uiFont) >>> 0, 0x30021);
   assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 88, 0) >>> 0, uiFont);
   const uiRecord = wat.test_gdi_object_record(uiFont) >>> 0;
@@ -110,7 +115,10 @@ const { bootRenderHarness } = require('./render-helper');
   assert(calls.bind > 0 && calls.textOut > 0,
     'unsupported scalable faces should retain the documented Canvas fallback');
 
-  console.log('PASS  stock and aliased Win9x UI text uses bundled W95FA without Canvas');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 7,
+    'four Wine resources should install seven embedded bitmap strikes');
+
+  console.log('PASS  System and MS Sans Serif stock/alias text uses Wine bitmaps without Canvas');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

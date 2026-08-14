@@ -1,100 +1,82 @@
 # Fonts
 
-Open substitutes for the Win98 system fonts, bundled so rendering does not
-depend on fonts installed on the host. These files are not Microsoft fonts and
-do not contain the original Win98 bitmap strikes.
+The deterministic Win9x stock-font path uses Wine's open-source bitmap-only
+fonts. WAT parses the generated `.FON` resources and writes their one-bit glyph
+pixels directly to the canonical GDI surface; JavaScript does not rasterize
+these fonts and Canvas text is not used for the covered stock faces.
 
-| File | Font | Substitutes for | Reported license | Source | SHA-256 |
-|---|---|---|---|---|---|
-| `W95FA.otf` | W95FA | MS Sans Serif, Tahoma, System | SIL OFL 1.1 | [FontsArena original release](https://fontsarena.com/w95fa-by-alina-sava/) | `9e1ad53708307b2b68e06d43799b2267f6aec620dda972bc62753ad16ba50f2b` |
-| `w95fa.woff2` | W95FA web build | same | SIL OFL 1.1 | same upstream | `d81cbd6c15b9695e614fe1674bc1f43fa79c820afd0cd4acf49955d065e71644` |
-| `W95FA.fon` | W95FA bitmap build | same | SIL OFL 1.1 | generated from `W95FA.otf` as described below | `080b1b49cba19b355cf9800419c15f652016309d2edffe6ba2dd54f342e945bb` |
-| `FSEX302.ttf` | Fixedsys Excelsior 3.02 | Fixedsys, Terminal, OEM/SYSTEM_FIXED_FONT | Public domain | https://github.com/kika/fixedsys/releases | `842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899` |
-| `Fixedsys.fon` | Fixedsys bitmap build | ANSI/OEM/SYSTEM fixed stock fonts | Public domain | generated from `FSEX302.ttf` as described below | `1ff9462cabce01e9cdbc90a55e6d9942ac758651b5026142294de65f0005caa6` |
+## WAT stock bitmap fonts
 
-Before replacing any artifact, record the exact upstream release/tag and add
-its license text beside the font. The labels above describe upstream's stated
-terms; the repository should retain local license copies rather than relying
-indefinitely on external pages.
+| Runtime file | Wine face and native cell strikes | Used for | SHA-256 |
+|---|---|---|---|
+| `System.fon` | System 16, 18 | `SYSTEM_FONT`, explicit System | `2f41afc0ea1d2ac4361fea4bfe4cd4eac5cb99627f1e7ee185ec9f5d1980f94b` |
+| `MSSansSerif.fon` | MS Sans Serif 13, 16, 20 | dialog/UI stocks and aliases | `71e0bb6cd752d858f8712ab6b0c9ec50065c5fa76dc70b68da9eb85438dcf2d8` |
+| `Fixedsys.fon` | Fixedsys 8x15 | `SYSTEM_FIXED_FONT`, Fixedsys | `2b5cf71bfbadbc460f79fb5b2d8bf1650a7e148359fcb6064392b4a28fadd3c4` |
+| `Courier.fon` | Courier 8x13 | `ANSI_FIXED_FONT`, Courier | `51dd54b23b9857032faac1ab672d7c788b657752ea0b2d0cc39a9f727a607457` |
 
-### W95FA license provenance
+The editable `.sfd` sources and Wine-generated TTFs are pinned in `wine/`.
+See `wine/UPSTREAM.md` for their exact Wine commit and checksums. Wine licenses
+these fonts under LGPL-2.1-or-later; the complete text is in
+`Wine-LGPL-2.1.txt`.
+
+Generate all four runtime resources reproducibly with:
+
+```sh
+bash tools/gen-wine-fonts.sh fonts
+node test/test-generated-wine-fonts.js
+```
+
+The generator requires a C compiler and `pkg-config freetype2`. FreeType reads
+the exact embedded monochrome strike at each requested size; it does not hint
+or rasterize an outline. FreeType is a build-time tool and is not linked into
+the emulator. `tools/gen-fixedsys-fon.sh` remains as a convenient wrapper for
+generating only the native Wine 8x15 Fixedsys resource.
+
+Fixedsys's larger Win98 sizes are integer nearest-neighbor expansions of the
+8x15 source bitmap in WAT. The common native cells measured by the v86 Win98
+probe are 8x15, 16x30, 32x60, 40x75, and 40x90. The last cell scales 5x in X
+and 6x in Y.
+
+### Stock mapping and the uncovered OEM face
+
+```text
+SYSTEM_FONT       -> Wine System 7x16
+DEFAULT_GUI_FONT  -> Wine MS Sans Serif 13px
+ANSI_VAR_FONT     -> Wine MS Sans Serif 13px
+DEVICE_DEFAULT    -> Wine MS Sans Serif 13px
+SYSTEM_FIXED_FONT -> Wine Fixedsys 8x15
+ANSI_FIXED_FONT   -> Wine Courier 8x13
+OEM_FIXED_FONT    -> Wine Fixedsys 8x15 fallback  [not native Terminal 8x12]
+```
+
+Wine does not currently provide a distinct bitmap-only Terminal/OEM 8x12
+face. Native Win98 reports that stock object as Terminal 8x12. Until a
+redistributable matching source is added, `OEM_FIXED_FONT` and an explicit
+Terminal request deliberately use the documented Fixedsys fallback. This is
+the only uncovered western stock role in the current Wine set. Additional OEM
+codepages and document fonts remain outside the stock-font milestone.
+
+## Legacy web/CSS substitutes
+
+`W95FA.otf`, `w95fa.woff2`, and `FSEX302.ttf` predate the WAT bitmap path. They
+remain for emulator-shell CSS and the explicit Canvas fallback used by
+unsupported scalable document faces; stock GDI rendering no longer consumes
+their generated FONs.
+
+| File | Font | License | Source | SHA-256 |
+|---|---|---|---|---|
+| `W95FA.otf` | W95FA | SIL OFL 1.1 | [FontsArena original release](https://fontsarena.com/w95fa-by-alina-sava/) | `9e1ad53708307b2b68e06d43799b2267f6aec620dda972bc62753ad16ba50f2b` |
+| `w95fa.woff2` | W95FA web build | SIL OFL 1.1 | same upstream | `d81cbd6c15b9695e614fe1674bc1f43fa79c820afd0cd4acf49955d065e71644` |
+| `FSEX302.ttf` | Fixedsys Excelsior 3.02 | public domain | [Fixedsys Excelsior releases](https://github.com/kika/fixedsys/releases) | `842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899` |
 
 `W95FA-OFL.txt` is an LF-normalized copy of `W95FA/OFL.txt` from the
-[publisher's original ZIP](https://fontsarena.com/wp-content/uploads/2020/01/W95FA.zip),
-downloaded and verified on 2026-08-13. The ZIP SHA-256 is
+publisher's original ZIP, downloaded and verified on 2026-08-13. The ZIP
+SHA-256 is
 `a78972d3d46cc506f9aef423100b027696fad437b16b078e3bdf396c0bf6d3eb`.
-Its OTF and WOFF2 files are byte-for-byte identical to the repository files
-listed above.
+The publisher identifies Alina Sava as the author and distributes W95FA under
+SIL OFL 1.1. The supplied template leaves its copyright-holder and reserved
+font-name placeholders unfilled; this repository preserves it unchanged.
 
-The publisher identifies [Alina Sava](https://fontsarena.com/created-by/alina-sava/)
-as the original author and says W95FA is licensed under SIL OFL 1.1. The
-original ZIP shipped the standard OFL header with its `<dates>`,
-`<Copyright Holder>`, and `<Reserved Font Name>` placeholders unfilled. This
-repository preserves the publisher's template statement as supplied; it does
-not declare an actual Reserved Font Name, so the generated bitmap build retains
-the W95FA name.
-
-Loaded two ways:
-- **Browser:** `@font-face` declared in `index.html`, served from `/fonts/`.
-- **Node CLI (`test/run.js`):** `canvas.registerFont()` is called at startup for both files; renders fall back silently if the package or files are missing.
-
-Sizes: W95FA looks crispest at 11–12px. Fixedsys is bundled at every cell
-height requested by the Win98 Font Viewer, so its samples do not rescale a
-single bitmap strike.
-
-The deterministic text path is specified in `docs/software-gdi-design.md` and
-uses generated monochrome strikes from these open fonts at runtime. Original
-Microsoft `.FON`/`.FNT` resources must not be committed without a verified
-redistribution license; users may provide their own installed Win98 font files
-for exact local rendering.
-
-## Generated bitmap FONs
-
-`tools/gen-w95fa-fon.sh` uses FreeType at build time to auto-hint W95FA into
-one-bit FNT 3.0 strikes and packages them in a resource-only Windows 3.x NE
-`.FON`. FreeType is not linked into the emulator. The tracked `W95FA.fon` was
-produced by this command and contains 11, 12, 16, 24, 32, 48, and 64-pixel
-strikes:
-
-```sh
-bash tools/gen-w95fa-fon.sh fonts/W95FA.fon
-```
-
-Pass explicit pixel heights after the output path to override that list:
-
-```sh
-bash tools/gen-w95fa-fon.sh scratch/w95fa.fon 11 12 16
-```
-
-For a local Font Viewer CLI experiment, place the generated file beside the
-ignored Win98 fixture so `test/run.js` imports it into the virtual C drive:
-
-```sh
-bash tools/gen-w95fa-fon.sh test/binaries/win98-apps/w95fa.fon
-node test/run.js \
-  --exe=test/binaries/win98-apps/fontview.exe \
-  --args=w95fa.fon \
-  --input=12:png:scratch/fontview-w95fa.png,20:click:45:43 \
-  --max-batches=30 --batch-size=5000 --no-close
-```
-
-The generator requires a C compiler plus FreeType development metadata exposed
-as `pkg-config freetype2`. Generated strikes are derived from W95FA and remain
-subject to its SIL Open Font License 1.1 terms.
-
-`tools/gen-fixedsys-fon.sh` uses the same generator's fixed-cell mode to create
-the tracked `Fixedsys.fon` from public-domain Fixedsys Excelsior 3.02. It
-contains native 16, 18, 21, 24, 32, 48, 64, and 80-pixel cell-height strikes,
-matching the sizes requested by the Win98 Font Viewer:
-
-```sh
-bash tools/gen-fixedsys-fon.sh fonts/Fixedsys.fon
-```
-
-Pass explicit pixel heights after the output path to override that list.
-
-At runtime, both the browser host and CLI preload the tracked FONs as
-`C:\\WINDOWS\\FONTS\\W95FA.FON` and `FIXEDSYS.FON`. WAT installs them lazily,
-so normal UI text and all three fixed stock fonts use the deterministic one-bit
-rasterizer rather than Canvas font measurement or glyph rendering. Explicit
-scalable document faces retain the Canvas fallback.
+Original Microsoft `.FON`/`.FNT` resources must not be committed without a
+verified redistribution license. Users may provide their own Win98 font files
+for exact local comparisons.

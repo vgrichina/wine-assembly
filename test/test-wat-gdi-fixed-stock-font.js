@@ -24,7 +24,7 @@ const { bootRenderHarness } = require('./render-helper');
   const root = path.join(__dirname, '..');
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  for (const name of ['W95FA.fon', 'Fixedsys.fon']) {
+  for (const name of ['System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon']) {
     hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
       data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
       attrs: 0x20,
@@ -66,23 +66,32 @@ const { bootRenderHarness } = require('./render-helper');
   const text = allocZero(8);
   bytes.set(Buffer.from('MWii\0', 'latin1'), wa(text));
   const size = allocZero(8);
-  const fixedStocks = [0x3001a, 0x3001b, 0x30020];
-  let selectedStrike = 0;
-  for (const handle of fixedStocks) {
+  const fixedStocks = [
+    { handle: 0x3001a, height: 15, face: 'Fixedsys', note: 'OEM fallback' },
+    { handle: 0x3001b, height: 13, face: 'Courier', note: 'ANSI fixed' },
+    { handle: 0x30020, height: 15, face: 'Fixedsys', note: 'system fixed' },
+  ];
+  const strikeFace = strike => {
+    const source = view.getUint32(strike + 8, true);
+    const faceOffset = view.getUint32(strike + 56, true);
+    let value = '';
+    for (let p = source + faceOffset; bytes[p]; p++) value += String.fromCharCode(bytes[p]);
+    return value;
+  };
+  for (const { handle, height, face, note } of fixedStocks) {
     wat.test_call_SelectObject(hdc, handle);
     const strike = wat.test_gdi_bitmap_font_selected(hdc) >>> 0;
-    assert(strike, `stock font ${handle.toString(16)} should select Fixedsys`);
-    if (selectedStrike) assert.strictEqual(strike, selectedStrike);
-    selectedStrike = strike;
+    assert(strike, `stock font ${handle.toString(16)} should select a Wine bitmap`);
+    assert.strictEqual(strikeFace(strike), face, note);
     assert.strictEqual(wat.test_call_GetTextExtentExPointA(
       hdc, text, 4, 0x7fffffff, 0, 0, size), 1);
     assert.strictEqual(wat.guest_read32(size), 32, 'four fixed cells should be 32px');
-    assert.strictEqual(wat.guest_read32(size + 4), 16, 'fixed stock cell height');
+    assert.strictEqual(wat.guest_read32(size + 4), height, `${note} cell height`);
     assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 4), 1);
   }
   assertNoCanvasText('all fixed stock font rendering and measurement must stay in WAT');
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 15,
-    'seven UI strikes plus eight Fixedsys strikes should fit the WAT registry');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 2,
+    'fixed stock selection should load only Fixedsys and Courier');
 
   const created = wat.test_call_CreateFontW(-16, 400, 0, writeWide('Fixedsys')) >>> 0;
   assert(created && wat.test_gdi_bitmap_font_bound(created),
@@ -91,21 +100,35 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 24, text, 4), 1);
   assertNoCanvasText('explicit Fixedsys rendering must stay in WAT');
 
-  const nativeHeights = [16, 18, 21, 24, 32, 48, 64, 80];
+  const nativeSizes = [
+    { request: 16, width: 32, height: 15 },
+    { request: 18, width: 32, height: 15 },
+    { request: 21, width: 64, height: 30 },
+    { request: 24, width: 64, height: 30 },
+    { request: 32, width: 64, height: 30 },
+    { request: 48, width: 128, height: 60 },
+    { request: 64, width: 160, height: 75 },
+    { request: 80, width: 160, height: 90 },
+  ];
   const selected = [];
-  for (const height of nativeHeights) {
-    const font = wat.test_call_CreateFontW(-height, 400, 0, writeWide('Fixedsys')) >>> 0;
+  for (const { request, width, height } of nativeSizes) {
+    const font = wat.test_call_CreateFontW(-request, 400, 0, writeWide('Fixedsys')) >>> 0;
     const strike = wat.test_gdi_bitmap_font_bound(font) >>> 0;
-    assert(font && strike, `${height}px Fixedsys should bind to a bundled strike`);
-    assert.strictEqual(view.getUint32(strike + 20, true), height,
-      `${height}px request should select its exact native strike`);
+    assert(font && strike, `${request}px Fixedsys should bind to Wine's base strike`);
+    assert.strictEqual(view.getUint32(strike + 20, true), 15,
+      'Wine Fixedsys source remains one pre-rendered 8x15 strike');
+    wat.test_call_SelectObject(hdc, font);
+    assert.strictEqual(wat.test_call_GetTextExtentExPointA(
+      hdc, text, 4, 0x7fffffff, 0, 0, size), 1);
+    assert.strictEqual(wat.guest_read32(size), width, `${request}px request width`);
+    assert.strictEqual(wat.guest_read32(size + 4), height, `${request}px request cell`);
     selected.push(strike);
   }
-  assert.strictEqual(new Set(selected).size, nativeHeights.length,
-    'each common Fixedsys size should use a distinct native strike');
+  assert.strictEqual(new Set(selected).size, 1,
+    'all native sizes scale the same authentic 8x15 bitmap strike');
   assertNoCanvasText('multi-strike Fixedsys selection must stay in WAT');
 
-  console.log('PASS  fixed stock and all common Fixedsys sizes use native WAT bitmap strikes');
+  console.log('PASS  fixed stocks use Wine Courier/Fixedsys bitmaps with native Fixedsys scaling');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

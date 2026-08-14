@@ -21,10 +21,10 @@ cc -std=c11 -O2 -Wall -Wextra -Werror \
   -o "$fontgen_dir/gen-bitmap-fon"
 
 if (( $# )); then
-  "$fontgen_dir/gen-bitmap-fon" "$repo_root/fonts/FSEX302.ttf" "$output" \
-    Fixedsys --fixed --copyright="Fixedsys Excelsior bitmap derivative; public domain" "$@"
-else
-  "$fontgen_dir/gen-bitmap-fon" "$repo_root/fonts/FSEX302.ttf" "$output" \
-    Fixedsys --fixed --copyright="Fixedsys Excelsior bitmap derivative; public domain" \
-    16 18 21 24 32 48 64 80
+  echo "gen-fixedsys-fon: Wine Fixedsys contains one native 15px strike" >&2
+  exit 2
 fi
+
+"$fontgen_dir/gen-bitmap-fon" "$repo_root/fonts/wine/fixedsys.ttf" "$output" \
+  Fixedsys --fixed --copyright="Wine Fixedsys; LGPL-2.1-or-later" \
+  --bitmap-only --hinting=native --raster=exact 15
