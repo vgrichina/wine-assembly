@@ -3246,23 +3246,22 @@
 
   (func $dialog_default_idok_close (param $parent i32)
     (local $dlg_rec i32)
-    ;; Plain x86 template dialogs can rely on USER's default IDOK behavior.
+    ;; Only DialogBoxParamA's modal pump supplies a default IDOK close.
+    ;; CreateDialogParamA dialogs are modeless: their application owns the
+    ;; lifetime even when the dialog proc returns FALSE for WM_COMMAND.
     ;; WAT-native dialogs (FindReplace/About/etc.) have their own class
     ;; handlers, so leave those alone.
     (if (i32.eqz (local.get $parent)) (then (return)))
+    (if (i32.ne (global.get $dlg_pump_hwnd) (local.get $parent)) (then (return)))
     (if (i32.eqz (call $wnd_table_get (local.get $parent))) (then (return)))
     (if (call $ctrl_table_get_class (local.get $parent)) (then (return)))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $parent)))
     (if (i32.eqz (local.get $dlg_rec)) (then (return)))
     (if (i32.eqz (i32.load offset=4 (local.get $dlg_rec))) (then (return)))
-    (if (i32.and
-          (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-          (i32.eq (global.get $dlg_pump_hwnd) (local.get $parent)))
-      (then
-        (global.set $dlg_ended (i32.const 1))
-        (global.set $dlg_result (i32.const 1))
-        (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
-        (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 1))))
+    (global.set $dlg_ended (i32.const 1))
+    (global.set $dlg_result (i32.const 1))
+    (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
+    (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 1))
     (call $wnd_destroy_tree (local.get $parent))
     (call $host_destroy_window (local.get $parent)))
 

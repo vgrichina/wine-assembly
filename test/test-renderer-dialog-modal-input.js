@@ -188,3 +188,54 @@ assert.strictEqual(ownerlessButton.sent.length, 2,
 assert.strictEqual(ownerlessButton.queued.length, 0);
 
 console.log('PASS  WAT capture dispatches directly outside owned guest modal buttons');
+
+const nativeDialogWasm = {
+  exports: {
+    ctrl_get_class: hwnd => hwnd === 0x40002 ? 0 : 1,
+    wnd_get_proc_export: hwnd => hwnd === 0x40002 ? 0x00412345 : 0,
+  },
+};
+const nativeDialog = {
+  hwnd: 0x40001,
+  wasm: nativeDialogWasm,
+};
+const nativeDialogRenderer = new FakeRenderer();
+nativeDialogRenderer.wasm = nativeDialogWasm;
+nativeDialogRenderer.inputQueue = [];
+nativeDialogRenderer._mouseX = 132;
+nativeDialogRenderer._mouseY = 79;
+nativeDialogRenderer._mouseButtonsMask = 1;
+nativeDialogRenderer._wakeMessageWait = () => {};
+nativeDialogRenderer._hitTestDeepChild = () => ({
+  hwnd: 0x40002,
+  sx: 100,
+  sy: 60,
+});
+
+assert.strictEqual(nativeDialogRenderer._queueNativeDialogChildMouseDown(
+  nativeDialog, 132, 79, 0x0201, 1), true);
+assert.deepStrictEqual(nativeDialogRenderer.inputQueue, [{
+  type: 'mouse',
+  hwnd: 0x40002,
+  msg: 0x0201,
+  wParam: 1,
+  lParam: (19 << 16) | 32,
+  mouseX: 132,
+  mouseY: 79,
+  mouseButtons: 1,
+}], 'registered x86 dialog child should receive DOWN through the guest queue');
+assert.deepStrictEqual(nativeDialogRenderer._directMouseDown, {
+  win: nativeDialog,
+  targetHwnd: 0x40002,
+  screenX: 100,
+  screenY: 60,
+});
+
+nativeDialogWasm.exports.wnd_get_proc_export = () => 0xFFFF0001;
+nativeDialogRenderer.inputQueue.length = 0;
+assert.strictEqual(nativeDialogRenderer._queueNativeDialogChildMouseDown(
+  nativeDialog, 132, 79, 0x0201, 1), false,
+  'WAT-owned dialog pages retain synchronous dialog routing');
+assert.strictEqual(nativeDialogRenderer.inputQueue.length, 0);
+
+console.log('PASS  native x86 dialog child mouse-down is queued through GetMessage');

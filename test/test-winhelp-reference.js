@@ -11,7 +11,7 @@ const { PNG } = require('pngjs');
 const root = path.join(__dirname, '..');
 const sourceDir = path.join(root, 'test', 'binaries', 'help');
 const sourceViewer = path.join(sourceDir, 'winhlp32.exe');
-const helpFile = path.join(root, 'test', 'binaries', 'help', 'notepad.hlp');
+const helpFile = path.join(root, 'test', 'binaries', 'help', 'freecell.hlp');
 const screenshot = path.join(root, 'build', 'winhelp-reference.png');
 const contentsScreenshot = path.join(root, 'build', 'winhelp-reference-contents.png');
 
@@ -46,7 +46,11 @@ for (const [name, expected] of Object.entries(cntHashes)) {
 // shipped through a product path, and so clean test runs do not depend on a
 // machine-local pre-generated GID.
 const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-winhelp-'));
-process.on('exit', () => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-winhelp-content-'));
+process.on('exit', () => {
+  fs.rmSync(fixtureDir, { recursive: true, force: true });
+  fs.rmSync(contentDir, { recursive: true, force: true });
+});
 for (const name of fs.readdirSync(sourceDir)) {
   const src = path.join(sourceDir, name);
   if (fs.statSync(src).isFile()) fs.copyFileSync(src, path.join(fixtureDir, name));
@@ -55,6 +59,11 @@ const commonControls = path.join(root, 'test', 'binaries', 'dlls', 'comctl32.dll
 if (!fs.existsSync(commonControls)) throw new Error('Win98 comctl32.dll fixture is missing');
 fs.copyFileSync(commonControls, path.join(fixtureDir, 'comctl32.dll'));
 const viewer = path.join(fixtureDir, 'winhlp32.exe');
+for (const name of ['winhlp32.exe', 'freecell.hlp']) {
+  fs.copyFileSync(path.join(sourceDir, name), path.join(contentDir, name));
+}
+fs.copyFileSync(commonControls, path.join(contentDir, 'comctl32.dll'));
+const contentViewer = path.join(contentDir, 'winhlp32.exe');
 for (const stem of ['notepad', 'freecell']) {
   const gid = path.join(fixtureDir, `${stem}.gid`);
   if (fs.existsSync(gid)) continue;
@@ -82,13 +91,14 @@ for (const stem of ['notepad', 'freecell']) {
 fs.mkdirSync(path.dirname(screenshot), { recursive: true });
 const run = spawnSync(process.execPath, [
   path.join(root, 'test', 'run.js'),
-  `--exe=${viewer}`,
-  '--args=notepad.hlp',
-  '--max-batches=2500',
+  `--exe=${contentViewer}`,
+  '--args=freecell.hlp',
+  '--screen=800x600',
+  '--max-batches=500',
   '--no-build',
   '--quiet-api',
   '--quiet-blocks',
-  '--input=80:dump-windows:winhelp',
+  '--input=300:dump-windows:winhelp',
   `--png=${screenshot}`,
 ], {
   cwd: root,
@@ -99,8 +109,8 @@ const run = spawnSync(process.execPath, [
 
 const output = (run.stdout || '') + (run.stderr || '');
 const failures = [];
-if (!output.includes('[SetWindowText] "Notepad Help"')) failures.push('viewer never loaded Notepad Help');
-if (!output.includes('Help Topics: Notepad Help')) failures.push('viewer never opened Notepad Help Topics');
+if (!output.includes('[SetWindowText] "Free Cell"')) failures.push('viewer never loaded the embedded FreeCell topic');
+if (output.includes('Help Topics: FreeCell Help')) failures.push('standalone HLP unexpectedly resolved through the mismatched CNT');
 if (!fs.existsSync(screenshot) || fs.statSync(screenshot).size < 1000) failures.push('rendered screenshot is missing');
 if (!/window:winhelp[^\n]*class="MS_WINTOPIC"[^\n]*size=\d+x([1-9]\d{2,})[^\n]*visible=true/.test(output)) {
   failures.push('Help topic child is not visible with a usable height');
@@ -108,9 +118,9 @@ if (!/window:winhelp[^\n]*class="MS_WINTOPIC"[^\n]*size=\d+x([1-9]\d{2,})[^\n]*v
 if (fs.existsSync(screenshot)) {
   const png = PNG.sync.read(fs.readFileSync(screenshot));
   let darkTopicPixels = 0;
-  // The reference fixture opens at a stable Win98 Help Topics layout. Exclude
-  // chrome so a blank dialog cannot satisfy the image assertion.
-  for (let y = 84; y < Math.min(410, png.height); y++) {
+  // The standalone HLP opens its one real embedded topic. Restrict the count
+  // to that topic surface so window chrome cannot satisfy the assertion.
+  for (let y = 84; y < Math.min(130, png.height); y++) {
     for (let x = 126; x < Math.min(440, png.width); x++) {
       const offset = (y * png.width + x) * 4;
       if (png.data[offset] < 100 && png.data[offset + 1] < 100 &&
@@ -119,7 +129,7 @@ if (fs.existsSync(screenshot)) {
       }
     }
   }
-  if (darkTopicPixels < 500) failures.push(`Help topic text was not rendered (${darkTopicPixels} dark pixels)`);
+  if (darkTopicPixels < 700) failures.push(`Help topic text was not rendered (${darkTopicPixels} dark pixels)`);
 }
 if (/UNIMPLEMENTED API|R6018|\*\*\* CRASH|FATAL:/.test(output)) failures.push('viewer hit a fatal compatibility path');
 if (run.error && run.error.code !== 'ETIMEDOUT') failures.push(run.error.message);

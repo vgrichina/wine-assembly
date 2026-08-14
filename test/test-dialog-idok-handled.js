@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// A dialog procedure's handled BOOL is distinct from DWL_MSGRESULT. A handled
-// WM_COMMAND/IDOK may legitimately leave the result at zero and keep the
-// dialog alive; only an unhandled command receives USER's default close.
+// A dialog procedure's handled BOOL is distinct from DWL_MSGRESULT. Modeless
+// dialogs own their lifetime regardless of that BOOL; only DialogBoxParamA's
+// modal pump supplies the dialog-manager IDOK fallback.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -34,6 +34,9 @@ const extraWat = String.raw`
 
   (func (export "test_window_exists") (param $hwnd i32) (result i32)
     (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+
+  (func (export "test_set_modal_dialog") (param $hwnd i32)
+    (global.set $dlg_pump_hwnd (local.get $hwnd)))
 `;
 
 (async () => {
@@ -68,18 +71,25 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_window_exists(handledDialog), 1,
     'handled IDOK must not run the dialog manager default close');
 
-  // xor eax,eax; ret 16 — unhandled WM_COMMAND. USER supplies the default
-  // IDOK behavior and closes the dialog.
+  // xor eax,eax; ret 16 — an unhandled modeless WM_COMMAND still leaves
+  // lifetime control with the application.
   const unhandledProc = writeProc(Uint8Array.from([
     0x31, 0xC0, 0xC2, 0x10, 0x00,
   ]));
-  const unhandledButton = e.test_create_idok_button(unhandledProc) >>> 0;
-  const unhandledDialog = e.wnd_get_parent(unhandledButton) >>> 0;
-  click(unhandledButton);
-  assert.strictEqual(e.test_window_exists(unhandledDialog), 0,
-    'unhandled IDOK must receive the dialog manager default close');
+  const modelessButton = e.test_create_idok_button(unhandledProc) >>> 0;
+  const modelessDialog = e.wnd_get_parent(modelessButton) >>> 0;
+  click(modelessButton);
+  assert.strictEqual(e.test_window_exists(modelessDialog), 1,
+    'unhandled modeless IDOK must not destroy a CreateDialogParamA window');
 
-  console.log('PASS  handled and unhandled dialog IDOK paths remain distinct');
+  const modalButton = e.test_create_idok_button(unhandledProc) >>> 0;
+  const modalDialog = e.wnd_get_parent(modalButton) >>> 0;
+  e.test_set_modal_dialog(modalDialog);
+  click(modalButton);
+  assert.strictEqual(e.test_window_exists(modalDialog), 0,
+    'unhandled modal IDOK receives the DialogBoxParamA fallback close');
+
+  console.log('PASS  dialog IDOK fallback is modal-only');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

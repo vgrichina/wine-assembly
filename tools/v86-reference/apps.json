@@ -1,6 +1,36 @@
 {
   "schemaVersion": 1,
   "apps": {
+    "winhelp-freecell-default": {
+      "title": "Windows Help - FreeCell embedded default topic after CNT warning",
+      "probeSource": "tools/v86-reference/probes/open-winhelp-contents.c",
+      "probeName": "PROBE.EXE",
+      "launch": "D:\\PROBE.EXE",
+      "waitMs": 4000,
+      "postLaunch": [
+        { "waitMs": 8000, "scancodes": [28, 156] },
+        { "waitMs": 2000, "scancodes": [28, 156] }
+      ],
+      "files": [
+        { "path": "test/binaries/help/winhlp32.exe", "name": "WINHLP32.EXE" },
+        { "path": "test/binaries/help/freecell.hlp", "name": "FREECELL.HLP" },
+        { "path": "test/binaries/help/freecell.cnt", "name": "FREECELL.CNT" }
+      ]
+    },
+    "winhelp-freecell-topics": {
+      "title": "Windows Help - FreeCell mismatched CNT topic list",
+      "launch": "D:\\WINHLP32.EXE D:\\FREECELL.HLP",
+      "waitMs": 4000,
+      "postLaunch": [
+        { "waitMs": 4000, "scancodes": [28, 156] },
+        { "waitMs": 1000, "scancodes": [56, 20, 148, 184] }
+      ],
+      "files": [
+        { "path": "test/binaries/help/winhlp32.exe", "name": "WINHLP32.EXE" },
+        { "path": "test/binaries/help/freecell.hlp", "name": "FREECELL.HLP" },
+        { "path": "test/binaries/help/freecell.cnt", "name": "FREECELL.CNT" }
+      ]
+    },
     "geometry-probe": {
       "title": "Minesweeper geometry probe",
       "probeSource": "tools/v86-reference/probes/query-winrect.c",
