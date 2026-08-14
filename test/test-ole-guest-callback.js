@@ -619,6 +619,68 @@ async function main() {
   assert.strictEqual(read(retainedStorage + 4), 1);
   assert.strictEqual(callMethod(retainedStorage, 2), 0);
 
+  const clipboardCacheRoot = e.test_ole_create_static_handler(0) >>> 0;
+  const clipboardCache = clipboardCacheRoot + 52;
+  const clipboardStreamFormat = makeFormat(0xc51d, 4);
+  const clipboardStorageFormat = makeFormat(0xc51e, 8);
+  const clipboardStream = makeGuestSite();
+  const clipboardStorage = makeGuestSite();
+  const clipboardStreamMedium = alloc(12);
+  const clipboardStorageMedium = alloc(12);
+  write(clipboardStreamMedium, 4);
+  write(clipboardStreamMedium + 4, clipboardStream);
+  write(clipboardStreamMedium + 8, 0);
+  write(clipboardStorageMedium, 8);
+  write(clipboardStorageMedium + 4, clipboardStorage);
+  write(clipboardStorageMedium + 8, 0);
+  assert.strictEqual(callMethod(clipboardCache, 7,
+    clipboardStreamFormat, clipboardStreamMedium, 1), 0);
+  assert.strictEqual(callMethod(clipboardCache, 7,
+    clipboardStorageFormat, clipboardStorageMedium, 1), 0);
+  const clipboardOut = alloc(4);
+  write(clipboardOut, 0xcccccccc);
+  const clipboardStorageVtable = read(clipboardStorage);
+  const clipboardStorageAddRef = read(clipboardStorageVtable + 4);
+  write(clipboardStorageVtable + 4, 0);
+  const malformedClipboardHr = callMethod(
+    clipboardCacheRoot, 10, 0, clipboardOut);
+  check('GetClipboardData preflights every guest AddRef before retaining any entry',
+    malformedClipboardHr === 0x80004002 && read(clipboardOut) === 0 &&
+    read(clipboardStream + 4) === 1 && read(clipboardStream + 8) === 0 &&
+    read(clipboardStorage + 4) === 1 && read(clipboardStorage + 8) === 0,
+    `hr=0x${malformedClipboardHr.toString(16)} streamAddRefs=${read(clipboardStream + 8)} storageAddRefs=${read(clipboardStorage + 8)}`);
+  write(clipboardStorageVtable + 4, clipboardStorageAddRef);
+  const clipboardStorageRelease = read(clipboardStorageVtable + 8);
+  write(clipboardStorageVtable + 8, 0);
+  check('GetClipboardData also preflights the Release needed by the returned medium',
+    callMethod(clipboardCacheRoot, 10, 0, clipboardOut) === 0x80004002 &&
+    read(clipboardOut) === 0 && read(clipboardStream + 8) === 0 &&
+    read(clipboardStorage + 8) === 0);
+  write(clipboardStorageVtable + 8, clipboardStorageRelease);
+  check('GetClipboardData AddRefs every DLL-private cached stream/storage entry',
+    callMethod(clipboardCacheRoot, 10, 0, clipboardOut) === 0 &&
+    read(clipboardOut) !== 0 && read(clipboardStream + 4) === 2 &&
+    read(clipboardStream + 8) === 1 && read(clipboardStorage + 4) === 2 &&
+    read(clipboardStorage + 8) === 1);
+  const clipboardSnapshot = read(clipboardOut);
+  const clipboardSnapshotEntries = read(clipboardSnapshot + 12);
+  check('GetClipboardData publishes a complete two-entry snapshot with normal releasers',
+    read(clipboardSnapshot + 16) === 2 &&
+    read(clipboardSnapshotEntries + 20) === 4 &&
+    read(clipboardSnapshotEntries + 24) === clipboardStream &&
+    read(clipboardSnapshotEntries + 28) === 0 &&
+    read(clipboardSnapshotEntries + 52) === 8 &&
+    read(clipboardSnapshotEntries + 56) === clipboardStorage &&
+    read(clipboardSnapshotEntries + 60) === 0);
+  check('destroying the source cache leaves guest media owned by its snapshot',
+    callMethod(clipboardCache, 2) === 0 &&
+    read(clipboardStream + 4) === 1 && read(clipboardStream + 12) === 1 &&
+    read(clipboardStorage + 4) === 1 && read(clipboardStorage + 12) === 1);
+  check('final clipboard snapshot Release balances every retained guest medium',
+    callMethod(clipboardSnapshot, 2) === 0 &&
+    read(clipboardStream + 4) === 0 && read(clipboardStream + 12) === 2 &&
+    read(clipboardStorage + 4) === 0 && read(clipboardStorage + 12) === 2);
+
   const replaceSequence = alloc(4);
   write(replaceSequence, 0);
   const replaceObject = e.test_ole_create_data_object(0, 0) >>> 0;
