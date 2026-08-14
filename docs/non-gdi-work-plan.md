@@ -436,9 +436,11 @@ cursor semantics. The expanded focused suite passes 38/38.
   bookkeeping.
 - [x] Complete client-site ownership, `GetClientSite` AddRef behavior, and
   dirty-close `SaveObject` calls for the synthetic in-process site fixture.
-- Complete advisory connections and extend client-site ownership to
-  DLL-private interfaces after the guest COM callback bridge can safely invoke
-  AddRef/Release/SaveObject.
+- [x] Complete multiple advisory connections, targeted `Unadvise`, and stable
+  `EnumAdvise`/clone ownership for synthetic in-process sinks.
+- Extend client-site and advisory ownership to DLL-private interfaces after the
+  guest COM callback bridge can safely invoke AddRef/Release/SaveObject and
+  sink notifications.
 - [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
   generalized P3 object rather than DIB-only branches for runtime-owned
   `IDataObject` instances.
@@ -476,6 +478,16 @@ releases its ownership, and SAVEIFDIRTY/PROMPTSAVE close clears dirty state
 only after the local SaveObject callback succeeds. Native RichEdit's
 DLL-private site remains borrowed pending continuation-based guest callbacks;
 its existing compatibility path is unchanged. The focused suite passes 58/58.
+
+2026-08-13 local-advisory result: `IOleObject::Advise` now assigns monotonic
+connection IDs and retains each synthetic local sink independently.
+`Unadvise` removes only its requested connection and returns
+`OLE_E_NOCONNECTION` without mutation for an unknown ID. `EnumAdvise` returns a
+stable `IEnumSTATDATA` snapshot whose Next and Clone operations own local sink
+references and preserve independent cursors even after the live collection is
+changed. Final enumerator/object release balances all retained references. The
+focused suite passes 65/65. DLL-private sinks remain borrowed and cannot yet
+receive notifications without the guest callback bridge.
 
 ### Acceptance
 

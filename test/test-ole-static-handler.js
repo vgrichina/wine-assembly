@@ -134,6 +134,69 @@ async function main() {
     e.test_ole_release(testSite) === 2 &&
     dv.getUint32(wa(testSite) + 16, true) === 1);
 
+  const adviseSinkA = e.test_ole_create_test_site() >>> 0;
+  const adviseSinkB = e.test_ole_create_test_site() >>> 0;
+  const adviseConnectionA = alloc(4);
+  const adviseConnectionB = alloc(4);
+  check('IOleObject Advise assigns stable connections and owns local sinks',
+    e.test_ole_static_advise(object, adviseSinkA, adviseConnectionA) === 0 &&
+    e.test_ole_static_advise(object, adviseSinkB, adviseConnectionB) === 0 &&
+    dv.getUint32(wa(adviseConnectionA), true) === 1 &&
+    dv.getUint32(wa(adviseConnectionB), true) === 2 &&
+    dv.getUint32(wa(object) + 152, true) === 2 &&
+    dv.getUint32(wa(adviseSinkA) + 4, true) === 2 &&
+    dv.getUint32(wa(adviseSinkB) + 4, true) === 2);
+  const adviseEnum = e.test_ole_create_advise_enum(object) >>> 0;
+  check('EnumAdvise creates an owned stable two-sink snapshot',
+    adviseEnum !== 0 && dv.getUint32(wa(adviseSinkA) + 4, true) === 3 &&
+    dv.getUint32(wa(adviseSinkB) + 4, true) === 3);
+  check('Unadvise rejects unknown IDs without mutating live connections',
+    (e.test_ole_static_unadvise(object, 99) >>> 0) === 0x80040004 &&
+    dv.getUint32(wa(object) + 152, true) === 2);
+  check('Unadvise removes only its connection and releases the live sink',
+    e.test_ole_static_unadvise(object, 1) === 0 &&
+    dv.getUint32(wa(object) + 152, true) === 1 &&
+    dv.getUint32(wa(adviseSinkA) + 4, true) === 2 &&
+    dv.getUint32(wa(adviseSinkB) + 4, true) === 3);
+  const adviseItems = alloc(32 * 3);
+  const adviseFetched = alloc(4);
+  const adviseNextHr = e.test_ole_cache_enum_next(adviseEnum, 3, adviseItems, adviseFetched) >>> 0;
+  check('IEnumSTATDATA returns advisory sinks and stable connection IDs with AddRef',
+    adviseNextHr === 1 && dv.getUint32(wa(adviseFetched), true) === 2 &&
+    dv.getUint32(wa(adviseItems) + 24, true) === adviseSinkA &&
+    dv.getUint32(wa(adviseItems) + 28, true) === 1 &&
+    dv.getUint32(wa(adviseItems) + 32 + 24, true) === adviseSinkB &&
+    dv.getUint32(wa(adviseItems) + 32 + 28, true) === 2 &&
+    dv.getUint32(wa(adviseSinkA) + 4, true) === 3 &&
+    dv.getUint32(wa(adviseSinkB) + 4, true) === 4);
+  e.test_ole_release(adviseSinkA);
+  e.test_ole_release(adviseSinkB);
+  e.test_ole_format_free(adviseItems);
+  e.test_ole_format_free(adviseItems + 32);
+  e.test_ole_format_enum_reset(adviseEnum);
+  e.test_ole_format_enum_skip(adviseEnum, 1);
+  const adviseClone = e.test_ole_clone_cache_enum(adviseEnum) >>> 0;
+  const originalAdvise = alloc(32);
+  const clonedAdvise = alloc(32);
+  check('EnumAdvise Clone preserves its cursor and independent sink ownership',
+    adviseClone !== 0 &&
+    e.test_ole_cache_enum_next(adviseEnum, 1, originalAdvise, 0) === 0 &&
+    e.test_ole_cache_enum_next(adviseClone, 1, clonedAdvise, 0) === 0 &&
+    dv.getUint32(wa(originalAdvise) + 24, true) === adviseSinkB &&
+    dv.getUint32(wa(clonedAdvise) + 24, true) === adviseSinkB);
+  e.test_ole_release(adviseSinkB);
+  e.test_ole_release(adviseSinkB);
+  e.test_ole_format_free(originalAdvise);
+  e.test_ole_format_free(clonedAdvise);
+  e.test_ole_release(adviseClone);
+  e.test_ole_release(adviseEnum);
+  check('snapshot release and final Unadvise restore both caller sink references',
+    e.test_ole_static_unadvise(object, 2) === 0 &&
+    dv.getUint32(wa(adviseSinkA) + 4, true) === 1 &&
+    dv.getUint32(wa(adviseSinkB) + 4, true) === 1);
+  e.test_ole_release(adviseSinkA);
+  e.test_ole_release(adviseSinkB);
+
   const userTypeOut = alloc(4);
   check('GetUserType returns caller-owned static-object text',
     e.test_ole_static_get_user_type(0, userTypeOut) === 0 &&

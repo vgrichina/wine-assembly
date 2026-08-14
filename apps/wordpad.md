@@ -110,6 +110,13 @@ state. The focused suite passes 58/58. RichEdit's DLL-private site keeps the
 existing borrowed compatibility path until guest COM callbacks can suspend and
 resume safely.
 
+Local `IOleObject` advisory state is now a real multi-connection collection.
+Connections have stable IDs, targeted removal, exact unknown-ID failure, and
+owned `EnumAdvise`/`IEnumSTATDATA` snapshots with independent clones and
+balanced returned-sink references. The focused suite passes 65/65. Native
+DLL-private advise sinks remain borrowed and notification-free until the same
+guest callback continuation work lands.
+
 ## Remaining Work
 
 The everyday non-OLE WordPad target is complete. Remaining work is narrower.

@@ -70,6 +70,13 @@ assertions; the focused suite passes 58/58. This deliberately does not call a
 DLL-private RichEdit vtable synchronously from a WAT API frame—the continuation
 bridge remains required for that half and for native advisory sinks.
 
+Synthetic local advisory sinks now cover the corresponding collection
+contract: monotonic connections, independently retained sinks, targeted and
+failure-atomic `Unadvise`, stable `EnumAdvise` snapshots, AddRef on returned
+STATDATA sinks, cursor-preserving clones, and balanced destruction. The focused
+suite passes 65/65. DLL-private sink notification remains behind the callback
+bridge rather than being approximated with unsafe synchronous re-entry.
+
 ## ASCII TLDR
 
 ```text
