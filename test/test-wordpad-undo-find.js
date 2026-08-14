@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // WordPad editing-command regression: native RichEdit Undo plus the actual
-// MFC Edit > Find command and common modeless Find dialog notification path.
+// MFC Edit > Find command and the native RichEdit's single-execution path.
 
 'use strict';
 
@@ -80,7 +80,7 @@ check('typed text reached native RichEdit', /len=10 .*text="alpha beta"/.test(st
 check('Ctrl+Z invoked native RichEdit Undo', /len=0 .*text=""/.test(state('undone')));
 check('WordPad opened the modeless Find dialog', /\[FindTextA\].*owner=0x10002/.test(output));
 check('Find dialog accepted beta', /dump-find:.*editText="beta"/.test(output));
-check('Find Next notification targets the RichEdit owner', /post_queue after find-click:.*h=0x10002 m=0xc[0-9a-f]+ .*lp=0x[1-9a-f][0-9a-f]*/i.test(output));
+check('native Find avoids a duplicate owner notification', !/post_queue after find-click:.*h=0x10002 m=0xc[0-9a-f]+ .*lp=0x[1-9a-f][0-9a-f]*/i.test(output));
 check('FINDREPLACE reports Find Next beta', /dump-fr: flags=0x[0-9a-f]*[89a-f][0-9a-f]* findWhat="beta"/i.test(output));
 check('Find Next selects beta in native RichEdit', /len=10 sel=6\.\.10 .*text="alpha beta"/.test(controlState('found')));
 check('Find screenshot written', fs.existsSync(PNG) && fs.statSync(PNG).size > 0);
