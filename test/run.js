@@ -3226,7 +3226,15 @@ async function main() {
         }
         if (found) {
           we.send_message(found, 0x0201, 0, 0);
-          we.send_message(found, 0x0202, 0, 0);
+          const watModalHwnd = renderer && renderer._modalDialogHwnd
+            ? (renderer._modalDialogHwnd(renderer.wasm || instance) | 0)
+            : 0;
+          if (renderer && !watModalHwnd) {
+            renderer.inputQueue.push({ type: 'mouse', hwnd: found, msg: 0x0202, wParam: 0, lParam: 0 });
+            if (renderer._wakeMessageWait) renderer._wakeMessageWait();
+          } else {
+            we.send_message(found, 0x0202, 0, 0);
+          }
           logs.push(`[input] dlg-click: id=${ev.ctrlId} hwnd=0x${found.toString(16)} dlg=0x${dlg.toString(16)} at batch ${batch}`);
         } else if (dlg) {
           logs.push(`[input] dlg-click: id=${ev.ctrlId} NOT FOUND dlg=0x${dlg.toString(16)} at batch ${batch}`);

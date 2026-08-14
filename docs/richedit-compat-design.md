@@ -1,6 +1,6 @@
 # RichEdit Compatibility Task Design
 
-Last updated: 2026-08-12.
+Last updated: 2026-08-13.
 
 Status: active task design for making native RichEdit usable across WordPad,
 installers, and other Win9x-era apps.
@@ -692,6 +692,8 @@ screenshot where the result is visual.
    [x] ruler tab interaction updates native paragraph state
    [x] toolbar checked/disabled state is covered by focused visual regressions
    [x] Paragraph, Tabs, and Date/Time dialogs route commands correctly
+   [x] all 13 non-OLE menu dialogs close through real button input and restore
+       the enabled WordPad frame
 
 5. International text
    [x] Unicode input/readback covers BMP and surrogate-pair characters
@@ -712,6 +714,22 @@ activation, structured-storage object persistence, and object clipboard
 transfer. TOM/COM, deep accessibility, and drag/drop editing are also outside
 this non-OLE completion program unless one of the probes proves they are a
 hard dependency.
+
+### 2026-08-13 dialog lifecycle slice
+
+Dialog mouse releases now follow the owner of the modal loop rather than an
+application-specific close path. Native guest dialogs receive captured button
+releases through the queued `GetMessage` / `DispatchMessage` path, which lets
+MFC and common-control modal loops resume after their button procedure returns.
+Emulator-owned WAT modal dialogs retain synchronous `dialog_route_mouse`
+delivery through the WAT dialog manager.
+
+`test/test-wordpad-dialog-lifecycle.js` builds once, then opens and closes 13
+WordPad menu dialogs with actual button down/up events: New, Open, Save As,
+Print, Page Setup, Options, Find, Replace, Date and Time, Font, Paragraph, Tabs,
+and About WordPad. The regression also asserts that no dialog remains visible
+and that the main WordPad frame is enabled after every close. The current gate
+passes 13/13 with no skips.
 
 ### 2026-08-12 OLE storage foundation
 

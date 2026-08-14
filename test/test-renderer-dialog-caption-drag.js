@@ -265,12 +265,15 @@ function makeRenderer(wasm) {
 
   assert.deepStrictEqual(calls, [
     { hwnd: 400, msg: 0x0201 },
-    { hwnd: 400, msg: 0x0202 },
   ]);
   const dialogMove = r.inputQueue.find(event => event && event.msg === 0x0200);
   assert(dialogMove, 'captured dialog control should receive moves after another app repaints');
   assert.strictEqual(dialogMove.hwnd, 401);
   assert.strictEqual(dialogMove.lParam, (50 << 16) | 40);
+  const dialogUp = r.inputQueue.find(event => event && event.msg === 0x0202);
+  assert(dialogUp, 'captured native dialog control should receive queued mouse-up');
+  assert.strictEqual(dialogUp.hwnd, 401);
+  assert.strictEqual(dialogUp.lParam, (20 << 16) | 20);
 }
 
 {

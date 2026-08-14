@@ -17,16 +17,25 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 
+const build = spawnSync('bash', ['tools/build.sh'], {
+  cwd: ROOT,
+  encoding: 'utf8',
+  maxBuffer: 24 * 1024 * 1024,
+});
+if (build.status !== 0 || build.signal || build.error) {
+  process.stdout.write(build.stdout || '');
+  process.stderr.write(build.stderr || '');
+  console.log(`FAIL  build status=${build.status} signal=${build.signal || 'none'} error=${build.error ? build.error.message : 'none'}`);
+  process.exit(1);
+}
+
 const cases = [
   { name: 'File New', command: 57600, close: 2 },
   { name: 'File Open', command: 57601, close: 2 },
   { name: 'File Save As', command: 57604, close: 2 },
   { name: 'File Print', command: 57607, close: 2 },
   { name: 'File Page Setup', command: 32771, close: 2 },
-  {
-    name: 'View Options', command: 32776, close: 2,
-    skip: 'native comctl32 property-sheet button teardown is not emulated yet',
-  },
+  { name: 'View Options', command: 32776, close: 2 },
   { name: 'Edit Find', command: 57636, close: 2, needsText: true },
   { name: 'Edit Replace', command: 57641, close: 2, needsText: true },
   { name: 'Insert Date and Time', command: 32778, close: 2 },
@@ -41,7 +50,7 @@ function runDialog(testCase) {
     ...(testCase.needsText ? ['66:click:40:150', '67:keypress:120'] : []),
     `70:0x111:${testCase.command}`,
     '94:dlg-dump:open',
-    `98:dlg-cmd:${testCase.close}`,
+    `98:dlg-click:${testCase.close}`,
     '112:dlg-dump:closed',
     '114:dump-windows:after',
     '118:stop',
@@ -55,6 +64,7 @@ function runDialog(testCase) {
     '--quiet-api',
     '--quiet-blocks',
     '--no-close',
+    '--no-build',
   ], {
     cwd: ROOT,
     encoding: 'utf8',
@@ -78,16 +88,16 @@ for (const testCase of cases) {
   const { result, output } = runDialog(testCase);
   const completed = result.status === 0 && !result.signal && !result.error;
   const opened = /dlg-dump:open: dlg=0x[0-9a-f]+/i.test(output);
-  const closeSent = new RegExp(`dlg-cmd: cmd=${testCase.close} hwnd=0x[0-9a-f]+`, 'i').test(output);
+  const closeSent = new RegExp(`dlg-click: id=${testCase.close} hwnd=0x[0-9a-f]+`, 'i').test(output);
   const closed = /dlg-dump:closed: dlg=none modal=none/.test(output);
   const mainReady = /window:after hwnd=65537 .*visible=true.*enabled=true.*title="[^"]*WordPad"/.test(output);
-  const healthy = !/UNIMPLEMENTED API:|CRASH|RuntimeError|Unreachable code|EIP=0x00000000/.test(output);
+  const healthy = !/UNIMPLEMENTED API:|CRASH|CompileError|RuntimeError|Unreachable code|EIP=0x00000000/.test(output);
   const pass = completed && opened && closeSent && closed && mainReady && healthy;
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${testCase.name} opens, closes, and returns to WordPad`);
   if (!pass) {
     failed++;
     for (const line of output.split('\n')) {
-      if (/dlg-dump:|dlg-cmd:|window:after hwnd=65537 |UNIMPLEMENTED API:|CRASH|RuntimeError|Unreachable code|EIP=0x00000000/.test(line)) {
+      if (/dlg-dump:|dlg-click:|window:after hwnd=65537 |UNIMPLEMENTED API:|CRASH|CompileError|RuntimeError|Unreachable code|EIP=0x00000000/.test(line)) {
         console.log(`  ${line}`);
       }
     }
