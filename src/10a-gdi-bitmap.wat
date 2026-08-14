@@ -793,7 +793,8 @@
   ;; transparency (AND) mask, and report twice their visible height. Static
   ;; SS_ICON controls use this path directly from their dialog resource ordinal.
   (func $gdi_icon_draw_resource (param $hdc i32) (param $resource_id i32)
-        (param $control_w i32) (param $control_h i32) (result i32)
+        (param $control_w i32) (param $control_h i32) (param $origin_clip i32)
+        (result i32)
     (local $group i32) (local $group_size i32) (local $entry i32)
     (local $image i32) (local $image_size i32) (local $image_id i32)
     (local $header_size i32) (local $width i32) (local $stored_h i32)
@@ -889,24 +890,32 @@
     (i32.store offset=24 (local.get $src) (i32.add (local.get $image) (local.get $header_size)))
     (i32.store offset=28 (local.get $src) (local.get $palette_count))
 
-    ;; Center the icon, clipping its edges when the resource is larger than
-    ;; the static control (the same layout behavior as Win9x SS_ICON).
+    ;; Most dialog illustrations are centered in their static. Some compact
+    ;; Win9x resources instead place a 16x16 glyph in the upper-left quadrant
+    ;; of a 32x32 icon DIB and rely on origin clipping; the caller identifies
+    ;; those resource layouts explicitly.
     (local.set $draw_w (local.get $width))
     (if (i32.gt_s (local.get $draw_w) (local.get $control_w))
       (then
-        (local.set $src_x (i32.div_s
-          (i32.sub (local.get $width) (local.get $control_w)) (i32.const 2)))
+        (if (i32.eqz (local.get $origin_clip))
+          (then (local.set $src_x (i32.div_s
+            (i32.sub (local.get $width) (local.get $control_w)) (i32.const 2)))))
         (local.set $draw_w (local.get $control_w)))
-      (else (local.set $dst_x (i32.div_s
-        (i32.sub (local.get $control_w) (local.get $width)) (i32.const 2)))))
+      (else
+        (if (i32.eqz (local.get $origin_clip))
+          (then (local.set $dst_x (i32.div_s
+            (i32.sub (local.get $control_w) (local.get $width)) (i32.const 2)))))))
     (local.set $draw_h (local.get $height))
     (if (i32.gt_s (local.get $draw_h) (local.get $control_h))
       (then
-        (local.set $src_y (i32.div_s
-          (i32.sub (local.get $height) (local.get $control_h)) (i32.const 2)))
+        (if (i32.eqz (local.get $origin_clip))
+          (then (local.set $src_y (i32.div_s
+            (i32.sub (local.get $height) (local.get $control_h)) (i32.const 2)))))
         (local.set $draw_h (local.get $control_h)))
-      (else (local.set $dst_y (i32.div_s
-        (i32.sub (local.get $control_h) (local.get $height)) (i32.const 2)))))
+      (else
+        (if (i32.eqz (local.get $origin_clip))
+          (then (local.set $dst_y (i32.div_s
+            (i32.sub (local.get $control_h) (local.get $height)) (i32.const 2)))))))
     (local.set $dst_x (call $gdi_line_map_x (local.get $dst) (local.get $dst_x)))
     (local.set $dst_y (call $gdi_line_map_y (local.get $dst) (local.get $dst_y)))
 

@@ -1151,6 +1151,39 @@
                  (i32.eqz (global.get $show_window_activated)))
       (then
         (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
+        ;; Dialog HWNDs store USER's WNDPROC_DIALOG marker rather than an x86
+        ;; callback address.  Entering that marker as guest code strands the
+        ;; application inside ShowWindow before its message loop and timers can
+        ;; start.  Route the activation messages through DefDlgProc's stored
+        ;; DLGPROC synchronously, then complete ShowWindow in this handler.
+        (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
+          (then
+            (global.set $show_window_activated (i32.const 1))
+            (drop (call $dialog_default_proc
+              (global.get $main_hwnd) (i32.const 0x001C) (i32.const 1) (i32.const 0)))
+            (drop (call $dialog_default_proc
+              (global.get $main_hwnd) (i32.const 0x0006) (i32.const 1)
+              (global.get $main_hwnd)))
+            (drop (call $dialog_default_proc
+              (global.get $main_hwnd) (i32.const 0x0007) (i32.const 0) (i32.const 0)))
+            (local.set $packed (global.get $pending_wm_size))
+            (if (i32.eqz (local.get $packed))
+              (then (local.set $packed (local.get $client_size))))
+            (if (local.get $packed)
+              (then
+                (drop (call $dialog_default_proc
+                  (global.get $main_hwnd) (i32.const 0x0005)
+                  (select (i32.const 2) (i32.const 0)
+                    (call $wnd_max_get (global.get $main_hwnd)))
+                  (local.get $packed)))))
+            (global.set $pending_wm_size (i32.const 0))
+            (global.set $msg_phase (i32.const 5))
+            (global.set $paint_pending (i32.const 1))
+            (call $nc_flags_set (global.get $main_hwnd) (i32.const 4))
+            (call $invalidate_hwnd (global.get $main_hwnd))
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
         (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
                      (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
           (then

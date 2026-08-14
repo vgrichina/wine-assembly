@@ -3631,6 +3631,7 @@
     (local $name_ptr i32) (local $text_len i32) (local $style i32)
     (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
     (local $tx_r i32) (local $tx_b i32) (local $brush i32) (local $ctrl_id i32)
+    (local $origin_clip i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -3834,10 +3835,16 @@
               (i32.eq (local.get $style) (i32.const 3))
               (i32.ne (i32.load offset=12 (local.get $state_w)) (i32.const 0)))
           (then
+            ;; Compact Win9x statics commonly clip a padded 32x32 icon DIB at
+            ;; its origin; larger illustration controls use centered layout.
+            (local.set $origin_clip
+              (i32.and (i32.le_u (local.get $w) (i32.const 16))
+                       (i32.le_u (local.get $h) (i32.const 16))))
             (if (call $gdi_icon_draw_resource
                   (local.get $hdc)
                   (i32.load offset=12 (local.get $state_w))
-                  (local.get $w) (local.get $h))
+                  (local.get $w) (local.get $h)
+                  (local.get $origin_clip))
               (then (return (i32.const 0))))))
         ;; A few mixer builds reference absent speaker resources 301/302.
         ;; Preserve the compact monochrome fallback for those missing icons.
