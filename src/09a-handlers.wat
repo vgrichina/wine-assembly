@@ -9600,6 +9600,23 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (local.get $flags))
+    ;; Keep the WAT window style synchronized with the host visibility, just
+    ;; as SetWindowPos and ShowWindow do. MFC hides dock bars with deferred
+    ;; SWP_HIDEWINDOW calls during Print Preview, then consults GWL_STYLE when
+    ;; restoring the layout. A stale WS_VISIBLE makes it omit SWP_SHOWWINDOW.
+    (if (i32.ne
+          (i32.and (local.get $flags) (i32.const 0x0040)) ;; SWP_SHOWWINDOW
+          (i32.const 0))
+      (then
+        (drop (call $wnd_set_style (local.get $arg1)
+          (i32.or (call $wnd_get_style (local.get $arg1)) (i32.const 0x10000000))))))
+    (if (i32.ne
+          (i32.and (local.get $flags) (i32.const 0x0080)) ;; SWP_HIDEWINDOW
+          (i32.const 0))
+      (then
+        (drop (call $wnd_set_style (local.get $arg1)
+          (i32.and (call $wnd_get_style (local.get $arg1)) (i32.const 0xEFFFFFFF))))
+        (call $paint_clear_subtree (local.get $arg1))))
     ;; Refresh CLIENT_RECT now (MFC's AfxWndProc may not forward NCCALCSIZE to
     ;; DefWindowProc, so queuing the message alone doesn't update our table),
     ;; and queue a paint so the moved child redraws.
@@ -9617,10 +9634,17 @@
       (then
         (drop (call $post_queue_push
           (local.get $arg1) (i32.const 0x0005) (i32.const 0) (local.get $new_cs)))))
-    (call $paint_flag_set (local.get $arg1))
+    ;; Hidden windows have no update region, and SWP_NOREDRAW must not create
+    ;; one. Queue/dispatch paint only for an effectively visible target.
     (if (i32.and
-          (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 0))
-          (i32.ne (i32.and (call $wnd_get_style (local.get $arg1)) (i32.const 0x10000000)) (i32.const 0)))
+          (i32.eqz (i32.and (local.get $flags) (i32.const 0x0008))) ;; !SWP_NOREDRAW
+          (call $wnd_is_effectively_visible (local.get $arg1)))
+      (then (call $paint_flag_set (local.get $arg1))))
+    (if (i32.and
+          (i32.and
+            (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 0))
+            (call $wnd_is_effectively_visible (local.get $arg1)))
+          (i32.eqz (i32.and (local.get $flags) (i32.const 0x0008))))
       (then
         (drop (call $control_wndproc_dispatch
           (local.get $arg1) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
