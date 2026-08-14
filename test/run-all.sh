@@ -46,6 +46,7 @@ UNIT=(
   test/test-wat-gdi-public-state-format.js
   test/test-wat-gdi-public-font.js
   test/test-wat-gdi-bitmap-text-layout.js
+  test/test-wat-gdi-bitmap-text-compat.js
   test/test-wat-gdi-default-bitmap-font.js
   test/test-wat-gdi-public-metafile.js
   test/test-compatible-bitmap-wat.js

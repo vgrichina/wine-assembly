@@ -483,9 +483,12 @@ and `CreateFontIndirectA/W` bind the closest installed strike by face and
 height. Measurement, metrics, `TextOutA`, `ExtTextOutA/W`, and `DrawTextA/W`
 then use the one-bit vertical-strip glyphs and write pixels through the
 canonical, format-aware GDI raster path. The WAT `ExtTextOut` path applies
-`ETO_OPAQUE`, `ETO_CLIPPED`, and per-character `lpDx` advances before bounded
-presentation. The WAT `DrawText` path handles explicit lines, word wrapping,
-horizontal and vertical alignment, rectangle clipping, and `DT_CALCRECT`.
+`ETO_OPAQUE`, `ETO_CLIPPED`, horizontal or `ETO_PDY` paired advances, and
+`TA_UPDATECP` before bounded presentation. The WAT `DrawText` path handles
+explicit lines, word wrapping, horizontal and vertical alignment, rectangle
+clipping, `DT_CALCRECT`, mnemonic prefixes and underlines, expanded tabs, and
+single-line end/path/word ellipsis. `DT_MODIFYSTRING` copies an ellipsified
+byte-oriented presentation back to ANSI or UTF-16 caller storage.
 Unsupported formats and shaped/scalable faces continue through the Canvas
 fallback.
 

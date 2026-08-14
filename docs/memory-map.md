@@ -141,6 +141,9 @@ file-I/O counter and 80-byte surface descriptor. Its default-font VFS path,
 shared install state, and Win9x UI face aliases occupy
 `0x07F0A490..0x07F0A527`, followed by
 `0x07F0A800..0x07F0ABFF` for sixteen 64-byte installed-strike records. The
+`0x07F0AC00..0x07F0CBFF` range is a 4096-WCHAR DrawText presentation buffer
+for prefix removal, tab layout, and ellipsis insertion. The remaining bytes
+through `0x07F0CFFF` stay unused before the region table at `0x07F0D000`. The
 validated FNT byte payloads themselves are owned allocations in the DIB arena;
 the static table stores their WAT backing addresses and parsed metrics.
 
