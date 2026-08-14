@@ -32,6 +32,7 @@ const { bootRenderHarness } = require('./render-helper');
   }
 
   const bytes = new Uint8Array(memory.buffer);
+  const view = new DataView(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
   const allocZero = size => {
@@ -80,6 +81,8 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 4), 1);
   }
   assertNoCanvasText('all fixed stock font rendering and measurement must stay in WAT');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 15,
+    'seven UI strikes plus eight Fixedsys strikes should fit the WAT registry');
 
   const created = wat.test_call_CreateFontW(-16, 400, 0, writeWide('Fixedsys')) >>> 0;
   assert(created && wat.test_gdi_bitmap_font_bound(created),
@@ -88,7 +91,21 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 24, text, 4), 1);
   assertNoCanvasText('explicit Fixedsys rendering must stay in WAT');
 
-  console.log('PASS  fixed stock and explicit Fixedsys text uses bundled WAT bitmap font');
+  const nativeHeights = [16, 18, 21, 24, 32, 48, 64, 80];
+  const selected = [];
+  for (const height of nativeHeights) {
+    const font = wat.test_call_CreateFontW(-height, 400, 0, writeWide('Fixedsys')) >>> 0;
+    const strike = wat.test_gdi_bitmap_font_bound(font) >>> 0;
+    assert(font && strike, `${height}px Fixedsys should bind to a bundled strike`);
+    assert.strictEqual(view.getUint32(strike + 20, true), height,
+      `${height}px request should select its exact native strike`);
+    selected.push(strike);
+  }
+  assert.strictEqual(new Set(selected).size, nativeHeights.length,
+    'each common Fixedsys size should use a distinct native strike');
+  assertNoCanvasText('multi-strike Fixedsys selection must stay in WAT');
+
+  console.log('PASS  fixed stock and all common Fixedsys sizes use native WAT bitmap strikes');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

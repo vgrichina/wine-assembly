@@ -25,5 +25,6 @@ if (( $# )); then
     Fixedsys --fixed --copyright="Fixedsys Excelsior bitmap derivative; public domain" "$@"
 else
   "$fontgen_dir/gen-bitmap-fon" "$repo_root/fonts/FSEX302.ttf" "$output" \
-    Fixedsys --fixed --copyright="Fixedsys Excelsior bitmap derivative; public domain" 16
+    Fixedsys --fixed --copyright="Fixedsys Excelsior bitmap derivative; public domain" \
+    16 18 21 24 32 48 64 80
 fi

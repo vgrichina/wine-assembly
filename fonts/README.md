@@ -10,7 +10,7 @@ do not contain the original Win98 bitmap strikes.
 | `w95fa.woff2` | W95FA web build | same | SIL OFL 1.1 | same upstream | `d81cbd6c15b9695e614fe1674bc1f43fa79c820afd0cd4acf49955d065e71644` |
 | `W95FA.fon` | W95FA bitmap build | same | SIL OFL 1.1 | generated from `W95FA.otf` as described below | `080b1b49cba19b355cf9800419c15f652016309d2edffe6ba2dd54f342e945bb` |
 | `FSEX302.ttf` | Fixedsys Excelsior 3.02 | Fixedsys, Terminal, OEM/SYSTEM_FIXED_FONT | Public domain | https://github.com/kika/fixedsys/releases | `842f8fbf80f57d867aeb1d2988140d3ea8b4718e5f687035b0a3b66756df3899` |
-| `Fixedsys.fon` | Fixedsys bitmap build | ANSI/OEM/SYSTEM fixed stock fonts | Public domain | generated from `FSEX302.ttf` as described below | `3dc3b77f2811815c360c57e9d88902253a8eeaaa46ac84bf9a4edb1f3b3a26df` |
+| `Fixedsys.fon` | Fixedsys bitmap build | ANSI/OEM/SYSTEM fixed stock fonts | Public domain | generated from `FSEX302.ttf` as described below | `1ff9462cabce01e9cdbc90a55e6d9942ac758651b5026142294de65f0005caa6` |
 
 Before replacing any artifact, record the exact upstream release/tag and add
 its license text beside the font. The labels above describe upstream's stated
@@ -38,7 +38,9 @@ Loaded two ways:
 - **Browser:** `@font-face` declared in `index.html`, served from `/fonts/`.
 - **Node CLI (`test/run.js`):** `canvas.registerFont()` is called at startup for both files; renders fall back silently if the package or files are missing.
 
-Sizes: W95FA looks crispest at 11–12px; Fixedsys Excelsior at 16px.
+Sizes: W95FA looks crispest at 11–12px. Fixedsys is bundled at every cell
+height requested by the Win98 Font Viewer, so its samples do not rescale a
+single bitmap strike.
 
 The deterministic text path is specified in `docs/software-gdi-design.md` and
 uses generated monochrome strikes from these open fonts at runtime. Original
@@ -81,11 +83,15 @@ as `pkg-config freetype2`. Generated strikes are derived from W95FA and remain
 subject to its SIL Open Font License 1.1 terms.
 
 `tools/gen-fixedsys-fon.sh` uses the same generator's fixed-cell mode to create
-the tracked 8x16 `Fixedsys.fon` from public-domain Fixedsys Excelsior 3.02:
+the tracked `Fixedsys.fon` from public-domain Fixedsys Excelsior 3.02. It
+contains native 16, 18, 21, 24, 32, 48, 64, and 80-pixel cell-height strikes,
+matching the sizes requested by the Win98 Font Viewer:
 
 ```sh
 bash tools/gen-fixedsys-fon.sh fonts/Fixedsys.fon
 ```
+
+Pass explicit pixel heights after the output path to override that list.
 
 At runtime, both the browser host and CLI preload the tracked FONs as
 `C:\\WINDOWS\\FONTS\\W95FA.FON` and `FIXEDSYS.FON`. WAT installs them lazily,

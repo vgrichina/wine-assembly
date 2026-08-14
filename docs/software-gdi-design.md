@@ -535,11 +535,13 @@ path. Explicit document faces such as Arial remain on the scalable Canvas
 fallback rather than being silently substituted.
 
 The stock `ANSI_FIXED_FONT`, `OEM_FIXED_FONT`, and `SYSTEM_FIXED_FONT` objects,
-plus an explicit `Fixedsys` face, resolve to the generated 8x16 public-domain
-Fixedsys Excelsior strike. Their measurement and glyph writes stay entirely on
-the WAT pixel surface. Exact OEM code-page mapping remains separate matching
-work; the bundled substitute currently shares its byte-to-glyph table across
-the three stock handles.
+plus an explicit `Fixedsys` face, resolve to generated public-domain Fixedsys
+Excelsior strikes. The bundled FON has native 16, 18, 21, 24, 32, 48, 64, and
+80-pixel cell heights, matching the Win98 Font Viewer's requests instead of
+fractionally scaling one 8x16 bitmap. Their measurement and glyph writes stay
+entirely on the WAT pixel surface. Exact OEM code-page mapping remains separate
+matching work; the bundled substitute currently shares its byte-to-glyph table
+across the three stock handles.
 
 Raster output should be monochrome by default for the Win98 look. Glyph origins
 and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,
@@ -562,7 +564,7 @@ The repository already bundles two open substitutes:
 - **W95FA** is an OFL-licensed recreation used for MS Sans Serif/Tahoma-like UI
   text. It is an outline/web font, not the original Microsoft bitmap strikes.
 - **Fixedsys Excelsior** is reported as public domain and provides the source
-  for both the outline fallback and the generated 8x16 fixed-pitch FON.
+  for both the outline fallback and the generated multi-strike fixed-pitch FON.
 
 Both can be rasterized once at build time into bundled strike files for the
 exact pixel sizes the emulator supports. Generated strikes remain subject to
