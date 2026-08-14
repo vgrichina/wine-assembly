@@ -336,10 +336,10 @@
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
-            (i32.load (local.get $scan_base))
-            (i32.and
-              (i32.load offset=20 (local.get $scan_base))
-              (i32.const 0x0002)))
+            (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
+            (i32.ne
+              (i32.and (i32.load offset=20 (local.get $scan_base)) (i32.const 0x0002))
+              (i32.const 0)))
         (then
           (if (call $tv_item_is_descendant_of (local.get $scan_base) (local.get $ancestor))
             (then (return (i32.const 1))))))
@@ -747,10 +747,10 @@
           (br_if $scan_done (i32.ge_u (local.get $i) (i32.const 32)))
           (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
           (if (i32.and
-                (i32.load (local.get $scan_base))
-                (i32.and
-                  (i32.load offset=20 (local.get $scan_base))
-                  (i32.const 0x0002)))
+                (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
+                (i32.ne
+                  (i32.and (i32.load offset=20 (local.get $scan_base)) (i32.const 0x0002))
+                  (i32.const 0)))
             (then
               (if (i32.eqz (call $tv_item_visible (local.get $scan_base)))
                 (then (return (call $tv_select_caret

@@ -18,6 +18,7 @@ const TVM_INSERTITEMA = 0x1100;
 const TVM_EXPAND = 0x1102;
 const TVM_GETCOUNT = 0x1105;
 const TVM_GETNEXTITEM = 0x110A;
+const TVM_SELECTITEM = 0x110B;
 const TVM_GETITEMA = 0x110C;
 const TVM_HITTEST = 0x1111;
 const TVGN_FIRSTVISIBLE = 5;
@@ -179,6 +180,14 @@ async function main() {
   check('TVM_EXPAND reveals both children',
     e.send_message(tv, TVM_EXPAND, TVE_EXPAND, parent) === 1 &&
       e.treeview_get_visible_count() === 16);
+  const selectedChild = [childA, childB].find(handle => (handle & 0x0002) === 0);
+  check('test has a selected child whose handle does not share TVIS_SELECTED bit',
+    !!selectedChild, `childA=0x${childA.toString(16)} childB=0x${childB.toString(16)}`);
+  check('selected-descendant scan treats handle and state as booleans',
+    !!selectedChild &&
+      e.send_message(tv, TVM_SELECTITEM, TVGN_CARET, selectedChild) === 1 &&
+      e.treeview_has_selected_descendant(parent) === 1);
+  e.send_message(tv, TVM_SELECTITEM, TVGN_CARET, parent);
   check('TVGN_NEXTVISIBLE follows depth-first tree order, not allocation order',
     (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, parent) >>> 0) === childA &&
       (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, childB) >>> 0) === laterRoot);

@@ -582,8 +582,11 @@
           (select (i32.const 0x20) (i32.const 0x10)
                   (i32.eq (local.get $cmd) (i32.const 0x401))))
         (local.set $mc_h (call $ctrl_find_by_id (local.get $hwnd) (i32.const 0x411)))
-        (if (i32.and (local.get $mc_h)
-              (i32.and (call $button_get_flags_internal (local.get $mc_h)) (i32.const 0x02)))
+        (if (i32.and
+              (i32.ne (local.get $mc_h) (i32.const 0))
+              (i32.ne
+                (i32.and (call $button_get_flags_internal (local.get $mc_h)) (i32.const 0x02))
+                (i32.const 0)))
           (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04)))))
         (i32.store offset=12 (local.get $fr_w) (local.get $flags))
         (call $findreplace_copy_edit_to_buffer

@@ -2805,6 +2805,23 @@
     (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 0))
     (local.get $dlg))
 
+  ;; Test helper: build the Replace variant and expose its FINDREPLACE flags.
+  ;; A standalone owner is unnecessary for validating WM_COMMAND flag assembly.
+  (func (export "test_create_replace_dialog") (result i32)
+    (local $dlg i32) (local $fr i32)
+    (local.set $fr (call $heap_alloc (i32.const 32)))
+    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 32))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 1))
+    (local.get $dlg))
+
+  (func (export "test_findreplace_flags") (result i32)
+    (local $fr i32)
+    (local.set $fr (call $wnd_get_userdata (global.get $findreplace_dlg_hwnd)))
+    (if (i32.eqz (local.get $fr)) (then (return (i32.const 0))))
+    (i32.load offset=12 (call $g2w (local.get $fr))))
+
   ;; Test helper: create a parent + SysTreeView32 child, return tree hwnd.
   ;; This exercises the WAT-native TreeView wndproc without booting a guest EXE.
   (func (export "test_create_treeview")
@@ -2831,6 +2848,13 @@
     (global.get $tv_first_visible_row))
   (func (export "treeview_get_visible_count") (result i32)
     (call $tv_visible_count))
+
+  (func (export "treeview_has_selected_descendant") (param $hItem i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $tv_find_slot (local.get $hItem)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return (i32.const 0))))
+    (call $tv_has_selected_descendant
+      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32)))))
   (func (export "treeview_get_max_scroll") (param $hwnd i32) (result i32)
     (local $sz i32)
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
