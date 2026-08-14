@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// SkiFree keeps a window DC acquired during WM_CREATE. Starting a game must
-// still draw through that DC after ShowWindow makes the main window visible.
+// SkiFree keeps a window DC acquired during WM_CREATE. Starting and steering
+// a game must keep presenting changing memory-DC sprites through that retained
+// DC after ShowWindow makes the main window visible.
 
 const fs = require('fs');
 const os = require('os');
@@ -11,14 +12,19 @@ const { createCanvas, loadImage } = require('../lib/canvas-compat');
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'entertainment-pack', 'ski32.exe');
-const PNG = path.join(os.tmpdir(), `wine-assembly-skifree-gameplay-${process.pid}.png`);
+const PNG_STILL = path.join(os.tmpdir(), `wine-assembly-skifree-still-${process.pid}.png`);
+const PNG_FRAME_A = path.join(os.tmpdir(), `wine-assembly-skifree-frame-a-${process.pid}.png`);
+const PNG_FRAME_B = path.join(os.tmpdir(), `wine-assembly-skifree-frame-b-${process.pid}.png`);
+const PNGS = [PNG_STILL, PNG_FRAME_A, PNG_FRAME_B];
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP  ski32.exe not found');
   process.exit(0);
 }
 
-try { fs.unlinkSync(PNG); } catch (_) {}
+for (const png of PNGS) {
+  try { fs.unlinkSync(png); } catch (_) {}
+}
 
 const args = [
   RUN,
@@ -27,10 +33,10 @@ const args = [
   '--screen=640x480',
   '--quiet-api',
   '--quiet-blocks',
-  '--input=80:keydown:113,82:keyup:113,300:stop',
-  '--max-batches=320',
+  `--input=80:keydown:113,82:keyup:113,100:png:${PNG_STILL},` +
+    `110:keydown:104,112:png:${PNG_FRAME_A},118:png:${PNG_FRAME_B},120:keyup:104,140:stop`,
+  '--max-batches=160',
   '--batch-size=25000',
-  `--png=${PNG}`,
 ];
 
 console.log('$', [process.execPath, ...args].join(' ').replace(ROOT, '.'));
@@ -42,44 +48,80 @@ const run = spawnSync(process.execPath, args, {
 });
 const output = `${run.stdout || ''}${run.stderr || ''}`;
 
-async function countGameplayInk() {
-  if (!fs.existsSync(PNG) || fs.statSync(PNG).size <= 1000) return 0;
-  const image = await loadImage(PNG);
+async function readPixels(png) {
+  if (!fs.existsSync(png) || fs.statSync(png).size <= 1000) return null;
+  const image = await loadImage(png);
   const canvas = createCanvas(image.width, image.height);
   const ctx = canvas.getContext('2d');
   ctx.drawImage(image, 0, 0);
+  return { width: image.width, height: image.height, data: ctx.getImageData(0, 0, image.width, image.height).data };
+}
 
-  // The title screen leaves this lower playfield almost entirely white. A
-  // started game fills it with the skier, trees, rocks, and terrain marks.
-  const left = Math.min(83, image.width);
-  const top = Math.min(240, image.height);
-  const width = Math.max(0, Math.min(474, image.width - left));
-  const height = Math.max(0, Math.min(237, image.height - top));
-  const pixels = ctx.getImageData(left, top, width, height).data;
-  let ink = 0;
-  for (let i = 0; i < pixels.length; i += 4) {
-    if (pixels[i] < 245 || pixels[i + 1] < 245 || pixels[i + 2] < 245) ink++;
+function countChangedPixels(a, b) {
+  if (!a || !b || a.width !== b.width || a.height !== b.height) return 0;
+
+  // Ignore desktop and chrome. This is the stable client playfield below the
+  // score panel, where the sprite blits move after a numpad direction key.
+  const left = 83;
+  const top = 75;
+  const right = Math.min(557, a.width);
+  const bottom = Math.min(476, a.height);
+  let changed = 0;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const i = (y * a.width + x) * 4;
+      const delta = Math.abs(a.data[i] - b.data[i]) +
+        Math.abs(a.data[i + 1] - b.data[i + 1]) +
+        Math.abs(a.data[i + 2] - b.data[i + 2]);
+      if (delta >= 32) changed++;
+    }
   }
-  return ink;
+  return changed;
+}
+
+function countTitleBlue(frame) {
+  if (!frame) return 0;
+  let blue = 0;
+  const right = Math.min(557, frame.width);
+  const bottom = Math.min(20, frame.height);
+  for (let y = 2; y < bottom; y++) {
+    for (let x = 83; x < right; x++) {
+      const i = (y * frame.width + x) * 4;
+      if (frame.data[i] < 40 && frame.data[i + 1] < 80 && frame.data[i + 2] > 100) blue++;
+    }
+  }
+  return blue;
 }
 
 (async () => {
-  let gameplayInk = 0;
+  let still = null;
+  let frameA = null;
+  let frameB = null;
   try {
-    gameplayInk = await countGameplayInk();
+    [still, frameA, frameB] = await Promise.all(PNGS.map(readPixels));
   } finally {
-    try { fs.unlinkSync(PNG); } catch (_) {}
+    for (const png of PNGS) {
+      try { fs.unlinkSync(png); } catch (_) {}
+    }
   }
+
+  const startDelta = countChangedPixels(still, frameA);
+  const animationDelta = countChangedPixels(frameA, frameB);
+  const titleBlueA = countTitleBlue(frameA);
+  const titleBlueB = countTitleBlue(frameB);
 
   const checks = [
     { name: 'CLI run exits cleanly', pass: run.status === 0 && !run.error },
     { name: 'F2 keydown reaches the emulator', pass: /\[input\].*keydown.*(?:vk=)?113\b/.test(output) },
-    { name: 'final screenshot is written', pass: gameplayInk > 0 },
-    { name: 'F2 starts visible gameplay', pass: gameplayInk >= 1200 },
+    { name: 'numpad direction reaches the emulator', pass: /\[input\].*keydown.*(?:vk=)?104\b/.test(output) },
+    { name: 'all gameplay screenshots are written', pass: !!still && !!frameA && !!frameB },
+    { name: 'direction starts visible gameplay', pass: startDelta >= 500 },
+    { name: 'successive gameplay frames keep changing', pass: animationDelta >= 100 },
+    { name: 'window chrome remains visible', pass: titleBlueA >= 1000 && titleBlueB >= 1000 },
     { name: 'no runtime crash', pass: !/\*\*\* CRASH|UNIMPLEMENTED API:|LinkError/.test(output) },
   ];
 
-  console.log(`gameplay ink: ${gameplayInk} pixels`);
+  console.log(`client changes: start=${startDelta}, animation=${animationDelta}; title blue=${titleBlueA}/${titleBlueB}`);
   let failed = 0;
   for (const check of checks) {
     console.log(`${check.pass ? 'PASS  ' : 'FAIL  '}${check.name}`);
