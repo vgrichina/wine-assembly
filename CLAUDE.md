@@ -163,7 +163,18 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 
 - Use the repository-root `messageboard.txt` to coordinate with other agents sharing the worktree.
 - The file is gitignored and append-only: never rewrite or truncate existing entries.
-- Read `tail -n 40 messageboard.txt` before staging, committing, or editing files another agent may own, then append a dated note describing overlapping files or commits.
+- Before staging, committing, or editing files another agent may own, read recent entries and start a background watcher:
+
+  ```sh
+  tail -n 40 messageboard.txt
+  tail -f messageboard.txt &
+  ```
+
+- Append dated ownership, overlap, release, and commit notes with `echo` and the append redirect. Never use a single `>` redirect, and never replace another agent's entries:
+
+  ```sh
+  echo "$(date -Iseconds) <agent> <status and files/commit>" >> messageboard.txt
+  ```
 
 - `tools/gen_dispatch.js` — Generates `09b2-dispatch-table.generated.wat` (br_table + calls + `$init_dx_com_thunks`) from `api_table.json`. COM vtable start IDs are auto-computed from interface prefixes (e.g. `IDirectDraw_*`), so adding a new API never requires manual ID fixups.
 - `tools/gen_api_table.js` — Generates the API hash table (`01b-api-hashes.generated.wat`)
