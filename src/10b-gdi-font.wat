@@ -745,6 +745,167 @@
       (br $write_rows)))
     (local.get $required))
 
+  (func $gdi_font_character_width (param $hdc i32) (param $character i32)
+        (param $wide i32) (result i32)
+    (local $strike i32) (local $glyph i32) (local $height i32)
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (local.get $strike)
+      (then
+        (local.set $glyph (call $gdi_bitmap_font_glyph
+          (local.get $strike) (i32.and (local.get $character) (i32.const 0xFF))))
+        (local.set $height (call $gdi_bitmap_font_height
+          (local.get $hdc) (local.get $strike)))
+        (return (call $gdi_bitmap_font_scaled_width
+          (local.get $strike) (local.get $glyph) (local.get $height)))))
+    (if (local.get $wide)
+      (then
+        (i32.store16 (global.get $TEXT_SCRATCH) (local.get $character))
+        (i32.store16 offset=2 (global.get $TEXT_SCRATCH) (i32.const 0)))
+      (else
+        (i32.store8 (global.get $TEXT_SCRATCH) (local.get $character))
+        (i32.store8 offset=1 (global.get $TEXT_SCRATCH) (i32.const 0))))
+    (call $host_measure_text (local.get $hdc) (global.get $TEXT_SCRATCH)
+      (i32.const 1) (local.get $wide)))
+
+  ;; GetCharWidth/GetCharWidth32 share the same selected-font semantics. FNT
+  ;; advances never cross the host boundary; scalable faces use Canvas only as
+  ;; their font provider, while range validation and output storage stay in WAT.
+  (func $gdi_font_char_widths (param $hdc i32) (param $first i32)
+        (param $last i32) (param $output i32) (param $wide i32) (result i32)
+    (local $count i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $output))
+          (i32.or (i32.gt_u (local.get $first) (local.get $last))
+            (i32.gt_u (i32.sub (local.get $last) (local.get $first))
+              (i32.const 65535))))
+      (then (return (i32.const 0))))
+    (local.set $count
+      (i32.add (i32.sub (local.get $last) (local.get $first)) (i32.const 1)))
+    (block $done (loop $characters
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (i32.store (i32.add (local.get $output) (i32.shl (local.get $i) (i32.const 2)))
+        (call $gdi_font_character_width (local.get $hdc)
+          (i32.add (local.get $first) (local.get $i)) (local.get $wide)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $characters)))
+    (i32.const 1))
+
+  ;; Deterministic Latin/SBCS placement. WAT owns the GCP_RESULTSW contract and
+  ;; all arrays. The selected font provider supplies only integer advances:
+  ;; bitmap FNT in WAT, or Canvas measurement for a scalable fallback face.
+  (func $gdi_character_placement_w (param $hdc i32) (param $text i32)
+        (param $count i32) (param $max_extent i32) (param $results i32)
+        (param $flags i32) (result i32)
+    (local $capacity i32) (local $limit i32) (local $i i32) (local $included i32)
+    (local $character i32) (local $width i32) (local $extent i32) (local $height i32)
+    (local $out_string i32) (local $order i32) (local $dx i32)
+    (local $caret i32) (local $class i32) (local $glyphs i32)
+    (local $strike i32) (local $packed i32) (local $justification i32)
+    (local $extra i32) (local $share i32) (local $remainder i32)
+    (if (i32.or (i32.eqz (local.get $results))
+          (i32.or (i32.lt_s (local.get $count) (i32.const 0))
+            (i32.or (i32.gt_u (local.get $count) (i32.const 65536))
+              (i32.and (i32.gt_u (local.get $count) (i32.const 0))
+                (i32.eqz (local.get $text))))))
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (i32.load (local.get $results)) (i32.const 36))
+      (then (return (i32.const 0))))
+    (local.set $capacity (i32.load offset=28 (local.get $results)))
+    (local.set $limit (select (local.get $capacity) (local.get $count)
+      (i32.lt_u (local.get $capacity) (local.get $count))))
+    (local.set $out_string (i32.load offset=4 (local.get $results)))
+    (local.set $order (i32.load offset=8 (local.get $results)))
+    (local.set $dx (i32.load offset=12 (local.get $results)))
+    (local.set $caret (i32.load offset=16 (local.get $results)))
+    (local.set $class (i32.load offset=20 (local.get $results)))
+    (local.set $glyphs (i32.load offset=24 (local.get $results)))
+    (if (local.get $out_string) (then (local.set $out_string (call $g2w (local.get $out_string)))))
+    (if (local.get $order) (then (local.set $order (call $g2w (local.get $order)))))
+    (if (local.get $dx) (then (local.set $dx (call $g2w (local.get $dx)))))
+    (if (local.get $caret) (then (local.set $caret (call $g2w (local.get $caret)))))
+    (if (local.get $class) (then (local.set $class (call $g2w (local.get $class)))))
+    (if (local.get $glyphs) (then (local.set $glyphs (call $g2w (local.get $glyphs)))))
+    (block $done (loop $characters
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $character
+        (i32.load16_u (i32.add (local.get $text) (i32.shl (local.get $i) (i32.const 1)))))
+      (local.set $width (call $gdi_font_character_width
+        (local.get $hdc) (local.get $character) (i32.const 1)))
+      ;; GCP_MAXEXTENT stops before the first character that would exceed the
+      ;; caller's logical extent. Other flags do not truncate the input.
+      (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x00100000))
+                    (i32.const 0))
+            (i32.gt_s (i32.add (local.get $extent) (local.get $width))
+              (local.get $max_extent)))
+        (then (br $done)))
+      (if (local.get $out_string)
+        (then (i32.store16
+          (i32.add (local.get $out_string) (i32.shl (local.get $included) (i32.const 1)))
+          (local.get $character))))
+      (if (local.get $order)
+        (then (i32.store
+          (i32.add (local.get $order) (i32.shl (local.get $included) (i32.const 2)))
+          (local.get $i))))
+      (if (local.get $dx)
+        (then (i32.store
+          (i32.add (local.get $dx) (i32.shl (local.get $included) (i32.const 2)))
+          (local.get $width))))
+      (if (local.get $caret)
+        (then (i32.store
+          (i32.add (local.get $caret) (i32.shl (local.get $included) (i32.const 2)))
+          (local.get $extent))))
+      ;; GCP_CLASSIN preserves nonzero caller classifications. Otherwise Latin
+      ;; is the deterministic classification for this SBCS placement backend.
+      (if (local.get $class)
+        (then
+          (if (i32.or
+                (i32.eqz (i32.and (local.get $flags) (i32.const 0x00080000)))
+                (i32.eqz (i32.load8_u (i32.add (local.get $class) (local.get $included)))))
+            (then (i32.store8
+              (i32.add (local.get $class) (local.get $included)) (i32.const 1))))))
+      (if (local.get $glyphs)
+        (then (i32.store16
+          (i32.add (local.get $glyphs) (i32.shl (local.get $included) (i32.const 1)))
+          (local.get $character))))
+      (local.set $extent (i32.add (local.get $extent) (local.get $width)))
+      (local.set $included (i32.add (local.get $included) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $characters)))
+    ;; Simple Latin justification distributes the requested remainder across
+    ;; emitted advances. Complex-script justification remains a font fallback.
+    (local.set $justification (i32.and
+      (i32.eq (i32.and (local.get $flags) (i32.const 0x00110000))
+        (i32.const 0x00110000))
+      (i32.and (i32.ne (local.get $dx) (i32.const 0))
+        (i32.gt_u (local.get $included) (i32.const 0)))))
+    (if (i32.and (local.get $justification)
+          (i32.gt_s (local.get $max_extent) (local.get $extent)))
+      (then
+        (local.set $extra (i32.sub (local.get $max_extent) (local.get $extent)))
+        (local.set $share (i32.div_u (local.get $extra) (local.get $included)))
+        (local.set $remainder (i32.rem_u (local.get $extra) (local.get $included)))
+        (local.set $i (i32.const 0))
+        (block $justify_done (loop $justify
+          (br_if $justify_done (i32.ge_u (local.get $i) (local.get $included)))
+          (i32.store (i32.add (local.get $dx) (i32.shl (local.get $i) (i32.const 2)))
+            (i32.add
+              (i32.load (i32.add (local.get $dx) (i32.shl (local.get $i) (i32.const 2))))
+              (i32.add (local.get $share)
+                (i32.lt_u (local.get $i) (local.get $remainder)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $justify)))
+        (local.set $extent (local.get $max_extent))))
+    (i32.store offset=28 (local.get $results) (local.get $included))
+    (i32.store offset=32 (local.get $results) (local.get $included))
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (local.get $strike)
+      (then (local.set $height (call $gdi_bitmap_font_height
+        (local.get $hdc) (local.get $strike))))
+      (else
+        (local.set $packed (call $host_get_text_metrics (local.get $hdc)))
+        (local.set $height (i32.and (local.get $packed) (i32.const 0xFFFF)))))
+    (i32.or (i32.and (local.get $extent) (i32.const 0xFFFF))
+      (i32.shl (i32.and (local.get $height) (i32.const 0xFFFF)) (i32.const 16))))
+
   (func $gdi_bitmap_text_measure (param $hdc i32) (param $text i32)
         (param $count i32) (param $wide i32) (result i32)
     (local $strike i32) (local $height i32) (local $i i32) (local $code i32) (local $width i32)

@@ -394,25 +394,11 @@
 
   ;; GetCharWidthA(hdc, first, last, widths) — fill INT widths for a range.
   (func $handle_GetCharWidthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $width i32) (local $count i32) (local $i i32)
-    (if (i32.or (i32.eqz (local.get $arg3)) (i32.lt_u (local.get $arg2) (local.get $arg1)))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (local.set $width (i32.shr_u (local.get $packed) (i32.const 16)))
-    (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 8))))
-    (local.set $count (i32.add (i32.sub (local.get $arg2) (local.get $arg1)) (i32.const 1)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $loop
-      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (call $gs32
-        (i32.add (local.get $arg3) (i32.shl (local.get $i) (i32.const 2)))
-        (local.get $width))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $loop)))
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $gdi_font_char_widths
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

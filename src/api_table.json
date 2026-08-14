@@ -17916,5 +17916,54 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1286405696
+  },
+  {
+    "id": 2351,
+    "name": "CreateDIBPatternBrush",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2977793038
+  },
+  {
+    "id": 2352,
+    "name": "CreateDiscardableBitmap",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 103553690
+  },
+  {
+    "id": 2353,
+    "name": "GetCharWidth32A",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3883609207
+  },
+  {
+    "id": 2354,
+    "name": "GetCharWidth32W",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4118495873
+  },
+  {
+    "id": 2355,
+    "name": "GetCharacterPlacementW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1157853498
+  },
+  {
+    "id": 2356,
+    "name": "InvertRgn",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2799834220
+  },
+  {
+    "id": 2357,
+    "name": "PolyPolyline",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3337921375
   }
 ]

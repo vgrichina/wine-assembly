@@ -5,17 +5,9 @@
     "peFileCount": 230,
     "importCount": 225,
     "sortedImportSha256": "f2cf3514cb7624a349a41a3828fa04b3e2145bab6528f8cf54ba888146acdb80",
-    "representedInApiTable": 218
+    "representedInApiTable": 225
   },
-  "notExposed": [
-    "CreateDIBPatternBrush",
-    "CreateDiscardableBitmap",
-    "GetCharWidth32A",
-    "GetCharWidth32W",
-    "GetCharacterPlacementW",
-    "InvertRgn",
-    "PolyPolyline"
-  ],
+  "notExposed": [],
   "knownPartialOrUnsupported": {
     "metafile": [
       "CopyMetaFileA",
@@ -43,9 +35,11 @@
       "AddFontResourceA installs user-supplied NE .FON or standalone FNT 2.x/3.x bitmap strikes from the VFS; RemoveFontResourceA unregisters them",
       "Browser and CLI preload the tracked W95FA FON; WAT lazily installs it and routes stock variable UI fonts plus common Win9x UI aliases through deterministic bitmap metrics and rasterization",
       "WAT selects installed bitmap faces by name and rasterizes TextOut, ExtTextOut rectangle/lpDx semantics, and DrawText layout directly into canonical GDI pixels; unsupported formats and shaped/scalable text paths retain the Canvas fallback",
+      "GetCharWidthA/W and GetCharWidth32A/W use exact selected FNT advances in WAT and per-character Canvas measurement only for scalable fallback faces; GetCharacterPlacementW owns deterministic Latin ordering, widths, carets, classifications, glyph arrays, maximum extent, and simple justification in WAT",
       "GetFontData returns GDI_ERROR because raw selected-font table export is not implemented",
       "GetGlyphOutlineA returns WAT-derived GGO_METRICS and DWORD-aligned GGO_BITMAP payloads for selected FNT strikes; scalable fonts retain Canvas metrics-only fallback, while native/Bezier/gray bitmap formats and transformed bitmap strikes remain unavailable",
-      "EnumFontsA shares the current deterministic single-face fallback enumeration"
+      "EnumFontsA shares the current deterministic single-face fallback enumeration",
+      "Complex-script reordering, ligation, kerning, glyph shaping, Kashida justification, and DBCS expansion in GetCharacterPlacementW remain unavailable"
     ]
   }
 }

@@ -592,6 +592,13 @@ silently substituted.
 Scalable faces retain the metrics-only Canvas fallback; affine transforms and
 native/Bezier/gray outline formats remain explicit future font-provider work.
 
+Character-width queries share one font-provider boundary: selected FNT strikes
+produce their advances in WAT, while scalable faces may call Canvas once per
+character. `GetCharacterPlacementW` keeps Latin ordering, widths, caret
+positions, classes, maximum-extent truncation, and simple justification in WAT.
+Complex-script shaping remains explicit future provider work rather than a
+geometry or destination-surface fallback.
+
 The fixed stock objects therefore retain distinct native roles instead of
 sharing an outline-derived substitute: Courier 8x13 for `ANSI_FIXED_FONT`,
 ANAKRON-derived Terminal 8x12 for `OEM_FIXED_FONT`, and Wine Fixedsys 8x15 for
