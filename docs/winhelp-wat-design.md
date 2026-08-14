@@ -1,6 +1,9 @@
 # WAT-native WinHelp design
 
-Status: **design proposal; implementation not started**.
+Status: **implementation in progress**. Phase 1's WAT-owned file buffer,
+bounded-reader foundation, directory B+tree parser, raw VFS load path, and
+malformed-input tests are implemented. Topic parsing and runtime UI cutover
+have not started.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -787,6 +790,10 @@ Exit criterion: the expected WAT parser outputs and native UI states are known
 for FreeCell plus at least Calculator, Notepad, Paint, and WordPad.
 
 ### Phase 1: WAT file buffer, bounded readers, and directory
+
+Status: **implemented**. The focused parser gate covers all checked-in HLP
+directories plus synthetic multi-page/indexed trees, source-buffer mutation,
+cyclic links, truncation, invalid internal-file headers, and capacity bounds.
 
 - Mount/read HLP bytes through VFS into a document arena.
 - Implement outer header, internal-file header, and directory B+tree.
