@@ -561,6 +561,23 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (call $set_reg (local.get $op) (local.get $v))
     (return_call $next))
+  ;; Flat Win32 still uses PUSH/POP segment registers around optimized bitmap
+  ;; routines. Preserve the architectural stack width and conventional ring-3
+  ;; selector value; actual addressing remains flat (except the modeled FS TIB).
+  ;; bit 16 selects the 16-bit operand-size form, low 16 bits are the selector.
+  (func $th_push_seg (param $op i32)
+    (if (i32.and (local.get $op) (i32.const 0x10000))
+      (then
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
+        (call $gs16 (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF))))
+      (else
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF)))))
+    (return_call $next))
+  (func $th_pop_seg (param $op i32)
+    (global.set $esp (i32.add (global.get $esp)
+      (select (i32.const 2) (i32.const 4) (i32.ne (local.get $op) (i32.const 0)))))
+    (return_call $next))
   (func $th_push_eax (param $op i32)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $eax))

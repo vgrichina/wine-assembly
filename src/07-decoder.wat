@@ -693,6 +693,27 @@
           (then (call $te (i32.const 182) (i32.sub (local.get $op) (i32.const 0x58))))
           (else (call $te (i32.add (i32.const 331) (i32.sub (local.get $op) (i32.const 0x58))) (i32.const 0))))
           (br $decode)))
+      ;; ---- PUSH/POP segment register (ES/CS/SS/DS) ----
+      ;; Win32 uses a flat address space, but generated bitmap code still saves
+      ;; and restores ES. Keep conventional selectors for observable PUSHes and
+      ;; preserve the 66h-controlled 16/32-bit stack width.
+      (if (i32.or
+            (i32.or (i32.eq (local.get $op) (i32.const 0x06)) (i32.eq (local.get $op) (i32.const 0x0E)))
+            (i32.or (i32.eq (local.get $op) (i32.const 0x16)) (i32.eq (local.get $op) (i32.const 0x1E))))
+        (then
+          (local.set $imm (i32.const 0x23)) ;; ES/SS/DS
+          (if (i32.eq (local.get $op) (i32.const 0x0E))
+            (then (local.set $imm (i32.const 0x1B)))) ;; CS
+          (if (local.get $prefix_66)
+            (then (local.set $imm (i32.or (local.get $imm) (i32.const 0x10000)))))
+          (call $te (i32.const 359) (local.get $imm))
+          (br $decode)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $op) (i32.const 0x07)) (i32.eq (local.get $op) (i32.const 0x17)))
+            (i32.eq (local.get $op) (i32.const 0x1F)))
+        (then
+          (call $te (i32.const 360) (local.get $prefix_66))
+          (br $decode)))
       ;; ---- INC reg (0x40-0x47) / INC r16 with 66h ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x40)) (i32.le_u (local.get $op) (i32.const 0x47)))
         (then (if (local.get $prefix_66)

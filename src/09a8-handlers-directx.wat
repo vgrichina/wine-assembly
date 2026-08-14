@@ -3023,7 +3023,8 @@
   ;; EnumObjects — no-op
   (func $handle_IDirectInputDevice_EnumObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    ;; COM this + callback + ref + flags, plus the return address.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; GetProperty / SetProperty — no-op
   (func $handle_IDirectInputDevice_GetProperty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

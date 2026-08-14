@@ -57,6 +57,29 @@ assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 0, 'resuming a runni
 assert.strictEqual(suspendTm.suspendThread(0xdeadbeef), 0xFFFFFFFF, 'invalid suspend handle fails');
 assert.strictEqual(suspendTm.resumeThread(0xdeadbeef), 0xFFFFFFFF, 'invalid resume handle fails');
 
+const pendingWaitTm = makeThreadManager();
+const pendingWaitHandle = pendingWaitTm.createThread(0x6100, 0, 0, 0x4);
+const pendingWaitEvent = pendingWaitTm.createEvent(false, false);
+const pendingWaitHandlesWA = 0x100;
+const pendingWaitMemory = new Int32Array(pendingWaitTm.memory.buffer);
+pendingWaitMemory[pendingWaitHandlesWA >>> 2] = pendingWaitEvent;
+pendingWaitMemory[(pendingWaitHandlesWA >>> 2) + 1] = pendingWaitHandle;
+assert.strictEqual(
+  pendingWaitTm.waitSingle(pendingWaitHandle, 0),
+  0xFFFF,
+  'a thread handle remains unsignaled while its worker instance is pending'
+);
+assert.strictEqual(
+  pendingWaitTm.waitMultiple(2, pendingWaitHandlesWA, false, 0),
+  0x102,
+  'WaitForMultipleObjects must not report a pending thread as exited'
+);
+assert.strictEqual(
+  pendingWaitTm.getExitCodeThread(pendingWaitHandle),
+  0x103,
+  'GetExitCodeThread reports a pending worker as STILL_ACTIVE'
+);
+
 const lifecycleEvents = suspendTm.getThreadEvents();
 assert.deepStrictEqual(
   lifecycleEvents.map(event => event.type),
@@ -226,3 +249,4 @@ console.log('PASS  ThreadManager supports wall-budgeted worker slices');
 console.log('PASS  ThreadManager prioritizes hot audio threads');
 console.log('PASS  ThreadManager notifies thread exits once');
 console.log('PASS  ThreadManager completes nested infinite waits without losing callback state');
+console.log('PASS  ThreadManager keeps pending worker handles unsignaled');

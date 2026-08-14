@@ -550,6 +550,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; CoInitializeEx(pvReserved, dwCoInit) — this single-apartment runtime does
+  ;; not distinguish COM concurrency models, but successful initialization is
+  ;; observable to applications probing the Win98 DCOM update.
+  (func $handle_CoInitializeEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; stdcall, 2 args
+  )
+
   ;; CoGetMalloc(dwMemContext, ppMalloc) — return a process-local IMalloc
   ;; backed by the emulator heap. oleaut32 uses this for Automation buffers.
   (func $handle_CoGetMalloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

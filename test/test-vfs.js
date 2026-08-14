@@ -40,6 +40,8 @@ test('wildcard *.* in CWD finds files in c:\\', () => {
   const vfs = makeVFS({ 'c:\\foo.txt': 10, 'c:\\bar.dat': 20 });
   const r = vfs.findFirstFile('.\\*.*');
   assert(r.handle, 'should find files');
+  assert((r.handle >>> 0) <= 0x7fffffff,
+    'search handle must remain nonnegative for MSVCRT _findfirst');
 });
 
 test('wildcard *.* on different drive letter finds nothing', () => {

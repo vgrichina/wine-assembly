@@ -1221,7 +1221,7 @@
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
-  (global $HANDLER_HIST_COUNT i32 (i32.const 359))
+  (global $HANDLER_HIST_COUNT i32 (i32.const 361))
   (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
   (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
   (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))

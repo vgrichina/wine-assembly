@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 359 funcref)
+  (table $handlers 361 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -414,4 +414,6 @@
     $th_stack_packet         ;; 356: flagged stack-packet prototype
     $th_movzx_r_r16          ;; 357: movzx r32, r16 (preserves flags)
     $th_movsx_r_r16          ;; 358: movsx r32, r16 (preserves flags)
+    $th_push_seg             ;; 359: push flat-mode segment selector (op bit16=16-bit)
+    $th_pop_seg              ;; 360: discard popped segment selector (op=16-bit flag)
   )

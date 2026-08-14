@@ -92,6 +92,12 @@ async function main() {
   e.test_set_dll_count(1);
   check('GetModuleHandleA finds DLL table entry by basename',
     (e.test_call_GetModuleHandleA(queryA) >>> 0) === (loadAddr >>> 0));
+  const ole32A = writeAscii('oLe32.DlL');
+  const notOle32A = writeAscii('OLE32X');
+  check('GetModuleHandleA recognizes statically dispatched OLE32',
+    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === (e.get_image_base() >>> 0));
+  check('GetModuleHandleA does not prefix-match static module names',
+    (e.test_call_GetModuleHandleA(notOle32A) >>> 0) === 0);
   check('GetModuleHandleW returns NULL module as image base',
     (e.test_call_GetModuleHandleW(0) >>> 0) === (e.get_image_base() >>> 0));
   check('GetModuleHandleW finds DLL table entry case-insensitively',

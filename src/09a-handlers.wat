@@ -221,19 +221,43 @@
     (call $host_exit (local.get $arg0)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)) (return)
   )
 
+  ;; Statically dispatched system DLLs do not have a mapped PE image or DLL
+  ;; table entry. Recognize OLE32 explicitly so callers can use its handle with
+  ;; GetProcAddress, which already resolves non-mapped modules through the API
+  ;; table. Accept both the basename and the conventional .DLL suffix.
+  (func $guest_name_is_ole32 (param $name i32) (result i32)
+    (local $p i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $p (call $g2w (local.get $name)))
+    (if (i32.ne (i32.or (i32.load8_u (local.get $p)) (i32.const 0x20)) (i32.const 0x6f)) (then (return (i32.const 0)))) ;; o
+    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 1))) (i32.const 0x20)) (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
+    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 2))) (i32.const 0x20)) (i32.const 0x65)) (then (return (i32.const 0)))) ;; e
+    (if (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 3))) (i32.const 0x33)) (then (return (i32.const 0)))) ;; 3
+    (if (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 4))) (i32.const 0x32)) (then (return (i32.const 0)))) ;; 2
+    (if (i32.eqz (i32.load8_u (i32.add (local.get $p) (i32.const 5)))) (then (return (i32.const 1))))
+    (if (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 5))) (i32.const 0x2e)) (then (return (i32.const 0)))) ;; .
+    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 6))) (i32.const 0x20)) (i32.const 0x64)) (then (return (i32.const 0)))) ;; d
+    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 7))) (i32.const 0x20)) (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
+    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 8))) (i32.const 0x20)) (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
+    (i32.eqz (i32.load8_u (i32.add (local.get $p) (i32.const 9))))
+  )
+
   ;; 1: GetModuleHandleA(lpModuleName) — NULL→image_base, else search DLL table
   (func $handle_GetModuleHandleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $result i32) (local $idx i32)
     (if (i32.eqz (local.get $arg0))
       (then (local.set $result (global.get $image_base)))
       (else
-        (local.set $idx (call $find_loaded_dll (local.get $arg0)))
-        (if (i32.ge_s (local.get $idx) (i32.const 0))
-          (then
-            (local.set $result
-              (i32.load (i32.add (global.get $DLL_TABLE)
-                (i32.mul (local.get $idx) (i32.const 32))))))
-          (else (local.set $result (i32.const 0))))))
+        (if (call $guest_name_is_ole32 (local.get $arg0))
+          (then (local.set $result (global.get $image_base)))
+          (else
+            (local.set $idx (call $find_loaded_dll (local.get $arg0)))
+            (if (i32.ge_s (local.get $idx) (i32.const 0))
+              (then
+                (local.set $result
+                  (i32.load (i32.add (global.get $DLL_TABLE)
+                    (i32.mul (local.get $idx) (i32.const 32))))))
+              (else (local.set $result (i32.const 0))))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -6835,9 +6859,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 422: DuplicateHandle — STUB: unimplemented
+  ;; 422: DuplicateHandle
   (func $handle_DuplicateHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Kernel object handles in this runtime are stable process-local IDs, so a
+    ;; duplicate can share the same value. This also preserves pseudo handles
+    ;; such as GetCurrentThread() == -2, which Allegro duplicates during setup.
+    (if (local.get $arg3)
+      (then (call $gs32 (local.get $arg3) (local.get $arg1))))
+    (global.set $eax (i32.ne (local.get $arg3) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))) ;; 7 args + ret
   )
 
   ;; 423: LockFile — STUB: unimplemented

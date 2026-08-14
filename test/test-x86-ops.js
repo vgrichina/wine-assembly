@@ -135,6 +135,15 @@ async function main() {
   runCode([0x54, 0x58]); // push esp; pop eax
   test('PUSH ESP stores original ESP', e.get_eax(), imageBase + 0xD00000);
 
+  runCode([0x06, 0x58]); // push es; pop eax
+  test('PUSH ES exposes conventional flat selector', e.get_eax(), 0x23);
+
+  runCode([0x66, 0x06, 0x66, 0x58], () => e.set_eax(0xAAAA0000)); // push es; pop ax
+  test('16-bit PUSH ES/POP AX preserves upper register', e.get_eax(), 0xAAAA0023);
+
+  runCode([0x66, 0x06, 0x66, 0x07, 0x8B, 0xC4]); // push es; pop es; mov eax,esp
+  test('16-bit PUSH/POP ES preserves stack width', e.get_eax(), imageBase + 0xD00000);
+
   // Delphi/VCL uses x87 FILD/FISTP qword pairs as a memcpy fast path. The
   // integer payload is often a string chunk, so preserving raw bytes matters.
   const fpuCopyBytes = [0x54, 0x4d, 0x41, 0x49, 0x4e, 0x46, 0x4f, 0x52]; // "TMAINFOR"

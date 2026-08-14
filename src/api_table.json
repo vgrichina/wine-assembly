@@ -8897,7 +8897,7 @@
   {
     "id": 1088,
     "name": "IDirectInputDevice_EnumObjects",
-    "nargs": 5,
+    "nargs": 4,
     "convention": "stdcall",
     "hash": 858065249
   },
@@ -17909,5 +17909,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3154411128
+  },
+  {
+    "id": 2350,
+    "name": "CoInitializeEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1286405696
   }
 ]
