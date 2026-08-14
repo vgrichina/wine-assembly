@@ -75,9 +75,12 @@ standard format. Classic WMF playback also interprets common mapping, color,
 ROP2, fill-mode, SaveDC/RestoreDC, pen/brush lifetime, line, rectangle,
 ellipse, round-rectangle, polygon, and polyline records directly in WAT. Its
 object table is bounded by `mtNoObjects`; playback restores the caller DC and
-deletes all surviving temporary objects on success or failure. Vector EMF,
-WMF text/region records, and enumeration callbacks remain separate
-compatibility layers.
+deletes all surviving temporary objects on success or failure. `EnumMetaFile`
+walks the validated record stream through a resumable guest `MFENUMPROC`, with
+a live bounded `HANDLETABLE`, EOF delivery, early-stop semantics, and caller-DC
+restoration. `PlayMetaFileRecord` routes each callback record through the same
+WAT evaluator so state and object-table mutations persist between callbacks.
+Vector EMF and WMF text/region records remain separate compatibility layers.
 
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains

@@ -3,10 +3,36 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const { exports: wat, memory } = await bootRenderHarness();
+  const { exports: wat, memory } = await bootRenderHarness({
+    extraWat: `
+  (func (export "test_start_EnumMetaFile")
+        (param $hdc i32) (param $hmf i32) (param $callback i32)
+        (param $data i32) (result i32)
+    (local $start i32)
+    (local.set $start (global.get $esp))
+    (call $gs32 (local.get $start) (i32.const 0))
+    (call $handle_EnumMetaFile (local.get $hdc) (local.get $hmf)
+      (local.get $callback) (local.get $data) (i32.const 0) (i32.const 0))
+    (global.get $eip))
+  (func (export "test_call_PlayMetaFileRecord")
+        (param $hdc i32) (param $table i32) (param $record i32)
+        (param $count i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PlayMetaFileRecord (local.get $hdc) (local.get $table)
+      (local.get $record) (local.get $count) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))`,
+  });
+  const root = path.join(__dirname, '..');
+  const exe = fs.readFileSync(path.join(root, 'test', 'binaries', 'calc.exe'));
+  new Uint8Array(memory.buffer).set(exe, wat.get_staging());
+  assert(wat.load_pe(exe.length), 'PE load must initialize callback continuation thunks');
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
@@ -73,6 +99,46 @@ const { bootRenderHarness } = require('./render-helper');
   };
   const readBytes = (pointer, size) => Array.from(bytes.subarray(wa(pointer), wa(pointer) + size));
   const read16 = pointer => bytes[wa(pointer)] | (bytes[wa(pointer) + 1] << 8);
+  const makeRecord = (fn, params = []) => {
+    const record = allocZero((3 + params.length) * 2);
+    wat.guest_write32(record, 3 + params.length);
+    wat.guest_write16(record + 4, fn);
+    params.forEach((value, index) => wat.guest_write16(record + 6 + index * 2, value));
+    return record;
+  };
+  const makeEnumCallback = stopAfter => {
+    const callback = allocZero(96);
+    const code = [
+      0x8b, 0x44, 0x24, 0x14,       // mov eax,[esp+20] (lParam)
+      0x8b, 0x08,                   // mov ecx,[eax] (count)
+      0xc1, 0xe1, 0x04,             // shl ecx,4
+      0x8b, 0x54, 0x24, 0x0c,       // mov edx,[esp+12] (METARECORD*)
+      0x0f, 0xb7, 0x52, 0x04,       // movzx edx,word [edx+4] (rdFunction)
+      0x89, 0x54, 0x08, 0x04,       // mov [eax+ecx+4],edx
+      0x8b, 0x54, 0x24, 0x10,       // mov edx,[esp+16] (nObj)
+      0x89, 0x54, 0x08, 0x08,       // mov [eax+ecx+8],edx
+      0x8b, 0x54, 0x24, 0x08,       // mov edx,[esp+8] (HANDLETABLE*)
+      0x89, 0x54, 0x08, 0x0c,       // mov [eax+ecx+12],edx
+      0xff, 0x00,                   // inc dword [eax]
+    ];
+    if (stopAfter) {
+      code.push(
+        0x8b, 0x10,                 // mov edx,[eax]
+        0x31, 0xc0,                 // xor eax,eax
+        0x83, 0xfa, stopAfter,       // cmp edx,stopAfter
+        0x0f, 0x92, 0xc0,           // setb al
+      );
+    } else {
+      code.push(0xb8, 0x01, 0x00, 0x00, 0x00); // mov eax,1
+    }
+    code.push(0xc2, 0x14, 0x00);    // ret 20
+    bytes.set(code, wa(callback));
+    return callback;
+  };
+  const runCallbacks = () => {
+    for (let index = 0; index < 1000 && wat.get_eip(); index++) wat.run(1000);
+    assert.strictEqual(wat.get_eip(), 0, 'metafile callback sequence must restore caller EIP');
+  };
 
   check('classic WMF bits are owned, copied, typed, and deleted in WAT', () => {
     const source = makeWmf();
@@ -189,6 +255,85 @@ const { bootRenderHarness } = require('./render-helper');
     assert(recycled, 'temporary WMF objects must be released after playback');
     assert.strictEqual(wat.test_call_DeleteObject(recycled), 1);
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
+  });
+
+  check('EnumMetaFile invokes guest callbacks for validated records and honors stop', () => {
+    const { data, size } = makeVectorWmf([
+      { fn: 0x02fa, params: [0, 1, 0, 0x00ff, 0] }, // create red pen
+      { fn: 0x012d, params: [0] },                    // select pen
+      { fn: 0x0214, params: [2, 2] },                 // move to
+      { fn: 0x0213, params: [2, 20] },                // line to
+      { fn: 0x0000 },                                 // EOF
+    ]);
+    const metafile = wat.test_call_SetMetaFileBitsEx(size, data) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 32, 16) >>> 0;
+    assert(metafile && hdc && bitmap);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+
+    const callback = makeEnumCallback(0);
+    const callbackData = allocZero(4 + 16 * 8);
+    assert(wat.test_start_EnumMetaFile(hdc, metafile, callback, callbackData));
+    runCallbacks();
+    assert.strictEqual(wat.get_eax(), 1, 'complete enumeration returns TRUE');
+    assert.strictEqual(wat.guest_read32(callbackData), 5);
+    assert.deepStrictEqual(Array.from({ length: 5 }, (_, index) =>
+      wat.guest_read32(callbackData + 4 + index * 16)),
+    [0x02fa, 0x012d, 0x0214, 0x0213, 0x0000],
+    'callbacks must receive every record including META_EOF');
+    for (let index = 0; index < 5; index++) {
+      assert.strictEqual(wat.guest_read32(callbackData + 8 + index * 16), 2,
+        'callback nObj must come from METAHEADER');
+      assert(wat.guest_read32(callbackData + 12 + index * 16),
+        'callback must receive a live HANDLETABLE');
+    }
+
+    const stopCallback = makeEnumCallback(2);
+    const stopData = allocZero(4 + 16 * 4);
+    assert(wat.test_start_EnumMetaFile(hdc, metafile, stopCallback, stopData));
+    runCallbacks();
+    assert.strictEqual(wat.guest_read32(stopData), 2);
+    assert.strictEqual(wat.get_eax(), 0, 'zero callback return stops enumeration');
+
+    const malformed = makeVectorWmf([{ fn: 0x0214, params: [2, 2] }]);
+    wat.guest_write32(malformed.data + 18, 0x1000);
+    const bad = wat.test_call_SetMetaFileBitsEx(malformed.size, malformed.data) >>> 0;
+    assert(bad);
+    const badData = allocZero(32);
+    assert.strictEqual(wat.test_start_EnumMetaFile(hdc, bad, callback, badData), 0,
+      'out-of-bounds first record must fail before entering the callback');
+    assert.strictEqual(wat.get_eax(), 0);
+    assert.strictEqual(wat.test_call_DeleteMetaFile(bad), 1);
+    assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
+  });
+
+  check('PlayMetaFileRecord preserves handle-table state across record calls', () => {
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 32, 16) >>> 0;
+    const table = allocZero(8);
+    assert(hdc && bitmap);
+    assert.notStrictEqual(wat.test_call_SelectObject(hdc, bitmap) | 0, -1);
+
+    const createPen = makeRecord(0x02fa, [0, 1, 0, 0x00ff, 0]);
+    const selectPen = makeRecord(0x012d, [0]);
+    const moveTo = makeRecord(0x0214, [2, 2]);
+    const lineTo = makeRecord(0x0213, [2, 20]);
+    const deletePen = makeRecord(0x01f0, [0]);
+    for (const record of [createPen, selectPen, moveTo, lineTo]) {
+      assert.strictEqual(wat.test_call_PlayMetaFileRecord(hdc, table, record, 2), 1);
+    }
+    const pen = wat.guest_read32(table) >>> 0;
+    assert(pen, 'META_CREATEPENINDIRECT must publish the first free handle-table slot');
+    assert.strictEqual(wat.test_call_GetObjectType(pen), 1);
+    assert.strictEqual(wat.test_call_GetPixel(hdc, 5, 2) >>> 0, 0x000000ff,
+      'separate select/move/line records must share DC and object-table state');
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(hdc, table, deletePen, 2), 1);
+    assert.strictEqual(wat.guest_read32(table), 0,
+      'META_DELETEOBJECT must clear the external handle-table slot');
+
+    const malformed = makeRecord(0x0213, []);
+    assert.strictEqual(wat.test_call_PlayMetaFileRecord(hdc, table, malformed, 2), 0,
+      'short supported records must fail atomically');
   });
 
   check('enhanced metafile transport supports headers, copy, play, and deletion', () => {

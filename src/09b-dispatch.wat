@@ -721,6 +721,10 @@
           (then
             (call $gdi_font_enum_continue)
             (return)))
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x4345464D))
+          (then
+            (call $gdi_metafile_enum_continue)
+            (return)))
         (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x43454C4F))
           (then
             (call $ole_guest_callback_continue)

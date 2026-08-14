@@ -5806,7 +5806,8 @@
   ;; 365: PlayMetaFile(hdc, hmf) — parse and replay WAT-owned WMF records.
   (func $handle_PlayMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_metafile_play_wmf
-      (local.get $arg0) (local.get $arg1)))
+      (local.get $arg0) (local.get $arg1)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8816,11 +8817,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 561: EnumMetaFile — opaque streams currently contain no replay callbacks.
+  ;; 561: EnumMetaFile — validate and enumerate each classic WMF record through
+  ;; the guest MFENUMPROC. The WAT callback context owns the HANDLETABLE.
   (func $handle_EnumMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.ne
-      (call $gdi_metafile_record (local.get $arg1) (i32.const 6)) (i32.const 0)))
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $gdi_metafile_enum_start (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $ret) (global.get $esp))
   )
 
   ;; 562: GetObjectType(h) → OBJ_* type. Host GDI owns the full object table,
@@ -8912,11 +8916,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 563: PlayMetaFileRecord — accept bounded record enumeration fallback.
+  ;; 563: PlayMetaFileRecord — replay one validated WMF record against the
+  ;; caller's live HANDLETABLE, preserving object/state changes for the next
+  ;; EnumMetaFile callback.
   (func $handle_PlayMetaFileRecord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.and
-      (i32.ne (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)) (i32.const 0))
-      (i32.ne (local.get $arg2) (i32.const 0))))
+    (global.set $eax (call $gdi_metafile_play_wmf_record
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
