@@ -28,17 +28,17 @@ for (const file of Object.values(shots)) {
 }
 
 const input = [
-  '40:click:39:146',
-  '50:mousedown:120:140', '51:mousemove:150:160', '52:mouseup:190:190',
-  `60:png:${shots.drawn}`,
-  '65:0x111:57642', // Edit > Select All
-  '75:0x111:57635', // Edit > Cut
-  '90:dump-clipboard:after-cut',
-  `100:png:${shots.cut}`,
-  '110:0x111:57637', // Edit > Paste
-  `140:png:${shots.pasted}`,
-  '141:dump-clipboard:after-paste',
-  '142:stop',
+  '18:click:39:146',
+  '19:mousedown:120:140', '20:mousemove:150:160', '21:mouseup:190:190',
+  `23:png:${shots.drawn}`,
+  '24:0x111:57642', // Edit > Select All
+  '27:0x111:57635', // Edit > Cut
+  '32:dump-clipboard:after-cut',
+  `33:png:${shots.cut}`,
+  '35:0x111:57637', // Edit > Paste
+  `43:png:${shots.pasted}`,
+  '43:dump-clipboard:after-paste',
+  '44:stop',
 ].join(',');
 
 let output = '';
@@ -48,13 +48,13 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=160',
+    '--max-batches=48',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
     '--trace-api=OleSetClipboard,OpenClipboard,GetClipboardData,IsClipboardFormatAvailable,CloseClipboard',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 12 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 12 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
