@@ -37,6 +37,15 @@
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
   (global $com_aux_next (mut i32) (i32.const 0))
 
+  ;; Shared registry for COM vtable guest addresses. The vtable globals below
+  ;; are per-WASM-instance, while threads use separate instances over one
+  ;; shared memory. The main instance records the addresses produced by
+  ;; $init_dx_com_thunks here; a worker restores its local globals before its
+  ;; first Win32/COM dispatch. 0x07FFE000..0x08000000 is the reserved high-memory
+  ;; gap immediately after COM_WRAPPERS_AUX.
+  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFE000))
+  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 53))
+
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
   ;; These globals store the GUEST address of each vtable block (set by init_dx_com_thunks).
@@ -94,6 +103,86 @@
   (global $DX_VTBL_D3DVB7    (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DTEX    (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DTEX2   (mut i32) (i32.const 0))
+
+  (func $dx_vtable_registry_reset
+    (i32.store (global.get $DX_VTBL_REGISTRY) (i32.const 0)))
+
+  (func $dx_vtable_registry_append (param $vtbl_guest i32)
+    (local $count i32)
+    (local.set $count (i32.load (global.get $DX_VTBL_REGISTRY)))
+    (if (i32.lt_u (local.get $count) (global.get $DX_VTBL_REGISTRY_COUNT))
+      (then
+        (i32.store
+          (i32.add (global.get $DX_VTBL_REGISTRY)
+            (i32.add (i32.const 4) (i32.mul (local.get $count) (i32.const 4))))
+          (local.get $vtbl_guest))
+        (i32.store (global.get $DX_VTBL_REGISTRY)
+          (i32.add (local.get $count) (i32.const 1))))))
+
+  ;; Restore every generated DX_VTBL_* global in the exact order used by
+  ;; $init_dx_com_thunks. Only complete registries are accepted, so a worker
+  ;; can never observe a partially initialized main instance.
+  (func $dx_sync_thread_vtables
+    (if (i32.lt_u (i32.load (global.get $DX_VTBL_REGISTRY))
+                   (global.get $DX_VTBL_REGISTRY_COUNT))
+      (then (return)))
+    (global.set $DX_VTBL_DDRAW (i32.load offset=4 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DDRAW2 (i32.load offset=8 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DDSURF (i32.load offset=12 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DDSURF2 (i32.load offset=16 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DDPAL (i32.load offset=20 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DDCLIP (i32.load offset=24 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DSOUND (i32.load offset=28 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DSBUF (i32.load offset=32 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DINPUT (i32.load offset=36 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DIDEV (i32.load offset=40 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DPLAY3 (i32.load offset=44 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DPLAYLOBBY2 (i32.load offset=48 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3D (i32.load offset=52 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3D3 (i32.load offset=56 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DDFACTORY (i32.load offset=60 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DA_VIEW (i32.load offset=64 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DA_STATICS (i32.load offset=68 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DA_BEHAVIOR (i32.load offset=72 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_IMALLOC (i32.load offset=76 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_ROT (i32.load offset=80 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_ENUMMONIKER (i32.load offset=84 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_MONIKER (i32.load offset=88 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_BINDCTX (i32.load offset=92 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_ENUMSTRING (i32.load offset=96 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_LOCKBYTES (i32.load offset=100 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_STREAM (i32.load offset=104 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_STORAGE (i32.load offset=108 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_DATAOBJECT (i32.load offset=112 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_ENUMFORMATETC (i32.load offset=116 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_ENUMSTATSTG (i32.load offset=120 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_OBJECT (i32.load offset=124 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_PERSISTSTORAGE (i32.load offset=128 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_CACHE (i32.load offset=132 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_VIEWOBJECT (i32.load offset=136 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_VIEWOBJECT2 (i32.load offset=140 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DDEV3 (i32.load offset=144 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DVP3 (i32.load offset=148 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DLIGHT (i32.load offset=152 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DMAT3 (i32.load offset=156 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3D2 (i32.load offset=160 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3D7 (i32.load offset=164 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DDEV1 (i32.load offset=168 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DDEV2 (i32.load offset=172 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DDEV7 (i32.load offset=176 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DVP1 (i32.load offset=180 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DVP2 (i32.load offset=184 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DMAT1 (i32.load offset=188 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DMAT2 (i32.load offset=192 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DEXEC (i32.load offset=196 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DVB (i32.load offset=200 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DVB7 (i32.load offset=204 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DTEX (i32.load offset=208 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DTEX2 (i32.load offset=212 (global.get $DX_VTBL_REGISTRY))))
+
+  (func $dx_sync_thread_vtables_if_needed
+    (if (i32.eqz (global.get $DX_VTBL_DDRAW))
+      (then (call $dx_sync_thread_vtables))))
 
   ;; DirectDraw display mode (set by SetDisplayMode)
   (global $dx_display_w (mut i32) (i32.const 640))
@@ -286,6 +375,10 @@
   (func $init_com_vtable (param $base_api_id i32) (param $count i32) (result i32)
     (local $i i32) (local $thunk_wa i32) (local $thunk_guest i32)
     (local $vtbl_guest i32) (local $vtbl_wa i32)
+    ;; IDirectDraw is always the first generated interface. Resetting here
+    ;; makes repeated main-instance initialization deterministic.
+    (if (i32.eq (local.get $base_api_id) (i32.const 978))
+      (then (call $dx_vtable_registry_reset)))
     ;; Allocate vtable from heap (count * 4 bytes)
     (local.set $vtbl_guest (call $heap_alloc (i32.mul (local.get $count) (i32.const 4))))
     (local.set $vtbl_wa (call $g2w (local.get $vtbl_guest)))
@@ -311,6 +404,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
     (call $update_thunk_end)
+    (call $dx_vtable_registry_append (local.get $vtbl_guest))
     (local.get $vtbl_guest))
 
   ;; Extend a parent vtable: copy parent entries, append new thunks for extra methods.
@@ -340,6 +434,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
     (call $update_thunk_end)
+    (call $dx_vtable_registry_append (local.get $vtbl_guest))
     (local.get $vtbl_guest))
 
   ;; $init_dx_com_thunks is now auto-generated in 09b2-dispatch-table.generated.wat

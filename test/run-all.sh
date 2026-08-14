@@ -52,6 +52,7 @@ UNIT=(
   test/test-wat-gdi-multiline-ellipsis.js
   test/test-wat-gdi-draw-text-ex.js
   test/test-wat-gdi-default-bitmap-font.js
+  test/test-wat-gdi-font-enum.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
@@ -141,6 +142,7 @@ E2E=(
   test/test-mspaint-dirty-new.js
   test/test-mspaint-clipboard.js
   test/test-mspaint-large-scroll.js
+  test/test-mspaint-scrollbar-thumb.js
   test/test-mspaint-thumbnail.js
   test/test-mplay32-dual-mode.js
   test/test-statusbar-surface.js

@@ -1072,9 +1072,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_EnumFontsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3)
-      (call $gl32 (i32.sub (global.get $esp) (i32.const 20)))))
+    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
+      (local.get $ret) (global.get $esp) (local.get $arg1)
+      (i32.const 0) (i32.const 0xFF)))
 
   (func $handle_SetMetaFileBitsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32)

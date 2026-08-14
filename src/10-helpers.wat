@@ -234,6 +234,39 @@
       (br $scan_loop)))
     (i32.const 1))
 
+  ;; The high guest-address allocator is process-wide. Mutable WAT globals are
+  ;; per instance, so a worker can otherwise reserve from a stale top and
+  ;; overlap a range already owned by the main instance. Keep the authoritative
+  ;; downward cursor in shared memory at VIRTUAL_MAP_STATE+8.
+  (func $virtual_shared_top_observe (param $guest i32)
+    (local $top i32)
+    (local.set $top
+      (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))))
+    (if (i32.or (i32.eqz (local.get $top))
+                (i32.lt_u (local.get $guest) (local.get $top)))
+      (then
+        (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))
+          (local.get $guest)))))
+
+  (func $virtual_reserve_down (param $size i32) (result i32)
+    (local $top i32) (local $new_top i32)
+    (local.set $top
+      (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))))
+    (if (i32.eqz (local.get $top))
+      (then
+        (local.set $top (global.get $virtual_alloc_top))
+        (if (i32.eqz (local.get $top))
+          (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))))
+    (local.set $new_top
+      (i32.and (i32.sub (local.get $top) (local.get $size))
+        (i32.const 0xFFFF0000)))
+    (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
+      (then (return (i32.const 0))))
+    (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))
+      (local.get $new_top))
+    (global.set $virtual_alloc_top (local.get $new_top))
+    (local.get $new_top))
+
   ;; Back a high guest VirtualAlloc commit with real WASM memory. Entries are
   ;; coalesced when the guest commits adjacent 64KB chunks in order, which keeps
   ;; g2w's sparse-map scan short for CRT small-block heap arenas.
@@ -292,6 +325,8 @@
     (i32.store (global.get $VIRTUAL_MAP_STATE) (i32.add (local.get $count) (i32.const 1)))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
       (i32.add (local.get $backing_ptr) (local.get $size)))
+    (call $virtual_shared_top_observe (local.get $guest))
+    (global.set $virtual_alloc_top (local.get $guest))
     (local.get $guest))
 
   ;; HeapAlloc starts in the low direct guest window for compatibility, then
@@ -315,17 +350,10 @@
           (i32.and
             (i32.add (local.get $chunk) (i32.const 0xFFFF))
             (i32.const 0xFFFF0000)))
-        (if (i32.eqz (global.get $virtual_alloc_top))
-          (then (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
-        (local.set $new_top
-          (i32.and
-            (i32.sub (global.get $virtual_alloc_top) (local.get $chunk))
-            (i32.const 0xFFFF0000)))
-        (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
-          (then (return (i32.const 0))))
+        (local.set $new_top (call $virtual_reserve_down (local.get $chunk)))
+        (if (i32.eqz (local.get $new_top)) (then (return (i32.const 0))))
         (if (i32.eqz (call $virtual_map_commit (local.get $new_top) (local.get $chunk)))
           (then (return (i32.const 0))))
-        (global.set $virtual_alloc_top (local.get $new_top))
         (global.set $heap_sparse_ptr (local.get $new_top))
         (global.set $heap_sparse_end (i32.add (local.get $new_top) (local.get $chunk)))))
     (local.set $ptr (global.get $heap_sparse_ptr))

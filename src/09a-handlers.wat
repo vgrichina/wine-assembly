@@ -1117,16 +1117,10 @@
         ;; Reserve from a sparse high guest-address arena, separate from
         ;; HeapAlloc's upward-growing low heap. MEM_RESERVE is address-space
         ;; bookkeeping; real backing is added only by MEM_COMMIT.
-        (if (i32.eqz (global.get $virtual_alloc_top))
-          (then (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
-        (local.set $new_top
-          (i32.and
-            (i32.sub (global.get $virtual_alloc_top) (local.get $size))
-            (i32.const 0xFFFF0000)))
-        (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
+        (local.set $new_top (call $virtual_reserve_down (local.get $size)))
+        (if (i32.eqz (local.get $new_top))
           (then (global.set $eax (i32.const 0)))
           (else
-            (global.set $virtual_alloc_top (local.get $new_top))
             (if (i32.and (local.get $arg2) (i32.const 0x1000))
               (then (global.set $eax (call $virtual_map_commit (local.get $new_top) (local.get $size))))
               (else (global.set $eax (local.get $new_top))))))))
@@ -5980,175 +5974,60 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; Minimal font enumeration callback. Enumerate one stable TrueType-style
-  ;; face ("Arial") with enough ENUMLOGFONTEXA/W / NEWTEXTMETRICEXA/W fields
-  ;; for MFC/WordPad font-list startup code.
-  (func $font_enum_dispatch_one_a (param $callback i32) (param $lparam i32) (param $ret_addr i32)
-    (local $lf_guest i32) (local $lf_wa i32) (local $tm_guest i32) (local $tm_wa i32)
-    (if (i32.eqz (local.get $callback))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $eip (local.get $ret_addr))
-        (return)))
-    (local.set $lf_guest (call $heap_alloc (i32.const 192)))
-    (local.set $tm_guest (call $heap_alloc (i32.const 128)))
-    (local.set $lf_wa (call $g2w (local.get $lf_guest)))
-    (local.set $tm_wa (call $g2w (local.get $tm_guest)))
-    (call $zero_memory (local.get $lf_wa) (i32.const 192))
-    (call $zero_memory (local.get $tm_wa) (i32.const 128))
-
-    ;; LOGFONTA at ENUMLOGFONTEXA+0.
-    (i32.store (local.get $lf_wa) (i32.const -12))                         ;; lfHeight
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 16)) (i32.const 400)) ;; lfWeight
-    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 23)) (i32.const 0))  ;; ANSI_CHARSET
-    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 27)) (i32.const 0x22)) ;; VARIABLE_PITCH|FF_SWISS
-    ;; lfFaceName = "Arial".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 28)) (i32.const 0x61697241))
-    (i32.store16 (i32.add (local.get $lf_wa) (i32.const 32)) (i32.const 0x006c))
-    ;; elfFullName = "Arial".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 60)) (i32.const 0x61697241))
-    (i32.store16 (i32.add (local.get $lf_wa) (i32.const 64)) (i32.const 0x006c))
-    ;; elfStyle = "Regular".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 124)) (i32.const 0x75676552))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 128)) (i32.const 0x0072616c))
-    ;; elfScript = "Western".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 156)) (i32.const 0x74736557))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 160)) (i32.const 0x006e7265))
-
-    ;; TEXTMETRICA / NEWTEXTMETRICA prefix.
-    (i32.store (local.get $tm_wa) (i32.const 16))                         ;; tmHeight
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 4)) (i32.const 13))  ;; tmAscent
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 8)) (i32.const 3))   ;; tmDescent
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 20)) (i32.const 8))  ;; tmAveCharWidth
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 24)) (i32.const 16)) ;; tmMaxCharWidth
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 28)) (i32.const 400)) ;; tmWeight
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 36)) (i32.const 96))
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 40)) (i32.const 96))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 44)) (i32.const 32))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 45)) (i32.const 255))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 46)) (i32.const 0))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 47)) (i32.const 32))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 51)) (i32.const 0x22))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 52)) (i32.const 0))
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 64)) (i32.const 16)) ;; ntmSizeEM
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 68)) (i32.const 16)) ;; ntmCellHeight
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 72)) (i32.const 8))  ;; ntmAvgWidth
-
-    ;; Save original return address above the stdcall callback frame.
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $ret_addr))
-    ;; Push FONTENUMPROCA args right-to-left:
-    ;; lParam, FontType=TRUETYPE_FONTTYPE, lpntme, lpelfe.
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $lparam))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 4))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $tm_guest))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $lf_guest))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
-    (global.set $eip (local.get $callback))
-    (global.set $steps (i32.const 0)))
-
-  (func $font_enum_dispatch_one_w (param $callback i32) (param $lparam i32) (param $ret_addr i32)
-    (local $lf_guest i32) (local $lf_wa i32) (local $tm_guest i32) (local $tm_wa i32)
-    (if (i32.eqz (local.get $callback))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $eip (local.get $ret_addr))
-        (return)))
-    (local.set $lf_guest (call $heap_alloc (i32.const 384)))
-    (local.set $tm_guest (call $heap_alloc (i32.const 128)))
-    (local.set $lf_wa (call $g2w (local.get $lf_guest)))
-    (local.set $tm_wa (call $g2w (local.get $tm_guest)))
-    (call $zero_memory (local.get $lf_wa) (i32.const 384))
-    (call $zero_memory (local.get $tm_wa) (i32.const 128))
-
-    ;; LOGFONTW at ENUMLOGFONTEXW+0.
-    (i32.store (local.get $lf_wa) (i32.const -12))                         ;; lfHeight
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 16)) (i32.const 400)) ;; lfWeight
-    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 23)) (i32.const 0))  ;; ANSI_CHARSET
-    (i32.store8 (i32.add (local.get $lf_wa) (i32.const 27)) (i32.const 0x22)) ;; VARIABLE_PITCH|FF_SWISS
-    ;; lfFaceName = L"Arial".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 28)) (i32.const 0x00720041))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 32)) (i32.const 0x00610069))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 36)) (i32.const 0x0000006c))
-    ;; elfFullName = L"Arial".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 92)) (i32.const 0x00720041))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 96)) (i32.const 0x00610069))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 100)) (i32.const 0x0000006c))
-    ;; elfStyle = L"Regular".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 220)) (i32.const 0x00650052))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 224)) (i32.const 0x00750067))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 228)) (i32.const 0x0061006c))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 232)) (i32.const 0x00000072))
-    ;; elfScript = L"Western".
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 284)) (i32.const 0x00650057))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 288)) (i32.const 0x00740073))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 292)) (i32.const 0x00720065))
-    (i32.store (i32.add (local.get $lf_wa) (i32.const 296)) (i32.const 0x0000006e))
-
-    ;; TEXTMETRICW / NEWTEXTMETRICW prefix.
-    (i32.store (local.get $tm_wa) (i32.const 16))                         ;; tmHeight
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 4)) (i32.const 13))  ;; tmAscent
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 8)) (i32.const 3))   ;; tmDescent
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 20)) (i32.const 8))  ;; tmAveCharWidth
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 24)) (i32.const 16)) ;; tmMaxCharWidth
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 28)) (i32.const 400)) ;; tmWeight
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 36)) (i32.const 96))
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 40)) (i32.const 96))
-    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 44)) (i32.const 32))
-    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 46)) (i32.const 255))
-    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 48)) (i32.const 31))
-    (i32.store16 (i32.add (local.get $tm_wa) (i32.const 50)) (i32.const 32))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 55)) (i32.const 0x22))
-    (i32.store8 (i32.add (local.get $tm_wa) (i32.const 56)) (i32.const 0))
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 64)) (i32.const 16)) ;; ntmSizeEM
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 68)) (i32.const 16)) ;; ntmCellHeight
-    (i32.store (i32.add (local.get $tm_wa) (i32.const 72)) (i32.const 8))  ;; ntmAvgWidth
-
-    ;; Save original return address above the stdcall callback frame.
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $ret_addr))
-    ;; Push FONTENUMPROCW args right-to-left:
-    ;; lParam, FontType=TRUETYPE_FONTTYPE, lpntme, lpelfe.
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $lparam))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 4))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $tm_guest))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $lf_guest))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
-    (global.set $eip (local.get $callback))
-    (global.set $steps (i32.const 0)))
-
   ;; EnumFontFamiliesExA(hdc, lpLogfont, proc, lParam, flags) → INT.
   (func $handle_EnumFontFamiliesExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32) (local $charset i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $charset (i32.const 0xFF))
+    (if (local.get $arg1)
+      (then
+        (local.set $charset (call $gl8 (i32.add (local.get $arg1) (i32.const 23))))
+        (if (i32.eq (local.get $charset) (i32.const 1))
+          (then (local.set $charset (i32.const 0xFF))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 24))))
+    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
+      (local.get $ret) (global.get $esp)
+      (select (i32.add (local.get $arg1) (i32.const 28)) (i32.const 0)
+        (i32.ne (local.get $arg1) (i32.const 0)))
+      (i32.const 0) (local.get $charset))
   )
 
   ;; EnumFontFamiliesA(hdc, lpszFamily, proc, lParam) → INT.
   (func $handle_EnumFontFamiliesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 20))))
+    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
+      (local.get $ret) (global.get $esp) (local.get $arg1)
+      (i32.const 0) (i32.const 0xFF))
   )
 
   ;; 377: EnumFontFamiliesExW(hdc, lpLogfont, proc, lParam, flags) → INT.
   (func $handle_EnumFontFamiliesExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32) (local $charset i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $charset (i32.const 0xFF))
+    (if (local.get $arg1)
+      (then
+        (local.set $charset (call $gl8 (i32.add (local.get $arg1) (i32.const 23))))
+        (if (i32.eq (local.get $charset) (i32.const 1))
+          (then (local.set $charset (i32.const 0xFF))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    (call $font_enum_dispatch_one_w (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 24))))
+    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
+      (local.get $ret) (global.get $esp)
+      (select (i32.add (local.get $arg1) (i32.const 28)) (i32.const 0)
+        (i32.ne (local.get $arg1) (i32.const 0)))
+      (i32.const 1) (local.get $charset))
   )
 
   ;; 378: EnumFontFamiliesW(hdc, lpszFamily, proc, lParam) → INT.
   (func $handle_EnumFontFamiliesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    (call $font_enum_dispatch_one_w (local.get $arg2) (local.get $arg3) (call $gl32 (i32.sub (global.get $esp) (i32.const 20))))
+    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
+      (local.get $ret) (global.get $esp) (local.get $arg1)
+      (i32.const 1) (i32.const 0xFF))
   )
 
   ;; 379: CallNextHookEx — no next hook in chain, return 0

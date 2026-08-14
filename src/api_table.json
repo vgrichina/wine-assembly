@@ -17965,5 +17965,12 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3337921375
+  },
+  {
+    "id": 2358,
+    "name": "IsEqualGUID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2832259242
   }
 ]

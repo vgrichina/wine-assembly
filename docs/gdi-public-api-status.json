@@ -38,7 +38,7 @@
       "GetCharWidthA/W and GetCharWidth32A/W use exact selected FNT advances in WAT and per-character Canvas measurement only for scalable fallback faces; GetCharacterPlacementW owns deterministic Latin ordering, widths, carets, classifications, glyph arrays, maximum extent, and simple justification in WAT",
       "GetFontData returns GDI_ERROR because raw selected-font table export is not implemented",
       "GetGlyphOutlineA returns WAT-derived GGO_METRICS and DWORD-aligned GGO_BITMAP payloads for selected FNT strikes; scalable fonts retain Canvas metrics-only fallback, while native/Bezier/gray bitmap formats and transformed bitmap strikes remain unavailable",
-      "EnumFontsA shares the current deterministic single-face fallback enumeration",
+      "EnumFontsA and EnumFontFamilies A/W enumerate scalable Arial first for compatibility, followed by unique installed FNT faces with WAT-derived ENUMLOGFONTEX and NEWTEXTMETRICEX fields; family/charset filters and callback early termination are WAT-owned",
       "Complex-script reordering, ligation, kerning, glyph shaping, Kashida justification, and DBCS expansion in GetCharacterPlacementW remain unavailable"
     ]
   }

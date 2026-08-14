@@ -9,6 +9,11 @@
     (local $saved_ebx i32) (local $saved_esi i32)
     (local $saved_edi i32) (local $saved_ebp i32)
 
+    ;; Worker threads instantiate a fresh module over the process's shared
+    ;; memory. Restore per-instance COM vtable globals before any imported API
+    ;; can create or return a DirectX/OLE wrapper.
+    (call $dx_sync_thread_vtables_if_needed)
+
     ;; Read thunk data
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
     (local.set $api_id (i32.load (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8))) (i32.const 4))))
@@ -26,7 +31,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (if (i32.eq (global.get $eax) (i32.const 1))
           (then
-            (global.set $delphi_seh_rec (call $gl32 (global.get $delphi_seh_rec)))
+            (call $delphi_seh_continue_search)
             (call $dispatch_delphi_exception_handler)
             (return)))
         ;; Other dispositions should have resumed inside the Delphi runtime.
@@ -712,6 +717,10 @@
     ;; enumerators retain the original saved-return-address form.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0011))
       (then
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x434E5446))
+          (then
+            (call $gdi_font_enum_continue)
+            (return)))
         (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x43454C4F))
           (then
             (call $ole_guest_callback_continue)

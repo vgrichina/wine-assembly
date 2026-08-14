@@ -154,7 +154,13 @@
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
       (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
-      (br_if $id (i32.eqz (local.get $ilt_rva)))
+      ;; OriginalFirstThunk is optional. Bound/stripped images commonly leave
+      ;; it zero and retain the lookup entries in FirstThunk until the loader
+      ;; overwrites them. FirstThunk is required for a live descriptor, so it
+      ;; is also the reliable end-of-table discriminator.
+      (br_if $id (i32.eqz (local.get $iat_rva)))
+      (if (i32.eqz (local.get $ilt_rva))
+        (then (local.set $ilt_rva (local.get $iat_rva))))
       (local.set $ilt_ptr (i32.add (global.get $GUEST_BASE) (local.get $ilt_rva)))
       (local.set $iat_ptr (i32.add (global.get $GUEST_BASE) (local.get $iat_rva)))
       (block $fd (loop $fl

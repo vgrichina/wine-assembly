@@ -599,6 +599,13 @@ positions, classes, maximum-extent truncation, and simple justification in WAT.
 Complex-script shaping remains explicit future provider work rather than a
 geometry or destination-surface fallback.
 
+Font enumeration is also provider-aware. `EnumFontsA` and the ANSI/Unicode
+`EnumFontFamilies` variants retain scalable Arial as the first compatibility
+face, then invoke the guest callback for every unique installed FNT family.
+WAT constructs each `ENUMLOGFONTEX` and `NEWTEXTMETRICEX` from parsed strike
+metadata, applies family and charset filters, and resumes or terminates through
+a stack-resident callback context without consulting Canvas.
+
 The fixed stock objects therefore retain distinct native roles instead of
 sharing an outline-derived substitute: Courier 8x13 for `ANSI_FIXED_FONT`,
 ANAKRON-derived Terminal 8x12 for `OEM_FIXED_FONT`, and Wine Fixedsys 8x15 for

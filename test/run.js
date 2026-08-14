@@ -38,6 +38,7 @@ const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/re
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
+const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: print raw sparse guest-map records
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 // When multiple --break addrs are passed, the WASM `set_bp` only holds one,
 // so the JS fallback (eipBefore check) must see every block entry. Force
@@ -4930,6 +4931,23 @@ if (VERBOSE) {
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
+  }
+
+  if (DUMP_VIRTUAL_MAPS) {
+    const dv = new DataView(memory.buffer);
+    const state = 0x07F02400;
+    const table = 0x07F02410;
+    const count = dv.getUint32(state, true);
+    const backingTop = dv.getUint32(state + 4, true);
+    const reservationTop = dv.getUint32(state + 8, true);
+    console.log(`virtual_maps: count=${count} backing_top=${hex(backingTop)} reservation_top=${hex(reservationTop)}`);
+    for (let i = 0; i < count; i++) {
+      const rec = table + i * 16;
+      const guest = dv.getUint32(rec, true);
+      const size = dv.getUint32(rec + 4, true);
+      const backing = dv.getUint32(rec + 8, true);
+      console.log(`  [${i}] guest=${hex(guest)}..${hex((guest + size) >>> 0)} size=${hex(size)} backing=${hex(backing)}`);
+    }
   }
 
   // --peek=ADDR[:LEN],... — dump memory at end. Addrs >= image_base treated as

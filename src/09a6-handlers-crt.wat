@@ -453,6 +453,34 @@
     (call $bsearch_probe)
   )
 
+  ;; IsEqualGUID(rguid1, rguid2) — compare all 16 bytes of the two GUIDs.
+  ;; The Windows headers commonly expose this as an inline/macro, but some
+  ;; Win9x-era runtimes import the helper from OLE32.
+  (func $handle_IsEqualGUID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa0 i32) (local $wa1 i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.eq (local.get $arg0) (local.get $arg1))
+      (then (global.set $eax (i32.const 1)))
+      (else
+        (if (i32.and (local.get $arg0) (local.get $arg1))
+          (then
+            (local.set $wa0 (call $g2w (local.get $arg0)))
+            (local.set $wa1 (call $g2w (local.get $arg1)))
+            (global.set $eax
+              (i32.and
+                (i32.and
+                  (i32.eq (i32.load (local.get $wa0))
+                          (i32.load (local.get $wa1)))
+                  (i32.eq (i32.load offset=4 (local.get $wa0))
+                          (i32.load offset=4 (local.get $wa1))))
+                (i32.and
+                  (i32.eq (i32.load offset=8 (local.get $wa0))
+                          (i32.load offset=8 (local.get $wa1)))
+                  (i32.eq (i32.load offset=12 (local.get $wa0))
+                          (i32.load offset=12 (local.get $wa1))))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; fallback: unknown API — crash with full details
   (func $handle_fallback (param $name_ptr i32) (param $api_id i32)
     (call $host_log_i32 (local.get $api_id))

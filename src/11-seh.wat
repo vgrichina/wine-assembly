@@ -27,6 +27,31 @@
   ;;   [+4]  filterFunc (guest addr, or 0)
   ;;   [+8]  handlerFunc (guest addr — the __except block)
   ;;
+  ;; A Delphi handler may call RtlUnwind before returning
+  ;; ExceptionContinueSearch. That makes FS:[0] the authoritative next frame;
+  ;; the old record's link may have been rewritten by the runtime meanwhile.
+  ;; Handlers that leave the live chain untouched use the ordinary saved link.
+  (global $delphi_seh_head_before (mut i32) (i32.const 0))
+
+  (func $delphi_seh_continue_search
+    (local $live_head i32)
+    ;; We are leaving an unwind/finally handler and returning to the search
+    ;; phase. Do not leak EXCEPTION_UNWINDING/EXIT_UNWIND into the next frame;
+    ;; Delphi catch handlers deliberately ignore records carrying those bits.
+    (if (global.get $delphi_exception_record)
+      (then (call $gs32
+        (i32.add (global.get $delphi_exception_record) (i32.const 4))
+        (i32.and
+          (call $gl32 (i32.add (global.get $delphi_exception_record) (i32.const 4)))
+          (i32.const 0xFFFFFFF9)))))
+    (local.set $live_head (call $gl32 (global.get $fs_base)))
+    (if (i32.and
+          (i32.eq (global.get $delphi_seh_rec) (global.get $delphi_seh_head_before))
+          (i32.ne (local.get $live_head) (global.get $delphi_seh_head_before)))
+      (then (global.set $delphi_seh_rec (local.get $live_head)))
+      (else (global.set $delphi_seh_rec
+        (call $gl32 (global.get $delphi_seh_rec))))))
+
   (func $dispatch_delphi_exception_handler
     (local $handler i32)
     (block $unhandled (loop $walk
@@ -35,6 +60,8 @@
       (local.set $handler (call $gl32 (i32.add (global.get $delphi_seh_rec) (i32.const 4))))
       (if (local.get $handler)
         (then
+          (global.set $delphi_seh_head_before
+            (call $gl32 (global.get $fs_base)))
           ;; Call handler(ExceptionRecord, EstablisherFrame, ContextRecord, DispatcherContext).
           (global.set $esp (i32.sub (global.get $esp) (i32.const 20)))
           (call $gs32 (global.get $esp) (global.get $delphi_seh_thunk))
