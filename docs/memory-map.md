@@ -104,6 +104,10 @@ Important translation classes are:
 **Everything below GUEST_BASE (0x0 - 0x12000)** -- emulator window, control,
 timer, and helper state. The guest *can* reach these by forming pointers below
 its ImageBase. This is not protected by hardware and is only safe by convention.
+The `0x00005200..0x000061FF` range is a 256-entry window-extra table with four
+independent LONG slots per HWND. It backs positive `Get/SetWindowLong` indices
+without aliasing application `GWL_USERDATA`; WinHelp's toolbar relies on
+separate offsets 4, 8, and 12 for width, row, and layout state.
 
 **Guest address space (0x12000 - 0x3C12000)** -- PE sections and large data.
 The main stack, heap, thunks, DLLs, and decoded-thread regions occupy the
@@ -137,9 +141,9 @@ Extended per-DC state occupies `0x07EFC800..0x07EFE7FF` as 256 32-byte
 records for arc direction, brush origin, mapper flags, and text spacing.
 
 The Win16/Win9x bitmap-font backend uses `0x07F0A420..0x07F0A46F` for its
-file-I/O counter and 80-byte surface descriptor. Its default-font VFS path,
-shared install state, and Win9x UI face aliases occupy
-`0x07F0A490..0x07F0A527`, followed by
+file-I/O counter and 80-byte surface descriptor. Its bundled-font VFS paths,
+shared install states, and Win9x UI/fixed face names occupy
+`0x07F0A490..0x07F0A558`, followed by
 `0x07F0A800..0x07F0ABFF` for sixteen 64-byte installed-strike records. The
 `0x07F0AC00..0x07F0CBFF` range is a 4096-WCHAR DrawText presentation buffer
 for prefix removal, tab layout, and ellipsis insertion. The remaining bytes

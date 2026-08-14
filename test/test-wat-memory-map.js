@@ -76,6 +76,7 @@ const requiredRegions = [
   'API_HASH_TABLE',
   'WND_BG_BRUSH_TABLE',
   'WND_RECORDS',
+  'WINDOW_EXTRA_TABLE',
   'CONTROL_TABLE',
   'CONTROL_GEOM',
   'CLASS_RECORDS',

@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const root = path.join(__dirname, '..');
 const viewer = path.join(root, 'test', 'binaries', 'help', 'winhlp32.exe');
@@ -33,6 +34,7 @@ const run = spawnSync(process.execPath, [
   '--no-build',
   '--quiet-api',
   '--quiet-blocks',
+  '--input=80:dump-windows:winhelp',
   `--png=${screenshot}`,
 ], {
   cwd: root,
@@ -46,6 +48,25 @@ const failures = [];
 if (!output.includes('[SetWindowText] "Notepad Help"')) failures.push('viewer never loaded Notepad Help');
 if (!output.includes('[ShowWindow] hwnd=0x10001 cmd=10')) failures.push('main Help window was not shown');
 if (!fs.existsSync(screenshot) || fs.statSync(screenshot).size < 1000) failures.push('rendered screenshot is missing');
+if (!/window:winhelp[^\n]*class="MS_WINTOPIC"[^\n]*size=\d+x([1-9]\d{2,})[^\n]*visible=true/.test(output)) {
+  failures.push('Help topic child is not visible with a usable height');
+}
+if (fs.existsSync(screenshot)) {
+  const png = PNG.sync.read(fs.readFileSync(screenshot));
+  let darkTopicPixels = 0;
+  // The reference fixture opens at a stable Win98 layout. Exclude chrome and
+  // scrollbars so a blank gray topic pane cannot satisfy the image assertion.
+  for (let y = 84; y < Math.min(320, png.height); y++) {
+    for (let x = 126; x < Math.min(440, png.width); x++) {
+      const offset = (y * png.width + x) * 4;
+      if (png.data[offset] < 100 && png.data[offset + 1] < 100 &&
+          png.data[offset + 2] < 100 && png.data[offset + 3] !== 0) {
+        darkTopicPixels++;
+      }
+    }
+  }
+  if (darkTopicPixels < 500) failures.push(`Help topic text was not rendered (${darkTopicPixels} dark pixels)`);
+}
 if (/UNIMPLEMENTED API|R6018|\*\*\* CRASH|FATAL:/.test(output)) failures.push('viewer hit a fatal compatibility path');
 if (run.error && run.error.code !== 'ETIMEDOUT') failures.push(run.error.message);
 

@@ -2104,16 +2104,17 @@
       (then
         (global.set $eax (call $wnd_set_style (local.get $arg0) (local.get $arg2)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    ;; Dialog extra bytes are independent of application GWL_USERDATA.
-    (if (i32.ge_s (local.get $arg1) (i32.const 0))  ;; positive offset = dialog extra bytes
+    ;; Dialog and registered-window extra bytes are independent of application
+    ;; GWL_USERDATA. WinHelp's toolbar uses multiple positive LONG offsets.
+    (if (i32.ge_s (local.get $arg1) (i32.const 0))
       (then
         (if (call $dialog_proc_get (local.get $arg0))
           (then
             (global.set $eax (call $dialog_extra_set
               (local.get $arg0) (local.get $arg1) (local.get $arg2))))
           (else
-            ;; Preserve legacy extra-byte behavior for non-dialog windows.
-            (global.set $eax (call $wnd_set_userdata (local.get $arg0) (local.get $arg2)))))
+            (global.set $eax (call $wnd_extra_set
+              (local.get $arg0) (local.get $arg1) (local.get $arg2)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     ;; Default: return 0 for unhandled indices
     (global.set $eax (i32.const 0))

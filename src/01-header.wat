@@ -903,7 +903,9 @@
   ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
-  ;; 0x00005104  ~7.75KB Free (former API dispatch hash table)
+  ;; 0x00005104  252B    Free
+  ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
+  ;; 0x00006200  3.5KB   Free (former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -1304,6 +1306,11 @@
   ;; global because each emulated Win32 thread is a separate WASM instance.
   (global $SHARED_PROCESS_ID i32 (i32.const 0x00005100))
   (global $SHARED_PROCESS_ID_SIZE i32 (i32.const 0x00000004))
+  ;; Per-window cbWndExtra-compatible storage. USER classes in WinHelp use
+  ;; independent LONG slots at offsets 0, 4, 8, and 12; aliasing these to
+  ;; GWL_USERDATA corrupts toolbar layout state.
+  (global $WINDOW_EXTRA_TABLE i32 (i32.const 0x00005200))
+  (global $WINDOW_EXTRA_TABLE_SIZE i32 (i32.const 0x00001000))
   ;; One-shot override for CreateDialogIndirectParam*: when non-zero,
   ;; $dlg_load reads the DLGTEMPLATE directly from this guest pointer
   ;; instead of resolving an RT_DIALOG resource.

@@ -75,7 +75,8 @@
         (call $wnd_owner_reset_slot (local.get $empty))
         (call $menu_data_reset_slot (local.get $empty))
         (call $dialog_state_reset_slot (local.get $empty))
-        (call $wnd_unicode_reset_slot (local.get $empty))))
+        (call $wnd_unicode_reset_slot (local.get $empty))
+        (call $wnd_extra_reset_slot (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -120,6 +121,7 @@
           (call $menu_data_reset_slot (local.get $i))
           (call $dialog_state_reset_slot (local.get $i))
           (call $wnd_unicode_reset_slot (local.get $i))
+          (call $wnd_extra_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
@@ -198,6 +200,46 @@
     (i32.store offset=12 (local.get $ptr) (local.get $value))
     (local.get $old)
   )
+
+  ;; Registered classes may reserve cbWndExtra bytes addressed by nonnegative
+  ;; Get/SetWindowLong indices. Keep the first four LONG slots independent of
+  ;; GWL_USERDATA; authentic WinHelp uses offsets 4, 8, and 12 concurrently.
+  (func $wnd_extra_addr (param $slot i32) (param $index i32) (result i32)
+    (i32.add (global.get $WINDOW_EXTRA_TABLE)
+      (i32.add (i32.mul (local.get $slot) (i32.const 16)) (local.get $index))))
+
+  (func $wnd_extra_reset_slot (param $slot i32)
+    (local $p i32)
+    (local.set $p (call $wnd_extra_addr (local.get $slot) (i32.const 0)))
+    (i32.store (local.get $p) (i32.const 0))
+    (i32.store offset=4 (local.get $p) (i32.const 0))
+    (i32.store offset=8 (local.get $p) (i32.const 0))
+    (i32.store offset=12 (local.get $p) (i32.const 0)))
+
+  (func $wnd_extra_get (param $hwnd i32) (param $index i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.or
+          (i32.lt_s (local.get $slot) (i32.const 0))
+          (i32.or
+            (i32.gt_u (local.get $index) (i32.const 12))
+            (i32.ne (i32.and (local.get $index) (i32.const 3)) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (i32.load (call $wnd_extra_addr (local.get $slot) (local.get $index))))
+
+  (func $wnd_extra_set (param $hwnd i32) (param $index i32) (param $value i32) (result i32)
+    (local $slot i32) (local $p i32) (local $old i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.or
+          (i32.lt_s (local.get $slot) (i32.const 0))
+          (i32.or
+            (i32.gt_u (local.get $index) (i32.const 12))
+            (i32.ne (i32.and (local.get $index) (i32.const 3)) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $wnd_extra_addr (local.get $slot) (local.get $index)))
+    (local.set $old (i32.load (local.get $p)))
+    (i32.store (local.get $p) (local.get $value))
+    (local.get $old))
 
   ;; Dialog procedures are not window procedures. USER installs DefDlgProc as
   ;; the WNDPROC and keeps the application DLGPROC plus dialog extra bytes in
