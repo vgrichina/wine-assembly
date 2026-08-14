@@ -17216,5 +17216,61 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3666440497
+  },
+  {
+    "id": 2251,
+    "name": "AddFontResourceA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1890756352
+  },
+  {
+    "id": 2252,
+    "name": "EnumFontsA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 651251617
+  },
+  {
+    "id": 2253,
+    "name": "GetCharABCWidthsA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1237940971
+  },
+  {
+    "id": 2254,
+    "name": "GetFontData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2438712894
+  },
+  {
+    "id": 2255,
+    "name": "GetGlyphOutlineA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3100394838
+  },
+  {
+    "id": 2256,
+    "name": "GetTextExtentExPointA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2331778848
+  },
+  {
+    "id": 2257,
+    "name": "GetTextExtentExPointW",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2700886466
+  },
+  {
+    "id": 2258,
+    "name": "RemoveFontResourceA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3342577783
   }
 ]

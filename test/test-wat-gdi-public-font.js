@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+
+'use strict';
+
+const assert = require('assert');
+const { bootRenderHarness } = require('./render-helper');
+
+(async () => {
+  const { exports: wat, memory } = await bootRenderHarness();
+  const bytes = new Uint8Array(memory.buffer);
+  const imageBase = wat.get_image_base() >>> 0;
+  const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
+  let passed = 0;
+
+  const check = (name, fn) => {
+    fn();
+    passed++;
+    console.log(`PASS  ${name}`);
+  };
+  const allocZero = size => {
+    const pointer = wat.guest_alloc(size) >>> 0;
+    bytes.fill(0, wa(pointer), wa(pointer) + size);
+    return pointer;
+  };
+  const createTextDc = () => {
+    const bmi = allocZero(40);
+    wat.guest_write32(bmi, 40);
+    wat.guest_write32(bmi + 4, 64);
+    wat.guest_write32(bmi + 8, -32);
+    wat.guest_write16(bmi + 12, 1);
+    wat.guest_write16(bmi + 14, 32);
+    const bitsOut = allocZero(4);
+    const bitmap = wat.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap && hdc);
+    wat.test_call_SelectObject(hdc, bitmap);
+    return { bitmap, hdc };
+  };
+
+  check('ANSI extent-ex returns progressive widths and exact fit count', () => {
+    const { hdc } = createTextDc();
+    const text = allocZero(4);
+    bytes.set(Buffer.from('Wi!\0', 'latin1'), wa(text));
+    const fit = allocZero(4);
+    const dx = allocZero(12);
+    const size = allocZero(8);
+    assert.strictEqual(wat.test_call_GetTextExtentExPointA(
+      hdc, text, 3, 0x7fffffff, fit, dx, size), 1);
+    const widths = [0, 1, 2].map(index => wat.guest_read32(dx + index * 4));
+    assert(widths[0] > 0 && widths[1] >= widths[0] && widths[2] >= widths[1]);
+    assert.strictEqual(wat.guest_read32(fit), 3);
+    assert.strictEqual(wat.guest_read32(size), widths[2]);
+    assert(wat.guest_read32(size + 4) > 0);
+    assert.strictEqual(wat.test_call_GetTextExtentExPointA(
+      hdc, text, 3, widths[0], fit, 0, size), 1);
+    assert.strictEqual(wat.guest_read32(fit), 1);
+  });
+
+  check('UTF-16 extent-ex shares Canvas measurement and WAT prefix fitting', () => {
+    const { hdc } = createTextDc();
+    const text = allocZero(8);
+    ['W', 'i', '!'].forEach((character, index) =>
+      wat.guest_write16(text + index * 2, character.charCodeAt(0)));
+    const fit = allocZero(4);
+    const dx = allocZero(12);
+    const size = allocZero(8);
+    assert.strictEqual(wat.test_call_GetTextExtentExPointW(
+      hdc, text, 3, 0x7fffffff, fit, dx, size), 1);
+    assert.strictEqual(wat.guest_read32(fit), 3);
+    assert.strictEqual(wat.guest_read32(size), wat.guest_read32(dx + 8));
+    assert(wat.guest_read32(dx) > 0);
+  });
+
+  check('ABC widths expose measured B advances with zero side bearings', () => {
+    const { hdc } = createTextDc();
+    const abc = allocZero(36);
+    assert.strictEqual(wat.test_call_GetCharABCWidthsA(hdc, 65, 67, abc), 1);
+    for (let index = 0; index < 3; index++) {
+      assert.strictEqual(wat.guest_read32(abc + index * 12), 0);
+      assert(wat.guest_read32(abc + index * 12 + 4) > 0);
+      assert.strictEqual(wat.guest_read32(abc + index * 12 + 8), 0);
+    }
+  });
+
+  check('GetGlyphOutlineA provides GGO_METRICS and rejects unavailable bitmaps', () => {
+    const { hdc } = createTextDc();
+    const metrics = allocZero(20);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(hdc, 65, 0, metrics, 0, 0, 0), 0);
+    assert(wat.guest_read32(metrics) > 0);
+    assert(wat.guest_read32(metrics + 4) > 0);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(hdc, 65, 1, metrics, 0, 0, 0) >>> 0,
+      0xffffffff);
+  });
+
+  check('font-resource and unavailable font-table contracts are deterministic', () => {
+    const { hdc } = createTextDc();
+    const path = allocZero(16);
+    bytes.set(Buffer.from('TEST.FON\0', 'latin1'), wa(path));
+    assert.strictEqual(wat.test_call_AddFontResourceA(path), 1);
+    assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
+    assert.strictEqual(wat.test_call_AddFontResourceA(0), 0);
+    assert.strictEqual(wat.test_call_GetFontData(hdc, 0, 0, 0, 0) >>> 0, 0xffffffff);
+  });
+
+  console.log(`\n${passed}/${passed} checks passed`);
+})().catch(error => {
+  console.error(error.stack || error);
+  process.exit(1);
+});

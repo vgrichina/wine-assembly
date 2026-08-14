@@ -949,3 +949,75 @@
         (local.set $ok (i32.const 1))))
     (global.set $eax (local.get $ok))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GetTextExtentExPointA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dx_g i32) (local $size_g i32)
+    (local.set $dx_g (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $size_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $eax (call $gdi_text_extent_ex
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg2) (local.get $arg3)
+      (if (result i32) (local.get $arg4)
+        (then (call $g2w (local.get $arg4))) (else (i32.const 0)))
+      (if (result i32) (local.get $dx_g)
+        (then (call $g2w (local.get $dx_g))) (else (i32.const 0)))
+      (if (result i32) (local.get $size_g)
+        (then (call $g2w (local.get $size_g))) (else (i32.const 0)))
+      (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
+  (func $handle_GetTextExtentExPointW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dx_g i32) (local $size_g i32)
+    (local.set $dx_g (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $size_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $eax (call $gdi_text_extent_ex
+      (local.get $arg0)
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg2) (local.get $arg3)
+      (if (result i32) (local.get $arg4)
+        (then (call $g2w (local.get $arg4))) (else (i32.const 0)))
+      (if (result i32) (local.get $dx_g)
+        (then (call $g2w (local.get $dx_g))) (else (i32.const 0)))
+      (if (result i32) (local.get $size_g)
+        (then (call $g2w (local.get $size_g))) (else (i32.const 0)))
+      (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
+  (func $handle_GetCharABCWidthsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_char_abc_widths_a
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_GetGlyphOutlineA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_glyph_metrics_a
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (if (result i32) (local.get $arg3)
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
+  ;; Canvas exposes no underlying font-file tables. GDI_ERROR is the native
+  ;; contract for a selected font whose requested table is unavailable.
+  (func $handle_GetFontData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const -1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; Dynamic host font-file installation is unavailable in browsers. Accept
+  ;; a named resource for application compatibility; Canvas font fallback and
+  ;; existing CreateFont selection remain deterministic.
+  (func $handle_AddFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_RemoveFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_EnumFontsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $font_enum_dispatch_one_a (local.get $arg2) (local.get $arg3)
+      (call $gl32 (i32.sub (global.get $esp) (i32.const 20)))))

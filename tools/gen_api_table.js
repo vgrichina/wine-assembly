@@ -862,6 +862,15 @@ const extra = [
   { name: 'SetGraphicsMode', nargs: 2 },
   { name: 'SetPixelFormat', nargs: 3 },
   { name: 'SwapBuffers', nargs: 1 },
+  // GDI32 text/font compatibility implemented around the Canvas text policy.
+  { name: 'AddFontResourceA', nargs: 1 },
+  { name: 'EnumFontsA', nargs: 4 },
+  { name: 'GetCharABCWidthsA', nargs: 4 },
+  { name: 'GetFontData', nargs: 5 },
+  { name: 'GetGlyphOutlineA', nargs: 7 },
+  { name: 'GetTextExtentExPointA', nargs: 7 },
+  { name: 'GetTextExtentExPointW', nargs: 7 },
+  { name: 'RemoveFontResourceA', nargs: 1 },
   // OLE32 — structured-storage element enumerator.
   { name: 'IEnumSTATSTG_QueryInterface', nargs: 3 },
   { name: 'IEnumSTATSTG_AddRef', nargs: 1 },

@@ -38,6 +38,10 @@ state, gamma-ramp bytes, and the single software RGBA pixel-format contract
 are likewise WAT-owned. Pixel-format selection is immutable after the first
 successful `SetPixelFormat`, and `SwapBuffers` uses only the raw surface
 presentation boundary.
+`GetTextExtentExPointA/W`, `GetCharABCWidthsA`, and `GetGlyphOutlineA`
+delegate glyph measurement to the allowed Canvas policy while WAT owns prefix
+fitting and Win32 result structures. Font enumeration and resource/table
+fallback contracts are exposed without adding another JavaScript bridge.
 DirectDraw HDCs now address native WAT DIB bytes,
 screen DCs select a persistent WAT bitmap, and JS no longer owns DC handles,
 semantic DC records, HDC target resolution, or Canvas-to-DIB synchronization.
