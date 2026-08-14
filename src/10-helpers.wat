@@ -6612,6 +6612,7 @@
     (local $x i32) (local $y i32) (local $source_y i32) (local $color i32)
     (local $header_size i32) (local $palette_count i32) (local $table i32)
     (local $selected_palette i32) (local $index i32) (local $desired i32)
+    (local $requested_bpp i32) (local $compression i32) (local $masks i32)
     (if (i32.or (i32.gt_u (local.get $color_use) (i32.const 1))
           (i32.eqz (local.get $bmi)))
       (then (return (i32.const 0))))
@@ -6630,10 +6631,43 @@
     (if (i32.eqz (i32.load offset=8 (local.get $bmi)))
       (then (i32.store offset=8 (local.get $bmi) (local.get $height))))
     (i32.store16 offset=12 (local.get $bmi) (i32.const 1))
-    (if (i32.eqz (i32.load16_u offset=14 (local.get $bmi)))
+    (local.set $requested_bpp (i32.load16_u offset=14 (local.get $bmi)))
+    (if (i32.eqz (local.get $requested_bpp))
       (then (i32.store16 offset=14 (local.get $bmi) (local.get $bpp))))
     (local.set $bpp (i32.load16_u offset=14 (local.get $bmi)))
-    (i32.store offset=16 (local.get $bmi) (i32.const 0))
+    (local.set $compression (i32.load offset=16 (local.get $bmi)))
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then
+        ;; A format-query for a non-RGB555 DIB section reports its owned masks.
+        ;; An explicit caller request keeps and validates the supplied triplet.
+        (if (i32.eqz (local.get $requested_bpp))
+          (then
+            (local.set $masks (i32.load offset=32 (local.get $record)))
+            (if (i32.and (i32.eq (i32.load offset=36 (local.get $record)) (i32.const 3))
+                  (call $gdi_color_masks_valid (local.get $masks)))
+              (then
+                (if (i32.or
+                      (i32.ne (i32.load (local.get $masks)) (i32.const 0x7C00))
+                      (i32.or
+                        (i32.ne (i32.load offset=4 (local.get $masks)) (i32.const 0x03E0))
+                        (i32.ne (i32.load offset=8 (local.get $masks)) (i32.const 0x001F))))
+                  (then
+                    (local.set $compression (i32.const 3))
+                    (i32.store (i32.add (local.get $bmi) (i32.const 40))
+                      (i32.load (local.get $masks)))
+                    (i32.store (i32.add (local.get $bmi) (i32.const 44))
+                      (i32.load offset=4 (local.get $masks)))
+                    (i32.store (i32.add (local.get $bmi) (i32.const 48))
+                      (i32.load offset=8 (local.get $masks)))))))))
+        (if (i32.and (i32.ne (local.get $compression) (i32.const 0))
+              (i32.ne (local.get $compression) (i32.const 3)))
+          (then (return (i32.const 0))))
+        (if (i32.and (i32.eq (local.get $compression) (i32.const 3))
+              (i32.eqz (call $gdi_color_masks_valid
+                (i32.add (local.get $bmi) (i32.const 40)))))
+          (then (return (i32.const 0))))
+        (i32.store offset=16 (local.get $bmi) (local.get $compression)))
+      (else (i32.store offset=16 (local.get $bmi) (i32.const 0))))
     (if (i32.le_u (local.get $bpp) (i32.const 8))
       (then
         (local.set $palette_count (i32.load offset=32 (local.get $bmi)))

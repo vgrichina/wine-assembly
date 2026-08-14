@@ -398,6 +398,51 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(copy, 2, 2), 0x0000FF);
   });
 
+  check('GetDIBits and SetDIBits preserve explicit 16-bpp channel masks', () => {
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiGa = wat.guest_alloc(52) >>> 0;
+    const bitsOutGa = wat.guest_alloc(4) >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    for (let offset = 0; offset < 52; offset += 4) wat.guest_write32(bmiGa + offset, 0);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, 2);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 16);
+    wat.guest_write32(bmiGa + 16, 3);
+    wat.guest_write32(bmiGa + 40, 0xF800);
+    wat.guest_write32(bmiGa + 44, 0x07E0);
+    wat.guest_write32(bmiGa + 48, 0x001F);
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, bitsOutGa) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap && hdc);
+    assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap) >>> 0, 0x30007);
+    assert.strictEqual(wat.test_call_SetPixel(hdc, 0, 0, 0x000000FF), 0x000000FF);
+    assert.strictEqual(wat.test_call_SetPixel(hdc, 1, 1, 0x0000FF00), 0x0000FF00);
+
+    const outGa = wat.guest_alloc(8) >>> 0;
+    const outWa = 0x12000 + (outGa - imageBase);
+    const dv = new DataView(memory.buffer);
+    assert.strictEqual(wat.test_gdi_get_dibits(0, bitmap, 0, 2, outWa, bmiWa, 0), 2);
+    assert.deepStrictEqual([0, 2, 4, 6].map(offset =>
+      dv.getUint16(outWa + offset, true)),
+    [0, 0x07E0, 0xF800, 0]);
+
+    const queryGa = wat.guest_alloc(52) >>> 0;
+    const queryWa = 0x12000 + (queryGa - imageBase);
+    wat.guest_write32(queryGa, 40);
+    assert.strictEqual(wat.test_gdi_get_dibits(0, bitmap, 0, 0, 0, queryWa, 0), 2);
+    assert.strictEqual(dv.getUint16(queryWa + 14, true), 16);
+    assert.strictEqual(dv.getUint32(queryWa + 16, true), 3);
+    assert.deepStrictEqual([40, 44, 48].map(offset => dv.getUint32(queryWa + offset, true)),
+      [0xF800, 0x07E0, 0x001F]);
+
+    const copy = makeDib(2, 2);
+    assert.strictEqual(wat.test_gdi_set_dibits(0, copy.bitmap, 0, 2, outWa, bmiWa, 0), 2);
+    assert.strictEqual(packed(copy, 0, 0), 0xFF0000);
+    assert.strictEqual(packed(copy, 1, 1), 0x00FF00);
+  });
+
   check('GetDIBColorTable returns the selected indexed bitmap RGBQUADs', () => {
     const bmiGa = wat.guest_alloc(48) >>> 0;
     const outGa = wat.guest_alloc(4) >>> 0;
