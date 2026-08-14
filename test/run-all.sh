@@ -53,6 +53,7 @@ UNIT=(
   test/test-wat-gdi-default-bitmap-font.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-gdi-public-metafile.js
+  test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js
   test/test-gdi-surface.js
   test/test-wat-memory-map.js

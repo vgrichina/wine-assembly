@@ -1800,10 +1800,12 @@
   (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
 
   ;; ---- Printer compatibility state ----
-  ;; A printer DC is still canvas-backed, but GetDeviceCaps exposes Letter
-  ;; paper at 300 DPI and a 0.25-inch non-printable margin. The job/page state
-  ;; makes GDI print lifecycle ordering observable and rejects invalid nesting.
+  ;; Printer DCs select a WAT-owned 2400x3150 32-bpp printable Letter page.
+  ;; Canvas is only a derived page presentation/text fallback. GetDeviceCaps
+  ;; exposes 300 DPI and a 0.25-inch non-printable margin; lifecycle state
+  ;; rejects invalid document/page nesting.
   (global $printer_hdc       (mut i32) (i32.const 0))
+  (global $printer_bitmap    (mut i32) (i32.const 0))
   (global $printer_doc_state (mut i32) (i32.const 0)) ;; 0=idle, 1=document, 2=page
   (global $printer_page_count (mut i32) (i32.const 0))
   (global $common_dialog_kind (mut i32) (i32.const 0)) ;; 1=page setup, 2=print

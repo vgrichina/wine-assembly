@@ -22,15 +22,9 @@
       "GetWinMetaFileBits and SetWinMetaFileBits emit valid empty target streams rather than converting drawing records"
     ],
     "printer": [
-      "AbortDoc",
-      "EndDoc",
-      "EndPage",
-      "Escape",
-      "ExtEscape",
-      "SetAbortProc",
-      "StartDocA",
-      "StartDocW",
-      "StartPage"
+      "CreateDCA/W and PrintDlg allocate a WAT-owned 2400x3150 32-bpp page; StartDoc/StartPage/EndPage/EndDoc/AbortDoc enforce job ordering and each page begins white",
+      "Browser spool/export and persistent storage for every completed page are not implemented; the canonical bitmap retains the current page",
+      "SetAbortProc accepts but does not invoke the application callback; Escape and ExtEscape expose only the compatibility queries used by tracked applications"
     ],
     "path": [
       "SelectClipPath consumes and combines canonical closed-path regions; general BeginPath/EndPath geometry recording is not exposed by the corpus API table"

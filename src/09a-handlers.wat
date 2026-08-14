@@ -5728,9 +5728,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 372: CreateDCW — wide printer/display DC follows the canonical screen-DC path.
+  ;; 372: CreateDCW — wide printer/display DC owns a canonical page surface.
   (func $handle_CreateDCW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $printer_hdc (call $host_alloc_screen_dc))
+    (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -8994,7 +8994,9 @@
   )
 
   (func $handle_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ne (global.get $printer_doc_state) (i32.const 0))
+    (if (i32.or
+          (i32.ne (local.get $arg0) (global.get $printer_hdc))
+          (i32.ne (global.get $printer_doc_state) (i32.const 0)))
       (then (global.set $eax (i32.const -1)))
       (else
         (global.set $printer_doc_state (i32.const 1))
@@ -12292,7 +12294,7 @@
     (call $memcpy (i32.add (call $g2w (local.get $devnames)) (i32.const 16)) (i32.const 0x11229) (i32.const 12)) ;; Web Printer
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
-    (global.set $printer_hdc (call $host_alloc_screen_dc))
+    (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 16)) (global.get $printer_hdc))
     (call $gs16 (i32.add (local.get $arg0) (i32.const 24)) (i32.const 1))
     (call $gs16 (i32.add (local.get $arg0) (i32.const 26)) (i32.const 1))

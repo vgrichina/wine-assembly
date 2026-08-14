@@ -34,8 +34,9 @@
   (func $handle_DeleteDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.eq (local.get $arg0) (global.get $printer_hdc))
       (then
-        (global.set $printer_hdc (i32.const 0))
-        (global.set $printer_doc_state (i32.const 0))))
+        (global.set $eax (call $gdi_printer_dc_release (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (global.set $eax (call $gdi_dc_delete (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -532,10 +533,9 @@
   )
 
   ;; CreateDCA(lpszDriver, lpszDevice, lpszOutput, lpInitData) — 4 args stdcall.
-  ;; Allocate a real host DC record so native RichEdit can draw preview/print
-  ;; bands through the normal canvas GDI path, then tag it for printer caps.
+  ;; Allocate a WAT-owned printable Letter page and tag it for printer caps.
   (func $handle_CreateDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $printer_hdc (call $host_alloc_screen_dc))
+    (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -698,7 +698,9 @@
   )
 
   (func $handle_StartDocA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ne (global.get $printer_doc_state) (i32.const 0))
+    (if (i32.or
+          (i32.ne (local.get $arg0) (global.get $printer_hdc))
+          (i32.ne (global.get $printer_doc_state) (i32.const 0)))
       (then (global.set $eax (i32.const -1)))
       (else
         (global.set $printer_doc_state (i32.const 1))
@@ -708,17 +710,24 @@
   )
 
   (func $handle_StartPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ne (global.get $printer_doc_state) (i32.const 1))
+    (if (i32.or
+          (i32.ne (local.get $arg0) (global.get $printer_hdc))
+          (i32.ne (global.get $printer_doc_state) (i32.const 1)))
       (then (global.set $eax (i32.const -1)))
       (else
-        (global.set $printer_doc_state (i32.const 2))
-        (global.set $printer_page_count (i32.add (global.get $printer_page_count) (i32.const 1)))
-        (global.set $eax (i32.const 1))))
+        (if (i32.eqz (call $gdi_printer_page_clear (local.get $arg0)))
+          (then (global.set $eax (i32.const -1)))
+          (else
+            (global.set $printer_doc_state (i32.const 2))
+            (global.set $printer_page_count (i32.add (global.get $printer_page_count) (i32.const 1)))
+            (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   (func $handle_EndPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ne (global.get $printer_doc_state) (i32.const 2))
+    (if (i32.or
+          (i32.ne (local.get $arg0) (global.get $printer_hdc))
+          (i32.ne (global.get $printer_doc_state) (i32.const 2)))
       (then (global.set $eax (i32.const -1)))
       (else
         (global.set $printer_doc_state (i32.const 1))
@@ -750,7 +759,9 @@
   )
 
   (func $handle_EndDoc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (global.get $printer_doc_state) (i32.const 1))
+    (if (i32.and
+          (i32.eq (local.get $arg0) (global.get $printer_hdc))
+          (i32.eq (global.get $printer_doc_state) (i32.const 1)))
       (then
         (global.set $printer_doc_state (i32.const 0))
         (global.set $eax (i32.const 1)))
@@ -759,8 +770,11 @@
   )
 
   (func $handle_AbortDoc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $printer_doc_state (i32.const 0))
-    (global.set $eax (i32.const 1))
+    (if (i32.eq (local.get $arg0) (global.get $printer_hdc))
+      (then
+        (global.set $printer_doc_state (i32.const 0))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

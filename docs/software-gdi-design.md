@@ -53,6 +53,14 @@ complete hot DC record, auxiliary text/brush/arc state, color adjustment, and
 selected logical palette. Absolute and relative restore indices discard the
 restored snapshot and every newer snapshot.
 
+Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
+print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the
+300-DPI printable area of Letter paper. Each successful `StartPage` clears the
+canonical page to white; geometry, blits, bitmap-font text, and Canvas fallback
+text then commit to those same bytes. Job ordering and teardown are WAT-owned.
+Persisting every completed page and handing a spool/export stream to the
+browser remain printer-integration work rather than GDI raster ownership work.
+
 `CreateCompatibleBitmap` DDBs now use private 32-bpp, top-down canonical storage
 in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
 a derived cache: WAT raster writes upload bounded rectangles. The retained
