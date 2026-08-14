@@ -1044,10 +1044,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_GetGlyphOutlineA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_glyph_metrics_a
+    (local $buffer_g i32) (local $mat2_g i32) (local $result i32)
+    (local.set $buffer_g (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $mat2_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $result (call $gdi_bitmap_glyph_outline_a
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+      (local.get $arg4)
+      (if (result i32) (local.get $buffer_g)
+        (then (call $g2w (local.get $buffer_g))) (else (i32.const 0)))
+      (if (result i32) (local.get $mat2_g)
+        (then (call $g2w (local.get $mat2_g))) (else (i32.const 0)))))
+    (if (i32.eq (local.get $result) (i32.const -2))
+      (then (local.set $result (call $gdi_glyph_metrics_a
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (if (result i32) (local.get $arg3)
+          (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))))
+    (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   ;; Canvas exposes no underlying font-file tables. GDI_ERROR is the native

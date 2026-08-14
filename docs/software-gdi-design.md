@@ -587,6 +587,11 @@ Common Win9x UI aliases use deterministic MS Sans Serif. Explicit document
 faces such as Arial remain on the scalable Canvas fallback rather than being
 silently substituted.
 
+`GetGlyphOutlineA` derives exact metrics and DWORD-aligned monochrome
+`GGO_BITMAP` payloads from selected FNT strikes without binding Canvas.
+Scalable faces retain the metrics-only Canvas fallback; affine transforms and
+native/Bezier/gray outline formats remain explicit future font-provider work.
+
 The fixed stock objects therefore retain distinct native roles instead of
 sharing an outline-derived substitute: Courier 8x13 for `ANSI_FIXED_FONT`,
 ANAKRON-derived Terminal 8x12 for `OEM_FIXED_FONT`, and Wine Fixedsys 8x15 for

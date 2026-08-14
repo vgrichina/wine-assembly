@@ -6,7 +6,19 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const { exports: wat, memory, hostCtx } = await bootRenderHarness();
+  const canvasCalls = {
+    bind: 0, textOut: 0, extTextOut: 0, drawText: 0, measure: 0, metrics: 0,
+  };
+  const { exports: wat, memory, hostCtx } = await bootRenderHarness({
+    extraHostOverrides: {
+      gdi_text_bind: () => { canvasCalls.bind++; return 1; },
+      gdi_text_out: () => { canvasCalls.textOut++; return 1; },
+      gdi_ext_text_out: () => { canvasCalls.extTextOut++; return 1; },
+      gdi_draw_text: () => { canvasCalls.drawText++; return 8; },
+      measure_text: (_hdc, _text, count) => { canvasCalls.measure++; return count * 8; },
+      get_text_metrics: () => { canvasCalls.metrics++; return 8 | (8 << 16); },
+    },
+  });
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
@@ -111,7 +123,7 @@ const { bootRenderHarness } = require('./render-helper');
     fnt.writeUInt16LE(126, 120);
     fnt.writeUInt16LE(0, 122); // sentinel entry
     fnt.writeUInt16LE(134, 124);
-    fnt.fill(0xff, 126, 134);
+    fnt.fill(0x3c, 126, 134); // Four centered pixels on every row.
     fnt.write('UnitFnt\0', 134, 'latin1');
     hostCtx.vfs.files.set('c:\\test.fon', { data: new Uint8Array(fnt), attrs: 0x20 });
 
@@ -130,6 +142,7 @@ const { bootRenderHarness } = require('./render-helper');
     wat.test_call_SelectObject(hdc, font);
     assert.strictEqual(wat.test_gdi_bitmap_font_selected(hdc),
       wat.test_gdi_bitmap_font_bound(font));
+    Object.keys(canvasCalls).forEach(key => { canvasCalls[key] = 0; });
     const text = allocZero(2);
     bytes[wa(text)] = 65;
     const size = allocZero(8);
@@ -138,13 +151,51 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.guest_read32(size), 8);
     assert.strictEqual(wat.guest_read32(size + 4), 8);
 
-    // Seed the canonical top-down DIB with a non-GDI byte pattern. An all-set
-    // FNT glyph must overwrite its 8x8 cell through WAT's raster writer.
+    const metrics = allocZero(20);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 65, 0, metrics, 0, 0, 0), 0);
+    assert.deepStrictEqual([
+      wat.guest_read32(metrics),
+      wat.guest_read32(metrics + 4),
+      wat.guest_read32(metrics + 8),
+      wat.guest_read32(metrics + 12),
+      wat.guest_read32(metrics + 16) & 0xffff,
+      wat.guest_read32(metrics + 16) >>> 16,
+    ], [4, 8, 2, 8, 8, 0]);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 65, 1, metrics, 0, 0, 0), 32);
+    const glyphBitmap = allocZero(36);
+    bytes.fill(0xa5, wa(glyphBitmap), wa(glyphBitmap) + 36);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 65, 1, metrics, 31, glyphBitmap, 0) >>> 0, 0xffffffff);
+    assert.deepStrictEqual([...bytes.slice(wa(glyphBitmap), wa(glyphBitmap) + 36)],
+      Array(36).fill(0xa5));
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 65, 1, metrics, 32, glyphBitmap, 0), 32);
+    assert.deepStrictEqual([...bytes.slice(wa(glyphBitmap), wa(glyphBitmap) + 32)],
+      Array.from({ length: 8 }, () => [0xf0, 0, 0, 0]).flat());
+    assert.deepStrictEqual([...bytes.slice(wa(glyphBitmap) + 32, wa(glyphBitmap) + 36)],
+      Array(4).fill(0xa5));
+    const identity = allocZero(16);
+    wat.guest_write32(identity, 0x00010000);
+    wat.guest_write32(identity + 12, 0x00010000);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 65, 0x101, metrics, 32, glyphBitmap, identity), 32);
+    wat.guest_write32(identity + 4, 0x00008000);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 65, 1, metrics, 32, glyphBitmap, identity) >>> 0, 0xffffffff);
+
+    // Seed the canonical top-down DIB with a non-GDI byte pattern. The FNT
+    // glyph must write its opaque white cell and centered black foreground.
     for (let offset = 0; offset < 64 * 32 * 4; offset += 4) {
       wat.guest_write32(dibBits + offset, 0x7f7f7f7f);
     }
     assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 3, text, 1), 1);
-    assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 2) * 4), 0);
+    assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 2) * 4), 0x00ffffff);
+    assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 4) * 4), 0);
+    assert.deepStrictEqual(canvasCalls, {
+      bind: 0, textOut: 0, extTextOut: 0, drawText: 0, measure: 0, metrics: 0,
+    }, 'selected user FNT metrics, glyph extraction, and rasterization must stay in WAT');
     assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
     assert.strictEqual(wat.test_gdi_bitmap_font_count(), 0);
     assert.strictEqual(wat.test_call_AddFontResourceA(0), 0);

@@ -592,6 +592,159 @@
       (i64.extend_i32_u (i32.load offset=20 (local.get $strike)))))
     (select (local.get $width) (i32.const 1) (i32.gt_s (local.get $width) (i32.const 0))))
 
+  (func $gdi_bitmap_font_glyph_pixel (param $strike i32) (param $glyph_offset i32)
+        (param $native_width i32) (param $native_height i32)
+        (param $width i32) (param $height i32) (param $x i32) (param $y i32)
+        (result i32)
+    (local $sx i32) (local $sy i32)
+    (if (i32.or (i32.ge_u (local.get $x) (local.get $width))
+          (i32.ge_u (local.get $y) (local.get $height)))
+      (then (return (i32.const 0))))
+    (local.set $sx (i32.div_u
+      (i32.mul (local.get $x) (local.get $native_width)) (local.get $width)))
+    (local.set $sy (i32.div_u
+      (i32.mul (local.get $y) (local.get $native_height)) (local.get $height)))
+    (i32.ne (i32.and
+      (i32.load8_u (i32.add
+        (i32.add (i32.load offset=8 (local.get $strike)) (local.get $glyph_offset))
+        (i32.add (i32.mul (i32.shr_u (local.get $sx) (i32.const 3))
+                    (local.get $native_height))
+          (local.get $sy))))
+      (i32.shl (i32.const 1)
+        (i32.sub (i32.const 7) (i32.and (local.get $sx) (i32.const 7)))))
+      (i32.const 0)))
+
+  ;; Return -2 when no bitmap strike is selected so the public handler can
+  ;; retain Canvas only as the scalable-font fallback. Selected FNT strikes
+  ;; implement GGO_METRICS and DWORD-aligned monochrome GGO_BITMAP in WAT.
+  (func $gdi_bitmap_glyph_outline_a (param $hdc i32) (param $character i32)
+        (param $format i32) (param $metrics_out i32) (param $buffer_size i32)
+        (param $buffer i32) (param $mat2 i32) (result i32)
+    (local $strike i32) (local $glyph i32) (local $glyph_offset i32)
+    (local $base_format i32) (local $native_width i32) (local $native_height i32)
+    (local $width i32) (local $height i32) (local $ascent i32)
+    (local $x i32) (local $y i32) (local $min_x i32) (local $min_y i32)
+    (local $max_x i32) (local $max_y i32) (local $black_width i32)
+    (local $black_height i32) (local $stride i32) (local $required i32)
+    (local $output_x i32) (local $output_y i32) (local $byte i32)
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (i32.eqz (local.get $strike)) (then (return (i32.const -2))))
+    (if (i32.eqz (local.get $metrics_out)) (then (return (i32.const -1))))
+    (local.set $base_format (i32.and (local.get $format) (i32.const 0xFF)))
+    ;; GGO_UNHINTED has no effect on an already-rasterized bitmap strike.
+    (if (i32.or (i32.gt_u (local.get $base_format) (i32.const 1))
+          (i32.ne (i32.and (local.get $format) (i32.const -257))
+            (local.get $base_format)))
+      (then (return (i32.const -1))))
+    ;; Null historically behaved as identity in this emulator. Honor a supplied
+    ;; identity MAT2, but reject transforms until the bitmap transformer exists.
+    (if (local.get $mat2)
+      (then
+        (if (i32.or
+              (i32.ne (i32.load (local.get $mat2)) (i32.const 0x00010000))
+              (i32.or
+                (i32.ne (i32.load offset=4 (local.get $mat2)) (i32.const 0))
+                (i32.or
+                  (i32.ne (i32.load offset=8 (local.get $mat2)) (i32.const 0))
+                  (i32.ne (i32.load offset=12 (local.get $mat2))
+                    (i32.const 0x00010000)))))
+          (then (return (i32.const -1))))))
+    (local.set $glyph (call $gdi_bitmap_font_glyph
+      (local.get $strike) (i32.and (local.get $character) (i32.const 0xFF))))
+    (local.set $native_width (i32.load16_u (local.get $glyph)))
+    (local.set $native_height (i32.load offset=20 (local.get $strike)))
+    (local.set $height (call $gdi_bitmap_font_height
+      (local.get $hdc) (local.get $strike)))
+    (local.set $width (call $gdi_bitmap_font_scaled_width
+      (local.get $strike) (local.get $glyph) (local.get $height)))
+    (if (i32.or (i32.gt_u (local.get $width) (i32.const 4096))
+          (i32.gt_u (local.get $height) (i32.const 4096)))
+      (then (return (i32.const -1))))
+    (local.set $glyph_offset (select (i32.load16_u offset=2 (local.get $glyph))
+      (i32.load offset=2 (local.get $glyph))
+      (i32.eq (i32.load offset=16 (local.get $strike)) (i32.const 0x0200))))
+    (local.set $min_x (local.get $width))
+    (local.set $min_y (local.get $height))
+    (local.set $max_x (i32.const -1))
+    (local.set $max_y (i32.const -1))
+    (block $scan_done (loop $scan_rows
+      (br_if $scan_done (i32.ge_u (local.get $y) (local.get $height)))
+      (local.set $x (i32.const 0))
+      (block $row_done (loop $scan_row
+        (br_if $row_done (i32.ge_u (local.get $x) (local.get $width)))
+        (if (call $gdi_bitmap_font_glyph_pixel
+              (local.get $strike) (local.get $glyph_offset)
+              (local.get $native_width) (local.get $native_height)
+              (local.get $width) (local.get $height) (local.get $x) (local.get $y))
+          (then
+            (if (i32.lt_u (local.get $x) (local.get $min_x))
+              (then (local.set $min_x (local.get $x))))
+            (if (i32.lt_u (local.get $y) (local.get $min_y))
+              (then (local.set $min_y (local.get $y))))
+            (if (i32.gt_s (local.get $x) (local.get $max_x))
+              (then (local.set $max_x (local.get $x))))
+            (if (i32.gt_s (local.get $y) (local.get $max_y))
+              (then (local.set $max_y (local.get $y))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $scan_row)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $scan_rows)))
+    (if (i32.ge_s (local.get $max_x) (i32.const 0))
+      (then
+        (local.set $black_width
+          (i32.add (i32.sub (local.get $max_x) (local.get $min_x)) (i32.const 1)))
+        (local.set $black_height
+          (i32.add (i32.sub (local.get $max_y) (local.get $min_y)) (i32.const 1)))
+        (local.set $ascent (call $gdi_round_ratio
+          (i64.mul (i64.extend_i32_u (i32.load offset=24 (local.get $strike)))
+            (i64.extend_i32_u (local.get $height)))
+          (i64.extend_i32_u (local.get $native_height))))))
+    (i32.store (local.get $metrics_out) (local.get $black_width))
+    (i32.store offset=4 (local.get $metrics_out) (local.get $black_height))
+    (i32.store offset=8 (local.get $metrics_out)
+      (select (local.get $min_x) (i32.const 0) (i32.gt_s (local.get $black_width) (i32.const 0))))
+    (i32.store offset=12 (local.get $metrics_out)
+      (select (i32.sub (local.get $ascent) (local.get $min_y)) (i32.const 0)
+        (i32.gt_s (local.get $black_height) (i32.const 0))))
+    (i32.store16 offset=16 (local.get $metrics_out) (local.get $width))
+    (i32.store16 offset=18 (local.get $metrics_out) (i32.const 0))
+    (if (i32.eqz (local.get $base_format)) (then (return (i32.const 0))))
+    (local.set $stride (i32.and
+      (i32.add (local.get $black_width) (i32.const 31)) (i32.const -32)))
+    (local.set $stride (i32.shr_u (local.get $stride) (i32.const 3)))
+    (local.set $required (i32.mul (local.get $stride) (local.get $black_height)))
+    (if (i32.or (i32.eqz (local.get $required))
+          (i32.or (i32.eqz (local.get $buffer_size)) (i32.eqz (local.get $buffer))))
+      (then (return (local.get $required))))
+    (if (i32.lt_u (local.get $buffer_size) (local.get $required))
+      (then (return (i32.const -1))))
+    (memory.fill (local.get $buffer) (i32.const 0) (local.get $required))
+    (local.set $y (local.get $min_y))
+    (block $write_done (loop $write_rows
+      (br_if $write_done (i32.gt_s (local.get $y) (local.get $max_y)))
+      (local.set $x (local.get $min_x))
+      (block $write_row_done (loop $write_row
+        (br_if $write_row_done (i32.gt_s (local.get $x) (local.get $max_x)))
+        (if (call $gdi_bitmap_font_glyph_pixel
+              (local.get $strike) (local.get $glyph_offset)
+              (local.get $native_width) (local.get $native_height)
+              (local.get $width) (local.get $height) (local.get $x) (local.get $y))
+          (then
+            (local.set $output_x (i32.sub (local.get $x) (local.get $min_x)))
+            (local.set $output_y (i32.sub (local.get $y) (local.get $min_y)))
+            (local.set $byte (i32.add (local.get $buffer)
+              (i32.add (i32.mul (local.get $output_y) (local.get $stride))
+                (i32.shr_u (local.get $output_x) (i32.const 3)))))
+            (i32.store8 (local.get $byte)
+              (i32.or (i32.load8_u (local.get $byte))
+                (i32.shr_u (i32.const 0x80)
+                  (i32.and (local.get $output_x) (i32.const 7)))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $write_row)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $write_rows)))
+    (local.get $required))
+
   (func $gdi_bitmap_text_measure (param $hdc i32) (param $text i32)
         (param $count i32) (param $wide i32) (result i32)
     (local $strike i32) (local $height i32) (local $i i32) (local $code i32) (local $width i32)
