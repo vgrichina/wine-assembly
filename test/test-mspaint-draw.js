@@ -38,35 +38,37 @@ for (const p of [pngBefore, pngAfter]) { try { fs.unlinkSync(p); } catch (_) {} 
 // icon sits at screen (39, 146) — Tools palette button 0x10010, menu=636
 // (the pencil). We click it first so the subsequent drag lays down actual
 // pencil pixels instead of a marching-ants selection marquee.
-const toolClickBatch = 50;
+const toolClickBatch = 20;
 const PENCIL_X = 39, PENCIL_Y = 146;
 const drag = [];
 const STEPS = 12;
 const x0 = 140, y0 = 170, x1 = 240, y1 = 260;
-drag.push(`60:mousedown:${x0}:${y0}`);
+const dragBatch = 23;
+drag.push(`${dragBatch}:mousedown:${x0}:${y0}`);
 for (let i = 1; i < STEPS; i++) {
   const t = i / STEPS;
   const x = Math.round(x0 + (x1 - x0) * t);
   const y = Math.round(y0 + (y1 - y0) * t);
-  drag.push(`${60 + i}:mousemove:${x}:${y}`);
+  drag.push(`${dragBatch + i}:mousemove:${x}:${y}`);
 }
-drag.push(`${60 + STEPS}:mouseup:${x1}:${y1}`);
+drag.push(`${dragBatch + STEPS}:mouseup:${x1}:${y1}`);
 
 const inputSpec = [
-  `40:png:${pngBefore}`,
+  `18:png:${pngBefore}`,
   `${toolClickBatch}:mousedown:${PENCIL_X}:${PENCIL_Y}`,
   `${toolClickBatch + 1}:mouseup:${PENCIL_X}:${PENCIL_Y}`,
   ...drag,
-  `120:png:${pngAfter}`,
+  `42:png:${pngAfter}`,
+  '43:stop',
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=140 --batch-size=50000 --no-close --quiet-api --quiet-blocks`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=47 --batch-size=50000 --no-close --quiet-api --quiet-blocks`;
 console.log('$', cmd);
 
 let out = '';
 let exitCode = 0;
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  out = execSync(cmd, { encoding: 'utf-8', timeout: 15000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
   exitCode = e.status ?? 1;
