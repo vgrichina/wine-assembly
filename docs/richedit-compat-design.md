@@ -60,15 +60,16 @@ success returns: independently owned host application/object names, validated
 content extents with persistent dirty tracking, caller-owned user-type text,
 static misc flags, close state, running state, nested run locks,
 last-unlock-close, and contained state. The expanded focused suite passes
-52/52. Client-site and advisory ownership still need the guest COM callback
-bridge because RichEdit supplies DLL-private interfaces.
+52/52. DLL-private client-site ownership now uses the guest COM callback
+bridge; advisory sinks and general data objects remain the next bridge users.
 
-The local half of client-site fidelity is now covered by a synthetic
-in-process fixture. Assignment, repeated assignment, retrieval, replacement,
-dirty-close SaveObject, and final destruction have explicit reference-count
-assertions; the focused suite passes 58/58. This deliberately does not call a
-DLL-private RichEdit vtable synchronously from a WAT API frame—the continuation
-bridge remains required for that half and for native advisory sinks.
+Client-site fidelity is covered for both local fixtures and DLL-private guest
+interfaces. Assignment, repeated assignment, retrieval, replacement,
+dirty-close `SaveObject`, and final destruction have explicit reference-count
+assertions. Guest AddRef/Release/SaveObject methods execute as x86 callbacks
+through a stack-resident continuation context, so the original WAT API frame
+resumes without synchronous re-entry. The local suite remains 65/65 and the
+guest callback suite passes 10/10.
 
 Synthetic local advisory sinks now cover the corresponding collection
 contract: monotonic connections, independently retained sinks, targeted and

@@ -707,9 +707,15 @@
         (call $d3d_enum_tex_continue)
         (return)))
 
-    ;; EnumFontFamilies callback returned — return the callback's result.
+    ;; Generic one-callback continuation. OLE guest COM calls leave a typed
+    ;; stack context for their multi-stage API-frame resume; locale/font
+    ;; enumerators retain the original saved-return-address form.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0011))
       (then
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x43454C4F))
+          (then
+            (call $ole_guest_callback_continue)
+            (return)))
         (global.set $eip (call $gl32 (global.get $esp)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
         (return)))

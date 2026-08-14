@@ -438,9 +438,10 @@ cursor semantics. The expanded focused suite passes 38/38.
   dirty-close `SaveObject` calls for the synthetic in-process site fixture.
 - [x] Complete multiple advisory connections, targeted `Unadvise`, and stable
   `EnumAdvise`/clone ownership for synthetic in-process sinks.
-- Extend client-site and advisory ownership to DLL-private interfaces after the
-  guest COM callback bridge can safely invoke AddRef/Release/SaveObject and
-  sink notifications.
+- [x] Extend client-site ownership to DLL-private interfaces through suspended
+  guest AddRef/Release/SaveObject callbacks.
+- Extend advisory ownership and sink notifications to DLL-private interfaces
+  through the same guest COM callback bridge.
 - [x] Implement clipboard `InitFromData`/`GetClipboardData` through the
   generalized P3 object rather than DIB-only branches for runtime-owned
   `IDataObject` instances.
@@ -465,19 +466,21 @@ queries, marks successful extent changes dirty, returns caller-owned `Static
 Object` user-type text, and advertises `OLEMISC_RECOMPOSEONRESIZE |
 OLEMISC_STATIC`. It records validated close options, maintains running and
 nested run-lock state, honors last-unlock-close, and tracks whether the object
-is contained. Owned host strings are released with the handler. Close requests
-do not yet invoke a DLL-private client site's `SaveObject`; client-site and
-advisory ownership remain explicitly deferred to the callback bridge. The
-focused static-handler suite passes 52/52.
+is contained. Owned host strings are released with the handler. The later guest
+client-site result below completes DLL-private `SaveObject` and ownership;
+advisory ownership remains the next callback-bridge slice. The focused
+static-handler suite passes 52/52 at this milestone.
 
-2026-08-13 local-client-site result: a synthetic in-process site fixture now
-records AddRef, Release, and SaveObject activity. `SetClientSite` retains and
-atomically replaces local sites, repeated assignment is neutral,
-`GetClientSite` returns a separately referenced interface, handler destruction
-releases its ownership, and SAVEIFDIRTY/PROMPTSAVE close clears dirty state
-only after the local SaveObject callback succeeds. Native RichEdit's
-DLL-private site remains borrowed pending continuation-based guest callbacks;
-its existing compatibility path is unchanged. The focused suite passes 58/58.
+2026-08-13 guest-client-site result: a stack-resident continuation context now
+suspends an OLE API frame, invokes DLL-private guest x86 vtable methods, and
+resumes the exact caller EIP/ESP after stdcall cleanup. `SetClientSite` AddRefs
+before publishing and releases the replaced site, repeated assignment is
+neutral, `GetClientSite` returns an independently AddRefed interface, and final
+handler destruction releases its ownership before freeing WAT storage.
+SAVEIFDIRTY/PROMPTSAVE `Close` propagates a failing guest `SaveObject` HRESULT
+without clearing dirty state and clears it after success. The real-vtable guest
+callback suite passes 10/10; the existing local static-handler suite remains
+65/65, and native WordPad static-object Copy/Cut/Paste remains 13/13.
 
 2026-08-13 local-advisory result: `IOleObject::Advise` now assigns monotonic
 connection IDs and retains each synthetic local sink independently.
