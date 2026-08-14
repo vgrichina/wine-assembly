@@ -8308,10 +8308,10 @@
   ;; Helper: open the dropdown (show inner listbox, fire CBN_DROPDOWN, set
   ;; capture so outside clicks dismiss). Idempotent.
   ;;
-  ;; CBS_DROPDOWNLIST (variant=3): the listbox is migrated under the
-  ;; pre-allocated WS_POPUP shell (offset=24) and the shell is positioned
-  ;; in screen coords directly below the combo's field, then shown via
-  ;; host_move_window(SWP_SHOWWINDOW). This lets the dropdown extend past
+  ;; CBS_DROPDOWN/CBS_DROPDOWNLIST (variants 2/3): the listbox is migrated
+  ;; under the pre-allocated WS_POPUP shell (offset=24) and the shell is
+  ;; positioned in screen coords directly below the combo's field, then shown
+  ;; via host_move_window(SWP_SHOWWINDOW). This lets the dropdown extend past
   ;; the parent dialog's clip rect — a real top-level window.
   (func $combobox_open_dropdown (param $hwnd i32)
     (local $state i32) (local $sw i32) (local $lb i32) (local $style i32) (local $parent i32)
@@ -8329,10 +8329,10 @@
     (local.set $lb (i32.load offset=20 (local.get $sw)))
     (if (i32.eqz (local.get $lb)) (then (return)))
     (local.set $popup (i32.load offset=24 (local.get $sw)))
-    ;; Variant=3 with a pre-allocated popup: migrate listbox under popup,
+    ;; Dropdown variants with a pre-allocated popup: migrate listbox under popup,
     ;; position popup at combo screen pos + (0, FIELD_H), show it.
     (if (i32.and
-          (i32.eq (i32.load offset=36 (local.get $sw)) (i32.const 3))
+          (i32.ne (i32.load offset=36 (local.get $sw)) (i32.const 1))
           (i32.ne (local.get $popup) (i32.const 0)))
       (then
         (local.set $lb_wh (call $ctrl_get_wh_packed (local.get $lb)))
@@ -8351,12 +8351,17 @@
           (i32.load          (local.get $rect))           ;; left
           (i32.add (i32.load offset=4 (local.get $rect)) (i32.const 21)) ;; top + FIELD_H
           (local.get $lb_w) (local.get $lb_h)
-          (i32.const 0x40))))                             ;; SWP_SHOWWINDOW
+          (i32.const 0x40))                               ;; SWP_SHOWWINDOW
+        ;; host_move_window updates renderer geometry/visibility, while USER
+        ;; effective-visibility checks read the WAT style. Keep both sides in
+        ;; sync so the reparented listbox is eligible for WM_PAINT.
+        (drop (call $wnd_set_style (local.get $popup)
+          (i32.or (call $wnd_get_style (local.get $popup)) (i32.const 0x10000000))))))
     (local.set $style (call $wnd_get_style (local.get $lb)))
     (drop (call $wnd_set_style (local.get $lb) (i32.or (local.get $style) (i32.const 0x10000000))))
     (i32.store offset=32 (local.get $sw) (i32.const 1))
     (global.set $combo_open_hwnd (local.get $hwnd))
-    ;; Capture: prefer the popup (variant=3) so DOWN+UP both flow through
+    ;; Capture: prefer the popup so DOWN+UP both flow through
     ;; $combo_popup_wndproc, which forwards inside-rect events to the inner
     ;; listbox. Without this, UP gets routed via capture to the combo and
     ;; misses the listbox entirely. Falls back to combo for variants without
@@ -8386,11 +8391,11 @@
     (if (i32.eqz (i32.load offset=32 (local.get $sw))) (then (return)))  ;; not dropped
     (local.set $lb (i32.load offset=20 (local.get $sw)))
     (local.set $popup (i32.load offset=24 (local.get $sw)))
-    ;; Variant=3 with popup: reparent listbox back under combo, restore its
+    ;; Dropdown variant with popup: reparent listbox back under combo, restore its
     ;; original geom (y=FIELD_H), and hide popup via SWP_HIDEWINDOW. Symmetric
     ;; with $combobox_open_dropdown.
     (if (i32.and
-          (i32.eq (i32.load offset=36 (local.get $sw)) (i32.const 3))
+          (i32.ne (i32.load offset=36 (local.get $sw)) (i32.const 1))
           (i32.and (i32.ne (local.get $popup) (i32.const 0))
                    (i32.ne (local.get $lb) (i32.const 0))))
       (then
@@ -8403,7 +8408,9 @@
           (i32.const 0) (i32.const 21) (local.get $lb_w) (local.get $lb_h))
         (call $host_move_window (local.get $popup)
           (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0x83))))                             ;; SWP_NOMOVE|SWP_NOSIZE|SWP_HIDEWINDOW
+          (i32.const 0x83))                               ;; SWP_NOMOVE|SWP_NOSIZE|SWP_HIDEWINDOW
+        (drop (call $wnd_set_style (local.get $popup)
+          (i32.and (call $wnd_get_style (local.get $popup)) (i32.const 0xEFFFFFFF))))))
     ;; Hide listbox (CBS_SIMPLE keeps it visible — variant=1 means "always open")
     (if (i32.ne (i32.load offset=36 (local.get $sw)) (i32.const 1))
       (then
@@ -8574,11 +8581,10 @@
                 (i32.sub (local.get $field_h) (i32.const 4))
                 (i32.const 0x50000080)  ;; WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL
                 (i32.load offset=36 (local.get $cs_w)))))) ;; pass initial title
-        ;; CBS_DROPDOWNLIST (variant=3): pre-allocate a WS_POPUP dropdown
-        ;; shell sized to the listbox area. Hidden until $combobox_open_dropdown
-        ;; shows it. Listbox is still parented to the combo for now —
-        ;; subsequent commit migrates it under the popup.
-        (if (i32.eq (local.get $variant) (i32.const 3))
+        ;; Dropdown variants (2/3): pre-allocate a WS_POPUP shell sized to the
+        ;; listbox area. Hidden until $combobox_open_dropdown shows it. The
+        ;; listbox is still parented to the combo until then.
+        (if (i32.ne (local.get $variant) (i32.const 1))
           (then
             (i32.store offset=24 (local.get $state_w)
               (call $combo_create_popup (local.get $hwnd) (local.get $w) (local.get $h)))))

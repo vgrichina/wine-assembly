@@ -173,6 +173,8 @@ async function main() {
     const popup = e.combobox_get_popup_hwnd(cb);
     check('popup hwnd exists for CBS_DROPDOWNLIST',
       popup !== 0, 'popup=0x' + popup.toString(16));
+    check('open popup has WS_VISIBLE in WAT state',
+      !!(e.wnd_get_style_export(popup) & 0x10000000));
     // Popup-local (5, row2_y). Each list row is 16px; first row at y=0 in
     // popup-local coords (listbox is at popup-local (0,0)). Row 2 → y in
     // (32..47). Click at (5, 35) should select index 2 = "Left".
@@ -182,6 +184,8 @@ async function main() {
       `sel=${e.combobox_get_cur_sel(cb)} text="${getText()}"`);
     check('popup-routed click closes dropdown (accept)',
       e.combobox_is_dropped(cb) === 0);
+    check('closed popup clears WS_VISIBLE in WAT state',
+      !(e.wnd_get_style_export(popup) & 0x10000000));
 
     // Popup-local outside-rect click (negative coords) dismisses as cancel.
     e.send_message(cb, CB_SETCURSEL, 1, 0);  // baseline
@@ -294,6 +298,20 @@ async function main() {
 
   const lb2 = e.combobox_get_lb_hwnd(cb2);
   check('CBS_DROPDOWN still has inner listbox', lb2 !== 0);
+
+  const popup2 = e.combobox_get_popup_hwnd(cb2);
+  check('CBS_DROPDOWN has an unclipped popup shell', popup2 !== 0,
+    'popup=0x' + popup2.toString(16));
+  e.send_message(cb2, CB_SHOWDROPDOWN, 1, 0);
+  check('CBS_DROPDOWN opens through its popup shell',
+    e.combobox_is_dropped(cb2) === 1);
+  check('CBS_DROPDOWN popup becomes effectively visible',
+    !!(e.wnd_get_style_export(popup2) & 0x10000000));
+  e.send_message(cb2, CB_SHOWDROPDOWN, 0, 0);
+  check('CBS_DROPDOWN popup closes normally',
+    e.combobox_is_dropped(cb2) === 0);
+  check('CBS_DROPDOWN popup clears visible style on close',
+    !(e.wnd_get_style_export(popup2) & 0x10000000));
 
   // WM_SETTEXT routed to edit
   e.send_message(cb2, WM_SETTEXT, 0, writeStr('hello'));
