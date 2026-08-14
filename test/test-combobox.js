@@ -24,9 +24,10 @@ const VK_F4 = 0x73, VK_ESC = 0x1B, VK_RETURN = 0x0D;
 const CB_ADDSTRING = 0x0143, CB_GETCOUNT = 0x0146, CB_GETCURSEL = 0x0147;
 const CB_GETLBTEXT = 0x0148, CB_SETCURSEL = 0x014E, CB_RESETCONTENT = 0x014B;
 const CB_GETDROPPEDSTATE = 0x0157, CB_SHOWDROPDOWN = 0x014F;
-const WM_KEYDOWN = 0x0100, WM_LBUTTONDOWN = 0x0201, WM_COMMAND = 0x0111;
+const WM_GETTEXT = 0x000D, WM_KEYDOWN = 0x0100;
+const WM_LBUTTONDOWN = 0x0201, WM_COMMAND = 0x0111;
 const FIELD_H = 21;
-const CBS_DROPDOWNLIST = 3;
+const CBS_DROPDOWN = 2, CBS_DROPDOWNLIST = 3;
 
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
@@ -292,8 +293,7 @@ async function main() {
   // ===================================================================
   // CBS_DROPDOWN (variant=2): editable field via inner edit child
   // ===================================================================
-  const CBS_DROPDOWN = 2;
-  const WM_SETTEXT = 0x000C, WM_GETTEXT = 0x000D, WM_GETTEXTLENGTH = 0x000E, WM_PAINT = 0x000F;
+  const WM_SETTEXT = 0x000C, WM_GETTEXTLENGTH = 0x000E, WM_PAINT = 0x000F;
   const CB_LIMITTEXT = 0x0141, CB_GETEDITSEL = 0x0140, CB_SETEDITSEL = 0x0142;
   const EM_GETLIMITTEXT = 0x00D5;
 
@@ -319,6 +319,23 @@ async function main() {
     e.combobox_is_dropped(cb2) === 0);
   check('CBS_DROPDOWN popup clears visible style on close',
     !(e.wnd_get_style_export(popup2) & 0x10000000));
+
+  // A programmatic list selection must update the real inner EDIT, not only
+  // the combo's private mirror. Paint's Fonts palette uses this for size 8.
+  e.send_message(cb2, CB_ADDSTRING, 0, writeStr('8'));
+  e.send_message(cb2, CB_SETCURSEL, 0, 0);
+  const selectedText = e.guest_alloc(16);
+  const selectedLen = e.send_message(cb2, WM_GETTEXT, 16, selectedText);
+  check('CBS_DROPDOWN selection synchronizes its visible edit field',
+    selectedLen === 1 && readStr(selectedText) === '8',
+    `len=${selectedLen} text="${readStr(selectedText)}"`);
+  paintedText.length = 0;
+  e.send_message(cb2, WM_PAINT, 0, 0);
+  check('CBS_DROPDOWN paints its selected list text',
+    paintedText.includes('8'), `painted=${JSON.stringify(paintedText)}`);
+  e.send_message(cb2, CB_RESETCONTENT, 0, 0);
+  check('CB_RESETCONTENT clears the editable field',
+    e.send_message(cb2, WM_GETTEXT, 16, selectedText) === 0 && readStr(selectedText) === '');
 
   // WM_SETTEXT routed to edit
   e.send_message(cb2, WM_SETTEXT, 0, writeStr('hello'));

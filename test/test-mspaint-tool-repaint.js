@@ -165,6 +165,16 @@ assert(paintWindow && fontsWindow && Number(fontsWindow[1]) > Number(paintWindow
 const startImage = PNG.sync.read(fs.readFileSync(shots.start));
 const textEditImage = PNG.sync.read(fs.readFileSync(shots['text-edit']));
 const committedImage = PNG.sync.read(fs.readFileSync(shots['text-committed']));
+let fontSizeInk = 0;
+for (let y = 58; y < 69; y++) {
+  for (let x = 220; x < 267; x++) {
+    const i = (y * textEditImage.width + x) * 4;
+    if (textEditImage.data[i] < 80 && textEditImage.data[i + 1] < 80 &&
+        textEditImage.data[i + 2] < 80) fontSizeInk++;
+  }
+}
+assert(fontSizeInk >= 3,
+  `Paint Fonts palette size field is blank (${fontSizeInk} dark pixels)`);
 let antialiasedTextPixels = 0;
 for (let y = 99; y < 147; y++) {
   for (let x = 104; x < 217; x++) {
@@ -192,5 +202,6 @@ assert(committedInk >= 5, `Paint did not commit typed text to the canvas (${comm
 console.log('PASS  Paint tool glyphs survive brush/airbrush/text/selection repaints');
 console.log('PASS  Paint tool mask remains transparent in all five snapshots');
 console.log('PASS  Paint pressed buttons and tool-option glyphs render correctly');
+console.log(`PASS  Paint Fonts palette shows its selected size (${fontSizeInk} dark pixels)`);
 console.log('PASS  Paint text glyph coverage is thresholded to Win98-style binary pixels');
 console.log(`PASS  Paint Fonts palette installs its font and commits multiline text (${committedInk} pixels)`);

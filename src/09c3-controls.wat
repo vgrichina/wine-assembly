@@ -9470,6 +9470,8 @@
 
   ;; Helper: copy the inner listbox's selected item text into combobox text_buf.
   ;; Called after CB_SETCURSEL or LBN_SELCHANGE so WM_GETTEXT returns the right thing.
+  ;; CBS_DROPDOWN has a real inner EDIT, which owns the visible field text, so
+  ;; keep that child synchronized with the same selection as well.
   (func $combobox_sync_text (param $sw i32)
     (local $lb i32) (local $sel i32) (local $buf_g i32) (local $slen i32)
     (local.set $lb (i32.load offset=20 (local.get $sw)))
@@ -9480,14 +9482,28 @@
     (call $heap_free (i32.load (local.get $sw)))
     (i32.store         (local.get $sw) (i32.const 0))
     (i32.store offset=4 (local.get $sw) (i32.const 0))
-    (if (i32.lt_s (local.get $sel) (i32.const 0)) (then (return)))
+    (if (i32.lt_s (local.get $sel) (i32.const 0))
+      (then
+        (if (i32.and
+              (i32.eq (i32.load offset=36 (local.get $sw)) (i32.const 2))
+              (i32.ne (i32.load offset=28 (local.get $sw)) (i32.const 0)))
+          (then (drop (call $wnd_send_message
+            (i32.load offset=28 (local.get $sw))
+            (i32.const 0x000C) (i32.const 0) (i32.const 0)))))
+        (return)))
     ;; Get LB_GETTEXTLEN, alloc buf, LB_GETTEXT into it, store.
     (local.set $slen (call $wnd_send_message (local.get $lb) (i32.const 0x018A) (local.get $sel) (i32.const 0)))
     (if (i32.lt_s (local.get $slen) (i32.const 0)) (then (return)))
     (local.set $buf_g (call $heap_alloc (i32.add (local.get $slen) (i32.const 1))))
     (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0189) (local.get $sel) (local.get $buf_g)))
     (i32.store         (local.get $sw) (local.get $buf_g))
-    (i32.store offset=4 (local.get $sw) (local.get $slen)))
+    (i32.store offset=4 (local.get $sw) (local.get $slen))
+    (if (i32.and
+          (i32.eq (i32.load offset=36 (local.get $sw)) (i32.const 2))
+          (i32.ne (i32.load offset=28 (local.get $sw)) (i32.const 0)))
+      (then (drop (call $wnd_send_message
+        (i32.load offset=28 (local.get $sw))
+        (i32.const 0x000C) (i32.const 0) (local.get $buf_g))))))
 
   (func $combobox_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
@@ -9765,6 +9781,12 @@
         (call $heap_free (i32.load (local.get $state_w)))
         (i32.store          (local.get $state_w) (i32.const 0))
         (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (if (i32.and
+              (i32.eq (local.get $variant) (i32.const 2))
+              (i32.ne (i32.load offset=28 (local.get $state_w)) (i32.const 0)))
+          (then (drop (call $wnd_send_message
+            (i32.load offset=28 (local.get $state_w))
+            (i32.const 0x000C) (i32.const 0) (i32.const 0)))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
