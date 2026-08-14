@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
@@ -12,7 +13,7 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 
-function run(input, max = 380) {
+function run(input, max = 2600) {
   return spawnSync(process.execPath, [
     path.join(__dirname, 'run.js'), `--exe=${EXE}`,
     `--max-batches=${max}`, '--quiet-api', '--quiet-blocks', `--input=${input}`,
@@ -23,6 +24,40 @@ let failures = 0;
 function check(label, ok) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}`);
   if (!ok) failures++;
+}
+
+function previewPixels(file) {
+  if (!fs.existsSync(file)) return null;
+  const image = PNG.sync.read(fs.readFileSync(file));
+  let pageWhite = 0;
+  let interiorDark = 0;
+  for (let y = 57; y < 274; y++) {
+    for (let x = 115; x < 283; x++) {
+      const i = (y * image.width + x) * 4;
+      const r = image.data[i];
+      const g = image.data[i + 1];
+      const b = image.data[i + 2];
+      if (r > 245 && g > 245 && b > 245) pageWhite++;
+      if (x >= 140 && x < 267 && y >= 78 && y < 252 &&
+          r < 96 && g < 96 && b < 96) interiorDark++;
+    }
+  }
+  return { image, pageWhite, interiorDark };
+}
+
+function previewInteriorDifference(a, b) {
+  if (!a || !b || a.image.width !== b.image.width || a.image.height !== b.image.height) return 0;
+  let changed = 0;
+  for (let y = 78; y < 252; y++) {
+    for (let x = 140; x < 267; x++) {
+      const i = (y * a.image.width + x) * 4;
+      const delta = Math.abs(a.image.data[i] - b.image.data[i]) +
+        Math.abs(a.image.data[i + 1] - b.image.data[i + 1]) +
+        Math.abs(a.image.data[i + 2] - b.image.data[i + 2]);
+      if (delta > 30) changed++;
+    }
+  }
+  return changed;
 }
 
 const printPng = '/private/tmp/wordpad-print-dialog.png';
@@ -38,11 +73,12 @@ const previewText = Array.from({ length: 90 }, (_, i) =>
 fs.writeFileSync(previewFixture, previewText, 'latin1');
 
 const print = run([
-  '70:0x111:57607', '105:wait-dlg-control:1154:130', '106:dlg-dump:print',
-  '110:dlg-set-edit:1152:2', '112:dlg-set-edit:1153:4',
-  '114:dlg-set-edit:1154:3', `120:dlg-png:${printPng}`,
-  '125:dlg-cmd:1', '270:dump-print-state:completed',
-  '300:dump-windows:after-print', '320:stop',
+  '20:wait-title-command:Document_-_WordPad:2000:57607:print',
+  '40:wait-dlg-control:1154:1000', '41:dlg-dump:print',
+  '45:dlg-set-edit:1152:2', '47:dlg-set-edit:1153:4',
+  '49:dlg-set-edit:1154:3', `55:dlg-png:${printPng}`,
+  '60:dlg-cmd:1', '205:dump-print-state:completed',
+  '235:dump-windows:after-print', '255:stop',
 ].join(','));
 const po = `${print.stdout || ''}\n${print.stderr || ''}`;
 check('Print dialog exposes printer, range, copies, OK and Cancel',
@@ -54,8 +90,9 @@ check('Print dialog closes and WordPad remains present',
 check('Print screenshot written', fs.existsSync(printPng) && fs.statSync(printPng).size > 1000);
 
 const lifecycle = run([
-  '70:0x111:57607', '105:wait-dlg-control:1154:130', '110:dlg-cmd:1',
-  '270:dump-print-state:completed', '300:dump-windows:after-job', '320:stop',
+  '20:wait-title-command:Document_-_WordPad:2000:57607:print-job',
+  '40:wait-dlg-control:1154:1000', '45:dlg-cmd:1',
+  '205:dump-print-state:completed', '235:dump-windows:after-job', '255:stop',
 ].join(','));
 const lo = `${lifecycle.stdout || ''}\n${lifecycle.stderr || ''}`;
 check('Print job completes one page and returns the driver to idle',
@@ -65,11 +102,12 @@ check('Print progress closes and the WordPad frame is re-enabled',
   !/window:after-job .*dialog=true.*title="WordPad"/.test(lo));
 
 const page = run([
-  '70:0x111:32771', '105:wait-dlg-control:1158:130', '106:dlg-dump:page',
-  '110:dlg-set-edit:1155:1.25', '112:dlg-set-edit:1156:1.50',
-  '114:dlg-set-edit:1157:1.75', '116:dlg-set-edit:1158:2.00',
-  `122:dlg-png:${pagePng}`, '128:dlg-cmd:1',
-  '180:dump-windows:after-page', '200:stop',
+  '20:wait-title-command:Document_-_WordPad:2000:32771:page-setup',
+  '40:wait-dlg-control:1158:1000', '41:dlg-dump:page',
+  '45:dlg-set-edit:1155:1.25', '47:dlg-set-edit:1156:1.50',
+  '49:dlg-set-edit:1157:1.75', '51:dlg-set-edit:1158:2.00',
+  `57:dlg-png:${pagePng}`, '63:dlg-cmd:1',
+  '115:dump-windows:after-page', '135:stop',
 ].join(','));
 const go = `${page.stdout || ''}\n${page.stderr || ''}`;
 check('Page Setup exposes Letter paper and four margin edits',
@@ -82,15 +120,17 @@ check('Page Setup closes and WordPad remains present',
 check('Page Setup screenshot written', fs.existsSync(pagePng) && fs.statSync(pagePng).size > 1000);
 
 const preview = run([
-  `60:vfs-import:print-preview-multipage.txt:${previewFixture}`,
-  '90:0x111:57601', '180:open-dlg-pick:print-preview-multipage.txt',
-  `220:wait-focus-length:${previewText.length}:1000`,
-  '230:wait-title:print-preview-multipage.txt - WordPad:1000',
-  '240:formatrange-probe:7200:7200:multi',
-  '260:0x111:57609', '380:dump-windows:preview',
-  `390:png:${previewFirstPng}`, '410:0x111:58114',
-  '490:dump-windows:preview-next', `500:png:${previewNextPng}`, '515:stop',
-].join(','), 2500);
+  `20:vfs-import:print-preview-multipage.txt:${previewFixture}`,
+  '30:wait-title-command:Document_-_WordPad:2000:57601:open',
+  '50:wait-dlg-control:1090:1000',
+  '51:open-dlg-pick:print-preview-multipage.txt',
+  `70:wait-focus-length:${previewText.length}:1000`,
+  '80:wait-title:print-preview-multipage.txt - WordPad:1000',
+  '90:formatrange-probe:7200:7200:multi',
+  '100:0x111:57609', '750:dump-windows:preview',
+  `780:png:${previewFirstPng}`, '850:0x111:58114',
+  '1150:dump-windows:preview-next', `1180:png:${previewNextPng}`, '1190:stop',
+].join(','), 3000);
 const vo = `${preview.stdout || ''}\n${preview.stderr || ''}`;
 const pagination = /formatrange-probe:multi:.*len=(\d+) pages=(\d+) bounds=([\d,]+) complete=1/.exec(vo);
 check('EM_FORMATRANGE returns monotonic boundaries through a multi-page document',
@@ -104,5 +144,15 @@ check('Print Preview Next renders without an unimplemented API or crash',
   !/UNIMPLEMENTED|CRASH|RuntimeError|Unreachable code/.test(vo));
 check('Print Preview first/next screenshots written',
   [previewFirstPng, previewNextPng].every(file => fs.existsSync(file) && fs.statSync(file).size > 1000));
+check('Print Preview status advances from Page 1 to Page 2',
+  /window:preview .*class="msctls_statusbar32".*title="Page 1"/.test(vo) &&
+  /window:preview-next .*class="msctls_statusbar32".*title="Page 2"/.test(vo));
+const firstPixels = previewPixels(previewFirstPng);
+const nextPixels = previewPixels(previewNextPng);
+check('Print Preview renders a white page with scaled non-overlapping document ink',
+  [firstPixels, nextPixels].every(stats => stats && stats.pageWhite > 25000 &&
+    stats.interiorDark > 2000 && stats.interiorDark < 9000));
+check('Print Preview Next replaces Page 1 document pixels',
+  previewInteriorDifference(firstPixels, nextPixels) > 500);
 
 process.exitCode = failures ? 1 : 0;

@@ -2255,15 +2255,23 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
     ;; EM_FORMATRANGE. The Win98 RichEdit DLL's printer message path cannot
     ;; reliably preserve its LRESULT through the emulated native wndproc (it
-    ;; returns the FORMATRANGE pointer). Supply deterministic pagination from
-    ;; the twip rectangle instead. A NULL lParam is the documented cache-free
-    ;; call. WordPad compares the returned character index with document length
-    ;; and therefore terminates correctly on both short and multi-page files.
+    ;; returns the FORMATRANGE pointer), but render=true must still enter that
+    ;; wndproc so Print Preview/printing draw document content into the supplied
+    ;; HDC. Preserve those drawing side effects, then replace only the return
+    ;; value with deterministic pagination from the twip rectangle. A NULL
+    ;; lParam is the documented cache-free call.
     (if (i32.and
           (i32.eq (local.get $arg1) (i32.const 0x0439))
           (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0)))
       ;; Native RichEdit is an unclassified child; ToolbarWindow32 is class 21.
       (then
+        (if (i32.and
+              (i32.ne (local.get $arg2) (i32.const 0))
+              (i32.ne (local.get $arg3) (i32.const 0)))
+          (then
+            (drop (call $wnd_send_message
+              (local.get $arg0) (local.get $arg1)
+              (local.get $arg2) (local.get $arg3)))))
         (global.set $eax (call $richedit_formatrange_next (local.get $arg3)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))

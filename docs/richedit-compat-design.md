@@ -1002,10 +1002,13 @@ visually verified in `/private/tmp/wordpad-print-dialog.png` and
 The GDI print lifecycle now validates `StartDoc` -> `StartPage` -> `EndPage` ->
 `EndDoc`, and `EM_FORMATRANGE` returns a bounded next-character index derived
 from the requested twip rectangle instead of leaking the native structure
-pointer. Print Preview reaches WordPad's real preview mode: it hides the edit
-view and normal bars, creates the preview toolbar, and installs an
-`AfxFrameOrView42` page surface. Preview also drove implementation of the DC
-state queries `GetBkMode`, `Get/SetPolyFillMode`, and `GetStretchBltMode`.
+pointer. A render request first enters the native RichEdit window procedure so
+the document is drawn into the supplied preview/printer DC; only the unreliable
+return value is replaced afterward. Print Preview reaches WordPad's real
+preview mode: it hides the edit view and normal bars, creates the preview
+toolbar, and installs an `AfxFrameOrView42` page surface. Preview also drove
+implementation of the DC state queries `GetBkMode`, `Get/SetPolyFillMode`, and
+`GetStretchBltMode`.
 
 The printing acceptance matrix is now complete. MFC's abort procedure exposed
 a queue-fidelity bug: `PeekMessage(PM_NOREMOVE)` could expose a native-control
@@ -1018,8 +1021,14 @@ returns the printer state to idle, and re-enables the WordPad frame.
 monotonic `EM_FORMATRANGE` page boundaries through EOF. Print Preview's Next
 command now renders through legacy Win9x `Escape` printer queries
 (`GETPHYSPAGESIZE`, `GETPRINTINGOFFSET`, and `GETSCALINGFACTOR`) without a fatal
-stub. The expanded 14-point regression captures the first and next preview
-pages and passes without an unimplemented API or crash.
+stub. The expanded 17-point regression waits for the real preview rather than
+accepting a transitional editor frame. It proves Page 1 -> Page 2 status,
+captures both pages, requires a large white page area plus bounded document-ink
+density, and requires the page interiors to differ. The upper ink bound guards
+the anisotropic-font regression where mapped line origins shrank correctly but
+an 8px creation-time font floor made glyphs overlap into a black block. Mapped
+Canvas glyphs now use their valid device height while logical `CreateFont`
+normalization retains that floor.
 
 ### 2026-08-12 editing/layout stress slice
 

@@ -993,11 +993,16 @@ saved files retain the table/font/color/paragraph structure. See
 `test/test-wordpad-advanced-rtf.js` and
 `test/output/wordpad-richedit/advanced-rtf.png`.
 
-Printing status (2026-08-12): concrete Print and Page Setup dialogs expose page
+Printing status (verified 2026-08-14): concrete Print and Page Setup dialogs expose page
 range, copies, Letter paper, and editable margins. The default printer DC
 reports 300-DPI Letter metrics and completes `StartDoc` through `EndDoc` while
 cleaning up its progress dialog. Multi-page `EM_FORMATRANGE` pagination and
-Print Preview first/next navigation have passing app-level coverage.
+Print Preview first/next navigation have passing app-level coverage. Rendering
+requests now enter the native RichEdit window procedure for drawing before the
+emulator supplies its deterministic pagination result. The visual gate proves
+Page 1 and Page 2 each contain a white page and bounded, non-overlapping
+document ink, and that Next replaces the page pixels rather than only changing
+toolbar/status state. See `test/test-wordpad-printing.js`.
 
 Ruler/UI status (2026-08-12): ruler dragging now has an app-level assertion
 that adds a 1278-twip native RichEdit tab stop. Paragraph, Tabs, and Date/Time
