@@ -704,6 +704,15 @@ not encode Canvas output as the expected result for operations being migrated.
 
 ## Performance constraints
 
+`npm run bench:gdi` runs the public-handler WAT benchmark used by the unit
+suite. It warms each workload, reports the median of at least three samples,
+and covers SetPixel, line and rectangle rasterization, PatBlt, BitBlt,
+StretchBlt, and the stock bitmap-font TextOut fast path. Each case checks its
+resulting pixels and has a deliberately broad minimum throughput gate. The
+gate catches catastrophic routing or upload regressions; the printed medians,
+not the gate values, are the useful numbers for comparing implementations on
+the same machine.
+
 - Use typed-array loops over contiguous spans, not per-pixel object allocation.
 - Specialize solid fills and common ROPs; bulk operations should dominate Paint
   workloads.

@@ -12,6 +12,7 @@
     "test:e2e": "test/run-all.sh e2e",
     "test:smoke": "test/run-all.sh smoke",
     "test:quick": "test/run-all.sh quick",
+    "bench:gdi": "node test/test-wat-gdi-benchmark.js",
     "reference:v86": "node tools/v86-reference/capture.js"
   },
   "keywords": [],
