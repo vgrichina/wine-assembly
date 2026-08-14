@@ -4014,6 +4014,31 @@
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (i32.ne (call $ctrl_find_by_id (local.get $parent) (i32.const 0xE900)) (i32.const 0)))
 
+  ;; Write an unsigned decimal value into WAT memory and return its length.
+  ;; Paint coordinates are clamped before this helper is called.
+  (func $statusbar_write_uint (param $dst i32) (param $value i32) (result i32)
+    (local $digits i32) (local $remaining i32) (local $i i32)
+    (local.set $remaining (local.get $value))
+    (local.set $digits (i32.const 1))
+    (block $count_done
+      (loop $count
+        (br_if $count_done (i32.lt_u (local.get $remaining) (i32.const 10)))
+        (local.set $remaining (i32.div_u (local.get $remaining) (i32.const 10)))
+        (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+        (br $count)))
+    (local.set $remaining (local.get $value))
+    (local.set $i (local.get $digits))
+    (block $write_done
+      (loop $write
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (i32.store8
+          (i32.add (local.get $dst) (local.get $i))
+          (i32.add (i32.rem_u (local.get $remaining) (i32.const 10)) (i32.const 48)))
+        (local.set $remaining (i32.div_u (local.get $remaining) (i32.const 10)))
+        (br_if $write_done (i32.eqz (local.get $i)))
+        (br $write)))
+    (local.get $digits))
+
   ;; MFC's CStatusBar draws a six-segment diagonal size grip inside the last
   ;; pane. Use light/shadow stock brushes to match the Win98 staircase.
   (func $statusbar_draw_size_grip (param $hdc i32) (param $w i32) (param $h i32)
@@ -4051,6 +4076,9 @@
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $text_w i32) (local $text_len i32) (local $right i32)
     (local $is_paint i32)
+    (local $parent i32) (local $view i32) (local $view_sz i32) (local $slot i32)
+    (local $mouse i32) (local $coord_x i32) (local $coord_y i32)
+    (local $coord_w i32) (local $coord_len i32) (local $part_len i32)
     ;; WM_SETTEXT and SB_SETTEXTA. Paint uses the former for its help prompt;
     ;; accepting part zero/simple-mode SB_SETTEXTA also covers common callers.
     (if (i32.or
@@ -4134,6 +4162,59 @@
                   (i32.const 169) (i32.const 2) (i32.sub (local.get $w) (i32.const 2))
                   (i32.sub (local.get $h) (i32.const 2))
                   (i32.const 0x0A) (i32.const 0x0F)))
+                ;; Paint exposes image coordinates in its second pane while
+                ;; the pointer is over the scroll view. The renderer requests
+                ;; this small repaint on each relevant pointer movement.
+                (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                (local.set $view (call $ctrl_find_by_id (local.get $parent) (i32.const 0xE900)))
+                (local.set $mouse (call $host_get_mouse_position))
+                (local.set $coord_x
+                  (i32.sub
+                    (i32.and (local.get $mouse) (i32.const 0xFFFF))
+                    (call $wnd_client_screen_x (local.get $view))))
+                (local.set $coord_y
+                  (i32.sub
+                    (i32.and (i32.shr_u (local.get $mouse) (i32.const 16)) (i32.const 0xFFFF))
+                    (call $wnd_client_screen_y (local.get $view))))
+                (local.set $view_sz (call $ctrl_get_wh_packed (local.get $view)))
+                (if (i32.and
+                      (i32.and (i32.ge_s (local.get $coord_x) (i32.const 0))
+                               (i32.ge_s (local.get $coord_y) (i32.const 0)))
+                      (i32.and
+                        (i32.lt_s (local.get $coord_x)
+                          (i32.sub (i32.and (local.get $view_sz) (i32.const 0xFFFF)) (i32.const 16)))
+                        (i32.lt_s (local.get $coord_y)
+                          (i32.sub (i32.shr_u (local.get $view_sz) (i32.const 16)) (i32.const 16)))))
+                  (then
+                    (local.set $slot (call $wnd_table_find (local.get $view)))
+                    (if (i32.ne (local.get $slot) (i32.const -1))
+                      (then
+                        (local.set $coord_x
+                          (i32.add (local.get $coord_x)
+                            (i32.load (i32.add (global.get $SCROLL_TABLE)
+                              (i32.mul (local.get $slot) (i32.const 24))))))
+                        (local.set $coord_y
+                          (i32.add (local.get $coord_y)
+                            (i32.load offset=12 (i32.add (global.get $SCROLL_TABLE)
+                              (i32.mul (local.get $slot) (i32.const 24))))))))
+                    (if (i32.gt_u (local.get $coord_x) (i32.const 99999))
+                      (then (local.set $coord_x (i32.const 99999))))
+                    (if (i32.gt_u (local.get $coord_y) (i32.const 99999))
+                      (then (local.set $coord_y (i32.const 99999))))
+                    (local.set $coord_w (i32.add (global.get $PAINT_SCRATCH) (i32.const 32)))
+                    (local.set $coord_len
+                      (call $statusbar_write_uint (local.get $coord_w) (local.get $coord_x)))
+                    (i32.store8 (i32.add (local.get $coord_w) (local.get $coord_len)) (i32.const 44))
+                    (local.set $coord_len (i32.add (local.get $coord_len) (i32.const 1)))
+                    (local.set $part_len
+                      (call $statusbar_write_uint
+                        (i32.add (local.get $coord_w) (local.get $coord_len)) (local.get $coord_y)))
+                    (local.set $coord_len (i32.add (local.get $coord_len) (local.get $part_len)))
+                    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+                    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+                    (drop (call $host_gdi_text_out (local.get $hdc)
+                      (i32.const 173) (i32.const 5)
+                      (local.get $coord_w) (local.get $coord_len) (i32.const 0)))))
                 (call $statusbar_draw_size_grip (local.get $hdc) (local.get $w) (local.get $h)))
               (else
                 ;; Minimal generic Win9x size grip for SBARS_SIZEGRIP bars.
