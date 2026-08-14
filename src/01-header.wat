@@ -616,6 +616,8 @@
   ;; Filesystem host imports — backed by virtual FS
   (import "host" "fs_create_file" (func $host_fs_create_file (param i32 i32 i32 i32 i32) (result i32)))
   ;; fs_create_file(pathWA, access, creation, flagsAttrs, isWide) → handle
+  (import "host" "fs_create_legacy_file" (func $host_fs_create_legacy_file (param i32 i32 i32 i32 i32) (result i32)))
+  ;; fs_create_legacy_file(...) → 16-bit HFILE for _lopen/_lcreat
   (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))

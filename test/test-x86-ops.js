@@ -227,6 +227,28 @@ async function main() {
   // shld eax, edx, 1: eax = (0x80000000<<1) | (0x00000001>>31) = 0 | 0 = 0
   test('SHLD eax,edx,1', e.get_eax(), 0x00000000);
 
+  // Group-2 immediate shifts on absolute memory use a different threaded-op
+  // layout from [base+disp]. WinHelp's drive scan depends on this exact word
+  // form advancing 1 -> 2 -> ... -> 0x200 before its unsigned comparison.
+  setByte(scratch, 0x40);
+  runCode([0xD0, 0x25, ...le32(scratch)]); // shl byte ptr [scratch], 1
+  test('SHL byte ptr [abs],1', mem[g2w(scratch)], 0x80);
+
+  setMem(scratch, 1);
+  runCode([0x66, 0xD1, 0x25, ...le32(scratch)]); // shl word ptr [scratch], 1
+  test('SHL word ptr [abs],1', memAt(scratch) & 0xFFFF, 2);
+
+  setMem(scratch, 0x40000000);
+  runCode([0xD1, 0x25, ...le32(scratch)]); // shl dword ptr [scratch], 1
+  test('SHL dword ptr [abs],1', memAt(scratch), 0x80000000);
+
+  setMem(scratch, 0x200);
+  runCode([
+    0x66, 0x81, 0x3D, ...le32(scratch), 0x00, 0x01, // cmp word ptr [scratch],0x100
+    0x0F, 0x97, 0xC0,                               // seta al
+  ], () => e.set_eax(0));
+  test('CMP word ptr [abs],0x100 + SETA', e.get_eax() & 0xFF, 1);
+
   // ================================================================
   // IMUL r32, r/m32 — signed two-operand multiply
   // ================================================================

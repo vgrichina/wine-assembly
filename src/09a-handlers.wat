@@ -662,7 +662,7 @@
     ;; iAttribute: 0=normal, 1=readonly, 2=hidden, 3=system. Map low bits to
     ;; FILE_ATTRIBUTE_*; default to NORMAL when iAttribute=0.
     (local.set $attr (i32.or (local.get $arg1) (i32.const 0x80)))
-    (global.set $eax (call $host_fs_create_file
+    (global.set $eax (call $host_fs_create_legacy_file
       (call $g2w (local.get $arg0))
       (i32.const 0xC0000000)  ;; GENERIC_READ | GENERIC_WRITE
       (i32.const 2)           ;; CREATE_ALWAYS
@@ -674,7 +674,7 @@
   ;; 20: _lopen — STUB: unimplemented
   (func $handle__lopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; _lopen(lpPathName, iReadWrite) — 2 args stdcall
-    (global.set $eax (call $host_fs_create_file
+    (global.set $eax (call $host_fs_create_legacy_file
       (call $g2w (local.get $arg0))
       (i32.const 0x80000000)  ;; GENERIC_READ
       (i32.const 3)           ;; OPEN_EXISTING
@@ -731,6 +731,26 @@
     (global.set $eax (i32.load (local.get $bytes_read_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
   )
+
+  ;; VkKeyScanA(CHAR ch) → SHORT. The low byte is the virtual-key code and
+  ;; the high byte contains modifier state (bit 0 = SHIFT).
+  (func $handle_VkKeyScanA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ch i32)
+    (local.set $ch (i32.and (local.get $arg0) (i32.const 0xFF)))
+    (block $done
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x7A)))
+        (then (global.set $eax (i32.sub (local.get $ch) (i32.const 0x20))) (br $done)))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x5A)))
+        (then (global.set $eax (i32.or (local.get $ch) (i32.const 0x0100))) (br $done)))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30)) (i32.le_u (local.get $ch) (i32.const 0x39)))
+        (then (global.set $eax (local.get $ch)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x20)) (then (global.set $eax (i32.const 0x20)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x09)) (then (global.set $eax (i32.const 0x09)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x0D)) (then (global.set $eax (i32.const 0x0D)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x1B)) (then (global.set $eax (i32.const 0x1B)) (br $done)))
+      (if (i32.eq (local.get $ch) (i32.const 0x08)) (then (global.set $eax (i32.const 0x08)) (br $done)))
+      (global.set $eax (i32.const 0xFFFF)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; LZ32's file APIs also accept ordinary, uncompressed files. Font Viewer
   ;; uses that path for font-resource files, so map the handle operations onto
@@ -1591,10 +1611,14 @@
   )
 
   ;; 85: GetDC — Phase B: alloc DcRecord via host_alloc_window_dc
-  ;; (whole=0). GetDC(NULL) → screen DC.
+  ;; (whole=0). GetDC(NULL) and GetDC(GetDesktopWindow()) → screen DC.
   (func $handle_GetDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hdc i32)
-    (if (local.get $arg0)
+    ;; GetDesktopWindow returns the fixed pseudo HWND 0x10000. It has no
+    ;; window-table record or canonical per-window surface, so treat it like
+    ;; NULL just as GetWindowDC/GetDCEx already do.
+    (if (i32.and (local.get $arg0)
+          (i32.ne (local.get $arg0) (i32.const 0x10000)))
       (then
         (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
         (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0)))
@@ -2678,9 +2702,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 129: ChildWindowFromPoint — STUB: unimplemented
+  ;; 129: ChildWindowFromPoint(hWndParent, POINT). POINT is passed by value.
+  ;; Convert the parent-client point to screen coordinates and use the shared
+  ;; HWND-tree hit tester. Win32 returns the parent when no child contains it.
   (func $handle_ChildWindowFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $child i32)
+    (local.set $child (call $wnd_child_from_point_deep
+      (local.get $arg0)
+      (i32.add (call $wnd_client_screen_x (local.get $arg0)) (local.get $arg1))
+      (i32.add (call $wnd_client_screen_y (local.get $arg0)) (local.get $arg2))))
+    (global.set $eax
+      (select (local.get $child) (local.get $arg0) (local.get $child)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 130: ScreenToClient
@@ -6030,6 +6063,14 @@
   ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
   (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $i i32) (local $screen i32)
+    ;; SPI_SETDESKWALLPAPER = 0x14. The host loads the named VFS bitmap and
+    ;; interprets uiParam=0/1 as centered/tiled for the Win98 Paint commands.
+    (if (i32.eq (local.get $arg0) (i32.const 0x14))
+      (then
+        (global.set $eax (call $host_set_wallpaper
+          (call $g2w (local.get $arg2)) (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area.
     ;; We do not emulate taskbar reservation, so the work area is the screen.
     (if (i32.eq (local.get $arg0) (i32.const 0x30))
@@ -7930,9 +7971,39 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; 508: GetFileInformationByHandle — STUB: unimplemented
+  ;; 508: GetFileInformationByHandle(hFile, lpFileInformation) → BOOL
+  ;; Populate the stable fields exposed by the in-memory VFS. Timestamps are
+  ;; synthetic (as in GetFileTime), while file size and handle validity come
+  ;; from the host so callers can distinguish real VFS files from bad handles.
   (func $handle_GetFileInformationByHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $info i32) (local $size i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $size (call $host_fs_get_file_size (local.get $arg0)))
+    (if (i32.eq (local.get $size) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $info (call $g2w (local.get $arg1)))
+    (i32.store offset=0 (local.get $info) (i32.const 0x20))       ;; FILE_ATTRIBUTE_ARCHIVE
+    (i32.store offset=4 (local.get $info) (i32.const 0x256D4000)) ;; creation FILETIME low
+    (i32.store offset=8 (local.get $info) (i32.const 0x01BF53EB)) ;; creation FILETIME high
+    (i32.store offset=12 (local.get $info) (i32.const 0x256D4000))
+    (i32.store offset=16 (local.get $info) (i32.const 0x01BF53EB))
+    (i32.store offset=20 (local.get $info) (i32.const 0x256D4000))
+    (i32.store offset=24 (local.get $info) (i32.const 0x01BF53EB))
+    (i32.store offset=28 (local.get $info) (i32.const 0x57415458)) ;; stable volume serial, "WATX"
+    (i32.store offset=32 (local.get $info) (i32.const 0))         ;; file size high
+    (i32.store offset=36 (local.get $info) (local.get $size))
+    (i32.store offset=40 (local.get $info) (i32.const 1))         ;; link count
+    (i32.store offset=44 (local.get $info) (i32.const 0))
+    (i32.store offset=48 (local.get $info) (local.get $arg0))     ;; stable per-open file index
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 509: PeekNamedPipe — STUB: unimplemented

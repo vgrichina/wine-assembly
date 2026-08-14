@@ -17391,5 +17391,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3115698649
+  },
+  {
+    "id": 2276,
+    "name": "VkKeyScanA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2143355267
   }
 ]

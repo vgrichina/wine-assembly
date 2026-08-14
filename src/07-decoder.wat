@@ -442,7 +442,11 @@
       (then (call $te (i32.const 139) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $shift_info)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 54) (local.get $shift_info))
+    ;; Direct-address handlers carry the count in bits 16..23; the RO
+    ;; handlers below read the decoder's compact type<<8|count word.
+    (call $te (i32.const 54)
+      (i32.or (i32.and (local.get $shift_info) (i32.const 0xFF00))
+              (i32.shl (i32.and (local.get $shift_info) (i32.const 0xFF)) (i32.const 16))))
     (call $te_raw (local.get $a)))
 
   ;; Shift [mem8] — 8-bit, with simple base check
@@ -451,7 +455,9 @@
       (then (call $te (i32.const 245) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $shift_info)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 192) (local.get $shift_info))
+    (call $te (i32.const 192)
+      (i32.or (i32.and (local.get $shift_info) (i32.const 0xFF00))
+              (i32.shl (i32.and (local.get $shift_info) (i32.const 0xFF)) (i32.const 16))))
     (call $te_raw (local.get $a)))
   ;; Shift [mem16] — 16-bit, with simple base check
   (func $emit_shift_m16 (param $shift_info i32) (local $a i32)
@@ -459,7 +465,9 @@
       (then (call $te (i32.const 246) (global.get $mr_base))
             (call $te_raw (global.get $mr_disp)) (call $te_raw (local.get $shift_info)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 194) (local.get $shift_info))
+    (call $te (i32.const 194)
+      (i32.or (i32.and (local.get $shift_info) (i32.const 0xFF00))
+              (i32.shl (i32.and (local.get $shift_info) (i32.const 0xFF)) (i32.const 16))))
     (call $te_raw (local.get $a)))
 
   ;; CALL [mem] (indirect)

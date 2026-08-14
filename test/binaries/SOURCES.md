@@ -290,3 +290,18 @@ MW3 extracted via `unshield x data1.cab`. Other SFX archives extracted with `7z`
 | calc.exe | Windows Calculator |
 | mspaint.exe | MS Paint (Win98) |
 | nt/mspaint.exe | MS Paint (NT) |
+
+## Windows 98 Help viewer reference
+
+The authentic Windows 98 Second Edition Help viewer is an optional, ignored
+reference fixture at `test/binaries/help/winhlp32.exe`. It is used by
+`test/test-winhelp-reference.js` with the tracked `notepad.hlp` beside it.
+
+- Source: `https://archive.org/details/en_win98se_oem.iso`
+- ISO file: `en_win98se_oem.iso`
+- Cabinet member: `WIN98/WIN98_47.CAB` → `WINHLP32.EXE`
+- Size: 319,488 bytes
+- SHA-256: `d18e766a5dec37a21775eb1933b67fd211e82cd4f8f83ca0824d9d443838fb0a`
+
+The binary is not committed. Recover it by extracting the ISO and cabinet,
+then copy it to the path above. The reference test skips cleanly when absent.

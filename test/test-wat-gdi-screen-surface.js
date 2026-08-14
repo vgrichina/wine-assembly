@@ -56,9 +56,15 @@ const { bootRenderHarness } = require('./render-helper');
     'screen DC acquisitions must share one persistent WAT bitmap');
   assert.strictEqual(wat.test_call_ReleaseDC(0, second), 1);
 
+  const desktop = wat.test_call_GetDC(0x10000) >>> 0;
+  assert(desktop, 'GetDC(GetDesktopWindow()) must allocate a screen HDC');
+  assert.strictEqual(wat.test_gdi_surface_descriptor(desktop, desc), 1);
+  assert.strictEqual(dv.getUint32(desc + 68, true), screenBitmap,
+    'the desktop pseudo HWND must share the persistent screen bitmap');
+  assert.strictEqual(wat.test_call_ReleaseDC(0x10000, desktop), 1);
+
   console.log('Canonical WAT screen surface: PASS');
 })().catch(error => {
   console.error(error);
   process.exit(1);
 });
-
