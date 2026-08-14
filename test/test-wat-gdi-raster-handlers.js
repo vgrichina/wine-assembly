@@ -587,6 +587,47 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(canvasRgb(surface, 3, 3), 0xFFFFFF);
   });
 
+  check('StretchDIBits interprets bottom-up source rectangles from the lower left', () => {
+    const surface = makeDib(2, 4);
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(48) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, 4);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    wat.guest_write32(bmiGa + 16, 0);
+    // Bottom-up physical rows: blue, yellow, green, red. Each row has an
+    // 8-byte DWORD-aligned stride. In display coordinates they are reversed.
+    bytes.set([
+      255, 0, 0, 255, 0, 0, 0, 0,
+      0, 255, 255, 0, 255, 255, 0, 0,
+      0, 255, 0, 0, 255, 0, 0, 0,
+      0, 0, 255, 0, 0, 255, 0, 0,
+    ], bitsWa);
+
+    // Pinball uses this relation for its 600x416 back buffer:
+    // ySrc = biHeight - yDest - SrcHeight.
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 0, 2, 1, 0, 3, 2, 1,
+      bitsWa, bmiWa, 0, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 1, 2, 2, 0, 1, 2, 2,
+      bitsWa, bmiWa, 0, 0x00CC0020), 2);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 3, 2, 1, 0, 0, 2, 1,
+      bitsWa, bmiWa, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([0, 1, 2, 3].map(y => packed(surface, 0, y)), [
+      0xFF0000,
+      0x00FF00,
+      0xFFFF00,
+      0x0000FF,
+    ]);
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 })().catch(error => {
   console.error(error.stack || error);

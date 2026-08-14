@@ -7,6 +7,26 @@
 
 **All-EXE smoke:** final desktop `--png` forces a shutdown repaint that is too expensive for Pinball. `test/test-all-exes.js` uses `--args=-quick`, captures hwnd `0x10002` via `hwnd-png-pixels` at batch 20, then stops at batch 21. This verifies the rendered table back-canvas without entering the long gameplay/repaint path.
 
+## 2026-08-14 — bottom-up sprite subrects fixed
+
+The WAT `StretchDIBits` wrapper was passing `ySrc` directly to the canonical
+top-left rasterizer. Pinball's shared 600x416, 8-bpp back buffer is bottom-up,
+so Win32 defines its source origin at the lower left. Pinball consistently uses
+`ySrc = 416 - yDest - SrcHeight`; treating that value as top-left selected a
+different vertical sprite band. The playfield consequently showed incorrect
+sprites and the right display accumulated unrelated fragments even though the
+palette and window surface were valid.
+
+The wrapper now converts bottom-up source rectangles at the API boundary while
+leaving the shared rasterizer in canonical top-left coordinates. The focused
+raster test covers top, middle, and bottom subrects. Current verification:
+
+- `test/test-wat-gdi-raster-handlers.js`: 26/26.
+- `test/test-wat-gdi-palette.js`: 10/10, including `DIB_PAL_COLORS`.
+- `test/test-pinball-playable.js`: 9/9; both flippers animate after deployment.
+- CLI and browser captures show the correct playfield sprites and clean right
+  display without Canvas readback.
+
 **Heap note:** `load_pe` sets `heap_ptr = image_base + SizeOfImage` (0x0104b000 for pinball), NOT the fixed 0x01D12000. DLL loading + DllMain + VirtualAlloc(4MB from msvcrt) push it to ~0x01519000. Total available heap before stack overlap is ~23MB.
 
 ## REGRESSION (2026-04-28): LEFT flipper (Z) does not move; RIGHT flipper (/) does

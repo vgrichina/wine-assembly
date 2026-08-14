@@ -9948,7 +9948,7 @@
         (param $sx i32) (param $sy i32) (param $sw i32) (param $sh i32)
         (param $bits i32) (param $bmi i32) (param $usage i32) (param $rop i32) (result i32)
     (local $dst i32) (local $src i32) (local $mdx i32) (local $mdy i32)
-    (local $pattern i32) (local $ok i32)
+    (local $msy i32) (local $pattern i32) (local $ok i32)
     (if (i32.gt_u (local.get $usage) (i32.const 1)) (then (return (i32.const 0))))
     (local.set $dst (global.get $GDI_BLIT_DST_DESC))
     (local.set $src (global.get $GDI_BLIT_SRC_DESC))
@@ -9959,10 +9959,26 @@
       (then (return (i32.const 0))))
     (local.set $mdx (call $gdi_line_map_x (local.get $dst) (local.get $dx)))
     (local.set $mdy (call $gdi_line_map_y (local.get $dst) (local.get $dy)))
+    (local.set $msy (local.get $sy))
+    ;; StretchDIBits source coordinates follow the DIB's own origin. A
+    ;; bottom-up DIB therefore measures ySrc upward from its lower-left
+    ;; corner, while raster descriptors always use canonical top-left
+    ;; coordinates. Preserve the signed source extent so the shared blitter
+    ;; still owns mirroring semantics.
+    (if (i32.eqz (i32.load offset=20 (local.get $src)))
+      (then
+        (if (i32.gt_s (local.get $sh) (i32.const 0))
+          (then
+            (local.set $msy (i32.sub
+              (i32.sub (i32.load offset=8 (local.get $src)) (local.get $sy))
+              (local.get $sh))))
+          (else
+            (local.set $msy (i32.sub
+              (i32.load offset=8 (local.get $src)) (local.get $sy)))))))
     (local.set $ok (call $gdi_raster_stretch_blt
       (local.get $hdc) (i32.const 0) (local.get $dst) (local.get $mdx) (local.get $mdy)
       (local.get $dw) (local.get $dh) (local.get $src)
-      (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
+      (local.get $sx) (local.get $msy) (local.get $sw) (local.get $sh)
       (local.get $pattern) (local.get $rop)))
     (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
     (call $gdi_geometry_present (local.get $hdc) (local.get $dst)
