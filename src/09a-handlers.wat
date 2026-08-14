@@ -7212,11 +7212,11 @@
         (if (local.get $src_hdc)
           (then
             (if (i32.eqz (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src)))
-              (then (local.set $src (i32.const 0)))
+              (then (local.set $src (i32.const 0))))
             (if (local.get $src)
               (then
                 (local.set $sx (call $gdi_line_map_x (local.get $src) (local.get $sx)))
-                (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy)))))))
+                (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy))))))
           (else (local.set $src (i32.const 0))))
         (if (i32.and
               (i32.ne (i32.and

@@ -43,6 +43,14 @@ const { bootRenderHarness } = require('./render-helper');
     return bytes[p] | (bytes[p + 1] << 8) | (bytes[p + 2] << 16);
   }
 
+  function setPacked(dib, x, y, color) {
+    const p = dib.bits + y * dib.stride + x * 4;
+    bytes[p] = color & 0xFF;
+    bytes[p + 1] = (color >>> 8) & 0xFF;
+    bytes[p + 2] = (color >>> 16) & 0xFF;
+    bytes[p + 3] = 0;
+  }
+
   function canvasRgb(dib, x, y) {
     const p = dib.presentation.canvas.getContext('2d').getImageData(x, y, 1, 1).data;
     return (p[0] << 16) | (p[1] << 8) | p[2];
@@ -140,6 +148,63 @@ const { bootRenderHarness } = require('./render-helper');
     assert(wat.test_gdi_fast_count(1) > 0, 'SRCCOPY did not enter the 32-bpp bulk path');
     assert.strictEqual(packed(dst, 5, 2), 0x112233);
     assert.strictEqual(canvasRgb(dst, 5, 2), 0x112233);
+  });
+
+  check('overlapping drag buffers restore the board without sprite trails', () => {
+    const board = makeDib(40, 24);
+    const sprite = makeDib(7, 6);
+    let oldBackground = makeDib(7, 6);
+    let newBackground = makeDib(7, 6);
+
+    for (let y = 0; y < board.height; y++) {
+      for (let x = 0; x < board.width; x++) {
+        setPacked(board, x, y, 0x004000 + ((x * 3 + y * 5) & 0x3F));
+      }
+    }
+    for (let y = 0; y < sprite.height; y++) {
+      for (let x = 0; x < sprite.width; x++) {
+        setPacked(sprite, x, y, 0x800000 + y * 0x100 + x);
+      }
+    }
+
+    const origin = { x: 2, y: 8 };
+    assert.strictEqual(wat.test_call_BitBlt(
+      oldBackground.hdc, 0, 0, 7, 6, board.hdc, origin.x, origin.y, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_call_BitBlt(
+      board.hdc, origin.x, origin.y, 7, 6, sprite.hdc, 0, 0, 0x00CC0020), 1);
+    const expected = Array.from({ length: board.width * board.height }, (_, i) =>
+      packed(board, i % board.width, (i / board.width) | 0));
+
+    let old = origin;
+    for (const next of [
+      { x: 15, y: 8 },
+      { x: 11, y: 7 },
+      { x: 7, y: 8 },
+      { x: 3, y: 8 },
+    ]) {
+      assert.strictEqual(wat.test_call_BitBlt(
+        newBackground.hdc, 0, 0, 7, 6, board.hdc, next.x, next.y, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        newBackground.hdc, old.x - next.x, old.y - next.y,
+        7, 6, oldBackground.hdc, 0, 0, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        oldBackground.hdc, next.x - old.x, next.y - old.y,
+        7, 6, sprite.hdc, 0, 0, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        board.hdc, next.x, next.y, 7, 6, sprite.hdc, 0, 0, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        board.hdc, old.x, old.y, 7, 6, oldBackground.hdc, 0, 0, 0x00CC0020), 1);
+      [oldBackground, newBackground] = [newBackground, oldBackground];
+      old = next;
+    }
+
+    assert.strictEqual(wat.test_call_BitBlt(
+      board.hdc, old.x, old.y, 7, 6, oldBackground.hdc, 0, 0, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_call_BitBlt(
+      board.hdc, origin.x, origin.y, 7, 6, sprite.hdc, 0, 0, 0x00CC0020), 1);
+    const actual = Array.from({ length: board.width * board.height }, (_, i) =>
+      packed(board, i % board.width, (i / board.width) | 0));
+    assert.deepStrictEqual(actual, expected);
   });
 
   check('BitBlt accelerates and respects a rectangular WAT DC clip region', () => {

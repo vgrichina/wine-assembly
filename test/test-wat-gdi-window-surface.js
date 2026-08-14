@@ -315,6 +315,101 @@ async function main() {
     dv.getInt32(desc + 72, true), dv.getInt32(desc + 76, true),
   ], [0, 0], 'whole-window DC origin must be the window top-left');
 
+  {
+    const makeDragDib = (width, height) => {
+      const dragBmi = wat.guest_alloc(40) >>> 0;
+      const dragBitsOut = wat.guest_alloc(4) >>> 0;
+      wat.guest_write32(dragBmi, 40);
+      wat.guest_write32(dragBmi + 4, width);
+      wat.guest_write32(dragBmi + 8, -height);
+      wat.guest_write16(dragBmi + 12, 1);
+      wat.guest_write16(dragBmi + 14, 32);
+      const bitmap = wat.test_call_CreateDIBSection(0, dragBmi, dragBitsOut) >>> 0;
+      const dc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+      assert(bitmap && dc, 'drag scratch DIB/DC allocation failed');
+      assert.strictEqual(wat.test_call_SelectObject(dc, bitmap) >>> 0, 0x30007);
+      return { bitmap, dc, width, height };
+    };
+    const sprite = makeDragDib(7, 6);
+    let oldBackground = makeDragDib(7, 6);
+    let newBackground = makeDragDib(7, 6);
+    const stretchedBackground = makeDragDib(14, 12);
+    for (let y = 0; y < 22; y++) {
+      for (let x = 0; x < 34; x++) {
+        assert.notStrictEqual(wat.test_call_SetPixel(
+          hdc, x, y, 0x00004000 + ((x * 3 + y * 5) & 0x3F)), -1);
+      }
+    }
+    for (let y = 0; y < sprite.height; y++) {
+      for (let x = 0; x < sprite.width; x++) {
+        assert.notStrictEqual(wat.test_call_SetPixel(
+          sprite.dc, x, y, 0x00000080 + y * 0x100 + x), -1);
+      }
+    }
+    const origin = { x: 2, y: 10 };
+    assert.strictEqual(wat.test_call_BitBlt(
+      oldBackground.dc, 0, 0, 7, 6, hdc, origin.x, origin.y, 0x00CC0020), 1);
+    for (let y = 0; y < 6; y++) {
+      for (let x = 0; x < 7; x++) {
+        assert.strictEqual(wat.test_call_GetPixel(oldBackground.dc, x, y) >>> 0,
+          0x00004000 + (((origin.x + x) * 3 + (origin.y + y) * 5) & 0x3F),
+          'BitBlt must map a window source through its client-surface origin');
+      }
+    }
+    assert.strictEqual(wat.test_call_StretchBlt(
+      stretchedBackground.dc, 0, 0, 14, 12,
+      hdc, origin.x, origin.y, 7, 6, 0x00CC0020), 1);
+    for (let y = 0; y < 12; y++) {
+      for (let x = 0; x < 14; x++) {
+        assert.strictEqual(wat.test_call_GetPixel(stretchedBackground.dc, x, y) >>> 0,
+          0x00004000 + (((origin.x + (x >> 1)) * 3 +
+            (origin.y + (y >> 1)) * 5) & 0x3F),
+          'StretchBlt must map a window source through its client-surface origin');
+      }
+    }
+    assert.strictEqual(wat.test_call_BitBlt(
+      hdc, origin.x, origin.y, 7, 6, sprite.dc, 0, 0, 0x00CC0020), 1);
+    const expected = Array.from({ length: 34 * 22 }, (_, i) =>
+      wat.test_call_GetPixel(hdc, i % 34, (i / 34) | 0) >>> 0);
+
+    let old = origin;
+    for (const next of [
+      { x: 15, y: 10 },
+      { x: 11, y: 9 },
+      { x: 7, y: 10 },
+      { x: 3, y: 10 },
+    ]) {
+      assert.strictEqual(wat.test_call_BitBlt(
+        newBackground.dc, 0, 0, 7, 6, hdc, next.x, next.y, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        newBackground.dc, old.x - next.x, old.y - next.y,
+        7, 6, oldBackground.dc, 0, 0, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        oldBackground.dc, next.x - old.x, next.y - old.y,
+        7, 6, sprite.dc, 0, 0, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        hdc, next.x, next.y, 7, 6, sprite.dc, 0, 0, 0x00CC0020), 1);
+      assert.strictEqual(wat.test_call_BitBlt(
+        hdc, old.x, old.y, 7, 6, oldBackground.dc, 0, 0, 0x00CC0020), 1);
+      [oldBackground, newBackground] = [newBackground, oldBackground];
+      old = next;
+    }
+    assert.strictEqual(wat.test_call_BitBlt(
+      hdc, old.x, old.y, 7, 6, oldBackground.dc, 0, 0, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_call_BitBlt(
+      hdc, origin.x, origin.y, 7, 6, sprite.dc, 0, 0, 0x00CC0020), 1);
+    const actual = Array.from({ length: 34 * 22 }, (_, i) =>
+      wat.test_call_GetPixel(hdc, i % 34, (i / 34) | 0) >>> 0);
+    const mismatches = actual.reduce((count, value, index) =>
+      count + (value !== expected[index] ? 1 : 0), 0);
+    assert.strictEqual(mismatches, 0,
+      'retained window blits must restore overlapping drag buffers without trails');
+    for (const dib of [sprite, oldBackground, newBackground, stretchedBackground]) {
+      assert.strictEqual(wat.test_call_DeleteDC(dib.dc), 1);
+      assert.strictEqual(wat.test_call_DeleteObject(dib.bitmap), 1);
+    }
+  }
+
   win.w = 52;
   win.h = 36;
   win.clientRect = { x: 103, y: 55, w: 46, h: 28 };
