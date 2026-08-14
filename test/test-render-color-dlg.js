@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // PNG screenshot test: ChooseColor dialog. Exercises the WAT colorgrid
-// WM_PAINT (8x6 basic and 8x2 custom swatches + selection ring) plus buttons.
+// WM_PAINT (8x6 basic and 8x2 custom swatches + selection ring), plus the
+// expandable RGB editor used to add a caller-persistent custom color.
 //
 // Output: test/output/color-dlg.png
 //
@@ -43,6 +44,42 @@ runRenderTest('color-dlg', async (h, check) => {
   check('custom click clears basic selection', e.colorgrid_get_sel(grid) === -1);
   check('custom click updates CHOOSECOLOR.rgbResult',
     e.test_color_dialog_result(dlg) === 0x00123456);
+
+  const findById = id => {
+    for (let s = 0; s < 256; s++) {
+      const ch = e.wnd_slot_hwnd(s);
+      if (ch && e.ctrl_get_id(ch) === id) return ch;
+    }
+    return 0;
+  };
+  const define = findById(0x462);
+  check('Define Custom Colors button exists', define !== 0);
+  e.send_message(dlg, 0x0111, 0x462, define);
+  const red = findById(0x463), green = findById(0x464), blue = findById(0x465);
+  const add = findById(0x466);
+  check('Define expands RGB editor controls', !!(red && green && blue && add));
+  check('Define widens the visible dialog', h.renderer.windows[dlg].w === 436,
+    `width=${h.renderer.windows[dlg].w}`);
+
+  const u8 = new Uint8Array(h.memory.buffer);
+  const wa = g => g - e.get_image_base() + e.get_guest_base();
+  const setText = (hwnd, value) => {
+    const s = String(value);
+    const g = e.guest_alloc(s.length + 1);
+    const p = wa(g);
+    for (let i = 0; i < s.length; i++) u8[p + i] = s.charCodeAt(i);
+    u8[p + s.length] = 0;
+    e.send_message(hwnd, 0x000C, 0, g);
+    e.guest_free(g);
+  };
+  setText(red, 17);
+  setText(green, 34);
+  setText(blue, 51);
+  e.send_message(dlg, 0x0111, 0x466, add);
+  check('Add updates selected custom swatch from RGB fields',
+    e.colorgrid_control_color(customGrid, 5) === 0x00332211);
+  check('Add updates CHOOSECOLOR.rgbResult',
+    e.test_color_dialog_result(dlg) === 0x00332211);
 
   h.renderer.repaint();
 }, { minColors: 16 });

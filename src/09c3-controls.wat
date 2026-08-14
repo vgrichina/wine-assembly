@@ -1612,6 +1612,167 @@
   ;; The predefined values match the classic comdlg32 6x8 palette. Custom
   ;; colors are read directly from CHOOSECOLOR.lpCustColors so the application's
   ;; persistent 16-entry array is reflected every time the grid repaints.
+  ;; Build the few labels used only by the expanded custom-color pane at
+  ;; runtime. Keeping them here avoids reserving more global static-string
+  ;; addresses for a pane that most callers never open.
+  (func $colordlg_make_label (param $kind i32) (result i32)
+    (local $buf i32) (local $bw i32)
+    (local.set $buf (call $heap_alloc
+      (select (i32.const 21) (i32.const 7)
+        (i32.eq (local.get $kind) (i32.const 3)))))
+    (local.set $bw (call $g2w (local.get $buf)))
+    (if (i32.eq (local.get $kind) (i32.const 0))
+      (then
+        (i32.store (local.get $bw) (i32.const 0x3A646552)) ;; "Red:"
+        (i32.store8 offset=4 (local.get $bw) (i32.const 0)))
+      (else (if (i32.eq (local.get $kind) (i32.const 1))
+        (then
+          (i32.store (local.get $bw) (i32.const 0x65657247)) ;; "Gree"
+          (i32.store16 offset=4 (local.get $bw) (i32.const 0x3A6E)) ;; "n:"
+          (i32.store8 offset=6 (local.get $bw) (i32.const 0)))
+        (else (if (i32.eq (local.get $kind) (i32.const 2))
+          (then
+            (i32.store (local.get $bw) (i32.const 0x65756C42)) ;; "Blue"
+            (i32.store8 offset=4 (local.get $bw) (i32.const 0x3A))
+            (i32.store8 offset=5 (local.get $bw) (i32.const 0)))
+          (else
+            (i32.store         (local.get $bw) (i32.const 0x20646441)) ;; "Add "
+            (i32.store offset=4  (local.get $bw) (i32.const 0x43206F74)) ;; "to C"
+            (i32.store offset=8  (local.get $bw) (i32.const 0x6F747375)) ;; "usto"
+            (i32.store offset=12 (local.get $bw) (i32.const 0x6F43206D)) ;; "m Co"
+            (i32.store offset=16 (local.get $bw) (i32.const 0x73726F6C)) ;; "lors"
+            (i32.store8 offset=20 (local.get $bw) (i32.const 0))))))))
+    (local.get $buf))
+
+  (func $colordlg_set_u8_text (param $hwnd i32) (param $value i32)
+    (local $buf i32) (local $bw i32) (local $n i32)
+    (if (i32.gt_u (local.get $value) (i32.const 255))
+      (then (local.set $value (i32.const 255))))
+    (local.set $buf (call $heap_alloc (i32.const 4)))
+    (local.set $bw (call $g2w (local.get $buf)))
+    (if (i32.ge_u (local.get $value) (i32.const 100))
+      (then
+        (i32.store8 (local.get $bw)
+          (i32.add (i32.div_u (local.get $value) (i32.const 100)) (i32.const 48)))
+        (i32.store8 offset=1 (local.get $bw)
+          (i32.add (i32.rem_u (i32.div_u (local.get $value) (i32.const 10)) (i32.const 10)) (i32.const 48)))
+        (i32.store8 offset=2 (local.get $bw)
+          (i32.add (i32.rem_u (local.get $value) (i32.const 10)) (i32.const 48)))
+        (local.set $n (i32.const 3)))
+      (else (if (i32.ge_u (local.get $value) (i32.const 10))
+        (then
+          (i32.store8 (local.get $bw)
+            (i32.add (i32.div_u (local.get $value) (i32.const 10)) (i32.const 48)))
+          (i32.store8 offset=1 (local.get $bw)
+            (i32.add (i32.rem_u (local.get $value) (i32.const 10)) (i32.const 48)))
+          (local.set $n (i32.const 2)))
+        (else
+          (i32.store8 (local.get $bw) (i32.add (local.get $value) (i32.const 48)))
+          (local.set $n (i32.const 1))))))
+    (i32.store8 (i32.add (local.get $bw) (local.get $n)) (i32.const 0))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x000C) (i32.const 0) (local.get $buf)))
+    (call $heap_free (local.get $buf)))
+
+  (func $colordlg_expand_custom (param $dlg i32)
+    (local $rect i32) (local $cc i32) (local $rgb i32)
+    (local $label i32) (local $edit i32)
+    ;; Presence of the first RGB edit is also the expanded-state flag.
+    (if (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x463)) (then (return)))
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $dlg) (local.get $rect))
+    (call $host_move_window
+      (local.get $dlg)
+      (i32.load (local.get $rect)) (i32.load offset=4 (local.get $rect))
+      (i32.const 436) (i32.const 330) (i32.const 0))
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
+    (call $dlg_fill_bkgnd (local.get $dlg))
+    ;; Allocate/fill the resized back-canvas now. If its first allocation is
+    ;; deferred until a newly-created right-pane child paints, that resize
+    ;; clears the left palette children that were already painted this pass.
+    (drop (call $host_erase_background (local.get $dlg) (i32.const 16)))
+
+    (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
+    (if (local.get $cc)
+      (then (local.set $rgb (i32.load offset=12 (call $g2w (local.get $cc))))))
+
+    (local.set $label (call $colordlg_make_label (i32.const 0)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+      (i32.const 244) (i32.const 30) (i32.const 50) (i32.const 18)
+      (i32.const 0x50000000) (local.get $label)))
+    (call $heap_free (local.get $label))
+    (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x463)
+      (i32.const 302) (i32.const 26) (i32.const 54) (i32.const 22)
+      (i32.const 0x50812080) (i32.const 0)))
+    (call $colordlg_set_u8_text (local.get $edit) (i32.and (local.get $rgb) (i32.const 0xFF)))
+
+    (local.set $label (call $colordlg_make_label (i32.const 1)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+      (i32.const 244) (i32.const 62) (i32.const 50) (i32.const 18)
+      (i32.const 0x50000000) (local.get $label)))
+    (call $heap_free (local.get $label))
+    (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x464)
+      (i32.const 302) (i32.const 58) (i32.const 54) (i32.const 22)
+      (i32.const 0x50812080) (i32.const 0)))
+    (call $colordlg_set_u8_text (local.get $edit)
+      (i32.and (i32.shr_u (local.get $rgb) (i32.const 8)) (i32.const 0xFF)))
+
+    (local.set $label (call $colordlg_make_label (i32.const 2)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+      (i32.const 244) (i32.const 94) (i32.const 50) (i32.const 18)
+      (i32.const 0x50000000) (local.get $label)))
+    (call $heap_free (local.get $label))
+    (local.set $edit (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 0x465)
+      (i32.const 302) (i32.const 90) (i32.const 54) (i32.const 22)
+      (i32.const 0x50812080) (i32.const 0)))
+    (call $colordlg_set_u8_text (local.get $edit)
+      (i32.and (i32.shr_u (local.get $rgb) (i32.const 16)) (i32.const 0xFF)))
+
+    (local.set $label (call $colordlg_make_label (i32.const 3)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x466)
+      (i32.const 244) (i32.const 132) (i32.const 174) (i32.const 24)
+      (i32.const 0x50010000) (local.get $label)))
+    (call $heap_free (local.get $label))
+    (call $invalidate_hwnd (local.get $dlg)))
+
+  (func $colordlg_add_custom (param $dlg i32)
+    (local $cc i32) (local $custom i32) (local $rgb i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $idx i32)
+    (local $grid i32) (local $state i32) (local $basic i32)
+    (local.set $cc (call $wnd_get_userdata (local.get $dlg)))
+    (if (i32.eqz (local.get $cc)) (then (return)))
+    (local.set $custom (i32.load offset=16 (call $g2w (local.get $cc))))
+    (if (i32.eqz (local.get $custom)) (then (return)))
+    (local.set $r (call $ctrl_decimal_value (local.get $dlg) (i32.const 0x463) (i32.const 0)))
+    (local.set $g (call $ctrl_decimal_value (local.get $dlg) (i32.const 0x464) (i32.const 0)))
+    (local.set $b (call $ctrl_decimal_value (local.get $dlg) (i32.const 0x465) (i32.const 0)))
+    (if (i32.gt_u (local.get $r) (i32.const 255)) (then (local.set $r (i32.const 255))))
+    (if (i32.gt_u (local.get $g) (i32.const 255)) (then (local.set $g (i32.const 255))))
+    (if (i32.gt_u (local.get $b) (i32.const 255)) (then (local.set $b (i32.const 255))))
+    (local.set $rgb
+      (i32.or (local.get $r)
+        (i32.or (i32.shl (local.get $g) (i32.const 8))
+                (i32.shl (local.get $b) (i32.const 16)))))
+    (local.set $grid (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x461)))
+    (if (local.get $grid)
+      (then
+        (local.set $state (call $wnd_get_state_ptr (local.get $grid)))
+        (if (local.get $state) (then (local.set $idx (i32.load (call $g2w (local.get $state))))))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (i32.const 16)))
+          (then (local.set $idx (i32.const 0))))
+        (i32.store (i32.add (call $g2w (local.get $custom))
+          (i32.mul (local.get $idx) (i32.const 4))) (local.get $rgb))
+        (if (local.get $state) (then (i32.store (call $g2w (local.get $state)) (local.get $idx))))
+        (call $invalidate_hwnd (local.get $grid))))
+    (local.set $basic (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x460)))
+    (if (local.get $basic)
+      (then
+        (local.set $state (call $wnd_get_state_ptr (local.get $basic)))
+        (if (local.get $state) (then (i32.store (call $g2w (local.get $state)) (i32.const -1))))
+        (call $invalidate_hwnd (local.get $basic))))
+    (i32.store offset=12 (call $g2w (local.get $cc)) (local.get $rgb)))
+
   (func $colorgrid_color_for_idx (param $idx i32) (result i32)
     ;; Values are COLORREF (0x00BBGGRR), indexed row-major.
     (if (i32.eq (local.get $idx) (i32.const  0)) (then (return (i32.const 0x008080FF))))
@@ -1847,6 +2008,14 @@
         ;; CHOOSECOLOR.rgbResult; IDOK only commits the modal result.
         (call $modal_done (i32.const 1))
         (return (i32.const 0))))
+    (if (i32.eq (local.get $cmd) (i32.const 0x462))
+      (then
+        (call $colordlg_expand_custom (local.get $hwnd))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $cmd) (i32.const 0x466))
+      (then
+        (call $colordlg_add_custom (local.get $hwnd))
+        (return (i32.const 0))))
     (i32.const 0))
 
   (func $colordlg_call_hook
@@ -1880,7 +2049,7 @@
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
       (i32.const 0x252)   ;; "Color"
-      (i32.const 236) (i32.const 298)
+      (i32.const 236) (i32.const 330)
       (i32.const 1))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (call $title_table_set (local.get $dlg) (i32.const 0x252) (i32.const 5))
@@ -1954,13 +2123,19 @@
                       (br $custom_done)))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $scan_custom)))))))))
+    ;; The stock partial dialog exposes custom-color expansion below the
+    ;; persistent swatches. Keep OK/Cancel below it so controls never overlap.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x462)
+            (i32.const 8) (i32.const 234) (i32.const 208) (i32.const 24)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x11252) (i32.const 23))))
     ;; OK + Cancel
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
-            (i32.const 8) (i32.const 240) (i32.const 68) (i32.const 24)
+            (i32.const 8) (i32.const 266) (i32.const 68) (i32.const 24)
             (i32.const 0x50010001)
             (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
-            (i32.const 82) (i32.const 240) (i32.const 68) (i32.const 24)
+            (i32.const 82) (i32.const 266) (i32.const 68) (i32.const 24)
             (i32.const 0x50010000)
             (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
     ;; CCHookProc receives WM_INITDIALOG with lParam pointing at CHOOSECOLOR.
