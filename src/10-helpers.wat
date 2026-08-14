@@ -3474,6 +3474,19 @@
   ;; lookup with its stable surface id without changing raster semantics.
   (func $gdi_geometry_present (param $hdc i32) (param $desc i32)
         (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+    (local $swap i32)
+    ;; Signed StretchBlt extents can report either corner first. Upload the
+    ;; normalized dirty rectangle without changing the canonical coordinates.
+    (if (i32.gt_s (local.get $left) (local.get $right))
+      (then
+        (local.set $swap (local.get $left))
+        (local.set $left (local.get $right))
+        (local.set $right (local.get $swap))))
+    (if (i32.gt_s (local.get $top) (local.get $bottom))
+      (then
+        (local.set $swap (local.get $top))
+        (local.set $top (local.get $bottom))
+        (local.set $bottom (local.get $swap))))
     (drop (call $host_gdi_surface_upload
       (i32.load offset=68 (local.get $desc)) (local.get $left) (local.get $top)
       (local.get $right) (local.get $bottom))))
@@ -5739,8 +5752,10 @@
       (i32.xor (local.get $rop3) (i32.shr_u (local.get $rop3) (i32.const 4)))
       (i32.const 0x0F)) (i32.const 0)))
 
-  ;; Positive-dimension nearest-neighbor blit. Destination bounds clip. The
-  ;; source descriptor may be zero for pattern/destination-only ROPs. Scaling
+  ;; Signed-extent nearest-neighbor blit. A negative source or destination
+  ;; extent walks that axis backwards; differing signs mirror it, matching
+  ;; StretchBlt. Destination bounds clip. The source descriptor may be zero
+  ;; for pattern/destination-only ROPs. Scaling
   ;; an overlapping surface is rejected until a WAT scratch-row allocator is
   ;; connected; equal-size self copies are handled by $gdi_raster_bitblt.
   (func $gdi_raster_stretch_blt (param $hdc i32) (param $src_hdc i32)
@@ -5749,15 +5764,17 @@
         (param $sw i32) (param $sh i32) (param $pattern i32) (param $rop i32) (result i32)
     (local $x i32) (local $y i32) (local $tx i32) (local $ty i32)
     (local $ux i32) (local $uy i32) (local $s i32) (local $d i32) (local $rop3 i32)
+    (local $dw_abs i32) (local $dh_abs i32) (local $sw_abs i32) (local $sh_abs i32)
+    (local $dst_x0 i32) (local $dst_y0 i32) (local $src_x0 i32) (local $src_y0 i32)
+    (local $dst_x_step i32) (local $dst_y_step i32)
+    (local $src_x_step i32) (local $src_y_step i32)
     (local $brush i32) (local $sample i32) (local $pixel_pattern i32)
     (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $dst)))
-          (i32.or (i32.le_s (local.get $dw) (i32.const 0))
-            (i32.le_s (local.get $dh) (i32.const 0))))
+          (i32.or (i32.eqz (local.get $dw)) (i32.eqz (local.get $dh))))
       (then (return (i32.const 0))))
     (if (i32.and (i32.ne (local.get $src) (i32.const 0))
           (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $src)))
-            (i32.or (i32.le_s (local.get $sw) (i32.const 0))
-              (i32.le_s (local.get $sh) (i32.const 0)))))
+            (i32.or (i32.eqz (local.get $sw)) (i32.eqz (local.get $sh)))))
       (then (return (i32.const 0))))
     (if (i32.and (i32.ne (local.get $src) (i32.const 0))
           (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src))))
@@ -5770,13 +5787,43 @@
           (local.get $hdc) (i32.const 8) (i32.const 0x30010)))
         (if (i32.eqz (call $gdi_brush_valid (local.get $brush)))
           (then (return (i32.const 0))))))
+    (local.set $dw_abs (select
+      (i32.sub (i32.const 0) (local.get $dw)) (local.get $dw)
+      (i32.lt_s (local.get $dw) (i32.const 0))))
+    (local.set $dh_abs (select
+      (i32.sub (i32.const 0) (local.get $dh)) (local.get $dh)
+      (i32.lt_s (local.get $dh) (i32.const 0))))
+    (local.set $sw_abs (select
+      (i32.sub (i32.const 0) (local.get $sw)) (local.get $sw)
+      (i32.lt_s (local.get $sw) (i32.const 0))))
+    (local.set $sh_abs (select
+      (i32.sub (i32.const 0) (local.get $sh)) (local.get $sh)
+      (i32.lt_s (local.get $sh) (i32.const 0))))
+    (local.set $dst_x_step (select (i32.const -1) (i32.const 1)
+      (i32.lt_s (local.get $dw) (i32.const 0))))
+    (local.set $dst_y_step (select (i32.const -1) (i32.const 1)
+      (i32.lt_s (local.get $dh) (i32.const 0))))
+    (local.set $src_x_step (select (i32.const -1) (i32.const 1)
+      (i32.lt_s (local.get $sw) (i32.const 0))))
+    (local.set $src_y_step (select (i32.const -1) (i32.const 1)
+      (i32.lt_s (local.get $sh) (i32.const 0))))
+    (local.set $dst_x0 (select (i32.sub (local.get $dx) (i32.const 1)) (local.get $dx)
+      (i32.lt_s (local.get $dw) (i32.const 0))))
+    (local.set $dst_y0 (select (i32.sub (local.get $dy) (i32.const 1)) (local.get $dy)
+      (i32.lt_s (local.get $dh) (i32.const 0))))
+    (local.set $src_x0 (select (i32.sub (local.get $sx) (i32.const 1)) (local.get $sx)
+      (i32.lt_s (local.get $sw) (i32.const 0))))
+    (local.set $src_y0 (select (i32.sub (local.get $sy) (i32.const 1)) (local.get $sy)
+      (i32.lt_s (local.get $sh) (i32.const 0))))
     (block $rows_done (loop $rows
-      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $dh)))
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $dh_abs)))
       (local.set $x (i32.const 0))
       (block $cols_done (loop $cols
-        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $dw)))
-        (local.set $tx (i32.add (local.get $dx) (local.get $x)))
-        (local.set $ty (i32.add (local.get $dy) (local.get $y)))
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $dw_abs)))
+        (local.set $tx (i32.add (local.get $dst_x0)
+          (i32.mul (local.get $x) (local.get $dst_x_step))))
+        (local.set $ty (i32.add (local.get $dst_y0)
+          (i32.mul (local.get $y) (local.get $dst_y_step))))
         (if (i32.and
               (i32.ne (call $gdi_raster_pixel_ptr
                 (local.get $dst) (local.get $tx) (local.get $ty)) (i32.const 0))
@@ -5799,10 +5846,14 @@
             (local.set $s (i32.const 0))
             (if (local.get $src)
               (then
-                (local.set $ux (i32.add (local.get $sx)
-                  (i32.div_u (i32.mul (local.get $x) (local.get $sw)) (local.get $dw))))
-                (local.set $uy (i32.add (local.get $sy)
-                  (i32.div_u (i32.mul (local.get $y) (local.get $sh)) (local.get $dh))))
+                (local.set $ux (i32.add (local.get $src_x0)
+                  (i32.mul (local.get $src_x_step)
+                    (i32.div_u (i32.mul (local.get $x) (local.get $sw_abs))
+                      (local.get $dw_abs)))))
+                (local.set $uy (i32.add (local.get $src_y0)
+                  (i32.mul (local.get $src_y_step)
+                    (i32.div_u (i32.mul (local.get $y) (local.get $sh_abs))
+                      (local.get $dh_abs)))))
                 (local.set $s (call $gdi_raster_read_blt_source
                   (local.get $hdc) (local.get $src_hdc) (local.get $dst) (local.get $src)
                   (local.get $ux) (local.get $uy)))

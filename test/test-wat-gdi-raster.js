@@ -159,6 +159,27 @@ const SRC = path.join(ROOT, 'src');
     'overlapping stretch must reject instead of corrupting source pixels');
   });
 
+  check('StretchBlt mirrors pixels when source and destination extent signs differ', () => {
+    const src = surface(3, 2, 24);
+    const horizontal = surface(3, 2, 32);
+    const vertical = surface(3, 2, 32);
+    const bothNegative = surface(3, 2, 32);
+    [[1, 2, 3], [4, 5, 6]].forEach((row, y) =>
+      row.forEach((color, x) => setPacked(src, x, y, color)));
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      horizontal.desc, 3, 0, -3, 2, src.desc, 0, 0, 3, 2, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(horizontal, x, 0)), [3, 2, 1]);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(horizontal, x, 1)), [6, 5, 4]);
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      vertical.desc, 0, 0, 3, 2, src.desc, 0, 2, 3, -2, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(vertical, x, 0)), [4, 5, 6]);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(vertical, x, 1)), [1, 2, 3]);
+    assert.strictEqual(wat.test_gdi_raster_stretch_blt(
+      bothNegative.desc, 3, 2, -3, -2, src.desc, 3, 2, -3, -2, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(bothNegative, x, 0)), [1, 2, 3]);
+    assert.deepStrictEqual([...Array(3)].map((_, x) => packed(bothNegative, x, 1)), [4, 5, 6]);
+  });
+
   check('BITMAPINFO descriptors validate true-color and indexed BI_RGB layouts', () => {
     const bmi = nextDesc;
     nextDesc += 0x100;
