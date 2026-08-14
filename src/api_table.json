@@ -17069,5 +17069,75 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2264215400
+  },
+  {
+    "id": 2230,
+    "name": "CreateBitmapIndirect",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1988083472
+  },
+  {
+    "id": 2231,
+    "name": "CreatePolyPolygonRgn",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2170679898
+  },
+  {
+    "id": 2232,
+    "name": "CreateRoundRectRgn",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 641841592
+  },
+  {
+    "id": 2233,
+    "name": "GetBitmapBits",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1797037436
+  },
+  {
+    "id": 2234,
+    "name": "GetBitmapDimensionEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2278466117
+  },
+  {
+    "id": 2235,
+    "name": "GetBrushOrgEx",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1897263924
+  },
+  {
+    "id": 2236,
+    "name": "GetRegionData",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3688326247
+  },
+  {
+    "id": 2237,
+    "name": "MaskBlt",
+    "nargs": 12,
+    "convention": "stdcall",
+    "hash": 1501640265
+  },
+  {
+    "id": 2238,
+    "name": "PtInRegion",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3428002046
+  },
+  {
+    "id": 2239,
+    "name": "SetBitmapBits",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2322223040
   }
 ]

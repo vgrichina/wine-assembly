@@ -839,6 +839,17 @@ const extra = [
   // argument metadata; keep its six-argument ABI explicit here.
   { name: 'LineDDA', nargs: 6 },
   { name: 'GetColorAdjustment', nargs: 2 },
+  // GDI32 public bitmap/region surface imported by the checked-in PE corpus.
+  { name: 'CreateBitmapIndirect', nargs: 1 },
+  { name: 'CreatePolyPolygonRgn', nargs: 4 },
+  { name: 'CreateRoundRectRgn', nargs: 6 },
+  { name: 'GetBitmapBits', nargs: 3 },
+  { name: 'GetBitmapDimensionEx', nargs: 2 },
+  { name: 'GetBrushOrgEx', nargs: 2 },
+  { name: 'GetRegionData', nargs: 3 },
+  { name: 'MaskBlt', nargs: 12 },
+  { name: 'PtInRegion', nargs: 3 },
+  { name: 'SetBitmapBits', nargs: 3 },
   // OLE32 — structured-storage element enumerator.
   { name: 'IEnumSTATSTG_QueryInterface', nargs: 3 },
   { name: 'IEnumSTATSTG_AddRef', nargs: 1 },

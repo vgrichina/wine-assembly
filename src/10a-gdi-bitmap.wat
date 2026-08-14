@@ -556,6 +556,44 @@
       (i32.ne (local.get $pixels) (i32.const 0)) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0)))
 
+  (func $gdi_bitmap_create_indirect (param $bitmap i32) (result i32)
+    (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
+    (if (i32.ne (i32.load (local.get $bitmap)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (call $gdi_bitmap_create_bitmap
+      (i32.load offset=4 (local.get $bitmap))
+      (i32.load offset=8 (local.get $bitmap))
+      (i32.load16_u offset=16 (local.get $bitmap))
+      (i32.load16_u offset=18 (local.get $bitmap))
+      (if (result i32) (i32.load offset=20 (local.get $bitmap))
+        (then (call $g2w (i32.load offset=20 (local.get $bitmap))))
+        (else (i32.const 0)))))
+
+  (func $gdi_bitmap_bits (param $bitmap i32) (param $count i32)
+        (param $buffer i32) (param $write i32) (result i32)
+    (local $record i32) (local $size i32) (local $copied i32)
+    (local.set $record (call $gdi_object_record (local.get $bitmap)))
+    (if (i32.or (i32.eqz (call $gdi_bitmap_record_valid (local.get $record)))
+          (i32.lt_s (local.get $count) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.mul (i32.load offset=28 (local.get $record))
+      (i32.load offset=12 (local.get $record))))
+    (local.set $copied (local.get $count))
+    (if (i32.gt_u (local.get $copied) (local.get $size))
+      (then (local.set $copied (local.get $size))))
+    (if (i32.eqz (local.get $copied)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $buffer)) (then (return (i32.const 0))))
+    (if (local.get $write)
+      (then
+        (memory.copy (i32.load offset=24 (local.get $record))
+          (local.get $buffer) (local.get $copied))
+        (drop (call $host_gdi_surface_upload (i32.load offset=40 (local.get $record))
+          (i32.const 0) (i32.const 0) (i32.load offset=8 (local.get $record))
+          (i32.load offset=12 (local.get $record)))))
+      (else (memory.copy (local.get $buffer)
+        (i32.load offset=24 (local.get $record)) (local.get $copied))))
+    (local.get $copied))
+
   ;; HINST_COMMCTRL names six standard toolbar strips that are owned by the
   ;; common-controls DLL rather than the caller's PE resources. Keep the
   ;; compatibility artwork in canonical WAT bitmap storage; JavaScript only

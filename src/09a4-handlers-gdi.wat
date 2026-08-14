@@ -753,3 +753,110 @@
     (global.set $eax (global.get $cursor_count))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+
+  (func $handle_CreateBitmapIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_bitmap_create_indirect
+      (if (result i32) (local.get $arg0)
+        (then (call $g2w (local.get $arg0))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GetBitmapBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_bitmap_bits (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0))) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_SetBitmapBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_bitmap_bits (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0))) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetBitmapDimensionEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (call $gdi_object_type (local.get $arg0)) (i32.const 3))
+          (i32.ne (local.get $arg0) (i32.const 0x30007)))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (if (local.get $arg1)
+          (then
+            (call $gs32 (local.get $arg1) (i32.const 0))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
+        (global.set $eax (i32.ne (local.get $arg1) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetBrushOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (local.get $arg1))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0))))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (call $gs32 (local.get $arg1)
+          (call $gdi_dc_aux_get (local.get $arg0) (i32.const 8) (i32.const 0)))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+          (call $gdi_dc_aux_get (local.get $arg0) (i32.const 12) (i32.const 0)))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_CreateRoundRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_rgn_alloc_round_rect
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (local.get $arg4) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  (func $handle_CreatePolyPolygonRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_rgn_alloc_poly_polygon
+      (if (result i32) (local.get $arg0)
+        (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (if (result i32) (local.get $arg1)
+        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (local.get $arg2) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_PtInRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_rgn_point_in
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetRegionData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_rgn_get_data
+      (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_MaskBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $src i32) (local $mask i32) (local $src_hdc i32)
+    (local $sx i32) (local $sy i32) (local $mask_bitmap i32)
+    (local $mx i32) (local $my i32) (local $rop4 i32)
+    (local $dx i32) (local $dy i32) (local $ok i32)
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
+    (local.set $mask (global.get $GDI_BRUSH_DESC))
+    (local.set $src_hdc (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $sx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $sy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $mask_bitmap (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    (local.set $mx (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
+    (local.set $my (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
+    (local.set $rop4 (call $gl32 (i32.add (global.get $esp) (i32.const 48))))
+    (if (i32.and
+          (i32.and (call $gdi_surface_descriptor (local.get $arg0) (local.get $dst))
+            (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src)))
+          (i32.and (call $gdi_raster_desc_from_bitmap (local.get $mask_bitmap) (local.get $mask))
+            (i32.eq (i32.load offset=16 (local.get $mask)) (i32.const 1))))
+      (then
+        (local.set $dx (call $gdi_line_map_x (local.get $dst) (local.get $arg1)))
+        (local.set $dy (call $gdi_line_map_y (local.get $dst) (local.get $arg2)))
+        (local.set $sx (call $gdi_line_map_x (local.get $src) (local.get $sx)))
+        (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy)))
+        (local.set $ok (call $gdi_raster_mask_blt
+          (local.get $dst) (local.get $dx) (local.get $dy) (local.get $arg3) (local.get $arg4)
+          (local.get $src) (local.get $sx) (local.get $sy)
+          (i32.load (local.get $mask)) (i32.load offset=12 (local.get $mask))
+          (local.get $mx) (local.get $my) (i32.const 0) (local.get $rop4)))
+        (if (local.get $ok)
+          (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
+            (local.get $dx) (local.get $dy)
+            (i32.add (local.get $dx) (local.get $arg3))
+            (i32.add (local.get $dy) (local.get $arg4)))))))
+    (global.set $eax (local.get $ok))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 52))))
