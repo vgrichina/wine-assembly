@@ -320,7 +320,8 @@ caret:  native RichEdit creates a USER caret and sets it to x=48, y=3 after
 pixels: the on frames have a dark 13px inverted vertical caret stroke at the
         expected RichEdit client coordinate; the off frame clears it
 result: PASS for visible native RichEdit caret paint, blink cadence, and
-        repaint-based inverted/XOR-style erasure.
+        repaint-based inverted/XOR-style erasure. Revalidated 13/13 on
+        2026-08-13 with explicit timer-driven on/off phase transitions.
 ```
 
 Focused toolbar layout/command probe:
