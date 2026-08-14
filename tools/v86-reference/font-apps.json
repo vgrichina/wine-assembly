@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "apps": {
+    "font-inventory": {
+      "title": "Windows 98 bitmap font inventory",
+      "probeSource": "tools/v86-reference/probes/font-inventory.c",
+      "probeName": "FONTREF.EXE",
+      "launch": "D:\\FONTREF.EXE",
+      "waitMs": 3000,
+      "files": []
+    },
+    "fixedsys-sizes": {
+      "title": "Windows 98 native Fixedsys sizes",
+      "probeSource": "tools/v86-reference/probes/font-inventory.c",
+      "probeName": "FONTREF.EXE",
+      "launch": "D:\\FONTREF.EXE",
+      "postLaunch": [
+        {
+          "waitMs": 4000,
+          "scancodes": [57, 185]
+        }
+      ],
+      "waitMs": 3000,
+      "files": []
+    },
+    "stock-font-ascii": {
+      "title": "Windows 98 native stock-font ASCII",
+      "probeSource": "tools/v86-reference/probes/font-inventory.c",
+      "probeName": "FONTREF.EXE",
+      "launch": "D:\\FONTREF.EXE",
+      "postLaunch": [
+        {
+          "waitMs": 4000,
+          "scancodes": [57, 185]
+        },
+        {
+          "waitMs": 700,
+          "scancodes": [57, 185]
+        }
+      ],
+      "waitMs": 3000,
+      "files": []
+    }
+  }
+}

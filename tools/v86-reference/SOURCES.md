@@ -80,6 +80,36 @@ Minesweeper window, `148x191` client area, and client origin `(3,41)` relative
 to the outer window. Keep the generated PNG and JSON together when using that
 measurement to change emulator metrics.
 
+## Bitmap-font reference probes
+
+`font-apps.json` keeps the font probes separate from the accessory profiles in
+`apps.json`. The probes enumerate installed `.FON` files and raster faces,
+measure GDI stock-font objects, render printable ASCII, and request several
+Fixedsys heights through `CreateFontA`. Run any profile with the same documented
+online image used above, for example:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/font-apps.json \
+  --app stock-font-ascii
+```
+
+The pinned Windows 98 state reports these distinct stock objects at its default
+640x480 display configuration:
+
+| GDI stock object | Raster face | First metric |
+| --- | --- | ---: |
+| `ANSI_FIXED_FONT` | Courier | 8x13 |
+| `OEM_FIXED_FONT` | Terminal | 8x12 |
+| `SYSTEM_FIXED_FONT` | Fixedsys | 8x15 |
+| `SYSTEM_FONT` | System | 7x16 |
+
+Negative Fixedsys height requests select discrete bitmap results rather than a
+new outline rasterization at every height: requests 16 and 18 produce `8x15`,
+21 through 32 produce `16x30`, 48 produces `32x60`, 64 produces `40x75`, and
+80 produces `40x90`. The probe also records `tmInternalLeading`, so requested
+character height can be distinguished from total cell height.
+
 ## Profile exclusions
 
 `apps.json` marks profile-specific exclusions with `skip`. The official Win98

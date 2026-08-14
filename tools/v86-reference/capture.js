@@ -12,7 +12,7 @@ const { generate, toDosFilename } = require("./iso9660");
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
 const CACHE_ROOT = path.join(REPO_ROOT, ".cache/v86-reference");
-const APPS = require("./apps.json").apps;
+const DEFAULT_MANIFEST = path.join(__dirname, "apps.json");
 const WIN98_DISK_SIZE = 300 * 1024 * 1024;
 const WIN98_CHUNK_SIZE = 256 * 1024;
 const ONLINE = {
@@ -27,6 +27,7 @@ function usage() {
 
 Options:
   --app ID             App from apps.json (default: geometry-probe)
+  --manifest PATH      Alternate app manifest (default: tools/v86-reference/apps.json)
   --output PATH        VGA screenshot path
   --metadata PATH      Capture metadata path
   --online             Load BIOS, Win98 disk chunks, and state from documented URLs
@@ -53,6 +54,7 @@ function parseArgs(argv) {
   };
   const valueOptions = new Map([
     ["--app", "app"],
+    ["--manifest", "manifest"],
     ["--output", "output"],
     ["--metadata", "metadata"],
     ["--bios", "bios"],
@@ -138,6 +140,7 @@ function buildProbe(entry) {
     "-Wl,--minor-subsystem-version,0",
     "-lkernel32",
     "-luser32",
+    "-lgdi32",
     "-o", output,
   ], {
     cwd: REPO_ROOT,
@@ -294,15 +297,18 @@ function findBrowser(explicit) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const manifestPath = options.manifest ? path.resolve(options.manifest) : DEFAULT_MANIFEST;
+  const apps = JSON.parse(fs.readFileSync(
+    requireFile(manifestPath, "app manifest"), "utf8")).apps;
   if (options.help) return usage();
   if (options.list) {
-    for (const [id, app] of Object.entries(APPS)) {
+    for (const [id, app] of Object.entries(apps)) {
       console.log(`${id.padEnd(20)} ${app.skip ? "[skip] " : "       "}${app.title}`);
     }
     return;
   }
 
-  const entry = APPS[options.app];
+  const entry = apps[options.app];
   if (!entry) throw new Error(`unknown app ${options.app}; use --list`);
   if (entry.skip) throw new Error(`${options.app} is excluded from this profile: ${entry.skip}`);
   entry.id = options.app;
