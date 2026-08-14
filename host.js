@@ -640,14 +640,9 @@ class WineAssembly {
         compileEl.style.display = 'block';
       }, 100);
     }
-    await this.ensureUiFontsReady();
-    const wasmModule = await WineAssembly.getWasmModule();
-    if (showTimeout) clearTimeout(showTimeout);
-    if (compileEl) compileEl.style.display = 'none';
-    // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
-    // COMCTL32#17 -> InitCommonControls) to real handler IDs. Without this
-    // every ordinal call crashes as "<ord> unimplemented".
-    if (!this.apiTable) {
+    const fontsReady = this.ensureUiFontsReady();
+    const wasmReady = WineAssembly.getWasmModule();
+    const apiTableReady = !this.apiTable ? (async () => {
       try {
         const r = await fetch(`src/api_table.json?v=${WineAssembly.SOURCE_VERSION}`);
         this.apiTable = await r.json();
@@ -655,7 +650,13 @@ class WineAssembly {
         console.warn('[host] failed to load api_table.json:', e);
         this.apiTable = [];
       }
-    }
+    })() : Promise.resolve();
+    const [, wasmModule] = await Promise.all([fontsReady, wasmReady, apiTableReady]);
+    if (showTimeout) clearTimeout(showTimeout);
+    if (compileEl) compileEl.style.display = 'none';
+    // Load api_table.json so resolve_ordinal can map ordinal imports (e.g.
+    // COMCTL32#17 -> InitCommonControls) to real handler IDs. Without this
+    // every ordinal call crashes as "<ord> unimplemented".
     const imports = this.getImports();
 
     // Make deterministic Win9x UI and fixed fonts available before guest code
@@ -771,6 +772,20 @@ class WineAssembly {
       const modulePromise = (async () => {
         const tailCalls = WineAssembly.supportsWasmTailCalls();
         console.log(`[host] wasm tail calls ${tailCalls ? 'enabled' : 'not available; using compatibility dispatch'}`);
+        const forceSourceCompile = typeof location !== 'undefined' &&
+          new URLSearchParams(location.search).has('compile-wat');
+        if (!forceSourceCompile) {
+          const artifact = tailCalls
+            ? 'build/wine-assembly.wasm'
+            : 'build/wine-assembly.compat.wasm';
+          try {
+            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await WebAssembly.compile(await response.arrayBuffer());
+          } catch (error) {
+            console.warn(`[host] unable to load ${artifact}; compiling WAT sources`, error);
+          }
+        }
         const bytes = await compileWatSnapshot(
           async file => {
             const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`);
@@ -977,7 +992,6 @@ class WineAssembly {
     const _loadDlls = (typeof DllLoader !== 'undefined' && DllLoader.loadDlls) || (typeof loadDlls === 'function' && loadDlls);
     if (!_loadDlls) return;
     // dllPaths can be strings (URLs) or {name, bytes} objects
-    const configs = [];
     const rememberDllBytes = (name, bytes) => {
       if (!name || !bytes) return;
       const key = String(name).toLowerCase();
@@ -988,21 +1002,21 @@ class WineAssembly {
         vfs.files.set('c:\\' + key, { data: bytes, attrs: 0x20 });
       }
     };
-    for (const item of dllPaths) {
+    const configs = await Promise.all(dllPaths.map(async item => {
       if (typeof item === 'string') {
         const resp = await fetch(item);
-        if (!resp.ok) { console.error('Failed to fetch DLL:', item); continue; }
+        if (!resp.ok) { console.error('Failed to fetch DLL:', item); return null; }
         const bytes = new Uint8Array(await resp.arrayBuffer());
         const name = item.split('/').pop();
         rememberDllBytes(name, bytes);
-        configs.push({ name, bytes });
-      } else {
-        if (item && item.name && item.bytes) {
-          rememberDllBytes(item.name, item.bytes);
-        }
-        configs.push(item);
+        return { name, bytes };
       }
-    }
+      if (item && item.name && item.bytes) {
+        rememberDllBytes(item.name, item.bytes);
+      }
+      return item;
+    }));
+    const readyConfigs = configs.filter(Boolean);
     const exeBytes = this._exeBytes;
     this._inDllInit = true;
     const opts = {};
@@ -1013,7 +1027,7 @@ class WineAssembly {
         this._registerDllBitmapResources(dllConfigs[i].name, dllConfigs[i].bytes, dllResults[i].loadAddr);
       }
     };
-    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, configs, console.log, opts);
+    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     this._inDllInit = false;
     this.running = true;
   }

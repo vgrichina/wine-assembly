@@ -230,12 +230,21 @@ assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host
 assert(indexHtml.includes('lib/host-imports.js?v=200'), 'web host should cache-bust binary text rasterization');
 assert(indexHtml.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(indexHtml.includes('host.js?v=205'), 'web host should cache-bust host.js after top-level dialog caption fixes');
-assert(hostJs.includes("static SOURCE_VERSION = '205'"), 'web host should cache-bust WAT source compilation');
+assert(indexHtml.includes('host.js?v=206'), 'web host should cache-bust host.js after precompiled WASM startup support');
+assert(hostJs.includes("static SOURCE_VERSION = '206'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(indexHtml.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(indexHtml.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
-assert(hostJs.includes('compileWatSnapshot('), 'host.js should compile declaration and body passes from one WAT source snapshot');
+assert(hostJs.includes("'build/wine-assembly.wasm'"), 'web startup should load the precompiled tail-call WASM artifact');
+assert(hostJs.includes("'build/wine-assembly.compat.wasm'"), 'web startup should load the precompiled compatibility WASM artifact');
+assert(hostJs.includes("has('compile-wat')"), 'web startup should retain an explicit source-compilation mode');
+assert(hostJs.includes('compileWatSnapshot('), 'host.js should retain WAT source compilation as a development/failure fallback');
+assert(hostJs.includes('Promise.all([fontsReady, wasmReady, apiTableReady])'), 'web startup should overlap independent font, WASM, and API-table loading');
+assert(hostJs.includes('Promise.all(dllPaths.map(async item =>'), 'web startup should fetch independent DLL payloads in parallel');
+assert(deployJs.includes("const BINARY_DIRS = ['binaries', 'icons', 'build']"), 'deploy should include precompiled browser WASM artifacts');
+assert(deployJs.includes("'build/wine-assembly.wasm'"), 'deploy should allow the tail-call browser WASM artifact above the general binary-size cap');
+assert(deployJs.includes("'build/wine-assembly.compat.wasm'"), 'deploy should allow the compatibility browser WASM artifact above the general binary-size cap');
+assert(deployJs.includes("'.wasm'"), 'deploy should encode WASM artifacts as binary');
 assert(hostJs.includes('WineAssembly._wasmModulePromise = null'), 'host.js should allow a failed WAT compilation to retry');
 assert(indexHtml.includes('wine._availableDllFiles = new Set(Object.keys(availableDlls))'), 'web launch should tell host imports which DLLs can be dynamically fetched');
 assert(/availableDllFiles\(\)\s*\{\s*return opts\.availableDllFiles \|\| self\._availableDllFiles \|\| null;/.test(hostJs), 'host.js should pass browser-fetchable DLL names into host imports');

@@ -6,7 +6,6 @@
 //                                                sha256 differs from server
 //   node tools/deploy-berrry.js --update --full  force-reupload everything
 //   node tools/deploy-berrry.js --update --files=a,b,c   push explicit list
-//                                                (rejects compiled build/*.wasm)
 // Autodiscovers all deployable files — no hardcoded lists.
 
 const fs = require('fs');
@@ -29,7 +28,7 @@ const SKIP_FILES = new Set(['package.json', 'package-lock.json']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools', 'test', 'build', 'binaries']);
 
 // Directories that contain binary assets (base64-encoded)
-const BINARY_DIRS = ['binaries', 'icons'];
+const BINARY_DIRS = ['binaries', 'icons', 'build'];
 
 // Skip these binary subdirs (too large, not used by app, or 16-bit).
 // Default deploy ships only assets reachable from the desktop icons. Debug-only
@@ -45,6 +44,8 @@ const MAX_BINARY_SIZE = 500 * 1024;
 // But always include these even if large
 const LARGE_OK = new Set(['cards.dll', 'comctl32.dll']);
 const LARGE_OK_PATHS = new Set([
+  'build/wine-assembly.wasm',
+  'build/wine-assembly.compat.wasm',
   'binaries/pinball/PINBALL.DAT',
   'binaries/pinball-plus95/PINBALL.DAT',
   'binaries/winamp.exe',
@@ -138,7 +139,7 @@ const DESKTOP_BINARY_PREFIXES = [
 ];
 
 // Binary extensions to include
-const BINARY_EXTS = new Set(['.exe', '.dll', '.manifest', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.m3u', '.dat', '.inf', '.ini', '.txt', '.png']);
+const BINARY_EXTS = new Set(['.exe', '.dll', '.manifest', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.m3u', '.dat', '.inf', '.ini', '.txt', '.png', '.wasm']);
 
 function walk(dir, base, filter) {
   const results = [];
@@ -259,9 +260,6 @@ function loadExplicitFiles(relList) {
   const files = [];
   for (const originalRel of relList) {
     const rel = originalRel.replace(/\\/g, '/').replace(/^\.\//, '');
-    if (/^build\/.*\.wasm$/i.test(rel)) {
-      throw new Error(`Refusing to deploy ${rel}: browser deploys compile src/*.wat instead of compiled wasm artifacts`);
-    }
     const full = path.resolve(ROOT, rel);
     if (!fs.existsSync(full)) { console.error('SKIP missing: ' + rel); continue; }
     const ext = path.extname(rel).toLowerCase();
