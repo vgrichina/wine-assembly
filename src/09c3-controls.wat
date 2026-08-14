@@ -140,6 +140,39 @@
 
   ;; ---- Control table helpers (legacy CONTROL_TABLE) ----
 
+  ;; Mark a registered native status-bar window without classifying it as a
+  ;; WAT control. Its guest comctl32/MFC wndproc must remain authoritative for
+  ;; CCS_BOTTOM layout, while the shared renderer surface still needs WAT to
+  ;; cover stale pixels when WM_PAINT is dispatched.
+  (func $statusbar_native_mark_slot (param $slot i32) (param $marked i32)
+    (local $addr i32) (local $mask i32) (local $value i32)
+    (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
+                (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+      (then (return)))
+    (local.set $addr
+      (i32.add (global.get $NATIVE_STATUS_BITS)
+        (i32.shr_u (local.get $slot) (i32.const 3))))
+    (local.set $mask
+      (i32.shl (i32.const 1) (i32.and (local.get $slot) (i32.const 7))))
+    (local.set $value (i32.load8_u (local.get $addr)))
+    (i32.store8 (local.get $addr)
+      (if (result i32) (local.get $marked)
+        (then (i32.or (local.get $value) (local.get $mask)))
+        (else (i32.and (local.get $value) (i32.xor (local.get $mask) (i32.const 0xFF)))))))
+
+  (func $statusbar_native_is (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.and
+      (i32.shr_u
+        (i32.load8_u
+          (i32.add (global.get $NATIVE_STATUS_BITS)
+            (i32.shr_u (local.get $slot) (i32.const 3))))
+        (i32.and (local.get $slot) (i32.const 7)))
+      (i32.const 1)))
+
   ;; Set control class and ID for a window table slot
   (func $ctrl_table_set (param $slot i32) (param $class i32) (param $ctrl_id i32)
     (local $addr i32)
@@ -153,6 +186,7 @@
   ;; Clear per-slot WAT control metadata when WND_RECORDS reuses a slot.
   (func $ctrl_table_reset_slot (param $slot i32)
     (local $addr i32)
+    (call $statusbar_native_mark_slot (local.get $slot) (i32.const 0))
     (local.set $addr (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
     (i64.store (local.get $addr) (i64.const 0))
     (i64.store offset=8 (local.get $addr) (i64.const 0))
@@ -373,10 +407,9 @@
     ;; Class 21 = Toolbar (ToolbarWindow32)
     (if (i32.eq (local.get $class) (i32.const 21))
       (then (return (call $toolbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
-    ;; Class 22 = StatusBar (msctls_statusbar32). The renderer owns its
-    ;; fallback surface; WAT still owns HWND/parent/geometry bookkeeping.
+    ;; Class 22 = StatusBar (msctls_statusbar32)
     (if (i32.eq (local.get $class) (i32.const 22))
-      (then (return (i32.const 0))))
+      (then (return (call $statusbar_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -3962,6 +3995,108 @@
     ;; Default
     (i32.const 0)
   )
+
+  ;; ---- StatusBar WndProc ----
+  ;;
+  ;; Paint a compact Win9x status line into the shared top-level surface.
+  ;; Leaving this class as a no-op exposed pixels from the MDI view's initial
+  ;; full-height horizontal scrollbar after Paint docked the view above the
+  ;; status bar.  The title table is the authoritative text store because MFC
+  ;; updates its prompt with SetWindowTextA.
+
+  (func $statusbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $text_w i32) (local $text_len i32) (local $right i32)
+    ;; WM_SETTEXT and SB_SETTEXTA. Paint uses the former for its help prompt;
+    ;; accepting part zero/simple-mode SB_SETTEXTA also covers common callers.
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x000C))
+          (i32.eq (local.get $msg) (i32.const 0x0401)))
+      (then
+        (if (i32.or
+              (i32.eq (local.get $msg) (i32.const 0x000C))
+              (i32.or
+                (i32.eqz (i32.and (local.get $wParam) (i32.const 0xFF)))
+                (i32.eq (i32.and (local.get $wParam) (i32.const 0xFF)) (i32.const 0xFF))))
+          (then
+            (local.set $text_len
+              (if (result i32) (local.get $lParam)
+                (then (call $guest_strlen (local.get $lParam)))
+                (else (i32.const 0))))
+            (call $title_table_set
+              (local.get $hwnd)
+              (if (result i32) (local.get $lParam)
+                (then (call $g2w (local.get $lParam)))
+                (else (i32.const 0)))
+              (local.get $text_len))
+            (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 1))))
+    ;; SB_SETPARTS / SB_SIMPLE: retain API success. The Paint/MFC status bar
+    ;; presents its active prompt through the whole first pane.
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0404))
+          (i32.eq (local.get $msg) (i32.const 0x0409)))
+      (then
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 1))))
+    ;; WM_PAINT
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                     (i32.gt_s (local.get $h) (i32.const 0)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+              (i32.const 0x30011))) ;; COLOR_3DFACE
+            ;; SBARS_SIZEGRIP (0x100) reserves the classic 16px grip at right.
+            (local.set $right
+              (if (result i32)
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
+                (then (i32.sub (local.get $w) (i32.const 17)))
+                (else (i32.sub (local.get $w) (i32.const 2)))))
+            (if (i32.gt_s (local.get $right) (i32.const 3))
+              (then
+                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                  (i32.const 1) (i32.const 2) (local.get $right) (i32.sub (local.get $h) (i32.const 2))
+                  (i32.const 0x0A) (i32.const 0x0F))) ;; EDGE_SUNKEN | BF_RECT
+                (local.set $text_w (call $title_table_get_ptr (local.get $hwnd)))
+                (local.set $text_len (call $title_table_get_len (local.get $hwnd)))
+                (if (i32.and (local.get $text_w) (local.get $text_len))
+                  (then
+                    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+                    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+                    (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
+                    (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 2))
+                    (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $right) (i32.const 3)))
+                    (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.sub (local.get $h) (i32.const 2)))
+                    (drop (call $host_gdi_draw_text
+                      (local.get $hdc) (local.get $text_w) (local.get $text_len)
+                      (global.get $PAINT_SCRATCH) (i32.const 0x824) (i32.const 0)))))))
+            ;; Minimal Win9x size-grip dots: highlight up-left, shadow down-right.
+            (if (i32.and
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
+                  (i32.and (i32.ge_s (local.get $w) (i32.const 16))
+                           (i32.ge_s (local.get $h) (i32.const 12))))
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (i32.sub (local.get $w) (i32.const 5)) (i32.sub (local.get $h) (i32.const 5))
+                  (i32.sub (local.get $w) (i32.const 3)) (i32.sub (local.get $h) (i32.const 3))
+                  (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (i32.sub (local.get $w) (i32.const 9)) (i32.sub (local.get $h) (i32.const 5))
+                  (i32.sub (local.get $w) (i32.const 7)) (i32.sub (local.get $h) (i32.const 3))
+                  (i32.const 0x30014)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (i32.sub (local.get $w) (i32.const 5)) (i32.sub (local.get $h) (i32.const 9))
+                  (i32.sub (local.get $w) (i32.const 3)) (i32.sub (local.get $h) (i32.const 7))
+                  (i32.const 0x30014)))))))
+        (return (i32.const 0))))
+    (i32.const 0))
 
   ;; ---- ProgressBar WndProc ----
   ;;
@@ -11597,6 +11732,12 @@
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (local.get $wp)) (then (return (i32.const 0))))
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $hwnd)))
+    ;; A registered status bar keeps ctrl_class=0 so its guest wndproc can
+    ;; perform MFC layout. Only its shared-surface paint is WAT-owned.
+    (if (i32.and (call $statusbar_native_is (local.get $hwnd))
+                 (i32.eq (local.get $msg) (i32.const 0x000F)))
+      (then (return (call $statusbar_wndproc
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Keep the exported/test-driver path consistent with SendMessageA and
     ;; DispatchMessageA: WAT-owned controls paint through the native control
     ;; proc even if the app has subclassed the window.

@@ -7,7 +7,7 @@
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
-    (local $detected_class i32) (local $name_w i32)
+    (local $detected_class i32) (local $name_w i32) (local $wat_statusbar i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
     ;; treating the caller's stack frame as the source of truth.
@@ -203,6 +203,21 @@
       (i32.ne (i32.and (local.get $arg3) (i32.const 0x40000000)) (i32.const 0))))
     ;; Pass className to host so it knows the window type (e.g. "Edit")
     (call $host_set_window_class (local.get $hwnd) (call $g2w (local.get $arg1)))
+    ;; Paint's MFC status bar needs the registered common-control wndproc for
+    ;; its automatic CCS_BOTTOM layout, but WAT must own WM_PAINT. Remember the
+    ;; exact class here; after wndproc selection we set a separate paint marker
+    ;; without changing CONTROL_TABLE routing.
+    (if (i32.and
+          (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+          (i32.and
+            (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                    (i32.const 0x7463736d)) ;; "msct"
+            (i32.and
+              (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x737f736c)) ;; "ls_s" after lowercase mask
+              (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
+                      (i32.const 0x75746174))))) ;; "tatu"
+      (then (local.set $wat_statusbar (i32.const 1))))
     ;; Store style before any native control WM_CREATE. Edit/Button/etc. read
     ;; style bits during creation just like USER32-created controls on Win98.
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
@@ -252,7 +267,7 @@
             (i32.eq (i32.or (i32.load (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                     (i32.const 0x6c6f6f74)) ;; "tool"
             (i32.eq (i32.or (i32.load offset=4 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
-                    (i32.const 0x73706974)))) ;; "tips"
+                          (i32.const 0x73706974)))) ;; "tips"
       (then (local.set $tmp (i32.const 0))))
     ;; Prefer the WAT-native ToolbarWindow32 default proc for MFC control bars.
     ;; MFC subclasses it through the active CBT hook and chains TB_* messages
@@ -302,6 +317,8 @@
         ;; ctrl class IDs (see $control_wndproc_dispatch):
         ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7,
         ;;   TreeView=8, ListView=18, TrackBar=19, Tooltip=20, Toolbar=21.
+        ;; Registered status bars deliberately remain unclassified: MFC must
+        ;; subclass and lay them out before the separate paint marker is used.
         (local.set $detected_class (i32.const 0))
         (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
         (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
@@ -467,6 +484,16 @@
                           (i32.const 1)))))) ;; CBS_SIMPLE keeps full height
           (else
             (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN))))))
+    ;; Hybrid common-control ownership: retain the DLL/MFC wndproc chosen
+    ;; above for layout and non-paint messages, while a dedicated per-slot bit
+    ;; routes only WM_PAINT through WAT. CONTROL_TABLE must remain class zero:
+    ;; its class field also controls SetWindowText and default-proc behavior.
+    (if (local.get $wat_statusbar)
+      (then
+        (local.set $v (call $wnd_table_find (local.get $hwnd)))
+        (if (i32.ge_s (local.get $v) (i32.const 0))
+          (then (call $statusbar_native_mark_slot
+            (local.get $v) (i32.const 1))))))
     (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
@@ -1785,6 +1812,22 @@
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; callback addr
     (global.set $steps (i32.const 0))
     (return)))
+    ;; Registered status bars keep their guest wndproc for layout and normal
+    ;; messages, but paint through WAT so their shared parent surface cannot
+    ;; expose stale view/scrollbar pixels.
+    (if (i32.and
+          (call $statusbar_native_is (call $gl32 (local.get $arg0)))
+          (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x000F)))
+      (then
+        (call $update_clear_hwnd (call $gl32 (local.get $arg0)))
+        (call $paint_flag_clear_hwnd (call $gl32 (local.get $arg0)))
+        (global.set $eax (call $statusbar_wndproc
+          (call $gl32 (local.get $arg0))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Paint for WAT-owned controls is rendered by our native control path.
     ;; Match SendMessageA here: GetMessageA synthesizes WM_PAINT MSGs, and
     ;; DispatchMessageA must not route those controls into an app fallback
@@ -2166,6 +2209,13 @@
     ;; Do not enter an app-installed subclass proc just to chain back to the
     ;; default marker; some NSIS treeview paints unwind with a corrupted frame.
     (local.set $ctrl_class (call $ctrl_table_get_class (local.get $arg0)))
+    (if (i32.and (call $statusbar_native_is (local.get $arg0))
+                 (i32.eq (local.get $arg1) (i32.const 0x000F)))
+      (then
+        (global.set $eax (call $statusbar_wndproc
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (if (i32.and (i32.ne (local.get $ctrl_class) (i32.const 0))
                  (i32.eq (local.get $arg1) (i32.const 0x000F)))
       (then
