@@ -102,6 +102,16 @@ assert(!/\[\s*'dxball'\s*,\s*'DX-Ball'/.test(indexHtml),
   'normal desktop whitelist should not promote the local DX-Ball payload');
 assert(!deployJs.includes('test/binaries/candidates/dxball'),
   'public deploy should exclude the local DX-Ball payload');
+assert(indexHtml.includes('<option value="blobby_volley">Blobby Volley</option>'),
+  'debug app selector should expose the local Blobby Volley candidate');
+assert(/const blobbyCandidateFiles = \[\s*'graph\.pak', 'sound\.pak', 'text\.pak',\s*\]/s.test(indexHtml),
+  'Blobby Volley debug launch should preload its three runtime PAK files');
+assert(/blobby_volley:\s*\{[^}]*exe:\s*blobbyCandidateRoot \+ 'volley\.exe'[^}]*files:\s*blobbyCandidateFiles[^}]*requiredFiles:\s*true/s.test(indexHtml),
+  'Blobby Volley debug launch should require its local runtime payload');
+assert(!/\[\s*'blobby_volley'\s*,\s*'Blobby Volley'/.test(indexHtml),
+  'normal desktop whitelist should not promote the local Blobby Volley payload');
+assert(!deployJs.includes('test/binaries/candidates/blobby-volley'),
+  'public deploy should exclude the local Blobby Volley payload');
 assert(indexHtml.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
 assert(indexHtml.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
 assert(indexHtml.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');

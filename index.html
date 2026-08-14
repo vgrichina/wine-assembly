@@ -506,6 +506,7 @@
         </optgroup>
         <optgroup label="Local Candidates">
           <option value="dxball">DX-Ball 1.09</option>
+          <option value="blobby_volley">Blobby Volley</option>
         </optgroup>
       </select>
       <button onclick="launchApp()">Launch</button>
@@ -1169,6 +1170,13 @@ Resource-aware Win98 emulator
       'wowpulse.wav', 'xploshor.wav', 'xplosht1.wav',
     ].map(name => dxballCandidateRoot + name);
 
+    // Extracted archive payload used by the candidate CLI gate. Keep it local
+    // and debug-only, alongside DX-Ball, until Blobby is ready for promotion.
+    const blobbyCandidateRoot = 'test/binaries/candidates/blobby-volley/';
+    const blobbyCandidateFiles = [
+      'graph.pak', 'sound.pak', 'text.pak',
+    ].map(name => blobbyCandidateRoot + name);
+
     const apps = {
       notepad:  { exe: 'binaries/notepad.exe' },
       calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'] },
@@ -1234,6 +1242,11 @@ Resource-aware Win98 emulator
       dxball: {
         exe: dxballCandidateRoot + 'dxball.exe',
         files: dxballCandidateFiles,
+        requiredFiles: true,
+      },
+      blobby_volley: {
+        exe: blobbyCandidateRoot + 'volley.exe',
+        files: blobbyCandidateFiles,
         requiredFiles: true,
       },
       funtris:    {
