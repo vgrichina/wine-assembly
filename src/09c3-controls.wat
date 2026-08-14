@@ -4230,6 +4230,8 @@
           (if (i32.load (local.get $state_w))
             (then
               ;; SS_LEFT(0)/SS_CENTER(1)/SS_RIGHT(2) use DT_WORDBREAK for multi-line.
+              ;; Text statics also expand tabs; Paint's Attributes dialog uses
+              ;; them to align the two "Not Available" values.
               ;; SS_SIMPLE(0x0B), SS_LEFTNOWORDWRAP(0x0C) use DT_SINGLELINE.
               (local.set $fmt (if (result i32) (i32.le_u (local.get $style) (i32.const 2))
                 (then (i32.const 0x10))    ;; DT_WORDBREAK
@@ -4243,6 +4245,11 @@
                   (i32.or
                     (i32.and (local.get $fmt) (i32.const 0x03)) ;; keep horizontal alignment
                     (i32.const 0x24))))) ;; DT_VCENTER|DT_SINGLELINE
+              (if (i32.or
+                    (i32.le_u (local.get $style) (i32.const 2))
+                    (i32.eq (local.get $style) (i32.const 0x0C)))
+                (then (local.set $fmt
+                  (i32.or (local.get $fmt) (i32.const 0x40))))) ;; DT_EXPANDTABS
               (i32.store        (global.get $PAINT_SCRATCH) (local.get $tx_l))
               (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $tx_t))
               (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $tx_r))

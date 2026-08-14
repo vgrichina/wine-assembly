@@ -57,6 +57,7 @@ assert(/text="&Width:"/.test(output) && /text="&Height:"/.test(output),
 const dialogWindow = output.match(
   /window:attributes hwnd=\d+ .* pos=(-?\d+),(-?\d+) size=(\d+)x(\d+).* title="Attributes"/);
 assert(dialogWindow, 'Paint Attributes window geometry was not reported');
+const dialogX = Number(dialogWindow[1]);
 const dialogY = Number(dialogWindow[2]);
 assert(dialogY >= 40 && dialogY <= 100,
   `Paint Attributes was not centered over its owner (y=${dialogY})`);
@@ -64,6 +65,23 @@ assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|CRASH/.test(output),
   'Paint Attributes triggered an emulator failure');
 
 const image = PNG.sync.read(fs.readFileSync(SHOT));
+function firstDarkX(y0, y1, x0, x1) {
+  for (let x = x0; x < x1; x++) {
+    for (let y = y0; y < y1; y++) {
+      const p = (y * image.width + x) * 4;
+      if (image.data[p] < 80 && image.data[p + 1] < 80 && image.data[p + 2] < 80) return x;
+    }
+  }
+  return -1;
+}
+
+// Both values follow tabs in separate static controls. They should land on
+// the same tab stop, with a visible gap after their differently sized labels.
+const savedValueX = firstDarkX(dialogY + 35, dialogY + 48, dialogX + 91, dialogX + 210);
+const sizeValueX = firstDarkX(dialogY + 52, dialogY + 65, dialogX + 81, dialogX + 210);
+assert(savedValueX >= dialogX + 115 && Math.abs(savedValueX - sizeValueX) <= 1,
+  `Paint Attributes tabs were rendered as glyphs instead of alignment (${savedValueX}/${sizeValueX})`);
+
 let activeCaptionPixels = 0;
 for (let y = dialogY + 3; y < Math.min(dialogY + 22, image.height); y++) {
   for (let x = 3; x < Math.min(356, image.width); x++) {
@@ -77,4 +95,4 @@ for (let y = dialogY + 3; y < Math.min(dialogY + 22, image.height); y++) {
 assert(activeCaptionPixels > 1000,
   `Paint Attributes dialog has no active title bar (${activeCaptionPixels} caption pixels)`);
 
-console.log('PASS  Paint Attributes opens with its Win98 dialog frame and controls');
+console.log('PASS  Paint Attributes opens with its Win98 dialog frame and tab-aligned labels');
