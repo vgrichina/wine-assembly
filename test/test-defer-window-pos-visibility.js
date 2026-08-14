@@ -25,10 +25,14 @@ const extraWat = String.raw`
     (global.get $eax))
 
   (func (export "test_clear_window_paint") (param $hwnd i32)
-    (call $paint_flag_clear_hwnd (local.get $hwnd)))
+    (call $paint_flag_clear_hwnd (local.get $hwnd))
+    (call $update_clear_hwnd (local.get $hwnd)))
 
   (func (export "test_first_pending_paint") (result i32)
     (call $paint_flag_first))
+
+  (func (export "test_select_next_paint") (result i32)
+    (call $paint_select_next_dirty))
 `;
 
 (async () => {
@@ -61,8 +65,13 @@ const extraWat = String.raw`
 
   e.test_clear_window_paint(child);
   e.test_call_DeferWindowPos_flags(child, 0x07 | SWP_NOREDRAW);
-  assert.notStrictEqual(e.test_first_pending_paint() >>> 0, child,
+  assert.notStrictEqual(e.test_select_next_paint() >>> 0, child,
     'SWP_NOREDRAW does not create an update region');
+
+  e.test_clear_window_paint(child);
+  e.test_call_DeferWindowPos_flags(child, 0x07);
+  assert.strictEqual(e.test_select_next_paint() >>> 0, child,
+    'ordinary visible DeferWindowPos creates a selectable update region');
 
   console.log('PASS  DeferWindowPos synchronizes visibility and paint state');
 })().catch(err => {

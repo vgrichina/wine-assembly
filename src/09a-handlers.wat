@@ -9825,7 +9825,7 @@
     (if (i32.and
           (i32.eqz (i32.and (local.get $flags) (i32.const 0x0008))) ;; !SWP_NOREDRAW
           (call $wnd_is_effectively_visible (local.get $arg1)))
-      (then (call $paint_flag_set (local.get $arg1))))
+      (then (call $paint_flag_set_inv (local.get $arg1))))
     (if (i32.and
           (i32.and
             (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 0))
@@ -12316,12 +12316,15 @@
   )
 
   ;; 923: WSAStartup(wVersionRequested, lpWSAData) — 2 args stdcall
-  ;; Fill WSADATA struct with version 2.2, return 0 (success)
+  ;; Negotiate the caller's requested 1.x/2.x version while advertising 2.2
+  ;; as the highest supported version, then return 0 (success).
   (func $handle_WSAStartup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $arg1)))
-    ;; WSADATA: wVersion(2), wHighVersion(2), rest is description strings + status
-    (i32.store16 (local.get $wa) (i32.const 0x0202))         ;; wVersion = 2.2
+    ;; WSADATA: wVersion is the negotiated request; wHighVersion is the
+    ;; provider ceiling. WinSock 1.1 clients reject a successful call that
+    ;; incorrectly reports 2.2 in wVersion.
+    (i32.store16 (local.get $wa) (i32.and (local.get $arg0) (i32.const 0xFFFF)))
     (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 0x0202)) ;; wHighVersion = 2.2
     (global.set $eax (i32.const 0))  ;; success
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
