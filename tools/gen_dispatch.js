@@ -96,6 +96,7 @@ const comInterfaces = [
   { prefix: 'IDirectAnimationDABehavior', global: 'DX_VTBL_DA_BEHAVIOR' },
   { prefix: 'IMalloc',              global: 'DX_VTBL_IMALLOC' },
   { prefix: 'IRunningObjectTable',   global: 'DX_VTBL_OLE_ROT' },
+  { prefix: 'IMoniker',             global: 'DX_VTBL_OLE_MONIKER' },
   { prefix: 'ILockBytes',           global: 'DX_VTBL_OLE_LOCKBYTES' },
   { prefix: 'IStream',              global: 'DX_VTBL_OLE_STREAM' },
   { prefix: 'IStorage',             global: 'DX_VTBL_OLE_STORAGE' },

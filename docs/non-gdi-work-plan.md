@@ -649,8 +649,17 @@ GDI-rejoin concern, but its protocol and state machine can be completed now.
 
 ### P5.1 Linked objects and activation
 
-- Implement the needed moniker/bind-context/Running Object Table contracts,
-  beginning with file monikers and deterministic bind failure.
+- [x] Replace the save-path `CreateFileMoniker` placeholder with an ABI-correct
+  file-moniker value object: full inherited 23-slot vtable, COM identity and
+  lifetime, exact class ID/display-name ownership, normalized equality/hash,
+  system-moniker type, and deterministic unsupported results.
+- [ ] Implement `CreateBindCtx` and the needed `IBindCtx` option, bound-object,
+  object-parameter, and ROT-access contracts.
+- [ ] Replace the no-op process-local Running Object Table with retained
+  registration records, stable cookies, moniker-value lookup, timestamps,
+  revocation, and enumeration; then connect file-moniker binding to it.
+- [ ] Add file-moniker `IPersistStream` save/load and supported composition /
+  relative-path behavior after the callback and composite-moniker layers exist.
 - Persist link source, display name, update policy, and last cached
   presentation independently of server availability.
 - Add class-object registration and activation plumbing sufficient for the
@@ -659,6 +668,19 @@ GDI-rejoin concern, but its protocol and state machine can be completed now.
   explicit unsupported responses for unimplemented in-place UI.
 - Add `IOleInPlaceObject`/site/window-context support only to the method set
   proven necessary by a traced WordPad insertion/activation flow.
+
+2026-08-14 file-moniker result: `CreateFileMoniker` now returns an independently
+owned kind-specific `IMoniker`, not the former `IMalloc`-vtable placeholder.
+`QueryInterface` validates the complete canonical COM IID and exposes
+`IUnknown`, `IPersist`, `IPersistStream`, and `IMoniker`; final `Release` frees
+the owned UTF-16 path. `GetClassID` returns `CLSID_FileMoniker`,
+`GetDisplayName` returns a fresh `CoTaskMem`-compatible buffer, `IsEqual` and
+`Hash` use matching case-insensitive/slash-neutral filename semantics, and
+`IsSystemMoniker` returns `MKSYS_FILEMONIKER`. Simple enumeration and immutable
+dirty state are defined. Binding, persistence callbacks, and composition return
+explicit HRESULTs without publishing fabricated outputs until their generic
+layers land. `test/test-ole-moniker.js` exercises the public API thunk and all
+23 vtable slots and passes 25/25.
 
 ### P5.2 Drag/drop
 

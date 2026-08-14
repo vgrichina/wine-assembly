@@ -724,13 +724,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; CreateFileMoniker(lpszPathName, ppmk)
-  ;; WordPad's MFC/OLE save path creates a file moniker for linked/embedded
-  ;; object bookkeeping. We do not model moniker binding yet; return an inert
-  ;; IUnknown-compatible placeholder so the document save flow can continue.
+  ;; CreateFileMoniker(lpszPathName, ppmk) — create an independently owned,
+  ;; ABI-correct IMoniker value. Binding/ROT integration is layered on this
+  ;; stable value object rather than exposing an unrelated placeholder vtable.
   (func $handle_CreateFileMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32) (local $obj_w i32)
-    (drop (local.get $arg0))
+    (local $obj i32)
     (drop (local.get $arg2))
     (drop (local.get $arg3))
     (drop (local.get $arg4))
@@ -740,20 +738,194 @@
         (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    (local.set $obj (call $heap_alloc (i32.const 8)))
+    (call $gs32 (local.get $arg1) (i32.const 0))
+    (if (i32.or (i32.eqz (local.get $arg0))
+          (i32.eqz (call $guest_wcslen (local.get $arg0))))
+      (then
+        (global.set $eax (i32.const 0x800401E4)) ;; MK_E_SYNTAX
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $obj (call $ole_create_file_moniker (local.get $arg0)))
     (if (i32.eqz (local.get $obj))
       (then
-        (call $gs32 (local.get $arg1) (i32.const 0))
         (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
-    (local.set $obj_w (call $g2w (local.get $obj)))
-    (i32.store (local.get $obj_w) (global.get $DX_VTBL_IMALLOC))
-    (i32.store (i32.add (local.get $obj_w) (i32.const 4)) (i32.const 0))
     (call $gs32 (local.get $arg1) (local.get $obj))
     (global.set $eax (i32.const 0)) ;; S_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
+
+  ;; IMoniker / IPersistStream for process-local file moniker values.
+  (func $handle_IMoniker_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (if (i32.or
+          (i32.or
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0x00000000)) ;; IUnknown
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0x0000000F))) ;; IMoniker
+          (i32.or
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0x0000010C)) ;; IPersist
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0x00000109)))) ;; IPersistStream
+      (then
+        (call $gs32 (local.get $arg2) (local.get $arg0))
+        (drop (call $ole_obj_addref (local.get $arg0)))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004002)))) ;; E_NOINTERFACE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMoniker_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IMoniker_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IMoniker_GetClassID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        ;; CLSID_FileMoniker {00000303-0000-0000-C000-000000000046}
+        (call $gs32 (local.get $arg1) (i32.const 0x00000303))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 0x000000C0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 0x46000000))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMoniker_IsDirty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1)) ;; S_FALSE: immutable value
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IMoniker_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL: guest IStream callback bridge follows later
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMoniker_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMoniker_GetSizeMax (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $gs32 (local.get $arg1) (i32.const 0))
+            (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x80004001) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMoniker_BindToObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x800401EA) (i32.const 0x80004003) (local.get $arg4))) ;; MK_E_CANTOPENFILE / E_POINTER
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_IMoniker_BindToStorage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x800401ED) (i32.const 0x80004003) (local.get $arg4))) ;; MK_E_NOSTORAGE / E_POINTER
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_IMoniker_Reduce (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x80004001) (i32.const 0x80004003) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_IMoniker_ComposeWith (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x80004001) (i32.const 0x80004003) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IMoniker_Enum (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else (call $gs32 (local.get $arg2) (i32.const 0)) (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMoniker_IsEqual (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80070057))) ;; E_INVALIDARG
+      (else
+        (global.set $eax
+          (if (result i32) (i32.and
+                (i32.eq (call $gl32 (local.get $arg1)) (global.get $DX_VTBL_OLE_MONIKER))
+                (call $ole_moniker_paths_equal
+                  (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))
+                  (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))))
+            (then (i32.const 0))
+            (else (i32.const 1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMoniker_Hash (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMoniker_IsRunning (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1)) ;; S_FALSE until ROT-backed binding is layered in
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IMoniker_GetTimeOfLastChange (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3)
+      (then (call $gs32 (local.get $arg3) (i32.const 0))
+            (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x800401EA) (i32.const 0x80004003) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IMoniker_Inverse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x800401EC) (i32.const 0x80004003) (local.get $arg1))) ;; MK_E_NOINVERSE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IMoniker_CommonPrefixWith (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x800401EE) (i32.const 0x80004003) (local.get $arg2))) ;; MK_E_NOPREFIX
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMoniker_RelativePathTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (select (i32.const 0x80004001) (i32.const 0x80004003) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IMoniker_GetDisplayName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $copy i32)
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (call $gs32 (local.get $arg3) (i32.const 0))
+    (if (local.get $arg2)
+      (then (global.set $eax (i32.const 0x80004001))) ;; composite display follows composition support
+      (else
+        (local.set $copy (call $ole_wide_dup (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (if (local.get $copy)
+          (then (call $gs32 (local.get $arg3) (local.get $copy)) (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x8007000E))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IMoniker_ParseDisplayName (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $out i32)
+    (local.set $out (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg4) (local.get $out))
+        (then (i32.const 0x800401E4)) ;; MK_E_SYNTAX
+        (else (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  (func $handle_IMoniker_IsSystemMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (i32.const 2)) ;; MKSYS_FILEMONIKER
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; StgIsStorageFile(pwcsName) — report "not a structured storage file".
   (func $handle_StgIsStorageFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -815,6 +987,73 @@
     (local.set $dst (call $heap_alloc (i32.shl (i32.add (local.get $chars) (i32.const 1)) (i32.const 1))))
     (if (local.get $dst) (then (call $guest_wcscpy (local.get $dst) (local.get $src))))
     (local.get $dst))
+
+  ;; All classic OLE interface IDs used here share the canonical COM suffix
+  ;; 0000-0000-C000-000000000046. Compare the entire IID, not only Data1.
+  (func $ole_iid_is_com (param $iid i32) (param $data1 i32) (result i32)
+    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
+    (i32.and
+      (i32.and
+        (i32.eq (call $gl32 (local.get $iid)) (local.get $data1))
+        (i32.eqz (call $gl32 (i32.add (local.get $iid) (i32.const 4)))))
+      (i32.and
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x000000C0))
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x46000000)))))
+
+  ;; File-moniker comparisons follow Win32 filename semantics for the stable
+  ;; value subset implemented here: ASCII case-insensitive and slash-neutral,
+  ;; while preserving all other UTF-16 code units verbatim.
+  (func $ole_moniker_normalize_char (param $ch i32) (result i32)
+    (if (i32.eq (local.get $ch) (i32.const 0x2F))
+      (then (return (i32.const 0x5C))))
+    (call $tolower (local.get $ch)))
+
+  (func $ole_moniker_hash_path (param $path i32) (result i32)
+    (local $hash i32) (local $index i32) (local $ch i32)
+    (local.set $hash (i32.const 0x811C9DC5))
+    (block $done (loop $scan
+      (local.set $ch (call $gl16 (i32.add (local.get $path) (i32.shl (local.get $index) (i32.const 1)))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $hash
+        (i32.mul
+          (i32.xor (local.get $hash) (call $ole_moniker_normalize_char (local.get $ch)))
+          (i32.const 0x01000193)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (local.get $hash))
+
+  (func $ole_moniker_paths_equal (param $left i32) (param $right i32) (result i32)
+    (local $index i32) (local $a i32) (local $b i32)
+    (if (i32.or (i32.eqz (local.get $left)) (i32.eqz (local.get $right)))
+      (then (return (i32.const 0))))
+    (block $equal (loop $scan
+      (local.set $a (call $ole_moniker_normalize_char
+        (call $gl16 (i32.add (local.get $left) (i32.shl (local.get $index) (i32.const 1))))))
+      (local.set $b (call $ole_moniker_normalize_char
+        (call $gl16 (i32.add (local.get $right) (i32.shl (local.get $index) (i32.const 1))))))
+      (if (i32.ne (local.get $a) (local.get $b)) (then (return (i32.const 0))))
+      (br_if $equal (i32.eqz (local.get $a)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; IMoniker file value (20 bytes, kind=11): vtable, refcount, kind,
+  ;; independently owned UTF-16 path, normalized hash.
+  (func $ole_create_file_moniker (param $path i32) (result i32)
+    (local $obj i32) (local $copy i32)
+    (local.set $copy (call $ole_wide_dup (local.get $path)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (local.set $obj (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $obj))
+      (then (call $heap_free (local.get $copy)) (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 20))
+    (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_MONIKER))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 11))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $copy))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16))
+      (call $ole_moniker_hash_path (local.get $copy)))
+    (local.get $obj))
 
   (func $ole_stream_root (param $obj i32) (result i32)
     (local $root i32)
@@ -2628,6 +2867,10 @@
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $advise_enum_entries)))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
+    (if (i32.eq (local.get $kind) (i32.const 11))
+      (then
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (if (local.get $data) (then (call $heap_free (local.get $data))))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 28))))
     (if (i32.and
           (i32.ne (local.get $data) (i32.const 0))
@@ -3113,6 +3356,8 @@
       (then (return (call $ole_obj_release (local.get $root)))))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2))
       (then (return (call $ole_obj_release (local.get $root)))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_MONIKER))
+      (then (return (call $ole_obj_release (local.get $root)))))
     (i32.const 0))
 
   (func $ole_interface_is_local (param $iface i32) (result i32)
@@ -3141,7 +3386,9 @@
             (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_CACHE))
             (i32.or
               (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT))
-              (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2))))))))
+              (i32.or
+                (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_VIEWOBJECT2))
+                (i32.eq (local.get $vtbl) (global.get $DX_VTBL_OLE_MONIKER)))))))))
 
   (func $ole_medium_data_interface (param $medium i32) (result i32)
     (local $tymed i32)

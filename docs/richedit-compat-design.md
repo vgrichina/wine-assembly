@@ -466,6 +466,9 @@ native-editing path is alive.
   As filename, create/write/close the target file, update the title, and avoid
   the previous MFC null-ROT call. This is scoped save-path scaffolding, not full
   structured storage, moniker binding, or embedded OLE object support.
+  The `CreateFileMoniker` placeholder described at this historical stage was
+  replaced by the generic file-moniker implementation documented in the
+  2026-08-14 section below; the no-op ROT and `CreateBindCtx` placeholder remain.
 - Extended the same bounded regression to cover WordPad File New and File Open.
   `SetWindowTextA/W` now forwards `WM_SETTEXT` to native child windows with real
   wndprocs, which lets WordPad's New document-type dialog clear the RichEdit
@@ -753,6 +756,34 @@ activation, structured-storage object persistence, and object clipboard
 transfer. TOM/COM, deep accessibility, and drag/drop editing are also outside
 this non-OLE completion program unless one of the probes proves they are a
 hard dependency.
+
+### 2026-08-14 OLE file-moniker activation foundation
+
+The save-path `CreateFileMoniker` compatibility object is now a real generic
+file-moniker value rather than an object carrying the unrelated `IMalloc`
+vtable. Its 23 slots follow the inherited `IUnknown` / `IPersist` /
+`IPersistStream` / `IMoniker` ABI exactly. It owns its UTF-16 path, validates
+complete IIDs, returns `CLSID_FileMoniker`, allocates independent display-name
+buffers, compares Windows paths case-insensitively with slash equivalence,
+produces equality-consistent hashes, identifies `MKSYS_FILEMONIKER`, and frees
+the path on final release.
+
+`test/test-ole-moniker.js` passes 25/25 through the public OLE API thunk and the
+generated COM vtable. It also locks down deterministic failure semantics:
+unsupported persistence/composition never publishes an output, missing file
+activation reports a moniker error, and an unregistered value reports
+`S_FALSE` from `IsRunning`. The next generic slices are a real `IBindCtx`, a
+retaining process-local ROT keyed by moniker value, and binding through that
+ROT. File-moniker stream persistence, composite/relative monikers, class
+factories, verbs, links, and drag/drop remain after those foundations.
+
+In the isolated real-app gate, WordPad Save As created and wrote the file,
+called `CreateFileMoniker`, registered it through the ROT, released the ROT,
+updated its title, preserved editor text, and remained alive. The combined
+Save/New/Open regression currently reports 31/32 only because its checked-in
+assertion still expects the old `sources.md` heading `# DLL Sources`; the
+current fixture begins `# Test Binary Sources`. The unrelated open operation
+did populate 8,191 visible characters and completed without a runtime crash.
 
 ### 2026-08-13 dialog lifecycle slice
 
