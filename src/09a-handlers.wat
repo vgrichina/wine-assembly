@@ -2121,6 +2121,11 @@
             (return)))
         (call $wnd_table_set (local.get $arg0) (local.get $arg2)) ;; set new wndproc
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const -12))  ;; GWL_ID
+      (then
+        (global.set $eax
+          (call $ctrl_table_set_id (local.get $arg0) (local.get $arg2)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
       (then
         (global.set $eax (call $wnd_set_style (local.get $arg0) (local.get $arg2)))

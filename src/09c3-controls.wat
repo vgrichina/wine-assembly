@@ -195,6 +195,21 @@
     (i32.load offset=4
       (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16)))))
 
+  ;; Change a child window's control/menu ID and return its previous value.
+  ;; MFC temporarily renames views while installing Print Preview, then finds
+  ;; the saved view by its replacement ID when preview closes.
+  (func $ctrl_table_set_id (param $hwnd i32) (param $ctrl_id i32) (result i32)
+    (local $idx i32) (local $addr i32) (local $old i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $addr
+      (i32.add (global.get $CONTROL_TABLE)
+        (i32.mul (local.get $idx) (i32.const 16))))
+    (local.set $old (i32.load offset=4 (local.get $addr)))
+    (i32.store offset=4 (local.get $addr) (local.get $ctrl_id))
+    (local.get $old))
+
   ;; Get check state for a control hwnd (legacy CONTROL_TABLE path)
   (func $ctrl_get_check_state (param $hwnd i32) (result i32)
     (local $idx i32) (local $state i32)
