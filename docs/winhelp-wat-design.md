@@ -18,8 +18,9 @@ copies of validated records and variable command payloads live in a separate
 caller-owned arena, never in the reusable TOPIC-block scratch buffer.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
-into bounded WAT-owned records. Image decompression, layout, and the runtime UI
-cutover remain.
+into bounded WAT-owned records. Picture payloads now decode through all four
+WinHelp packing modes into preflighted caller-owned buffers. Layout, GDI bitmap
+materialization, and the runtime UI cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -546,8 +547,11 @@ foreground, and background while retaining whether metrics use half-points or
 twips. Bitmap records normalize resource/picture number, picture and packing
 type, dimensions, depth, resolution, palette, transparency, compressed data,
 hotspot slices, and decoded-size metadata. Every offset/length pair is checked
-against its containing internal file before publication; the decoder itself is
-a later, independently bounded stage.
+against its containing internal file before publication. The payload decoder
+supports raw, RLE, LZ77, and LZ77-then-RLE streams. It derives exact WORD- or
+DWORD-aligned raster sizes with i64 arithmetic, caps both final and intermediate
+expansion, rejects output aliases into document-owned storage, and validates a
+whole stream without writes before filling the caller's buffer.
 
 ```mermaid
 flowchart LR
@@ -806,6 +810,8 @@ Proposed starting envelope:
 | CNT nesting depth | 64 |
 | Topic token count | 262,144 |
 | Decompressed bytes for one topic | 4 MiB |
+| Decoded bytes for one picture | 16 MiB |
+| Intermediate picture expansion | 64 MiB |
 | Hotspots for one topic | 16,384 |
 | History entries | 256 |
 | Live documents per process | 4 |
@@ -863,8 +869,11 @@ six checked-in help files, including table paragraphs; synthetic fixtures cover
 all documented variable payload families, arena aliasing/capacity, and
 command/string-count mismatch. Exact normalized `|FONT` and lP/lp `|bmN`
 records cover every checked-in resource, with transactional malformed-offset,
-descriptor, hotspot, duplicate-ID, and capacity tests. Picture decompression,
-keyword indexes, and layout remain before Phase 2 is complete.
+descriptor, hotspot, duplicate-ID, and capacity tests. Exact decoded payload
+hashes cover every checked-in picture, while synthetic fixtures exercise all
+four packing modes plus truncated RLE, invalid LZ77, alias, capacity, and
+integer-overflow failures without partial output. Keyword indexes and layout
+remain before Phase 2 is complete.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.
@@ -897,7 +906,7 @@ the native fixture matrix.
 
 - Complete font/paragraph token decoding and deterministic layout.
 - Implement jump/popup hotspots and context popups.
-- Decode embedded bitmap resources into WAT-owned GDI bitmaps.
+- Materialize decoded embedded bitmap payloads as WAT-owned GDI bitmaps.
 
 Exit criterion: visual topic captures and hotspot target transitions match the
 reference for fixtures containing `|FONT` and `|bmN` data.

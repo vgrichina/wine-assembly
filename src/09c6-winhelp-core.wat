@@ -17,6 +17,8 @@
   (global $HELP_MAX_FONT_FACES i32 (i32.const 4096))
   (global $HELP_MAX_FONT_DESCRIPTORS i32 (i32.const 65536))
   (global $HELP_MAX_BITMAP_RESOURCES i32 (i32.const 4096))
+  (global $HELP_MAX_BITMAP_BYTES i32 (i32.const 0x01000000))
+  (global $HELP_MAX_BITMAP_INTERMEDIATE_BYTES i32 (i32.const 0x04000000))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -125,7 +127,8 @@
   ;; face_index, height, family, attributes, weight, foreground, background.
   (global $HELP_FONT_FACE_SIZE i32 (i32.const 8))
   (global $HELP_FONT_SIZE i32 (i32.const 28))
-  ;; HelpBitmap is 80 bytes; see the formatted-topic design for fields.
+  ;; HelpBitmap is 80 bytes; see the formatted-topic design for fields. The
+  ;; decoded_size field is the exact caller-buffer requirement after packing.
   (global $HELP_BITMAP_SIZE i32 (i32.const 80))
 
   ;; HelpSlice is 16 bytes:

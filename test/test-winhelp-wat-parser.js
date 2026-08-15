@@ -69,7 +69,8 @@ const EXPECTED_SEMANTICS = {
     formattedKinds: { 3: 28, 4: 28, 5: 35, 9: 1 }, payloadBytes: 544,
     fontFaces: ['MS Sans Serif','Times New Roman'],
     fonts: [[0,16,3,0,400,257,257],[0,16,3,0,400,255,257],[1,16,2,0,400,0,257],[0,16,3,1,700,257,257]],
-    bitmaps: [[0,0,6,3,0,80,1,4,10,11,16,0,10682,69,0,0,10618,16,0,0]],
+    bitmaps: [[0,0,6,3,0,80,1,4,10,11,16,0,10682,69,0,0,10618,16,88,0]],
+    bitmapPayloads: [[88,'af05e0d1c22157124c3ca4e1c71071af65b688028ee80ac8f44b59d426310b2d']],
   },
   'notepad.hlp': {
     title: 'Notepad Help', cnt: '', topics: [0,495,994,1032],
@@ -99,7 +100,8 @@ const EXPECTED_SEMANTICS = {
     formattedKinds: { 2: 10, 3: 15, 4: 10, 5: 14, 9: 10 }, payloadBytes: 320,
     fontFaces: ['MS Sans Serif'],
     fonts: [[0,16,3,0,400,257,257],[0,16,3,1,700,257,257]],
-    bitmaps: [[0,0,6,2,0,0,1,1,4,8,2,0,8043,31,0,0,8035,2,0,0]],
+    bitmaps: [[0,0,6,2,0,0,1,1,4,8,2,0,8043,31,0,0,8035,2,32,0]],
+    bitmapPayloads: [[32,'d906e1459df649cadb63bbe2b5fcc7572a7c78fd373f6e6a176e54ae3f896e44']],
   },
   'wordpad.hlp': {
     title: 'WordPad Help', cnt: '', topics: [0,30,63,91,242,311,409,557,643,712,781,855,923,968,1175,1245,1314,1461,1495,1528,1563,1729,2204,2289,2386,2509,2657,2692,2730,2891,3054,32768,32914,33299,33689,33727],
@@ -115,7 +117,8 @@ const EXPECTED_SEMANTICS = {
     formattedKinds: { 2: 10, 3: 48, 4: 39, 5: 63, 9: 8 }, payloadBytes: 891,
     fontFaces: ['MS Sans Serif'],
     fonts: [[0,16,3,0,400,257,257],[0,16,3,1,700,257,257],[0,18,3,0,400,257,257]],
-    bitmaps: [[0,0,6,3,0,80,1,4,10,11,16,0,12229,69,0,0,12165,16,0,0],[1,0,6,2,0,0,1,1,4,8,2,0,12351,31,0,0,12343,2,0,0]],
+    bitmaps: [[0,0,6,3,0,80,1,4,10,11,16,0,12229,69,0,0,12165,16,88,0],[1,0,6,2,0,0,1,1,4,8,2,0,12351,31,0,0,12343,2,32,0]],
+    bitmapPayloads: [[88,'af05e0d1c22157124c3ca4e1c71071af65b688028ee80ac8f44b59d426310b2d'],[32,'d906e1459df649cadb63bbe2b5fcc7572a7c78fd373f6e6a176e54ae3f896e44']],
   },
 };
 
@@ -302,24 +305,26 @@ function encodeCompressedUnsignedLong(value) {
   return result;
 }
 
-function buildSyntheticBitmap() {
+function buildSyntheticBitmap({
+  packing = 0,
+  payload = Buffer.from([0,0,0,0,1,0,1,0]),
+} = {}) {
   const pictureParts = [
-    Buffer.from([6, 0]),
+    Buffer.from([6, packing]),
     encodeCompressedUnsignedLong(96), encodeCompressedUnsignedLong(96),
     Buffer.from([2, 16]),
     encodeCompressedUnsignedLong(2), encodeCompressedUnsignedLong(2),
     encodeCompressedUnsignedLong(2), encodeCompressedUnsignedLong(1),
-    encodeCompressedUnsignedLong(4), encodeCompressedUnsignedLong(0),
+    encodeCompressedUnsignedLong(payload.length), encodeCompressedUnsignedLong(0),
   ];
   const pictureHeader = Buffer.concat(pictureParts);
   const palette = Buffer.from([0,0,0,0, 0xff,0xff,0xff,0]);
-  const pixels = Buffer.from([0,1,1,0]);
-  const picture = Buffer.alloc(pictureHeader.length + 8 + palette.length + pixels.length);
+  const picture = Buffer.alloc(pictureHeader.length + 8 + palette.length + payload.length);
   pictureHeader.copy(picture);
   picture.writeUInt32LE(pictureHeader.length + 8 + palette.length, pictureHeader.length);
   picture.writeUInt32LE(0, pictureHeader.length + 4);
   palette.copy(picture, pictureHeader.length + 8);
-  pixels.copy(picture, pictureHeader.length + 8 + palette.length);
+  payload.copy(picture, pictureHeader.length + 8 + palette.length);
   const result = Buffer.alloc(8 + picture.length);
   result.writeUInt16LE(0x506c, 0);
   result.writeUInt16LE(1, 2);
@@ -708,6 +713,15 @@ async function main() {
         e.test_help_find_bitmap(bitmap[0], bitmap[1]) === index) &&
       e.test_help_find_bitmap(0xffff, 0xffff) === -1 &&
       e.get_help_bitmap_record(semantic.bitmaps.length) === 0);
+    const bitmapPayloads = semantic.bitmapPayloads || [];
+    const decodedBitmaps = semantic.bitmaps.map((bitmap, index) => {
+      const length = e.test_help_decode_bitmap(index, topicOutWA, topicOutCapacity);
+      return [length, length < 0 ? '' : crypto.createHash('sha256')
+        .update(Buffer.from(bytes.subarray(topicOutWA, topicOutWA + length))).digest('hex')];
+    });
+    check(`${file} exact decoded bitmap payloads`,
+      JSON.stringify(decodedBitmaps) === JSON.stringify(bitmapPayloads),
+      `decoded=${JSON.stringify(decodedBitmaps)}`);
 
     const rawParts = [];
     const rawTopics = [];
@@ -1025,10 +1039,80 @@ async function main() {
       const record = e.get_help_bitmap_record(0);
       return JSON.stringify(Array.from({ length: 20 }, (_, field) =>
         dv.getUint32(record + field * 4, true))) === JSON.stringify([
-        7,0,6,0,96,96,1,8,2,2,2,1,bitmapDataOff + 44,4,0,0,
-        bitmapDataOff + 36,2,0,0,
+        7,0,6,0,96,96,1,8,2,2,2,1,bitmapDataOff + 44,8,0,0,
+        bitmapDataOff + 36,2,8,0,
       ]);
     })());
+  check('synthetic unpacked bitmap decodes exact pixels',
+    e.test_help_decode_bitmap(0, topicOutWA, 8) === 8 &&
+    Buffer.from(bytes.subarray(topicOutWA, topicOutWA + 8)).equals(
+      Buffer.from([0,0,0,0,1,0,1,0])));
+  const syntheticPixels = Buffer.from([0,0,0,0,1,0,1,0]);
+  const syntheticRle = Buffer.from([4,0,0x84,1,0,1,0]);
+  const syntheticPackingPayloads = [
+    syntheticPixels,
+    syntheticRle,
+    encodeLiteralLz77(syntheticPixels),
+    encodeLiteralLz77(syntheticRle),
+  ];
+  for (let packing = 0; packing < syntheticPackingPayloads.length; packing++) {
+    const packedHelp = buildSyntheticSemanticHelp({
+      extraFiles: [['|bm7', buildSyntheticBitmap({
+        packing, payload: syntheticPackingPayloads[packing],
+      })]],
+    });
+    bytes.fill(0xa5, topicOutWA, topicOutWA + 8);
+    const length = load(packedHelp.file) === 1
+      ? e.test_help_decode_bitmap(0, topicOutWA, 8)
+      : -1;
+    check(`bitmap packing ${packing} decodes exact pixels`,
+      length === 8 &&
+      Buffer.from(bytes.subarray(topicOutWA, topicOutWA + 8)).equals(syntheticPixels));
+  }
+  const malformedRleHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', buildSyntheticBitmap({
+      packing: 1, payload: Buffer.from([0x88,0,0]),
+    })]],
+  });
+  bytes.fill(0xa5, topicOutWA, topicOutWA + 8);
+  check('truncated bitmap RLE fails without partial output',
+    load(malformedRleHelp.file) === 1 &&
+    e.test_help_decode_bitmap(0, topicOutWA, 8) === -1 &&
+    e.get_help_last_error() === 16 &&
+    bytes.subarray(topicOutWA, topicOutWA + 8).every(byte => byte === 0xa5));
+  const malformedLzHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', buildSyntheticBitmap({
+      packing: 2, payload: Buffer.from([1,0,0]),
+    })]],
+  });
+  bytes.fill(0xa5, topicOutWA, topicOutWA + 8);
+  check('invalid bitmap LZ77 back-reference fails without partial output',
+    load(malformedLzHelp.file) === 1 &&
+    e.test_help_decode_bitmap(0, topicOutWA, 8) === -1 &&
+    e.get_help_last_error() === 16 &&
+    bytes.subarray(topicOutWA, topicOutWA + 8).every(byte => byte === 0xa5));
+  bytes.fill(0xa5, topicOutWA, topicOutWA + 8);
+  check('bitmap decoder preflights caller capacity',
+    load(bitmapHelp.file) === 1 &&
+    e.test_help_decode_bitmap(0, topicOutWA, 7) === -1 &&
+    e.get_help_last_error() === 6 &&
+    bytes.subarray(topicOutWA, topicOutWA + 8).every(byte => byte === 0xa5));
+  check('bitmap decoder rejects output aliases into the owned HLP',
+    load(bitmapHelp.file) === 1 && (() => {
+      const record = e.get_help_bitmap_record(0);
+      const source = e.get_help_file_ptr() + dv.getUint32(record + 48, true);
+      const before = Buffer.from(bytes.subarray(source, source + 8));
+      return e.test_help_decode_bitmap(0, source, 8) === -1 &&
+        e.get_help_last_error() === 1 &&
+        Buffer.from(bytes.subarray(source, source + 8)).equals(before);
+    })());
+  check('bitmap decoder validates output memory bounds and index',
+    load(bitmapHelp.file) === 1 &&
+    e.test_help_decode_bitmap(0, memory.buffer.byteLength - 4, 8) === -1 &&
+    e.get_help_last_error() === 1 &&
+    load(bitmapHelp.file) === 1 &&
+    e.test_help_decode_bitmap(1, topicOutWA, 8) === -1 &&
+    e.get_help_last_error() === 1);
   const badBitmapOffset = Buffer.from(syntheticBitmap);
   badBitmapOffset.writeUInt32LE(0xffffffff, 28);
   const badBitmapOffsetHelp = buildSyntheticSemanticHelp({
@@ -1058,6 +1142,32 @@ async function main() {
   });
   check('duplicate bitmap resource numbers fail before publication',
     load(duplicateBitmapHelp.file) === 0 && e.get_help_last_error() === 16 &&
+    e.get_help_bitmap_count() === 0);
+  const mismatchedRawBitmap = Buffer.from(syntheticBitmap);
+  mismatchedRawBitmap.writeUInt16LE(14, 24);
+  const mismatchedRawBitmapHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', mismatchedRawBitmap]],
+  });
+  check('unpacked bitmap byte count must match normalized raster size',
+    load(mismatchedRawBitmapHelp.file) === 0 && e.get_help_last_error() === 16 &&
+    e.get_help_bitmap_count() === 0);
+  const oversizedBitmap = Buffer.from(syntheticBitmap);
+  oversizedBitmap.writeUInt16LE(0xfffe, 16);
+  oversizedBitmap.writeUInt16LE(0xfffe, 18);
+  const oversizedBitmapHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', oversizedBitmap]],
+  });
+  check('decoded bitmap byte cap rejects hostile geometry without wrap',
+    load(oversizedBitmapHelp.file) === 0 && e.get_help_last_error() === 6 &&
+    e.get_help_bitmap_count() === 0);
+  const unsupportedDdbPacking = Buffer.from(syntheticBitmap);
+  unsupportedDdbPacking[8] = 5;
+  unsupportedDdbPacking[9] = 2;
+  const unsupportedDdbPackingHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', unsupportedDdbPacking]],
+  });
+  check('DDB resources reject unsupported LZ77 packing modes',
+    load(unsupportedDdbPackingHelp.file) === 0 && e.get_help_last_error() === 16 &&
     e.get_help_bitmap_count() === 0);
 
   for (const [variant, minor, compressedTopic] of [

@@ -21,6 +21,10 @@
   (global $help_bitmap_result_ga (mut i32) (i32.const 0))
   (global $help_bitmap_result_wa (mut i32) (i32.const 0))
   (global $help_bitmap_result_count (mut i32) (i32.const 0))
+  (global $help_bitmap_decode_out_pos (mut i32) (i32.const 0))
+  (global $help_bitmap_decode_rle_count (mut i32) (i32.const 0))
+  (global $help_bitmap_decode_rle (mut i32) (i32.const 0))
+  (global $help_bitmap_decode_lz_pos (mut i32) (i32.const 0))
   (global $help_phrase_bit_position (mut i32) (i32.const 0))
   (global $help_topic_block_result_size (mut i32) (i32.const 0))
   (global $help_ld1_value (mut i32) (i32.const 0))
@@ -2904,6 +2908,7 @@
     (local $compressed_size i32) (local $hotspot_size i32)
     (local $compressed_off i32) (local $hotspot_off i32) (local $palette_off i32)
     (local $decoded_size i32)
+    (local $decoded_size64 i64)
     (if (i32.or
           (i32.gt_u (local.get $picture_off) (local.get $data_len))
           (i32.gt_u (i32.const 2) (i32.sub (local.get $data_len) (local.get $picture_off))))
@@ -2914,6 +2919,12 @@
     (local.set $picture_type (i32.load8_u (local.get $picture)))
     (local.set $packing (i32.load8_u offset=1 (local.get $picture)))
     (if (i32.gt_u (local.get $packing) (i32.const 3))
+      (then (return (i32.const 0))))
+    ;; Device-dependent bitmaps only use raw or run-length packing. DIBs and
+    ;; metafiles admit all four documented combinations.
+    (if (i32.and
+          (i32.eq (local.get $picture_type) (i32.const 5))
+          (i32.gt_u (local.get $packing) (i32.const 1)))
       (then (return (i32.const 0))))
     (if (i32.or (i32.eq (local.get $picture_type) (i32.const 5))
                 (i32.eq (local.get $picture_type) (i32.const 6)))
@@ -2977,8 +2988,41 @@
               (i32.add (local.get $data_off) (i32.sub (local.get $ptr) (local.get $data))))
             (local.set $ptr (i32.add (local.get $ptr)
               (i32.mul (local.get $palette_count) (i32.const 4))))))
-        (if (i32.or (i32.eqz (local.get $width)) (i32.eqz (local.get $height)))
-          (then (return (i32.const 0)))))
+        (if (i32.or
+              (i32.or (i32.eqz (local.get $width)) (i32.eqz (local.get $height)))
+              (i32.or (i32.eqz (local.get $planes)) (i32.eqz (local.get $bit_count))))
+          (then (return (i32.const 0))))
+        ;; DDB rows are WORD-aligned in the resource. DIB rows are DWORD-
+        ;; aligned. Compute in i64 so hostile dimensions cannot wrap.
+        (local.set $decoded_size64
+          (i64.mul
+            (if (result i64) (i32.eq (local.get $picture_type) (i32.const 5))
+              (then
+                (i64.shl
+                  (i64.shr_u
+                    (i64.add
+                      (i64.mul (i64.extend_i32_u (local.get $width))
+                        (i64.extend_i32_u (local.get $bit_count)))
+                      (i64.const 15))
+                    (i64.const 4))
+                  (i64.const 1)))
+              (else
+                (i64.shl
+                  (i64.shr_u
+                    (i64.add
+                      (i64.mul (i64.extend_i32_u (local.get $width))
+                        (i64.extend_i32_u (local.get $bit_count)))
+                      (i64.const 31))
+                    (i64.const 5))
+                  (i64.const 2))))
+            (i64.extend_i32_u (local.get $height))))
+        (if (i64.gt_u (local.get $decoded_size64)
+              (i64.extend_i32_u (global.get $HELP_MAX_BITMAP_BYTES)))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_CAPACITY)
+              (i32.add (local.get $data_off) (local.get $picture_off)))
+            (return (i32.const 0))))
+        (local.set $decoded_size (i32.wrap_i64 (local.get $decoded_size64))))
       (else
         (if (i32.ne (local.get $picture_type) (i32.const 8))
           (then (return (i32.const 0))))
@@ -2994,6 +3038,13 @@
         (if (i32.eqz (call $help_read_culong (local.get $ptr) (local.get $end)))
           (then (return (i32.const 0))))
         (local.set $decoded_size (global.get $help_ld1_value))
+        (if (i32.or (i32.eqz (local.get $decoded_size))
+                    (i32.gt_u (local.get $decoded_size)
+                      (global.get $HELP_MAX_BITMAP_BYTES)))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_CAPACITY)
+              (i32.add (local.get $data_off) (local.get $picture_off)))
+            (return (i32.const 0))))
         (local.set $ptr (global.get $help_ld1_next))
         (if (i32.eqz (call $help_read_culong (local.get $ptr) (local.get $end)))
           (then (return (i32.const 0))))
@@ -3019,6 +3070,9 @@
               (local.get $compressed_off))))
       (then (return (i32.const 0))))
     (if (i32.ne (i32.eqz (local.get $hotspot_size)) (i32.eqz (local.get $hotspot_off)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $packing))
+          (i32.ne (local.get $compressed_size) (local.get $decoded_size)))
       (then (return (i32.const 0))))
     (if (local.get $hotspot_size)
       (then
@@ -3187,6 +3241,221 @@
     (if (i32.eqz (local.get $ok))
       (then (if (local.get $bitmaps_ga) (then (call $heap_free (local.get $bitmaps_ga))))))
     (local.get $ok))
+
+  ;; Consume one byte after the optional LZ77 layer. WinHelp's run-length
+  ;; layer uses 0x81..0xff for literal runs and 0x01..0x7f for repeated-byte
+  ;; runs. A zero low-seven-bit count is a control boundary, including 0x80
+  ;; after the final literal in a run.
+  (func $help_bitmap_decode_emit
+    (param $ch i32) (param $dest i32) (param $expected i32) (param $write i32)
+    (result i32)
+    (local $count i32) (local $out_pos i32)
+    (local.set $out_pos (global.get $help_bitmap_decode_out_pos))
+    (if (global.get $help_bitmap_decode_rle)
+      (then
+        (local.set $count (global.get $help_bitmap_decode_rle_count))
+        (if (i32.and (local.get $count) (i32.const 0x7f))
+          (then
+            (if (i32.and (local.get $count) (i32.const 0x80))
+              (then
+                (if (i32.ge_u (local.get $out_pos) (local.get $expected))
+                  (then (return (i32.const 0))))
+                (if (local.get $write)
+                  (then (i32.store8 (i32.add (local.get $dest) (local.get $out_pos))
+                    (local.get $ch))))
+                (global.set $help_bitmap_decode_out_pos
+                  (i32.add (local.get $out_pos) (i32.const 1)))
+                (global.set $help_bitmap_decode_rle_count
+                  (i32.and (i32.sub (local.get $count) (i32.const 1)) (i32.const 0xff))))
+              (else
+                (if (i32.gt_u (local.get $count)
+                      (i32.sub (local.get $expected) (local.get $out_pos)))
+                  (then (return (i32.const 0))))
+                (if (local.get $write)
+                  (then (memory.fill (i32.add (local.get $dest) (local.get $out_pos))
+                    (local.get $ch) (local.get $count))))
+                (global.set $help_bitmap_decode_out_pos
+                  (i32.add (local.get $out_pos) (local.get $count)))
+                (global.set $help_bitmap_decode_rle_count (i32.const 0)))))
+          (else
+            (global.set $help_bitmap_decode_rle_count (local.get $ch)))))
+      (else
+        (if (i32.ge_u (local.get $out_pos) (local.get $expected))
+          (then (return (i32.const 0))))
+        (if (local.get $write)
+          (then (i32.store8 (i32.add (local.get $dest) (local.get $out_pos))
+            (local.get $ch))))
+        (global.set $help_bitmap_decode_out_pos
+          (i32.add (local.get $out_pos) (i32.const 1)))))
+    (i32.const 1))
+
+  (func $help_bitmap_decode_lz_emit
+    (param $ch i32) (param $window i32)
+    (param $dest i32) (param $expected i32) (param $write i32) (result i32)
+    (local $position i32)
+    (local.set $position (global.get $help_bitmap_decode_lz_pos))
+    (if (i32.ge_u (local.get $position) (global.get $HELP_MAX_BITMAP_INTERMEDIATE_BYTES))
+      (then (return (i32.const 0))))
+    (i32.store8 (i32.add (local.get $window)
+      (i32.and (local.get $position) (i32.const 0x0fff))) (local.get $ch))
+    (if (i32.eqz (call $help_bitmap_decode_emit
+          (local.get $ch) (local.get $dest) (local.get $expected) (local.get $write)))
+      (then (return (i32.const 0))))
+    (global.set $help_bitmap_decode_lz_pos
+      (i32.add (local.get $position) (i32.const 1)))
+    (i32.const 1))
+
+  ;; Decode one picture payload. Packing 3 means LZ77 first, then RLE, which
+  ;; is the order used by the compiler and native reader. This pass is also
+  ;; usable without writes, allowing the public entry point to validate the
+  ;; complete stream before changing caller memory.
+  (func $help_bitmap_decode_pass
+    (param $source i32) (param $source_len i32) (param $packing i32)
+    (param $dest i32) (param $expected i32) (param $window i32) (param $write i32)
+    (result i32)
+    (local $source_pos i32) (local $control i32) (local $bit i32)
+    (local $word i32) (local $distance i32) (local $length i32)
+    (local $i i32) (local $ch i32) (local $back i32)
+    (global.set $help_bitmap_decode_out_pos (i32.const 0))
+    (global.set $help_bitmap_decode_rle_count (i32.const 0))
+    (global.set $help_bitmap_decode_rle (i32.and (local.get $packing) (i32.const 1)))
+    (global.set $help_bitmap_decode_lz_pos (i32.const 0))
+    (if (i32.and (local.get $packing) (i32.const 2))
+      (then
+        (block $lz_done (loop $controls
+          (br_if $lz_done (i32.ge_u (local.get $source_pos) (local.get $source_len)))
+          (local.set $control (i32.load8_u
+            (i32.add (local.get $source) (local.get $source_pos))))
+          (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
+          (local.set $bit (i32.const 0))
+          (block $control_done (loop $tokens
+            (br_if $control_done (i32.ge_u (local.get $bit) (i32.const 8)))
+            ;; High control bits are unused when the physical stream ends.
+            (br_if $control_done (i32.ge_u (local.get $source_pos) (local.get $source_len)))
+            (if (i32.and (local.get $control)
+                  (i32.shl (i32.const 1) (local.get $bit)))
+              (then
+                (if (i32.gt_u (i32.const 2)
+                      (i32.sub (local.get $source_len) (local.get $source_pos)))
+                  (then (return (i32.const 0))))
+                (local.set $word (i32.load16_u
+                  (i32.add (local.get $source) (local.get $source_pos))))
+                (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 2)))
+                (local.set $distance (i32.and (local.get $word) (i32.const 0x0fff)))
+                (local.set $length
+                  (i32.add (i32.shr_u (local.get $word) (i32.const 12)) (i32.const 3)))
+                (if (i32.ge_u (local.get $distance) (global.get $help_bitmap_decode_lz_pos))
+                  (then (return (i32.const 0))))
+                (local.set $i (i32.const 0))
+                (block $copy_done (loop $copy
+                  (br_if $copy_done (i32.ge_u (local.get $i) (local.get $length)))
+                  (local.set $back (i32.sub
+                    (i32.sub (global.get $help_bitmap_decode_lz_pos)
+                      (local.get $distance))
+                    (i32.const 1)))
+                  (local.set $ch (i32.load8_u (i32.add (local.get $window)
+                    (i32.and (local.get $back) (i32.const 0x0fff)))))
+                  (if (i32.eqz (call $help_bitmap_decode_lz_emit
+                        (local.get $ch) (local.get $window) (local.get $dest)
+                        (local.get $expected) (local.get $write)))
+                    (then (return (i32.const 0))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $copy))))
+              (else
+                (local.set $ch (i32.load8_u
+                  (i32.add (local.get $source) (local.get $source_pos))))
+                (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
+                (if (i32.eqz (call $help_bitmap_decode_lz_emit
+                      (local.get $ch) (local.get $window) (local.get $dest)
+                      (local.get $expected) (local.get $write)))
+                  (then (return (i32.const 0))))))
+            (local.set $bit (i32.add (local.get $bit) (i32.const 1)))
+            (br $tokens)))
+          (br $controls))))
+      (else
+        (block $raw_done (loop $raw
+          (br_if $raw_done (i32.ge_u (local.get $source_pos) (local.get $source_len)))
+          (if (i32.eqz (call $help_bitmap_decode_emit
+                (i32.load8_u (i32.add (local.get $source) (local.get $source_pos)))
+                (local.get $dest) (local.get $expected) (local.get $write)))
+            (then (return (i32.const 0))))
+          (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
+          (br $raw)))))
+    (i32.and
+      (i32.eq (global.get $help_bitmap_decode_out_pos) (local.get $expected))
+      (i32.eqz (i32.and (global.get $help_bitmap_decode_rle_count) (i32.const 0x7f)))))
+
+  (func $help_decode_bitmap
+    (param $bitmap_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
+    (local $memory_bytes i32) (local $record i32) (local $source_off i32)
+    (local $source_len i32) (local $source i32) (local $packing i32)
+    (local $expected i32) (local $window_ga i32) (local $window_wa i32)
+    (local $table_bytes i32)
+    (if (i32.ge_u (local.get $bitmap_index) (global.get $help_doc_bitmap_count))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
+        (return (i32.const -1))))
+    (local.set $record (i32.add (global.get $help_doc_bitmaps_wa)
+      (i32.mul (local.get $bitmap_index) (global.get $HELP_BITMAP_SIZE))))
+    (local.set $source_off (i32.load offset=48 (local.get $record)))
+    (local.set $source_len (i32.load offset=52 (local.get $record)))
+    (local.set $packing (i32.load offset=12 (local.get $record)))
+    (local.set $expected (i32.load offset=72 (local.get $record)))
+    (local.set $memory_bytes (i32.shl (memory.size) (i32.const 16)))
+    (if (i32.or
+          (i32.gt_u (local.get $out_wa) (local.get $memory_bytes))
+          (i32.gt_u (local.get $capacity)
+            (i32.sub (local.get $memory_bytes) (local.get $out_wa))))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (local.get $source_off))
+        (return (i32.const -1))))
+    (if (i32.gt_u (local.get $expected) (local.get $capacity))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (local.get $source_off))
+        (return (i32.const -1))))
+    ;; Never permit a caller-owned output arena to corrupt the immutable HLP
+    ;; image or the normalized bitmap table.
+    (if (i32.and
+          (i32.lt_u (local.get $out_wa)
+            (i32.add (global.get $help_doc_file_wa) (global.get $help_doc_file_size)))
+          (i32.lt_u (global.get $help_doc_file_wa)
+            (i32.add (local.get $out_wa) (local.get $expected))))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (local.get $source_off))
+        (return (i32.const -1))))
+    (local.set $table_bytes
+      (i32.mul (global.get $help_doc_bitmap_count) (global.get $HELP_BITMAP_SIZE)))
+    (if (i32.and
+          (i32.lt_u (local.get $out_wa)
+            (i32.add (global.get $help_doc_bitmaps_wa) (local.get $table_bytes)))
+          (i32.lt_u (global.get $help_doc_bitmaps_wa)
+            (i32.add (local.get $out_wa) (local.get $expected))))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (local.get $source_off))
+        (return (i32.const -1))))
+    (local.set $source (i32.add (global.get $help_doc_file_wa) (local.get $source_off)))
+    (local.set $window_ga (call $heap_alloc (i32.const 4096)))
+    (if (i32.eqz (local.get $window_ga))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (local.get $source_off))
+        (return (i32.const -1))))
+    (local.set $window_wa (call $g2w (local.get $window_ga)))
+    (if (i32.eqz (call $help_bitmap_decode_pass
+          (local.get $source) (local.get $source_len) (local.get $packing)
+          (local.get $out_wa) (local.get $expected) (local.get $window_wa) (i32.const 0)))
+      (then
+        (call $heap_free (local.get $window_ga))
+        (call $help_set_error (global.get $HELP_ERROR_BITMAP_TABLE) (local.get $source_off))
+        (return (i32.const -1))))
+    (if (i32.eqz (call $help_bitmap_decode_pass
+          (local.get $source) (local.get $source_len) (local.get $packing)
+          (local.get $out_wa) (local.get $expected) (local.get $window_wa) (i32.const 1)))
+      (then
+        (call $heap_free (local.get $window_ga))
+        (call $help_set_error (global.get $HELP_ERROR_BITMAP_TABLE) (local.get $source_off))
+        (return (i32.const -1))))
+    (call $heap_free (local.get $window_ga))
+    (local.get $expected))
 
   (func $help_parse_semantic_indexes (result i32)
     (local $topic_internal i32) (local $title_internal i32)
@@ -3482,6 +3751,10 @@
     (call $help_document_load_buffer_core (local.get $source_wa) (local.get $source_size)))
   (func (export "test_help_load_vfs") (param $path_wa i32) (result i32)
     (call $help_document_load_vfs (local.get $path_wa)))
+  (func (export "test_help_decode_bitmap")
+    (param $bitmap_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
+    (call $help_decode_bitmap
+      (local.get $bitmap_index) (local.get $out_wa) (local.get $capacity)))
   (func (export "test_help_decode_topic_raw")
     (param $topic_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
     (call $help_decode_topic_raw
