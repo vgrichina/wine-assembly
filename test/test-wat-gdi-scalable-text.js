@@ -208,6 +208,42 @@ const REPO = path.join(__dirname, '..');
   assert.ok(inkCount(bigDc.hdc) > inkCount(smallDc.hdc),
     'a larger requested size must draw larger glyphs');
 
+  // ---- GetFontData reads the selected face's sfnt tables -----------------
+  //
+  // fontview.exe fills the block under its headline — Typeface name, File
+  // size, Version, copyright — from the 'name' table, and drops all four
+  // lines when the call fails. dwTable carries the tag with its first
+  // character in the low byte, the reverse of the file's big-endian order.
+  const NAME_TAG = 0x656d616e; // 'n','a','m','e' little-endian
+  const nameSize = wat.test_call_GetFontData(hdc, NAME_TAG, 0, 0, 0) >>> 0;
+  assert.ok(nameSize > 0 && nameSize !== 0xFFFFFFFF,
+    `GetFontData must report the 'name' table size for a scalable face, got ${nameSize}`);
+
+  const nameBuf = allocZero(nameSize);
+  assert.strictEqual(wat.test_call_GetFontData(hdc, NAME_TAG, 0, nameBuf, nameSize) >>> 0,
+    nameSize, 'GetFontData must copy the whole table when given room for it');
+  // A name table opens with format 0 and a record count; the string offset
+  // must land inside the table. Checking the shape rather than a byte blob
+  // keeps this from breaking when the substitute font is revised.
+  const u16 = at => (wat.guest_read32(nameBuf + (at & ~3)) >>> ((at & 2) ? 16 : 0)) & 0xFFFF;
+  const be16 = at => ((u16(at) & 0xFF) << 8) | (u16(at) >>> 8);
+  assert.strictEqual(be16(0), 0, "'name' table must be format 0");
+  const recordCount = be16(2);
+  const stringOffset = be16(4);
+  assert.ok(recordCount > 0, "'name' table must carry records");
+  assert.ok(stringOffset >= 6 + recordCount * 12 && stringOffset < nameSize,
+    `'name' string area at ${stringOffset} must sit after ${recordCount} records `
+    + `and inside ${nameSize} bytes`);
+
+  // A short buffer truncates rather than overruns, and an absent table is
+  // GDI_ERROR — the same contract Win98 offers.
+  assert.strictEqual(wat.test_call_GetFontData(hdc, NAME_TAG, 0, nameBuf, 8) >>> 0, 8,
+    'GetFontData must copy only what the caller asked for');
+  assert.strictEqual(wat.test_call_GetFontData(hdc, 0x5a5a5a5a, 0, 0, 0) >>> 0, 0xFFFFFFFF,
+    'a table the font does not have must be GDI_ERROR');
+  assert.strictEqual(wat.test_call_GetFontData(hdc, 0, 0, 0, 0) >>> 0 > nameSize, true,
+    'dwTable zero must address the whole font file');
+
   console.log(
     `PASS  scalable text: Arial draws ${ink} pixels of "${text}" in WAT across ` +
     `${drawn}px (face measures ${expected}px) with ${canvas.mask - beforeFallback - 1} ` +

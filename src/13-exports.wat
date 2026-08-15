@@ -442,9 +442,13 @@
         (param i32) (param i32) (param i32) (param i32) (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 16)) (local.get 1))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get 2))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 52)) (local.get 3))
+    ;; A real CreateFontW frame: fnWeight is the 5th argument at esp+20,
+    ;; fdwItalic the 6th at esp+24, lpszFace the 14th at esp+56. This helper
+    ;; used to lay them out one slot short, matching the handler's own
+    ;; off-by-one, so no test could see that every created font was nameless.
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get 1))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get 2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 56)) (local.get 3))
     (call $handle_CreateFontW
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))

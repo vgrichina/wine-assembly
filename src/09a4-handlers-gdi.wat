@@ -597,11 +597,17 @@
   ;; 168: CreateFontA — 14 params on stack
   (func $handle_CreateFontA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $handle i32) (local $weight i32) (local $italic i32) (local $face i32)
-    ;; arg0=nHeight, esp+16=fnWeight, esp+20=bItalic, esp+52=lpszFace
-    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
-    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    ;; CreateFontA takes fourteen arguments, so argument n sits at esp+4n:
+    ;; nHeight is arg0, fnWeight is the 5th at esp+20, fdwItalic the 6th at
+    ;; esp+24, and lpszFace the 14th at esp+56. These offsets used to be one
+    ;; slot short each, which read weight out of nOrientation and the face
+    ;; name out of fdwPitchAndFamily — always zero, so every CreateFontA font
+    ;; was nameless and fell back to a stock face at its own size. fontview's
+    ;; 30-point headline is drawn with this call.
+    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $face (call $g2w (call $gl32
-      (i32.add (global.get $esp) (i32.const 52)))))
+      (i32.add (global.get $esp) (i32.const 56)))))
     (local.set $handle (call $gdi_font_create
       (local.get $arg0)                                              ;; height
       (local.get $weight)                                            ;; weight
@@ -1145,11 +1151,72 @@
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
-  ;; Canvas exposes no underlying font-file tables. GDI_ERROR is the native
-  ;; contract for a selected font whose requested table is unavailable.
+  ;; GetFontData(hdc, dwTable, dwOffset, lpvBuffer, cbData) — read the sfnt
+  ;; tables of the DC's selected font. dwTable carries the four-character tag
+  ;; with its FIRST character in the low byte ('name' arrives as 0x656d616e),
+  ;; the reverse of the big-endian order the table directory stores, so it is
+  ;; byte-swapped before lookup. dwTable of zero addresses the whole file.
+  ;;
+  ;; Returning GDI_ERROR unconditionally, as this did while no font file was
+  ;; reachable, costs more than a missing feature: fontview.exe asks for the
+  ;; 'name' table to fill the block under its headline (Typeface name, File
+  ;; size, Version, copyright) and silently drops all four lines when the call
+  ;; fails. A bitmap font still gets GDI_ERROR, which is what Win98 does — the
+  ;; tables genuinely do not exist.
   (func $handle_GetFontData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dc i32) (local $handle i32) (local $face i32)
+    (local $data i32) (local $size i32) (local $tag i32)
+    (local $off i32) (local $len i32) (local $avail i32) (local $n i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return)))
+    (local.set $handle (i32.load offset=88 (local.get $dc)))
+    (if (i32.eqz (local.get $handle)) (then (return)))
+    (local.set $face (call $tt_face_for_logfont
+      (call $gdi_font_face (local.get $handle))
+      (call $gdi_font_weight (local.get $handle))
+      (call $gdi_font_italic (local.get $handle))))
+    (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return)))
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (if (i32.or (i32.eqz (local.get $data)) (i32.le_s (local.get $size) (i32.const 0)))
+      (then (return)))
+    (if (local.get $arg1)
+      (then
+        (local.set $tag (i32.or
+          (i32.or (i32.shr_u (local.get $arg1) (i32.const 24))
+                  (i32.and (i32.shr_u (local.get $arg1) (i32.const 8))
+                           (i32.const 0x0000FF00)))
+          (i32.or (i32.and (i32.shl (local.get $arg1) (i32.const 8))
+                           (i32.const 0x00FF0000))
+                  (i32.shl (local.get $arg1) (i32.const 24)))))
+        (local.set $off (call $tt_table_off
+          (local.get $data) (local.get $size) (local.get $tag)))
+        (local.set $len (call $tt_table_len
+          (local.get $data) (local.get $size) (local.get $tag)))
+        (if (i32.or (i32.eqz (local.get $off)) (i32.eqz (local.get $len)))
+          (then (return))))
+      (else
+        (local.set $off (i32.const 0))
+        (local.set $len (local.get $size))))
+    (if (i32.gt_u (local.get $arg2) (local.get $len)) (then (return)))
+    (local.set $avail (i32.sub (local.get $len) (local.get $arg2)))
+    ;; A null buffer asks how much there is to read.
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (local.get $avail))
+        (return)))
+    (local.set $n (select (local.get $arg4) (local.get $avail)
+      (i32.lt_u (local.get $arg4) (local.get $avail))))
+    (if (local.get $n)
+      (then
+        (memory.copy
+          (call $g2w (local.get $arg3))
+          (i32.add (local.get $data)
+            (i32.add (local.get $off) (local.get $arg2)))
+          (local.get $n))))
+    (global.set $eax (local.get $n)))
 
   ;; Install a font resource: Win16/Win9x bitmap strikes in the WAT text
   ;; rasterizer, or a TrueType file in the scalable face registry.

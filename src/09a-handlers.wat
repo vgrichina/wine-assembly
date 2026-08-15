@@ -9388,8 +9388,10 @@
   ;; 602: CreateFontW — convert the face name, then share the font-provider policy.
   (func $handle_CreateFontW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $face i32) (local $weight i32) (local $italic i32) (local $handle i32)
-    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 16))))
-    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    ;; Fourteen arguments, so argument n is at esp+4n: fnWeight is the 5th,
+    ;; fdwItalic the 6th, lpszFace the 14th. See $handle_CreateFontA.
+    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
+    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $face (call $heap_alloc (i32.const 64)))
     (if (i32.eqz (local.get $face))
       (then
@@ -9397,7 +9399,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
         (return)))
     (drop (call $wide_to_ansi
-      (call $gl32 (i32.add (global.get $esp) (i32.const 52)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 56)))
       (local.get $face) (i32.const 64)))
     (local.set $handle (call $gdi_font_create
       (local.get $arg0) (local.get $weight) (local.get $italic)
