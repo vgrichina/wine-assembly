@@ -13,8 +13,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
+const { Win98Renderer } = require('../lib/renderer');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -32,21 +34,15 @@ const CBS_DROPDOWN = 2, CBS_DROPDOWNLIST = 3;
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const renderer = new Win98Renderer(createCanvas(640, 480));
 
   const ctx = {
     getMemory: () => memory.buffer,
-    renderer: null,
+    renderer,
     resourceJson: { menus: {}, dialogs: {}, strings: {}, bitmaps: {} },
     onExit: () => {},
   };
   const base = createHostImports(ctx);
-  const paintedText = [];
-  const drawText = base.host.gdi_draw_text;
-  base.host.gdi_draw_text = (hdc, textPtr, nCount, rectWA, uFormat, isWide) => {
-    const bytes = new Uint8Array(memory.buffer, textPtr, Math.max(0, nCount));
-    paintedText.push(String.fromCharCode(...bytes));
-    return drawText(hdc, textPtr, nCount, rectWA, uFormat, isWide);
-  };
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread   = () => 0;
@@ -59,6 +55,9 @@ async function main() {
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, base);
   const e = instance.exports;
+  ctx.exports = e;
+  renderer.wasm = instance;
+  renderer.wasmMemory = memory;
 
   const checks = [];
   function check(name, pass, info = '') {
@@ -85,6 +84,23 @@ async function main() {
     const dest = e.guest_alloc(64);
     e.combobox_get_text(cb, dest, 64);
     return readStr(dest);
+  };
+  const snapshotWindow = hwnd => {
+    const record = e.test_gdi_window_surface_record(hwnd) >>> 0;
+    if (!record) return null;
+    const dv = new DataView(memory.buffer);
+    const width = dv.getUint32(record + 8, true);
+    const height = dv.getUint32(record + 12, true);
+    const bits = dv.getUint32(record + 16, true);
+    return bits && width && height
+      ? new Uint8Array(memory.buffer, bits, width * height * 4).slice()
+      : null;
+  };
+  const changedBytes = (before, after) => {
+    if (!before || !after || before.length !== after.length) return 0;
+    let changed = 0;
+    for (let i = 0; i < before.length; i++) changed += before[i] !== after[i];
+    return changed;
   };
 
   const baselineSlots = e.wnd_count_used();
@@ -299,6 +315,7 @@ async function main() {
 
   const cb2 = e.test_create_combobox(0, 0, 200, 100, CBS_DROPDOWN);
   check('CBS_DROPDOWN combobox allocated', cb2 !== 0, 'hwnd=0x' + cb2.toString(16));
+  e.wnd_set_style_export(cb2 - 1, 0x90000000); // WS_POPUP | WS_VISIBLE
 
   const ed = e.combobox_get_edit_hwnd(cb2);
   check('CBS_DROPDOWN exposes edit child', ed !== 0, 'edit=0x' + ed.toString(16));
@@ -329,13 +346,20 @@ async function main() {
   check('CBS_DROPDOWN selection synchronizes its visible edit field',
     selectedLen === 1 && readStr(selectedText) === '8',
     `len=${selectedLen} text="${readStr(selectedText)}"`);
-  paintedText.length = 0;
+  e.send_message(cb2, WM_SETTEXT, 0, writeStr(''));
   e.send_message(cb2, WM_PAINT, 0, 0);
+  const emptySelectedPixels = snapshotWindow(cb2 - 1);
+  e.send_message(cb2, CB_SETCURSEL, 0, 0);
+  e.send_message(cb2, WM_PAINT, 0, 0);
+  const selectedPixels = snapshotWindow(cb2 - 1);
   check('CBS_DROPDOWN paints its selected list text',
-    paintedText.includes('8'), `painted=${JSON.stringify(paintedText)}`);
+    changedBytes(emptySelectedPixels, selectedPixels) > 0,
+    `changedBytes=${changedBytes(emptySelectedPixels, selectedPixels)} bytes=${selectedPixels?.length || 0}`);
   e.send_message(cb2, CB_RESETCONTENT, 0, 0);
   check('CB_RESETCONTENT clears the editable field',
     e.send_message(cb2, WM_GETTEXT, 16, selectedText) === 0 && readStr(selectedText) === '');
+  e.send_message(cb2, WM_PAINT, 0, 0);
+  const emptyEditPixels = snapshotWindow(cb2 - 1);
 
   // WM_SETTEXT routed to edit
   e.send_message(cb2, WM_SETTEXT, 0, writeStr('hello'));
@@ -345,10 +369,11 @@ async function main() {
     n === 5 && readStr(dest) === 'hello', `n=${n} text="${readStr(dest)}"`);
   check('WM_GETTEXTLENGTH agrees',
     e.send_message(cb2, WM_GETTEXTLENGTH, 0, 0) === 5);
-  paintedText.length = 0;
   e.send_message(cb2, WM_PAINT, 0, 0);
+  const editPixels = snapshotWindow(cb2 - 1);
   check('CBS_DROPDOWN paint uses the inner edit text',
-    paintedText.includes('hello'), `painted=${JSON.stringify(paintedText)}`);
+    changedBytes(emptyEditPixels, editPixels) > 0,
+    `changedBytes=${changedBytes(emptyEditPixels, editPixels)} bytes=${editPixels?.length || 0}`);
 
   // CB_LIMITTEXT → EM_SETLIMITTEXT round-trip via EM_GETLIMITTEXT
   e.send_message(cb2, CB_LIMITTEXT, 32, 0);

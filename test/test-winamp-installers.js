@@ -170,7 +170,7 @@ for (const tc of CASES) {
       `--input=${LICENSE_WAIT},2:dlg-dump:license`,
       `--png="${pngPath}"`,
       '--quiet-api',
-      '--trace-host=gdi_draw_text',
+      '--trace-api=DrawTextA,DrawTextW',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
@@ -196,8 +196,7 @@ for (const tc of CASES) {
     const licenseChecks = [
       { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
       { name: 'license text uses word-wrapped DrawText', pass:
-        /DrawText\(hdc=.*text="Winamp is a freeware product\..*format=DT_WORDBREAK/.test(licenseOut) ||
-        /gdi_draw_text\(0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+, 16, 0\) \u2192 0x[1-9][0-9a-f]+/.test(licenseOut) },
+        /DrawText[AW]\(hdc=.*lpString="Winamp is a freeware product\..*uFormat=.*DT_WORDBREAK/.test(licenseOut) },
       { name: 'license page PNG captured', pass: pngOk },
       { name: 'license wizard buttons are visible', pass: wizardButtonInk > 700 },
     ];

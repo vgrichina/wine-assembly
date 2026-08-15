@@ -7325,6 +7325,120 @@
         (local.get $hdc) (local.get $desc) (local.get $width))))
     (local.get $ok))
 
+  ;; Process scalable ExtTextOut with caller-supplied logical advances without
+  ;; delegating placement policy to Canvas. Each font-provider request covers
+  ;; one glyph; WAT owns TA_UPDATECP, horizontal alignment, and ETO_PDY. An
+  ;; open path consumes one-bit masks; ordinary output uses bounded glyph runs.
+  (func $gdi_scalable_ext_text_layout (param $hdc i32) (param $x i32) (param $y i32)
+        (param $options i32) (param $rect i32) (param $text i32) (param $count i32)
+        (param $dx_array i32) (param $wide i32) (result i32)
+    (local $desc i32) (local $align i32) (local $temporary_align i32)
+    (local $i i32) (local $total_x i32) (local $total_y i32)
+    (local $origin_x i32) (local $origin_y i32) (local $pdy i32)
+    (local $path_open i32) (local $glyph_options i32)
+    (if (i32.eqz (local.get $dx_array))
+      (then
+        (if (call $gdi_dc_path_is_open (local.get $hdc))
+          (then (return (call $gdi_scalable_text_path
+            (local.get $hdc) (local.get $x) (local.get $y)
+            (local.get $text) (local.get $count) (local.get $wide)))))
+        (return (i32.const 0))))
+    (if (i32.or (i32.lt_s (local.get $count) (i32.const 0))
+          (i32.or (i32.gt_u (local.get $count) (i32.const 65536))
+            (i32.and (i32.gt_u (local.get $count) (i32.const 0))
+              (i32.eqz (local.get $text)))))
+      (then (return (i32.const 0))))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
+      (then (return (i32.const 0))))
+    (local.set $align (call $gdi_dc_get_field
+      (local.get $hdc) (i32.const 32) (i32.const 0)))
+    (local.set $path_open (call $gdi_dc_path_is_open (local.get $hdc)))
+    (if (i32.eqz (local.get $count))
+      (then
+        (if (i32.and (i32.eqz (local.get $path_open))
+              (i32.ne (i32.and (local.get $options) (i32.const 2)) (i32.const 0)))
+          (then (return (call $host_gdi_ext_text_out
+            (local.get $hdc) (local.get $x) (local.get $y)
+            (local.get $options) (local.get $rect) (local.get $text)
+            (i32.const 0) (i32.const 0) (local.get $wide)))))
+        (return (i32.const 1))))
+    (local.set $pdy (i32.ne
+      (i32.and (local.get $options) (i32.const 0x2000)) (i32.const 0)))
+    (if (i32.ne (i32.and (local.get $align) (i32.const 1)) (i32.const 0))
+      (then
+        (local.set $x (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 12) (i32.const 0)))
+        (local.set $y (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 16) (i32.const 0)))))
+    (local.set $origin_x (local.get $x))
+    (local.set $origin_y (local.get $y))
+    (block $sum_done (loop $sum
+      (br_if $sum_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $total_x (i32.add (local.get $total_x)
+        (i32.load (i32.add (local.get $dx_array)
+          (i32.mul (local.get $i)
+            (select (i32.const 8) (i32.const 4) (local.get $pdy)))))))
+      (if (local.get $pdy)
+        (then (local.set $total_y (i32.add (local.get $total_y)
+          (i32.load offset=4 (i32.add (local.get $dx_array)
+            (i32.shl (local.get $i) (i32.const 3))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $sum)))
+    (if (i32.eq (i32.and (local.get $align) (i32.const 6)) (i32.const 2))
+      (then (local.set $x (i32.sub (local.get $x) (local.get $total_x)))))
+    (if (i32.eq (i32.and (local.get $align) (i32.const 6)) (i32.const 6))
+      (then (local.set $x (i32.sub
+        (local.get $x) (i32.div_s (local.get $total_x) (i32.const 2))))))
+    (local.set $temporary_align (i32.and (local.get $align) (i32.const 24)))
+    (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
+      (local.get $temporary_align) (i32.const 0)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $glyphs
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $glyph_options (local.get $options))
+      (if (i32.gt_u (local.get $i) (i32.const 0))
+        (then (local.set $glyph_options
+          (i32.and (local.get $glyph_options) (i32.const -3)))))
+      (if (i32.eqz
+            (if (result i32) (local.get $path_open)
+              (then (call $gdi_scalable_text_path
+                (local.get $hdc) (local.get $x) (local.get $y)
+                (i32.add (local.get $text)
+                  (select (i32.shl (local.get $i) (i32.const 1))
+                    (local.get $i) (local.get $wide)))
+                (i32.const 1) (local.get $wide)))
+              (else (call $host_gdi_ext_text_out
+                (local.get $hdc) (local.get $x) (local.get $y)
+                (local.get $glyph_options) (local.get $rect)
+                (i32.add (local.get $text)
+                  (select (i32.shl (local.get $i) (i32.const 1))
+                    (local.get $i) (local.get $wide)))
+                (i32.const 1) (i32.const 0) (local.get $wide)))))
+        (then
+          (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
+            (local.get $align) (i32.const 0)))
+          (return (i32.const 0))))
+      (local.set $x (i32.add (local.get $x)
+        (i32.load (i32.add (local.get $dx_array)
+          (i32.mul (local.get $i)
+            (select (i32.const 8) (i32.const 4) (local.get $pdy)))))))
+      (if (local.get $pdy)
+        (then (local.set $y (i32.add (local.get $y)
+          (i32.load offset=4 (i32.add (local.get $dx_array)
+            (i32.shl (local.get $i) (i32.const 3))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $glyphs)))
+    (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
+      (local.get $align) (i32.const 0)))
+    (if (i32.ne (i32.and (local.get $align) (i32.const 1)) (i32.const 0))
+      (then
+        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12)
+          (i32.add (local.get $origin_x) (local.get $total_x)) (i32.const 0)))
+        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16)
+          (i32.add (local.get $origin_y) (local.get $total_y)) (i32.const 0)))))
+    (i32.const 1))
+
   (func $host_gdi_set_text_color (param $hdc i32) (param $color i32) (result i32)
     (call $gdi_dc_set_field (local.get $hdc) (i32.const 20)
       (i32.and (local.get $color) (i32.const 0xFFFFFF)) (i32.const 0)))
@@ -7609,12 +7723,18 @@
       (local.get $count) (local.get $dx_array) (local.get $wide)))
     (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
       (then (return (local.get $bitmap_result))))
+    (if (local.get $dx_array)
+      (then (return (call $gdi_scalable_ext_text_layout
+        (local.get $hdc) (local.get $x) (local.get $y)
+        (local.get $options) (local.get $rect)
+        (local.get $text) (local.get $count) (local.get $dx_array)
+        (local.get $wide)))))
     (if (call $gdi_dc_path_is_open (local.get $hdc))
-      (then
-        (if (local.get $dx_array) (then (return (i32.const 0))))
-        (return (call $gdi_scalable_text_path
-          (local.get $hdc) (local.get $x) (local.get $y)
-          (local.get $text) (local.get $count) (local.get $wide)))))
+      (then (return (call $gdi_scalable_ext_text_layout
+        (local.get $hdc) (local.get $x) (local.get $y)
+        (local.get $options) (local.get $rect)
+        (local.get $text) (local.get $count) (i32.const 0)
+        (local.get $wide)))))
     (local.set $align (call $gdi_dc_get_field
       (local.get $hdc) (i32.const 32) (i32.const 0)))
     (if (i32.ne (i32.and (local.get $align) (i32.const 1)) (i32.const 0))
@@ -7640,15 +7760,8 @@
     (local.get $result))
   (func $host_gdi_draw_text (param $hdc i32) (param $text i32) (param $count i32)
         (param $rect i32) (param $format i32) (param $wide i32) (result i32)
-    (local $token i32) (local $bitmap_result i32)
-    (local.set $bitmap_result (call $gdi_bitmap_draw_text
+    (call $gdi_bitmap_draw_text
       (local.get $hdc) (local.get $text) (local.get $count)
-      (local.get $rect) (local.get $format) (local.get $wide)))
-    (if (i32.ge_s (local.get $bitmap_result) (i32.const 0))
-      (then (return (local.get $bitmap_result))))
-    (local.set $token (call $gdi_text_prepare (local.get $hdc)))
-    (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
-    (call $host_gdi_draw_text_raw (local.get $token) (local.get $text) (local.get $count)
       (local.get $rect) (local.get $format) (local.get $wide)))
 
   (func $gdi_surface_descriptor (param $hdc i32) (param $desc i32) (result i32)

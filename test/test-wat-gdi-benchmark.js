@@ -22,13 +22,13 @@ function formatNumber(value) {
 }
 
 (async () => {
-  const fallbackCalls = { bind: 0, out: 0, ext: 0, draw: 0 };
+  const fallbackCalls = { bind: 0, mask: 0, out: 0, ext: 0 };
   const harness = await bootRenderHarness({
     extraHostOverrides: {
       gdi_text_bind: () => { fallbackCalls.bind++; return 1; },
+      gdi_text_mask: () => { fallbackCalls.mask++; return 0; },
       gdi_text_out: () => { fallbackCalls.out++; return 1; },
       gdi_ext_text_out: () => { fallbackCalls.ext++; return 1; },
-      gdi_draw_text: () => { fallbackCalls.draw++; return 1; },
     },
   });
   const { exports: wat, memory, hostCtx } = harness;
@@ -169,7 +169,7 @@ function formatNumber(value) {
       verify() {
         assert(wat.test_gdi_bitmap_font_selected(target.hdc),
           'stock font benchmark must use the WAT bitmap-font path');
-        assert.deepStrictEqual(fallbackCalls, { bind: 0, out: 0, ext: 0, draw: 0 },
+        assert.deepStrictEqual(fallbackCalls, { bind: 0, mask: 0, out: 0, ext: 0 },
           'stock text benchmark entered the Canvas fallback');
         assert.notStrictEqual(hashSurface(target), this.beforeHash,
           'bitmap-font benchmark did not change canonical surface pixels');

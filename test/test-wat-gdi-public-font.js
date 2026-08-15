@@ -7,14 +7,14 @@ const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
   const canvasCalls = {
-    bind: 0, textOut: 0, extTextOut: 0, drawText: 0, measure: 0, metrics: 0,
+    bind: 0, mask: 0, textOut: 0, extTextOut: 0, measure: 0, metrics: 0,
   };
   const { exports: wat, memory, hostCtx } = await bootRenderHarness({
     extraHostOverrides: {
       gdi_text_bind: () => { canvasCalls.bind++; return 1; },
+      gdi_text_mask: () => { canvasCalls.mask++; return 0; },
       gdi_text_out: () => { canvasCalls.textOut++; return 1; },
       gdi_ext_text_out: () => { canvasCalls.extTextOut++; return 1; },
-      gdi_draw_text: () => { canvasCalls.drawText++; return 8; },
       measure_text: (_hdc, _text, count) => { canvasCalls.measure++; return count * 8; },
       get_text_metrics: () => { canvasCalls.metrics++; return 8 | (8 << 16); },
     },
@@ -194,7 +194,7 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 2) * 4), 0x00ffffff);
     assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 4) * 4), 0);
     assert.deepStrictEqual(canvasCalls, {
-      bind: 0, textOut: 0, extTextOut: 0, drawText: 0, measure: 0, metrics: 0,
+      bind: 0, mask: 0, textOut: 0, extTextOut: 0, measure: 0, metrics: 0,
     }, 'selected user FNT metrics, glyph extraction, and rasterization must stay in WAT');
     assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
     assert.strictEqual(wat.test_gdi_bitmap_font_count(), 0);

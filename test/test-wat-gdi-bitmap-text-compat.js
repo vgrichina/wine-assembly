@@ -20,6 +20,12 @@ const { bootRenderHarness } = require('./render-helper');
     bytes.set(Buffer.from(value, 'latin1'), wa(pointer));
     return pointer;
   };
+  const writeWide = value => {
+    const pointer = allocZero((value.length + 1) * 2);
+    [...value].forEach((character, index) =>
+      wat.guest_write16(pointer + index * 2, character.charCodeAt(0)));
+    return pointer;
+  };
   const writeRect = (pointer, left, top, right, bottom) => {
     wat.guest_write32(pointer, left);
     wat.guest_write32(pointer + 4, top);
@@ -228,6 +234,104 @@ const { bootRenderHarness } = require('./render-helper');
     pixel(5 + index % 20, 5 + Math.floor(index / 20)) === 0).some(Boolean),
   'filling the scalable glyph path must paint canonical WAT pixels');
   assert.notStrictEqual(wat.test_call_SelectObject(hdc, 0x30010) | 0, -1); // WHITE_BRUSH
+
+  wat.test_gdi_dc_set_field(hdc, 32, 0, 0); // TA_LEFT | TA_TOP
+  clear();
+  const beforeScalableDx = bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+    hdc, 2, 2, 0x2000, 0, textAA, 2, paired), 1);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.deepStrictEqual(bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4),
+    beforeScalableDx, 'scalable ETO_PDY must return masks without rasterizing');
+  const scalableDxPath = readPath();
+  assert(scalableDxPath.points.some(([x, y]) => x >= 14 && y >= 6),
+    'scalable ETO_PDY must apply WAT-owned X/Y placement to the second glyph');
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
+
+  clear();
+  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+    hdc, 2, 2, 0x2000, 0, textAA, 2, paired), 1);
+  const scalableDxPixels = [];
+  for (let y = 0; y < 30; y++) {
+    for (let x = 0; x < 50; x++) {
+      if (pixel(x, y) === 0) scalableDxPixels.push([x, y]);
+    }
+  }
+  assert(scalableDxPixels.some(([x]) => x < 14),
+    'ordinary scalable ETO_PDY must commit the first glyph to canonical pixels');
+  assert(scalableDxPixels.some(([x, y]) => x >= 14 && y >= 6),
+    'ordinary scalable ETO_PDY must use WAT placement for the second glyph');
+
+  wat.test_gdi_dc_set_field(hdc, 32, 0, 0); // TA_LEFT | TA_TOP
+  clear();
+  const beforeScalableDrawText = bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4);
+  const scalableDrawRect = allocZero(16);
+  writeRect(scalableDrawRect, 2, 2, 90, 40);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert(wat.test_call_DrawTextA(hdc, prefixed, 3, scalableDrawRect, 0) > 0);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.deepStrictEqual(bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4),
+    beforeScalableDrawText,
+    'scalable DrawText must use WAT layout and masks without touching destination pixels');
+  const scalableDrawPath = readPath();
+  assert(scalableDrawPath.points.length > scalablePath.points.length,
+    'scalable DrawText must record both visible glyphs and the mnemonic underline');
+  assert(scalableDrawPath.types.every((type, index) => type === [6, 2, 2, 3][index % 4]));
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
+
+  clear();
+  writeRect(scalableDrawRect, 2, 2, 94, 40);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert(wat.test_call_DrawTextA(hdc, tabbed, 3, scalableDrawRect, 0x40) > 0);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  const scalableTabbedPath = readPath();
+  assert(scalableTabbedPath.points.some(([x]) => x >= 40),
+    'scalable DrawText must apply its WAT-owned expanded-tab position');
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
+
+  writeRect(scalableDrawRect, 2, 2, 40, 20);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert(wat.test_call_DrawTextA(hdc, prefixed, 3, scalableDrawRect, 0x400) > 0);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.strictEqual(readPath().points.length, 0,
+    'DT_CALCRECT must update layout bounds without adding scalable path geometry');
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
+
+  const wideNonAscii = writeWide('\u0100');
+  writeRect(scalableDrawRect, 2, 2, 40, 24);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert(wat.test_call_DrawTextW(hdc, wideNonAscii, 1, scalableDrawRect, 0x800) > 0);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert(readPath().points.length > 0,
+    'scalable DrawTextW must preserve non-ASCII UTF-16 instead of stealing a marker bit');
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
+
+  clear();
+  writeRect(scalableDrawRect, 2, 2, 94, 40);
+  assert(wat.test_call_DrawTextA(hdc, tabbed, 3, scalableDrawRect, 0x40) > 0);
+  const scalableDrawPixels = [];
+  for (let y = 0; y < 30; y++) {
+    for (let x = 0; x < width; x++) {
+      if (pixel(x, y) === 0) scalableDrawPixels.push([x, y]);
+    }
+  }
+  assert(scalableDrawPixels.some(([x]) => x < 20),
+    'ordinary scalable DrawText must commit its first Canvas glyph into canonical WAT pixels');
+  assert(scalableDrawPixels.some(([x]) => x >= 40),
+    'ordinary scalable DrawText must use WAT tab placement for the second Canvas glyph run');
+
+  wat.test_gdi_dc_set_field(hdc, 32, 1, 0); // TA_LEFT | TA_TOP | TA_UPDATECP
+  wat.test_gdi_current_pos_set(hdc, 4, 20);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+    hdc, 70, 40, 0x2000, 0, textAA, 2, paired), 1);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 12, 0), 28,
+    'scalable ETO_PDY must publish the summed WAT X advance');
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 16, 0), 22,
+    'scalable ETO_PDY must publish the summed WAT Y advance');
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
 
   wat.test_gdi_dc_set_field(hdc, 32, 1, 0); // TA_LEFT | TA_TOP | TA_UPDATECP
   wat.test_gdi_current_pos_set(hdc, 5, 30);

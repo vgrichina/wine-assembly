@@ -152,14 +152,17 @@ destination/source surface resolution without per-pixel host calls.
 Extended per-DC state occupies `0x07EFC800..0x07EFE7FF` as 256 32-byte
 records for arc direction, brush origin, mapper flags, and text spacing.
 
+The provider-neutral DrawText layout uses `0x07993000..0x079B3FFF` for a
+65,540-WCHAR presentation buffer and `0x079B4000..0x079C4FFF` for parallel
+mnemonic-prefix flags. Keeping the flags separate preserves the full UTF-16
+code unit while `.FON` and scalable providers share prefix removal, tabs,
+wrapping, and ellipsis policy.
+
 The Win16/Win9x bitmap-font backend uses `0x07F0A420..0x07F0A46F` for its
 file-I/O counter and 80-byte surface descriptor. Its bundled-font VFS paths,
 shared install states, and Win9x UI/fixed face names occupy
 `0x07F0A490..0x07F0A558`, followed by
 `0x07F0A800..0x07F0ABFF` for sixteen 64-byte installed-strike records. The
-`0x07F0AC00..0x07F0CBFF` range is a 4096-WCHAR DrawText presentation buffer
-for prefix removal, tab layout, and ellipsis insertion. The remaining bytes
-through `0x07F0CFFF` stay unused before the region table at `0x07F0D000`. The
 validated FNT byte payloads themselves are owned allocations in the DIB arena;
 the static table stores their WAT backing addresses and parsed metrics.
 

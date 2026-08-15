@@ -482,8 +482,6 @@
   (import "host" "gdi_ext_text_out" (func $host_gdi_ext_text_out_raw (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_ext_text_out(hdc, x, y, options, rectWasmAddr, textWasmAddr, nCount, isWide) → 1
   ;; Honors ExtTextOut's ETO_OPAQUE/ETO_CLIPPED rectangle while lpDx remains ignored.
-  (import "host" "gdi_draw_text" (func $host_gdi_draw_text_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_draw_text(hdc, textWA, nCount, rectWA, uFormat, isWide) → height
   (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)
     (call $gdi_hdc_set_pixel (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
@@ -1291,7 +1289,7 @@
   (global $CLASS_RECORDS i32 (i32.const 0x0000A000))
   (global $CLASS_RECORDS_SIZE i32 (i32.const 0x00000C00))
   (global $MAX_CLASSES   i32 (i32.const 64))
-  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call gdi_draw_text
+  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call WAT DrawText
   ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
   ;; cannot reach it via image-relative pointers. Lives just past TIMER_TABLE.
   (global $PAINT_SCRATCH  i32 (i32.const 0x0000AD40))

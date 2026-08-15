@@ -9,15 +9,15 @@ const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
   const calls = {
-    bind: 0, textOut: 0, extTextOut: 0, drawText: 0,
+    bind: 0, mask: 0, textOut: 0, extTextOut: 0,
     measure: 0, metrics: 0,
   };
   const harness = await bootRenderHarness({
     extraHostOverrides: {
       gdi_text_bind: () => { calls.bind++; return 1; },
+      gdi_text_mask: () => { calls.mask++; return 0; },
       gdi_text_out: () => { calls.textOut++; return 1; },
       gdi_ext_text_out: () => { calls.extTextOut++; return 1; },
-      gdi_draw_text: () => { calls.drawText++; return 12; },
       measure_text: () => { calls.measure++; return 99; },
       get_text_metrics: () => { calls.metrics++; return 12 | (6 << 16); },
     },
@@ -45,7 +45,7 @@ const { bootRenderHarness } = require('./render-helper');
   };
   const resetCalls = () => Object.keys(calls).forEach(key => { calls[key] = 0; });
   const assertNoCanvasText = label => assert.deepStrictEqual(calls, {
-    bind: 0, textOut: 0, extTextOut: 0, drawText: 0,
+    bind: 0, mask: 0, textOut: 0, extTextOut: 0,
     measure: 0, metrics: 0,
   }, label);
   const writeWide = value => {
