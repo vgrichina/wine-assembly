@@ -19,13 +19,35 @@ ANSI byte. Storage is `$heap_alloc`, not a fixed region — font files run from
 reservation would either waste a megabyte on a guest that never names a
 scalable face or run out on one that does.
 
-What remains is the GDI seam itself, and only that: `CreateFontIndirectA` must
-map a `LOGFONT` face name to a substitute path through
-`fonts/substitutions.json` and call `$tt_face_open`, and the public
-`GetTextExtentPoint32` / `GetCharWidth32` / `GetTextMetrics` handlers must
-call `$tt_face_text_width`, `$tt_face_char_width`, and `$tt_face_metric`
-instead of measuring on Canvas. Those handlers and the per-DC font selection
-state live in `src/10b-gdi-font.wat` and `lib/host-imports.js`.
+The GDI seam is now closed, and it turned out not to need a second renderer.
+The bitmap-font path already owns everything a text call needs — layout,
+alignment, clipping, colours, background modes, paths, `TA_UPDATECP`,
+justification, `GetGlyphOutline` — and reaches all of it through one parsed
+FNT image. So a scalable face is rasterized at one ppem into an FNT 3.00 image
+and installed as an ordinary strike, and nothing downstream cares that the
+glyphs came from an outline. That the glyph cache already stored bitmaps in
+the FNT column-major bit layout is what made this a copy rather than a
+conversion.
+
+`$gdi_bitmap_font_selected` resolves a substituted face to that strike;
+Canvas remains the fallback only for faces with no substitute. Strike records
+carry a third state: 1 is an installed bitmap font, 2 is a rasterized
+substitute, and face-and-nearest-height matching and font enumeration skip
+state 2 so a substitute is reachable only through its exact
+`(face, size, weight, italic)` key.
+
+Face names resolve to the filenames a real `C:\WINDOWS\FONTS` held —
+`ARIAL.TTF`, `TAHOMABD.TTF` — from a table in `src/10c-truetype.wat`. Which
+vendored open font is mounted at each of those VFS paths is the host's
+decision, recorded in `fonts/substitutions.json` under `win98Files` and applied
+by `lib/font-substitutions.js` in both `test/run.js` and `host.js`. WAT
+therefore carries no licensing knowledge and resolves faces exactly the way
+the bundled `.FON` strikes already do.
+
+Two limits worth stating rather than discovering later. An FNT cell width is
+the advance, so ink that overhangs the advance is clipped, the same way a
+bitmap font clips it. And a face with no italic file falls back to its upright
+file rather than being synthetically sheared.
 
 The entry points a caller needs, all in `src/10c-truetype.wat`:
 
@@ -37,7 +59,15 @@ $tt_face_text_width(face, text, n, ppem)
 $tt_face_char_width(face, byte, ppem)
 $tt_face_glyph(face, byte, ppem)       -> cache entry, or 0
 $tt_entry_width/height/left/top/pixel(entry, ...)
+
+$tt_subst_path(name, weight, italic)   -> Win98 font path, or 0
+$tt_face_for_logfont(name, weight, italic)
+$tt_strike_ensure(name, lfHeight, weight, italic)
+                                       -> installed strike record, or 0
 ```
+
+`$tt_strike_ensure` is the one the GDI layer actually calls; everything above
+it is reachable for tests and for callers that want metrics without a strike.
 
 The end state is **no Canvas text at all**: WAT parses TrueType
 files, owns metrics, and rasterizes glyphs onto the canonical GDI surface, the
@@ -53,16 +83,18 @@ canonical GDI surface for `System`, `MS Sans Serif`, `Fixedsys`, `Courier`, and
 This document covers the faces that path does **not** cover: the scalable
 TrueType faces a Win98 application names explicitly through
 `CreateFontIndirectA`/`W`, `EnumFontFamiliesEx`, or a resource-script dialog
-font. Today those fall through to `_buildCssFont` in `lib/host-imports.js`,
-which emits a CSS family list naming the *host's* fonts:
+font. Those with a vendored substitute are now rasterized in WAT; those without
+one still fall through to `_buildCssFont` in `lib/host-imports.js`, which emits
+a CSS family list naming the *host's* fonts:
 
 ```js
 'arial': 'Arial, sans-serif', 'times new roman': '"Times New Roman", serif',
 'verdana': 'Verdana, sans-serif'
 ```
 
-That is non-deterministic by construction. On a machine with Microsoft's fonts
-installed the metrics are right by accident; on a bare Linux CI box or a
+That is non-deterministic by construction, and it is why the substituted faces
+were moved off it first. On a machine with Microsoft's fonts installed the
+metrics are right by accident; on a bare Linux CI box or a
 locked-down browser the fallback is whatever the platform picks, and
 `GetTextExtentPoint32A` returns widths the guest never saw on Win98. Dialog
 layout, `DrawText` wrapping, caret placement, and RichEdit line breaking all
@@ -438,9 +470,11 @@ shrinks monotonically.
 1. **Metrics in WAT — no rasterizer.** Parse `head`/`hhea`/`hmtx`/`maxp`/`cmap`/
    `OS/2`, add the codepage tables, and serve `GetTextExtentPoint32`,
    `GetCharWidth32`, `GetTextMetrics`, and `GetTextFace` from the font file.
-   Parsing, CP1252, and `TEXTMETRIC` derivation are done in
-   `src/10c-truetype.wat`; the arena, face selection, and the public handlers
-   are not. CP437 is deliberately left out — the faces that need it are bitmap
+   Parsing, CP1252, `TEXTMETRIC` derivation, face selection, and the strike
+   the public handlers measure from are done in `src/10c-truetype.wat` and
+   `src/10b-gdi-font.wat`. The handlers reach the font through the installed
+   strike rather than calling `$tt_face_*` directly, which is why they needed
+   no change. CP437 is deliberately left out — the faces that need it are bitmap
    strikes on the `.FON` path, and no scalable face is requested with
    `OEM_CHARSET` yet.
    **Start here regardless of whether the rasterizer is ever built.** It is
@@ -453,18 +487,29 @@ shrinks monotonically.
    `dfWeight` 700), and `SmallFonts.fon` (11 ppem) are generated from the
    embedded EBDT strikes and checked by `test/test-generated-wine-fonts.js`
    (done). Still to do: extend `tools/gen-bitmap-fon.c` to rasterize the Tier 1
-   outlines across the hinted ladder, and wire all of it into the strike table
-   and `gdi_bitmap_font_best` — nothing selects these files at runtime yet. No
-   new rendering code; moves the Win98 shell font and the common UI sizes of
-   Arial, Times, and Courier onto the exact blit.
+   outlines across the hinted ladder, and install these three files at startup
+   the way the other five are — nothing selects them at runtime yet. Less
+   urgent than it was: a face with no installed strike is now rasterized on
+   demand rather than falling to Canvas, so the ladder buys pixel-exactness at
+   UI sizes rather than buying determinism, which is already won.
 
 3. **Interim deterministic substitution** — `_buildCssFont` reads the manifest
    and uses private family names, so whatever text still reaches Canvas stops
-   depending on host fonts. Skippable if milestone 4 lands quickly.
+   depending on host fonts. **Dropped**, which is what it was always for: it
+   was insurance against milestone 4 taking a long time, and milestone 4 has
+   landed. The text still reaching Canvas is exactly the set of faces with no
+   substitute, and giving those private family names would not make them
+   deterministic — nothing is mounted to be private about.
 
-4. **WAT rasterizer** — `glyf` parse, transform, flatten, scan-convert, cache.
-   Delete `gdi_text_mask` and both hosts' font registration when the corpus
-   renders without it.
+4. **WAT rasterizer** — `glyf` parse, transform, flatten, scan-convert, cache
+   (done). A substituted face is rasterized into an FNT 3.00 image and
+   installed as an ordinary strike, so it renders through the existing bitmap
+   text path; `test/test-wat-gdi-scalable-text.js` gates that `gdi_text_mask`
+   is not called for a face WAT can rasterize. Still to do: delete
+   `gdi_text_mask` and both hosts' font registration once the corpus renders
+   without it — the fallback is still load-bearing for unsubstituted faces
+   such as Verdana, so deleting it now would lose text rather than lose
+   Canvas.
 
 5. **Metric reference** — v86 probe, pinned capture, comparison test. Gates any
    claim of metric correctness; can run against milestone 1 immediately.
