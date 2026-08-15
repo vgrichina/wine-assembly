@@ -871,32 +871,22 @@
     (if (local.get $path_copy_ga) (then (call $heap_free (local.get $path_copy_ga))))
     (local.get $result))
 
-  ;; Bridge the canonical WAT document/session into the existing basic help
-  ;; window. This is intentionally a plain-text first cut: LinkData2 strings
-  ;; are decoded in WAT and NUL separators become line breaks. Typed layout
-  ;; consumes the formatted token stream in the next renderer slice.
+  ;; Decode and publish the canonical formatted topic and positioned run list.
+  ;; The typed-view builder retains the prior visible arenas until the complete
+  ;; decode/tokenize/layout transaction succeeds.
   (func $help_prepare_wat_view (result i32)
-    (local $length i32) (local $i i32) (local $copy_length i32)
-    (local $title_ga i32) (local $topic_ga i32) (local $stack_ga i32)
+    (local $copy_length i32) (local $title_ga i32) (local $stack_ga i32)
     (if (i32.lt_s (global.get $help_session_topic_index) (i32.const 0))
       (then (return (i32.const 0))))
-    (if (i32.or
-          (i32.eqz (global.get $help_title_wa))
-          (i32.or (i32.eqz (global.get $help_topic_wa))
-                  (i32.eqz (global.get $help_back_stack))))
+    (if (i32.eqz (global.get $help_title_wa))
       (then
         (local.set $title_ga (call $heap_alloc (i32.const 256)))
-        (local.set $topic_ga (call $heap_alloc (i32.const 0x10000)))
+        (if (i32.eqz (local.get $title_ga)) (then (return (i32.const 0))))
+        (global.set $help_title_wa (call $g2w (local.get $title_ga)))))
+    (if (i32.eqz (global.get $help_back_stack))
+      (then
         (local.set $stack_ga (call $heap_alloc (i32.const 64)))
-        (if (i32.or (i32.eqz (local.get $title_ga))
-              (i32.or (i32.eqz (local.get $topic_ga)) (i32.eqz (local.get $stack_ga))))
-          (then
-            (if (local.get $title_ga) (then (call $heap_free (local.get $title_ga))))
-            (if (local.get $topic_ga) (then (call $heap_free (local.get $topic_ga))))
-            (if (local.get $stack_ga) (then (call $heap_free (local.get $stack_ga))))
-            (return (i32.const 0))))
-        (global.set $help_title_wa (call $g2w (local.get $title_ga)))
-        (global.set $help_topic_wa (call $g2w (local.get $topic_ga)))
+        (if (i32.eqz (local.get $stack_ga)) (then (return (i32.const 0))))
         (global.set $help_back_stack (call $g2w (local.get $stack_ga)))))
     (local.set $copy_length (global.get $help_doc_title_len))
     (if (i32.gt_u (local.get $copy_length) (i32.const 255))
@@ -908,20 +898,9 @@
           (local.get $copy_length))))
     (i32.store8 (i32.add (global.get $help_title_wa) (local.get $copy_length)) (i32.const 0))
     (global.set $help_title_len (local.get $copy_length))
-    (local.set $length (call $help_decode_topic_raw
-      (global.get $help_session_topic_index)
-      (global.get $help_topic_wa) (i32.const 0x10000)))
-    (if (i32.lt_s (local.get $length) (i32.const 0))
+    (if (i32.eqz (call $help_replace_typed_view
+          (global.get $help_session_topic_index)))
       (then (return (i32.const 0))))
-    (block $done (loop $separators
-      (br_if $done (i32.ge_u (local.get $i) (local.get $length)))
-      (if (i32.eqz (i32.load8_u
-            (i32.add (global.get $help_topic_wa) (local.get $i))))
-        (then (i32.store8
-          (i32.add (global.get $help_topic_wa) (local.get $i)) (i32.const 0x0a))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $separators)))
-    (global.set $help_topic_len (local.get $length))
     (global.set $help_topic_count (global.get $help_doc_topic_count))
     (global.set $help_cur_topic
       (i32.add (global.get $help_session_topic_index) (i32.const 1)))
@@ -970,9 +949,15 @@
 
   ;; Scroll help window by delta pixels (positive = down, negative = up), clamp to 0
   (func $help_scroll_by (param $hwnd i32) (param $delta i32)
+    (local $maximum i32)
     (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (local.get $delta)))
     (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
       (then (global.set $help_scroll_y (i32.const 0))))
+    (local.set $maximum (i32.sub (global.get $help_view_extent_height) (i32.const 264)))
+    (if (i32.lt_s (local.get $maximum) (i32.const 0))
+      (then (local.set $maximum (i32.const 0))))
+    (if (i32.gt_s (global.get $help_scroll_y) (local.get $maximum))
+      (then (global.set $help_scroll_y (local.get $maximum))))
     (call $invalidate_hwnd (local.get $hwnd)))
 
   ;; Help window WndProc (WAT-native, called directly — not via x86)
@@ -993,60 +978,10 @@
         (drop (call $host_gdi_fill_rect (local.get $hdc)
           (i32.const 0) (i32.const 0) (i32.const 400) (i32.const 300)
           (i32.const 0x30010)))
-        ;; Draw topic text line by line
+        ;; Paint only the visible positioned text runs. Layout is retained
+        ;; across scrolling and is rebuilt only when the topic/width changes.
         (if (global.get $help_topic_wa)
-          (then
-            (local.set $scan (global.get $help_topic_wa))
-            (local.set $end (i32.add (global.get $help_topic_wa) (global.get $help_topic_len)))
-            (local.set $y (i32.const 0))
-            (local.set $line_start (local.get $scan))
-            (block $text_done (loop $text_loop
-              (if (i32.ge_u (local.get $scan) (local.get $end))
-                (then
-                  ;; Emit final line
-                  (local.set $line_len (i32.sub (local.get $scan) (local.get $line_start)))
-                  (if (i32.gt_u (local.get $line_len) (i32.const 0))
-                    (then
-                      (local.set $vis_y (i32.sub (i32.add (i32.const 8) (i32.mul (local.get $y) (i32.const 16))) (global.get $help_scroll_y)))
-                      (if (i32.and (i32.ge_s (local.get $vis_y) (i32.const -16))
-                                   (i32.lt_s (local.get $vis_y) (i32.const 270)))
-                        (then
-                          ;; On Contents page, draw topic lines in blue
-                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
-                                       (i32.gt_u (local.get $y) (i32.const 0)))
-                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000)))))
-                          (drop (call $host_gdi_text_out (local.get $hdc)
-                            (i32.const 8) (local.get $vis_y)
-                            (local.get $line_start) (local.get $line_len) (i32.const 0)))
-                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
-                                       (i32.gt_u (local.get $y) (i32.const 0)))
-                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))))
-                  (br $text_done)))
-              (local.set $ch (i32.load8_u (local.get $scan)))
-              (if (i32.eq (local.get $ch) (i32.const 0x0A))
-                (then
-                  ;; Newline — emit line
-                  (local.set $line_len (i32.sub (local.get $scan) (local.get $line_start)))
-                  (local.set $vis_y (i32.sub (i32.add (i32.const 8) (i32.mul (local.get $y) (i32.const 16))) (global.get $help_scroll_y)))
-                  (if (i32.and (i32.ge_s (local.get $vis_y) (i32.const -16))
-                               (i32.lt_s (local.get $vis_y) (i32.const 270)))
-                    (then
-                      (if (i32.gt_u (local.get $line_len) (i32.const 0))
-                        (then
-                          ;; On Contents page, draw topic lines in blue
-                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
-                                       (i32.gt_u (local.get $y) (i32.const 0)))
-                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000)))))
-                          (drop (call $host_gdi_text_out (local.get $hdc)
-                            (i32.const 8) (local.get $vis_y)
-                            (local.get $line_start) (local.get $line_len) (i32.const 0)))
-                          (if (i32.and (i32.eqz (global.get $help_cur_topic))
-                                       (i32.gt_u (local.get $y) (i32.const 0)))
-                            (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))))
-                  (local.set $y (i32.add (local.get $y) (i32.const 1)))
-                  (local.set $line_start (i32.add (local.get $scan) (i32.const 1)))))
-              (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
-              (br $text_loop))))
+          (then (call $help_paint_typed_view (local.get $hdc)))
           (else
             ;; No topic: draw placeholder
             (drop (call $host_gdi_text_out (local.get $hdc)
@@ -1195,14 +1130,11 @@
         (call $host_destroy_window (global.get $help_hwnd))
         (call $wnd_table_remove (global.get $help_hwnd))
         (global.set $help_hwnd (i32.const 0))))
-    (if (global.get $help_topic_wa)
-      (then (call $heap_free (call $w2g (global.get $help_topic_wa)))))
+    (call $help_typed_view_release)
     (if (global.get $help_title_wa)
       (then (call $heap_free (call $w2g (global.get $help_title_wa)))))
     (if (global.get $help_back_stack)
       (then (call $heap_free (call $w2g (global.get $help_back_stack)))))
-    (global.set $help_topic_wa (i32.const 0))
-    (global.set $help_topic_len (i32.const 0))
     (global.set $help_title_wa (i32.const 0))
     (global.set $help_title_len (i32.const 0))
     (global.set $help_topic_count (i32.const 0))

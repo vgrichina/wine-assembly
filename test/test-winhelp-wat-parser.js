@@ -1258,6 +1258,45 @@ async function main() {
       const value = dv.getUint32(token + 12, true);
       return len >= 1 && bytes[topicPayloadWA + off] === value;
     }));
+
+  const layoutRunsWA = staging + 0x80000;
+  const layoutText = Buffer.from('alpha beta gamma', 'latin1');
+  bytes.set(layoutText, topicOutWA);
+  dv.setUint32(topicTokensWA, 1, true);
+  dv.setUint32(topicTokensWA + 4, 0, true);
+  dv.setUint32(topicTokensWA + 8, layoutText.length, true);
+  dv.setUint32(topicTokensWA + 12, 0, true);
+  dv.setUint32(topicTokensWA + 16, 13, true);
+  dv.setUint32(topicTokensWA + 20, layoutText.length, true);
+  dv.setBigUint64(topicTokensWA + 24, 0n, true);
+  check('typed layout preflights the exact wrapped run count',
+    e.test_help_layout_tokens(topicOutWA, layoutText.length,
+      topicTokensWA, 2, 0, 131072, 64) === 5);
+  const layoutCount = e.test_help_layout_tokens(topicOutWA, layoutText.length,
+    topicTokensWA, 2, layoutRunsWA, 5, 64);
+  const expectedLayout = [
+    [1,8,8,35,16,0,5], [2,43,8,7,16,5,1],
+    [1,8,24,28,16,6,4], [2,36,24,7,16,10,1],
+    [1,8,40,35,16,11,5],
+  ];
+  const actualLayout = Array.from({ length: layoutCount }, (_, index) =>
+    Array.from({ length: 7 }, (_, field) =>
+      dv.getUint32(layoutRunsWA + index * 40 + field * 4, true)));
+  check('typed layout owns deterministic word-wrap geometry and raw slices',
+    layoutCount === expectedLayout.length &&
+    JSON.stringify(actualLayout) === JSON.stringify(expectedLayout) &&
+    e.get_help_layout_extent() === 56,
+    `actual=${JSON.stringify(actualLayout)} extent=${e.get_help_layout_extent()}`);
+  bytes.fill(0xa5, layoutRunsWA, layoutRunsWA + 4 * 40);
+  check('typed layout rejects short run capacity before writing',
+    e.test_help_layout_tokens(topicOutWA, layoutText.length,
+      topicTokensWA, 2, layoutRunsWA, 4, 64) === -1 &&
+    bytes.subarray(layoutRunsWA, layoutRunsWA + 4 * 40).every(byte => byte === 0xa5));
+  dv.setUint32(topicTokensWA + 4, layoutText.length, true);
+  dv.setUint32(topicTokensWA + 8, 1, true);
+  check('typed layout bounds every TEXT slice against LinkData2',
+    e.test_help_layout_tokens(topicOutWA, layoutText.length,
+      topicTokensWA, 2, 0, 131072, 64) === -1);
   bytes.fill(0xaa, topicTokensWA, topicTokensWA + 16);
   bytes.fill(0xbb, topicPayloadWA, topicPayloadWA + formattedParts.displayFormat.length);
   check('formatted topic preflights token capacity',
@@ -1304,6 +1343,20 @@ async function main() {
         dv.getUint32(record + field * 4, true))) ===
         JSON.stringify([0,20,2,3,700,0x112233,0x445566]);
     })());
+  bytes.set(Buffer.from('font', 'latin1'), topicOutWA);
+  for (let i = 0; i < 3; i++) bytes.fill(0, topicTokensWA + i * 16, topicTokensWA + (i + 1) * 16);
+  dv.setUint32(topicTokensWA, 5, true);
+  dv.setUint32(topicTokensWA + 12, 0, true);
+  dv.setUint32(topicTokensWA + 16, 1, true);
+  dv.setUint32(topicTokensWA + 20, 0, true);
+  dv.setUint32(topicTokensWA + 24, 4, true);
+  dv.setUint32(topicTokensWA + 32, 13, true);
+  check('typed layout applies normalized font height and foreground color',
+    e.test_help_layout_tokens(topicOutWA, 4, topicTokensWA, 3,
+      layoutRunsWA, 1, 200) === 1 &&
+    dv.getUint32(layoutRunsWA + 16, true) === 17 &&
+    dv.getUint32(layoutRunsWA + 28, true) === 0 &&
+    dv.getUint32(layoutRunsWA + 32, true) === 0x112233);
   const badFontFace = Buffer.from(syntheticFont);
   badFontFace.writeUInt16LE(1, badFontFace.readUInt16LE(6) + 3);
   const badFontFaceHelp = buildSyntheticSemanticHelp({ font: badFontFace });
@@ -1566,7 +1619,9 @@ async function main() {
     e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
     e.get_help_window() !== 0 && e.get_help_view_topic_ptr() !== 0 &&
     e.get_help_view_topic_len() === EXPECTED_SEMANTICS['freecell.hlp'].rawTopicLengths[0] &&
-    readLatin1(e.get_help_view_title_ptr(), e.get_help_view_title_len()) === 'Free Cell');
+    readLatin1(e.get_help_view_title_ptr(), e.get_help_view_title_len()) === 'Free Cell' &&
+    e.get_help_view_run_count() > 0 && e.get_help_view_run_ptr() !== 0 &&
+    e.get_help_view_extent_height() >= 16);
   check('WinHelpW handler reuses the same visible dispatcher/window path',
     e.test_invoke_WinHelpW(0x8888, 0, 0x0003, 0) === 1 &&
     e.get_help_window() !== 0 && e.get_help_session_owner() === 0x8888 &&
@@ -1599,7 +1654,8 @@ async function main() {
   check('actual HELP_QUIT remains idempotent after a failed replacement',
     e.test_invoke_WinHelpW(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&
-    e.get_help_view_title_ptr() === 0 && e.get_help_file_ptr() === 0);
+    e.get_help_view_title_ptr() === 0 && e.get_help_view_run_ptr() === 0 &&
+    e.get_help_view_run_count() === 0 && e.get_help_file_ptr() === 0);
 
   const badMagic = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
   badMagic[0] = 0;

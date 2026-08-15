@@ -21,9 +21,11 @@ documents transactionally: Contents/Index, Context, ContextPopup, Finder,
 exact Key, PartialKey prefix selection, SetContents, and owner-scoped Quit have
 explicit success/failure semantics. Unknown and not-yet-parsed structured
 commands return false without changing the visible topic. ANSI/Unicode ABI
-normalization now feeds the same engine, and the existing help window paints a
-plain-text WAT-decoded topic bridge. Typed layout and asynchronous browser VFS
-mounting remain in progress.
+normalization now feeds the same engine. The existing help window owns exact
+formatted-token/payload arenas plus positioned text/space/bitmap-placeholder
+runs, and paints visible WAT-laid-out text without reparsing while scrolling.
+Complete paragraph/table geometry and asynchronous browser VFS mounting remain
+in progress.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
@@ -919,10 +921,15 @@ paths, unsupported-command failure, and every implemented transition. The
 keyword/macro strings are copied through bounded temporary storage, while ANSI
 pointer data is normalized from guest to WAT addresses. Accepted topic requests
 populate the existing help window directly from the WAT-owned title and decoded
-`LinkData2` strings, with no semantic JS callback. The bridge deliberately
-flattens NUL-delimited strings to lines until the typed layout renderer lands.
-Browser assets not already mounted in the VFS still need the raw-byte async
-continuation described above.
+`LinkData2` strings, with no semantic JS callback. Topic presentation now
+decodes the typed IR transactionally, preflights exact viewer allocations, and
+publishes retained positioned runs only after layout succeeds. Text wrapping,
+explicit breaks, semantic spaces, normalized font height/color, hotspot
+membership, visible-run painting, bounded scrolling, and bitmap placeholders
+are WAT-owned. The current viewer path has a temporary 64 KiB decoded-topic
+cap; complete paragraph/table metrics, exact font selection, and dynamic sizing
+remain Phase 5 work. Browser assets not already mounted in the VFS still need
+the raw-byte async continuation described above.
 
 - Implement ANSI/Unicode normalization and transactional requests.
 - Support P0 commands and correct return/lifecycle semantics.
@@ -942,6 +949,13 @@ Exit criterion: hierarchy, selection, expansion icons, Display, and Back match
 the native fixture matrix.
 
 ### Phase 5: formatted topics, hotspots, popups, and images
+
+Status: **partially implemented**. Typed topic arenas and deterministic
+positioned text runs are live in the production WinHelp window. Layout uses an
+exact no-write preflight, retains raw/token/payload/run state transactionally,
+wraps words and overlong spans, carries font/color and hotspot state into each
+run, and repaints visible runs without decoding again. Embedded pictures retain
+positioned placeholders until their decoded pixels become GDI bitmaps.
 
 - Complete font/paragraph token decoding and deterministic layout.
 - Implement jump/popup hotspots and context popups.
