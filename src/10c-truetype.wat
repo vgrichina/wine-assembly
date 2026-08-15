@@ -1020,6 +1020,315 @@
       (i32.add (i32.mul (local.get $index) (i32.const 16))
         (i32.mul (local.get $field) (i32.const 4))))))
 
+  ;; ---- scan conversion --------------------------------------------------
+  ;;
+  ;; Edges become a one-bit glyph bitmap in the *same* column-major layout
+  ;; `$gdi_bitmap_font_glyph_pixel` already reads for FNT strikes: byte
+  ;; (x >> 3) * height + y, bit 0x80 >> (x & 7). Matching that layout is what
+  ;; makes a rasterized glyph indistinguishable from a strike glyph to every
+  ;; consumer above, which is the whole reason this produces bitmaps rather
+  ;; than a new drawing path.
+  ;;
+  ;; Filling is nonzero winding: a counter is cut out because its contour runs
+  ;; the opposite direction, not because it is the second contour. Coverage is
+  ;; accumulated rather than sampled to a single bit per pixel, so the 50%
+  ;; threshold at the end is the only place the answer becomes binary and real
+  ;; antialiasing stays available if Win98's "smooth edges of screen fonts" is
+  ;; ever emulated.
+  ;;
+  ;; Vertical is sampled at four sub-rows and horizontal is computed exactly
+  ;; as span overlap. Sampling both axes would need 16 passes for the same
+  ;; horizontal precision one subtraction gives, and the pixel-center rule the
+  ;; TrueType specification describes needs intricate drop-out control that
+  ;; accumulated coverage sidesteps entirely.
+
+  (global $TT_SUBROWS i32 (i32.const 4))
+  (global $TT_RASTER_POINTS i32 (i32.const 256))
+  (global $TT_RASTER_EDGES i32 (i32.const 1024))
+  (global $TT_RASTER_CROSSINGS i32 (i32.const 256))
+
+  ;; Scratch is one caller-supplied block partitioned here, so callers size it
+  ;; from this function rather than re-deriving four capacities.
+  (func $tt_raster_scratch_bytes (param $width i32) (result i32)
+    (i32.add
+      (i32.add (i32.mul (global.get $TT_RASTER_POINTS) (i32.const 6))
+        (i32.mul (global.get $TT_RASTER_EDGES) (i32.const 16)))
+      (i32.add (i32.mul (global.get $TT_RASTER_CROSSINGS) (i32.const 8))
+        (i32.mul (local.get $width) (i32.const 4)))))
+
+  ;; Arithmetic shift is floor division for negatives, which is what pixel
+  ;; boundaries need; truncation toward zero would move the box under the
+  ;; baseline by a pixel for any glyph with a descender.
+  (func $tt_floor_px (param $value_26_6 i32) (result i32)
+    (i32.shr_s (local.get $value_26_6) (i32.const 6)))
+
+  (func $tt_ceil_px (param $value_26_6 i32) (result i32)
+    (i32.sub (i32.const 0)
+      (i32.shr_s (i32.sub (i32.const 0) (local.get $value_26_6)) (i32.const 6))))
+
+  (func $tt_glyph_box_left (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (result i32)
+    (call $tt_floor_px (call $tt_fu_to_26_6
+      (call $tt_glyph_x_min (local.get $data) (local.get $size) (local.get $gid))
+      (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size)))))
+
+  (func $tt_glyph_box_top (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (result i32)
+    (call $tt_ceil_px (call $tt_fu_to_26_6
+      (call $tt_glyph_y_max (local.get $data) (local.get $size) (local.get $gid))
+      (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size)))))
+
+  (func $tt_glyph_box_width (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (result i32)
+    (i32.sub
+      (call $tt_ceil_px (call $tt_fu_to_26_6
+        (call $tt_glyph_x_max (local.get $data) (local.get $size) (local.get $gid))
+        (local.get $ppem)
+        (call $tt_units_per_em (local.get $data) (local.get $size))))
+      (call $tt_glyph_box_left (local.get $data) (local.get $size) (local.get $gid)
+        (local.get $ppem))))
+
+  (func $tt_glyph_box_height (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (result i32)
+    (i32.sub
+      (call $tt_glyph_box_top (local.get $data) (local.get $size) (local.get $gid)
+        (local.get $ppem))
+      (call $tt_floor_px (call $tt_fu_to_26_6
+        (call $tt_glyph_y_min (local.get $data) (local.get $size) (local.get $gid))
+        (local.get $ppem)
+        (call $tt_units_per_em (local.get $data) (local.get $size))))))
+
+  ;; Insertion sort: crossings per scan line are few and nearly sorted from
+  ;; one line to the next, which is the case insertion sort is good at and
+  ;; quicksort is not.
+  (func $tt_sort_crossings (param $crossings i32) (param $count i32)
+    (local $index i32) (local $probe i32) (local $x i32) (local $dir i32)
+    (local.set $index (i32.const 1))
+    (block $done (loop $outer
+      (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $x (i32.load
+        (i32.add (local.get $crossings) (i32.mul (local.get $index) (i32.const 8)))))
+      (local.set $dir (i32.load offset=4
+        (i32.add (local.get $crossings) (i32.mul (local.get $index) (i32.const 8)))))
+      (local.set $probe (local.get $index))
+      (block $placed (loop $shift
+        (br_if $placed (i32.eqz (local.get $probe)))
+        (br_if $placed (i32.le_s
+          (i32.load (i32.add (local.get $crossings)
+            (i32.mul (i32.sub (local.get $probe) (i32.const 1)) (i32.const 8))))
+          (local.get $x)))
+        (i64.store
+          (i32.add (local.get $crossings) (i32.mul (local.get $probe) (i32.const 8)))
+          (i64.load (i32.add (local.get $crossings)
+            (i32.mul (i32.sub (local.get $probe) (i32.const 1)) (i32.const 8)))))
+        (local.set $probe (i32.sub (local.get $probe) (i32.const 1)))
+        (br $shift)))
+      (i32.store
+        (i32.add (local.get $crossings) (i32.mul (local.get $probe) (i32.const 8)))
+        (local.get $x))
+      (i32.store offset=4
+        (i32.add (local.get $crossings) (i32.mul (local.get $probe) (i32.const 8)))
+        (local.get $dir))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $outer))))
+
+  ;; Add a span's exact horizontal overlap, in 64ths of a pixel, to each pixel
+  ;; it touches. A span narrower than one pixel lands entirely in that pixel's
+  ;; accumulator rather than being rounded away, which is what keeps thin
+  ;; stems from disappearing.
+  (func $tt_add_span (param $coverage i32) (param $width i32) (param $left i32)
+        (param $x_start i32) (param $x_end i32)
+    (local $first i32) (local $last i32) (local $pixel i32)
+    (local $lo i32) (local $hi i32)
+    (local.set $x_start (i32.sub (local.get $x_start) (local.get $left)))
+    (local.set $x_end (i32.sub (local.get $x_end) (local.get $left)))
+    (if (i32.le_s (local.get $x_end) (i32.const 0)) (then (return)))
+    (if (i32.ge_s (local.get $x_start)
+          (i32.mul (local.get $width) (i32.const 64)))
+      (then (return)))
+    (if (i32.lt_s (local.get $x_start) (i32.const 0))
+      (then (local.set $x_start (i32.const 0))))
+    (if (i32.gt_s (local.get $x_end) (i32.mul (local.get $width) (i32.const 64)))
+      (then (local.set $x_end (i32.mul (local.get $width) (i32.const 64)))))
+    (if (i32.ge_s (local.get $x_start) (local.get $x_end)) (then (return)))
+    (local.set $first (i32.shr_s (local.get $x_start) (i32.const 6)))
+    (local.set $last
+      (i32.shr_s (i32.sub (local.get $x_end) (i32.const 1)) (i32.const 6)))
+    (local.set $pixel (local.get $first))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_s (local.get $pixel) (local.get $last)))
+      (local.set $lo (i32.mul (local.get $pixel) (i32.const 64)))
+      (local.set $hi (i32.add (local.get $lo) (i32.const 64)))
+      (if (i32.lt_s (local.get $lo) (local.get $x_start))
+        (then (local.set $lo (local.get $x_start))))
+      (if (i32.gt_s (local.get $hi) (local.get $x_end))
+        (then (local.set $hi (local.get $x_end))))
+      (i32.store (i32.add (local.get $coverage)
+          (i32.mul (local.get $pixel) (i32.const 4)))
+        (i32.add
+          (i32.load (i32.add (local.get $coverage)
+            (i32.mul (local.get $pixel) (i32.const 4))))
+          (i32.sub (local.get $hi) (local.get $lo))))
+      (local.set $pixel (i32.add (local.get $pixel) (i32.const 1)))
+      (br $scan))))
+
+  (func $tt_rasterize_glyph (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (param $bitmap i32) (param $width i32) (param $height i32)
+        (param $left i32) (param $top i32) (param $scratch i32)
+        (param $scratch_size i32) (result i32)
+    (local $points i32) (local $edges i32) (local $crossings i32)
+    (local $coverage i32) (local $edge_count i32) (local $row i32)
+    (local $sub i32) (local $index i32) (local $count i32) (local $sample i32)
+    (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
+    (local $lo i32) (local $hi i32) (local $winding i32) (local $span_start i32)
+    (local $slot i32) (local $value i32) (local $column i32)
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
+          (i32.le_s (local.get $height) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $scratch_size)
+          (call $tt_raster_scratch_bytes (local.get $width)))
+      (then (return (i32.const 0))))
+    (local.set $points (local.get $scratch))
+    (local.set $edges (i32.add (local.get $points)
+      (i32.mul (global.get $TT_RASTER_POINTS) (i32.const 6))))
+    (local.set $crossings (i32.add (local.get $edges)
+      (i32.mul (global.get $TT_RASTER_EDGES) (i32.const 16))))
+    (local.set $coverage (i32.add (local.get $crossings)
+      (i32.mul (global.get $TT_RASTER_CROSSINGS) (i32.const 8))))
+
+    (local.set $edge_count (call $tt_glyph_edges (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem) (local.get $points)
+      (global.get $TT_RASTER_POINTS) (local.get $edges)
+      (global.get $TT_RASTER_EDGES)))
+    ;; An empty glyph is a legal, blank bitmap, not a failure: the caller
+    ;; still needs the cell cleared before it composites.
+    (memory.fill (local.get $bitmap) (i32.const 0)
+      (i32.mul (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
+        (local.get $height)))
+    (if (i32.eqz (local.get $edge_count)) (then (return (i32.const 1))))
+
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $row) (local.get $height)))
+      (memory.fill (local.get $coverage) (i32.const 0)
+        (i32.mul (local.get $width) (i32.const 4)))
+
+      (local.set $sub (i32.const 0))
+      (block $subs_done (loop $subs
+        (br_if $subs_done (i32.ge_s (local.get $sub) (global.get $TT_SUBROWS)))
+        ;; Sample at the centre of each sub-row. Sampling at its edge would
+        ;; put the sample exactly on a horizontal join between contours, the
+        ;; one place the crossing count is ambiguous.
+        (local.set $sample (i32.sub
+          (i32.sub (local.get $top) (i32.mul (local.get $row) (i32.const 64)))
+          (i32.div_s
+            (i32.mul (i32.add (i32.mul (local.get $sub) (i32.const 2))
+                (i32.const 1)) (i32.const 32))
+            (global.get $TT_SUBROWS))))
+
+        (local.set $count (i32.const 0))
+        (local.set $index (i32.const 0))
+        (block $edges_done (loop $walk
+          (br_if $edges_done (i32.ge_s (local.get $index) (local.get $edge_count)))
+          (local.set $x0
+            (call $tt_edge_field (local.get $edges) (local.get $index) (i32.const 0)))
+          (local.set $y0
+            (call $tt_edge_field (local.get $edges) (local.get $index) (i32.const 1)))
+          (local.set $x1
+            (call $tt_edge_field (local.get $edges) (local.get $index) (i32.const 2)))
+          (local.set $y1
+            (call $tt_edge_field (local.get $edges) (local.get $index) (i32.const 3)))
+          (local.set $lo (select (local.get $y1) (local.get $y0)
+            (i32.lt_s (local.get $y1) (local.get $y0))))
+          (local.set $hi (select (local.get $y0) (local.get $y1)
+            (i32.lt_s (local.get $y1) (local.get $y0))))
+          ;; Half-open in y: an edge is counted at its lower end and not at
+          ;; its upper one, so a vertex shared by two edges is crossed once
+          ;; rather than twice or not at all.
+          (if (i32.and (i32.le_s (local.get $lo) (local.get $sample))
+                (i32.lt_s (local.get $sample) (local.get $hi)))
+            (then
+              (if (i32.lt_s (local.get $count) (global.get $TT_RASTER_CROSSINGS))
+                (then
+                  (local.set $slot (i32.add (local.get $crossings)
+                    (i32.mul (local.get $count) (i32.const 8))))
+                  (i32.store (local.get $slot)
+                    (i32.add (local.get $x0) (call $gdi_round_ratio
+                      (i64.mul
+                        (i64.extend_i32_s (i32.sub (local.get $x1) (local.get $x0)))
+                        (i64.extend_i32_s
+                          (i32.sub (local.get $sample) (local.get $y0))))
+                      (i64.extend_i32_s (i32.sub (local.get $y1) (local.get $y0))))))
+                  (i32.store offset=4 (local.get $slot)
+                    (select (i32.const 1) (i32.const -1)
+                      (i32.gt_s (local.get $y1) (local.get $y0))))
+                  (local.set $count (i32.add (local.get $count) (i32.const 1)))))))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $walk)))
+
+        (call $tt_sort_crossings (local.get $crossings) (local.get $count))
+
+        ;; Nonzero winding: a span is inside while the running direction sum
+        ;; is not zero. The even-odd rule would fill the counter of every
+        ;; 'o' whose contours happen to wind the same way.
+        (local.set $winding (i32.const 0))
+        (local.set $index (i32.const 0))
+        (block $fill_done (loop $fill
+          (br_if $fill_done (i32.ge_s (local.get $index) (local.get $count)))
+          (local.set $slot (i32.add (local.get $crossings)
+            (i32.mul (local.get $index) (i32.const 8))))
+          (if (i32.eqz (local.get $winding))
+            (then (local.set $span_start (i32.load (local.get $slot)))))
+          (local.set $winding
+            (i32.add (local.get $winding) (i32.load offset=4 (local.get $slot))))
+          (if (i32.eqz (local.get $winding))
+            (then (call $tt_add_span (local.get $coverage) (local.get $width)
+              (local.get $left) (local.get $span_start)
+              (i32.load (local.get $slot)))))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $fill)))
+
+        (local.set $sub (i32.add (local.get $sub) (i32.const 1)))
+        (br $subs)))
+
+      ;; A pixel is ink when it is at least half covered, summed over the
+      ;; sub-rows: full coverage is 64 * TT_SUBROWS.
+      (local.set $column (i32.const 0))
+      (block $emit_done (loop $emit
+        (br_if $emit_done (i32.ge_s (local.get $column) (local.get $width)))
+        (local.set $value (i32.load (i32.add (local.get $coverage)
+          (i32.mul (local.get $column) (i32.const 4)))))
+        (if (i32.ge_s (i32.mul (local.get $value) (i32.const 2))
+              (i32.mul (i32.const 64) (global.get $TT_SUBROWS)))
+          (then
+            (local.set $slot (i32.add (local.get $bitmap)
+              (i32.add
+                (i32.mul (i32.shr_u (local.get $column) (i32.const 3))
+                  (local.get $height))
+                (local.get $row))))
+            (i32.store8 (local.get $slot) (i32.or (i32.load8_u (local.get $slot))
+              (i32.shr_u (i32.const 0x80)
+                (i32.and (local.get $column) (i32.const 7)))))))
+        (local.set $column (i32.add (local.get $column) (i32.const 1)))
+        (br $emit)))
+
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows)))
+    (i32.const 1))
+
+  ;; Read back a rasterized pixel with the same addressing the FNT accessor
+  ;; uses, so a caller cannot pair the wrong reader with this producer.
+  (func $tt_bitmap_pixel (param $bitmap i32) (param $height i32) (param $x i32)
+        (param $y i32) (result i32)
+    (i32.ne (i32.and
+        (i32.load8_u (i32.add (local.get $bitmap)
+          (i32.add (i32.mul (i32.shr_u (local.get $x) (i32.const 3))
+              (local.get $height))
+            (local.get $y))))
+        (i32.shr_u (i32.const 0x80) (i32.and (local.get $x) (i32.const 7))))
+      (i32.const 0)))
+
   ;; ---- ABC widths -------------------------------------------------------
   ;;
   ;; GetCharABCWidths splits the advance into left bearing, black width, and
@@ -1776,6 +2085,41 @@
   (func (export "test_tt_edge_field") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_edge_field (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_raster_scratch_bytes") (param i32) (result i32)
+    (call $tt_raster_scratch_bytes (local.get 0)))
+
+  (func (export "test_tt_glyph_box_left") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_glyph_box_left (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_glyph_box_top") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_glyph_box_top (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_glyph_box_width") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_glyph_box_width (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_glyph_box_height") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_glyph_box_height (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_rasterize_glyph") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (param i32) (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $tt_rasterize_glyph (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3) (local.get 4) (local.get 5) (local.get 6) (local.get 7)
+      (local.get 8) (local.get 9) (local.get 10)))
+
+  (func (export "test_tt_bitmap_pixel") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_bitmap_pixel (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
 
   (func (export "test_tt_point_x") (param i32) (param i32) (result i32)
     (call $tt_point_x (local.get 0) (local.get 1)))

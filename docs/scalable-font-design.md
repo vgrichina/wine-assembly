@@ -8,9 +8,12 @@ table directory, `head`/`hhea`/`maxp`/`OS/2`/`post`, `hmtx` advances and
 bearings, `cmap` formats 0/4/6 with the symbol-face `0xF000` bias, CP1252, the
 full pixel `TEXTMETRIC` derivation, `loca`/`glyf` record bounds in both loca
 formats, ABC widths, `kern` format 0, simple-glyph outline points, and
-composite recursion with an explicit depth limit. What is still missing from
-the rasterizer is flattening and scan conversion. What is still missing from
-milestone 1
+composite recursion with an explicit depth limit, 26.6 flattening, and nonzero
+scan conversion into the FNT column-major bitmap layout.
+
+The rasterizer is therefore complete as a *producer* and unreachable as a
+*feature*: nothing selects a face, loads a file, or caches a glyph, because
+all three need the font arena. What is still missing from milestone 1
 is the *wiring*: a font arena to hold file bytes, a face-selection path from
 `CreateFontIndirectA`, and the public `GetTextExtentPoint32` /
 `GetCharWidth32` / `GetTextMetrics` handlers reading from it instead of from

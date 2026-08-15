@@ -567,6 +567,143 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.strictEqual(readEdges(sans, 'o', 16, 4).length, 0,
     'a truncated edge list must report nothing rather than a partial outline');
 
+  // ---- scan conversion --------------------------------------------------
+  //
+  // The bitmap uses the same column-major addressing the FNT accessor reads:
+  // byte (x >> 3) * height + y, bit 0x80 >> (x & 7). Matching that is what
+  // makes a rasterized glyph indistinguishable from a strike glyph to
+  // everything above, so the layout is asserted directly against the raw
+  // bytes rather than only through the reader.
+
+  const BITMAP = wat.guest_alloc(4096) >>> 0;
+  const SCRATCH_BYTES = wat.test_tt_raster_scratch_bytes(64) >>> 0;
+  const SCRATCH = wat.guest_alloc(SCRATCH_BYTES) >>> 0;
+
+  const raster = (font, character, ppem) => {
+    const g = gid(font, character);
+    const width = wat.test_tt_glyph_box_width(font.at, font.size, g, ppem);
+    const height = wat.test_tt_glyph_box_height(font.at, font.size, g, ppem);
+    const ok = wat.test_tt_rasterize_glyph(font.at, font.size, g, ppem,
+      wa(BITMAP), width, height,
+      wat.test_tt_glyph_box_left(font.at, font.size, g, ppem) * 64,
+      wat.test_tt_glyph_box_top(font.at, font.size, g, ppem) * 64,
+      wa(SCRATCH), SCRATCH_BYTES);
+    assert.strictEqual(ok, 1, `rasterizing "${character}" at ${ppem} must succeed`);
+    const rows = [];
+    for (let y = 0; y < height; y += 1) {
+      let row = '';
+      for (let x = 0; x < width; x += 1) {
+        row += wat.test_tt_bitmap_pixel(wa(BITMAP), height, x, y) ? '#' : '.';
+      }
+      rows.push(row);
+    }
+    return { width, height, rows };
+  };
+
+  // The period is a rectangle from x 1.46 to 2.98 and y 0 to 1.71 pixels at
+  // 16ppem, so it lands in a 2x2 cell. Its top-left pixel is only 54% covered
+  // horizontally and 75% vertically — 40% of the pixel, under the threshold —
+  // while the other three clear it. Every one of those numbers moves if the
+  // box, the sampling, or the threshold is wrong, which is why the exact
+  // pattern is asserted rather than just the ink count.
+  assert.deepStrictEqual(raster(sans, '.', 16), {
+    width: 2, height: 2, rows: ['.#', '##'],
+  });
+
+  // A golden bitmap. Nonzero winding is tested here where it actually
+  // differs from even-odd: the counter is hollow because the inner contour
+  // runs the other way, not because it is the second contour. The bottom row
+  // is blank because the overshoot below the baseline is 0.23 of a pixel and
+  // does not reach the threshold, and the box is cut from the outline's own
+  // bounds rather than from what happens to be inked.
+  //
+  // Changing the fill rule, the sub-row count, or the threshold is expected
+  // to change this picture; it should be updated deliberately and looked at,
+  // which is the point of keeping it readable.
+  const o24 = raster(sans, 'o', 24);
+  assert.deepStrictEqual(o24, {
+    width: 12,
+    height: 14,
+    rows: [
+      '...#####....',
+      '..########..',
+      '.##.....##..',
+      '.##......##.',
+      '##.......##.',
+      '##.......##.',
+      '##.......##.',
+      '##.......##.',
+      '##.......##.',
+      '###......##.',
+      '.##.....###.',
+      '.####.####..',
+      '...######...',
+      '............',
+    ],
+  });
+  const middleRow = o24.rows[Math.floor(o24.height / 2)];
+  assert.strictEqual(middleRow[Math.floor(o24.width / 2)], '.',
+    'the counter of an o must be empty');
+  assert.strictEqual(middleRow[0], '#', 'the left stem of an o must be ink');
+
+  // 'i' is a dot and a stem with a gap between them, so some row must be
+  // completely empty. A rasterizer that filled between contours would lose
+  // that gap and the letter would read as an 'l'.
+  const i16 = raster(sans, 'i', 16);
+  const inked = i16.rows.map(row => row.includes('#'));
+  assert.ok(inked.indexOf(true) < inked.lastIndexOf(true),
+    'the i must have ink at both ends');
+  assert.ok(inked.slice(inked.indexOf(true), inked.lastIndexOf(true)).includes(false),
+    'and a blank row between the dot and the stem');
+  assert.strictEqual(i16.rows[i16.height - 1].includes('#'), true,
+    'the stem reaches the baseline');
+
+  // Composites rasterize through the same path; the acute must sit above the
+  // 'A' with clear space between them.
+  const aAcute16 = raster(sans, 'Á', 16);
+  const accentInked = aAcute16.rows.map(row => row.includes('#'));
+  assert.ok(
+    accentInked.slice(accentInked.indexOf(true),
+      accentInked.lastIndexOf(true)).includes(false),
+    'the accent must not fuse into the letter');
+  assert.ok(aAcute16.height > raster(sans, 'A', 16).height,
+    'the accent must make the box taller than the bare letter');
+
+  // Raw layout check, independent of the reader.
+  const rawBytes = new Uint8Array(memory.buffer, wa(BITMAP), 64);
+  const period = raster(sans, '.', 16);
+  assert.strictEqual(period.height, 2);
+  assert.strictEqual(rawBytes[0] & 0x80, 0, 'pixel (0,0) is the top bit of byte 0');
+  assert.strictEqual(rawBytes[0] & 0x40, 0x40, 'pixel (1,0) is the next bit down');
+  assert.strictEqual(rawBytes[1] & 0xC0, 0xC0, 'row 1 lives in byte 1');
+
+  // Ink must grow with size rather than merely scaling in place, and a large
+  // glyph must still fit the box its own bounds predict.
+  const countInk = image => image.rows.join('').split('#').length - 1;
+  assert.ok(countInk(raster(sans, 'o', 48)) > 4 * countInk(raster(sans, 'o', 24)),
+    'four times the area must carry more than four times the ink pixels');
+
+  // An empty glyph is a legal blank bitmap, not a failure: the caller still
+  // needs the cell cleared before compositing.
+  assert.strictEqual(
+    wat.test_tt_rasterize_glyph(sans.at, sans.size, gid(sans, ' '), 16,
+      wa(BITMAP), 4, 4, 0, 256, wa(SCRATCH), SCRATCH_BYTES), 1);
+  for (let y = 0; y < 4; y += 1) {
+    for (let x = 0; x < 4; x += 1) {
+      assert.strictEqual(wat.test_tt_bitmap_pixel(wa(BITMAP), 4, x, y), 0,
+        'a blank glyph must leave no stale ink behind');
+    }
+  }
+
+  assert.strictEqual(
+    wat.test_tt_rasterize_glyph(sans.at, sans.size, gid(sans, 'o'), 16,
+      wa(BITMAP), 8, 8, 0, 512, wa(SCRATCH), 16), 0,
+    'too little scratch must refuse rather than write past it');
+  assert.strictEqual(
+    wat.test_tt_rasterize_glyph(sans.at, sans.size, gid(sans, 'o'), 16,
+      wa(BITMAP), 0, 8, 0, 512, wa(SCRATCH), SCRATCH_BYTES), 0,
+    'a zero-width box is refused');
+
   // ---- ABC widths -------------------------------------------------------
   //
   // A and C are signed and routinely negative: 'j' overhangs to its left and
