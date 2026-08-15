@@ -2597,6 +2597,24 @@ async function main() {
     e.test_invoke_WinHelpA(0x8888, notepadPathA, 0x000b, 0) === 1 &&
     e.get_help_topics_hwnd() !== 0 && e.get_help_window() === 0 &&
     e.get_help_session_mode() === 3 && e.get_help_topics_contents_selection() === 0);
+  // $wnd_table_set zeroes the record's style, and $paint_select_next_dirty
+  // discards the paint bit of any window without WS_VISIBLE. Without a style
+  // the dialog painted once at creation and every later invalidate - tab
+  // switch, selection move, scroll - was silently dropped on screen.
+  check('the Topics window carries the style its repaints depend on',
+    (e.wnd_get_style_export(e.get_help_topics_hwnd()) & 0x10000000) !== 0,
+    `style=0x${(e.wnd_get_style_export(e.get_help_topics_hwnd()) >>> 0).toString(16)}`);
+  check('a mouse click on the Index tab switches the Topics dialog',
+    e.test_help_topics_message(0x0201, 0, (21 << 16) | 136) === 0 &&
+    e.get_help_session_mode() === 4 &&
+    e.test_help_topics_message(0x0201, 0, (21 << 16) | 40) === 0 &&
+    e.get_help_session_mode() === 3);
+  // A selected row paints white text over a navy highlight bar. With the
+  // background left OPAQUE, every glyph cell erased the bar back to white and
+  // the row's text became white-on-white - it vanished completely.
+  e.test_help_topics_message(0x000F, 0, 0);
+  check('Topics rows paint their text over the highlight, not through it',
+    e.test_gdi_dc_get_field(e.get_help_topics_hwnd() + 0x40000, 28, 2) === 1);
   check('Topics keyboard tab switching retains canonical dialog state',
     e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 4 &&
     e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 3 &&

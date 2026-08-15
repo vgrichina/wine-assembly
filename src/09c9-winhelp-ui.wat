@@ -2111,9 +2111,17 @@
       (i32.const 140) (i32.const 80) (i32.const 440) (i32.const 330)
       (global.get $help_topics_labels_wa) (i32.const 0)))
     (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
+    ;; $wnd_table_set zeroes the record's style, and $paint_select_next_dirty
+    ;; drops the paint bit of any window without WS_VISIBLE. Without a style
+    ;; the dialog painted exactly once - at creation - and every later
+    ;; invalidate (tab switch, selection move, scroll) was silently discarded.
+    ;; WS_POPUP keeps the client rect equal to the window rect, which is the
+    ;; space this dialog both paints and hit-tests in.
+    (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x90000000)))
     (global.set $help_topics_hwnd (local.get $hwnd))
     (drop (call $help_topics_wndproc
-      (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0))))
+      (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
+    (call $invalidate_hwnd (local.get $hwnd)))
 
   (func $help_topics_draw_button
     (param $hdc i32) (param $left i32) (param $right i32)
@@ -2134,7 +2142,10 @@
     (local $text i32) (local $length i32) (local $selected i32)
     (local $flags i32) (local $marker i32)
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 2)))
+    ;; TRANSPARENT. The selected row paints white text over a navy highlight
+    ;; bar, so an opaque background would erase the bar under every glyph cell
+    ;; and leave white-on-white - the row's text vanished entirely.
+    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
     (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0)))
     (drop (call $host_gdi_fill_rect (local.get $hdc)
       (i32.const 0) (i32.const 0) (i32.const 440) (i32.const 330)
