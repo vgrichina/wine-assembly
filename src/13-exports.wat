@@ -319,6 +319,11 @@
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_WidenPath") (param i32) (result i32)
+    (call $handle_WidenPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_FillPath") (param i32) (result i32)
     (call $handle_FillPath
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)

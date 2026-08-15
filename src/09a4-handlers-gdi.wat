@@ -267,6 +267,10 @@
     (global.set $eax (call $gdi_dc_path_flatten (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  (func $handle_WidenPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_path_widen (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   (func $handle_FillPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_dc_path_fill (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))

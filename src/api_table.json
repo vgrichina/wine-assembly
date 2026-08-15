@@ -18492,5 +18492,19 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 2382,
+    "name": "WidenPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2041929067,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

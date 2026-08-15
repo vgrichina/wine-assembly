@@ -11,7 +11,9 @@ const { compileWat } = require('../lib/compile-wat');
 async function main() {
   const root = path.join(__dirname, '..');
   const apiTable = JSON.parse(fs.readFileSync(path.join(root, 'src', 'api_table.json'), 'utf8'));
-  for (const [name, nargs] of [['AngleArc', 6], ['Chord', 9], ['Pie', 9]]) {
+  for (const [name, nargs] of [
+    ['AngleArc', 6], ['Chord', 9], ['Pie', 9], ['WidenPath', 1],
+  ]) {
     const api = apiTable.find(entry => entry.name === name);
     assert(api, `${name} must be exposed through the public API table`);
     assert.strictEqual(api.nargs, nargs, `${name} stdcall arity`);
@@ -562,6 +564,100 @@ async function main() {
     assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 0);
     assert.strictEqual(wat.test_call_GetPath(dib.hdc, 0, 0, 0) | 0, -1);
     assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+  });
+
+  check('WidenPath replaces an axis line with its exact wide-pen device area', () => {
+    setIdentityMap(dib.hdc);
+    clearDib(dib);
+    const pen = wat.test_call_CreatePen(0, 3, 0x000000ff) >>> 0;
+    const brush = wat.test_call_CreateSolidBrush(0x000000ff) >>> 0;
+    assert(pen && brush);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 6), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 6), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    const before = bytes.slice(dib.bits, dib.bits + dib.size);
+    assert.strictEqual(wat.test_call_WidenPath(dib.hdc), 1);
+    assert.deepStrictEqual(bytes.slice(dib.bits, dib.bits + dib.size), before);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [[2, 5], [14, 5], [14, 8], [2, 8]],
+      types: [6, 2, 2, 3],
+    });
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
+    assert.strictEqual(wat.test_call_FillPath(dib.hdc), 1);
+    assert.deepStrictEqual(pixel(dib, 2, 5), [0, 0, 255]);
+    assert.deepStrictEqual(pixel(dib, 13, 7), [0, 0, 255]);
+    assert.deepStrictEqual(pixel(dib, 14, 7), [255, 255, 255]);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30010) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  });
+
+  check('FillPath after WidenPath matches canonical diagonal StrokePath pixels', () => {
+    setIdentityMap(dib.hdc);
+    clearDib(dib);
+    const pen = wat.test_call_CreatePen(0, 3, 0x0000ff00) >>> 0;
+    const brush = wat.test_call_CreateSolidBrush(0x0000ff00) >>> 0;
+    assert(pen && brush);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 3), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 13, 11), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 1);
+    const stroked = bytes.slice(dib.bits, dib.bits + dib.size);
+
+    clearDib(dib);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 3), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 13, 11), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_WidenPath(dib.hdc), 1);
+    assert(!readPath(dib.hdc).types.includes(4));
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
+    assert.strictEqual(wat.test_call_FillPath(dib.hdc), 1);
+    assert.deepStrictEqual(bytes.slice(dib.bits, dib.bits + dib.size), stroked);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30010) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  });
+
+  check('WidenPath rejects thin cosmetic pens atomically', () => {
+    const pen = wat.test_call_CreatePen(0, 1, 0) >>> 0;
+    assert(pen);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 8, 7), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    const retained = readPath(dib.hdc);
+    assert.strictEqual(wat.test_call_WidenPath(dib.hdc), 0);
+    assert.deepStrictEqual(readPath(dib.hdc), retained);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
+  });
+
+  check('WidenPath grows its band path beyond the former fixed scratch limit', () => {
+    const pen = wat.test_call_CreatePen(0, 3, 0) >>> 0;
+    assert(pen);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 0, 0), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 800, 600), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_WidenPath(dib.hdc), 1);
+    const widened = readPath(dib.hdc);
+    assert(widened.points.length > 208 * 4);
+    assert.strictEqual(widened.points.length % 4, 0);
+    assert.strictEqual(widened.types.filter(type => type === 6).length,
+      widened.points.length / 4);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
   });
 
   check('PolyPolyline records each sub-polyline as a disjoint figure', () => {

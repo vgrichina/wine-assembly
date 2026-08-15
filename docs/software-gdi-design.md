@@ -75,8 +75,12 @@ feed `PathToRegion` and `SelectClipPath` through canonical WAT regions, and
 canonical surface directly; the combined operation closes open figures and
 all successful consumers discard the path. Preflighted stroke coverage and
 device-space filling ensure mapping changes after `EndPath` do not move the
-retained geometry. Text-outline recording and `WidenPath` remain explicit path
-work; none of the implemented shape APIs fall back to Canvas geometry.
+retained geometry. `WidenPath` flattens curves, derives the exact device-space
+coverage of the current integer square-stamp wide-pen rasterizer, and replaces
+the retained path atomically with non-overlapping band rectangles. It does not
+use Canvas geometry or pixel readback. Text-outline recording, adaptive curve
+subdivision, and distinct geometric cap/join styles remain explicit path
+fidelity work; none of the implemented shape APIs fall back to Canvas geometry.
 
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the

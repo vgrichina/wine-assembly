@@ -368,6 +368,9 @@ const extra = [
   { name: 'FillPath', nargs: 1 },
   { name: 'StrokePath', nargs: 1 },
   { name: 'StrokeAndFillPath', nargs: 1 },
+  { name: 'WidenPath', nargs: 1, args: [
+    { name: 'hdc', type: 'HDC' },
+  ], ret: 'BOOL' },
   { name: 'AngleArc', nargs: 6, args: [
     { name: 'hdc', type: 'HDC' },
     { name: 'x', type: 'INT' },
