@@ -582,6 +582,25 @@
       (local.get $hwnd) (local.get $w) (local.get $h)
       (local.get $title_wa) (local.get $title_len)
       (local.get $flags) (i32.const 0)))
+    ;; WS_EX_CLIENTEDGE: the sunken 3D frame around the whole window rect.
+    ;; Drawn before the scrollbars because it is the outermost chrome —
+    ;; $defwndproc_do_nccalcsize has already moved the client rect and the
+    ;; scrollbar strips inside it. Gated the same way as the nccalcsize inset:
+    ;; WAT-native controls draw their own edge.
+    (if (i32.and
+          (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+          (i32.ne
+            (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
+            (i32.const 0)))
+      (then
+        (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
+        (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd)
+          (local.get $w) (local.get $h))
+        ;; EDGE_SUNKEN (BDR_SUNKENOUTER|BDR_SUNKENINNER) | BF_RECT
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+          (i32.const 0x0A) (i32.const 0x0F)))
+        (drop (call $host_release_dc (local.get $hdc)))))
     (if (i32.and (local.get $style) (i32.const 0x00300000))
       (then
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -674,6 +693,23 @@
           (then (local.set $cy (i32.add (local.get $cy) (i32.const 18)))))
         (if (local.get $has_border) (then (local.set $cy (i32.add (local.get $cy) (i32.const 1)))))
         (local.set $bot (select (i32.const 4) (i32.const 0) (local.get $has_border)))))
+    ;; WS_EX_CLIENTEDGE sinks the client area into a 3D frame two pixels deep
+    ;; on every side (SM_CXEDGE/SM_CYEDGE were 2 on Win98). It sits outside any
+    ;; scrollbar, so it is added before the scrollbar strips below.
+    ;;
+    ;; Only for windows that are not WAT-native controls. Edit, listbox and the
+    ;; rest already draw their own sunken border inside their wndproc and size
+    ;; their content around it; adding a second one here would both double the
+    ;; border and move the client rect out from under them.
+    (if (i32.and
+          (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+          (i32.ne
+            (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
+            (i32.const 0)))
+      (then
+        (local.set $bw  (i32.add (local.get $bw)  (i32.const 2)))
+        (local.set $cy  (i32.add (local.get $cy)  (i32.const 2)))
+        (local.set $bot (i32.add (local.get $bot) (i32.const 2)))))
     ;; Standard window scrollbars are non-client strips. USER removes their
     ;; 16px metrics from the usable client area whenever the style bit is set.
     (local.set $right (local.get $bw))

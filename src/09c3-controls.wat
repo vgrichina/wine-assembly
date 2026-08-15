@@ -104,7 +104,9 @@
   ;; top-level/non-WAT windows. Dialog windows have class==0 but a parent.
   (func $ctrl_geom_sync
         (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $flags i32)
-    (local $idx i32) (local $a i32)
+    (local $idx i32) (local $a i32) (local $parent i32) (local $moved i32)
+    (local $ox i32) (local $oy i32) (local $ow i32) (local $oh i32)
+    (local $hdc i32) (local $brush i32)
     (if (i32.and
           (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
           (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
@@ -114,8 +116,45 @@
     (local.set $a (call $ctrl_geom_addr (local.get $idx)))
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 2)))
       (then
+        ;; A control that moves leaves its old pixels behind: children have no
+        ;; surface of their own, they draw onto the parent's back-canvas, so
+        ;; nothing repaints the rectangle it vacated. Win32 erases the parent
+        ;; over the uncovered region for exactly this reason. fontview.exe
+        ;; right-aligns its Print button on startup, and the strip it moved off
+        ;; stayed on screen as a slice of a second button.
+        (local.set $ox (i32.load16_s (local.get $a)))
+        (local.set $oy (i32.load16_s offset=2 (local.get $a)))
+        (local.set $ow (i32.load16_u offset=4 (local.get $a)))
+        (local.set $oh (i32.load16_u offset=6 (local.get $a)))
+        (local.set $moved (i32.or
+          (i32.ne (local.get $ox) (local.get $x))
+          (i32.ne (local.get $oy) (local.get $y))))
         (i32.store16        (local.get $a) (local.get $x))
-        (i32.store16 offset=2 (local.get $a) (local.get $y))))
+        (i32.store16 offset=2 (local.get $a) (local.get $y))
+        (if (i32.and
+              (local.get $moved)
+              (i32.and (i32.gt_s (local.get $ow) (i32.const 0))
+                       (i32.gt_s (local.get $oh) (i32.const 0))))
+          (then
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (if (local.get $parent)
+              (then
+                ;; CONTROL_GEOM is parent-client relative, which is what a
+                ;; client DC on the parent draws in.
+                (local.set $hdc
+                  (call $host_alloc_window_dc (local.get $parent) (i32.const 0)))
+                (if (local.get $hdc)
+                  (then
+                    (local.set $brush (call $wnd_get_bg_brush (local.get $parent)))
+                    (if (i32.eqz (local.get $brush))
+                      (then (local.set $brush (i32.const 0x30011)))) ;; COLOR_3DFACE
+                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (local.get $ox) (local.get $oy)
+                      (i32.add (local.get $ox) (local.get $ow))
+                      (i32.add (local.get $oy) (local.get $oh))
+                      (local.get $brush)))
+                    (drop (call $host_release_dc (local.get $hdc)))))
+                (call $invalidate_hwnd (local.get $parent))))))))
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 1)))
       (then
         (i32.store16 offset=4 (local.get $a) (local.get $w))

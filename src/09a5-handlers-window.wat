@@ -562,6 +562,11 @@
                           (i32.const 1))))))))) ;; CBS_SIMPLE keeps full height
     ;; Store window style (dwStyle = arg3)
     (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
+    ;; And the extended style (dwExStyle = arg0). $dlg_load already records
+    ;; this for template controls; without it here, a window created through
+    ;; the API loses WS_EX_CLIENTEDGE and renders flush where Win98 sank it
+    ;; into a 3D frame (fontview's view passes exStyle=0x200).
+    (call $ctrl_set_ex_style (local.get $hwnd) (local.get $arg0))
     ;; WinHelp 4.x uses a private child container for its command buttons. Its
     ;; window is created without WS_VISIBLE, then sized through private extra
     ;; LONGs before visible Button children are added; on Win98 the resulting
