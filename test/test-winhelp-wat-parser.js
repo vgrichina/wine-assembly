@@ -369,11 +369,11 @@ function encodeCompressedUnsignedLong(value) {
 }
 
 function buildSyntheticBitmap({
-  packing = 0,
+  packing = 0, pictureType = 6,
   payload = Buffer.from([0,0,0,0,1,0,1,0]),
 } = {}) {
   const pictureParts = [
-    Buffer.from([6, packing]),
+    Buffer.from([pictureType, packing]),
     encodeCompressedUnsignedLong(96), encodeCompressedUnsignedLong(96),
     Buffer.from([2, 16]),
     encodeCompressedUnsignedLong(2), encodeCompressedUnsignedLong(2),
@@ -381,7 +381,8 @@ function buildSyntheticBitmap({
     encodeCompressedUnsignedLong(payload.length), encodeCompressedUnsignedLong(0),
   ];
   const pictureHeader = Buffer.concat(pictureParts);
-  const palette = Buffer.from([0,0,0,0, 0xff,0xff,0xff,0]);
+  const palette = pictureType === 6
+    ? Buffer.from([0,0,0,0, 0xff,0xff,0xff,0]) : Buffer.alloc(0);
   const picture = Buffer.alloc(pictureHeader.length + 8 + palette.length + payload.length);
   pictureHeader.copy(picture);
   picture.writeUInt32LE(pictureHeader.length + 8 + palette.length, pictureHeader.length);
@@ -424,14 +425,22 @@ function buildOldFont(faces, descriptors, slotSize = 32) {
 
 function buildSyntheticFormattedTopic({
   stringCount = 12, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
-  closeVariableHotspot = false,
+  closeVariableHotspot = false, externalBitmapNumber = null,
 } = {}) {
   const fixedHotspot = Buffer.alloc(5);
   fixedHotspot[0] = hotspotOpcode;
   fixedHotspot.writeInt32LE(hotspotHash, 1);
+  const bitmapCommand = externalBitmapNumber === null
+    ? Buffer.concat([
+      Buffer.from([0x86, 3]), encodeCompressedLong(4), Buffer.from([0, 0, 7, 0]),
+    ])
+    : Buffer.concat([
+      Buffer.from([0x86, 0x22]), encodeCompressedLong(4), Buffer.from([0]),
+      Buffer.from([0, 0, externalBitmapNumber & 0xff, externalBitmapNumber >>> 8 & 0xff]),
+    ]);
   const commands = Buffer.concat([
     Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
-    Buffer.from([0x86, 3]), encodeCompressedLong(4), Buffer.from([0, 0, 7, 0]),
+    bitmapCommand,
     fixedHotspot, Buffer.from([0x89]),
     Buffer.from([0xc8, 2, 0, 'X'.charCodeAt(0), 0]),
     Buffer.from(closeVariableHotspot
@@ -1427,13 +1436,17 @@ async function main() {
       JSON.stringify(Array.from({ length: 12 }, (_, index) => [index * 2, 1])));
   check('formatted variable tokens address their copied command payloads',
     formattedTokenKinds.every((kind, index) => {
-      if (![7, 8, 9, 10].includes(kind)) return true;
+      if (![7, 8, 10].includes(kind)) return true;
       const token = topicTokensWA + index * 16;
       const off = dv.getUint32(token + 4, true);
       const len = dv.getUint32(token + 8, true);
       const value = dv.getUint32(token + 12, true);
       return len >= 1 && bytes[topicPayloadWA + off] === value;
     }));
+  const unsupportedBitmapToken = topicTokensWA + formattedTokenKinds.indexOf(9) * 16;
+  check('inline bitmap tokens retain exact bytes without a resource alias',
+    dv.getUint32(unsupportedBitmapToken + 12, true) === 0 &&
+    bytes[topicPayloadWA + dv.getUint32(unsupportedBitmapToken + 4, true)] === 0x86);
 
   const layoutRunsWA = staging + 0x80000;
   const layoutText = Buffer.from('alpha beta gamma', 'latin1');
@@ -1581,6 +1594,29 @@ async function main() {
     load(oversizedFontHelp.file) === 0 && e.get_help_last_error() === 6 &&
     e.get_help_font_face_count() === 0);
 
+  const realPaintHelp = fs.readFileSync(path.join(HELP, 'mspaint.hlp'));
+  const realPaintLoaded = load(realPaintHelp);
+  const realPaintTokenCount = realPaintLoaded === 1
+    ? e.test_help_decode_topic_formatted(1, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity)
+    : -1;
+  check('checked-in Paint help resolves its bmc command to normalized |bm0',
+    realPaintTokenCount > 0 && Array.from({ length: realPaintTokenCount }, (_, index) =>
+      topicTokensWA + index * 16).some(token =>
+      dv.getUint32(token, true) === 9 && dv.getUint32(token + 12, true) === 1));
+  check('checked-in Paint bitmap materializes with its exact native geometry',
+    e.test_help_replace_typed_view(1) === 1 && e.get_help_view_bitmap_count() === 1 && (() => {
+      const run = Array.from({ length: e.get_help_view_run_count() }, (_, index) =>
+        e.get_help_view_run_ptr() + index * 40).find(record => dv.getUint32(record, true) === 9);
+      const handle = e.get_help_view_bitmap_handle(0);
+      return run && handle !== 0 && dv.getUint32(run + 12, true) === 10 &&
+        dv.getUint32(run + 16, true) === 11 &&
+        crypto.createHash('sha256').update(Buffer.from(bytes.subarray(
+          e.test_gdi_bitmap_storage(handle), e.test_gdi_bitmap_storage(handle) + 88)))
+          .digest('hex') === EXPECTED_SEMANTICS['mspaint.hlp'].bitmapPayloads[0][1];
+    })());
+  e.test_help_replace_typed_view(0);
+
   const syntheticBitmap = buildSyntheticBitmap();
   const bitmapHelp = buildSyntheticSemanticHelp({ extraFiles: [['|bm7', syntheticBitmap]] });
   const bitmapDataOff = bitmapHelp.offsets['|bm7'] + 9;
@@ -1598,6 +1634,114 @@ async function main() {
     e.test_help_decode_bitmap(0, topicOutWA, 8) === 8 &&
     Buffer.from(bytes.subarray(topicOutWA, topicOutWA + 8)).equals(
       Buffer.from([0,0,0,0,1,0,1,0])));
+  const bitmapViewParts = buildSyntheticFormattedTopic({
+    returnParts: true, externalBitmapNumber: 7,
+    stringCount: 13, closeVariableHotspot: true,
+  });
+  const bitmapViewHelp = buildSyntheticSemanticHelp({
+    topic: bitmapViewParts.topic,
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+    extraFiles: [['|bm7', syntheticBitmap]],
+  });
+  const bitmapViewLoaded = load(bitmapViewHelp.file);
+  const bitmapViewTokenCount = bitmapViewLoaded === 1
+    ? e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity)
+    : -1;
+  check('external bitmap command resolves to a normalized token index',
+    bitmapViewLoaded === 1 && bitmapViewTokenCount > 0 && (() => {
+      const bitmapToken = Array.from({ length: bitmapViewTokenCount }, (_, index) =>
+        topicTokensWA + index * 16).find(token => dv.getUint32(token, true) === 9);
+      return bitmapToken && dv.getUint32(bitmapToken + 12, true) === 1 &&
+        bytes[topicPayloadWA + dv.getUint32(bitmapToken + 4, true)] === 0x86;
+    })());
+  check('typed view materializes referenced pixels and palette into owned GDI state',
+    e.test_help_replace_typed_view(0) === 1 &&
+    e.get_help_view_bitmap_slot_count() === 1 && e.get_help_view_bitmap_count() === 1 &&
+    e.get_help_view_bitmap_dc() !== 0 && (() => {
+      const handle = e.get_help_view_bitmap_handle(0);
+      const object = e.test_gdi_object_record(handle);
+      const storage = e.test_gdi_bitmap_storage(handle);
+      const palette = e.test_gdi_bitmap_palette(handle);
+      return handle !== 0 && object !== 0 && dv.getUint32(object + 4, true) === 3 &&
+        dv.getUint32(object + 8, true) === 2 && dv.getUint32(object + 12, true) === 2 &&
+        dv.getUint32(object + 16, true) === 8 && dv.getUint32(object + 28, true) === 4 &&
+        Buffer.from(bytes.subarray(storage, storage + 8)).equals(
+          Buffer.from([0,0,0,0,1,0,1,0])) &&
+        e.test_gdi_bitmap_palette_count(handle) === 2 &&
+        Buffer.from(bytes.subarray(palette, palette + 8)).equals(
+          Buffer.from([0,0,0,0,0xff,0xff,0xff,0]));
+    })(), `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()} ` +
+      `runs=${e.get_help_view_run_count()} slots=${e.get_help_view_bitmap_slot_count()} ` +
+      `count=${e.get_help_view_bitmap_count()} dc=${e.get_help_view_bitmap_dc()}`);
+  const bitmapViewRun = Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
+    const run = e.get_help_view_run_ptr() + index * 40;
+    return dv.getUint32(run, true) === 9 ? run : 0;
+  }).find(Boolean);
+  check('bitmap layout uses intrinsic normalized dimensions and canonical index',
+    bitmapViewRun && dv.getUint32(bitmapViewRun + 12, true) === 2 &&
+    dv.getUint32(bitmapViewRun + 16, true) === 2 &&
+    dv.getUint32(bitmapViewRun + 20, true) === 0);
+  const bitmapProbeA = e.test_help_paint_bitmap_probe(128, 128);
+  const bitmapProbeB = e.test_help_paint_bitmap_probe(128, 128);
+  check('production painter blits exact bitmap pixels at the positioned run on repaint',
+    bitmapViewRun && bitmapProbeA !== 0 && bitmapProbeB !== 0 && (() => {
+      const x = dv.getUint32(bitmapViewRun + 4, true);
+      const y = dv.getUint32(bitmapViewRun + 8, true);
+      const a = e.test_gdi_bitmap_storage(bitmapProbeA);
+      const b = e.test_gdi_bitmap_storage(bitmapProbeB);
+      const pixelsAt = storage => [
+        dv.getUint32(storage + (y * 128 + x) * 4, true),
+        dv.getUint32(storage + (y * 128 + x + 1) * 4, true),
+        dv.getUint32(storage + ((y + 1) * 128 + x) * 4, true),
+        dv.getUint32(storage + ((y + 1) * 128 + x + 1) * 4, true),
+      ];
+      return JSON.stringify(pixelsAt(a)) === JSON.stringify([0xffffff,0,0,0]) &&
+        JSON.stringify(pixelsAt(b)) === JSON.stringify(pixelsAt(a));
+    })(), bitmapViewRun && bitmapProbeA ? `pixels=${JSON.stringify((() => {
+      const x = dv.getUint32(bitmapViewRun + 4, true);
+      const y = dv.getUint32(bitmapViewRun + 8, true);
+      const storage = e.test_gdi_bitmap_storage(bitmapProbeA);
+      return [0,1,128,129].map(delta => dv.getUint32(storage + (y * 128 + x + delta) * 4, true));
+    })())}` : 'missing run/probe');
+  if (bitmapProbeA) e.test_help_release_bitmap_probe(bitmapProbeA);
+  if (bitmapProbeB) e.test_help_release_bitmap_probe(bitmapProbeB);
+  const replacedBitmapHandle = e.get_help_view_bitmap_handle(0);
+  check('topic replacement tears down prior materialized bitmap and DC state',
+    e.test_help_replace_typed_view(2) === 1 && e.get_help_view_bitmap_count() === 0 &&
+    e.get_help_view_bitmap_dc() === 0 && e.test_gdi_object_type(replacedBitmapHandle) === 0);
+  const unresolvedBitmapHelp = buildSyntheticSemanticHelp({
+    topic: bitmapViewParts.topic,
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+  });
+  check('missing external bitmap resource remains a bounded non-owning placeholder',
+    load(unresolvedBitmapHelp.file) === 1 && e.test_help_replace_typed_view(0) === 1 &&
+    e.get_help_view_bitmap_slot_count() === 0 && e.get_help_view_bitmap_count() === 0 &&
+    e.get_help_view_bitmap_dc() === 0 && (() => {
+      const run = Array.from({ length: e.get_help_view_run_count() }, (_, index) =>
+        e.get_help_view_run_ptr() + index * 40).find(record => dv.getUint32(record, true) === 9);
+      return run && dv.getUint32(run + 12, true) === 16 &&
+        dv.getUint32(run + 16, true) === 16 && dv.getUint32(run + 20, true) === 0xffffffff;
+    })());
+  const syntheticDdbPixels = Buffer.from([1,2,3,4]);
+  const bitmapDdbHelp = buildSyntheticSemanticHelp({
+    topic: bitmapViewParts.topic,
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+    extraFiles: [['|bm7', buildSyntheticBitmap({
+      pictureType: 5, payload: syntheticDdbPixels,
+    })]],
+  });
+  check('device-dependent embedded bitmap materializes with WORD-aligned pixels',
+    load(bitmapDdbHelp.file) === 1 && e.test_help_replace_typed_view(0) === 1 && (() => {
+      const handle = e.get_help_view_bitmap_handle(0);
+      const object = e.test_gdi_object_record(handle);
+      const storage = e.test_gdi_bitmap_storage(handle);
+      return e.get_help_view_bitmap_count() === 1 && handle !== 0 && object !== 0 &&
+        dv.getUint32(object + 16, true) === 8 && dv.getUint32(object + 28, true) === 2 &&
+        e.test_gdi_bitmap_palette_count(handle) === 0 &&
+        Buffer.from(bytes.subarray(storage, storage + 4)).equals(syntheticDdbPixels);
+    })());
+  e.test_help_replace_typed_view(2);
   const syntheticPixels = Buffer.from([0,0,0,0,1,0,1,0]);
   const syntheticRle = Buffer.from([4,0,0x84,1,0,1,0]);
   const syntheticPackingPayloads = [
@@ -1621,6 +1765,8 @@ async function main() {
       Buffer.from(bytes.subarray(topicOutWA, topicOutWA + 8)).equals(syntheticPixels));
   }
   const malformedRleHelp = buildSyntheticSemanticHelp({
+    topic: bitmapViewParts.topic,
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
     extraFiles: [['|bm7', buildSyntheticBitmap({
       packing: 1, payload: Buffer.from([0x88,0,0]),
     })]],
@@ -1631,6 +1777,29 @@ async function main() {
     e.test_help_decode_bitmap(0, topicOutWA, 8) === -1 &&
     e.get_help_last_error() === 16 &&
     bytes.subarray(topicOutWA, topicOutWA + 8).every(byte => byte === 0xa5));
+  let bitmapFailureState = {};
+  check('bitmap materialization failure retains the prior complete view transaction',
+    load(bitmapViewHelp.file) === 1 && e.test_help_replace_typed_view(0) === 1 && (() => {
+      const oldRuns = e.get_help_view_run_ptr();
+      const oldHandle = e.get_help_view_bitmap_handle(0);
+      const oldDC = e.get_help_view_bitmap_dc();
+      const loaded = load(malformedRleHelp.file);
+      const replaced = e.test_help_replace_typed_view(0);
+      bitmapFailureState = {
+        loaded, replaced, error: e.get_help_last_error(), oldRuns,
+        runs: e.get_help_view_run_ptr(), oldHandle, handle: e.get_help_view_bitmap_handle(0),
+        oldDC, dc: e.get_help_view_bitmap_dc(), count: e.get_help_view_bitmap_count(),
+        type: e.test_gdi_object_type(oldHandle),
+      };
+      return loaded === 1 && replaced === 0 &&
+        e.get_help_last_error() === 16 && e.get_help_view_run_ptr() === oldRuns &&
+        e.get_help_view_bitmap_handle(0) === oldHandle &&
+        e.get_help_view_bitmap_dc() === oldDC && e.get_help_view_bitmap_count() === 1 &&
+        e.test_gdi_object_type(oldHandle) === 3;
+    })(), JSON.stringify(bitmapFailureState));
+  check('a later valid topic replacement releases the retained failure snapshot',
+    e.test_help_replace_typed_view(2) === 1 && e.get_help_view_bitmap_count() === 0 &&
+    e.get_help_view_bitmap_dc() === 0);
   const malformedLzHelp = buildSyntheticSemanticHelp({
     extraFiles: [['|bm7', buildSyntheticBitmap({
       packing: 2, payload: Buffer.from([1,0,0]),
@@ -1861,6 +2030,22 @@ async function main() {
   check('HELP_QUIT tears down both Topics and main help windows',
     e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_window() === 0);
+
+  ctx.vfs.files.set('c:\\bitmap-view.hlp', {
+    data: new Uint8Array(bitmapViewHelp.file), attrs: 0x20,
+  });
+  const bitmapViewPathA = allocGuestAnsi('c:\\bitmap-view.hlp');
+  const bitmapWindowAccepted = e.test_invoke_WinHelpA(
+    0x8888, bitmapViewPathA, 0x0001, 8);
+  const bitmapWindowHandle = e.get_help_view_bitmap_handle(0);
+  check('real WinHelp window path publishes the WAT-owned embedded bitmap',
+    bitmapWindowAccepted === 1 && e.get_help_window() !== 0 &&
+    e.get_help_view_bitmap_count() === 1 && bitmapWindowHandle !== 0 &&
+    e.test_gdi_object_type(bitmapWindowHandle) === 3);
+  check('HELP_QUIT releases embedded bitmap objects and source DC state',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.get_help_window() === 0 && e.get_help_view_bitmap_count() === 0 &&
+    e.get_help_view_bitmap_dc() === 0 && e.test_gdi_object_type(bitmapWindowHandle) === 0);
 
   const hotspotHelp = buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({

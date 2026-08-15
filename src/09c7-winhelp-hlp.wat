@@ -1144,6 +1144,21 @@
       (i32.add (global.get $help_fmt_token_count) (i32.const 1)))
     (i32.const 1))
 
+  ;; Resolve an external bmc/bml/bmr PictureNumber to the first normalized
+  ;; picture in its |bmN resource. The token stores index+1 so zero remains a
+  ;; deterministic sentinel for inline/unsupported/unresolved picture forms.
+  (func $help_bitmap_token_value (param $resource_number i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_doc_bitmap_count)))
+      (local.set $record (i32.add (global.get $help_doc_bitmaps_wa)
+        (i32.mul (local.get $i) (global.get $HELP_BITMAP_SIZE))))
+      (if (i32.eq (i32.load (local.get $record)) (local.get $resource_number))
+        (then (return (i32.add (local.get $i) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; Convert one already-validated display record into typed tokens. Every
   ;; character command consumes exactly one NUL-terminated LinkData2 string.
   ;; The complete encoded LinkData1 record is copied once into payload_out;
@@ -1157,6 +1172,7 @@
     (local $flags i32) (local $bit i32) (local $tab_count i32) (local $i i32)
     (local $tab_stop i32) (local $command i32) (local $command_start i32)
     (local $payload_size i32) (local $picture_type i32) (local $font_index i32)
+    (local $picture_payload i32)
     (local $raw_ptr i32) (local $raw_end i32) (local $string_start i32)
     (local $string_len i32) (local $token_kind i32) (local $token_value i32)
     (local.set $data_len1 (i32.load offset=16 (local.get $link)))
@@ -1367,6 +1383,21 @@
                   (local.set $ptr (global.get $help_ld1_next))))
               (if (i32.gt_u (local.get $payload_size) (i32.sub (local.get $end) (local.get $ptr)))
                 (then (return (call $help_ld1_fail (local.get $topic_pos)))))
+              (local.set $picture_payload (local.get $ptr))
+              (local.set $token_value (i32.const 0))
+              ;; Types 3 and 0x22 share the picture union. External pictures
+              ;; begin with WORD embedded=0 followed by WORD PictureNumber.
+              ;; Inline pictures remain exact in the retained payload but are
+              ;; deliberately not aliased to a normalized resource record.
+              (if (i32.and
+                    (i32.and
+                      (i32.or (i32.eq (local.get $picture_type) (i32.const 3))
+                              (i32.eq (local.get $picture_type) (i32.const 0x22)))
+                      (i32.eq (local.get $payload_size) (i32.const 4)))
+                    (i32.eqz (i32.load16_u (local.get $picture_payload))))
+                (then
+                  (local.set $token_value (call $help_bitmap_token_value
+                    (i32.load16_u offset=2 (local.get $picture_payload))))))
               (local.set $ptr (i32.add (local.get $ptr) (local.get $payload_size)))
               (local.set $token_kind (global.get $HELP_TOKEN_BITMAP))
               (br $handled)))

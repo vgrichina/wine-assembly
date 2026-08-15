@@ -20,6 +20,15 @@
   (global $help_view_run_count (mut i32) (i32.const 0))
   (global $help_view_extent_height (mut i32) (i32.const 0))
   (global $help_view_layout_width (mut i32) (i32.const 0))
+  (global $help_view_bitmap_handles_ga (mut i32) (i32.const 0))
+  (global $help_view_bitmap_handles_wa (mut i32) (i32.const 0))
+  (global $help_view_bitmap_slot_count (mut i32) (i32.const 0))
+  (global $help_view_bitmap_materialized_count (mut i32) (i32.const 0))
+  (global $help_view_bitmap_dc (mut i32) (i32.const 0))
+
+  ;; Private result channel used while a replacement view is still local.
+  (global $help_materialize_bitmap_dc (mut i32) (i32.const 0))
+  (global $help_materialize_bitmap_count (mut i32) (i32.const 0))
 
   ;; Private two-pass layout channel. A zero output pointer counts and
   ;; validates exact run requirements without writing any records.
@@ -128,7 +137,8 @@
     (local $off i32) (local $len i32) (local $value i32)
     (local $i i32) (local $pos i32) (local $span i32) (local $ch i32)
     (local $x i32) (local $y i32) (local $right i32)
-    (local $width i32) (local $fit i32) (local $line_height i32)
+    (local $width i32) (local $height i32) (local $fit i32)
+    (local $font_height i32) (local $line_height i32)
     (local $font_index i32) (local $color i32) (local $hotspot i32)
     (local $saw_content i32) (local $ended i32)
     (global.set $help_layout_count (i32.const 0))
@@ -161,6 +171,7 @@
     (local.set $x (i32.const 8))
     (local.set $y (i32.const 8))
     (local.set $right (i32.sub (local.get $client_width) (i32.const 8)))
+    (local.set $font_height (i32.const 16))
     (local.set $line_height (i32.const 16))
     (local.set $font_index (i32.const -1))
     (local.set $color (i32.const 0))
@@ -182,14 +193,17 @@
           (if (local.get $saw_content)
             (then
               (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-              (local.set $x (i32.const 8))))
-          (local.set $line_height (i32.const 16))))
+              (local.set $x (i32.const 8))
+              (local.set $line_height (local.get $font_height))))
+          (local.set $line_height (local.get $font_height))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_FONT))
         (then
           (if (i32.ge_u (local.get $value) (global.get $help_doc_font_count))
             (then (return (i32.const -1))))
           (local.set $font_index (local.get $value))
-          (local.set $line_height (call $help_layout_font_height (local.get $value)))
+          (local.set $font_height (call $help_layout_font_height (local.get $value)))
+          (if (i32.gt_u (local.get $font_height) (local.get $line_height))
+            (then (local.set $line_height (local.get $font_height))))
           (local.set $color (i32.load offset=20
             (i32.add (global.get $help_doc_fonts_wa)
               (i32.mul (local.get $value) (global.get $HELP_FONT_SIZE)))))))
@@ -208,6 +222,7 @@
         (then
           (local.set $y (i32.add (local.get $y) (local.get $line_height)))
           (local.set $x (i32.const 8))
+          (local.set $line_height (local.get $font_height))
           (local.set $saw_content (i32.const 1))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_SPACE))
         (then
@@ -217,7 +232,8 @@
                 (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
             (then
               (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-              (local.set $x (i32.const 8))))
+              (local.set $x (i32.const 8))
+              (local.set $line_height (local.get $font_height))))
           (if (i32.eqz (call $help_layout_emit
                 (global.get $HELP_LAYOUT_SPACE) (local.get $x) (local.get $y)
                 (local.get $width) (local.get $line_height)
@@ -228,17 +244,31 @@
           (local.set $saw_content (i32.const 1))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_BITMAP))
         (then
-          ;; Preserve a positioned placeholder until bitmap materialization.
-          (if (i32.gt_u (i32.add (local.get $x) (i32.const 16)) (local.get $right))
+          ;; Canonical bitmap tokens store normalized index+1. Inline and
+          ;; unsupported forms retain a bounded 16x16 placeholder.
+          (local.set $off (i32.sub (local.get $value) (i32.const 1)))
+          (local.set $width (i32.const 16))
+          (local.set $height (i32.const 16))
+          (if (i32.lt_u (local.get $off) (global.get $help_doc_bitmap_count))
+            (then
+              (local.set $token (i32.add (global.get $help_doc_bitmaps_wa)
+                (i32.mul (local.get $off) (global.get $HELP_BITMAP_SIZE))))
+              (local.set $width (i32.load offset=32 (local.get $token)))
+              (local.set $height (i32.load offset=36 (local.get $token)))))
+          (if (i32.and (i32.gt_u (local.get $x) (i32.const 8))
+                (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
             (then
               (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-              (local.set $x (i32.const 8))))
+              (local.set $x (i32.const 8))
+              (local.set $line_height (local.get $font_height))))
           (if (i32.eqz (call $help_layout_emit
                 (global.get $HELP_LAYOUT_BITMAP) (local.get $x) (local.get $y)
-                (i32.const 16) (i32.const 16) (local.get $off) (local.get $len)
+                (local.get $width) (local.get $height) (local.get $off) (local.get $len)
                 (local.get $font_index) (local.get $color) (local.get $hotspot)))
             (then (return (i32.const -1))))
-          (local.set $x (i32.add (local.get $x) (i32.const 16)))
+          (local.set $x (i32.add (local.get $x) (local.get $width)))
+          (if (i32.gt_u (local.get $height) (local.get $line_height))
+            (then (local.set $line_height (local.get $height))))
           (local.set $saw_content (i32.const 1))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_TEXT))
         (then
@@ -260,7 +290,8 @@
                       (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
                   (then
                     (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-                    (local.set $x (i32.const 8))))
+                    (local.set $x (i32.const 8))
+                    (local.set $line_height (local.get $font_height))))
                 (if (i32.eqz (call $help_layout_emit
                       (global.get $HELP_LAYOUT_SPACE) (local.get $x) (local.get $y)
                       (local.get $width) (local.get $line_height)
@@ -289,7 +320,8 @@
                         (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
                     (then
                       (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-                      (local.set $x (i32.const 8))))
+                      (local.set $x (i32.const 8))
+                      (local.set $line_height (local.get $font_height))))
                   (local.set $fit (local.get $span))
                   (if (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right))
                     (then
@@ -313,7 +345,8 @@
                   (if (local.get $span)
                     (then
                       (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-                      (local.set $x (i32.const 8))))
+                      (local.set $x (i32.const 8))
+                      (local.set $line_height (local.get $font_height))))
                   (br $span_loop)))))
             (br $text_loop)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -347,7 +380,130 @@
       (local.get $runs) (local.get $run_capacity)
       (local.get $client_width) (local.get $hdc)))
 
+  (func $help_bitmap_handles_release
+    (param $handles i32) (param $count i32) (param $dc i32)
+    (local $i i32) (local $handle i32)
+    (if (local.get $dc) (then (drop (call $gdi_dc_delete (local.get $dc)))))
+    (if (local.get $handles)
+      (then
+        (block $done (loop $objects
+          (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $handle (i32.load (i32.add (local.get $handles)
+            (i32.shl (local.get $i) (i32.const 2)))))
+          (if (local.get $handle)
+            (then (drop (call $gdi_object_delete_full (local.get $handle)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $objects))))))
+
+  ;; Decode each distinct referenced raster and copy its pixels/palette into a
+  ;; canonical owned GDI bitmap. Metafiles and inline picture commands retain
+  ;; layout placeholders until their separate formats are implemented.
+  (func $help_materialize_view_bitmaps
+    (param $runs i32) (param $run_count i32)
+    (param $handles i32) (param $slot_count i32) (result i32)
+    (local $i i32) (local $run i32) (local $index i32) (local $record i32)
+    (local $picture_type i32) (local $decoded_size i32)
+    (local $temporary_ga i32) (local $temporary_wa i32)
+    (local $handle i32) (local $palette_count i32) (local $dc i32)
+    (global.set $help_materialize_bitmap_dc (i32.const 0))
+    (global.set $help_materialize_bitmap_count (i32.const 0))
+    (block $failed
+      (block $done (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (local.get $run_count)))
+        (local.set $run (i32.add (local.get $runs)
+          (i32.mul (local.get $i) (global.get $HELP_LAYOUT_RUN_SIZE))))
+        (if (i32.ne (i32.load (local.get $run)) (global.get $HELP_LAYOUT_BITMAP))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $scan)))
+        (local.set $index (i32.load offset=20 (local.get $run)))
+        (if (i32.ge_u (local.get $index) (local.get $slot_count))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $scan)))
+        (if (i32.load (i32.add (local.get $handles)
+              (i32.shl (local.get $index) (i32.const 2))))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $scan)))
+        (local.set $record (i32.add (global.get $help_doc_bitmaps_wa)
+          (i32.mul (local.get $index) (global.get $HELP_BITMAP_SIZE))))
+        (local.set $picture_type (i32.load offset=8 (local.get $record)))
+        (if (i32.and (i32.ne (local.get $picture_type) (i32.const 5))
+              (i32.ne (local.get $picture_type) (i32.const 6)))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $scan)))
+        (local.set $decoded_size (i32.load offset=72 (local.get $record)))
+        (local.set $temporary_ga (call $dib_alloc (local.get $decoded_size)))
+        (if (i32.eqz (local.get $temporary_ga))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION)
+              (i32.load offset=48 (local.get $record)))
+            (br $failed)))
+        (local.set $temporary_wa (call $g2w (local.get $temporary_ga)))
+        (if (i32.ne (call $help_decode_bitmap
+              (local.get $index) (local.get $temporary_wa) (local.get $decoded_size))
+              (local.get $decoded_size))
+          (then
+            (call $dib_free_wasm (local.get $temporary_wa))
+            (local.set $temporary_ga (i32.const 0))
+            (br $failed)))
+        (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0)
+          (global.get $GDI_BITMAP_PLAN_SIZE))
+        (i32.store (global.get $GDI_BITMAP_PLAN) (i32.load offset=32 (local.get $record)))
+        (i32.store offset=4 (global.get $GDI_BITMAP_PLAN)
+          (i32.load offset=36 (local.get $record)))
+        (i32.store offset=8 (global.get $GDI_BITMAP_PLAN)
+          (i32.load offset=28 (local.get $record)))
+        (i32.store offset=16 (global.get $GDI_BITMAP_PLAN)
+          (i32.div_u (local.get $decoded_size) (i32.load offset=36 (local.get $record))))
+        (local.set $palette_count (i32.load offset=68 (local.get $record)))
+        (if (local.get $palette_count)
+          (then
+            (i32.store offset=20 (global.get $GDI_BITMAP_PLAN)
+              (i32.add (global.get $help_doc_file_wa)
+                (i32.load offset=64 (local.get $record))))
+            (i32.store offset=24 (global.get $GDI_BITMAP_PLAN) (local.get $palette_count))))
+        (i32.store offset=32 (global.get $GDI_BITMAP_PLAN) (local.get $decoded_size))
+        (local.set $handle (call $gdi_bitmap_create_owned
+          (global.get $GDI_BITMAP_PLAN) (local.get $temporary_wa)
+          (i32.const 1) (i32.ne (local.get $palette_count) (i32.const 0))
+          (i32.const 0) (i32.const 0) (i32.const 0)))
+        (call $dib_free_wasm (local.get $temporary_wa))
+        (local.set $temporary_ga (i32.const 0))
+        (if (i32.eqz (local.get $handle))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION)
+              (i32.load offset=48 (local.get $record)))
+            (br $failed)))
+        (i32.store (i32.add (local.get $handles)
+          (i32.shl (local.get $index) (i32.const 2))) (local.get $handle))
+        (global.set $help_materialize_bitmap_count
+          (i32.add (global.get $help_materialize_bitmap_count) (i32.const 1)))
+        (if (i32.eqz (local.get $dc))
+          (then
+            (local.set $dc (call $gdi_dc_alloc))
+            (global.set $help_materialize_bitmap_dc (local.get $dc))
+            (if (i32.eqz (local.get $dc))
+              (then
+                (call $help_set_error (global.get $HELP_ERROR_ALLOCATION)
+                  (i32.load offset=48 (local.get $record)))
+                (br $failed)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+      (return (i32.const 1)))
+    (if (local.get $temporary_ga)
+      (then (call $dib_free_wasm (call $g2w (local.get $temporary_ga)))))
+    (i32.const 0))
+
   (func $help_typed_view_release
+    (call $help_bitmap_handles_release
+      (global.get $help_view_bitmap_handles_wa)
+      (global.get $help_view_bitmap_slot_count)
+      (global.get $help_view_bitmap_dc))
+    (if (global.get $help_view_bitmap_handles_ga)
+      (then (call $heap_free (global.get $help_view_bitmap_handles_ga))))
     (if (global.get $help_view_runs_ga)
       (then (call $heap_free (global.get $help_view_runs_ga))))
     (if (global.get $help_view_payload_ga)
@@ -367,6 +523,11 @@
     (global.set $help_view_token_count (i32.const 0))
     (global.set $help_view_extent_height (i32.const 0))
     (global.set $help_view_layout_width (i32.const 0))
+    (global.set $help_view_bitmap_handles_ga (i32.const 0))
+    (global.set $help_view_bitmap_handles_wa (i32.const 0))
+    (global.set $help_view_bitmap_slot_count (i32.const 0))
+    (global.set $help_view_bitmap_materialized_count (i32.const 0))
+    (global.set $help_view_bitmap_dc (i32.const 0))
     (global.set $help_topic_wa (i32.const 0))
     (global.set $help_topic_len (i32.const 0)))
 
@@ -378,10 +539,16 @@
     (local $tokens_ga i32) (local $tokens_wa i32) (local $token_count i32)
     (local $payload_ga i32) (local $payload_wa i32) (local $payload_len i32)
     (local $runs_ga i32) (local $runs_wa i32) (local $run_count i32)
+    (local $bitmap_handles_ga i32) (local $bitmap_handles_wa i32)
+    (local $bitmap_slot_count i32) (local $bitmap_materialized_count i32)
+    (local $bitmap_dc i32)
     (local $hdc i32) (local $ok i32)
     (block $cleanup
     (local.set $raw_ga (call $heap_alloc (i32.const 65536)))
-    (if (i32.eqz (local.get $raw_ga)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $raw_ga))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+        (return (i32.const 0))))
     (local.set $raw_wa (call $g2w (local.get $raw_ga)))
     (local.set $raw_len (call $help_decode_topic_raw
       (local.get $topic_index) (local.get $raw_wa) (i32.const 65536)))
@@ -391,6 +558,13 @@
     (drop (call $help_decode_topic_formatted
       (local.get $topic_index) (local.get $raw_wa) (i32.const 65536)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    ;; Zero-capacity counting intentionally reports CAPACITY through the
+    ;; public decoder. Do not let that expected probe mask a later build,
+    ;; decode, or materialization error.
+    (if (i32.eq (global.get $help_last_error) (global.get $HELP_ERROR_CAPACITY))
+      (then
+        (global.set $help_last_error (global.get $HELP_ERROR_NONE))
+        (global.set $help_last_error_offset (i32.const 0))))
     (local.set $token_count (global.get $help_fmt_token_count))
     (local.set $payload_len (global.get $help_fmt_payload_used))
     (if (i32.or (i32.eqz (local.get $token_count))
@@ -398,12 +572,18 @@
       (then (br $cleanup)))
     (local.set $tokens_ga (call $heap_alloc
       (i32.mul (local.get $token_count) (global.get $HELP_TOPIC_TOKEN_SIZE))))
-    (if (i32.eqz (local.get $tokens_ga)) (then (br $cleanup)))
+    (if (i32.eqz (local.get $tokens_ga))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+        (br $cleanup)))
     (local.set $tokens_wa (call $g2w (local.get $tokens_ga)))
     (if (local.get $payload_len)
       (then
         (local.set $payload_ga (call $heap_alloc (local.get $payload_len)))
-        (if (i32.eqz (local.get $payload_ga)) (then (br $cleanup)))
+        (if (i32.eqz (local.get $payload_ga))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+            (br $cleanup)))
         (local.set $payload_wa (call $g2w (local.get $payload_ga)))))
     (if (i32.lt_s (call $help_decode_topic_formatted
           (local.get $topic_index) (local.get $raw_wa) (i32.const 65536)
@@ -424,7 +604,10 @@
       (then
         (local.set $runs_ga (call $heap_alloc
           (i32.mul (local.get $run_count) (global.get $HELP_LAYOUT_RUN_SIZE))))
-        (if (i32.eqz (local.get $runs_ga)) (then (br $cleanup)))
+        (if (i32.eqz (local.get $runs_ga))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+            (br $cleanup)))
         (local.set $runs_wa (call $g2w (local.get $runs_ga)))))
     (if (i32.ne (call $help_layout_tokens
           (local.get $raw_wa) (local.get $raw_len)
@@ -432,6 +615,27 @@
           (local.get $runs_wa) (local.get $run_count)
           (i32.const 400) (local.get $hdc)) (local.get $run_count))
       (then (br $cleanup)))
+    (local.set $bitmap_slot_count (global.get $help_doc_bitmap_count))
+    (if (local.get $bitmap_slot_count)
+      (then
+        (local.set $bitmap_handles_ga (call $heap_alloc
+          (i32.shl (local.get $bitmap_slot_count) (i32.const 2))))
+        (if (i32.eqz (local.get $bitmap_handles_ga))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+            (br $cleanup)))
+        (local.set $bitmap_handles_wa (call $g2w (local.get $bitmap_handles_ga)))
+        (memory.fill (local.get $bitmap_handles_wa) (i32.const 0)
+          (i32.shl (local.get $bitmap_slot_count) (i32.const 2)))))
+    (if (i32.eqz (call $help_materialize_view_bitmaps
+          (local.get $runs_wa) (local.get $run_count)
+          (local.get $bitmap_handles_wa) (local.get $bitmap_slot_count)))
+      (then
+        (local.set $bitmap_dc (global.get $help_materialize_bitmap_dc))
+        (br $cleanup)))
+    (local.set $bitmap_dc (global.get $help_materialize_bitmap_dc))
+    (local.set $bitmap_materialized_count
+      (global.get $help_materialize_bitmap_count))
     (call $help_typed_view_release)
     (global.set $help_topic_wa (local.get $raw_wa))
     (global.set $help_topic_len (local.get $raw_len))
@@ -446,13 +650,27 @@
     (global.set $help_view_run_count (local.get $run_count))
     (global.set $help_view_extent_height (global.get $help_layout_extent))
     (global.set $help_view_layout_width (i32.const 400))
+    (global.set $help_view_bitmap_handles_ga (local.get $bitmap_handles_ga))
+    (global.set $help_view_bitmap_handles_wa (local.get $bitmap_handles_wa))
+    (global.set $help_view_bitmap_slot_count (local.get $bitmap_slot_count))
+    (global.set $help_view_bitmap_materialized_count
+      (local.get $bitmap_materialized_count))
+    (global.set $help_view_bitmap_dc (local.get $bitmap_dc))
     (global.set $help_last_error (global.get $HELP_ERROR_NONE))
     (global.set $help_last_error_offset (i32.const 0))
     (local.set $raw_ga (i32.const 0))
     (local.set $tokens_ga (i32.const 0))
     (local.set $payload_ga (i32.const 0))
     (local.set $runs_ga (i32.const 0))
+    (local.set $bitmap_handles_ga (i32.const 0))
+    (local.set $bitmap_dc (i32.const 0))
     (local.set $ok (i32.const 1)))
+    (if (local.get $bitmap_handles_ga)
+      (then
+        (call $help_bitmap_handles_release
+          (local.get $bitmap_handles_wa) (local.get $bitmap_slot_count)
+          (local.get $bitmap_dc))
+        (call $heap_free (local.get $bitmap_handles_ga))))
     (if (local.get $runs_ga) (then (call $heap_free (local.get $runs_ga))))
     (if (local.get $payload_ga) (then (call $heap_free (local.get $payload_ga))))
     (if (local.get $tokens_ga) (then (call $heap_free (local.get $tokens_ga))))
@@ -462,6 +680,7 @@
   (func $help_paint_typed_view (param $hdc i32)
     (local $i i32) (local $run i32) (local $kind i32)
     (local $y i32) (local $height i32) (local $color i32)
+    (local $index i32) (local $handle i32)
     (block $done (loop $runs
       (br_if $done (i32.ge_u (local.get $i) (global.get $help_view_run_count)))
       (local.set $run (i32.add (global.get $help_view_runs_wa)
@@ -482,6 +701,28 @@
             (local.get $hdc) (i32.load offset=4 (local.get $run)) (local.get $y)
             (i32.add (global.get $help_topic_wa) (i32.load offset=20 (local.get $run)))
             (i32.load offset=24 (local.get $run)) (i32.const 0)))))
+      (if (i32.and (i32.eq (local.get $kind) (global.get $HELP_LAYOUT_BITMAP))
+            (i32.and (i32.gt_s (i32.add (local.get $y) (local.get $height)) (i32.const 0))
+                     (i32.lt_s (local.get $y) (i32.const 272))))
+        (then
+          (local.set $index (i32.load offset=20 (local.get $run)))
+          (if (i32.and
+                (i32.lt_u (local.get $index) (global.get $help_view_bitmap_slot_count))
+                (i32.ne (global.get $help_view_bitmap_dc) (i32.const 0)))
+            (then
+              (local.set $handle (i32.load
+                (i32.add (global.get $help_view_bitmap_handles_wa)
+                  (i32.shl (local.get $index) (i32.const 2)))))
+              (if (local.get $handle)
+                (then
+                  (drop (call $gdi_dc_select_owned_object
+                    (global.get $help_view_bitmap_dc) (local.get $handle)))
+                  (drop (call $host_gdi_bitblt
+                    (local.get $hdc)
+                    (i32.load offset=4 (local.get $run)) (local.get $y)
+                    (i32.load offset=12 (local.get $run)) (local.get $height)
+                    (global.get $help_view_bitmap_dc) (i32.const 0) (i32.const 0)
+                    (i32.const 0x00CC0020)))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $runs))))
 
@@ -592,6 +833,54 @@
     (global.get $help_view_runs_wa))
   (func (export "get_help_view_extent_height") (result i32)
     (global.get $help_view_extent_height))
+  (func (export "get_help_view_bitmap_slot_count") (result i32)
+    (global.get $help_view_bitmap_slot_count))
+  (func (export "get_help_view_bitmap_count") (result i32)
+    (global.get $help_view_bitmap_materialized_count))
+  (func (export "get_help_view_bitmap_handle") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_view_bitmap_slot_count))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $help_view_bitmap_handles_wa)
+      (i32.shl (local.get $index) (i32.const 2)))))
+  (func (export "get_help_view_bitmap_dc") (result i32)
+    (global.get $help_view_bitmap_dc))
+  (func (export "test_help_replace_typed_view")
+    (param $topic_index i32) (result i32)
+    (call $help_replace_typed_view (local.get $topic_index)))
+  (func (export "test_help_paint_typed_view") (param $hdc i32)
+    (call $help_paint_typed_view (local.get $hdc)))
+  (func (export "test_help_paint_bitmap_probe")
+    (param $width i32) (param $height i32) (result i32)
+    (local $bitmap i32) (local $dc i32) (local $stride i32)
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $width)) (i32.gt_u (local.get $width) (i32.const 512)))
+          (i32.or (i32.eqz (local.get $height)) (i32.gt_u (local.get $height) (i32.const 512))))
+      (then (return (i32.const 0))))
+    (local.set $stride (i32.shl (local.get $width) (i32.const 2)))
+    (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0)
+      (global.get $GDI_BITMAP_PLAN_SIZE))
+    (i32.store (global.get $GDI_BITMAP_PLAN) (local.get $width))
+    (i32.store offset=4 (global.get $GDI_BITMAP_PLAN) (local.get $height))
+    (i32.store offset=8 (global.get $GDI_BITMAP_PLAN) (i32.const 32))
+    (i32.store offset=12 (global.get $GDI_BITMAP_PLAN) (i32.const 2))
+    (i32.store offset=16 (global.get $GDI_BITMAP_PLAN) (local.get $stride))
+    (i32.store offset=32 (global.get $GDI_BITMAP_PLAN)
+      (i32.mul (local.get $stride) (local.get $height)))
+    (local.set $bitmap (call $gdi_bitmap_create_owned
+      (global.get $GDI_BITMAP_PLAN) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
+    (local.set $dc (call $gdi_dc_alloc))
+    (if (i32.eqz (local.get $dc))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $bitmap)))
+        (return (i32.const 0))))
+    (drop (call $gdi_dc_select_owned_object (local.get $dc) (local.get $bitmap)))
+    (call $help_paint_typed_view (local.get $dc))
+    (drop (call $gdi_dc_delete (local.get $dc)))
+    (local.get $bitmap))
+  (func (export "test_help_release_bitmap_probe") (param $bitmap i32) (result i32)
+    (call $gdi_object_delete_full (local.get $bitmap)))
   (func (export "test_help_view_hotspot_token_at")
     (param $x i32) (param $y i32) (result i32)
     (call $help_view_hotspot_token_at (local.get $x) (local.get $y)))

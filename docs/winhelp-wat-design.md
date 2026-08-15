@@ -22,15 +22,20 @@ exact Key, PartialKey prefix selection, SetContents, and owner-scoped Quit have
 explicit success/failure semantics. Unknown and not-yet-parsed structured
 commands return false without changing the visible topic. ANSI/Unicode ABI
 normalization now feeds the same engine. The existing help window owns exact
-formatted-token/payload arenas plus positioned text/space/bitmap-placeholder
-runs, and paints visible WAT-laid-out text without reparsing while scrolling.
+formatted-token/payload arenas plus positioned text/space/bitmap runs, and
+paints visible WAT-laid-out text and embedded rasters without reparsing while
+scrolling.
 Complete paragraph/table geometry and asynchronous browser VFS mounting remain
 in progress.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
-WinHelp packing modes into preflighted caller-owned buffers. Layout, GDI bitmap
-materialization, and the runtime UI cutover remain. Paired `|KWBTREE` and
+WinHelp packing modes into preflighted caller-owned buffers. External
+`bmc`/`bml`/`bmr` commands resolve to normalized resource indexes; referenced
+DDB/DIB pixels and palettes are copied transactionally into WAT-owned GDI
+objects, laid out at intrinsic dimensions, painted through canonical BitBlt,
+and released on replacement or Quit. Inline picture unions and metafiles remain
+explicit placeholders. Paired `|KWBTREE` and
 `|KWDATA` files now publish a case-folded default keyword index with canonical
 topic postings and explicit `|Rose` macro sentinels.
 
@@ -925,11 +930,11 @@ populate the existing help window directly from the WAT-owned title and decoded
 decodes the typed IR transactionally, preflights exact viewer allocations, and
 publishes retained positioned runs only after layout succeeds. Text wrapping,
 explicit breaks, semantic spaces, normalized font height/color, hotspot
-membership, visible-run painting, bounded scrolling, and bitmap placeholders
-are WAT-owned. The current viewer path has a temporary 64 KiB decoded-topic
-cap; complete paragraph/table metrics, exact font selection, and dynamic sizing
-remain Phase 5 work. Browser assets not already mounted in the VFS still need
-the raw-byte async continuation described above.
+membership, visible-run painting, bounded scrolling, intrinsic bitmap geometry,
+and raster painting are WAT-owned. The current viewer path has a temporary
+64 KiB decoded-topic cap; complete paragraph/table metrics, exact font
+selection, and dynamic sizing remain Phase 5 work. Browser assets not already
+mounted in the VFS still need the raw-byte async continuation described above.
 
 - Implement ANSI/Unicode normalization and transactional requests.
 - Support P0 commands and correct return/lifecycle semantics.
@@ -979,14 +984,20 @@ fixed in-document hash jumps and popups resolve through canonical topic state,
 the shared transactional history, and the production window-message path.
 Nested, orphaned, and unterminated hotspot regions are rejected; unsupported
 variable, external, and macro forms fail without changing topic or history.
-Embedded pictures retain positioned placeholders until their decoded pixels
-become GDI bitmaps. Separate native-style popup window geometry remains to
-complete the popup presentation path.
+External embedded-picture references now retain exact command bytes alongside
+a canonical normalized bitmap index. Referenced DDB/DIB resources decode and
+materialize as owned GDI bitmap/source-DC state inside the same view
+transaction; layout uses normalized width/height, visible image runs paint via
+SRCCOPY, and topic/document/Quit teardown deletes every object. A failed decode
+or allocation leaves the prior complete view live. Inline picture unions and
+metafiles keep bounded placeholders pending their independent decoders.
+Separate native-style popup window geometry remains to complete the popup
+presentation path.
 
 - Complete font/paragraph token decoding and deterministic layout.
 - Extend implemented fixed-hash jumps/popups with bounded external forms and
   native-style context popup presentation.
-- Materialize decoded embedded bitmap payloads as WAT-owned GDI bitmaps.
+- Extend raster materialization to inline picture unions and metafiles.
 
 Exit criterion: visual topic captures and hotspot target transitions match the
 reference for fixtures containing `|FONT` and `|bmN` data.
