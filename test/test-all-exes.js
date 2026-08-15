@@ -177,12 +177,15 @@ const TEST_CASES = [
   // Winamp extracted app
   { exe: 'test/binaries/winamp.exe', name: 'Winamp' },
   // Installers (NSIS etc.)
+  // Both run with NSIS /S — a silent install, which by definition draws no UI.
+  // Reaching CreateProcessA is the whole success signal, so capturing a frame
+  // only produced a bare desktop that scored as BLANK.
   { exe: 'test/binaries/installers/winamp291.exe', name: 'Winamp 2.91 Installer',
     extraArgs: ['--args=/S'], maxBatches: 8000, batchSize: 5000, timeoutMs: 180000,
-    expectOutput: '[API] CreateProcessA' },
+    expectOutput: '[API] CreateProcessA', noPng: true },
   { exe: 'test/binaries/installers/winamp295.exe', name: 'Winamp 2.95 Installer',
     extraArgs: ['--args=/S'], maxBatches: 8000, batchSize: 5000, timeoutMs: 180000,
-    expectOutput: '[API] CreateProcessA' },
+    expectOutput: '[API] CreateProcessA', noPng: true },
   { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer', expectedCrash: 'not a current-stage target' },
   // WEP community 32-bit remakes (archive.org/details/wep-32bit)
   { exe: 'test/binaries/wep32-community/Bricks/bricks.exe', name: 'Bricks (Klotski)' },
