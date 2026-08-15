@@ -360,6 +360,373 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; ============================================================
+  ;; sscanf — the inverse of the wsprintf in 12-wsprintf.wat
+  ;; ============================================================
+  ;; cdplayer.exe parses its stored disc/track database with it. Supported
+  ;; directives: %d %i %u %x %o %c %s %e %f %g %[...] %%, each with an optional
+  ;; '*' suppression flag, a field width, and h/l/L length modifiers.
+  ;; Whitespace in the format matches any run of input whitespace; any other
+  ;; format character must match the input exactly. The return value is the
+  ;; number of items assigned, or -1 (EOF) when input ran out before the first
+  ;; conversion, exactly as the C runtime reports it.
+
+  (func $scan_is_space (param $ch i32) (result i32)
+    (i32.or
+      (i32.eq (local.get $ch) (i32.const 0x20))
+      (i32.and (i32.ge_u (local.get $ch) (i32.const 0x09))
+               (i32.le_u (local.get $ch) (i32.const 0x0D)))))
+
+  ;; Digit value of $ch in $base, or -1.
+  (func $scan_digit (param $ch i32) (param $base i32) (result i32)
+    (local $v i32)
+    (local.set $v (i32.const -1))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30))
+                 (i32.le_u (local.get $ch) (i32.const 0x39)))
+      (then (local.set $v (i32.sub (local.get $ch) (i32.const 0x30)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                 (i32.le_u (local.get $ch) (i32.const 0x7A)))
+      (then (local.set $v (i32.add (i32.sub (local.get $ch) (i32.const 0x61)) (i32.const 10)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
+                 (i32.le_u (local.get $ch) (i32.const 0x5A)))
+      (then (local.set $v (i32.add (i32.sub (local.get $ch) (i32.const 0x41)) (i32.const 10)))))
+    (if (i32.ge_u (local.get $v) (local.get $base)) (then (local.set $v (i32.const -1))))
+    (local.get $v))
+
+  ;; Store an integer through the next vararg pointer, honouring 'h' (short)
+  ;; and 'l' (long, same 32 bits here). $len: 0 = int, 1 = short, 2 = long.
+  (func $scan_store_int (param $dst i32) (param $val i32) (param $len i32)
+    (if (i32.eqz (local.get $dst)) (then (return)))
+    (if (i32.eq (local.get $len) (i32.const 1))
+      (then (call $gs16 (local.get $dst) (local.get $val)) (return)))
+    (call $gs32 (local.get $dst) (local.get $val)))
+
+  ;; Is $ch a member of the scanset starting at $set (just past the '[')?
+  ;; $set_end is the index of the closing ']'. Handles a leading '^' negation
+  ;; and a-z style ranges.
+  (func $scan_set_match (param $set i32) (param $set_end i32) (param $ch i32) (result i32)
+    (local $i i32) (local $neg i32) (local $hit i32) (local $c i32) (local $next i32)
+    (local.set $i (local.get $set))
+    (if (i32.eq (call $gl8 (local.get $i)) (i32.const 0x5E)) ;; '^'
+      (then (local.set $neg (i32.const 1))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $set_end)))
+      (local.set $c (call $gl8 (local.get $i)))
+      (local.set $next (call $gl8 (i32.add (local.get $i) (i32.const 1))))
+      ;; "a-z": a range, but only when the '-' is not the last set character.
+      (if (i32.and (i32.eq (local.get $next) (i32.const 0x2D))
+                   (i32.lt_u (i32.add (local.get $i) (i32.const 2)) (local.get $set_end)))
+        (then
+          (if (i32.and
+                (i32.ge_u (local.get $ch) (local.get $c))
+                (i32.le_u (local.get $ch) (call $gl8 (i32.add (local.get $i) (i32.const 2)))))
+            (then (local.set $hit (i32.const 1))))
+          (local.set $i (i32.add (local.get $i) (i32.const 3)))
+          (br $scan)))
+      (if (i32.eq (local.get $ch) (local.get $c)) (then (local.set $hit (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (local.get $neg) (then (return (i32.eqz (local.get $hit)))))
+    (local.get $hit))
+
+  ;; $src, $fmt: guest pointers. $va: guest address of the first vararg slot.
+  (func $sscanf_impl (param $src i32) (param $fmt i32) (param $va i32) (result i32)
+    (local $s i32) (local $f i32) (local $assigned i32) (local $ch i32) (local $fc i32)
+    (local $suppress i32) (local $width i32) (local $len i32) (local $conv i32)
+    (local $base i32) (local $neg i32) (local $val i32) (local $digits i32)
+    (local $dst i32) (local $count i32) (local $set_start i32) (local $set_end i32)
+    (local $fval f64) (local $frac f64) (local $any i32) (local $consumed i32)
+    (local.set $s (local.get $src))
+    (local.set $f (local.get $fmt))
+    (if (i32.or (i32.eqz (local.get $src)) (i32.eqz (local.get $fmt)))
+      (then (return (i32.const -1))))
+    (block $stop (loop $next_fmt
+      (local.set $fc (call $gl8 (local.get $f)))
+      (br_if $stop (i32.eqz (local.get $fc)))
+
+      ;; Whitespace in the format: match any amount, including none.
+      (if (call $scan_is_space (local.get $fc))
+        (then
+          (local.set $f (i32.add (local.get $f) (i32.const 1)))
+          (block $ws_done (loop $ws
+            (br_if $ws_done (i32.eqz (call $scan_is_space (call $gl8 (local.get $s)))))
+            (local.set $s (i32.add (local.get $s) (i32.const 1)))
+            (br $ws)))
+          (br $next_fmt)))
+
+      ;; Ordinary character: must match exactly.
+      (if (i32.ne (local.get $fc) (i32.const 0x25)) ;; '%'
+        (then
+          (br_if $stop (i32.ne (call $gl8 (local.get $s)) (local.get $fc)))
+          (local.set $s (i32.add (local.get $s) (i32.const 1)))
+          (local.set $f (i32.add (local.get $f) (i32.const 1)))
+          (br $next_fmt)))
+
+      ;; --- a directive ---
+      (local.set $f (i32.add (local.get $f) (i32.const 1)))
+      (local.set $suppress (i32.const 0))
+      (local.set $width (i32.const 0))
+      (local.set $len (i32.const 0))
+      (if (i32.eq (call $gl8 (local.get $f)) (i32.const 0x2A)) ;; '*'
+        (then (local.set $suppress (i32.const 1))
+              (local.set $f (i32.add (local.get $f) (i32.const 1)))))
+      (block $w_done (loop $w
+        (local.set $ch (call $gl8 (local.get $f)))
+        (br_if $w_done (i32.or (i32.lt_u (local.get $ch) (i32.const 0x30))
+                               (i32.gt_u (local.get $ch) (i32.const 0x39))))
+        (local.set $width (i32.add (i32.mul (local.get $width) (i32.const 10))
+                                   (i32.sub (local.get $ch) (i32.const 0x30))))
+        (local.set $f (i32.add (local.get $f) (i32.const 1)))
+        (br $w)))
+      (block $len_done (loop $lm
+        (local.set $ch (call $gl8 (local.get $f)))
+        (if (i32.eq (local.get $ch) (i32.const 0x68)) ;; 'h'
+          (then (local.set $len (i32.const 1))
+                (local.set $f (i32.add (local.get $f) (i32.const 1))) (br $lm)))
+        (if (i32.or (i32.eq (local.get $ch) (i32.const 0x6C))    ;; 'l'
+                    (i32.eq (local.get $ch) (i32.const 0x4C)))   ;; 'L'
+          (then (local.set $len (i32.const 2))
+                (local.set $f (i32.add (local.get $f) (i32.const 1))) (br $lm)))
+        (br $len_done)))
+      (local.set $conv (call $gl8 (local.get $f)))
+      (local.set $f (i32.add (local.get $f) (i32.const 1)))
+
+      ;; "%%" matches a literal percent and assigns nothing.
+      (if (i32.eq (local.get $conv) (i32.const 0x25))
+        (then
+          (br_if $stop (i32.ne (call $gl8 (local.get $s)) (i32.const 0x25)))
+          (local.set $s (i32.add (local.get $s) (i32.const 1)))
+          (br $next_fmt)))
+
+      ;; The vararg slot for this directive, unless assignment is suppressed.
+      (local.set $dst (i32.const 0))
+      (if (i32.eqz (local.get $suppress))
+        (then
+          (local.set $dst (call $gl32 (local.get $va)))
+          (local.set $va (i32.add (local.get $va) (i32.const 4)))))
+
+      ;; %c — exactly $width characters (default 1), no whitespace skipping.
+      (if (i32.eq (local.get $conv) (i32.const 0x63))
+        (then
+          (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 1))))
+          (local.set $count (i32.const 0))
+          (block $c_done (loop $c
+            (br_if $c_done (i32.ge_u (local.get $count) (local.get $width)))
+            (local.set $ch (call $gl8 (local.get $s)))
+            (br_if $c_done (i32.eqz (local.get $ch)))
+            (if (local.get $dst)
+              (then (call $gs8 (i32.add (local.get $dst) (local.get $count)) (local.get $ch))))
+            (local.set $s (i32.add (local.get $s) (i32.const 1)))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (br $c)))
+          (br_if $stop (i32.lt_u (local.get $count) (local.get $width)))
+          (if (i32.eqz (local.get $suppress))
+            (then (local.set $assigned (i32.add (local.get $assigned) (i32.const 1)))))
+          (br $next_fmt)))
+
+      ;; %[...] — a scanset, also without leading whitespace skipping.
+      (if (i32.eq (local.get $conv) (i32.const 0x5B))
+        (then
+          (local.set $set_start (local.get $f))
+          ;; A ']' immediately after '[' or '[^' is a literal member.
+          (local.set $set_end (local.get $f))
+          (if (i32.eq (call $gl8 (local.get $set_end)) (i32.const 0x5E))
+            (then (local.set $set_end (i32.add (local.get $set_end) (i32.const 1)))))
+          (if (i32.eq (call $gl8 (local.get $set_end)) (i32.const 0x5D))
+            (then (local.set $set_end (i32.add (local.get $set_end) (i32.const 1)))))
+          (block $set_done (loop $find
+            (local.set $ch (call $gl8 (local.get $set_end)))
+            (br_if $stop (i32.eqz (local.get $ch)))
+            (br_if $set_done (i32.eq (local.get $ch) (i32.const 0x5D)))
+            (local.set $set_end (i32.add (local.get $set_end) (i32.const 1)))
+            (br $find)))
+          (local.set $f (i32.add (local.get $set_end) (i32.const 1)))
+          (local.set $count (i32.const 0))
+          (block $sset_done (loop $sset
+            (if (local.get $width)
+              (then (br_if $sset_done (i32.ge_u (local.get $count) (local.get $width)))))
+            (local.set $ch (call $gl8 (local.get $s)))
+            (br_if $sset_done (i32.eqz (local.get $ch)))
+            (br_if $sset_done
+              (i32.eqz (call $scan_set_match (local.get $set_start) (local.get $set_end) (local.get $ch))))
+            (if (local.get $dst)
+              (then (call $gs8 (i32.add (local.get $dst) (local.get $count)) (local.get $ch))))
+            (local.set $s (i32.add (local.get $s) (i32.const 1)))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (br $sset)))
+          (br_if $stop (i32.eqz (local.get $count)))
+          (if (local.get $dst)
+            (then (call $gs8 (i32.add (local.get $dst) (local.get $count)) (i32.const 0))))
+          (if (i32.eqz (local.get $suppress))
+            (then (local.set $assigned (i32.add (local.get $assigned) (i32.const 1)))))
+          (br $next_fmt)))
+
+      ;; Every remaining conversion skips leading whitespace first.
+      (block $ws2_done (loop $ws2
+        (br_if $ws2_done (i32.eqz (call $scan_is_space (call $gl8 (local.get $s)))))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $ws2)))
+
+      ;; %s — a run of non-whitespace.
+      (if (i32.eq (local.get $conv) (i32.const 0x73))
+        (then
+          (local.set $count (i32.const 0))
+          (block $s_done (loop $sl
+            (if (local.get $width)
+              (then (br_if $s_done (i32.ge_u (local.get $count) (local.get $width)))))
+            (local.set $ch (call $gl8 (local.get $s)))
+            (br_if $s_done (i32.eqz (local.get $ch)))
+            (br_if $s_done (call $scan_is_space (local.get $ch)))
+            (if (local.get $dst)
+              (then (call $gs8 (i32.add (local.get $dst) (local.get $count)) (local.get $ch))))
+            (local.set $s (i32.add (local.get $s) (i32.const 1)))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (br $sl)))
+          (br_if $stop (i32.eqz (local.get $count)))
+          (if (local.get $dst)
+            (then (call $gs8 (i32.add (local.get $dst) (local.get $count)) (i32.const 0))))
+          (if (i32.eqz (local.get $suppress))
+            (then (local.set $assigned (i32.add (local.get $assigned) (i32.const 1)))))
+          (br $next_fmt)))
+
+      ;; %e %f %g — a decimal float, optionally with an exponent.
+      (if (i32.or (i32.eq (local.get $conv) (i32.const 0x66))   ;; 'f'
+            (i32.or (i32.eq (local.get $conv) (i32.const 0x65)) ;; 'e'
+                    (i32.eq (local.get $conv) (i32.const 0x67)))) ;; 'g'
+        (then
+          (local.set $neg (i32.const 0))
+          (local.set $ch (call $gl8 (local.get $s)))
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2D)) (i32.eq (local.get $ch) (i32.const 0x2B)))
+            (then
+              (local.set $neg (i32.eq (local.get $ch) (i32.const 0x2D)))
+              (local.set $s (i32.add (local.get $s) (i32.const 1)))))
+          (local.set $fval (f64.const 0))
+          (local.set $digits (i32.const 0))
+          (block $ip_done (loop $ip
+            (local.set $val (call $scan_digit (call $gl8 (local.get $s)) (i32.const 10)))
+            (br_if $ip_done (i32.lt_s (local.get $val) (i32.const 0)))
+            (local.set $fval (f64.add (f64.mul (local.get $fval) (f64.const 10))
+                                      (f64.convert_i32_s (local.get $val))))
+            (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+            (local.set $s (i32.add (local.get $s) (i32.const 1)))
+            (br $ip)))
+          (if (i32.eq (call $gl8 (local.get $s)) (i32.const 0x2E)) ;; '.'
+            (then
+              (local.set $s (i32.add (local.get $s) (i32.const 1)))
+              (local.set $frac (f64.const 1))
+              (block $fp_done (loop $fp
+                (local.set $val (call $scan_digit (call $gl8 (local.get $s)) (i32.const 10)))
+                (br_if $fp_done (i32.lt_s (local.get $val) (i32.const 0)))
+                (local.set $frac (f64.div (local.get $frac) (f64.const 10)))
+                (local.set $fval (f64.add (local.get $fval)
+                  (f64.mul (f64.convert_i32_s (local.get $val)) (local.get $frac))))
+                (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+                (local.set $s (i32.add (local.get $s) (i32.const 1)))
+                (br $fp)))))
+          (br_if $stop (i32.eqz (local.get $digits)))
+          ;; Exponent, only when it is actually well formed.
+          (local.set $ch (call $gl8 (local.get $s)))
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 0x65)) (i32.eq (local.get $ch) (i32.const 0x45)))
+            (then
+              (local.set $consumed (i32.const 1))
+              (local.set $any (i32.const 0))
+              (local.set $count (i32.const 0))
+              (local.set $ch (call $gl8 (i32.add (local.get $s) (local.get $consumed))))
+              (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2D)) (i32.eq (local.get $ch) (i32.const 0x2B)))
+                (then
+                  (local.set $any (i32.eq (local.get $ch) (i32.const 0x2D)))
+                  (local.set $consumed (i32.add (local.get $consumed) (i32.const 1)))))
+              (local.set $digits (i32.const 0))
+              (block $ex_done (loop $ex
+                (local.set $val (call $scan_digit
+                  (call $gl8 (i32.add (local.get $s) (local.get $consumed))) (i32.const 10)))
+                (br_if $ex_done (i32.lt_s (local.get $val) (i32.const 0)))
+                (local.set $count (i32.add (i32.mul (local.get $count) (i32.const 10)) (local.get $val)))
+                (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+                (local.set $consumed (i32.add (local.get $consumed) (i32.const 1)))
+                (br $ex)))
+              (if (local.get $digits)
+                (then
+                  (local.set $s (i32.add (local.get $s) (local.get $consumed)))
+                  (block $sc_done (loop $sc
+                    (br_if $sc_done (i32.eqz (local.get $count)))
+                    (if (local.get $any)
+                      (then (local.set $fval (f64.div (local.get $fval) (f64.const 10))))
+                      (else (local.set $fval (f64.mul (local.get $fval) (f64.const 10)))))
+                    (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+                    (br $sc)))))))
+          (if (local.get $neg) (then (local.set $fval (f64.neg (local.get $fval)))))
+          (if (local.get $dst)
+            (then
+              ;; 'l'/'L' means double; a bare %f is a float.
+              (if (i32.eq (local.get $len) (i32.const 2))
+                (then (f64.store (call $g2w (local.get $dst)) (local.get $fval)))
+                (else (f32.store (call $g2w (local.get $dst))
+                        (f32.demote_f64 (local.get $fval)))))))
+          (if (i32.eqz (local.get $suppress))
+            (then (local.set $assigned (i32.add (local.get $assigned) (i32.const 1)))))
+          (br $next_fmt)))
+
+      ;; %d %i %u %x %X %o — integers.
+      (local.set $base (i32.const 10))
+      (if (i32.or (i32.eq (local.get $conv) (i32.const 0x78))    ;; 'x'
+                  (i32.eq (local.get $conv) (i32.const 0x58)))   ;; 'X'
+        (then (local.set $base (i32.const 16))))
+      (if (i32.eq (local.get $conv) (i32.const 0x6F)) (then (local.set $base (i32.const 8)))) ;; 'o'
+      (br_if $stop
+        (i32.eqz (i32.or (i32.eq (local.get $conv) (i32.const 0x64))   ;; 'd'
+          (i32.or (i32.eq (local.get $conv) (i32.const 0x69))          ;; 'i'
+            (i32.or (i32.eq (local.get $conv) (i32.const 0x75))        ;; 'u'
+              (i32.or (i32.eq (local.get $conv) (i32.const 0x78))
+                (i32.or (i32.eq (local.get $conv) (i32.const 0x58))
+                        (i32.eq (local.get $conv) (i32.const 0x6F)))))))))
+      (local.set $neg (i32.const 0))
+      (local.set $ch (call $gl8 (local.get $s)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2D)) (i32.eq (local.get $ch) (i32.const 0x2B)))
+        (then
+          (local.set $neg (i32.eq (local.get $ch) (i32.const 0x2D)))
+          (local.set $s (i32.add (local.get $s) (i32.const 1)))))
+      ;; A 0x prefix is part of %x, and of %i's base detection.
+      (if (i32.and (i32.eq (call $gl8 (local.get $s)) (i32.const 0x30))
+                   (i32.or (i32.eq (local.get $base) (i32.const 16))
+                           (i32.eq (local.get $conv) (i32.const 0x69))))
+        (then
+          (local.set $ch (call $gl8 (i32.add (local.get $s) (i32.const 1))))
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 0x78)) (i32.eq (local.get $ch) (i32.const 0x58)))
+            (then
+              (local.set $base (i32.const 16))
+              (local.set $s (i32.add (local.get $s) (i32.const 2)))))))
+      (local.set $val (i32.const 0))
+      (local.set $digits (i32.const 0))
+      (block $int_done (loop $int
+        (if (local.get $width)
+          (then (br_if $int_done (i32.ge_u (local.get $digits) (local.get $width)))))
+        (local.set $count (call $scan_digit (call $gl8 (local.get $s)) (local.get $base)))
+        (br_if $int_done (i32.lt_s (local.get $count) (i32.const 0)))
+        (local.set $val (i32.add (i32.mul (local.get $val) (local.get $base)) (local.get $count)))
+        (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $int)))
+      (br_if $stop (i32.eqz (local.get $digits)))
+      (if (local.get $neg) (then (local.set $val (i32.sub (i32.const 0) (local.get $val)))))
+      (call $scan_store_int (local.get $dst) (local.get $val) (local.get $len))
+      (if (i32.eqz (local.get $suppress))
+        (then (local.set $assigned (i32.add (local.get $assigned) (i32.const 1)))))
+      (br $next_fmt)))
+    ;; Input exhausted before anything was converted is EOF, not "zero items".
+    (if (i32.and (i32.eqz (local.get $assigned))
+                 (i32.eqz (call $gl8 (local.get $src))))
+      (then (return (i32.const -1))))
+    (local.get $assigned))
+
+  ;; sscanf(buffer, format, ...) — cdecl
+  (func $handle_sscanf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $sscanf_impl
+      (local.get $arg0) (local.get $arg1) (i32.add (global.get $esp) (i32.const 12))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 733: realloc(ptr, size) — cdecl
   (func $handle_realloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $new_ptr i32) (local $old_size i32)

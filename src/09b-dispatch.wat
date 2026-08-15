@@ -700,6 +700,12 @@
         (call $d3d_enum_devices_continue)
         (return)))
 
+    ;; EnumChildWindows continuation — callback returned, try the next child
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002B))
+      (then
+        (call $enum_child_continue)
+        (return)))
+
     ;; D3D EnumZBufferFormats continuation — callback returned, finish enumeration
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000D))
       (then

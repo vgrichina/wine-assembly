@@ -1024,6 +1024,8 @@ const extra = [
   { name: 'AddAtomW', nargs: 1 },
   { name: 'GetAtomNameA', nargs: 3 },
   { name: 'GetAtomNameW', nargs: 3 },
+  // MSVCRT — cdplayer.exe parses its disc database with sscanf.
+  { name: 'sscanf', nargs: 2, convention: 'cdecl' },
   // USER32 — Win95-era menu item insertion; winamp.exe calls it while
   // building its playlist menu.
   { name: 'InsertMenuItemA', nargs: 4 },
@@ -1063,7 +1065,7 @@ const cdeclCrtApis = new Set([
   '_purecall', '_splitpath', '_strdup', '_stricmp', '_strlwr', '_strrev',
   '_wcsicmp', '_wtoi',
   'atoi', 'atol', 'bsearch', 'calloc', 'exit', 'free', 'malloc', 'memcpy',
-  'memmove', 'memset', 'rand', 'realloc', 'sprintf', 'srand', 'strcat',
+  'memmove', 'memset', 'rand', 'realloc', 'sprintf', 'sscanf', 'srand', 'strcat',
   'strchr', 'strcmp', 'strcpy', 'strlen', 'strncpy', 'strrchr', 'time',
   'toupper', 'wcscmp', 'wcslen', 'wcsncpy', 'wcsrchr', 'mbstowcs', 'wcstombs',
   'ceil', 'sqrt', 'sin', 'pow', '_CIpow',

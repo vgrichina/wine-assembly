@@ -1899,6 +1899,19 @@
   (global $d3d_enum_dev_ret   (mut i32) (i32.const 0))
   (global $d3d_enum_dev_mode  (mut i32) (i32.const 0)) ;; 0=legacy D3D1/2/3, 7=D3D7
 
+  ;; EnumChildWindows iteration state (CACA002B). The callback runs once per
+  ;; child and may stop the walk by returning FALSE, so the scan position has
+  ;; to survive across the guest call the way the D3D enumerators do.
+  ;; $enum_child_depth guards the re-entrant case: a callback that itself calls
+  ;; EnumChildWindows would otherwise overwrite the outer walk's position.
+  (global $enum_child_thunk  (mut i32) (i32.const 0))
+  (global $enum_child_parent (mut i32) (i32.const 0))
+  (global $enum_child_slot   (mut i32) (i32.const 0))
+  (global $enum_child_cb     (mut i32) (i32.const 0))
+  (global $enum_child_lparam (mut i32) (i32.const 0))
+  (global $enum_child_ret    (mut i32) (i32.const 0))
+  (global $enum_child_depth  (mut i32) (i32.const 0))
+
   ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir
   ;; which frees the old buffer first.

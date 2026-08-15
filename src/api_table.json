@@ -18583,5 +18583,12 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 4066315853
+  },
+  {
+    "id": 2394,
+    "name": "sscanf",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 61546003
   }
 ]

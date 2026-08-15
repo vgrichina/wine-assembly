@@ -2199,6 +2199,12 @@
   (func (export "guest_free") (param $g i32)
     (call $heap_free (local.get $g)))
 
+  ;; sscanf — exercised by test/test-sscanf.js. Varargs are a guest array of
+  ;; pointers here rather than a live stack frame, which is exactly what
+  ;; $sscanf_impl walks.
+  (func (export "test_sscanf") (param $src i32) (param $fmt i32) (param $va i32) (result i32)
+    (call $sscanf_impl (local.get $src) (local.get $fmt) (local.get $va)))
+
   ;; Dynamic menus — exercised by test/test-menu-insert.js. The read-backs
   ;; expose the MNUD item records so a test can assert insertion *order*,
   ;; which is the part InsertMenuItem exists to get right.

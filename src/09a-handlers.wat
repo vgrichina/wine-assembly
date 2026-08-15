@@ -11119,8 +11119,13 @@
   )
 
   ;; 677: DestroyCursor — STUB: unimplemented
+  ;; DestroyCursor(hCursor). LoadCursor hands back an encoded handle with no
+  ;; allocation behind it, so there is nothing to release — same situation as
+  ;; DestroyIcon. A NULL handle is still an error, which is the one part of
+  ;; the contract a caller can actually observe.
   (func $handle_DestroyCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 678: FindWindowW(lpClassName, lpWindowName) → HWND
@@ -11394,8 +11399,87 @@
   )
 
   ;; 693: EnumChildWindows — STUB: unimplemented
+  ;; EnumChildWindows(hwndParent, lpEnumFunc, lParam)
+  ;;
+  ;; Win32 enumerates every descendant, not just immediate children, and stops
+  ;; early when the callback returns FALSE. Each callback is a guest call, so
+  ;; the walk suspends on the CACA002B continuation and resumes at the next
+  ;; slot — the same shape as the D3D device enumerators.
+  (func $enum_child_is_descendant (param $hwnd i32) (param $ancestor i32) (result i32)
+    (local $p i32) (local $guard i32)
+    (local.set $p (call $wnd_get_parent (local.get $hwnd)))
+    (block $done (loop $walk
+      (br_if $done (i32.eqz (local.get $p)))
+      (if (i32.eq (local.get $p) (local.get $ancestor)) (then (return (i32.const 1))))
+      ;; A malformed parent chain must not spin forever.
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+      (local.set $p (call $wnd_get_parent (local.get $p)))
+      (br $walk)))
+    (i32.const 0))
+
+  ;; Finish the walk: drop the saved API return address and resume the caller.
+  ;; EnumChildWindows reports TRUE whenever it ran, including a callback-
+  ;; requested early stop.
+  (func $enum_child_finish
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (global.set $eip (global.get $enum_child_ret))
+    (global.set $enum_child_depth (i32.const 0))
+    (global.set $eax (i32.const 1)))
+
+  ;; Invoke the callback for the next descendant at or after $enum_child_slot.
+  (func $enum_child_dispatch
+    (local $slot i32) (local $hwnd i32)
+    (local.set $slot (global.get $enum_child_slot))
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS))
+        (then (call $enum_child_finish) (return)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $slot)))
+      (br_if $found
+        (i32.and
+          (i32.ne (local.get $hwnd) (i32.const 0))
+          (call $enum_child_is_descendant (local.get $hwnd) (global.get $enum_child_parent))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (global.set $enum_child_slot (local.get $slot))
+    ;; WNDENUMPROC(hwnd, lParam), stdcall — push right to left.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_child_lparam))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $hwnd))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_child_thunk))
+    (global.set $eip (global.get $enum_child_cb))
+    (global.set $steps (i32.const 0)))
+
+  ;; CACA002B: the callback returned. FALSE stops the walk.
+  (func $enum_child_continue
+    (if (i32.eqz (global.get $eax))
+      (then (call $enum_child_finish) (return)))
+    (global.set $enum_child_slot (i32.add (global.get $enum_child_slot) (i32.const 1)))
+    (call $enum_child_dispatch))
+
   (func $handle_EnumChildWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; ret addr + 3 args
+    ;; No callback, or a callback re-entering the walk we are already running:
+    ;; report success without touching the outer iteration state.
+    (if (i32.or (i32.eqz (local.get $arg1)) (global.get $enum_child_depth))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $eip (local.get $ret))
+        (return)))
+    (global.set $enum_child_depth (i32.const 1))
+    (global.set $enum_child_parent (local.get $arg0))
+    (global.set $enum_child_cb (local.get $arg1))
+    (global.set $enum_child_lparam (local.get $arg2))
+    (global.set $enum_child_ret (local.get $ret))
+    (global.set $enum_child_slot (i32.const 0))
+    ;; Keep the API return address below the callback's stdcall frame.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret))
+    (call $enum_child_dispatch)
   )
 
   ;; 694: InvalidateRgn(hwnd, hrgn, bErase). hrgn=NULL → full client rect.
