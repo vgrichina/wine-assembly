@@ -70,6 +70,36 @@ The candidate comparisons, licensing audit, style findings, CP437 conversion,
 and runtime design are recorded in
 [`docs/bitmap-font-review.md`](../docs/bitmap-font-review.md).
 
+## Scalable substitutes (design stage, not yet wired)
+
+Vendored for the work described in
+[`../docs/scalable-font-design.md`](../docs/scalable-font-design.md). No runtime
+code consumes these yet.
+
+Liberation 2.1.5 is metric-compatible with the Win98 core scalable faces — same
+advance widths, different outlines — so guest layout math stays correct:
+
+| Win98 face | File prefix | License |
+|---|---|---|
+| Arial | `liberation/LiberationSans-*.ttf` | SIL OFL 1.1 |
+| Times New Roman | `liberation/LiberationSerif-*.ttf` | SIL OFL 1.1 |
+| Courier New | `liberation/LiberationMono-*.ttf` | SIL OFL 1.1 |
+
+All four styles (Regular, Bold, Italic, BoldItalic) are present for each family,
+so no synthetic emboldening or obliquing is needed. Source release tarball
+`liberation-fonts-ttf-2.1.5.tar.gz`, SHA-256
+`7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`, downloaded
+2026-08-14; per-file hashes are reproducible from that archive. The license text
+is `liberation/LICENSE`.
+
+Wine's own Win9x substitutes for Tahoma, Tahoma Bold, Small Fonts, Marlett,
+Symbol, Wingdings, and Webdings are pinned in `wine/` alongside the bitmap
+sources; see `wine/UPSTREAM.md` for hashes and caveats.
+
+Metric compatibility is a statement of upstream design intent until the v86
+Win98 reference comparison described in the design doc exists. It has not been
+measured in this repository yet.
+
 ## Legacy web/CSS substitutes
 
 `W95FA.otf`, `w95fa.woff2`, and `FSEX302.ttf` predate the WAT bitmap path. They
