@@ -649,6 +649,18 @@ async function main() {
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const imports = createHostImports(ctx);
+  const windowCreates = [];
+  const windowDestroys = [];
+  const createWindow = imports.host.create_window;
+  const destroyWindow = imports.host.destroy_window;
+  imports.host.create_window = (...args) => {
+    windowCreates.push(args.slice(0, 6));
+    return createWindow(...args);
+  };
+  imports.host.destroy_window = hwnd => {
+    windowDestroys.push(hwnd);
+    return destroyWindow(hwnd);
+  };
   imports.host.memory = memory;
   imports.host.create_thread = () => 0;
   imports.host.exit_thread = () => 0;
@@ -2405,6 +2417,12 @@ async function main() {
     e.test_invoke_WinHelpA(0x8888, popupPathA, 0x0001, 8) === 1 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_session_mode() === 1 &&
     e.get_help_view_back_count() === 0);
+  const popupMainHwnd = e.get_help_window();
+  const popupMainTopicPtr = e.get_help_view_topic_ptr();
+  const popupMainRunsPtr = e.get_help_view_run_ptr();
+  const popupMainFont = Array.from({ length: e.get_help_view_font_slot_count() },
+    (_, index) => e.get_help_view_font_handle(index)).find(Boolean) || 0;
+  const popupCreateStart = windowCreates.length;
   const popupRun = Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
     const record = e.get_help_view_run_ptr() + index * 40;
     return {
@@ -2412,13 +2430,68 @@ async function main() {
       flagged: dv.getUint32(record + 36, true) !== 0,
     };
   }).find(run => run.flagged);
-  check('fixed popup hotspot commits canonical popup mode through the window path',
+  check('fixed popup hotspot opens a separate owned popup and shadow window',
     popupRun && e.test_help_window_message(0x0201, 0,
       (popupRun.y << 16) | (popupRun.x & 0xffff)) === 0 &&
+    e.get_help_popup_hwnd() !== 0 && e.get_help_popup_shadow_hwnd() !== 0 &&
+    e.get_help_popup_hwnd() !== popupMainHwnd && e.get_help_window() === popupMainHwnd &&
+    e.wnd_get_owner(e.get_help_popup_hwnd()) === popupMainHwnd &&
+    e.wnd_get_owner(e.get_help_popup_shadow_hwnd()) === popupMainHwnd);
+  const popupHwnd = e.get_help_popup_hwnd();
+  const popupShadowHwnd = e.get_help_popup_shadow_hwnd();
+  const popupCreates = windowCreates.slice(popupCreateStart);
+  check('fixed popup owns bounded content-sized geometry and popup styles',
+    popupCreates.length === 2 && popupCreates[0][0] === popupShadowHwnd &&
+    (popupCreates[0][1] >>> 0) === 0x90000000 && popupCreates[1][0] === popupHwnd &&
+    (popupCreates[1][1] >>> 0) === 0x90800000 &&
+    e.get_help_popup_width() >= 96 && e.get_help_popup_width() <= 336 &&
+    e.get_help_popup_height() >= 32 && e.get_help_popup_height() <= 240 &&
+    popupCreates.every(call => call[4] === e.get_help_popup_width() &&
+      call[5] === e.get_help_popup_height()));
+  check('popup navigation preserves primary Back history while publishing popup state',
     e.get_help_session_topic_ref() === 30 && e.get_help_session_mode() === 2 &&
-    e.get_help_view_topic_index() === 3 && e.get_help_view_back_count() === 1);
-  check('hotspot fixture cleanup uses normal HELP_QUIT lifecycle',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 && e.get_help_window() === 0);
+    e.get_help_view_topic_index() === 3 && e.get_help_view_back_count() === 0 &&
+    e.get_help_view_topic_ptr() !== popupMainTopicPtr);
+  check('Escape dismisses popup and atomically restores the exact primary view',
+    e.test_help_popup_message(0x0100, 0x1b, 0) === 0 &&
+    e.get_help_popup_hwnd() === 0 && e.get_help_popup_shadow_hwnd() === 0 &&
+    e.get_help_window() === popupMainHwnd &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_session_mode() === 1 &&
+    e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0 &&
+    e.get_help_view_topic_ptr() === popupMainTopicPtr &&
+    e.get_help_view_run_ptr() === popupMainRunsPtr &&
+    windowDestroys.includes(popupHwnd) && windowDestroys.includes(popupShadowHwnd));
+  check('HELP_CONTEXTPOPUP uses the same separate popup lifecycle',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.get_help_window() === popupMainHwnd && e.get_help_popup_hwnd() !== 0 &&
+    e.get_help_session_topic_ref() === 20 && e.get_help_session_mode() === 2 &&
+    e.get_help_view_back_count() === 0);
+  const apiPopupFont = Array.from({ length: e.get_help_view_font_slot_count() },
+    (_, index) => e.get_help_view_font_handle(index)).find(Boolean) || 0;
+  check('WM_CLOSE dismisses an API popup without closing its primary viewer',
+    e.test_help_popup_message(0x0010, 0, 0) === 0 &&
+    e.get_help_popup_hwnd() === 0 && e.get_help_popup_shadow_hwnd() === 0 &&
+    e.get_help_window() === popupMainHwnd && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_session_mode() === 1 && e.get_help_view_topic_ptr() === popupMainTopicPtr &&
+    (!apiPopupFont || e.test_gdi_object_type(apiPopupFont) === 0) &&
+    (!popupMainFont || e.test_gdi_object_type(popupMainFont) === 4));
+  check('a primary-window background click dismisses the owned popup',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.test_help_window_message(0x0201, 0, 0) === 0 &&
+    e.get_help_popup_hwnd() === 0 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_view_topic_ptr() === popupMainTopicPtr);
+  check('popup focus loss restores the primary transaction',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.test_help_popup_message(0x0008, popupMainHwnd, 0) === 0 &&
+    e.get_help_popup_hwnd() === 0 && e.get_help_session_mode() === 1 &&
+    e.get_help_view_topic_ptr() === popupMainTopicPtr);
+  check('HELP_QUIT releases both views while a context popup is live',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.get_help_popup_hwnd() !== 0 &&
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.get_help_window() === 0 && e.get_help_popup_hwnd() === 0 &&
+    e.get_help_popup_shadow_hwnd() === 0 && e.get_help_view_topic_ptr() === 0 &&
+    (!popupMainFont || e.test_gdi_object_type(popupMainFont) === 0));
 
   check('WinHelpA handler opens a window from WAT-owned title/topic state',
     e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&

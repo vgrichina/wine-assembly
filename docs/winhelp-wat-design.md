@@ -992,8 +992,12 @@ exact no-write preflight, retains raw/token/payload/run state transactionally,
 wraps words and overlong spans, carries font/color and hotspot state into each
 run, and repaints visible runs without decoding again. Hotspot runs retain the
 exact begin-token identity, bounded hit testing accounts for scrolling, and
-fixed in-document hash jumps and popups resolve through canonical topic state,
-the shared transactional history, and the production window-message path.
+fixed in-document hash jumps resolve through canonical topic state, shared
+transactional history, and the production window-message path. Fixed popup
+hotspots and `HELP_CONTEXTPOPUP` instead create a bounded owned WAT-native
+popup plus shadow surface. Popup layout uses a 320-pixel maximum measure and
+shrinks to retained run extents, with explicit minimum/maximum geometry and
+screen-edge clamping.
 Nested, orphaned, and unterminated hotspot regions are rejected; unsupported
 variable, external, and macro forms fail without changing topic or history.
 Referenced logical fonts materialize once per view as owned type-4 GDI objects;
@@ -1014,11 +1018,15 @@ continuation indents, before/after/line spacing, right/center alignment,
 left/right/center tab stops, and fixed or relative table-cell bounds. Variable
 tables honor their minimum width and scale their signed column metrics against
 the documented 32767 total without floating point.
-Separate native-style popup window geometry remains to complete the popup
-presentation path.
+While a popup is live, the primary typed view is detached without freeing or
+re-decoding its raw/token/payload/run arenas or its owned font/bitmap/DC state.
+Escape, `WM_CLOSE`, focus loss, or a background click destroys both popup
+windows and atomically restores the exact primary pointers, scroll position,
+session topic, mode, and Back count. A normal jump from a popup rejoins the
+ordinary primary navigation transaction instead. `HELP_QUIT` reunites and
+frees both views exactly once.
 
-- Extend implemented fixed-hash jumps/popups with bounded external forms and
-  native-style context popup presentation.
+- Extend implemented fixed-hash jumps/popups with bounded external forms.
 - Extend raster materialization to inline picture unions and metafiles.
 
 Exit criterion: visual topic captures and hotspot target transitions match the

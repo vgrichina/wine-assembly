@@ -874,7 +874,8 @@
   ;; Decode and publish the canonical formatted topic and positioned run list.
   ;; The typed-view builder retains the prior visible arenas until the complete
   ;; decode/tokenize/layout transaction succeeds.
-  (func $help_prepare_wat_view (result i32)
+  (func $help_prepare_wat_view_for
+    (param $layout_width i32) (param $target_hwnd i32) (result i32)
     (local $copy_length i32) (local $title_ga i32) (local $stack_ga i32)
     (if (i32.lt_s (global.get $help_session_topic_index) (i32.const 0))
       (then (return (i32.const 0))))
@@ -899,13 +900,168 @@
     (i32.store8 (i32.add (global.get $help_title_wa) (local.get $copy_length)) (i32.const 0))
     (global.set $help_title_len (local.get $copy_length))
     (if (i32.eqz (call $help_replace_typed_view
-          (global.get $help_session_topic_index)))
+          (global.get $help_session_topic_index)
+          (local.get $layout_width) (local.get $target_hwnd)))
       (then (return (i32.const 0))))
     (global.set $help_topic_count (global.get $help_doc_topic_count))
     (global.set $help_cur_topic
       (i32.add (global.get $help_session_topic_index) (i32.const 1)))
     (global.set $help_scroll_y (i32.const 0))
     (i32.const 1))
+
+  (func $help_prepare_wat_view (result i32)
+    (call $help_prepare_wat_view_for (i32.const 400)
+      (select (global.get $help_hwnd) (global.get $next_hwnd)
+        (i32.ne (global.get $help_hwnd) (i32.const 0)))))
+
+  (func $help_popup_measure
+    (local $i i32) (local $run i32) (local $right i32) (local $maximum i32)
+    (block $done (loop $runs
+      (br_if $done (i32.ge_u (local.get $i) (global.get $help_view_run_count)))
+      (local.set $run (i32.add (global.get $help_view_runs_wa)
+        (i32.mul (local.get $i) (global.get $HELP_LAYOUT_RUN_SIZE))))
+      (local.set $right (i32.add (i32.load offset=4 (local.get $run))
+        (i32.load offset=12 (local.get $run))))
+      (if (i32.gt_s (local.get $right) (local.get $maximum))
+        (then (local.set $maximum (local.get $right))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $runs)))
+    (global.set $help_popup_width (i32.add (local.get $maximum) (i32.const 12)))
+    (if (i32.lt_s (global.get $help_popup_width) (i32.const 96))
+      (then (global.set $help_popup_width (i32.const 96))))
+    (if (i32.gt_s (global.get $help_popup_width) (i32.const 336))
+      (then (global.set $help_popup_width (i32.const 336))))
+    (global.set $help_popup_height
+      (i32.add (global.get $help_view_extent_height) (i32.const 12)))
+    (if (i32.lt_s (global.get $help_popup_height) (i32.const 32))
+      (then (global.set $help_popup_height (i32.const 32))))
+    (if (i32.gt_s (global.get $help_popup_height) (i32.const 240))
+      (then (global.set $help_popup_height (i32.const 240)))))
+
+  (func $help_popup_destroy_windows
+    (if (global.get $help_popup_hwnd)
+      (then
+        (call $host_destroy_window (global.get $help_popup_hwnd))
+        (call $wnd_table_remove (global.get $help_popup_hwnd))
+        (global.set $help_popup_hwnd (i32.const 0))))
+    (if (global.get $help_popup_shadow_hwnd)
+      (then
+        (call $host_destroy_window (global.get $help_popup_shadow_hwnd))
+        (call $wnd_table_remove (global.get $help_popup_shadow_hwnd))
+        (global.set $help_popup_shadow_hwnd (i32.const 0))))
+    (global.set $help_popup_width (i32.const 0))
+    (global.set $help_popup_height (i32.const 0)))
+
+  ;; Close the popup and restore both the detached primary view and the exact
+  ;; viewer/session/history state that preceded popup activation.
+  (func $help_popup_close
+    (call $help_popup_destroy_windows)
+    (call $help_popup_restore_main_view)
+    (if (global.get $help_popup_saved_session_valid)
+      (then
+        (global.set $help_session_topic_ref (global.get $help_popup_saved_topic_ref))
+        (global.set $help_session_topic_index (global.get $help_popup_saved_topic_index))
+        (global.set $help_session_mode (global.get $help_popup_saved_mode))
+        (global.set $help_session_last_command (global.get $help_popup_saved_command))
+        (global.set $help_session_status (global.get $help_popup_saved_status))
+        (global.set $help_cur_topic (global.get $help_popup_saved_cur_topic))
+        (global.set $help_scroll_y (global.get $help_popup_saved_scroll_y))
+        (global.set $help_back_count (global.get $help_popup_saved_back_count))))
+    (global.set $help_popup_saved_session_valid (i32.const 0))
+    (if (global.get $help_hwnd)
+      (then (call $invalidate_hwnd (global.get $help_hwnd)))))
+
+  ;; A normal navigation issued while the popup is live retains the detached
+  ;; main view only long enough for the ordinary history transaction to see
+  ;; its source. A newly loaded document suppresses cross-document history.
+  (func $help_popup_abandon_for_navigation
+    (local $same_document i32)
+    (local.set $same_document
+      (i32.eq (global.get $help_popup_saved_doc_wa) (global.get $help_doc_file_wa)))
+    (call $help_popup_destroy_windows)
+    (call $help_popup_restore_main_view)
+    (if (i32.eqz (local.get $same_document))
+      (then
+        (global.set $help_cur_topic (i32.const 0))
+        (global.set $help_scroll_y (i32.const 0))))
+    (global.set $help_popup_saved_session_valid (i32.const 0)))
+
+  ;; Used by HELP_QUIT/document teardown: reunite both owned views so the
+  ;; existing typed-view release path frees each resource exactly once.
+  (func $help_popup_shutdown
+    (if (i32.or (global.get $help_popup_hwnd)
+          (global.get $help_popup_saved_valid))
+      (then
+        (call $help_popup_destroy_windows)
+        (call $help_popup_restore_main_view)))
+    (global.set $help_popup_saved_session_valid (i32.const 0)))
+
+  (func $help_popup_present
+    (local $first i32) (local $owner i32) (local $x i32) (local $y i32)
+    (local.set $first (i32.eqz (global.get $help_popup_hwnd)))
+    (if (local.get $first)
+      (then
+        (call $help_popup_detach_main_view)
+        (global.set $help_popup_hwnd (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+        (global.set $help_popup_shadow_hwnd (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+        (call $wnd_table_set (global.get $help_popup_hwnd)
+          (global.get $WNDPROC_WAT_NATIVE))
+        (drop (call $wnd_set_style (global.get $help_popup_hwnd) (i32.const 0x90800000)))
+        (call $wnd_table_set (global.get $help_popup_shadow_hwnd)
+          (global.get $WNDPROC_WAT_NATIVE))
+        (drop (call $wnd_set_style (global.get $help_popup_shadow_hwnd) (i32.const 0x90000000)))))
+    (if (i32.eqz (call $help_prepare_wat_view_for
+          (i32.const 320) (global.get $help_popup_hwnd)))
+      (then
+        (if (local.get $first)
+          (then (call $help_popup_close)))
+        (return)))
+    (call $help_popup_measure)
+    (local.set $owner
+      (select (global.get $help_hwnd) (global.get $help_session_owner)
+        (i32.ne (global.get $help_hwnd) (i32.const 0))))
+    (call $wnd_set_owner (global.get $help_popup_hwnd) (local.get $owner))
+    (call $wnd_set_owner (global.get $help_popup_shadow_hwnd) (local.get $owner))
+    (call $client_rect_set (global.get $help_popup_hwnd) (i32.const 0) (i32.const 0)
+      (global.get $help_popup_width) (global.get $help_popup_height))
+    (call $client_rect_set (global.get $help_popup_shadow_hwnd) (i32.const 0) (i32.const 0)
+      (global.get $help_popup_width) (global.get $help_popup_height))
+    (local.set $x (i32.add (global.get $help_popup_anchor_x) (i32.const 12)))
+    (local.set $y (i32.add (global.get $help_popup_anchor_y) (i32.const 18)))
+    (if (i32.gt_s (i32.add (local.get $x) (global.get $help_popup_width)) (i32.const 632))
+      (then (local.set $x (i32.sub (i32.const 632) (global.get $help_popup_width)))))
+    (if (i32.gt_s (i32.add (local.get $y) (global.get $help_popup_height)) (i32.const 472))
+      (then (local.set $y (i32.sub (i32.const 472) (global.get $help_popup_height)))))
+    (if (i32.lt_s (local.get $x) (i32.const 8)) (then (local.set $x (i32.const 8))))
+    (if (i32.lt_s (local.get $y) (i32.const 8)) (then (local.set $y (i32.const 8))))
+    (if (local.get $first)
+      (then
+        ;; Create the shadow first so the popup is above it in host z-order.
+        (drop (call $host_create_window
+          (global.get $help_popup_shadow_hwnd) (i32.const 0x90000000)
+          (i32.add (local.get $x) (i32.const 4))
+          (i32.add (local.get $y) (i32.const 4))
+          (global.get $help_popup_width) (global.get $help_popup_height)
+          (i32.const 0) (i32.const 0)))
+        (drop (call $host_create_window
+          (global.get $help_popup_hwnd) (i32.const 0x90800000)
+          (local.get $x) (local.get $y)
+          (global.get $help_popup_width) (global.get $help_popup_height)
+          (i32.const 0) (i32.const 0))))
+      (else
+        (call $host_move_window (global.get $help_popup_shadow_hwnd)
+          (i32.add (local.get $x) (i32.const 4))
+          (i32.add (local.get $y) (i32.const 4))
+          (global.get $help_popup_width) (global.get $help_popup_height) (i32.const 0))
+        (call $host_move_window (global.get $help_popup_hwnd)
+          (local.get $x) (local.get $y)
+          (global.get $help_popup_width) (global.get $help_popup_height) (i32.const 0))))
+    (drop (call $help_wndproc (global.get $help_popup_shadow_hwnd)
+      (i32.const 0x000F) (i32.const 0) (i32.const 0)))
+    (drop (call $help_wndproc (global.get $help_popup_hwnd)
+      (i32.const 0x000F) (i32.const 0) (i32.const 0))))
 
   (func $help_present_dispatch (param $accepted i32) (param $command i32)
     (local $old_index i32) (local $stack_ptr i32)
@@ -927,10 +1083,14 @@
       (then
         (call $help_topics_show)
         (return)))
-    (if (i32.or
-          (i32.eq (global.get $help_session_mode) (i32.const 1))
-          (i32.eq (global.get $help_session_mode) (i32.const 2)))
+    (if (i32.eq (global.get $help_session_mode) (i32.const 2))
       (then
+        (call $help_popup_present)
+        (return)))
+    (if (i32.eq (global.get $help_session_mode) (i32.const 1))
+      (then
+        (if (global.get $help_popup_hwnd)
+          (then (call $help_popup_abandon_for_navigation)))
         (local.set $old_index (i32.const -1))
         (if (i32.and (i32.ne (global.get $help_topic_wa) (i32.const 0))
               (i32.gt_u (global.get $help_cur_topic) (i32.const 0)))
@@ -971,22 +1131,45 @@
   (func $help_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $y i32) (local $line_start i32) (local $line_len i32)
     (local $scan i32) (local $end i32) (local $ch i32) (local $vis_y i32)
-    (local $click_y i32) (local $click_line i32)
+    (local $click_x i32) (local $click_y i32) (local $click_line i32)
     (if (i32.eq (local.get $hwnd) (global.get $help_topics_hwnd))
       (then (return (call $help_topics_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    (if (i32.eq (local.get $hwnd) (global.get $help_popup_shadow_hwnd))
+      (then
+        (if (i32.eq (local.get $msg) (i32.const 0x000F))
+          (then
+            (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (i32.const 0) (i32.const 0)
+              (global.get $help_popup_width) (global.get $help_popup_height)
+              (i32.const 0x30014)))))
+        (return (i32.const 0))))
+    ;; The primary back-canvas already contains its detached view. Do not let
+    ;; a background paint replace it with the active popup arena.
+    (if (i32.and
+          (i32.eq (local.get $hwnd) (global.get $help_hwnd))
+          (i32.and (i32.ne (global.get $help_popup_hwnd) (i32.const 0))
+            (i32.eq (local.get $msg) (i32.const 0x000F))))
+      (then (return (i32.const 0))))
     ;; WM_PAINT (0x000F): draw help text using GDI (window-relative)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         ;; hdc = hwnd + 0x40000 (same encoding as BeginPaint)
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        ;; Set white background
+        ;; Context popups retain the same deterministic system white surface;
+        ;; their border, sizing, ownership, and shadow distinguish the native
+        ;; popup presentation without introducing a private color renderer.
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
         (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
-        ;; Fill client area white
+        ;; Fill the exact retained popup extent or the fixed primary viewport.
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-          (i32.const 0) (i32.const 0) (i32.const 400) (i32.const 300)
+          (i32.const 0) (i32.const 0)
+          (select (global.get $help_popup_width) (i32.const 400)
+            (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd)))
+          (select (global.get $help_popup_height) (i32.const 300)
+            (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd)))
           (i32.const 0x30010)))
         ;; Paint only the visible positioned text runs. Layout is retained
         ;; across scrolling and is rebuilt only when the topic/width changes.
@@ -998,6 +1181,13 @@
               (i32.const 8) (i32.const 8)
               (i32.const 0x108)  ;; "Help"
               (i32.const 4) (i32.const 0)))))
+        (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
+          (then
+            (drop (call $host_gdi_draw_edge (local.get $hdc)
+              (i32.const 0) (i32.const 0)
+              (global.get $help_popup_width) (global.get $help_popup_height)
+              (i32.const 0x05) (i32.const 0x0F)))
+            (return (i32.const 0))))
         ;; Draw nav bar at bottom (y=276)
         ;; Draw separator line
         (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -1016,8 +1206,22 @@
     ;; WM_LBUTTONDOWN (0x0201)
     (if (i32.eq (local.get $msg) (i32.const 0x0201))
       (then
+        (if (i32.and
+              (i32.eq (local.get $hwnd) (global.get $help_hwnd))
+              (i32.ne (global.get $help_popup_hwnd) (i32.const 0)))
+          (then (call $help_popup_close) (return (i32.const 0))))
         ;; lParam: low word = x, high word = y
+        (local.set $click_x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (local.set $click_y (i32.shr_u (local.get $lParam) (i32.const 16)))
+        (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
+          (then
+            (if (call $help_activate_hotspot_at
+                  (global.get $help_session_owner)
+                  (local.get $click_x) (local.get $click_y))
+              (then (call $help_present_dispatch
+                (i32.const 1) (global.get $help_session_last_command)))
+              (else (call $help_popup_close)))
+            (return (i32.const 0))))
         ;; Nav bar click (y >= 270)
         (if (i32.ge_u (local.get $click_y) (i32.const 270))
           (then
@@ -1041,6 +1245,11 @@
     ;; WM_KEYDOWN (0x0100)
     (if (i32.eq (local.get $msg) (i32.const 0x0100))
       (then
+        (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
+          (then
+            (if (i32.eq (local.get $wParam) (i32.const 0x1B))
+              (then (call $help_popup_close)))
+            (return (i32.const 0))))
         ;; VK_UP (0x26): scroll up 16px
         (if (i32.eq (local.get $wParam) (i32.const 0x26))
           (then (call $help_scroll_by (local.get $hwnd) (i32.const -16)) (return (i32.const 0))))
@@ -1055,9 +1264,16 @@
           (then (call $help_scroll_by (local.get $hwnd) (i32.const 200)) (return (i32.const 0))))
         (return (i32.const 0))))
 
+    ;; Owned context popups dismiss when focus leaves them.
+    (if (i32.and
+          (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
+          (i32.eq (local.get $msg) (i32.const 0x0008)))
+      (then (call $help_popup_close) (return (i32.const 0))))
     ;; WM_CLOSE (0x0010)
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then
+        (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
+          (then (call $help_popup_close) (return (i32.const 0))))
         (call $help_destroy)
         (call $help_document_reset)
         (return (i32.const 0))))
@@ -1139,6 +1355,7 @@
 
   ;; Destroy help window and clean up
   (func $help_destroy
+    (call $help_popup_shutdown)
     (call $help_topics_destroy_window)
     (if (global.get $help_hwnd)
       (then
