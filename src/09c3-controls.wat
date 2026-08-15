@@ -4835,37 +4835,51 @@
         (br $write)))
     (local.get $digits))
 
-  ;; MFC's CStatusBar draws a six-segment diagonal size grip inside the last
-  ;; pane. Use light/shadow stock brushes to match the Win98 staircase.
+  ;; Win98's sizing grip is a right triangle of diagonal ribs in the bar's
+  ;; bottom-right corner. Counting back from the corner as dx/dy, a pixel is
+  ;; part of the grip while dx + dy <= 11, and its color cycles on
+  ;; (dx + dy) mod 4: 3 is 3DHILIGHT, 2 and 1 are 3DSHADOW, 0 is bare face.
+  ;; That produces three ribs of one highlight and two shadow pixels, spaced
+  ;; four apart, each running from the bottom edge up to the right edge.
+  ;;
+  ;; Measured off real Windows 98 under v86 with
+  ;; `node tools/png-crop.js <shot> --probe=X,Y,W,H`. The previous six-mark
+  ;; staircase used DKGRAY_BRUSH (#404040), a color the Win98 grip never
+  ;; contains, and covered about a third of the area.
   (func $statusbar_draw_size_grip (param $hdc i32) (param $w i32) (param $h i32)
-    (local $row i32) (local $col i32) (local $x i32) (local $y i32)
-    (local.set $row (i32.const 0))
+    (local $dx i32) (local $dy i32) (local $step i32) (local $brush i32)
+    (local $x i32) (local $y i32)
+    (local.set $dy (i32.const 0))
     (block $rows_done
       (loop $rows
-        (br_if $rows_done (i32.ge_u (local.get $row) (i32.const 3)))
-        (local.set $col (i32.const 0))
+        (br_if $rows_done (i32.gt_u (local.get $dy) (i32.const 11)))
+        (local.set $dx (i32.const 0))
         (block $cols_done
           (loop $cols
-            (br_if $cols_done
-              (i32.ge_u (local.get $col) (i32.sub (i32.const 3) (local.get $row))))
-            (local.set $x
-              (i32.add
-                (i32.sub (local.get $w) (i32.const 13))
-                (i32.mul (i32.add (local.get $row) (local.get $col)) (i32.const 4))))
-            (local.set $y
-              (i32.sub (i32.sub (local.get $h) (i32.const 3))
-                       (i32.mul (local.get $row) (i32.const 4))))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-              (local.get $x) (local.get $y)
-              (i32.add (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 1))
-              (i32.const 0x30010))) ;; WHITE_BRUSH
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-              (i32.add (local.get $x) (i32.const 1)) (local.get $y)
-              (i32.add (local.get $x) (i32.const 3)) (i32.add (local.get $y) (i32.const 2))
-              (i32.const 0x30013))) ;; DKGRAY_BRUSH
-            (local.set $col (i32.add (local.get $col) (i32.const 1)))
+            (br_if $cols_done (i32.gt_u
+              (i32.add (local.get $dx) (local.get $dy)) (i32.const 11)))
+            (local.set $step
+              (i32.rem_u (i32.add (local.get $dx) (local.get $dy)) (i32.const 4)))
+            (local.set $brush (i32.const 0))
+            (if (i32.eq (local.get $step) (i32.const 3))
+              (then (local.set $brush (i32.const 0x30010))))  ;; WHITE_BRUSH
+            (if (i32.or (i32.eq (local.get $step) (i32.const 1))
+                        (i32.eq (local.get $step) (i32.const 2)))
+              (then (local.set $brush (i32.const 0x30012))))  ;; GRAY_BRUSH
+            (if (local.get $brush)
+              (then
+                (local.set $x (i32.sub (i32.sub (local.get $w) (i32.const 1))
+                                       (local.get $dx)))
+                (local.set $y (i32.sub (i32.sub (local.get $h) (i32.const 1))
+                                       (local.get $dy)))
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (local.get $x) (local.get $y)
+                  (i32.add (local.get $x) (i32.const 1))
+                  (i32.add (local.get $y) (i32.const 1))
+                  (local.get $brush)))))
+            (local.set $dx (i32.add (local.get $dx) (i32.const 1)))
             (br $cols)))
-        (local.set $row (i32.add (local.get $row) (i32.const 1)))
+        (local.set $dy (i32.add (local.get $dy) (i32.const 1)))
         (br $rows))))
 
   (func $statusbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)

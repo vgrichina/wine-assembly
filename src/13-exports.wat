@@ -1069,6 +1069,11 @@
         (param i32) (param i32) (param i32) (param i32) (result i32)
     (call $gdi_brush_sample
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
+  ;; The status bar's sizing grip, drawn into any DC. Exported so its Win98
+  ;; rib pattern can be asserted without rendering a whole application.
+  (func (export "test_statusbar_draw_size_grip") (param i32) (param i32) (param i32)
+    (call $statusbar_draw_size_grip
+      (local.get 0) (local.get 1) (local.get 2)))
   (func (export "test_gdi_rop3_uses_pattern") (param i32) (result i32)
     (call $gdi_rop3_uses_pattern (local.get 0)))
   (func (export "test_gdi_object_height") (param i32) (result i32)
