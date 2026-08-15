@@ -17,7 +17,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   (text.charCodeAt(2) << 8) | text.charCodeAt(3)) >>> 0;
 
 (async () => {
-  const { exports: wat, memory } = await bootRenderHarness();
+  const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
@@ -756,6 +756,157 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.strictEqual(kern(tahoma, 'A', 'V'), 0);
   assert.strictEqual(wat.test_tt_kern_pair_fu(sans.at, 64, 1, 2), 0,
     'a truncated file kerns nothing instead of trapping');
+
+  // ---- face registry ----------------------------------------------------
+  //
+  // Everything above is a pure function of a buffer. This is the part that
+  // owns state: which font files are resident and which glyphs are already
+  // rasterized. Faces come from the same virtual filesystem the .FON strikes
+  // load through, so there is one filesystem rather than a second font path.
+
+  const mount = (vfsPath, relative) => {
+    hostCtx.vfs.files.set(vfsPath, {
+      data: new Uint8Array(fs.readFileSync(path.join(REPO, relative))),
+      attrs: 0x20,
+    });
+  };
+  hostCtx.vfs.dirs.add('c:\\windows');
+  hostCtx.vfs.dirs.add('c:\\windows\\fonts');
+  mount('c:\\windows\\fonts\\arial.ttf', 'fonts/liberation/LiberationSans-Regular.ttf');
+  mount('c:\\windows\\fonts\\cour.ttf', 'fonts/liberation/LiberationMono-Regular.ttf');
+  mount('c:\\windows\\fonts\\broken.ttf', 'fonts/w95fa.woff2');
+
+  const guestPath = text => {
+    const guest = wat.guest_alloc(text.length + 1) >>> 0;
+    bytes.set(Buffer.from(text, 'latin1'), wa(guest));
+    bytes[wa(guest) + text.length] = 0;
+    return guest;
+  };
+
+  const arial = wat.test_tt_face_open(guestPath('C:\\WINDOWS\\FONTS\\ARIAL.TTF'));
+  assert.ok(arial >= 0, 'the substituted Arial must open from the VFS');
+  assert.strictEqual(wat.test_tt_face_size(arial) >>> 0, sans.size,
+    'the whole file must be resident');
+
+  // Opening the same file again must not load a second 400KB copy. The path
+  // is spelled differently on purpose: Win98 paths are case-insensitive.
+  assert.strictEqual(
+    wat.test_tt_face_open(guestPath('c:\\windows\\fonts\\arial.ttf')), arial,
+    'the same file by a differently-cased path is one face');
+
+  const courier = wat.test_tt_face_open(guestPath('C:\\WINDOWS\\FONTS\\COUR.TTF'));
+  assert.ok(courier >= 0 && courier !== arial, 'a second face gets its own slot');
+
+  assert.strictEqual(wat.test_tt_face_open(guestPath('C:\\WINDOWS\\FONTS\\NOPE.TTF')), -1,
+    'a missing file fails rather than trapping');
+  // A WOFF2 is not an sfnt this layer can read. Refusing it at open is what
+  // keeps every accessor below from rediscovering it one zero at a time.
+  assert.strictEqual(wat.test_tt_face_open(guestPath('C:\\WINDOWS\\FONTS\\BROKEN.TTF')), -1,
+    'a non-TrueType file is refused at open');
+  assert.strictEqual(wat.test_tt_face_open(0), -1);
+
+  // The face API must agree with the buffer API it wraps: same font, same
+  // answers, reached without the caller ever holding a pointer.
+  const measured = 'Hello, World!';
+  const measuredGuest = guestPath(measured);
+  assert.strictEqual(
+    wat.test_tt_face_text_width(arial, wa(measuredGuest), measured.length, 16),
+    wat.test_tt_text_width_px(sans.at, sans.size, wa(measuredGuest),
+      measured.length, 16));
+  assert.strictEqual(wat.test_tt_face_char_width(arial, 0x41, 16),
+    wat.test_tt_char_advance_px(sans.at, sans.size, 0x41, 16));
+  assert.strictEqual(wat.test_tt_face_ppem(arial, -16), 16);
+  assert.strictEqual(wat.test_tt_face_ppem(arial, 16), 14);
+
+  // TEXTMETRIC by field index, so the GDI layer fills its struct from one
+  // call site rather than a dozen exports.
+  const metric = (face, field) => wat.test_tt_face_metric(face, 16, field);
+  assert.strictEqual(metric(arial, 0), 17, 'tmHeight');
+  assert.strictEqual(metric(arial, 1), 14, 'tmAscent');
+  assert.strictEqual(metric(arial, 2), 3, 'tmDescent');
+  assert.strictEqual(metric(arial, 5), 9, 'tmAveCharWidth');
+  assert.strictEqual(metric(arial, 7), 400, 'tmWeight');
+  assert.strictEqual(metric(arial, 9), 0x27, 'tmPitchAndFamily');
+  assert.strictEqual(metric(courier, 9), 0x36,
+    'the monospaced face reports fixed pitch through the same call');
+  assert.strictEqual(metric(arial, 99), 0, 'an unknown field is zero, not garbage');
+  assert.strictEqual(wat.test_tt_face_metric(-1, 16, 0), 0,
+    'metrics on an unopened face are zero rather than a wild read');
+
+  // ---- glyph cache ------------------------------------------------------
+  //
+  // Rasterization must happen once per glyph, face and size — not once per
+  // TextOut. Without this the scan converter would re-flatten and re-fill
+  // every character of every repaint.
+
+  wat.test_tt_cache_flush();
+  assert.strictEqual(wat.test_tt_cache_used(), 0);
+
+  const glyphA = wat.test_tt_face_glyph(arial, 0x41, 16);
+  assert.ok(glyphA, 'A must produce a cached glyph');
+  assert.strictEqual(wat.test_tt_cache_used(), 1);
+  assert.strictEqual(wat.test_tt_face_glyph(arial, 0x41, 16), glyphA,
+    'the second request must hit the same entry');
+  assert.strictEqual(wat.test_tt_cache_used(), 1, 'and must not rasterize again');
+
+  // Same glyph, different size, and same size, different face are distinct
+  // cache keys — collapsing either renders text at the wrong size or in the
+  // wrong face, which is much harder to spot than a blank.
+  assert.notStrictEqual(wat.test_tt_face_glyph(arial, 0x41, 24), glyphA);
+  assert.notStrictEqual(wat.test_tt_face_glyph(courier, 0x41, 16), glyphA);
+  assert.strictEqual(wat.test_tt_cache_used(), 3);
+
+  // The cached bitmap must be the same picture the direct rasterizer makes.
+  const direct = raster(sans, 'A', 16);
+  assert.strictEqual(wat.test_tt_entry_width(glyphA), direct.width);
+  assert.strictEqual(wat.test_tt_entry_height(glyphA), direct.height);
+  for (let y = 0; y < direct.height; y += 1) {
+    let row = '';
+    for (let x = 0; x < direct.width; x += 1) {
+      row += wat.test_tt_entry_pixel(glyphA, x, y) ? '#' : '.';
+    }
+    assert.strictEqual(row, direct.rows[y],
+      `cached row ${y} must match the direct rasterization`);
+  }
+  assert.strictEqual(wat.test_tt_entry_left(glyphA),
+    wat.test_tt_glyph_box_left(sans.at, sans.size, gid(sans, 'A'), 16),
+    'the bearing travels with the cached glyph');
+  assert.strictEqual(wat.test_tt_entry_top(glyphA),
+    wat.test_tt_glyph_box_top(sans.at, sans.size, gid(sans, 'A'), 16));
+
+  // Space caches as a real entry with no bitmap. Caching the absence is the
+  // point: otherwise the commonest character in any string is the one glyph
+  // that retries the whole box computation on every draw.
+  const glyphSpace = wat.test_tt_face_glyph(arial, 0x20, 16);
+  assert.ok(glyphSpace, 'space must occupy a cache entry');
+  assert.strictEqual(wat.test_tt_entry_width(glyphSpace), 0);
+  assert.strictEqual(wat.test_tt_entry_pixel(glyphSpace, 0, 0), 0);
+  const usedAfterSpace = wat.test_tt_cache_used();
+  wat.test_tt_face_glyph(arial, 0x20, 16);
+  assert.strictEqual(wat.test_tt_cache_used(), usedAfterSpace,
+    'a blank glyph must not be re-attempted');
+
+  // CP1252 reaches the cache too: the ANSI byte 0x80 must land on the same
+  // entry as the euro codepoint, not on .notdef.
+  const glyphEuro = wat.test_tt_face_glyph(arial, 0x80, 16);
+  assert.strictEqual(wat.test_tt_entry_width(glyphEuro),
+    wat.test_tt_glyph_box_width(sans.at, sans.size, euroGid, 16),
+    'the ANSI byte 0x80 must reach the euro through CP1252, not .notdef');
+  assert.ok(wat.test_tt_entry_width(glyphEuro) > 0);
+
+  assert.strictEqual(wat.test_tt_face_glyph(-1, 0x41, 16), 0,
+    'an unopened face yields no glyph');
+  assert.strictEqual(wat.test_tt_face_glyph(arial, 0x41, 0), 0,
+    'a zero ppem is refused rather than dividing by it');
+  assert.strictEqual(wat.test_tt_face_glyph(arial, 0x41, 4096), 0,
+    'an absurd ppem is refused rather than allocating for it');
+
+  // Flushing must free the bitmaps and leave the registry usable.
+  wat.test_tt_cache_flush();
+  assert.strictEqual(wat.test_tt_cache_used(), 0);
+  const reborn = wat.test_tt_face_glyph(arial, 0x41, 16);
+  assert.ok(reborn && wat.test_tt_entry_width(reborn) === direct.width,
+    'the cache must still work after a flush');
 
   console.log('PASS  WAT reads TrueType metrics from Liberation Sans and Wine Marlett');
 })().catch(error => {

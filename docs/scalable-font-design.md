@@ -11,14 +11,33 @@ formats, ABC widths, `kern` format 0, simple-glyph outline points, and
 composite recursion with an explicit depth limit, 26.6 flattening, and nonzero
 scan conversion into the FNT column-major bitmap layout.
 
-The rasterizer is therefore complete as a *producer* and unreachable as a
-*feature*: nothing selects a face, loads a file, or caches a glyph, because
-all three need the font arena. What is still missing from milestone 1
-is the *wiring*: a font arena to hold file bytes, a face-selection path from
-`CreateFontIndirectA`, and the public `GetTextExtentPoint32` /
-`GetCharWidth32` / `GetTextMetrics` handlers reading from it instead of from
-Canvas. The parser is exercised only by `test/test-wat-truetype-metrics.js`
-until that lands.
+A face registry and glyph cache sit on top: `$tt_face_open` loads a font from
+the same virtual filesystem the `.FON` strikes come from, keyed by path hash
+so a file opens once, and `$tt_face_glyph` returns a cached bitmap for a guest
+ANSI byte. Storage is `$heap_alloc`, not a fixed region — font files run from
+60 KB to 400 KB and the cache grows with what the guest draws, so a fixed
+reservation would either waste a megabyte on a guest that never names a
+scalable face or run out on one that does.
+
+What remains is the GDI seam itself, and only that: `CreateFontIndirectA` must
+map a `LOGFONT` face name to a substitute path through
+`fonts/substitutions.json` and call `$tt_face_open`, and the public
+`GetTextExtentPoint32` / `GetCharWidth32` / `GetTextMetrics` handlers must
+call `$tt_face_text_width`, `$tt_face_char_width`, and `$tt_face_metric`
+instead of measuring on Canvas. Those handlers and the per-DC font selection
+state live in `src/10b-gdi-font.wat` and `lib/host-imports.js`.
+
+The entry points a caller needs, all in `src/10c-truetype.wat`:
+
+```
+$tt_face_open(path_guest)              -> face index, or -1
+$tt_face_ppem(face, lfHeight)          -> ppem, both lfHeight conventions
+$tt_face_metric(face, ppem, field)     -> TEXTMETRIC field 0..11
+$tt_face_text_width(face, text, n, ppem)
+$tt_face_char_width(face, byte, ppem)
+$tt_face_glyph(face, byte, ppem)       -> cache entry, or 0
+$tt_entry_width/height/left/top/pixel(entry, ...)
+```
 
 The end state is **no Canvas text at all**: WAT parses TrueType
 files, owns metrics, and rasterizes glyphs onto the canonical GDI surface, the

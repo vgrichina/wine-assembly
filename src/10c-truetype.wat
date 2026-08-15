@@ -1873,6 +1873,448 @@
       (local.get $ppem)
       (call $tt_units_per_em (local.get $data) (local.get $size))))
 
+  ;; ---- face registry ----------------------------------------------------
+  ;;
+  ;; Everything above is a pure function of a buffer. This is the part that
+  ;; owns state: which font files are resident, and which glyphs have already
+  ;; been rasterized.
+  ;;
+  ;; Storage comes from `$heap_alloc` rather than a fixed region in the memory
+  ;; map. Font files vary from 60 KB to 400 KB and the glyph cache grows with
+  ;; what the guest actually draws, so a fixed reservation would either waste
+  ;; a megabyte on a guest that never asks for a scalable face or run out on
+  ;; one that does. The roots below are the only fixed cost, and they are
+  ;; three globals.
+  ;;
+  ;; Faces are keyed by path hash so opening the same file twice returns the
+  ;; same slot instead of a second copy of a 400 KB file.
+
+  (global $TT_MAX_FACES i32 (i32.const 16))
+  (global $TT_FACE_STRIDE i32 (i32.const 32))
+  (global $TT_CACHE_SLOTS i32 (i32.const 1024))
+  (global $TT_CACHE_STRIDE i32 (i32.const 24))
+  ;; Widest glyph the shared raster scratch can take. Beyond this the caller
+  ;; gets no bitmap rather than a truncated one.
+  (global $TT_SCRATCH_WIDTH i32 (i32.const 256))
+  ;; A font larger than this is refused outright: the guest cannot have named
+  ;; a Win98 face this big, so it is a sign of a wrong path, not a big font.
+  (global $TT_MAX_FONT_BYTES i32 (i32.const 0x00400000))
+
+  (global $tt_faces (mut i32) (i32.const 0))
+  (global $tt_cache (mut i32) (i32.const 0))
+  (global $tt_scratch (mut i32) (i32.const 0))
+  (global $tt_cache_used (mut i32) (i32.const 0))
+
+  ;; FNV-1a over a NUL-terminated path, case-folded so the same file opened as
+  ;; FONTS\ and fonts\ is one face rather than two copies.
+  (func $tt_path_hash (param $path i32) (result i32)
+    (local $hash i32) (local $byte i32)
+    (local.set $hash (i32.const 0x811C9DC5))
+    (block $done (loop $scan
+      (local.set $byte (i32.load8_u (local.get $path)))
+      (br_if $done (i32.eqz (local.get $byte)))
+      (if (i32.and (i32.ge_u (local.get $byte) (i32.const 65))
+            (i32.le_u (local.get $byte) (i32.const 90)))
+        (then (local.set $byte (i32.add (local.get $byte) (i32.const 32)))))
+      (local.set $hash (i32.mul (i32.xor (local.get $hash) (local.get $byte))
+        (i32.const 16777619)))
+      (local.set $path (i32.add (local.get $path) (i32.const 1)))
+      (br $scan)))
+    (local.get $hash))
+
+  ;; Returns the WASM address of the face table, allocating it on first use.
+  (func $tt_faces_ensure (result i32)
+    (local $guest i32) (local $bytes i32)
+    (if (global.get $tt_faces)
+      (then (return (call $g2w (global.get $tt_faces)))))
+    (local.set $bytes
+      (i32.mul (global.get $TT_MAX_FACES) (global.get $TT_FACE_STRIDE)))
+    (local.set $guest (call $heap_alloc (local.get $bytes)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $bytes))
+    (global.set $tt_faces (local.get $guest))
+    (call $g2w (local.get $guest)))
+
+  (func $tt_face_record (param $face i32) (result i32)
+    (local $table i32)
+    (if (i32.ge_u (local.get $face) (global.get $TT_MAX_FACES))
+      (then (return (i32.const 0))))
+    (local.set $table (call $tt_faces_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (i32.add (local.get $table)
+      (i32.mul (local.get $face) (global.get $TT_FACE_STRIDE))))
+
+  (func $tt_face_data (param $face i32) (result i32)
+    (local $record i32)
+    (local.set $record (call $tt_face_record (local.get $face)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load offset=16 (local.get $record)))
+      (then (return (i32.const 0))))
+    (call $g2w (i32.load offset=4 (local.get $record))))
+
+  (func $tt_face_size (param $face i32) (result i32)
+    (local $record i32)
+    (local.set $record (call $tt_face_record (local.get $face)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load offset=16 (local.get $record)))
+      (then (return (i32.const 0))))
+    (i32.load offset=8 (local.get $record)))
+
+  ;; Open a font file by guest path. Returns a face index, or -1 on any
+  ;; failure: a missing file, a file that is not glyf TrueType, a full table,
+  ;; or no heap. Callers fall back to whatever they would have done before,
+  ;; so a bad path degrades to the old behaviour instead of trapping.
+  (func $tt_face_open (param $path_guest i32) (result i32)
+    (local $path i32) (local $hash i32) (local $table i32) (local $record i32)
+    (local $index i32) (local $free i32) (local $handle i32) (local $size i32)
+    (local $data_guest i32) (local $data i32) (local $read i32)
+    (if (i32.eqz (local.get $path_guest)) (then (return (i32.const -1))))
+    (local.set $path (call $g2w (local.get $path_guest)))
+    (local.set $hash (call $tt_path_hash (local.get $path)))
+    (local.set $table (call $tt_faces_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const -1))))
+
+    (local.set $free (i32.const -1))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_MAX_FACES)))
+      (local.set $record (i32.add (local.get $table)
+        (i32.mul (local.get $index) (global.get $TT_FACE_STRIDE))))
+      (if (i32.load offset=16 (local.get $record))
+        (then
+          (if (i32.eq (i32.load (local.get $record)) (local.get $hash))
+            (then (return (local.get $index)))))
+        (else (if (i32.eq (local.get $free) (i32.const -1))
+          (then (local.set $free (local.get $index))))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eq (local.get $free) (i32.const -1)) (then (return (i32.const -1))))
+
+    ;; GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL: the same call the
+    ;; bitmap-font loader makes, so both paths see one filesystem.
+    (local.set $handle (call $host_fs_create_file (local.get $path)
+      (i32.const 0x80000000) (i32.const 3) (i32.const 0x80) (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const -1))))
+    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+    (if (i32.or (i32.le_s (local.get $size) (i32.const 0))
+          (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const -1))))
+    (local.set $data_guest (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $data_guest))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const -1))))
+    (local.set $data (call $g2w (local.get $data_guest)))
+    ;; The filesystem bridge reports the byte count through guest memory, so
+    ;; the count word is borrowed from the front of the buffer being filled
+    ;; and overwritten by the read itself.
+    (local.set $read (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $read))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (call $heap_free (local.get $data_guest))
+        (return (i32.const -1))))
+    (i32.store (call $g2w (local.get $read)) (i32.const 0))
+    (if (i32.eqz (call $host_fs_read_file (local.get $handle)
+          (local.get $data_guest) (local.get $size) (local.get $read)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (call $heap_free (local.get $data_guest))
+        (call $heap_free (local.get $read))
+        (return (i32.const -1))))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (if (i32.ne (i32.load (call $g2w (local.get $read))) (local.get $size))
+      (then
+        (call $heap_free (local.get $data_guest))
+        (call $heap_free (local.get $read))
+        (return (i32.const -1))))
+    (call $heap_free (local.get $read))
+
+    ;; Refuse anything that is not a glyf TrueType here rather than letting
+    ;; every accessor below rediscover it one zero at a time.
+    (if (i32.eqz (call $tt_is_truetype (local.get $data) (local.get $size)))
+      (then
+        (call $heap_free (local.get $data_guest))
+        (return (i32.const -1))))
+
+    (local.set $record (i32.add (local.get $table)
+      (i32.mul (local.get $free) (global.get $TT_FACE_STRIDE))))
+    (i32.store (local.get $record) (local.get $hash))
+    (i32.store offset=4 (local.get $record) (local.get $data_guest))
+    (i32.store offset=8 (local.get $record) (local.get $size))
+    (i32.store offset=12 (local.get $record)
+      (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (i32.store offset=16 (local.get $record) (i32.const 1))
+    (local.get $free))
+
+  ;; ---- glyph cache ------------------------------------------------------
+  ;;
+  ;; Rasterization is once per glyph, face, and size - not once per TextOut.
+  ;; Without this the scan converter would re-flatten and re-fill every
+  ;; character of every repaint, which is the one way this path could end up
+  ;; slower than the Canvas mask it replaces.
+  ;;
+  ;; Entries are 24 bytes:
+  ;;
+  ;;   +0  owner   face + 1, so zero means empty
+  ;;   +4  gid
+  ;;   +8  ppem
+  ;;   +12 bitmap  guest pointer, 0 for a glyph with no ink
+  ;;   +16 width | height << 16
+  ;;   +20 left, +22 top   signed, in pixels, relative to the pen origin
+
+  (func $tt_cache_ensure (result i32)
+    (local $guest i32) (local $bytes i32)
+    (if (global.get $tt_cache)
+      (then (return (call $g2w (global.get $tt_cache)))))
+    (local.set $bytes
+      (i32.mul (global.get $TT_CACHE_SLOTS) (global.get $TT_CACHE_STRIDE)))
+    (local.set $guest (call $heap_alloc (local.get $bytes)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $bytes))
+    (global.set $tt_cache (local.get $guest))
+    (call $g2w (local.get $guest)))
+
+  ;; Free every cached bitmap and start over. A rehashing eviction policy
+  ;; would be better under memory pressure; this one is correct, and the cache
+  ;; only fills when a guest uses more than a thousand distinct glyph-size
+  ;; pairs, at which point it has already paid for the rasterization once.
+  (func $tt_cache_flush
+    (local $table i32) (local $index i32) (local $entry i32)
+    (if (i32.eqz (global.get $tt_cache)) (then (return)))
+    (local.set $table (call $g2w (global.get $tt_cache)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_CACHE_SLOTS)))
+      (local.set $entry (i32.add (local.get $table)
+        (i32.mul (local.get $index) (global.get $TT_CACHE_STRIDE))))
+      (if (i32.load (local.get $entry))
+        (then (if (i32.load offset=12 (local.get $entry))
+          (then (call $heap_free (i32.load offset=12 (local.get $entry)))))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (memory.fill (local.get $table) (i32.const 0)
+      (i32.mul (global.get $TT_CACHE_SLOTS) (global.get $TT_CACHE_STRIDE)))
+    (global.set $tt_cache_used (i32.const 0)))
+
+  (func $tt_cache_slot (param $face i32) (param $gid i32) (param $ppem i32)
+        (result i32)
+    (local $table i32) (local $index i32) (local $probe i32) (local $entry i32)
+    (local.set $table (call $tt_cache_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (local.set $index (i32.and
+      (i32.add (i32.add (i32.mul (local.get $face) (i32.const 0x9E3779B1))
+          (i32.mul (local.get $gid) (i32.const 0x85EBCA6B)))
+        (i32.mul (local.get $ppem) (i32.const 0xC2B2AE35)))
+      (i32.sub (global.get $TT_CACHE_SLOTS) (i32.const 1))))
+    (block $done (loop $probe_loop
+      (br_if $done (i32.ge_u (local.get $probe) (global.get $TT_CACHE_SLOTS)))
+      (local.set $entry (i32.add (local.get $table)
+        (i32.mul (local.get $index) (global.get $TT_CACHE_STRIDE))))
+      ;; An empty slot ends the probe: with no deletions, a run of occupied
+      ;; slots is unbroken, so nothing can hide past the first hole.
+      (if (i32.eqz (i32.load (local.get $entry)))
+        (then (return (local.get $entry))))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $entry))
+              (i32.add (local.get $face) (i32.const 1)))
+            (i32.and (i32.eq (i32.load offset=4 (local.get $entry)) (local.get $gid))
+              (i32.eq (i32.load offset=8 (local.get $entry)) (local.get $ppem))))
+        (then (return (local.get $entry))))
+      (local.set $index (i32.and (i32.add (local.get $index) (i32.const 1))
+        (i32.sub (global.get $TT_CACHE_SLOTS) (i32.const 1))))
+      (local.set $probe (i32.add (local.get $probe) (i32.const 1)))
+      (br $probe_loop)))
+    (i32.const 0))
+
+  (func $tt_raster_scratch (result i32)
+    (local $guest i32)
+    (if (global.get $tt_scratch)
+      (then (return (call $g2w (global.get $tt_scratch)))))
+    (local.set $guest (call $heap_alloc
+      (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (global.set $tt_scratch (local.get $guest))
+    (call $g2w (local.get $guest)))
+
+  ;; Cached glyph for a face at a size, rasterizing on a miss. Returns the
+  ;; entry address, or 0 when the glyph cannot be produced at all.
+  (func $tt_glyph_ensure (param $face i32) (param $gid i32) (param $ppem i32)
+        (result i32)
+    (local $entry i32) (local $data i32) (local $size i32) (local $width i32)
+    (local $height i32) (local $bytes i32) (local $bitmap_guest i32)
+    (local $scratch i32)
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (if (i32.eqz (local.get $data)) (then (return (i32.const 0))))
+    (if (i32.or (i32.le_s (local.get $ppem) (i32.const 0))
+          (i32.gt_s (local.get $ppem) (i32.const 255)))
+      (then (return (i32.const 0))))
+    ;; Flush before the table fills so probing never degrades into a full
+    ;; scan of a table that can no longer take an insert.
+    (if (i32.ge_u (i32.mul (global.get $tt_cache_used) (i32.const 4))
+          (i32.mul (global.get $TT_CACHE_SLOTS) (i32.const 3)))
+      (then (call $tt_cache_flush)))
+    (local.set $entry
+      (call $tt_cache_slot (local.get $face) (local.get $gid) (local.get $ppem)))
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (if (i32.load (local.get $entry)) (then (return (local.get $entry))))
+
+    (local.set $width (call $tt_glyph_box_width (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem)))
+    (local.set $height (call $tt_glyph_box_height (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem)))
+    (i32.store (local.get $entry) (i32.add (local.get $face) (i32.const 1)))
+    (i32.store offset=4 (local.get $entry) (local.get $gid))
+    (i32.store offset=8 (local.get $entry) (local.get $ppem))
+    (i32.store offset=12 (local.get $entry) (i32.const 0))
+    (i32.store offset=16 (local.get $entry) (i32.const 0))
+    (i32.store16 offset=20 (local.get $entry) (i32.const 0))
+    (i32.store16 offset=22 (local.get $entry) (i32.const 0))
+    (global.set $tt_cache_used (i32.add (global.get $tt_cache_used) (i32.const 1)))
+
+    ;; A blank glyph caches as a real entry with no bitmap. Space is the
+    ;; common case and must not be re-attempted on every character.
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
+          (i32.le_s (local.get $height) (i32.const 0)))
+      (then (return (local.get $entry))))
+    (if (i32.gt_s (local.get $width) (global.get $TT_SCRATCH_WIDTH))
+      (then (return (local.get $entry))))
+
+    (local.set $scratch (call $tt_raster_scratch))
+    (if (i32.eqz (local.get $scratch)) (then (return (local.get $entry))))
+    (local.set $bytes (i32.mul
+      (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
+      (local.get $height)))
+    (local.set $bitmap_guest (call $heap_alloc (local.get $bytes)))
+    (if (i32.eqz (local.get $bitmap_guest)) (then (return (local.get $entry))))
+    (if (i32.eqz (call $tt_rasterize_glyph (local.get $data) (local.get $size)
+          (local.get $gid) (local.get $ppem) (call $g2w (local.get $bitmap_guest))
+          (local.get $width) (local.get $height)
+          (i32.mul (call $tt_glyph_box_left (local.get $data) (local.get $size)
+            (local.get $gid) (local.get $ppem)) (i32.const 64))
+          (i32.mul (call $tt_glyph_box_top (local.get $data) (local.get $size)
+            (local.get $gid) (local.get $ppem)) (i32.const 64))
+          (local.get $scratch)
+          (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))))
+      (then
+        (call $heap_free (local.get $bitmap_guest))
+        (return (local.get $entry))))
+
+    (i32.store offset=12 (local.get $entry) (local.get $bitmap_guest))
+    (i32.store offset=16 (local.get $entry)
+      (i32.or (local.get $width) (i32.shl (local.get $height) (i32.const 16))))
+    (i32.store16 offset=20 (local.get $entry)
+      (call $tt_glyph_box_left (local.get $data) (local.get $size)
+        (local.get $gid) (local.get $ppem)))
+    (i32.store16 offset=22 (local.get $entry)
+      (call $tt_glyph_box_top (local.get $data) (local.get $size)
+        (local.get $gid) (local.get $ppem)))
+    (local.get $entry))
+
+  (func $tt_entry_width (param $entry i32) (result i32)
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (i32.and (i32.load offset=16 (local.get $entry)) (i32.const 0xFFFF)))
+
+  (func $tt_entry_height (param $entry i32) (result i32)
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (i32.shr_u (i32.load offset=16 (local.get $entry)) (i32.const 16)))
+
+  (func $tt_entry_left (param $entry i32) (result i32)
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (i32.load16_s offset=20 (local.get $entry)))
+
+  (func $tt_entry_top (param $entry i32) (result i32)
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (i32.load16_s offset=22 (local.get $entry)))
+
+  ;; One pixel of a cached glyph, addressed exactly as the FNT accessor does.
+  (func $tt_entry_pixel (param $entry i32) (param $x i32) (param $y i32)
+        (result i32)
+    (local $bitmap i32) (local $height i32)
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (local.set $bitmap (i32.load offset=12 (local.get $entry)))
+    (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
+    (local.set $height (call $tt_entry_height (local.get $entry)))
+    (if (i32.or (i32.ge_u (local.get $x) (call $tt_entry_width (local.get $entry)))
+          (i32.ge_u (local.get $y) (local.get $height)))
+      (then (return (i32.const 0))))
+    (call $tt_bitmap_pixel (call $g2w (local.get $bitmap)) (local.get $height)
+      (local.get $x) (local.get $y)))
+
+  ;; ---- face-level API ---------------------------------------------------
+  ;;
+  ;; What a caller in the GDI layer needs, without ever handling a buffer:
+  ;; open a face by path, then ask it for widths, metrics, and glyphs.
+
+  (func $tt_face_ansi_glyph (param $face i32) (param $byte i32) (result i32)
+    (call $tt_ansi_glyph_index (call $tt_face_data (local.get $face))
+      (call $tt_face_size (local.get $face)) (local.get $byte)))
+
+  (func $tt_face_text_width (param $face i32) (param $text i32) (param $count i32)
+        (param $ppem i32) (result i32)
+    (call $tt_text_width_px (call $tt_face_data (local.get $face))
+      (call $tt_face_size (local.get $face)) (local.get $text) (local.get $count)
+      (local.get $ppem)))
+
+  (func $tt_face_char_width (param $face i32) (param $byte i32) (param $ppem i32)
+        (result i32)
+    (call $tt_ansi_advance_px (call $tt_face_data (local.get $face))
+      (call $tt_face_size (local.get $face)) (local.get $byte) (local.get $ppem)))
+
+  (func $tt_face_ppem (param $face i32) (param $lf_height i32) (result i32)
+    (call $tt_ppem_from_lfheight (call $tt_face_data (local.get $face))
+      (call $tt_face_size (local.get $face)) (local.get $lf_height)))
+
+  ;; TEXTMETRIC fields by index, so the GDI layer fills its struct from one
+  ;; call site instead of fourteen exported functions.
+  (func $tt_face_metric (param $face i32) (param $ppem i32) (param $field i32)
+        (result i32)
+    (local $data i32) (local $size i32)
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (if (i32.eqz (local.get $data)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $field))
+      (then (return (call $tt_tm_height (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 1))
+      (then (return (call $tt_tm_ascent (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 2))
+      (then (return (call $tt_tm_descent (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 3))
+      (then (return (call $tt_tm_internal_leading (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 4))
+      (then (return (call $tt_tm_external_leading (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 5))
+      (then (return (call $tt_tm_ave_char_width (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 6))
+      (then (return (call $tt_tm_max_char_width (local.get $data) (local.get $size)
+        (local.get $ppem)))))
+    (if (i32.eq (local.get $field) (i32.const 7))
+      (then (return (call $tt_tm_weight (local.get $data) (local.get $size)))))
+    (if (i32.eq (local.get $field) (i32.const 8))
+      (then (return (call $tt_is_italic (local.get $data) (local.get $size)))))
+    (if (i32.eq (local.get $field) (i32.const 9))
+      (then (return (call $tt_tm_pitch_and_family (local.get $data) (local.get $size)))))
+    (if (i32.eq (local.get $field) (i32.const 10))
+      (then (return (call $tt_tm_first_char (local.get $data) (local.get $size)))))
+    (if (i32.eq (local.get $field) (i32.const 11))
+      (then (return (call $tt_tm_last_char (local.get $data) (local.get $size)))))
+    (i32.const 0))
+
+  ;; Cached glyph for a guest ANSI byte: the single call a TextOut loop makes
+  ;; per character.
+  (func $tt_face_glyph (param $face i32) (param $byte i32) (param $ppem i32)
+        (result i32)
+    (call $tt_glyph_ensure (local.get $face)
+      (call $tt_face_ansi_glyph (local.get $face) (local.get $byte))
+      (local.get $ppem)))
+
   ;; ---- test surface -----------------------------------------------------
   ;;
   ;; Exported here rather than in 13-exports.wat so this layer stays a single
@@ -2085,6 +2527,54 @@
   (func (export "test_tt_edge_field") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_edge_field (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_face_open") (param i32) (result i32)
+    (call $tt_face_open (local.get 0)))
+
+  (func (export "test_tt_face_size") (param i32) (result i32)
+    (call $tt_face_size (local.get 0)))
+
+  (func (export "test_tt_face_metric") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_face_metric (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_face_ppem") (param i32) (param i32) (result i32)
+    (call $tt_face_ppem (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_face_text_width") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_face_text_width (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_face_char_width") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_face_char_width (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_face_glyph") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_face_glyph (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_entry_width") (param i32) (result i32)
+    (call $tt_entry_width (local.get 0)))
+
+  (func (export "test_tt_entry_height") (param i32) (result i32)
+    (call $tt_entry_height (local.get 0)))
+
+  (func (export "test_tt_entry_left") (param i32) (result i32)
+    (call $tt_entry_left (local.get 0)))
+
+  (func (export "test_tt_entry_top") (param i32) (result i32)
+    (call $tt_entry_top (local.get 0)))
+
+  (func (export "test_tt_entry_pixel") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_entry_pixel (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_cache_used") (result i32)
+    (global.get $tt_cache_used))
+
+  (func (export "test_tt_cache_flush")
+    (call $tt_cache_flush))
 
   (func (export "test_tt_raster_scratch_bytes") (param i32) (result i32)
     (call $tt_raster_scratch_bytes (local.get 0)))
