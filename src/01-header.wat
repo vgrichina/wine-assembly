@@ -1954,6 +1954,13 @@
   ;; PE resource directory RVA (set during PE load)
   (global $rsrc_rva (mut i32) (i32.const 0))
 
+  ;; PE import directory RVA (set during PE load). Kept here rather than read
+  ;; back from the mapped headers because CreateWindowExA deliberately uses
+  ;; image_base+0x100 as CREATESTRUCT scratch, and Borland images put their PE
+  ;; header at exactly that offset — by the time a guest asks about a module,
+  ;; the mapped copy of this field may already be overwritten.
+  (global $import_dir_rva (mut i32) (i32.const 0))
+
   ;; Emulated Windows version for GetVersion/GetVersionEx
   ;; GetVersion format: high word = build (bit 31 set=Win9x, clear=NT), low word = minor<<8|major
   ;; Win98 = 0xC0000A04, NT 4.0 = 0x05650004, Win2000 = 0x08930005

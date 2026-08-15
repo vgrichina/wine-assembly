@@ -23,6 +23,7 @@
     (global.set $thunk_guest_base (i32.add (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE)) (global.get $image_base)))
     (global.set $thunk_guest_end  (i32.add (i32.sub (global.get $THUNK_END)  (global.get $GUEST_BASE)) (global.get $image_base)))
     (local.set $import_rva (i32.load (i32.add (local.get $pe_off) (i32.const 128))))
+    (global.set $import_dir_rva (local.get $import_rva))
     ;; TLS directory = data directory entry 9 (offset 192 from PE header).
     (local.set $tls_rva (i32.load (i32.add (local.get $pe_off) (i32.const 192))))
     ;; Resource directory RVA = data directory entry 2 (offset 136 in optional header)

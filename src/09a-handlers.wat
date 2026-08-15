@@ -242,6 +242,157 @@
     (i32.eqz (i32.load8_u (i32.add (local.get $p) (i32.const 9))))
   )
 
+  ;; ---- modules the image imports are, by definition, already loaded -------
+  ;;
+  ;; GetModuleHandle on a statically imported system DLL must not fail. We
+  ;; satisfy those imports with built-in API thunks instead of mapping a real
+  ;; image, so the DLL table has no entry for them and the search below
+  ;; returns NULL — which on Windows only ever means "this is not loaded".
+  ;;
+  ;; Delphi's VCL is the sharp edge. It resolves comctl32's FlatSB_* entry
+  ;; points once at startup and installs its own USER32-based fallbacks
+  ;; *inside* the branch it takes when the module handle is non-NULL. A NULL
+  ;; handle therefore skips the fallbacks as well, leaving a table of NULL
+  ;; function pointers that the first scrollbar call jumps straight into.
+  ;;
+  ;; Rather than hand-maintain a list of module names, ask the image: its
+  ;; import directory is still mapped at the image base, and every DLL named
+  ;; there is loaded in a real process before the entry point runs.
+
+  (func $ascii_lower (param $c i32) (result i32)
+    (select (i32.add (local.get $c) (i32.const 32)) (local.get $c)
+      (i32.and (i32.ge_u (local.get $c) (i32.const 0x41))
+               (i32.le_u (local.get $c) (i32.const 0x5A)))))
+
+  ;; Length of a module name ignoring a trailing ".dll": "comctl32" and
+  ;; "COMCTL32.DLL" name the same module, and callers use both spellings.
+  (func $dll_base_len (param $gp i32) (result i32)
+    (local $n i32) (local $p i32)
+    (local.set $n (call $guest_strlen (local.get $gp)))
+    (if (i32.ge_u (local.get $n) (i32.const 4))
+      (then
+        (local.set $p (i32.add (call $g2w (local.get $gp))
+                               (i32.sub (local.get $n) (i32.const 4))))
+        (if (i32.and
+              (i32.and
+                (i32.eq (i32.load8_u (local.get $p)) (i32.const 0x2E))
+                (i32.eq (call $ascii_lower (i32.load8_u (i32.add (local.get $p) (i32.const 1))))
+                        (i32.const 0x64)))
+              (i32.and
+                (i32.eq (call $ascii_lower (i32.load8_u (i32.add (local.get $p) (i32.const 2))))
+                        (i32.const 0x6C))
+                (i32.eq (call $ascii_lower (i32.load8_u (i32.add (local.get $p) (i32.const 3))))
+                        (i32.const 0x6C))))
+          (then (local.set $n (i32.sub (local.get $n) (i32.const 4)))))))
+    (local.get $n))
+
+  ;; Case-insensitive module-name compare, both operands guest ANSI strings.
+  (func $dll_name_eq (param $a i32) (param $b i32) (result i32)
+    (local $la i32) (local $i i32) (local $pa i32) (local $pb i32)
+    (local.set $la (call $dll_base_len (local.get $a)))
+    (if (i32.eqz (local.get $la)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $la) (call $dll_base_len (local.get $b)))
+      (then (return (i32.const 0))))
+    (local.set $pa (call $g2w (local.get $a)))
+    (local.set $pb (call $g2w (local.get $b)))
+    (block $done (loop $l
+      (br_if $done (i32.ge_u (local.get $i) (local.get $la)))
+      (if (i32.ne (call $ascii_lower (i32.load8_u (i32.add (local.get $pa) (local.get $i))))
+                  (call $ascii_lower (i32.load8_u (i32.add (local.get $pb) (local.get $i)))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (i32.const 1))
+
+  ;; Same comparison with a UTF-16 left operand. Module names are ASCII, so a
+  ;; wide character with any high byte set cannot match an import entry.
+  (func $dll_name_eq_w (param $a i32) (param $b i32) (result i32)
+    (local $la i32) (local $lb i32) (local $i i32) (local $pa i32) (local $pb i32)
+    (local $c i32)
+    (local.set $pa (call $g2w (local.get $a)))
+    ;; MAX_PATH bounds the scan: a caller passing a non-terminated buffer must
+    ;; not walk memory looking for a zero halfword.
+    (block $end (loop $l
+      (br_if $end (i32.ge_u (local.get $la) (i32.const 260)))
+      (br_if $end (i32.eqz (i32.load16_u (i32.add (local.get $pa)
+                                                  (i32.mul (local.get $la) (i32.const 2))))))
+      (local.set $la (i32.add (local.get $la) (i32.const 1)))
+      (br $l)))
+    ;; Strip a trailing ".dll" the same way $dll_base_len does for ANSI.
+    (if (i32.ge_u (local.get $la) (i32.const 4))
+      (then
+        (local.set $i (i32.sub (local.get $la) (i32.const 4)))
+        (if (i32.and
+              (i32.and
+                (i32.eq (i32.load16_u (i32.add (local.get $pa)
+                          (i32.mul (local.get $i) (i32.const 2)))) (i32.const 0x2E))
+                (i32.eq (call $ascii_lower (i32.load16_u (i32.add (local.get $pa)
+                          (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 2)))))
+                        (i32.const 0x64)))
+              (i32.and
+                (i32.eq (call $ascii_lower (i32.load16_u (i32.add (local.get $pa)
+                          (i32.mul (i32.add (local.get $i) (i32.const 2)) (i32.const 2)))))
+                        (i32.const 0x6C))
+                (i32.eq (call $ascii_lower (i32.load16_u (i32.add (local.get $pa)
+                          (i32.mul (i32.add (local.get $i) (i32.const 3)) (i32.const 2)))))
+                        (i32.const 0x6C))))
+          (then (local.set $la (local.get $i))))))
+    (if (i32.eqz (local.get $la)) (then (return (i32.const 0))))
+    (local.set $lb (call $dll_base_len (local.get $b)))
+    (if (i32.ne (local.get $la) (local.get $lb)) (then (return (i32.const 0))))
+    (local.set $pb (call $g2w (local.get $b)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $l2
+      (br_if $done (i32.ge_u (local.get $i) (local.get $la)))
+      (local.set $c (i32.load16_u (i32.add (local.get $pa)
+                                           (i32.mul (local.get $i) (i32.const 2)))))
+      (if (i32.gt_u (local.get $c) (i32.const 0x7F)) (then (return (i32.const 0))))
+      (if (i32.ne (call $ascii_lower (local.get $c))
+                  (call $ascii_lower (i32.load8_u (i32.add (local.get $pb) (local.get $i)))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l2)))
+    (i32.const 1))
+
+  ;; Does the loaded image import $name? $wide selects a UTF-16 $name.
+  ;; Walks IMAGE_IMPORT_DESCRIPTOR: Name at +12, FirstThunk at +16, and a
+  ;; zero FirstThunk terminates — the same discriminator $process_imports
+  ;; uses, so the two agree on where the table ends.
+  (func $guest_module_is_imported (param $name i32) (param $wide i32) (result i32)
+    (local $rva i32) (local $desc i32)
+    (local $name_rva i32) (local $guard i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    ;; Recorded by the PE loader. Worker threads are separate instances and do
+    ;; not run the loader, so this reads 0 there and the answer degrades to
+    ;; "not loaded" — the same result those threads got before.
+    (local.set $rva (global.get $import_dir_rva))
+    (if (i32.eqz (local.get $rva)) (then (return (i32.const 0))))
+    (local.set $desc (i32.add (global.get $GUEST_BASE) (local.get $rva)))
+    (block $done (loop $l
+      ;; A corrupt or unmapped directory must not spin forever; no real image
+      ;; imports anywhere near this many DLLs.
+      (br_if $done (i32.ge_u (local.get $guard) (i32.const 128)))
+      (br_if $done (i32.eqz (i32.load (i32.add (local.get $desc) (i32.const 16)))))
+      (local.set $name_rva (i32.load (i32.add (local.get $desc) (i32.const 12))))
+      (if (local.get $name_rva)
+        (then
+          ;; Not a select: select evaluates both arms, which would run the
+          ;; UTF-16 comparator across an ANSI string and scan for a zero
+          ;; halfword well past its end.
+          (if (local.get $wide)
+            (then
+              (if (call $dll_name_eq_w (local.get $name)
+                        (i32.add (global.get $image_base) (local.get $name_rva)))
+                (then (return (i32.const 1)))))
+            (else
+              (if (call $dll_name_eq (local.get $name)
+                        (i32.add (global.get $image_base) (local.get $name_rva)))
+                (then (return (i32.const 1))))))))
+      (local.set $desc (i32.add (local.get $desc) (i32.const 20)))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $l)))
+    (i32.const 0))
+
   ;; 1: GetModuleHandleA(lpModuleName) — NULL→image_base, else search DLL table
   (func $handle_GetModuleHandleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $result i32) (local $idx i32)
@@ -257,7 +408,14 @@
                 (local.set $result
                   (i32.load (i32.add (global.get $DLL_TABLE)
                     (i32.mul (local.get $idx) (i32.const 32))))))
-              (else (local.set $result (i32.const 0))))))))
+              (else
+                ;; No mapped image, but the module may still be one we serve
+                ;; from the API table. Reporting the image base matches what
+                ;; ole32 already does above, and keeps the invariant that a
+                ;; module handle points at a valid PE.
+                (if (call $guest_module_is_imported (local.get $arg0) (i32.const 0))
+                  (then (local.set $result (global.get $image_base)))
+                  (else (local.set $result (i32.const 0))))))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -4528,7 +4686,12 @@
     (local $result i32)
     (if (i32.eqz (local.get $arg0))
       (then (local.set $result (global.get $image_base)))
-      (else (local.set $result (call $find_dll_by_wname (call $g2w (local.get $arg0))))))
+      (else
+        (local.set $result (call $find_dll_by_wname (call $g2w (local.get $arg0))))
+        (if (i32.eqz (local.get $result))
+          (then
+            (if (call $guest_module_is_imported (local.get $arg0) (i32.const 1))
+              (then (local.set $result (global.get $image_base))))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
