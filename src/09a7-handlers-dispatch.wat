@@ -10776,24 +10776,228 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 788: GlobalAddAtomA(lpString) — return unique atom
+  ;; ============================================================
+  ;; ATOM TABLES (AddAtom* / GlobalAddAtom* / FindAtom* / DeleteAtom / *GetAtomName*)
+  ;; ============================================================
+  ;; Atoms are a string-interning service: adding the same name twice must
+  ;; return the *same* atom with a bumped reference count, and FindAtom must
+  ;; return it. Apps use that identity, not just the number — Delphi's VCL
+  ;; (Tetravex, Runenlegen) registers a per-window-class atom at startup and
+  ;; calls GlobalFindAtomA on every window activation to recover it.
+
+  ;; An integer atom is a MAKEINTATOM value: the "string" pointer is really a
+  ;; 16-bit number, i.e. HIWORD(lpString) == 0. It is its own atom and never
+  ;; consumes a table slot.
+  (func $atom_is_int (param $s i32) (result i32)
+    (i32.eqz (i32.shr_u (local.get $s) (i32.const 16))))
+
+  ;; Slot index of $name in $table, or -1. Atom names are case-insensitive.
+  (func $atom_slot_of_name (param $table i32) (param $name i32) (result i32)
+    (local $i i32) (local $e i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $ATOM_TABLE_SLOTS)))
+      (local.set $e (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.and (i32.ne (i32.load (local.get $e)) (i32.const 0))
+                   (i32.eqz (call $guest_stricmp (i32.load (local.get $e)) (local.get $name))))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Add $name to $table. Returns the atom, or 0 when the table is full.
+  (func $atom_add (param $table i32) (param $name i32) (result i32)
+    (local $i i32) (local $e i32) (local $copy i32)
+    (if (call $atom_is_int (local.get $name))
+      (then (return (local.get $name))))
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $i (call $atom_slot_of_name (local.get $table) (local.get $name)))
+    (if (i32.ge_s (local.get $i) (i32.const 0))
+      (then
+        (local.set $e (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 8))))
+        (i32.store offset=4 (local.get $e) (i32.add (i32.load offset=4 (local.get $e)) (i32.const 1)))
+        (return (i32.add (global.get $ATOM_FIRST) (local.get $i)))))
+    ;; Not present — claim the first free slot and take a private copy of the
+    ;; name, since the caller's buffer is free to change after the call.
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $ATOM_TABLE_SLOTS)))
+      (local.set $e (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eqz (i32.load (local.get $e)))
+        (then
+          (local.set $copy (call $heap_alloc
+            (i32.add (call $guest_strlen (local.get $name)) (i32.const 1))))
+          (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+          (call $guest_strcpy (local.get $copy) (local.get $name))
+          (i32.store (local.get $e) (local.get $copy))
+          (i32.store offset=4 (local.get $e) (i32.const 1))
+          (return (i32.add (global.get $ATOM_FIRST) (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Look up $name in $table without adding it. Returns the atom, or 0.
+  (func $atom_find (param $table i32) (param $name i32) (result i32)
+    (local $i i32)
+    (if (call $atom_is_int (local.get $name))
+      (then (return (local.get $name))))
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $i (call $atom_slot_of_name (local.get $table) (local.get $name)))
+    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (return (i32.const 0))))
+    (i32.add (global.get $ATOM_FIRST) (local.get $i)))
+
+  ;; Entry address for a live string atom, or 0 when $atom is an integer atom,
+  ;; out of range, or names a free slot.
+  (func $atom_entry (param $table i32) (param $atom i32) (result i32)
+    (local $i i32) (local $e i32)
+    (if (i32.lt_u (local.get $atom) (global.get $ATOM_FIRST)) (then (return (i32.const 0))))
+    (local.set $i (i32.sub (local.get $atom) (global.get $ATOM_FIRST)))
+    (if (i32.ge_u (local.get $i) (global.get $ATOM_TABLE_SLOTS)) (then (return (i32.const 0))))
+    (local.set $e (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 8))))
+    (if (i32.eqz (i32.load (local.get $e))) (then (return (i32.const 0))))
+    (local.get $e))
+
+  ;; Drop one reference; free the slot when the last one goes. Returns 0 on
+  ;; success (both Win32 delete entry points report success as zero).
+  ;; Note: $atom_is_int must NOT be used here. It classifies a *name* argument
+  ;; (HIWORD == 0 means MAKEINTATOM), and every string atom value is itself
+  ;; below 0x10000, so applying it to an atom makes every delete a no-op.
+  ;; $atom_entry's "below 0xC000" test is the correct integer-atom guard.
+  (func $atom_delete (param $table i32) (param $atom i32) (result i32)
+    (local $e i32)
+    (local.set $e (call $atom_entry (local.get $table) (local.get $atom)))
+    (if (i32.eqz (local.get $e)) (then (return (i32.const 0))))
+    (i32.store offset=4 (local.get $e) (i32.sub (i32.load offset=4 (local.get $e)) (i32.const 1)))
+    (if (i32.le_s (i32.load offset=4 (local.get $e)) (i32.const 0))
+      (then
+        (call $heap_free (i32.load (local.get $e)))
+        (i32.store (local.get $e) (i32.const 0))
+        (i32.store offset=4 (local.get $e) (i32.const 0))))
+    (i32.const 0))
+
+  ;; Copy the name of $atom into the guest ANSI buffer $buf, which holds $size
+  ;; characters including the terminator. Returns characters copied (0 = no
+  ;; such atom), matching GlobalGetAtomNameA.
+  (func $atom_get_name_a (param $table i32) (param $atom i32) (param $buf i32) (param $size i32) (result i32)
+    (local $e i32) (local $src i32) (local $n i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $buf)) (i32.le_s (local.get $size) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $e (call $atom_entry (local.get $table) (local.get $atom)))
+    (if (i32.eqz (local.get $e)) (then (return (i32.const 0))))
+    (local.set $src (i32.load (local.get $e)))
+    (local.set $n (call $guest_strlen (local.get $src)))
+    (if (i32.gt_u (local.get $n) (i32.sub (local.get $size) (i32.const 1)))
+      (then (local.set $n (i32.sub (local.get $size) (i32.const 1)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs8 (i32.add (local.get $buf) (local.get $i))
+                 (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $buf) (local.get $n)) (i32.const 0))
+    (local.get $n))
+
+  ;; Same, writing UTF-16 into $buf.
+  (func $atom_get_name_w (param $table i32) (param $atom i32) (param $buf i32) (param $size i32) (result i32)
+    (local $e i32) (local $src i32) (local $n i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $buf)) (i32.le_s (local.get $size) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $e (call $atom_entry (local.get $table) (local.get $atom)))
+    (if (i32.eqz (local.get $e)) (then (return (i32.const 0))))
+    (local.set $src (i32.load (local.get $e)))
+    (local.set $n (call $guest_strlen (local.get $src)))
+    (if (i32.gt_u (local.get $n) (i32.sub (local.get $size) (i32.const 1)))
+      (then (local.set $n (i32.sub (local.get $size) (i32.const 1)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs16 (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 2)))
+                  (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs16 (i32.add (local.get $buf) (i32.mul (local.get $n) (i32.const 2))) (i32.const 0))
+    (local.get $n))
+
+  ;; Narrow a UTF-16 atom name into a temporary guest ANSI buffer so the W
+  ;; entry points share one table with the A ones — an atom added as W must be
+  ;; findable as A. Caller frees. Integer atoms pass through untouched.
+  (func $atom_narrow_w (param $ws i32) (result i32)
+    (local $len i32) (local $buf i32) (local $i i32) (local $ch i32)
+    (if (call $atom_is_int (local.get $ws)) (then (return (local.get $ws))))
+    (if (i32.eqz (local.get $ws)) (then (return (i32.const 0))))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (call $gl16 (i32.add (local.get $ws) (i32.mul (local.get $len) (i32.const 2))))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br_if $d (i32.ge_u (local.get $len) (i32.const 512)))
+      (br $l)))
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (block $d2 (loop $l2
+      (br_if $d2 (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $ch (call $gl16 (i32.add (local.get $ws) (i32.mul (local.get $i) (i32.const 2)))))
+      (call $gs8 (i32.add (local.get $buf) (local.get $i))
+        (select (i32.const 0x3F) (local.get $ch) (i32.gt_u (local.get $ch) (i32.const 0xFF))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l2)))
+    (call $gs8 (i32.add (local.get $buf) (local.get $len)) (i32.const 0))
+    (local.get $buf))
+
+  ;; Release a buffer handed back by $atom_narrow_w. Integer atoms were passed
+  ;; through rather than allocated, so they must not be freed.
+  (func $atom_narrow_free (param $ws i32) (param $buf i32)
+    (if (i32.and (i32.ne (local.get $buf) (i32.const 0))
+                 (i32.eqz (call $atom_is_int (local.get $ws))))
+      (then (call $heap_free (local.get $buf)))))
+
+  ;; 788: GlobalAddAtomA(lpString)
   (func $handle_GlobalAddAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $next_atom))
-    (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
+    (global.set $eax (call $atom_add (global.get $ATOM_GLOBAL_TABLE) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; AddAtomA(lpString) — process-local atom allocation
+  ;; GlobalFindAtomA(lpString) — 0 when the name was never added.
+  (func $handle_GlobalFindAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $atom_find (global.get $ATOM_GLOBAL_TABLE) (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; GlobalGetAtomNameA(nAtom, lpBuffer, nSize)
+  (func $handle_GlobalGetAtomNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $atom_get_name_a (global.get $ATOM_GLOBAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; AddAtomA(lpString) — process-local namespace, separate from the global one.
   (func $handle_AddAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $next_atom))
-    (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
+    (global.set $eax (call $atom_add (global.get $ATOM_LOCAL_TABLE) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; DeleteAtom(nAtom) — release a process-local atom. Atom reuse and
-  ;; reference counts are not observable by current callers; zero is success.
+  ;; AddAtomW(lpString)
+  (func $handle_AddAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $narrow i32)
+    (local.set $narrow (call $atom_narrow_w (local.get $arg0)))
+    (global.set $eax (call $atom_add (global.get $ATOM_LOCAL_TABLE) (local.get $narrow)))
+    (call $atom_narrow_free (local.get $arg0) (local.get $narrow))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; GetAtomNameA(nAtom, lpBuffer, nSize)
+  (func $handle_GetAtomNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $atom_get_name_a (global.get $ATOM_LOCAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; GetAtomNameW(nAtom, lpBuffer, nSize)
+  (func $handle_GetAtomNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $atom_get_name_w (global.get $ATOM_LOCAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; DeleteAtom(nAtom) — release one process-local reference.
   (func $handle_DeleteAtom (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $atom_delete (global.get $ATOM_LOCAL_TABLE) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

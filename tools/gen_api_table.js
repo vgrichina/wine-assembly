@@ -1016,6 +1016,14 @@ const extra = [
   { name: 'LZClose', nargs: 1 },
   // WINMM — RIFF file seek used by RCT after the 16-bit POP decoder fix.
   { name: 'mmioSeek', nargs: 3 },
+  // KERNEL32/USER32 — the halves of the atom API that had no entry at all.
+  // Delphi's VCL calls GlobalFindAtomA on every window activation, so a
+  // missing entry resolved to api_id 0xFFFF and trapped (Tetravex).
+  { name: 'GlobalFindAtomA', nargs: 1 },
+  { name: 'GlobalGetAtomNameA', nargs: 3 },
+  { name: 'AddAtomW', nargs: 1 },
+  { name: 'GetAtomNameA', nargs: 3 },
+  { name: 'GetAtomNameW', nargs: 3 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

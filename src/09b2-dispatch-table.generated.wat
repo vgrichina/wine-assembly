@@ -42,7 +42,7 @@
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2383))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2388))
       (then
         (call $dispatch_api_table_page_9 (i32.sub (local.get $api_id) (i32.const 2304)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -9338,8 +9338,13 @@
   )
 
   (func $dispatch_api_table_page_9 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2304..2382
+    ;; api ids 2304..2387
     (block $fallback
+    (block $api_83
+    (block $api_82
+    (block $api_81
+    (block $api_80
+    (block $api_79
     (block $api_78
     (block $api_77
     (block $api_76
@@ -9419,7 +9424,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $fallback (local.get $api_id))
     ) ;; 2304: IBindCtx_RevokeObjectBound
       (call $handle_IBindCtx_RevokeObjectBound (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -9656,6 +9661,21 @@
       (return)
     ) ;; 2382: WidenPath
       (call $handle_WidenPath (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2383: GlobalFindAtomA
+      (call $handle_GlobalFindAtomA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2384: GlobalGetAtomNameA
+      (call $handle_GlobalGetAtomNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2385: AddAtomW
+      (call $handle_AddAtomW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2386: GetAtomNameA
+      (call $handle_GetAtomNameA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2387: GetAtomNameW
+      (call $handle_GetAtomNameW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2304)))

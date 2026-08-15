@@ -8397,10 +8397,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 528: GlobalAddAtomW(lpString) — return unique atom, 1 arg stdcall
+  ;; 528: GlobalAddAtomW(lpString) — 1 arg stdcall, shares the A namespace.
   (func $handle_GlobalAddAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $next_atom))
-    (global.set $next_atom (i32.add (global.get $next_atom) (i32.const 1)))
+    (local $narrow i32)
+    (local.set $narrow (call $atom_narrow_w (local.get $arg0)))
+    (global.set $eax (call $atom_add (global.get $ATOM_GLOBAL_TABLE) (local.get $narrow)))
+    (call $atom_narrow_free (local.get $arg0) (local.get $narrow))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8412,9 +8414,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 530: GlobalGetAtomNameW — STUB: unimplemented
+  ;; 530: GlobalGetAtomNameW(nAtom, lpBuffer, nSize)
   (func $handle_GlobalGetAtomNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $atom_get_name_w (global.get $ATOM_GLOBAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 531: GetProfileIntW(appName, keyName, nDefault) — Unicode win.ini read
@@ -8692,29 +8696,32 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 550: GlobalDeleteAtom(nAtom) — no-op, return 0 (success)
+  ;; 550: GlobalDeleteAtom(nAtom) — release one global reference; 0 = success.
   (func $handle_GlobalDeleteAtom (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $atom_delete (global.get $ATOM_GLOBAL_TABLE) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; FindAtomA/W(lpString) — local atom table is not modeled. Return 0
-  ;; (not found), which is the documented failure result and lets IME/RichEdit
-  ;; probes fall back cleanly.
+  ;; FindAtomA/W(lpString) — process-local lookup; 0 when never added.
   (func $handle_FindAtomA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $atom_find (global.get $ATOM_LOCAL_TABLE) (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   (func $handle_FindAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $narrow i32)
+    (local.set $narrow (call $atom_narrow_w (local.get $arg0)))
+    (global.set $eax (call $atom_find (global.get $ATOM_LOCAL_TABLE) (local.get $narrow)))
+    (call $atom_narrow_free (local.get $arg0) (local.get $narrow))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 551: GlobalFindAtomW(lpString) — global atom table is not modeled. Return
-  ;; 0 (not found), matching Win32 failure semantics.
+  ;; 551: GlobalFindAtomW(lpString) — global lookup; 0 when never added.
   (func $handle_GlobalFindAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $narrow i32)
+    (local.set $narrow (call $atom_narrow_w (local.get $arg0)))
+    (global.set $eax (call $atom_find (global.get $ATOM_GLOBAL_TABLE) (local.get $narrow)))
+    (call $atom_narrow_free (local.get $arg0) (local.get $narrow))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

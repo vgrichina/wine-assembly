@@ -921,7 +921,9 @@
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
   ;; 0x00005104  252B    Free
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
-  ;; 0x00006200  3.5KB   Free (former API dispatch hash table)
+  ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
+  ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
+  ;; 0x00006A00  1.5KB   Free (former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -1664,7 +1666,18 @@
   (global $next_hmenu   (mut i32) (i32.const 0x800001)) ;; HMENU allocator — opaque handle, no backing state (AppendMenu is no-op; menu bar rendered from PE resources)
   (global $last_load_menu_id (mut i32) (i32.const 0)) ;; low-word resource id from most recent LoadMenuA/W
   (global $last_load_menu_hinst (mut i32) (i32.const 0)) ;; hInstance paired with $last_load_menu_id
-  (global $next_atom    (mut i32) (i32.const 0xC000))  ;; Atom allocator (0xC000+)
+  ;; ATOM_LOCAL_TABLE / ATOM_GLOBAL_TABLE: string-keyed atom tables. Win32 keeps
+  ;; the process-local (AddAtom) and system-global (GlobalAddAtom) namespaces
+  ;; separate, and apps rely on that: the same string added to both yields two
+  ;; independent atoms with independent reference counts. Each entry is 8 bytes:
+  ;;   +0 name — guest heap pointer to the NUL-terminated ANSI name (0 = free)
+  ;;   +4 refs — outstanding Add minus Delete calls (0 = free)
+  ;; The atom value for slot i is 0xC000 + i, matching the Win32 range for
+  ;; string atoms. Integer atoms (HIWORD(lpString) == 0) never occupy a slot.
+  (global $ATOM_LOCAL_TABLE  i32 (i32.const 0x00006200))
+  (global $ATOM_GLOBAL_TABLE i32 (i32.const 0x00006600))
+  (global $ATOM_TABLE_SLOTS  i32 (i32.const 128))     ;; per table; 128 × 8 = 1KB each
+  (global $ATOM_FIRST        i32 (i32.const 0xC000))  ;; first string-atom value
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
   (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)

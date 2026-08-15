@@ -18506,5 +18506,40 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 2383,
+    "name": "GlobalFindAtomA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3728827247
+  },
+  {
+    "id": 2384,
+    "name": "GlobalGetAtomNameA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4175667439
+  },
+  {
+    "id": 2385,
+    "name": "AddAtomW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1063335030
+  },
+  {
+    "id": 2386,
+    "name": "GetAtomNameA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4023690724
+  },
+  {
+    "id": 2387,
+    "name": "GetAtomNameW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4258577390
   }
 ]
