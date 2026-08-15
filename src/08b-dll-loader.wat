@@ -269,6 +269,14 @@
         (if (i32.eq (local.get $ordinal) (i32.const 18))  (then (return (call $lookup_api_id (i32.const 0x11375))))) ;; select
         (if (i32.eq (local.get $ordinal) (i32.const 21))  (then (return (call $lookup_api_id (i32.const 0x1137C))))) ;; setsockopt
         (if (i32.eq (local.get $ordinal) (i32.const 12))  (then (return (call $lookup_api_id (i32.const 0x11387))))) ;; ioctlsocket
+        (if (i32.eq (local.get $ordinal) (i32.const 1))   (then (return (call $lookup_api_id (i32.const 0x11393))))) ;; accept
+        (if (i32.eq (local.get $ordinal) (i32.const 2))   (then (return (call $lookup_api_id (i32.const 0x1139A))))) ;; bind
+        (if (i32.eq (local.get $ordinal) (i32.const 13))  (then (return (call $lookup_api_id (i32.const 0x1139F))))) ;; listen
+        (if (i32.eq (local.get $ordinal) (i32.const 22))  (then (return (call $lookup_api_id (i32.const 0x113A6))))) ;; shutdown
+        (if (i32.eq (local.get $ordinal) (i32.const 15))  (then (return (call $lookup_api_id (i32.const 0x113AF))))) ;; ntohs
+        (if (i32.eq (local.get $ordinal) (i32.const 11))  (then (return (call $lookup_api_id (i32.const 0x113B5))))) ;; inet_ntoa
+        (if (i32.eq (local.get $ordinal) (i32.const 151)) (then (return (call $lookup_api_id (i32.const 0x113BF))))) ;; __WSAFDIsSet
+        (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id (i32.const 0x113CC))))) ;; WSASetLastError
       ))
     (i32.const -1))
 

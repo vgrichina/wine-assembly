@@ -7710,98 +7710,268 @@
     "name": "WSAStartup",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 538074207
+    "hash": 538074207,
+    "args": [
+      {
+        "name": "version",
+        "type": "UINT"
+      },
+      {
+        "name": "data",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 924,
     "name": "WSACleanup",
     "nargs": 0,
     "convention": "stdcall",
-    "hash": 2345834946
+    "hash": 2345834946,
+    "ret": "INT"
   },
   {
     "id": 925,
     "name": "WSAGetLastError",
     "nargs": 0,
     "convention": "stdcall",
-    "hash": 3753760860
+    "hash": 3753760860,
+    "ret": "INT"
   },
   {
     "id": 926,
     "name": "socket",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2417129068
+    "hash": 2417129068,
+    "args": [
+      {
+        "name": "af",
+        "type": "INT"
+      },
+      {
+        "name": "type",
+        "type": "INT"
+      },
+      {
+        "name": "protocol",
+        "type": "INT"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 927,
     "name": "closesocket",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 109265666
+    "hash": 109265666,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 928,
     "name": "connect",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2866859257
+    "hash": 2866859257,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "name",
+        "type": "LPSOCKADDR"
+      },
+      {
+        "name": "namelen",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 929,
     "name": "send",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 1919010991
+    "hash": 1919010991,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "buf",
+        "type": "DWORD"
+      },
+      {
+        "name": "len",
+        "type": "INT"
+      },
+      {
+        "name": "flags",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 930,
     "name": "recv",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 3974385709
+    "hash": 3974385709,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "buf",
+        "type": "DWORD"
+      },
+      {
+        "name": "len",
+        "type": "INT"
+      },
+      {
+        "name": "flags",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 931,
     "name": "gethostbyname",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 695126147
+    "hash": 695126147,
+    "args": [
+      {
+        "name": "name",
+        "type": "LPCSTR"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 932,
     "name": "htons",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2986200853
+    "hash": 2986200853,
+    "args": [
+      {
+        "name": "hostshort",
+        "type": "UINT"
+      }
+    ],
+    "ret": "UINT"
   },
   {
     "id": 933,
     "name": "inet_addr",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3427581171
+    "hash": 3427581171,
+    "args": [
+      {
+        "name": "cp",
+        "type": "LPCSTR"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 934,
     "name": "select",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 297952813
+    "hash": 297952813,
+    "args": [
+      {
+        "name": "nfds",
+        "type": "INT"
+      },
+      {
+        "name": "readfds",
+        "type": "LPFDSET"
+      },
+      {
+        "name": "writefds",
+        "type": "LPFDSET"
+      },
+      {
+        "name": "exceptfds",
+        "type": "LPFDSET"
+      },
+      {
+        "name": "timeout",
+        "type": "LPTIMEVAL"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 935,
     "name": "setsockopt",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 910428104
+    "hash": 910428104,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "level",
+        "type": "INT"
+      },
+      {
+        "name": "optname",
+        "type": "INT"
+      },
+      {
+        "name": "optval",
+        "type": "DWORD"
+      },
+      {
+        "name": "optlen",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 936,
     "name": "ioctlsocket",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2151917855
+    "hash": 2151917855,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "cmd",
+        "type": "DWORD"
+      },
+      {
+        "name": "argp",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 937,
@@ -18056,5 +18226,145 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 359656012
+  },
+  {
+    "id": 2371,
+    "name": "accept",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 136609321,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "addr",
+        "type": "LPSOCKADDR",
+        "out": true
+      },
+      {
+        "name": "addrlen",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2372,
+    "name": "bind",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3344129838,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "name",
+        "type": "LPSOCKADDR"
+      },
+      {
+        "name": "namelen",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
+  },
+  {
+    "id": 2373,
+    "name": "listen",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 993752742,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "backlog",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
+  },
+  {
+    "id": 2374,
+    "name": "shutdown",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4162873931,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "how",
+        "type": "INT"
+      }
+    ],
+    "ret": "INT"
+  },
+  {
+    "id": 2375,
+    "name": "ntohs",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2991326401,
+    "args": [
+      {
+        "name": "netshort",
+        "type": "UINT"
+      }
+    ],
+    "ret": "UINT"
+  },
+  {
+    "id": 2376,
+    "name": "inet_ntoa",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4004911546,
+    "args": [
+      {
+        "name": "in",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2377,
+    "name": "__WSAFDIsSet",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3919210010,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "set",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "INT"
+  },
+  {
+    "id": 2378,
+    "name": "WSASetLastError",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 562980712,
+    "args": [
+      {
+        "name": "err",
+        "type": "INT"
+      }
+    ]
   }
 ]

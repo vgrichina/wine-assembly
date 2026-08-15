@@ -914,22 +914,50 @@ action, nor embed WebRTC concepts in WAT.
 ### Slice 0: runnable game client — complete
 
 - Original Liquid War 5.6.2 client loads its packed and custom assets.
-- DirectDraw reaches a colorful 640x480 menu.
+- DirectDraw reaches a colorful 640x480 menu with its `Net game` entry. The
+  client needs roughly 400k batches to get there; a shorter run stops during
+  asset loading and renders an empty screen.
 - Obsolete OLE/DCOM startup warnings are removed through compatibility work.
 - No network success is claimed yet.
 
-### Slice 1: deterministic socket core
+### Slice 1: deterministic socket core — complete
 
-- Add complete socket records and non-colliding handle allocation.
-- Implement address parsing, byte-order functions, WSA error state, and close.
-- Implement `bind`, `listen`, `connect`, `accept`, `send`, `recv`, `shutdown`,
-  `FIONBIO`, and `select` against an in-memory switch.
-- Add all WSOCK32 ordinal resolution required by both Liquid War binaries.
-- Test invalid handles, illegal state transitions, partial I/O, EOF/reset,
-  backlog limits, timeouts, and cleanup.
+- `src/09d-winsock.wat` owns a 64-entry socket table and the room switch.
+  Handles are tagged `0x53xxxxxx` so they cannot collide with file, thread, or
+  GDI handles.
+- `socket`, `bind`, `listen`, `connect`, `accept`, `send`, `recv`, `shutdown`,
+  `closesocket`, `select`, `__WSAFDIsSet`, `ioctlsocket` (`FIONBIO`,
+  `FIONREAD`), `setsockopt`, `htons`/`ntohs`, `inet_addr`/`inet_ntoa`,
+  `gethostbyname`, and the `WSA*` lifecycle run against that switch.
+- All 21 WSOCK32 ordinals both Liquid War binaries import now resolve.
+- Isolation is enforced at `bind` and `connect`: only `10.77.0.0/24` and
+  loopback are routable, everything else is `WSAENETUNREACH`.
+- `test/test-wat-winsock.js` — 37 checks covering invalid handles, illegal
+  state transitions, partial send, fragmented recv, orderly EOF versus reset,
+  backlog limits, ephemeral ports, readiness in all three `select` sets, and
+  table exhaustion.
 
-Exit gate: a synthetic client and server exchange fragmented bidirectional byte
-streams through public Winsock handlers with blocking and nonblocking modes.
+Exit gate met: a synthetic client and server exchange fragmented bidirectional
+byte streams through the public Winsock handlers, and `lwwinsrv.exe -private -6
+-nobeep` now reaches its real accept loop — `bind(&0.0.0.0:8035)`,
+`listen(backlog=10)`, then `select` on the listener with a 1s timeout — where
+it previously failed at `socket()` and exited 1.
+
+Deliberately deferred to Slice 2, where a second process can make a blocked
+call progress:
+
+- A blocking `accept`/`recv`/`send` that cannot complete calls
+  `$crash_unimplemented` rather than faking `WSAEWOULDBLOCK` on a blocking
+  socket. With one process there is nothing that could wake it, so the crash
+  names the next thing to build instead of hiding it.
+- `select` with a finite `timeval` returns 0 immediately rather than waiting
+  out the interval. The outcome is legal; the elapsed time is not yet real.
+- `connect` completes synchronously, so there is no `WSAEWOULDBLOCK` connect
+  path or writable-readiness completion yet.
+
+Tracing: `--trace-api` decodes `sockaddr_in`, `fd_set`, and `timeval` through
+the `LPSOCKADDR`, `LPFDSET`, and `LPTIMEVAL` types in `lib/api-format.js`, so a
+network trace reads `bind(name=&0.0.0.0:8035)` rather than a bare pointer.
 
 ### Slice 2: Liquid War local loopback
 

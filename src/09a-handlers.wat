@@ -12172,101 +12172,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 926: socket(af, type, protocol) — 3 args stdcall
-  ;; Return INVALID_SOCKET (-1) — no networking
-  (func $handle_socket (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 927: closesocket(s) — 1 arg stdcall
-  (func $handle_closesocket (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 928: connect(s, name, namelen) — 3 args stdcall, return SOCKET_ERROR (-1)
-  (func $handle_connect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 929: send(s, buf, len, flags) — 4 args stdcall, return SOCKET_ERROR (-1)
-  (func $handle_send (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 930: recv(s, buf, len, flags) — 4 args stdcall, return SOCKET_ERROR (-1)
-  (func $handle_recv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 931: gethostbyname(name) — 1 arg stdcall, return NULL (lookup failed)
-  (func $handle_gethostbyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 932: htons(hostshort) — 1 arg stdcall, byte-swap 16-bit
-  (func $handle_htons (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.or
-      (i32.shl (i32.and (local.get $arg0) (i32.const 0xFF)) (i32.const 8))
-      (i32.and (i32.shr_u (local.get $arg0) (i32.const 8)) (i32.const 0xFF))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 933: inet_addr(cp) — 1 arg stdcall, return INADDR_NONE (-1)
-  (func $handle_inet_addr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 934: select(nfds, readfds, writefds, exceptfds, timeout) — 5 args stdcall
-  (func $handle_select (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; 0 = timeout, no ready sockets
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 935: setsockopt(s, level, optname, optval, optlen) — 5 args stdcall
-  (func $handle_setsockopt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 936: ioctlsocket(s, cmd, argp) — 3 args stdcall
-  (func $handle_ioctlsocket (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const -1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 923: WSAStartup(wVersionRequested, lpWSAData) — 2 args stdcall
-  ;; Negotiate the caller's requested 1.x/2.x version while advertising 2.2
-  ;; as the highest supported version, then return 0 (success).
-  (func $handle_WSAStartup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    ;; WSADATA: wVersion is the negotiated request; wHighVersion is the
-    ;; provider ceiling. WinSock 1.1 clients reject a successful call that
-    ;; incorrectly reports 2.2 in wVersion.
-    (i32.store16 (local.get $wa) (i32.and (local.get $arg0) (i32.const 0xFFFF)))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 0x0202)) ;; wHighVersion = 2.2
-    (global.set $eax (i32.const 0))  ;; success
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 924: WSACleanup() — 0 args stdcall
-  (func $handle_WSACleanup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
-
-  ;; 925: WSAGetLastError() — 0 args stdcall
-  (func $handle_WSAGetLastError (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
+  ;; Winsock handlers (socket, bind, listen, accept, connect, send, recv,
+  ;; select, shutdown, ioctlsocket, setsockopt, the byte-order and address
+  ;; helpers, and the WSA* lifecycle) live in 09d-winsock.wat, which owns
+  ;; the virtual LAN socket switch described in docs/virtual-lan-party.md.
 
   ;; 921: SetWindowRgn(hwnd, hRgn, bRedraw) — 3 args stdcall
   (func $handle_SetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

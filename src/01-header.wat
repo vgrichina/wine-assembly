@@ -796,7 +796,7 @@
   (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
   ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
   ;; supported ordinals to these normal API-table names.
-  (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00")
+  (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -939,7 +939,9 @@
   ;; 0x00010B00  1KB     OWNER_TABLE   (256 entries × 4 bytes, ends 0x10F00)
   ;; 0x00010F00  256B    Free
   ;; 0x00011000  320B    WAT-owned system strings
-  ;; 0x00011140  1064B   DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
+  ;; 0x00011140  448B    DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
+  ;; 0x00011300  220B    WSOCK32 ordinal-import names (ends 0x000113DC)
+  ;; 0x000113DC 396B     Free
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
@@ -991,6 +993,7 @@
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
   ;; 0x07FF8000  8KB     COM_WRAPPERS   (1024 entries × 8 bytes, ends 0x07FFA000)
   ;; 0x07FFA000 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FFE000)
+  ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
@@ -1367,6 +1370,11 @@
   ;;   +12  v_track   SB_VERT nTrackPos
   (global $SCROLL_AUX_TABLE i32 (i32.const 0x07FEB000))
   (global $SCROLL_AUX_TABLE_SIZE i32 (i32.const 0x00001000))
+  ;; VSOCK_TABLE — virtual LAN socket records (docs/virtual-lan-party.md).
+  ;; 64 entries × 128 bytes, occupying the last 8KB below the sparse
+  ;; VirtualAlloc backing pool. Layout is documented in 09d-winsock.wat.
+  (global $VSOCK_TABLE i32 (i32.const 0x07FFE000))
+  (global $VSOCK_TABLE_SIZE i32 (i32.const 0x00002000))
   ;; FLASH_TABLE — per-window flash state, parallel to WND_RECORDS slots.
   ;; 256 entries × 1 byte = 0x100 (0xE970..0xEA70)
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
