@@ -227,8 +227,35 @@ static void render_glyph(FT_Face face, unsigned byte, int cell_height,
   }
   if (error) die_ft("FT_Load_Char", error);
   slot = face->glyph;
-  if (bitmap_only && slot->format != FT_GLYPH_FORMAT_BITMAP)
-    die("source did not return an embedded bitmap glyph");
+  /* A glyph with no embedded bitmap is acceptable in exactly two cases, and
+     both mean "there is nothing to draw" rather than "draw it another way":
+
+       - the glyph is blank, which is how space is stored in Wine's larger
+         Tahoma strikes: it has an advance and no ink, so the strike carries
+         no bitmap for it;
+       - the byte is not mapped by the face at all, so it would resolve to
+         .notdef, and the strike does not carry .notdef either. Wine's Tahoma
+         includes .notdef up to 10ppem and drops it above, so the five bytes
+         CP1252 leaves undefined show Wine's box at the small sizes and
+         nothing at the large ones - which is what the strikes contain.
+
+     Any other glyph reaching here would be silently rasterized from its
+     outline and substituted for strike pixels, which is the one thing
+     --bitmap-only exists to prevent. */
+  if (bitmap_only && slot->format != FT_GLYPH_FORMAT_BITMAP) {
+    int blank = slot->format == FT_GLYPH_FORMAT_OUTLINE &&
+                slot->outline.n_contours == 0;
+    if (!blank && FT_Get_Char_Index(face, codepoint) == 0) blank = 1;
+    if (!blank) {
+      fprintf(stderr,
+              "gen-bitmap-fon: byte 0x%02x (U+%04x) has no embedded bitmap "
+              "and is not blank\n", byte, codepoint);
+      exit(1);
+    }
+    /* Drop whatever outline came back so the cell is emitted empty. */
+    slot->outline.n_contours = 0;
+    slot->outline.n_points = 0;
+  }
   if (slot->format == FT_GLYPH_FORMAT_OUTLINE) {
     error = FT_Render_Glyph(slot, FT_RENDER_MODE_MONO);
     if (error) die_ft("FT_Render_Glyph", error);
@@ -267,7 +294,7 @@ static Strike make_strike(FT_Face face, int requested_height,
                           const char *face_name, int force_fixed,
                           const char *copyright, HintingMode hinting,
                           RasterSizing raster_sizing, int bitmap_only,
-                          CharacterSet charset) {
+                          CharacterSet charset, int weight) {
   enum { LAST_CHAR = 255, MAX_GLYPH_COUNT = 256 };
   Strike strike;
   Glyph glyphs[MAX_GLYPH_COUNT];
@@ -363,7 +390,7 @@ static Strike make_strike(FT_Face face, int requested_height,
   put_u8(&strike.bytes, 80, 0);
   put_u8(&strike.bytes, 81, 0);
   put_u8(&strike.bytes, 82, 0);
-  put_u16(&strike.bytes, 83, 400);
+  put_u16(&strike.bytes, 83, (uint16_t)weight);
   put_u8(&strike.bytes, 85, (uint8_t)(charset == CHARSET_OEM ? 255 : 0));
   put_u16(&strike.bytes, 86, (uint16_t)fixed_width);
   put_u16(&strike.bytes, 88, (uint16_t)height);
@@ -536,6 +563,9 @@ int main(int argc, char **argv) {
   const char *face_name;
   const char *copyright = default_copyright;
   const char *hinting_name = "auto";
+  /* dfWeight. A bold strike that reported 400 would be indistinguishable
+     from its regular sibling to any face-selection code reading the FNT. */
+  int weight = 400;
   HintingMode hinting = HINTING_AUTO;
   RasterSizing raster_sizing = RASTER_FIT_CELL;
   CharacterSet charset = CHARSET_ANSI;
@@ -559,6 +589,7 @@ int main(int argc, char **argv) {
       " [--charset=ansi|oem]"
       " [--hinting=auto|auto-normal|auto-light|native|none]"
       " [--raster=fit|exact]"
+      " [--weight=N]"
       " [PIXEL_HEIGHT ...]\n"
       "default heights: 11 12 16 24 32 48 64\n", argv[0]);
     return 2;
@@ -578,6 +609,10 @@ int main(int argc, char **argv) {
       charset = CHARSET_ANSI;
     } else if (strcmp(argv[first_height], "--charset=oem") == 0) {
       charset = CHARSET_OEM;
+    } else if (strncmp(argv[first_height], "--weight=", 9) == 0) {
+      weight = atoi(argv[first_height] + 9);
+      if (weight < 1 || weight > 1000)
+        die("--weight must be between 1 and 1000");
     } else if (strncmp(argv[first_height], "--copyright=", 12) == 0) {
       copyright = argv[first_height] + 12;
       if (!*copyright) die("copyright text must not be empty");
@@ -630,7 +665,8 @@ int main(int argc, char **argv) {
   if (!strikes) die("out of memory");
   for (i = 0; i < count; i++) {
     strikes[i] = make_strike(face, heights[i], face_name, force_fixed, copyright,
-                             hinting, raster_sizing, bitmap_only, charset);
+                             hinting, raster_sizing, bitmap_only, charset,
+                             weight);
     fprintf(stderr, "strike request=%dpx cell=%dpx em=%dpx ascent=%d avg=%d max=%d hinting=%s bytes=%zu\n",
       heights[i], strikes[i].height, strikes[i].raster_height, strikes[i].ascent,
       strikes[i].average_width, strikes[i].maximum_width, hinting_name,

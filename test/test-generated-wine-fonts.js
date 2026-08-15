@@ -22,6 +22,23 @@ const expected = {
   'MSSansSerif.fon': { face: 'MS Sans Serif', metrics: [[6, 13], [7, 16], [8, 20]] },
   'Courier.fon': { face: 'Courier', metrics: [[8, 13]] },
   'Terminal.fon': { face: 'Terminal', metrics: [[8, 12]], charset: 255, first: 0 },
+  // Tahoma is the Win98 shell and tooltip face. These are Wine's embedded
+  // monochrome strikes, extracted verbatim across exactly the ppem range
+  // dialogs use — no outline is rasterized at any of them.
+  'Tahoma.fon': {
+    face: 'Tahoma',
+    metrics: [[4, 8], [5, 9], [5, 10], [6, 11], [7, 12], [7, 13], [8, 15], [9, 16]],
+    weight: 400,
+  },
+  // Bold must declare dfWeight 700. A bold strike reporting 400 would be
+  // indistinguishable from its regular sibling to face selection, and the
+  // wrong one would win by table order.
+  'TahomaBold.fon': {
+    face: 'Tahoma Bold',
+    metrics: [[6, 9], [6, 10], [7, 11], [8, 12], [8, 13], [10, 15], [10, 16]],
+    weight: 700,
+  },
+  'SmallFonts.fon': { face: 'Small Fonts', metrics: [[5, 11]], weight: 400 },
 };
 
 function strikes(bytes) {
@@ -49,6 +66,7 @@ function strikes(bytes) {
         charset: bytes[strike + 85],
         first: bytes[strike + 95],
         last: bytes[strike + 96],
+        weight: bytes.readUInt16LE(strike + 83),
       });
     }
   }
@@ -95,10 +113,26 @@ try {
     assert(parsed.every(strike => strike.face === spec.face), `${name} face names`);
     assert.deepStrictEqual(parsed.map(strike => [strike.average, strike.height]), spec.metrics,
       `${name} embedded strike metrics`);
+    if (spec.weight !== undefined) {
+      assert(parsed.every(strike => strike.weight === spec.weight),
+        `${name} must declare dfWeight ${spec.weight}`);
+    }
     if (spec.charset !== undefined) {
       assert(parsed.every(strike => strike.charset === spec.charset), `${name} charset`);
       assert(parsed.every(strike => strike.first === spec.first && strike.last === 255),
         `${name} byte coverage`);
+    }
+    if (name === 'Tahoma.fon') {
+      // Wine's Tahoma strikes carry no bitmap for space at 11ppem and above,
+      // because it has an advance and no ink. That is the case that must come
+      // out as a blank cell rather than as a rasterized outline or an error.
+      for (const strike of parsed) {
+        assert.deepStrictEqual(glyphRows(generated, strike, 0x20),
+          Array(strike.height).fill(0),
+          `Tahoma space must be blank at ${strike.height}px`);
+        assert(glyphRows(generated, strike, 0x41).some(row => row !== 0),
+          `Tahoma A must have ink at ${strike.height}px`);
+      }
     }
     if (name === 'Terminal.fon') {
       const strike = parsed[0];
@@ -116,7 +150,7 @@ try {
         Array(12).fill(0xff), 'CP437 0xdb must be a complete 8x12 block');
     }
   }
-  console.log('PASS  Wine and ANAKRON sources reproduce all five tracked FON resources exactly');
+  console.log(`PASS  Wine and ANAKRON sources reproduce all ${Object.keys(expected).length} tracked FON resources exactly`);
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

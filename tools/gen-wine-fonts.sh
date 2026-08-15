@@ -37,6 +37,16 @@ generate system System System 16 18
 generate ms_sans_serif MSSansSerif "MS Sans Serif" 13 16 20
 generate courier Courier Courier --fixed 13
 
+# Tahoma is the Win98 shell and tooltip face. Wine's TTFs carry monochrome
+# strikes across exactly the ppem range dialogs use, so these are extracted
+# pixels rather than a rasterized outline, and Tahoma at UI sizes joins the
+# pixel-exact FNT path instead of any scalable fallback. Bold declares
+# dfWeight 700; a bold strike reporting 400 would be indistinguishable from
+# its regular sibling to face selection.
+generate tahoma Tahoma Tahoma 8 9 10 11 12 13 15 16
+generate tahomabd TahomaBold "Tahoma Bold" --weight=700 9 10 11 12 13 15 16
+generate small_fonts SmallFonts "Small Fonts" 11
+
 # ANAKRON v0.3.3 is a native 8x12 Unicode bitmap.  Repackage its exact pixels
 # as the Win9x Terminal face, mapping every FNT byte through IBM code page 437.
 "$fontgen_dir/gen-bitmap-fon" \

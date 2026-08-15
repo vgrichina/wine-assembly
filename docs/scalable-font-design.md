@@ -122,7 +122,7 @@ fonts (`ab0b3e2526827110319ea8d0b8a738e629e9472b`).
 | Win98 face | Wine file | Glyphs | Embedded strikes |
 |---|---|---:|---|
 | Tahoma | `tahoma.ttf` | 988 | **8, 9, 10, 11, 12, 13, 15, 16 ppem** |
-| Tahoma Bold | `tahomabd.ttf` | 979 | outline only |
+| Tahoma Bold | `tahomabd.ttf` | 979 | **9, 10, 11, 12, 13, 15, 16 ppem** |
 | Small Fonts | `small_fonts.ttf` | 516 | 11 ppem |
 | Marlett | `marlett.ttf` | 39 | outline only |
 | Symbol | `symbol.ttf` | 193 | outline only |
@@ -131,12 +131,15 @@ fonts (`ab0b3e2526827110319ea8d0b8a738e629e9472b`).
 
 Two findings matter here.
 
-**Tahoma ships eight monochrome `EBDT` strikes covering 8–16 ppem** — exactly
-the range Win98 dialogs and tooltips use. Those strikes can go through the
-*existing* pixel-exact pipeline: `tools/gen-bitmap-fon.c` already extracts
-embedded monochrome strikes with FreeType at `--bitmap-only --raster=exact`,
-which is how `MSSansSerif.fon` is built. Tahoma at UI sizes is therefore a
-bitmap-path face, not a Canvas face, and needs no new rasterizer.
+**Tahoma ships eight monochrome `EBDT` strikes covering 8–16 ppem, and Tahoma
+Bold ships seven covering 9–16** — exactly the range Win98 dialogs and
+tooltips use. (An earlier revision of this table said Tahoma Bold was outline
+only; that was wrong, and `fonts/Tahoma*.fon` are built from its strikes.)
+Those strikes go through the *existing* pixel-exact pipeline:
+`tools/gen-bitmap-fon.c` extracts embedded monochrome strikes with FreeType at
+`--bitmap-only --raster=exact`, which is how `MSSansSerif.fon` is built.
+Tahoma at UI sizes is therefore a bitmap-path face, not a Canvas face, and
+needs no new rasterizer.
 
 **Wingdings (53 glyphs) and Webdings (10) are heavily partial.** Wine only drew
 what Wine needed. Treat them as Tier 3 approximations with known holes; a guest
@@ -427,12 +430,14 @@ shrinks monotonically.
    the layout, wrapping, and caret bugs that actually bite. Canvas keeps
    producing glyph pixels in the meantime. Roughly 800-1200 lines of WAT.
 
-2. **Bitmap strikes** — extend `tools/gen-wine-fonts.sh` to emit `Tahoma.fon`
-   (8-16 ppem) and `SmallFonts.fon` (11 ppem) from the embedded EBDT strikes,
-   then extend `tools/gen-bitmap-fon.c` to rasterize the Tier 1 outlines across
-   the hinted ladder. Wire both into the existing strike table and
-   `gdi_bitmap_font_best`. No new rendering code; moves the Win98 shell font and
-   the common UI sizes of Arial, Times, and Courier onto the exact blit.
+2. **Bitmap strikes** — `Tahoma.fon` (8-16 ppem), `TahomaBold.fon` (9-16, with
+   `dfWeight` 700), and `SmallFonts.fon` (11 ppem) are generated from the
+   embedded EBDT strikes and checked by `test/test-generated-wine-fonts.js`
+   (done). Still to do: extend `tools/gen-bitmap-fon.c` to rasterize the Tier 1
+   outlines across the hinted ladder, and wire all of it into the strike table
+   and `gdi_bitmap_font_best` — nothing selects these files at runtime yet. No
+   new rendering code; moves the Win98 shell font and the common UI sizes of
+   Arial, Times, and Courier onto the exact blit.
 
 3. **Interim deterministic substitution** — `_buildCssFont` reads the manifest
    and uses private family names, so whatever text still reaches Canvas stops

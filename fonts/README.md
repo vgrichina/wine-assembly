@@ -15,6 +15,20 @@ for the covered stock faces.
 | `Fixedsys.fon` | Fixedsys 8x15 | `SYSTEM_FIXED_FONT`, Fixedsys | `2b5cf71bfbadbc460f79fb5b2d8bf1650a7e148359fcb6064392b4a28fadd3c4` |
 | `Courier.fon` | Courier 8x13 | `ANSI_FIXED_FONT`, Courier | `51dd54b23b9857032faac1ab672d7c788b657752ea0b2d0cc39a9f727a607457` |
 | `Terminal.fon` | ANAKRON-derived Terminal 8x12 | `OEM_FIXED_FONT`, Terminal | `dccca736742e4c1bf0b6a98393417c07f6e46ef0ecb2030cec0ebddb2369d4e1` |
+| `Tahoma.fon` | Tahoma 8, 9, 10, 11, 12, 13, 15, 16 | Win98 shell/tooltip face | `6ffb14378b094f763b2a86eeb9973596765c024707ae42a64ce4cd8f41dc35f4` |
+| `TahomaBold.fon` | Tahoma Bold 9, 10, 11, 12, 13, 15, 16 | bold shell face, `dfWeight` 700 | `549e1990dd2286456e1f79dbf5b7d5dd59bfca45bd8b3de3025df30e8f52bf7b` |
+| `SmallFonts.fon` | Small Fonts 11 | Win98 Small Fonts | `4732123f27559b62a8047efea41ab920c9df57367be8dd6fd12a9a63bf37c705` |
+
+Tahoma, Tahoma Bold, and Small Fonts are generated but **not yet wired into
+the strike table**; nothing selects them at runtime. Their sizes are the
+embedded monochrome strikes Wine's TTFs already carry, which is what lets the
+Win98 shell face use the pixel-exact path instead of a scalable fallback.
+
+Wine's Tahoma strikes carry no bitmap for space at 11ppem and above — it has
+an advance and no ink — and drop `.notdef` above 10ppem. Both come out as
+blank cells. `--bitmap-only` still refuses anything else that lacks a strike
+bitmap, because silently rasterizing one outline into a strike is the failure
+this whole path exists to avoid.
 
 The editable `.sfd` sources and Wine-generated TTFs are pinned in `wine/`.
 See `wine/UPSTREAM.md` for their exact Wine commit and checksums. Wine licenses

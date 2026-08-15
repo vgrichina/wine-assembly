@@ -97,6 +97,19 @@ for (const face of manifest.faces) {
         `${where} ${style} strikes must be listed in ascending ppem`);
     }
   }
+
+  // A generated .FON is a claim that this face reaches the pixel-exact path.
+  // If the file is not there the claim is worse than absent, because face
+  // selection would look for it and fall back silently.
+  if (face.generatedFon) {
+    for (const style of Object.keys(face.generatedFon)) {
+      assert.ok(face.embeddedStrikes && face.embeddedStrikes[style],
+        `${where} claims a generated FON for ${style} with no strikes to build it from`);
+      const generated = path.join(FONTS, face.generatedFon[style]);
+      assert.ok(fs.existsSync(generated),
+        `${where} ${style} names a missing FON: fonts/${face.generatedFon[style]}`);
+    }
+  }
 }
 
 // The faces named as deliberately unsubstituted must not also be substituted:
