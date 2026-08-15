@@ -43,6 +43,228 @@
   (global $help_layout_count (mut i32) (i32.const 0))
   (global $help_layout_extent (mut i32) (i32.const 0))
 
+  ;; Result channel for one retained PARAGRAPH header. Token slices point
+  ;; directly at the exact header; value low 24 bits points at its complete
+  ;; LinkData1 record so table columns remain available without rescanning
+  ;; intervening character commands.
+  (global $help_para_left (mut i32) (i32.const 0))
+  (global $help_para_right (mut i32) (i32.const 0))
+  (global $help_para_first (mut i32) (i32.const 0))
+  (global $help_para_above (mut i32) (i32.const 0))
+  (global $help_para_below (mut i32) (i32.const 0))
+  (global $help_para_lines (mut i32) (i32.const 0))
+  (global $help_para_align (mut i32) (i32.const 0))
+  (global $help_para_cell_left (mut i32) (i32.const 8))
+  (global $help_para_cell_right (mut i32) (i32.const 392))
+  (global $help_para_tabs (mut i32) (i32.const 0))
+  (global $help_para_tab_count (mut i32) (i32.const 0))
+  (global $help_para_tabs_end (mut i32) (i32.const 0))
+
+  (func $help_layout_metric_pixels (param $value i32) (result i32)
+    (local $negative i32) (local $magnitude i32) (local $denominator i32)
+    (if (i32.lt_s (local.get $value) (i32.const 0))
+      (then
+        (local.set $negative (i32.const 1))
+        (local.set $magnitude (i32.sub (i32.const 0) (local.get $value))))
+      (else (local.set $magnitude (local.get $value))))
+    (local.set $denominator
+      (select (i32.const 1440) (i32.const 144)
+        (i32.ne (global.get $help_doc_font_metric_mode) (i32.const 0))))
+    (local.set $magnitude (i32.div_u
+      (i32.add (i32.mul (local.get $magnitude) (i32.const 96))
+        (i32.shr_u (local.get $denominator) (i32.const 1)))
+      (local.get $denominator)))
+    (if (result i32) (local.get $negative)
+      (then (i32.sub (i32.const 0) (local.get $magnitude)))
+      (else (local.get $magnitude))))
+
+  (func $help_layout_table_scale
+    (param $value i32) (param $available i32) (result i32)
+    (local $product i64)
+    (local.set $product (i64.mul (i64.extend_i32_s (local.get $value))
+      (i64.extend_i32_s (local.get $available))))
+    (i32.wrap_i64 (i64.div_s
+      (i64.add (local.get $product)
+        (select (i64.const 16383) (i64.const -16383)
+          (i64.ge_s (local.get $product) (i64.const 0))))
+      (i64.const 32767))))
+
+  (func $help_layout_decode_paragraph
+    (param $payload i32) (param $payload_len i32)
+    (param $off i32) (param $len i32) (param $value i32)
+    (param $client_width i32) (result i32)
+    (local $ptr i32) (local $end i32) (local $record i32) (local $record_end i32)
+    (local $record_type i32) (local $columns i32) (local $table_type i32)
+    (local $column_data i32) (local $column i32) (local $flags i32)
+    (local $bit i32) (local $metric i32) (local $tab_count i32)
+    (local $i i32) (local $tab i32) (local $gap i32) (local $width i32)
+    (local $cursor i32) (local $available i32) (local $left i32)
+    (local $min_width i32)
+    (global.set $help_para_left (i32.const 0))
+    (global.set $help_para_right (i32.const 0))
+    (global.set $help_para_first (i32.const 0))
+    (global.set $help_para_above (i32.const 0))
+    (global.set $help_para_below (i32.const 0))
+    (global.set $help_para_lines (i32.const 0))
+    (global.set $help_para_align (i32.const 0))
+    (global.set $help_para_cell_left (i32.const 8))
+    (global.set $help_para_cell_right (i32.sub (local.get $client_width) (i32.const 8)))
+    (global.set $help_para_tabs (i32.const 0))
+    (global.set $help_para_tab_count (i32.const 0))
+    (global.set $help_para_tabs_end (i32.const 0))
+    (if (i32.or (i32.gt_u (local.get $off) (local.get $payload_len))
+          (i32.gt_u (local.get $len) (i32.sub (local.get $payload_len) (local.get $off))))
+      (then (return (i32.const 0))))
+    (local.set $ptr (i32.add (local.get $payload) (local.get $off)))
+    (local.set $end (i32.add (local.get $ptr) (local.get $len)))
+    (local.set $record_type (i32.shr_u (local.get $value) (i32.const 24)))
+    (local.set $record (i32.add (local.get $payload)
+      (i32.and (local.get $value) (i32.const 0x00FFFFFF))))
+    (local.set $record_end (i32.add (local.get $payload) (local.get $payload_len)))
+    (if (i32.or (i32.lt_u (local.get $record) (local.get $payload))
+          (i32.ge_u (local.get $record) (local.get $record_end)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $help_ld1_read_clong (local.get $record) (local.get $record_end)))
+      (then (return (i32.const 0))))
+    (local.set $record (global.get $help_ld1_next))
+    (if (i32.or (i32.eq (local.get $record_type) (i32.const 0x20))
+          (i32.eq (local.get $record_type) (i32.const 0x23)))
+      (then
+        (if (i32.eqz (call $help_ld1_read_cu16 (local.get $record) (local.get $record_end)))
+          (then (return (i32.const 0))))
+        (local.set $record (global.get $help_ld1_next))))
+    (if (i32.eq (local.get $record_type) (i32.const 0x23))
+      (then
+        (if (i32.gt_u (i32.const 2) (i32.sub (local.get $record_end) (local.get $record)))
+          (then (return (i32.const 0))))
+        (local.set $columns (i32.load8_u (local.get $record)))
+        (local.set $table_type (i32.load8_u offset=1 (local.get $record)))
+        (local.set $record (i32.add (local.get $record) (i32.const 2)))
+        (if (i32.or (i32.eqz (local.get $columns))
+              (i32.gt_u (local.get $table_type) (i32.const 3)))
+          (then (return (i32.const 0))))
+        (if (i32.or (i32.eq (local.get $table_type) (i32.const 0))
+              (i32.eq (local.get $table_type) (i32.const 2)))
+          (then
+            (if (i32.gt_u (i32.const 2) (i32.sub (local.get $record_end) (local.get $record)))
+              (then (return (i32.const 0))))
+            (local.set $min_width (call $help_layout_metric_pixels
+              (i32.load16_s (local.get $record))))
+            (local.set $record (i32.add (local.get $record) (i32.const 2)))))
+        (local.set $column_data (local.get $record))
+        (if (i32.gt_u (i32.mul (local.get $columns) (i32.const 4))
+              (i32.sub (local.get $record_end) (local.get $column_data)))
+          (then (return (i32.const 0))))
+        (if (i32.gt_u (i32.const 5) (i32.sub (local.get $end) (local.get $ptr)))
+          (then (return (i32.const 0))))
+        (local.set $column (i32.load16_s (local.get $ptr)))
+        (if (i32.or (i32.lt_s (local.get $column) (i32.const 0))
+              (i32.ge_u (local.get $column) (local.get $columns)))
+          (then (return (i32.const 0))))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 5)))
+        (local.set $available (i32.sub (local.get $client_width) (i32.const 16)))
+        (if (i32.gt_s (local.get $min_width) (local.get $available))
+          (then (local.set $available (local.get $min_width))))
+        (local.set $cursor (i32.const 0))
+        (local.set $i (i32.const 0))
+        (block $columns_done (loop $columns_loop
+          (br_if $columns_done (i32.gt_u (local.get $i) (local.get $column)))
+          (local.set $gap (i32.load16_s (i32.add (local.get $column_data)
+            (i32.mul (local.get $i) (i32.const 4)))))
+          (local.set $width (i32.load16_s (i32.add (local.get $column_data)
+            (i32.add (i32.mul (local.get $i) (i32.const 4)) (i32.const 2)))))
+          (if (i32.eq (local.get $i) (local.get $column))
+            (then
+              (local.set $left (i32.add (local.get $cursor) (local.get $gap)))
+              (br $columns_done)))
+          (local.set $cursor (i32.add (local.get $cursor)
+            (i32.add (local.get $gap) (local.get $width))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $columns_loop)))
+        (if (i32.or (i32.eq (local.get $table_type) (i32.const 0))
+              (i32.eq (local.get $table_type) (i32.const 2)))
+          (then
+            (global.set $help_para_cell_left (i32.add (i32.const 8)
+              (call $help_layout_table_scale (local.get $left) (local.get $available))))
+            (global.set $help_para_cell_right (i32.add (global.get $help_para_cell_left)
+              (call $help_layout_table_scale (local.get $width) (local.get $available)))))
+          (else
+            (global.set $help_para_cell_left (i32.add (i32.const 8)
+              (call $help_layout_metric_pixels (local.get $left))))
+            (global.set $help_para_cell_right (i32.add (global.get $help_para_cell_left)
+              (call $help_layout_metric_pixels (local.get $width))))))))
+    (if (i32.gt_u (i32.const 6) (i32.sub (local.get $end) (local.get $ptr)))
+      (then (return (i32.const 0))))
+    (local.set $ptr (i32.add (local.get $ptr) (i32.const 4)))
+    (local.set $flags (i32.load16_u (local.get $ptr)))
+    (local.set $ptr (i32.add (local.get $ptr) (i32.const 2)))
+    (if (i32.and (local.get $flags) (i32.const 1))
+      (then
+        (if (i32.eqz (call $help_ld1_read_clong (local.get $ptr) (local.get $end)))
+          (then (return (i32.const 0))))
+        (local.set $ptr (global.get $help_ld1_next))))
+    (local.set $bit (i32.const 2))
+    (block $metrics_done (loop $metrics
+      (br_if $metrics_done (i32.gt_u (local.get $bit) (i32.const 0x40)))
+      (if (i32.and (local.get $flags) (local.get $bit))
+        (then
+          (if (i32.eqz (call $help_ld1_read_ci16 (local.get $ptr) (local.get $end)))
+            (then (return (i32.const 0))))
+          (local.set $metric (call $help_layout_metric_pixels
+            (global.get $help_ld1_value)))
+          (if (i32.eq (local.get $bit) (i32.const 2))
+            (then (global.set $help_para_above (local.get $metric))))
+          (if (i32.eq (local.get $bit) (i32.const 4))
+            (then (global.set $help_para_below (local.get $metric))))
+          (if (i32.eq (local.get $bit) (i32.const 8))
+            (then (global.set $help_para_lines (local.get $metric))))
+          (if (i32.eq (local.get $bit) (i32.const 0x10))
+            (then (global.set $help_para_left (local.get $metric))))
+          (if (i32.eq (local.get $bit) (i32.const 0x20))
+            (then (global.set $help_para_right (local.get $metric))))
+          (if (i32.eq (local.get $bit) (i32.const 0x40))
+            (then (global.set $help_para_first (local.get $metric))))
+          (local.set $ptr (global.get $help_ld1_next))))
+      (local.set $bit (i32.shl (local.get $bit) (i32.const 1)))
+      (br $metrics)))
+    (if (i32.and (local.get $flags) (i32.const 0x0100))
+      (then
+        (if (i32.gt_u (i32.const 3) (i32.sub (local.get $end) (local.get $ptr)))
+          (then (return (i32.const 0))))
+        (local.set $ptr (i32.add (local.get $ptr) (i32.const 3)))))
+    (if (i32.and (local.get $flags) (i32.const 0x0200))
+      (then
+        (if (i32.eqz (call $help_ld1_read_ci16 (local.get $ptr) (local.get $end)))
+          (then (return (i32.const 0))))
+        (local.set $tab_count (global.get $help_ld1_value))
+        (local.set $ptr (global.get $help_ld1_next))
+        (if (i32.lt_s (local.get $tab_count) (i32.const 0))
+          (then (return (i32.const 0))))
+        (global.set $help_para_tabs (local.get $ptr))
+        (global.set $help_para_tab_count (local.get $tab_count))
+        (local.set $i (i32.const 0))
+        (block $tabs_done (loop $tabs
+          (br_if $tabs_done (i32.ge_u (local.get $i) (local.get $tab_count)))
+          (if (i32.eqz (call $help_ld1_read_cu16 (local.get $ptr) (local.get $end)))
+            (then (return (i32.const 0))))
+          (local.set $tab (global.get $help_ld1_value))
+          (local.set $ptr (global.get $help_ld1_next))
+          (if (i32.and (local.get $tab) (i32.const 0x4000))
+            (then
+              (if (i32.eqz (call $help_ld1_read_cu16 (local.get $ptr) (local.get $end)))
+                (then (return (i32.const 0))))
+              (local.set $ptr (global.get $help_ld1_next))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $tabs)))
+        (global.set $help_para_tabs_end (local.get $ptr))))
+    (if (i32.and (local.get $flags) (i32.const 0x0400))
+      (then (global.set $help_para_align (i32.const 1))))
+    (if (i32.and (local.get $flags) (i32.const 0x0800))
+      (then (global.set $help_para_align (i32.const 2))))
+    ;; 0x1000 is RTF-style "keep with next"; a continuously scrolling topic
+    ;; has no page boundary at which that pagination hint can take effect.
+    (i32.eq (local.get $ptr) (local.get $end)))
+
   (func $help_layout_emit
     (param $kind i32) (param $x i32) (param $y i32)
     (param $width i32) (param $height i32)
@@ -166,11 +388,102 @@
       (br $search)))
     (local.get $lo))
 
+  (func $help_layout_align_line
+    (param $first_run i32) (param $x i32) (param $right i32)
+    (param $align i32)
+    (local $shift i32) (local $i i32) (local $run i32)
+    (if (i32.eqz (local.get $align)) (then (return)))
+    (local.set $shift (i32.sub (local.get $right) (local.get $x)))
+    (if (i32.lt_s (local.get $shift) (i32.const 0))
+      (then (local.set $shift (i32.const 0))))
+    (if (i32.eq (local.get $align) (i32.const 2))
+      (then (local.set $shift (i32.shr_u (local.get $shift) (i32.const 1)))))
+    (if (i32.or (i32.eqz (local.get $shift))
+          (i32.eqz (global.get $help_layout_out)))
+      (then (return)))
+    (local.set $i (local.get $first_run))
+    (block $done (loop $runs
+      (br_if $done (i32.ge_u (local.get $i) (global.get $help_layout_count)))
+      (local.set $run (i32.add (global.get $help_layout_out)
+        (i32.mul (local.get $i) (global.get $HELP_LAYOUT_RUN_SIZE))))
+      (i32.store offset=4 (local.get $run)
+        (i32.add (i32.load offset=4 (local.get $run)) (local.get $shift)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $runs))))
+
+  ;; RTF's paragraph \sl convention matches the retained WinHelp field:
+  ;; positive values are a minimum line advance and negative values are exact.
+  (func $help_layout_line_advance
+    (param $line_height i32) (param $spacing i32) (result i32)
+    (if (result i32) (i32.lt_s (local.get $spacing) (i32.const 0))
+      (then (i32.sub (i32.const 0) (local.get $spacing)))
+      (else (select (local.get $spacing) (local.get $line_height)
+        (i32.gt_s (local.get $spacing) (local.get $line_height))))))
+
+  (func $help_layout_tab_width
+    (param $x i32) (param $base i32) (param $hdc i32)
+    (param $raw i32) (param $tokens i32) (param $token_count i32)
+    (param $token_index i32) (result i32)
+    (local $ptr i32) (local $i i32) (local $encoded i32) (local $type i32)
+    (local $target i32) (local $adjust i32) (local $next i32)
+    (if (global.get $help_para_tab_count)
+      (then
+        (local.set $ptr (global.get $help_para_tabs))
+        (block $done (loop $tabs
+          (br_if $done (i32.ge_u (local.get $i) (global.get $help_para_tab_count)))
+          (if (i32.eqz (call $help_ld1_read_cu16
+                (local.get $ptr) (global.get $help_para_tabs_end)))
+            (then (br $done)))
+          (local.set $encoded (global.get $help_ld1_value))
+          (local.set $ptr (global.get $help_ld1_next))
+          (local.set $type (i32.const 0))
+          (if (i32.and (local.get $encoded) (i32.const 0x4000))
+            (then
+              (if (i32.eqz (call $help_ld1_read_cu16
+                    (local.get $ptr) (global.get $help_para_tabs_end)))
+                (then (br $done)))
+              (local.set $type (global.get $help_ld1_value))
+              (local.set $ptr (global.get $help_ld1_next))))
+          (local.set $target (i32.add (local.get $base)
+            (call $help_layout_metric_pixels
+              (i32.and (local.get $encoded) (i32.const 0x3FFF)))))
+          (if (i32.gt_s (local.get $target) (local.get $x))
+            (then
+              (if (i32.and (i32.ne (local.get $type) (i32.const 0))
+                    (i32.lt_u (i32.add (local.get $token_index) (i32.const 1))
+                      (local.get $token_count)))
+                (then
+                  (local.set $next (i32.add (local.get $tokens)
+                    (i32.mul (i32.add (local.get $token_index) (i32.const 1))
+                      (global.get $HELP_TOPIC_TOKEN_SIZE))))
+                  (if (i32.eq (i32.load (local.get $next)) (global.get $HELP_TOKEN_TEXT))
+                    (then
+                      (local.set $adjust (call $help_layout_measure
+                        (local.get $hdc)
+                        (i32.add (local.get $raw) (i32.load offset=4 (local.get $next)))
+                        (i32.load offset=8 (local.get $next))))
+                      (if (i32.eq (local.get $type) (i32.const 2))
+                        (then (local.set $adjust
+                          (i32.shr_u (local.get $adjust) (i32.const 1)))))))))
+              (local.set $target (i32.sub (local.get $target) (local.get $adjust)))
+              (if (i32.gt_s (local.get $target) (local.get $x))
+                (then (return (i32.sub (local.get $target) (local.get $x)))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $tabs)))))
+    ;; WinHelp's default half-inch tab grid at 96 DPI.
+    (local.set $target (i32.add (local.get $base)
+      (i32.mul (i32.add
+          (i32.div_u (i32.sub (local.get $x) (local.get $base)) (i32.const 48))
+          (i32.const 1))
+        (i32.const 48))))
+    (i32.sub (local.get $target) (local.get $x)))
+
   ;; Convert a validated formatted-token stream into deterministic positioned
   ;; runs. It owns wrapping, line state, font metadata, colors, and hotspot
   ;; membership; painting consumes the published records without reparsing.
   (func $help_layout_tokens_core
     (param $raw i32) (param $raw_len i32)
+    (param $payload i32) (param $payload_len i32)
     (param $tokens i32) (param $token_count i32)
     (param $runs i32) (param $run_capacity i32)
     (param $client_width i32) (param $hdc i32)
@@ -183,6 +496,10 @@
     (local $font_height i32) (local $line_height i32)
     (local $font_index i32) (local $color i32) (local $hotspot i32)
     (local $saw_content i32) (local $ended i32)
+    (local $line_left i32) (local $continuation_left i32)
+    (local $line_run_start i32) (local $paragraph_right i32)
+    (local $paragraph_align i32) (local $paragraph_below i32)
+    (local $paragraph_lines i32)
     (global.set $help_layout_count (i32.const 0))
     (global.set $help_layout_extent (i32.const 0))
     (global.set $help_layout_out (local.get $runs))
@@ -203,13 +520,17 @@
             (i32.gt_u (local.get $run_capacity) (global.get $HELP_MAX_LAYOUT_RUNS))))
       (then (return (i32.const -1))))
     (if (i32.or
-          (i32.or (i32.gt_u (local.get $raw) (local.get $memory_bytes))
-                  (i32.gt_u (local.get $raw_len)
-                    (i32.sub (local.get $memory_bytes) (local.get $raw))))
-          (i32.or (i32.gt_u (local.get $tokens) (local.get $memory_bytes))
-                  (i32.gt_u (local.get $token_count)
-                    (i32.div_u (i32.sub (local.get $memory_bytes) (local.get $tokens))
-                      (global.get $HELP_TOPIC_TOKEN_SIZE)))))
+          (i32.or
+            (i32.or (i32.gt_u (local.get $raw) (local.get $memory_bytes))
+                    (i32.gt_u (local.get $raw_len)
+                      (i32.sub (local.get $memory_bytes) (local.get $raw))))
+            (i32.or (i32.gt_u (local.get $tokens) (local.get $memory_bytes))
+                    (i32.gt_u (local.get $token_count)
+                      (i32.div_u (i32.sub (local.get $memory_bytes) (local.get $tokens))
+                        (global.get $HELP_TOPIC_TOKEN_SIZE)))))
+          (i32.or (i32.gt_u (local.get $payload) (local.get $memory_bytes))
+                  (i32.gt_u (local.get $payload_len)
+                    (i32.sub (local.get $memory_bytes) (local.get $payload)))))
       (then (return (i32.const -1))))
     (if (i32.and (local.get $runs)
           (i32.or (i32.gt_u (local.get $runs) (local.get $memory_bytes))
@@ -220,6 +541,9 @@
     (local.set $x (i32.const 8))
     (local.set $y (i32.const 8))
     (local.set $right (i32.sub (local.get $client_width) (i32.const 8)))
+    (local.set $line_left (i32.const 8))
+    (local.set $continuation_left (i32.const 8))
+    (local.set $paragraph_right (local.get $right))
     (local.set $font_height (i32.const 16))
     (local.set $line_height (i32.const 16))
     (local.set $font_index (i32.const -1))
@@ -235,15 +559,43 @@
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_END_TOPIC))
         (then
           (if (local.get $hotspot) (then (return (i32.const -1))))
+          (call $help_layout_align_line
+            (local.get $line_run_start) (local.get $x)
+            (local.get $paragraph_right) (local.get $paragraph_align))
           (local.set $ended (i32.const 1))
           (br $done)))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_PARAGRAPH))
         (then
           (if (local.get $saw_content)
             (then
-              (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-              (local.set $x (i32.const 8))
-              (local.set $line_height (local.get $font_height))))
+              (call $help_layout_align_line
+                (local.get $line_run_start) (local.get $x)
+                (local.get $paragraph_right) (local.get $paragraph_align))
+              (local.set $y (i32.add (local.get $y)
+                (i32.add
+                  (call $help_layout_line_advance
+                    (local.get $line_height) (local.get $paragraph_lines))
+                  (local.get $paragraph_below))))))
+          (if (i32.eqz (call $help_layout_decode_paragraph
+                (local.get $payload) (local.get $payload_len)
+                (local.get $off) (local.get $len) (local.get $value)
+                (local.get $client_width)))
+            (then (return (i32.const -1))))
+          (local.set $y (i32.add (local.get $y) (global.get $help_para_above)))
+          (local.set $continuation_left (i32.add (global.get $help_para_cell_left)
+            (global.get $help_para_left)))
+          (local.set $line_left (i32.add (local.get $continuation_left)
+            (global.get $help_para_first)))
+          (local.set $paragraph_right (i32.sub (global.get $help_para_cell_right)
+            (global.get $help_para_right)))
+          (if (i32.le_s (local.get $paragraph_right) (local.get $line_left))
+            (then (return (i32.const -1))))
+          (local.set $x (local.get $line_left))
+          (local.set $right (local.get $paragraph_right))
+          (local.set $paragraph_align (global.get $help_para_align))
+          (local.set $paragraph_below (global.get $help_para_below))
+          (local.set $paragraph_lines (global.get $help_para_lines))
+          (local.set $line_run_start (global.get $help_layout_count))
           (local.set $line_height (local.get $font_height))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_FONT))
         (then
@@ -271,19 +623,39 @@
           (local.set $hotspot (i32.const 0))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_LINE_BREAK))
         (then
-          (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-          (local.set $x (i32.const 8))
+          (call $help_layout_align_line
+            (local.get $line_run_start) (local.get $x)
+            (local.get $paragraph_right) (local.get $paragraph_align))
+          (local.set $y (i32.add (local.get $y)
+            (call $help_layout_line_advance
+              (local.get $line_height) (local.get $paragraph_lines))))
+          (local.set $x (local.get $continuation_left))
+          (local.set $line_left (local.get $continuation_left))
+          (local.set $line_run_start (global.get $help_layout_count))
           (local.set $line_height (local.get $font_height))
           (local.set $saw_content (i32.const 1))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_SPACE))
         (then
-          (local.set $width (select (i32.const 8) (i32.const 4)
-            (i32.eq (local.get $value) (i32.const 0x8B))))
-          (if (i32.and (i32.gt_u (local.get $x) (i32.const 8))
+          (local.set $width
+            (if (result i32) (i32.eq (local.get $value) (i32.const 0x83))
+              (then (call $help_layout_tab_width
+                (local.get $x) (local.get $continuation_left) (local.get $hdc)
+                (local.get $raw) (local.get $tokens) (local.get $token_count)
+                (local.get $i)))
+              (else (select (i32.const 8) (i32.const 4)
+                (i32.eq (local.get $value) (i32.const 0x8B))))))
+          (if (i32.and (i32.gt_u (local.get $x) (local.get $line_left))
                 (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
             (then
-              (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-              (local.set $x (i32.const 8))
+              (call $help_layout_align_line
+                (local.get $line_run_start) (local.get $x)
+                (local.get $paragraph_right) (local.get $paragraph_align))
+              (local.set $y (i32.add (local.get $y)
+                (call $help_layout_line_advance
+                  (local.get $line_height) (local.get $paragraph_lines))))
+              (local.set $x (local.get $continuation_left))
+              (local.set $line_left (local.get $continuation_left))
+              (local.set $line_run_start (global.get $help_layout_count))
               (local.set $line_height (local.get $font_height))))
           (if (i32.eqz (call $help_layout_emit
                 (global.get $HELP_LAYOUT_SPACE) (local.get $x) (local.get $y)
@@ -306,11 +678,18 @@
                 (i32.mul (local.get $off) (global.get $HELP_BITMAP_SIZE))))
               (local.set $width (i32.load offset=32 (local.get $token)))
               (local.set $height (i32.load offset=36 (local.get $token)))))
-          (if (i32.and (i32.gt_u (local.get $x) (i32.const 8))
+          (if (i32.and (i32.gt_u (local.get $x) (local.get $line_left))
                 (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
             (then
-              (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-              (local.set $x (i32.const 8))
+              (call $help_layout_align_line
+                (local.get $line_run_start) (local.get $x)
+                (local.get $paragraph_right) (local.get $paragraph_align))
+              (local.set $y (i32.add (local.get $y)
+                (call $help_layout_line_advance
+                  (local.get $line_height) (local.get $paragraph_lines))))
+              (local.set $x (local.get $continuation_left))
+              (local.set $line_left (local.get $continuation_left))
+              (local.set $line_run_start (global.get $help_layout_count))
               (local.set $line_height (local.get $font_height))))
           (if (i32.eqz (call $help_layout_emit
                 (global.get $HELP_LAYOUT_BITMAP) (local.get $x) (local.get $y)
@@ -337,11 +716,18 @@
                 (local.set $width (call $help_layout_measure (local.get $hdc)
                   (i32.add (local.get $raw) (i32.add (local.get $off) (local.get $pos)))
                   (i32.const 1)))
-                (if (i32.and (i32.gt_u (local.get $x) (i32.const 8))
+                (if (i32.and (i32.gt_u (local.get $x) (local.get $line_left))
                       (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
                   (then
-                    (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-                    (local.set $x (i32.const 8))
+                    (call $help_layout_align_line
+                      (local.get $line_run_start) (local.get $x)
+                      (local.get $paragraph_right) (local.get $paragraph_align))
+                    (local.set $y (i32.add (local.get $y)
+                      (call $help_layout_line_advance
+                        (local.get $line_height) (local.get $paragraph_lines))))
+                    (local.set $x (local.get $continuation_left))
+                    (local.set $line_left (local.get $continuation_left))
+                    (local.set $line_run_start (global.get $help_layout_count))
                     (local.set $line_height (local.get $font_height))))
                 (if (i32.eqz (call $help_layout_emit
                       (global.get $HELP_LAYOUT_SPACE) (local.get $x) (local.get $y)
@@ -367,14 +753,22 @@
                   (local.set $width (call $help_layout_measure (local.get $hdc)
                     (i32.add (local.get $raw) (i32.add (local.get $off) (local.get $pos)))
                     (local.get $span)))
-                  (if (i32.and (i32.gt_u (local.get $x) (i32.const 8))
+                  (if (i32.and (i32.gt_u (local.get $x) (local.get $line_left))
                         (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right)))
                     (then
-                      (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-                      (local.set $x (i32.const 8))
+                      (call $help_layout_align_line
+                        (local.get $line_run_start) (local.get $x)
+                        (local.get $paragraph_right) (local.get $paragraph_align))
+                      (local.set $y (i32.add (local.get $y)
+                        (call $help_layout_line_advance
+                          (local.get $line_height) (local.get $paragraph_lines))))
+                      (local.set $x (local.get $continuation_left))
+                      (local.set $line_left (local.get $continuation_left))
+                      (local.set $line_run_start (global.get $help_layout_count))
                       (local.set $line_height (local.get $font_height))))
                   (local.set $fit (local.get $span))
-                  (if (i32.gt_u (i32.add (local.get $x) (local.get $width)) (local.get $right))
+                  (if (i32.gt_u (i32.add (local.get $x) (local.get $width))
+                        (local.get $right))
                     (then
                       (local.set $fit (call $help_layout_fit_prefix
                         (local.get $hdc)
@@ -395,8 +789,15 @@
                   (local.set $saw_content (i32.const 1))
                   (if (local.get $span)
                     (then
-                      (local.set $y (i32.add (local.get $y) (local.get $line_height)))
-                      (local.set $x (i32.const 8))
+                      (call $help_layout_align_line
+                        (local.get $line_run_start) (local.get $x)
+                        (local.get $paragraph_right) (local.get $paragraph_align))
+                      (local.set $y (i32.add (local.get $y)
+                        (call $help_layout_line_advance
+                          (local.get $line_height) (local.get $paragraph_lines))))
+                      (local.set $x (local.get $continuation_left))
+                      (local.set $line_left (local.get $continuation_left))
+                      (local.set $line_run_start (global.get $help_layout_count))
                       (local.set $line_height (local.get $font_height))))
                   (br $span_loop)))))
             (br $text_loop)))))
@@ -404,13 +805,15 @@
       (br $tokens_loop)))
     (if (i32.eqz (local.get $ended)) (then (return (i32.const -1))))
     (global.set $help_layout_extent
-      (i32.add (local.get $y) (local.get $line_height)))
+      (i32.add (i32.add (local.get $y) (local.get $line_height))
+        (local.get $paragraph_below)))
     (global.get $help_layout_count))
 
   ;; Public/internal entry point with an exact counting pass before any write.
   ;; Insufficient capacity therefore cannot leave a partial positioned list.
   (func $help_layout_tokens
     (param $raw i32) (param $raw_len i32)
+    (param $payload i32) (param $payload_len i32)
     (param $tokens i32) (param $token_count i32)
     (param $runs i32) (param $run_capacity i32)
     (param $client_width i32) (param $hdc i32)
@@ -420,6 +823,7 @@
       (then
         (local.set $required (call $help_layout_tokens_core
           (local.get $raw) (local.get $raw_len)
+          (local.get $payload) (local.get $payload_len)
           (local.get $tokens) (local.get $token_count)
           (i32.const 0) (global.get $HELP_MAX_LAYOUT_RUNS)
           (local.get $client_width) (local.get $hdc)
@@ -429,6 +833,7 @@
           (then (return (i32.const -1))))))
     (call $help_layout_tokens_core
       (local.get $raw) (local.get $raw_len)
+      (local.get $payload) (local.get $payload_len)
       (local.get $tokens) (local.get $token_count)
       (local.get $runs) (local.get $run_capacity)
       (local.get $client_width) (local.get $hdc)
@@ -774,6 +1179,7 @@
       (global.get $help_materialize_font_count))
     (local.set $run_count (call $help_layout_tokens
       (local.get $raw_wa) (local.get $raw_len)
+      (local.get $payload_wa) (local.get $payload_len)
       (local.get $tokens_wa) (local.get $token_count)
       (i32.const 0) (global.get $HELP_MAX_LAYOUT_RUNS)
       (i32.const 400) (local.get $hdc)
@@ -790,6 +1196,7 @@
         (local.set $runs_wa (call $g2w (local.get $runs_ga)))))
     (if (i32.ne (call $help_layout_tokens
           (local.get $raw_wa) (local.get $raw_len)
+          (local.get $payload_wa) (local.get $payload_len)
           (local.get $tokens_wa) (local.get $token_count)
           (local.get $runs_wa) (local.get $run_count)
           (i32.const 400) (local.get $hdc)
@@ -1058,6 +1465,20 @@
     (param $width i32) (result i32)
     (call $help_layout_tokens
       (local.get $raw) (local.get $raw_len)
+      (i32.const 0) (i32.const 0)
+      (local.get $tokens) (local.get $token_count)
+      (local.get $runs) (local.get $run_capacity)
+      (local.get $width) (i32.const 0x40001)
+      (i32.const 0) (i32.const 0)))
+  (func (export "test_help_layout_tokens_with_payload")
+    (param $raw i32) (param $raw_len i32)
+    (param $payload i32) (param $payload_len i32)
+    (param $tokens i32) (param $token_count i32)
+    (param $runs i32) (param $run_capacity i32)
+    (param $width i32) (result i32)
+    (call $help_layout_tokens
+      (local.get $raw) (local.get $raw_len)
+      (local.get $payload) (local.get $payload_len)
       (local.get $tokens) (local.get $token_count)
       (local.get $runs) (local.get $run_capacity)
       (local.get $width) (i32.const 0x40001)

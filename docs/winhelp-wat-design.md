@@ -29,8 +29,10 @@ WAT-owned HFONT inside the same view transaction. Layout and paint select the
 same face, negative character height, weight, and italic state; positioned
 runs retain underline/strikeout decoration bits, and replacement/Quit deletes
 every dynamic font after removing it from the target DC.
-Complete paragraph/table geometry and asynchronous browser VFS mounting remain
-in progress.
+Paragraph layout now consumes retained binary headers directly: metric
+conversion, margins, first-line/continuation indents, spacing, explicit line
+height, right/center alignment, typed tabs, and fixed/variable table cells are
+all WAT-owned. Asynchronous browser VFS mounting remains in progress.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
@@ -561,10 +563,13 @@ WAT-owned token stream:
 Each token is a 16-byte record `{kind, payload_off, payload_len, value}`.
 `TEXT` offsets address the caller's exact decoded `LinkData2` arena. Structured
 offsets address a second caller-owned arena containing one exact copy of every
-referenced `LinkData1` record. A `PARAGRAPH` token references its complete
-record and identifies the paragraph index and record type in `value`; this
-keeps table widths and cell metadata available without duplicating common
-table bytes. `FONT` stores the parsed font index directly. `SPACE` and
+referenced `LinkData1` record. A `PARAGRAPH` token's offset/length identifies
+the exact direct paragraph-header slice, while `value` stores the record type
+in its high byte and the complete record's payload offset in its low 24 bits.
+The direct slice avoids rescanning intervening character commands in a
+multi-paragraph table, while the shared record offset keeps column geometry
+available without duplicating common table bytes. `FONT` stores the parsed
+font index directly. `SPACE` and
 `LINE_BREAK` distinguish their source command in `value`. Bitmap, hotspot, and
 macro tokens reference the exact validated command subrange, so later resource
 resolution and the safe macro interpreter never depend on transient parser
@@ -596,11 +601,13 @@ flowchart LR
 Layout is deterministic and integer-based:
 
 1. Resolve logical fonts through the existing WAT font/GDI system.
-2. Measure tokens into the current client width.
-3. Break lines at explicit and legal soft breaks.
-4. Emit positioned runs and hotspot rectangles.
-5. Paint only visible runs using the top-level window back-canvas.
-6. Re-layout on width/font changes; scrolling does not reparse the topic.
+2. Decode each retained paragraph header into pixel margins, spacing,
+   alignment, tabs, and optional table-cell bounds.
+3. Measure tokens inside the resulting first-line and continuation bounds.
+4. Break lines at explicit and legal soft breaks, then align complete lines.
+5. Emit positioned runs and hotspot rectangles.
+6. Paint only visible runs using the top-level window back-canvas.
+7. Re-layout on width/font changes; scrolling does not reparse the topic.
 
 Installed FNT faces stay on the canonical WAT font path. Unavailable scalable
 faces may use the existing bounded Canvas fallback under the same GDI policy;
@@ -934,10 +941,11 @@ populate the existing help window directly from the WAT-owned title and decoded
 decodes the typed IR transactionally, preflights exact viewer allocations, and
 publishes retained positioned runs only after layout succeeds. Text wrapping,
 explicit breaks, semantic spaces, realized font selection/metrics/decorations,
-normalized color, hotspot membership, visible-run painting, bounded scrolling,
-intrinsic bitmap geometry, and raster painting are WAT-owned. The current
-viewer path has a temporary 64 KiB decoded-topic cap; complete paragraph/table
-metrics and dynamic sizing remain Phase 5 work. Browser assets not already
+normalized color, paragraph margins/indents/spacing/alignment/tabs, fixed and
+variable table cells, hotspot membership, visible-run painting, bounded
+scrolling, intrinsic bitmap geometry, and raster painting are WAT-owned. The
+current viewer path has a temporary 64 KiB decoded-topic cap; dynamic sizing
+remains Phase 5 work. Browser assets not already
 mounted in the VFS still need the raw-byte async continuation described above.
 
 - Implement ANSI/Unicode normalization and transactional requests.
@@ -1001,10 +1009,14 @@ transaction; layout uses normalized width/height, visible image runs paint via
 SRCCOPY, and topic/document/Quit teardown deletes every object. A failed decode
 or allocation leaves the prior complete view live. Inline picture unions and
 metafiles keep bounded placeholders pending their independent decoders.
+Retained paragraph slices now drive half-point/twip margins, first-line and
+continuation indents, before/after/line spacing, right/center alignment,
+left/right/center tab stops, and fixed or relative table-cell bounds. Variable
+tables honor their minimum width and scale their signed column metrics against
+the documented 32767 total without floating point.
 Separate native-style popup window geometry remains to complete the popup
 presentation path.
 
-- Complete paragraph/table geometry and deterministic layout.
 - Extend implemented fixed-hash jumps/popups with bounded external forms and
   native-style context popup presentation.
 - Extend raster materialization to inline picture unions and metafiles.

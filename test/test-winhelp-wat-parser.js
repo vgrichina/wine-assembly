@@ -368,6 +368,45 @@ function encodeCompressedUnsignedLong(value) {
   return result;
 }
 
+function encodeCompressedSignedShort(value) {
+  if (value < -0x4000 || value >= 0x4000) {
+    throw new Error('synthetic compressed signed short out of range');
+  }
+  if (value >= -0x40 && value < 0x40) return Buffer.from([(value + 0x40) * 2]);
+  const result = Buffer.alloc(2);
+  result.writeUInt16LE(((value + 0x4000) * 2) | 1);
+  return result;
+}
+
+function encodeCompressedUnsignedShort(value) {
+  if (value < 0 || value >= 0x8000) {
+    throw new Error('synthetic compressed unsigned short out of range');
+  }
+  if (value < 0x80) return Buffer.from([value * 2]);
+  const result = Buffer.alloc(2);
+  result.writeUInt16LE((value * 2) | 1);
+  return result;
+}
+
+function buildParagraphHeader({ column = null, flags = 0, metrics = [], tabs = [] } = {}) {
+  const base = Buffer.alloc(column === null ? 6 : 11);
+  let offset = 0;
+  if (column !== null) {
+    base.writeInt16LE(column, 0);
+    offset = 5;
+  }
+  base.writeUInt16LE(flags, offset + 4);
+  const parts = [base, ...metrics.map(encodeCompressedSignedShort)];
+  if (flags & 0x0200) {
+    parts.push(encodeCompressedSignedShort(tabs.length));
+    for (const [stop, type = 0] of tabs) {
+      parts.push(encodeCompressedUnsignedShort(type ? stop | 0x4000 : stop));
+      if (type) parts.push(encodeCompressedUnsignedShort(type));
+    }
+  }
+  return Buffer.concat(parts);
+}
+
 function buildSyntheticBitmap({
   packing = 0, pictureType = 6,
   payload = Buffer.from([0,0,0,0,1,0,1,0]),
@@ -1447,6 +1486,21 @@ async function main() {
   check('inline bitmap tokens retain exact bytes without a resource alias',
     dv.getUint32(unsupportedBitmapToken + 12, true) === 0 &&
     bytes[topicPayloadWA + dv.getUint32(unsupportedBitmapToken + 4, true)] === 0x86);
+  const formattedParagraphTokens = formattedTokenKinds
+    .map((kind, index) => [kind, topicTokensWA + index * 16])
+    .filter(([kind]) => kind === 4)
+    .map(([, token]) => token);
+  check('PARAGRAPH tokens retain exact direct headers and complete-record identity',
+    formattedParagraphTokens.length > 0 && formattedParagraphTokens.every(token => {
+      const off = dv.getUint32(token + 4, true);
+      const len = dv.getUint32(token + 8, true);
+      const value = dv.getUint32(token + 12, true);
+      const recordOff = value & 0x00ffffff;
+      const recordType = value >>> 24;
+      return off > recordOff && len >= 6 &&
+        off + len <= e.get_help_formatted_payload_size() &&
+        [1, 0x20, 0x23].includes(recordType);
+    }));
 
   const layoutRunsWA = staging + 0x80000;
   const layoutText = Buffer.from('alpha beta gamma', 'latin1');
@@ -1559,6 +1613,175 @@ async function main() {
         dv.getUint32(record + field * 4, true))) ===
         JSON.stringify([0,20,2,3,700,0x112233,0x445566]);
     })());
+
+  const writeLayoutToken = (index, kind, off = 0, len = 0, value = 0) => {
+    const token = topicTokensWA + index * 16;
+    dv.setUint32(token, kind, true);
+    dv.setUint32(token + 4, off, true);
+    dv.setUint32(token + 8, len, true);
+    dv.setUint32(token + 12, value, true);
+  };
+  const layoutParagraph = ({
+    raw, header, recordType = 0x20, recordPrefix = Buffer.alloc(0), width = 100,
+    extraTokens = [], capacity = 32,
+  }) => {
+    const prefix = Buffer.concat([
+      encodeCompressedLong(0), encodeCompressedUnsignedShort(0), recordPrefix,
+    ]);
+    const payload = Buffer.concat([prefix, header]);
+    bytes.set(raw, topicOutWA);
+    bytes.set(payload, topicPayloadWA);
+    bytes.fill(0, topicTokensWA, topicTokensWA + (extraTokens.length + 3) * 16);
+    writeLayoutToken(0, 4, prefix.length, header.length,
+      ((recordType & 0xff) << 24) >>> 0);
+    extraTokens.forEach((token, index) => writeLayoutToken(index + 1, ...token));
+    writeLayoutToken(extraTokens.length + 1, 1, 0, raw.length);
+    writeLayoutToken(extraTokens.length + 2, 13);
+    const count = e.test_help_layout_tokens_with_payload(
+      topicOutWA, raw.length, topicPayloadWA, payload.length,
+      topicTokensWA, extraTokens.length + 3, layoutRunsWA, capacity, width);
+    return { count, payload };
+  };
+
+  const metricParagraphHeader = buildParagraphHeader({
+    flags: 0x007e, metrics: [12, 9, 30, 15, 12, 9],
+  });
+  const metricParagraph = layoutParagraph({
+    raw: Buffer.from('alpha beta gamma', 'latin1'), header: metricParagraphHeader,
+  });
+  const metricRuns = Array.from({ length: metricParagraph.count }, (_, index) =>
+    Array.from({ length: 5 }, (_, field) =>
+      dv.getUint32(layoutRunsWA + index * 40 + field * 4, true)));
+  check('paragraph metrics own exact margins, first-line indent, spacing, and line height',
+    metricParagraph.count === 5 && JSON.stringify(metricRuns) === JSON.stringify([
+      [1,24,16,35,16], [2,59,16,7,16], [1,18,36,28,16],
+      [2,46,36,7,16], [1,18,56,35,16],
+    ]) && e.get_help_layout_extent() === 78,
+    `runs=${JSON.stringify(metricRuns)} extent=${e.get_help_layout_extent()}`);
+
+  const exactLineHeader = buildParagraphHeader({ flags: 0x0008, metrics: [-30] });
+  const exactLinePrefix = Buffer.concat([
+    encodeCompressedLong(0), encodeCompressedUnsignedShort(0),
+  ]);
+  const exactLinePayload = Buffer.concat([exactLinePrefix, exactLineHeader]);
+  bytes.set(Buffer.from('ab', 'latin1'), topicOutWA);
+  bytes.set(exactLinePayload, topicPayloadWA);
+  bytes.fill(0, topicTokensWA, topicTokensWA + 80);
+  writeLayoutToken(0, 4, exactLinePrefix.length, exactLineHeader.length, 0x20000000);
+  writeLayoutToken(1, 1, 0, 1);
+  writeLayoutToken(2, 3);
+  writeLayoutToken(3, 1, 1, 1);
+  writeLayoutToken(4, 13);
+  const exactLineCount = e.test_help_layout_tokens_with_payload(
+    topicOutWA, 2, topicPayloadWA, exactLinePayload.length,
+    topicTokensWA, 5, layoutRunsWA, 2, 100);
+  check('negative paragraph line spacing produces an exact line advance',
+    exactLineCount === 2 &&
+    dv.getUint32(layoutRunsWA + 8, true) === 8 &&
+    dv.getUint32(layoutRunsWA + 40 + 8, true) === 28);
+
+  const centerParagraph = layoutParagraph({
+    raw: Buffer.from('abcd', 'latin1'),
+    header: buildParagraphHeader({ flags: 0x0800 }),
+  });
+  check('center paragraph alignment shifts the complete positioned line',
+    centerParagraph.count === 1 && dv.getUint32(layoutRunsWA + 4, true) === 36);
+  const rightParagraph = layoutParagraph({
+    raw: Buffer.from('abcd', 'latin1'),
+    header: buildParagraphHeader({ flags: 0x0400 }),
+  });
+  check('right paragraph alignment shifts the complete positioned line',
+    rightParagraph.count === 1 && dv.getUint32(layoutRunsWA + 4, true) === 64);
+
+  const tabHeader = buildParagraphHeader({
+    flags: 0x0200, tabs: [[72, 1]],
+  });
+  const tabPrefix = Buffer.concat([
+    encodeCompressedLong(0), encodeCompressedUnsignedShort(0),
+  ]);
+  const tabPayload = Buffer.concat([tabPrefix, tabHeader]);
+  bytes.set(Buffer.from('abc', 'latin1'), topicOutWA);
+  bytes.set(tabPayload, topicPayloadWA);
+  bytes.fill(0, topicTokensWA, topicTokensWA + 80);
+  writeLayoutToken(0, 4, tabPrefix.length, tabHeader.length, 0x20000000);
+  writeLayoutToken(1, 1, 0, 1);
+  writeLayoutToken(2, 2, 0, 0, 0x83);
+  writeLayoutToken(3, 1, 1, 2);
+  writeLayoutToken(4, 13);
+  const tabCount = e.test_help_layout_tokens_with_payload(
+    topicOutWA, 3, topicPayloadWA, tabPayload.length,
+    topicTokensWA, 5, layoutRunsWA, 3, 100);
+  check('right tab stops align the following text against retained tab metadata',
+    tabCount === 3 &&
+    dv.getUint32(layoutRunsWA + 4, true) === 8 &&
+    dv.getUint32(layoutRunsWA + 40 + 4, true) === 15 &&
+    dv.getUint32(layoutRunsWA + 40 + 12, true) === 27 &&
+    dv.getUint32(layoutRunsWA + 80 + 4, true) === 42,
+    `count=${tabCount} runs=${JSON.stringify(Array.from({ length: Math.max(0, tabCount) },
+      (_, index) => Array.from({ length: 5 }, (_, field) =>
+        dv.getUint32(layoutRunsWA + index * 40 + field * 4, true))))}`);
+
+  const tablePrefix = Buffer.alloc(12);
+  tablePrefix[0] = 2;
+  tablePrefix[1] = 0;
+  tablePrefix.writeInt16LE(0, 2);
+  tablePrefix.writeInt16LE(0, 4);
+  tablePrefix.writeInt16LE(16384, 6);
+  tablePrefix.writeInt16LE(0, 8);
+  tablePrefix.writeInt16LE(16383, 10);
+  const tableParagraph = layoutParagraph({
+    raw: Buffer.from('cell', 'latin1'), width: 200, recordType: 0x23,
+    recordPrefix: tablePrefix,
+    header: buildParagraphHeader({ column: 1 }),
+  });
+  check('variable-width table paragraphs scale into exact client cell geometry',
+    tableParagraph.count === 1 &&
+    dv.getUint32(layoutRunsWA + 4, true) === 100 &&
+    dv.getUint32(layoutRunsWA + 12, true) === 28);
+
+  tablePrefix.writeInt16LE(300, 2);
+  const minimumTableParagraph = layoutParagraph({
+    raw: Buffer.from('cell', 'latin1'), width: 200, recordType: 0x23,
+    recordPrefix: tablePrefix,
+    header: buildParagraphHeader({ column: 1 }),
+  });
+  check('variable table minimum width expands cell geometry beyond a narrow client',
+    minimumTableParagraph.count === 1 &&
+    dv.getUint32(layoutRunsWA + 4, true) === 108);
+
+  const fixedTablePrefix = Buffer.alloc(10);
+  fixedTablePrefix[0] = 2;
+  fixedTablePrefix[1] = 1;
+  fixedTablePrefix.writeInt16LE(0, 2);
+  fixedTablePrefix.writeInt16LE(60, 4);
+  fixedTablePrefix.writeInt16LE(15, 6);
+  fixedTablePrefix.writeInt16LE(75, 8);
+  const fixedTableParagraph = layoutParagraph({
+    raw: Buffer.from('cell', 'latin1'), width: 200, recordType: 0x23,
+    recordPrefix: fixedTablePrefix,
+    header: buildParagraphHeader({ column: 1 }),
+  });
+  check('fixed-width table paragraphs convert exact metric cell geometry',
+    fixedTableParagraph.count === 1 &&
+    dv.getUint32(layoutRunsWA + 4, true) === 58);
+
+  fixedTablePrefix[1] = 4;
+  check('paragraph layout rejects unsupported table geometry types',
+    layoutParagraph({
+      raw: Buffer.from('cell', 'latin1'), width: 200, recordType: 0x23,
+      recordPrefix: fixedTablePrefix,
+      header: buildParagraphHeader({ column: 1 }),
+    }).count === -1);
+
+  bytes.fill(0xa5, layoutRunsWA, layoutRunsWA + 40);
+  writeLayoutToken(0, 4, metricParagraph.payload.length, 1, 0x20000000);
+  writeLayoutToken(1, 13);
+  check('paragraph layout rejects an out-of-range retained header before writing',
+    e.test_help_layout_tokens_with_payload(
+      topicOutWA, 0, topicPayloadWA, metricParagraph.payload.length,
+      topicTokensWA, 2, layoutRunsWA, 1, 100) === -1 &&
+    bytes.subarray(layoutRunsWA, layoutRunsWA + 40).every(byte => byte === 0xa5));
+
   bytes.set(Buffer.from('font', 'latin1'), topicOutWA);
   for (let i = 0; i < 3; i++) bytes.fill(0, topicTokensWA + i * 16, topicTokensWA + (i + 1) * 16);
   dv.setUint32(topicTokensWA, 5, true);

@@ -1168,6 +1168,7 @@
     (param $raw_start i32) (param $raw_len i32) (result i32)
     (local $ld1_start i32) (local $ptr i32) (local $end i32) (local $data_len1 i32)
     (local $record_payload_off i32) (local $record_payload_len i32)
+    (local $paragraph_payload_off i32) (local $paragraph_payload_len i32)
     (local $columns i32) (local $table_type i32) (local $paragraph_index i32)
     (local $flags i32) (local $bit i32) (local $tab_count i32) (local $i i32)
     (local $tab_stop i32) (local $command i32) (local $command_start i32)
@@ -1213,6 +1214,9 @@
         (local.set $columns (i32.load8_u (local.get $ptr)))
         (local.set $table_type (i32.load8_u offset=1 (local.get $ptr)))
         (local.set $ptr (i32.add (local.get $ptr) (i32.const 2)))
+        (if (i32.or (i32.eqz (local.get $columns))
+              (i32.gt_u (local.get $table_type) (i32.const 3)))
+          (then (return (call $help_ld1_fail (local.get $topic_pos)))))
         (if (i32.or (i32.eq (local.get $table_type) (i32.const 0))
                     (i32.eq (local.get $table_type) (i32.const 2)))
           (then
@@ -1224,6 +1228,8 @@
           (then (return (call $help_ld1_fail (local.get $topic_pos)))))
         (local.set $ptr (i32.add (local.get $ptr) (local.get $payload_size)))))
     (block $paragraphs_done (loop $paragraphs
+      (local.set $paragraph_payload_off (i32.add (local.get $record_payload_off)
+        (i32.sub (local.get $ptr) (local.get $ld1_start))))
       (if (i32.eq (local.get $record_type) (i32.const 0x23))
         (then
           (if (i32.gt_u (i32.const 2) (i32.sub (local.get $end) (local.get $ptr)))
@@ -1284,11 +1290,15 @@
                 (local.set $ptr (global.get $help_ld1_next))))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
             (br $tabs)))))
+      (local.set $paragraph_payload_len (i32.sub
+        (i32.add (local.get $record_payload_off)
+          (i32.sub (local.get $ptr) (local.get $ld1_start)))
+        (local.get $paragraph_payload_off)))
       (if (i32.eqz (call $help_fmt_add_token
             (global.get $HELP_TOKEN_PARAGRAPH)
-            (local.get $record_payload_off) (local.get $record_payload_len)
+            (local.get $paragraph_payload_off) (local.get $paragraph_payload_len)
             (i32.or (i32.shl (local.get $record_type) (i32.const 24))
-              (local.get $paragraph_index))))
+              (i32.and (local.get $record_payload_off) (i32.const 0x00FFFFFF)))))
         (then
           (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (local.get $topic_pos))
           (return (i32.const 0))))
