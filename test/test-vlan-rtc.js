@@ -172,6 +172,53 @@ async function main() {
       assert.ok(!found.users.some(u => u.userId === me.id));
     });
 
+    // ---- scopes: one network, then channels, then rooms -----------------
+    const { scopeFor, signalKeyFor } = rtc;
+
+    await check('the default scope is one shared network', () => {
+      assert.strictEqual(scopeFor({}), 'net:default');
+      assert.strictEqual(scopeFor(), 'net:default');
+    });
+
+    await check('a channel scope names the executable', () => {
+      assert.strictEqual(scopeFor({ exe: 'lwwin.exe' }), 'net:default/exe:lwwin.exe');
+    });
+
+    await check('the same program from two paths is one channel', () => {
+      assert.strictEqual(
+        scopeFor({ exe: 'test/binaries/candidates/liquid-war/LW5/lwwin.exe' }),
+        scopeFor({ exe: 'LWWIN.EXE' }));
+    });
+
+    await check('a room is a subdivision of a channel', () => {
+      assert.strictEqual(scopeFor({ exe: 'lwwin.exe', room: 'r1' }),
+        'net:default/exe:lwwin.exe/room:r1');
+    });
+
+    await check('two programs do not share a signaling key', async () => {
+      assert.notStrictEqual(
+        await signalKeyFor(scopeFor({ exe: 'lwwin.exe' })),
+        await signalKeyFor(scopeFor({ exe: 'doom.exe' })));
+    });
+
+    await check('a scope with no secret still yields a usable key', async () => {
+      const k = await signalKeyFor(scopeFor({ exe: 'lwwin.exe' }));
+      assert.ok(k.startsWith('vln-signal-'));
+      assert.ok(k.length > 12);
+    });
+
+    await check('a secret changes the key of the same scope', async () => {
+      const scope = scopeFor({ exe: 'lwwin.exe' });
+      assert.notStrictEqual(await signalKeyFor(scope), await signalKeyFor(scope, secret));
+    });
+
+    await check('the key of a shared network is computable by anyone', async () => {
+      // Not a defect — it is the definition of an open network, and the
+      // design doc records what it costs. Asserted so a later change that
+      // makes it secret is a deliberate one.
+      assert.strictEqual(await signalKeyFor(scopeFor({})), await signalKeyFor('net:default'));
+    });
+
     // ---- the wire contract ----------------------------------------------
     await check('an inbound message becomes a peekable frame', () => {
       const ch = new FakeChannel();

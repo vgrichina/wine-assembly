@@ -614,6 +614,76 @@ slice.
 
 ## Room and signaling protocol
 
+### One network first, channels and rooms later
+
+The design below describes rooms as the unit of membership, and that is where
+this ends up. It is not where it starts. The shipping order is:
+
+```text
+  now          one network
+               every signed-in user of the site is on the same segment
+                 │
+  next         channels
+               one segment per executable — Liquid War players see each
+               other, Doom players see each other, and neither sees the
+               other's traffic
+                 │
+  later        rooms
+               a named, invitable subdivision of a channel, with the
+               admission and moderation rules described further down
+```
+
+The reason to start with one network is that it is the version with no
+matchmaking in it. Nobody has to create anything, name anything, or send
+anyone a link: sign in, launch the game, and the other people who did the same
+are already reachable. Rooms are the right end state, but they are only worth
+building once there are enough people online for "which room?" to be a real
+question. Until then a room is a lobby with one person in it.
+
+Splitting by executable comes before rooms because it is forced rather than
+chosen. Two programs on one segment will find each other's listeners — Liquid
+War binds `:8035`, and anything else that binds `:8035` becomes a Liquid War
+server as far as the client can tell. The channel is what keeps a program's
+traffic among instances of that program.
+
+Each tier is a different *scope string* fed to the same key derivation, so the
+signaling code does not branch on which tier is in use — see `scopeFor` in
+`lib/vlan-rtc.js`. Widening from one network to channels is a change to what
+is hashed, not to how any of it works.
+
+#### What one shared network gives up
+
+A room protected by an invite secret can encrypt what it publishes, because
+the people entitled to read it are exactly the people who have the link. A
+network open to every signed-in user has no such secret: the scope is
+well-known, so anything published under it is readable by any signed-in user.
+
+That matters because a WebRTC offer is not an opaque token. It carries ICE
+candidates, and those carry **the publisher's LAN address and public IP**.
+Publishing them to a shared network means every signed-in user can enumerate
+every other signed-in user's addresses, whether or not they ever play
+together. Peer-to-peer games leak your IP to the person you are playing
+against — that is inherent, and normal. Leaking it to everyone who happened to
+be logged in at the time is a different and larger thing.
+
+This is a deliberate tradeoff for the first version, not an oversight, and it
+constrains what the first version should be used for: a small trusted
+audience, not a public lobby. Three things narrow it later, in increasing
+order of cost:
+
+- Publish an *availability* record rather than an offer. Only when two peers
+  agree to connect does either publish an SDP, and then only addressed to the
+  other. Presence is public; addresses are not. This is the cheap fix and it
+  is what the channel tier should ship with.
+- Filter host candidates from the SDP, leaving server-reflexive ones. Hides
+  the LAN topology, still exposes the public IP.
+- Force relay-only candidates, which hides the public IP too and requires the
+  TURN server this project does not run.
+
+The encrypted-record machinery already built stays exactly as it is: it is
+what a room uses once rooms exist. A network simply has no secret to use it
+with, and the code says so rather than pretending to protect something.
+
 ### Room lifecycle
 
 ```text
