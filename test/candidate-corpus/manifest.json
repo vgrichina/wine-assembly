@@ -7,7 +7,9 @@
       "name": "DX-Ball",
       "kind": "game",
       "version": "1.09",
-      "executables": ["dxball19.exe"],
+      "executables": [
+        "dxball19.exe"
+      ],
       "sourcePage": "https://archive.org/details/DX-Ball_game",
       "license": "freeware; verify the bundled terms before public deployment",
       "packages": [
@@ -17,14 +19,19 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 80, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 80,
+        "batchSize": 25000
+      }
     },
     {
       "id": "qbob",
       "name": "QBob",
       "kind": "game",
       "version": "1.3 (32-bit)",
-      "executables": ["QBob.exe"],
+      "executables": [
+        "QBob.exe"
+      ],
       "sourcePage": "https://archive.org/details/QBOB3213",
       "license": "shareware; keep as a local candidate fixture",
       "packages": [
@@ -34,14 +41,19 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
     },
     {
       "id": "blobby-volley",
       "name": "Blobby Volley",
       "kind": "game",
       "version": "1.7.4",
-      "executables": ["volley.exe"],
+      "executables": [
+        "volley.exe"
+      ],
       "sourcePage": "https://archive.org/details/volley",
       "license": "freeware; verify the original package terms before public deployment",
       "packages": [
@@ -51,14 +63,20 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
     },
     {
       "id": "cave-story",
       "name": "Cave Story",
       "kind": "game",
       "version": "1.0.0.6 Japanese freeware",
-      "executables": ["doukutsu/Doukutsu.exe", "Doukutsu.exe"],
+      "executables": [
+        "doukutsu/Doukutsu.exe",
+        "Doukutsu.exe"
+      ],
       "sourcePage": "https://archive.org/details/CaveStory",
       "license": "freeware; game and fan translation have separate terms",
       "packages": [
@@ -68,14 +86,20 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 120, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 120,
+        "batchSize": 25000
+      }
     },
     {
       "id": "liquid-war",
       "name": "Liquid War",
       "kind": "game",
       "version": "5.6.2",
-      "executables": ["LW5/lwwin.exe", "lwwin.exe"],
+      "executables": [
+        "LW5/lwwin.exe",
+        "lwwin.exe"
+      ],
       "sourcePage": "https://archive.org/details/lw562w",
       "license": "GPL",
       "packages": [
@@ -85,14 +109,19 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 120, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 120,
+        "batchSize": 25000
+      }
     },
     {
       "id": "generally",
       "name": "GeneRally",
       "kind": "game",
       "version": "1.05",
-      "executables": ["GeneRally.exe"],
+      "executables": [
+        "GeneRally.exe"
+      ],
       "sourcePage": "https://archive.org/details/generally105.zip",
       "license": "freeware; keep as a local candidate fixture",
       "packages": [
@@ -102,7 +131,10 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 120, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 120,
+        "batchSize": 25000
+      }
     },
     {
       "id": "generally-track-editor",
@@ -110,18 +142,25 @@
       "name": "GeneRally Track Editor",
       "kind": "app",
       "version": "1.05",
-      "executables": ["TrackEditor.exe"],
+      "executables": [
+        "TrackEditor.exe"
+      ],
       "sourcePage": "https://archive.org/details/generally105.zip",
       "license": "freeware; keep as a local candidate fixture",
       "packages": [],
-      "cli": { "maxBatches": 80, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 80,
+        "batchSize": 25000
+      }
     },
     {
       "id": "pocket-tanks-installer",
       "name": "Pocket Tanks shareware installer",
       "kind": "installer",
       "version": "1.x",
-      "executables": ["ptanks.exe"],
+      "executables": [
+        "ptanks.exe"
+      ],
       "sourcePage": "https://classic.blitwise.com/pockettanks.html",
       "license": "shareware",
       "packages": [
@@ -132,14 +171,19 @@
           "destination": "ptanks.exe"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 10000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
     },
     {
       "id": "little-fighter-2-installer",
       "name": "Little Fighter 2 installer",
       "kind": "installer",
       "version": "1.9",
-      "executables": ["lf2_v19.exe"],
+      "executables": [
+        "lf2_v19.exe"
+      ],
       "sourcePage": "https://archive.org/details/lf2_v19",
       "license": "freeware; verify the installer terms before public deployment",
       "packages": [
@@ -150,14 +194,19 @@
           "destination": "lf2_v19.exe"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 10000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
     },
     {
       "id": "scummvm-fotaq",
       "name": "ScummVM + Flight of the Amazon Queen",
       "kind": "game",
       "version": "ScummVM 0.8.0 / FOTAQ freeware floppy",
-      "executables": ["scummvm.exe"],
+      "executables": [
+        "scummvm.exe"
+      ],
       "sourcePage": "https://www.scummvm.org/old/downloads.php?lang=en",
       "license": "GPL engine plus officially distributed freeware game data",
       "packages": [
@@ -190,7 +239,9 @@
       "name": "NetHack Win32 console",
       "kind": "game",
       "version": "3.3.1",
-      "executables": ["nethack.exe"],
+      "executables": [
+        "nethack.exe"
+      ],
       "sourcePage": "https://ww2.nethack.org/v331/ports/download-nt.html",
       "license": "NetHack General Public License",
       "packages": [],
@@ -201,7 +252,9 @@
       "name": "Jazz Jackrabbit 2 demo installer",
       "kind": "installer",
       "version": "1.23s",
-      "executables": ["J2swc123.exe"],
+      "executables": [
+        "J2swc123.exe"
+      ],
       "sourcePage": "https://archive.org/details/JazzJackrabbit2Demo",
       "license": "commercial demo; verify redistribution terms",
       "packages": [
@@ -212,14 +265,21 @@
           "destination": "J2swc123.exe"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 10000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
     },
     {
       "id": "fallout-demo",
       "name": "Fallout demo",
       "kind": "game",
       "version": "1997 demo",
-      "executables": ["falldemo.exe", "falloutw.exe", "setup.exe"],
+      "executables": [
+        "falldemo.exe",
+        "falloutw.exe",
+        "setup.exe"
+      ],
       "sourcePage": "https://archive.org/details/FalloutDemo",
       "license": "commercial demo; verify redistribution terms",
       "packages": [
@@ -229,14 +289,21 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 120, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 120,
+        "batchSize": 25000
+      }
     },
     {
       "id": "starcraft-shareware",
       "name": "StarCraft Shareware",
       "kind": "game",
       "version": "1998 shareware CD",
-      "executables": ["starcraft.exe", "install.exe", "setup.exe"],
+      "executables": [
+        "starcraft.exe",
+        "install.exe",
+        "setup.exe"
+      ],
       "sourcePage": "https://archive.org/details/cdrom-starcraft-shareware",
       "license": "commercial shareware; verify redistribution terms",
       "packages": [],
@@ -247,7 +314,11 @@
       "name": "Icy Tower",
       "kind": "game",
       "version": "1.3",
-      "executables": ["icytower13_install.exe", "icytower13.exe", "icytower.exe"],
+      "executables": [
+        "icytower13_install.exe",
+        "icytower13.exe",
+        "icytower.exe"
+      ],
       "sourcePage": "https://archive.org/details/Icy_Tower",
       "license": "freeware; verify original package terms before public deployment",
       "packages": [
@@ -257,14 +328,20 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
     },
     {
       "id": "jardinains",
       "name": "Jardinains!",
       "kind": "game",
       "version": "1.2",
-      "executables": ["jardinains_1_2.exe", "jardinains.exe"],
+      "executables": [
+        "jardinains_1_2.exe",
+        "jardinains.exe"
+      ],
       "sourcePage": "https://archive.org/details/Jardinains1",
       "license": "freeware; verify original package terms before public deployment",
       "packages": [
@@ -274,26 +351,37 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
     },
     {
       "id": "snood",
       "name": "Snood",
       "kind": "game",
       "version": "Windows shareware release",
-      "executables": ["Snood.exe", "snood.exe"],
+      "executables": [
+        "Snood.exe",
+        "snood.exe"
+      ],
       "sourcePage": "https://archive.org/details/Snood_20180218",
       "license": "shareware; verify original package terms before public deployment",
       "packages": [],
       "manual": "The linked Archive item is the DOS/DJGPP build; acquire and hash a verified PE32 Windows shareware release manually",
-      "cli": { "maxBatches": 80, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 80,
+        "batchSize": 25000
+      }
     },
     {
       "id": "putty",
       "name": "PuTTY",
       "kind": "app",
       "version": "0.60",
-      "executables": ["putty.exe"],
+      "executables": [
+        "putty.exe"
+      ],
       "sourcePage": "https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.60.html",
       "license": "MIT",
       "packages": [
@@ -304,14 +392,19 @@
           "destination": "putty.exe"
         }
       ],
-      "cli": { "maxBatches": 80, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 80,
+        "batchSize": 25000
+      }
     },
     {
       "id": "virtualdub",
       "name": "VirtualDub",
       "kind": "app",
       "version": "1.10.4",
-      "executables": ["VirtualDub.exe"],
+      "executables": [
+        "VirtualDub.exe"
+      ],
       "sourcePage": "https://www.virtualdub.org/download.html",
       "license": "GPL; any redistributed binary must be accompanied by a compliant source offer",
       "packages": [
@@ -321,14 +414,19 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
     },
     {
       "id": "winboard-installer",
       "name": "WinBoard installer",
       "kind": "installer",
       "version": "4.2.7",
-      "executables": ["winboard-4_2_7.exe"],
+      "executables": [
+        "winboard-4_2_7.exe"
+      ],
       "sourcePage": "https://ftp.gnu.org/old-gnu/xboard/winboard/",
       "license": "GPL",
       "packages": [
@@ -339,14 +437,19 @@
           "destination": "winboard-4_2_7.exe"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 10000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
     },
     {
       "id": "7zip-file-manager",
       "name": "7-Zip File Manager",
       "kind": "app",
       "version": "9.20",
-      "executables": ["7zFM.exe"],
+      "executables": [
+        "7zFM.exe"
+      ],
       "sourcePage": "https://www.7-zip.org/download.html",
       "license": "LGPL plus the package's documented unRAR restriction",
       "packages": [
@@ -356,14 +459,19 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
     },
     {
       "id": "povray-installer",
       "name": "POV-Ray for Windows installer",
       "kind": "installer",
       "version": "3.6.1c",
-      "executables": ["povwin-3.6.1c.exe"],
+      "executables": [
+        "povwin-3.6.1c.exe"
+      ],
       "sourcePage": "https://www.povray.org/ftp/pub/povray/Old-Versions/Official-3.6/Windows/",
       "license": "POV-Ray 3.6 custom license; preserve the complete official package",
       "packages": [
@@ -374,14 +482,19 @@
           "destination": "povwin-3.6.1c.exe"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 10000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
     },
     {
       "id": "dependency-walker",
       "name": "Dependency Walker",
       "kind": "app",
       "version": "2.2.6000 x86",
-      "executables": ["depends.exe"],
+      "executables": [
+        "depends.exe"
+      ],
       "sourcePage": "https://www.dependencywalker.com/",
       "license": "free to use, but upstream forbids bundling with another product; internal candidate only",
       "packages": [
@@ -391,7 +504,33 @@
           "type": "archive"
         }
       ],
-      "cli": { "maxBatches": 100, "batchSize": 25000 }
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 25000
+      }
+    },
+    {
+      "id": "tetrinet",
+      "name": "TetriNET",
+      "kind": "game",
+      "version": "1.13",
+      "executables": [
+        "TETRINET.EXE"
+      ],
+      "sourcePage": "https://archive.org/details/tnet113",
+      "license": "freeware; verify the bundled terms before public deployment",
+      "notes": "Winsock TCP, client and server in one exe (Start Server button). No DirectX.",
+      "packages": [
+        {
+          "url": "https://archive.org/download/tnet113/tnet113.zip",
+          "sha1": "f60a155c3a7f5ba775b4d7bd1b32a066dd5ce647",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 3000,
+        "batchSize": 25000
+      }
     }
   ]
 }

@@ -55,8 +55,18 @@ while (true) {
   }
 
   if (match && (showAll || dllFilter)) {
-    const iltOff = rva2off(iltRVA);
-    for (let j = 0; ; j++) {
+    // OriginalFirstThunk is optional. Delphi and Borland linkers routinely
+    // emit 0 there and leave only the IAT, which on disk still holds the
+    // name/ordinal entries the loader is about to overwrite. Reading the
+    // ILT unconditionally walks off the end of such a file.
+    const thunkRVA = iltRVA || iatRVA;
+    const iltOff = rva2off(thunkRVA);
+    if (iltOff < 0) {
+      console.log(`  (cannot resolve thunk array at RVA 0x${thunkRVA.toString(16)})`);
+      off += 20;
+      continue;
+    }
+    for (let j = 0; iltOff + j * 4 + 4 <= buf.length; j++) {
       const entry = buf.readUInt32LE(iltOff + j * 4);
       if (entry === 0) break;
       if (entry & 0x80000000) {

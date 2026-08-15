@@ -119,8 +119,38 @@ const crashHandlers = imports.filter(name => {
   return body && body.includes('$crash_unimplemented');
 });
 
+// The inventory is a drift detector over the fetched corpus, so adding a
+// candidate to test/candidate-corpus/manifest.json legitimately moves every
+// number here. There is no generator for the status file, so this test owns
+// refreshing it: rerun with --write after the corpus grows, then read the
+// diff. The classification lists are still yours to review — --write records
+// what is, it does not decide what should be.
+if (process.argv.includes('--write')) {
+  const refreshed = {
+    ...status,
+    corpus: {
+      peFileCount: peFiles.length,
+      importCount: imports.length,
+      sortedImportSha256: digest,
+      representedInApiTable: imports.length - notExposed.length,
+    },
+    notExposed: [...notExposed].sort(),
+    handlerCoverage: {
+      ...status.handlerCoverage,
+      missing: missingHandlers,
+      crashStub: crashHandlers,
+      dispatchable: imports.length - missingHandlers.length,
+    },
+  };
+  fs.writeFileSync(path.join(ROOT, 'docs', 'gdi-public-api-status.json'),
+    JSON.stringify(refreshed, null, 2) + '\n');
+  console.log(`wrote docs/gdi-public-api-status.json: ${imports.length} imports `
+    + `from ${peFiles.length} PE files`);
+  process.exit(0);
+}
+
 assert.strictEqual(peFiles.length, status.corpus.peFileCount,
-  'checked-in PE corpus changed; refresh the GDI public API inventory');
+  'fetched PE corpus changed; rerun this test with --write to refresh the inventory');
 assert.strictEqual(imports.length, status.corpus.importCount);
 assert.strictEqual(digest, status.corpus.sortedImportSha256,
   'GDI32 import set changed; classify the new public surface explicitly');

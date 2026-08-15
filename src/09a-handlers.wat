@@ -12664,11 +12664,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; CreateIcon(hInst, nWidth, nHeight, cPlanes, cBitsPixel, lpbANDbits, lpbXORbits)
+  ;; — 7 args stdcall. Same opaque-handle model the rest of the icon APIs use:
+  ;; GetIconInfo reports no bitmaps and DrawIconEx is a no-op, so keeping the
+  ;; AND/XOR masks would give nothing anything to read them. Returning a handle
+  ;; from the same space keeps DestroyIcon and CopyImage consistent.
+  (func $handle_CreateIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x00CC0001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; ret + 7 args
+  )
+
   ;; 944: DrawIconEx(hdc, x, y, hIcon, cx, cy, istep, hbrFlicker, diFlags) — 9 args stdcall
   ;; Return TRUE, no-op for now (icon drawing delegated to renderer)
   (func $handle_DrawIconEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40)))  ;; 9 args + ret
+  )
+
+  ;; DrawIcon(hdc, x, y, hIcon) — 4 args stdcall. The fixed-size sibling of
+  ;; DrawIconEx, and a no-op for the same reason: icon handles carry no pixels.
+  (func $handle_DrawIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; ret + 4 args
   )
 
   ;; 943: GetIconInfo(hIcon, piconinfo) — 2 args stdcall

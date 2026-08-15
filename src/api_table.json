@@ -18590,5 +18590,19 @@
     "nargs": 2,
     "convention": "cdecl",
     "hash": 61546003
+  },
+  {
+    "id": 2395,
+    "name": "CreateIcon",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2920684184
+  },
+  {
+    "id": 2396,
+    "name": "DrawIcon",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2588105842
   }
 ]
