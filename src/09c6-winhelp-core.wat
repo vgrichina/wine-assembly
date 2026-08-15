@@ -82,6 +82,9 @@
   (global $help_session_keyword_index (mut i32) (i32.const -1))
   (global $help_session_last_command (mut i32) (i32.const 0))
   (global $help_session_status (mut i32) (i32.const 0))
+  (global $help_topics_contents_selection (mut i32) (i32.const -1))
+  (global $help_topics_first_visible (mut i32) (i32.const 0))
+  (global $help_topics_return_mode (mut i32) (i32.const 0))
 
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
@@ -319,7 +322,10 @@
     (global.set $help_session_mode (i32.const 0))
     (global.set $help_session_keyword_index (i32.const -1))
     (global.set $help_session_last_command (i32.const 0))
-    (global.set $help_session_status (global.get $HELP_DISPATCH_NONE)))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_NONE))
+    (global.set $help_topics_contents_selection (i32.const -1))
+    (global.set $help_topics_first_visible (i32.const 0))
+    (global.set $help_topics_return_mode (i32.const 0)))
 
   (func $help_document_reset
     (call $help_document_release_storage)
@@ -591,13 +597,10 @@
       (br $scan)))
     (i32.const -1))
 
-  (func $help_resolve_keyword
-    (param $query i32) (param $query_len i32) (param $prefix i32) (result i32)
-    (local $index i32) (local $record i32) (local $first i32)
+  (func $help_resolve_keyword_index (param $index i32) (result i32)
+    (local $record i32) (local $first i32)
     (local $count i32) (local $i i32) (local $posting i32)
-    (local.set $index (call $help_find_keyword
-      (local.get $query) (local.get $query_len) (local.get $prefix)))
-    (if (i32.lt_s (local.get $index) (i32.const 0))
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_keyword_count))
       (then (return (i32.const -1))))
     (local.set $record (i32.add (global.get $help_doc_keywords_wa)
       (i32.mul (local.get $index) (global.get $HELP_KEYWORD_SIZE))))
@@ -614,6 +617,15 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $postings)))
     (i32.const -1))
+
+  (func $help_resolve_keyword
+    (param $query i32) (param $query_len i32) (param $prefix i32) (result i32)
+    (local $index i32)
+    (local.set $index (call $help_find_keyword
+      (local.get $query) (local.get $query_len) (local.get $prefix)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (return (i32.const -1))))
+    (call $help_resolve_keyword_index (local.get $index)))
 
   (func $help_find_topic_index_in
     (param $topics_wa i32) (param $count i32) (param $topic_ref i32)
@@ -697,10 +709,27 @@
   (func $help_session_commit_dialog
     (param $caller i32) (param $command i32) (param $mode i32)
     (param $keyword_index i32) (result i32)
+    (if (i32.and
+          (i32.ne (global.get $help_session_mode) (i32.const 3))
+          (i32.ne (global.get $help_session_mode) (i32.const 4)))
+      (then
+        (global.set $help_topics_return_mode
+          (if (result i32)
+            (i32.or (i32.eq (global.get $help_session_mode) (i32.const 1))
+                    (i32.eq (global.get $help_session_mode) (i32.const 2)))
+            (then (global.get $help_session_mode))
+            (else (select (i32.const 1) (i32.const 0)
+              (i32.ge_s (global.get $help_session_topic_ref) (i32.const 0))))))))
     (if (i32.eqz (global.get $help_session_owner))
       (then (global.set $help_session_owner (local.get $caller))))
     (global.set $help_session_mode (local.get $mode))
     (global.set $help_session_keyword_index (local.get $keyword_index))
+    (global.set $help_topics_first_visible (i32.const 0))
+    (if (i32.eq (local.get $mode) (i32.const 3))
+      (then
+        (global.set $help_topics_contents_selection
+          (select (i32.const 0) (i32.const -1)
+            (i32.ne (global.get $help_doc_cnt_node_count) (i32.const 0))))))
     (global.set $help_session_last_command (local.get $command))
     (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
     (i32.const 1))

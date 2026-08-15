@@ -1070,6 +1070,8 @@ async function main() {
   const syntheticCnt = Buffer.from(
     ':Base fixture.hlp\n:Title Fixture\n1 Root\n2 Child=WIN_HELP_AUTOCLOSE\n' +
     '2 Macro=!ExecProgram("bad.exe")\n1 Peer=999999\n', 'latin1');
+  check('synthetic CNT binding HLP reloads',
+    load(fs.readFileSync(path.join(HELP, 'notepad.hlp'))) === 1);
   check('synthetic CNT hierarchy parses', loadCnt(syntheticCnt) === 1);
   const syntheticCntNodes = Array.from({ length: e.get_help_cnt_node_count() }, (_, index) => readCntNode(index));
   check('synthetic CNT publishes exact parent/child/sibling records',
@@ -1078,6 +1080,29 @@ async function main() {
     syntheticCntNodes[1].nextSibling === 2 && syntheticCntNodes[2].parent === 0 &&
     (syntheticCntNodes[2].flags & (2 | 8 | 16)) === (2 | 8 | 16) &&
     (syntheticCntNodes[3].flags & (2 | 8)) === (2 | 8));
+  check('Topics Contents starts with only canonical root rows visible',
+    e.test_help_dispatch_loaded(0x5151, 0x000b, 0) === 1 &&
+    e.get_help_session_mode() === 3 && e.get_help_topics_contents_selection() === 0 &&
+    e.get_help_cnt_visible_count() === 2 && e.get_help_cnt_visible_at(0) === 0 &&
+    e.get_help_cnt_visible_at(1) === 3 && e.get_help_cnt_visible_at(2) === -1);
+  check('Topics Display toggles a book and exposes its children',
+    e.test_help_topics_activate(0x5151) === 2 && e.get_help_cnt_visible_count() === 4 &&
+    (readCntNode(0).flags & 4) !== 0 && e.get_help_cnt_visible_at(1) === 1);
+  check('Topics keyboard movement selects a visible child',
+    e.test_help_topics_move_selection(1) === 1 &&
+    e.get_help_topics_contents_selection() === 1);
+  check('Topics Display binds a resolved CNT leaf transactionally',
+    e.test_help_topics_activate(0x5151) === 1 && e.get_help_session_mode() === 1 &&
+    e.get_help_session_topic_ref() === 994);
+  check('Topics macro leaves fail safely without changing the visible topic',
+    e.test_help_dispatch_loaded(0x5151, 0x000b, 0) === 1 &&
+    e.test_help_topics_expand_contents(0, 2) === 1 &&
+    e.test_help_topics_select_contents(2) === 1 &&
+    e.test_help_topics_activate(0x5151) === 0 && e.get_help_dispatch_status() === 6 &&
+    e.get_help_session_topic_ref() === 994 && e.get_help_session_mode() === 3);
+  check('collapsing a book moves a hidden selection back to the book',
+    e.test_help_topics_expand_contents(0, 1) === 1 &&
+    e.get_help_topics_contents_selection() === 0 && e.get_help_cnt_visible_count() === 2);
   const preservedCntNode = e.get_help_cnt_node(0);
   const malformedCntCases = [
     ['depth jump', '1 Root\n3 Bad\n', 18],
@@ -1237,6 +1262,16 @@ async function main() {
   check('empty HELP_PARTIALKEY opens Index without a selection',
     e.test_help_dispatch_loaded(dispatchOwner, 0x0105, nameWA) === 1 &&
     e.get_help_session_mode() === 4 && e.get_help_session_keyword_index() === -1);
+  check('Index keyboard movement chooses the first canonical keyword',
+    e.test_help_topics_move_selection(1) === 1 &&
+    e.get_help_session_keyword_index() === 0 && e.get_help_topics_first_visible() === 0);
+  check('Index Display resolves postings through the shared navigation engine',
+    e.test_help_topics_activate(dispatchOwner) === 1 &&
+    e.get_help_session_mode() === 1 && e.get_help_session_topic_ref() === 0);
+  writeCString(nameWA, 'Beta');
+  check('keyword navigation restores the dispatcher fixture topic',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA) === 1 &&
+    e.get_help_session_topic_ref() === 10);
   check('HELP_FINDER opens the Topics dialog without changing topic state',
     e.test_help_dispatch_loaded(dispatchOwner, 0x000b, 0) === 1 &&
     e.get_help_session_mode() === 3 && e.get_help_session_topic_ref() === 10);
@@ -1692,12 +1727,29 @@ async function main() {
     e.get_help_phrase_image_size() === 0);
 
   const mounted = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
+  const mountedCnt = fs.readFileSync(path.join(HELP, 'freecell.cnt'));
   ctx.vfs.files.set('c:\\fixture.hlp', { data: new Uint8Array(mounted), attrs: 0x20 });
+  ctx.vfs.files.set('c:\\fixture.cnt', { data: new Uint8Array(mountedCnt), attrs: 0x20 });
   const mountedPath = Buffer.from('c:\\fixture.hlp\0', 'latin1');
   bytes.set(mountedPath, nameWA);
   check('mounted file loads through raw VFS boundary', e.test_help_load_vfs(nameWA) === 1,
     `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
   check('VFS load publishes exact directory', e.get_help_directory_count() === EXPECTED['freecell.hlp'].length);
+  check('VFS load derives and binds the same-directory CNT companion',
+    e.get_help_cnt_node_count() === 3 &&
+    readLatin1(e.get_help_cnt_title_ptr(), e.get_help_cnt_title_length()) === 'FreeCell Help');
+  ctx.vfs.files.set('c:\\nocnt.hlp', { data: new Uint8Array(mounted), attrs: 0x20 });
+  bytes.set(Buffer.from('c:\\nocnt.hlp\0', 'latin1'), nameWA);
+  check('a missing optional CNT companion does not reject its HLP',
+    e.test_help_load_vfs(nameWA) === 1 && e.get_help_cnt_node_count() === 0);
+  ctx.vfs.files.set('c:\\badcnt.hlp', { data: new Uint8Array(mounted), attrs: 0x20 });
+  ctx.vfs.files.set('c:\\badcnt.cnt', {
+    data: new Uint8Array(Buffer.from('1 Root\n3 Bad\n', 'latin1')), attrs: 0x20,
+  });
+  bytes.set(Buffer.from('c:\\badcnt.hlp\0', 'latin1'), nameWA);
+  check('a malformed mounted CNT rejects the document without partial publication',
+    e.test_help_load_vfs(nameWA) === 0 && e.get_help_last_error() === 18 &&
+    e.get_help_file_ptr() === 0 && e.get_help_cnt_node_count() === 0);
   bytes.set(mountedPath, nameWA);
   check('unified dispatcher loads a mounted path and applies its command',
     e.test_help_dispatch(0x3333, nameWA, 0x0003, 0, 0) === 1 &&
@@ -1747,6 +1799,33 @@ async function main() {
     `status=${e.get_help_dispatch_status()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
   check('WinHelpW matching HELP_QUIT releases converted session state',
     e.test_call_WinHelpW(0x7777, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+
+  const notepadMounted = fs.readFileSync(path.join(HELP, 'notepad.hlp'));
+  const notepadMountedCnt = fs.readFileSync(path.join(HELP, 'notepad.cnt'));
+  ctx.vfs.files.set('c:\\notepad.hlp', { data: new Uint8Array(notepadMounted), attrs: 0x20 });
+  ctx.vfs.files.set('c:\\notepad.cnt', { data: new Uint8Array(notepadMountedCnt), attrs: 0x20 });
+  const notepadPathA = allocGuestAnsi('c:\\notepad.hlp');
+  check('HELP_FINDER opens a separate WAT-native Topics window',
+    e.test_invoke_WinHelpA(0x8888, notepadPathA, 0x000b, 0) === 1 &&
+    e.get_help_topics_hwnd() !== 0 && e.get_help_window() === 0 &&
+    e.get_help_session_mode() === 3 && e.get_help_topics_contents_selection() === 0);
+  check('Topics keyboard tab switching retains canonical dialog state',
+    e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 4 &&
+    e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 3 &&
+    e.get_help_topics_hwnd() !== 0);
+  check('Topics Cancel restores the prior viewer mode without releasing the document',
+    e.test_help_topics_message(0x0100, 0x1b, 0) === 0 &&
+    e.get_help_topics_hwnd() === 0 && e.get_help_session_mode() === 0 &&
+    e.get_help_file_ptr() !== 0 &&
+    e.test_invoke_WinHelpA(0x8888, 0, 0x000b, 0) === 1 && e.get_help_topics_hwnd() !== 0);
+  check('Topics Display closes the dialog and presents its resolved CNT leaf',
+    e.test_help_topics_message(0x0100, 0x0d, 0) === 0 &&
+    e.get_help_topics_hwnd() === 0 && e.get_help_window() !== 0 &&
+    e.get_help_session_mode() === 1 && e.get_help_session_topic_ref() === 994 &&
+    e.get_help_view_topic_index() === 2);
+  check('HELP_QUIT tears down both Topics and main help windows',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.get_help_topics_hwnd() === 0 && e.get_help_window() === 0);
 
   check('WinHelpA handler opens a window from WAT-owned title/topic state',
     e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&

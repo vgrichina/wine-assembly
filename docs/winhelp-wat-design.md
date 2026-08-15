@@ -951,8 +951,14 @@ external, and disabled-macro flags. Exact inventories cover every checked-in
 CNT fixture plus the HOVER! hierarchy; synthetic tests cover parent/child and
 sibling construction, macros, malformed depth/title/directive data, hostile
 capacity, source bounds, and preservation of the previously published tree.
-Automatic same-directory CNT mounting and the interactive Contents/Index
-dialog remain to complete this phase.
+Mounted HLP paths now derive and load an optional same-directory CNT through
+the raw VFS boundary, while an existing malformed companion rejects the whole
+document without partial publication. `HELP_FINDER` and `HELP_PARTIALKEY` feed
+a separate WAT-native Topics window with Contents/Index tabs, canonical
+visible-row expansion, selection scrolling, keyboard/mouse input, cancel-mode
+restoration, and Display through the shared transactional navigation engine.
+Native-reference geometry/icon tuning, multiple-posting selection, and the
+optional full-text Find model remain to complete this phase.
 
 - Parse CNT hierarchy.
 - Bind books/leaves to canonical topics.

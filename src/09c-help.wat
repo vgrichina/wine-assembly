@@ -919,6 +919,13 @@
     (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_QUIT))
       (then
         (if (global.get $help_hwnd) (then (call $help_destroy)))
+        (call $help_topics_destroy_window)
+        (return)))
+    (if (i32.or
+          (i32.eq (global.get $help_session_mode) (i32.const 3))
+          (i32.eq (global.get $help_session_mode) (i32.const 4)))
+      (then
+        (call $help_topics_show)
         (return)))
     (if (i32.or
           (i32.eq (global.get $help_session_mode) (i32.const 1))
@@ -965,6 +972,9 @@
     (local $hdc i32) (local $y i32) (local $line_start i32) (local $line_len i32)
     (local $scan i32) (local $end i32) (local $ch i32) (local $vis_y i32)
     (local $click_y i32) (local $click_line i32)
+    (if (i32.eq (local.get $hwnd) (global.get $help_topics_hwnd))
+      (then (return (call $help_topics_wndproc
+        (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; WM_PAINT (0x000F): draw help text using GDI (window-relative)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
@@ -1125,6 +1135,7 @@
 
   ;; Destroy help window and clean up
   (func $help_destroy
+    (call $help_topics_destroy_window)
     (if (global.get $help_hwnd)
       (then
         (call $host_destroy_window (global.get $help_hwnd))

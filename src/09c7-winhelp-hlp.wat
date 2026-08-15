@@ -4130,6 +4130,102 @@
         (return (i32.const 0))))
     (i32.const 1))
 
+  ;; Load an optional same-directory .cnt companion. A missing companion is
+  ;; normal; an existing malformed/truncated one fails the document load so a
+  ;; partially bound Contents tree is never published.
+  (func $help_document_try_load_cnt_vfs
+    (param $path_wa i32) (result i32)
+    (local $path_len i32) (local $cnt_len i32) (local $i i32) (local $dot i32)
+    (local $ch i32) (local $path_ga i32) (local $cnt_path i32)
+    (local $handle i32) (local $size i32)
+    (local $temp_ga i32) (local $temp_wa i32)
+    (local $read_ga i32) (local $read_wa i32) (local $ok i32)
+    (local.set $path_len (call $help_cstring_length_memory
+      (local.get $path_wa) (i32.const 1024)))
+    (if (i32.le_s (local.get $path_len) (i32.const 0))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $path_ga (call $heap_alloc (i32.add (local.get $path_len) (i32.const 5))))
+    (if (i32.eqz (local.get $path_ga))
+      (then
+        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $cnt_path (call $g2w (local.get $path_ga)))
+    (memory.copy (local.get $cnt_path) (local.get $path_wa) (local.get $path_len))
+    (local.set $dot (i32.const -1))
+    (block $scan_done (loop $scan
+      (br_if $scan_done (i32.ge_u (local.get $i) (local.get $path_len)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $cnt_path) (local.get $i))))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                  (i32.eq (local.get $ch) (i32.const 92)))
+        (then (local.set $dot (i32.const -1))))
+      (if (i32.eq (local.get $ch) (i32.const 46))
+        (then (local.set $dot (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $dot) (i32.const 0))
+      (then
+        (i32.store8 (i32.add (local.get $cnt_path) (local.get $path_len)) (i32.const 46))
+        (local.set $dot (local.get $path_len))))
+    (i32.store8 (i32.add (local.get $cnt_path) (i32.add (local.get $dot) (i32.const 1)))
+      (i32.const 99))
+    (i32.store8 (i32.add (local.get $cnt_path) (i32.add (local.get $dot) (i32.const 2)))
+      (i32.const 110))
+    (i32.store8 (i32.add (local.get $cnt_path) (i32.add (local.get $dot) (i32.const 3)))
+      (i32.const 116))
+    (local.set $cnt_len (i32.add (local.get $dot) (i32.const 4)))
+    (i32.store8 (i32.add (local.get $cnt_path) (local.get $cnt_len)) (i32.const 0))
+    (local.set $handle (call $host_fs_create_file
+      (local.get $cnt_path) (i32.const 0x80000000)
+      (i32.const 3) (i32.const 0x80) (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then
+        (call $heap_free (local.get $path_ga))
+        (return (i32.const 1))))
+    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+    (if (i32.or (i32.eq (local.get $size) (i32.const -1))
+          (i32.eqz (local.get $size)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (call $heap_free (local.get $path_ga))
+        (call $help_set_error (global.get $HELP_ERROR_CNT) (i32.const 0))
+        (return (i32.const 0))))
+    (if (i32.gt_u (local.get $size) (global.get $HELP_MAX_CNT_BYTES))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (call $heap_free (local.get $path_ga))
+        (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $temp_ga (call $heap_alloc (local.get $size)))
+    (local.set $read_ga (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $temp_ga)) (i32.eqz (local.get $read_ga)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (if (local.get $temp_ga) (then (call $heap_free (local.get $temp_ga))))
+        (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
+        (call $heap_free (local.get $path_ga))
+        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $temp_wa (call $g2w (local.get $temp_ga)))
+    (local.set $read_wa (call $g2w (local.get $read_ga)))
+    (i32.store (local.get $read_wa) (i32.const 0))
+    (local.set $ok (call $host_fs_read_file
+      (local.get $handle) (local.get $temp_ga) (local.get $size) (local.get $read_ga)))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (call $heap_free (local.get $path_ga))
+    (if (i32.or (i32.eqz (local.get $ok))
+          (i32.ne (i32.load (local.get $read_wa)) (local.get $size)))
+      (then
+        (call $heap_free (local.get $read_ga))
+        (call $heap_free (local.get $temp_ga))
+        (call $help_set_error (global.get $HELP_ERROR_VFS) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $ok (call $help_load_cnt_buffer (local.get $temp_wa) (local.get $size)))
+    (call $heap_free (local.get $read_ga))
+    (call $heap_free (local.get $temp_ga))
+    (local.get $ok))
+
   ;; Load an already-mounted help file through the ordinary VFS boundary.
   ;; The host supplies only file bytes; parsing and ownership stay in WAT.
   (func $help_document_load_vfs
@@ -4193,6 +4289,12 @@
     (local.set $ok (call $help_document_load_buffer (local.get $temp_wa) (local.get $size)))
     (call $heap_free (local.get $read_ga))
     (call $heap_free (local.get $temp_ga))
+    (if (local.get $ok)
+      (then
+        (if (i32.eqz (call $help_document_try_load_cnt_vfs (local.get $path_wa)))
+          (then
+            (call $help_document_release_storage)
+            (return (i32.const 0))))))
     (local.get $ok))
 
   ;; Unified API engine. The A/W boundary owns normalization; path_wa and any
