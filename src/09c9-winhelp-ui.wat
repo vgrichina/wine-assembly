@@ -217,9 +217,15 @@
         (local.set $i (i32.const 0))
         (block $columns_done (loop $columns_loop
           (br_if $columns_done (i32.gt_u (local.get $i) (local.get $column)))
-          (local.set $gap (i32.load16_s (i32.add (local.get $column_data)
-            (i32.mul (local.get $i) (i32.const 4)))))
+          ;; Each column record is { width, gap }, in that order. It was read
+          ;; the other way round, which made notepad.hlp's first two topics -
+          ;; both single-column tables holding the whole topic - come out as a
+          ;; 437-unit gap in front of a 1-unit-wide cell. A cell narrower than
+          ;; its own margins fails the margin check below, so layout rejected
+          ;; the entire topic and notepad's help opened on its third topic.
           (local.set $width (i32.load16_s (i32.add (local.get $column_data)
+            (i32.mul (local.get $i) (i32.const 4)))))
+          (local.set $gap (i32.load16_s (i32.add (local.get $column_data)
             (i32.add (i32.mul (local.get $i) (i32.const 4)) (i32.const 2)))))
           (if (i32.eq (local.get $i) (local.get $column))
             (then
@@ -526,6 +532,41 @@
         (i32.const 48))))
     (i32.sub (local.get $target) (local.get $x)))
 
+  ;; Layout rejects a topic by returning -1, and every rejection used to look
+  ;; identical from the outside - a topic that would not render, with nothing
+  ;; to say why. Each refusal now records a numbered reason and the token it
+  ;; was looking at, readable through get_help_layout_fail_code /
+  ;; get_help_layout_fail_token. Codes are positional within
+  ;; $help_layout_tokens_core, in source order:
+  ;;   1 bad width/token/run-capacity argument   2 raw/token/payload out of memory
+  ;;   3 run buffer out of memory                4 END_TOPIC inside a hotspot
+  ;;   5 paragraph record would not decode       6 paragraph margins invert
+  ;;   7 font index out of range                 8 hotspot opens inside a hotspot
+  ;;   9 hotspot ends with none open            10 run capacity, space token
+  ;;  11 run capacity, bitmap token             12 text offset past raw buffer
+  ;;  13 text length past raw buffer            14 run capacity, space in text
+  ;;  15 run capacity, word in text             16 stream ended with no END_TOPIC
+  (global $help_layout_fail_code (mut i32) (i32.const 0))
+  (global $help_layout_fail_token (mut i32) (i32.const 0))
+
+  (func $help_layout_fail (param $code i32) (param $token i32) (result i32)
+    (global.set $help_layout_fail_code (local.get $code))
+    (global.set $help_layout_fail_token (local.get $token))
+    (i32.const -1))
+
+  (func (export "test_help_para_metric") (param $which i32) (result i32)
+    (if (i32.eq (local.get $which) (i32.const 0)) (then (return (global.get $help_para_left))))
+    (if (i32.eq (local.get $which) (i32.const 1)) (then (return (global.get $help_para_right))))
+    (if (i32.eq (local.get $which) (i32.const 2)) (then (return (global.get $help_para_first))))
+    (if (i32.eq (local.get $which) (i32.const 3)) (then (return (global.get $help_para_cell_left))))
+    (if (i32.eq (local.get $which) (i32.const 4)) (then (return (global.get $help_para_cell_right))))
+    (i32.const 0))
+
+  (func (export "get_help_layout_fail_code") (result i32)
+    (global.get $help_layout_fail_code))
+  (func (export "get_help_layout_fail_token") (result i32)
+    (global.get $help_layout_fail_token))
+
   ;; Convert a validated formatted-token stream into deterministic positioned
   ;; runs. It owns wrapping, line state, font metadata, colors, and hotspot
   ;; membership; painting consumes the published records without reparsing.
@@ -566,7 +607,7 @@
           (i32.or
             (i32.gt_u (local.get $token_count) (global.get $HELP_MAX_TOPIC_TOKENS))
             (i32.gt_u (local.get $run_capacity) (global.get $HELP_MAX_LAYOUT_RUNS))))
-      (then (return (i32.const -1))))
+      (then (return (call $help_layout_fail (i32.const 1) (local.get $i)))))
     (if (i32.or
           (i32.or
             (i32.or (i32.gt_u (local.get $raw) (local.get $memory_bytes))
@@ -579,13 +620,13 @@
           (i32.or (i32.gt_u (local.get $payload) (local.get $memory_bytes))
                   (i32.gt_u (local.get $payload_len)
                     (i32.sub (local.get $memory_bytes) (local.get $payload)))))
-      (then (return (i32.const -1))))
+      (then (return (call $help_layout_fail (i32.const 2) (local.get $i)))))
     (if (i32.and (local.get $runs)
           (i32.or (i32.gt_u (local.get $runs) (local.get $memory_bytes))
                   (i32.gt_u (local.get $run_capacity)
                     (i32.div_u (i32.sub (local.get $memory_bytes) (local.get $runs))
                       (global.get $HELP_LAYOUT_RUN_SIZE)))))
-      (then (return (i32.const -1))))
+      (then (return (call $help_layout_fail (i32.const 3) (local.get $i)))))
     (local.set $x (i32.const 8))
     (local.set $y (i32.const 8))
     (local.set $right (i32.sub (local.get $client_width) (i32.const 8)))
@@ -606,7 +647,7 @@
       (local.set $value (i32.load offset=12 (local.get $token)))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_END_TOPIC))
         (then
-          (if (local.get $hotspot) (then (return (i32.const -1))))
+          (if (local.get $hotspot) (then (return (call $help_layout_fail (i32.const 4) (local.get $i)))))
           (call $help_layout_align_line
             (local.get $line_run_start) (local.get $x)
             (local.get $paragraph_right) (local.get $paragraph_align))
@@ -628,7 +669,7 @@
                 (local.get $payload) (local.get $payload_len)
                 (local.get $off) (local.get $len) (local.get $value)
                 (local.get $client_width)))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 5) (local.get $i)))))
           (local.set $y (i32.add (local.get $y) (global.get $help_para_above)))
           (local.set $continuation_left (i32.add (global.get $help_para_cell_left)
             (global.get $help_para_left)))
@@ -637,7 +678,7 @@
           (local.set $paragraph_right (i32.sub (global.get $help_para_cell_right)
             (global.get $help_para_right)))
           (if (i32.le_s (local.get $paragraph_right) (local.get $line_left))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 6) (local.get $i)))))
           (local.set $x (local.get $line_left))
           (local.set $right (local.get $paragraph_right))
           (local.set $paragraph_align (global.get $help_para_align))
@@ -648,7 +689,7 @@
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_FONT))
         (then
           (if (i32.ge_u (local.get $value) (global.get $help_doc_font_count))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 7) (local.get $i)))))
           (local.set $font_index (local.get $value))
           (local.set $font_height (call $help_layout_select_font
             (local.get $hdc) (local.get $font_handles) (local.get $font_count)
@@ -668,12 +709,12 @@
             (i32.eq (local.get $kind) (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
             (i32.eq (local.get $kind) (global.get $HELP_TOKEN_MACRO)))
         (then
-          (if (local.get $hotspot) (then (return (i32.const -1))))
+          (if (local.get $hotspot) (then (return (call $help_layout_fail (i32.const 8) (local.get $i)))))
           ;; Store token_index+1 in each run; zero remains "not a hotspot".
           (local.set $hotspot (i32.add (local.get $i) (i32.const 1)))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_HOTSPOT_END))
         (then
-          (if (i32.eqz (local.get $hotspot)) (then (return (i32.const -1))))
+          (if (i32.eqz (local.get $hotspot)) (then (return (call $help_layout_fail (i32.const 9) (local.get $i)))))
           (local.set $hotspot (i32.const 0))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_LINE_BREAK))
         (then
@@ -716,7 +757,7 @@
                 (local.get $width) (local.get $line_height)
                 (i32.const 0) (i32.const 0) (local.get $font_index)
                 (local.get $color) (local.get $hotspot)))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 10) (local.get $i)))))
           (local.set $x (i32.add (local.get $x) (local.get $width)))
           (local.set $saw_content (i32.const 1))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_BITMAP))
@@ -749,7 +790,7 @@
                 (global.get $HELP_LAYOUT_BITMAP) (local.get $x) (local.get $y)
                 (local.get $width) (local.get $height) (local.get $off) (local.get $len)
                 (local.get $font_index) (local.get $color) (local.get $hotspot)))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 11) (local.get $i)))))
           (local.set $x (i32.add (local.get $x) (local.get $width)))
           (if (i32.gt_u (local.get $height) (local.get $line_height))
             (then (local.set $line_height (local.get $height))))
@@ -757,9 +798,9 @@
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_TEXT))
         (then
           (if (i32.gt_u (local.get $off) (local.get $raw_len))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 12) (local.get $i)))))
           (if (i32.gt_u (local.get $len) (i32.sub (local.get $raw_len) (local.get $off)))
-            (then (return (i32.const -1))))
+            (then (return (call $help_layout_fail (i32.const 13) (local.get $i)))))
           (local.set $pos (i32.const 0))
           (block $text_done (loop $text_loop
             (br_if $text_done (i32.ge_u (local.get $pos) (local.get $len)))
@@ -788,7 +829,7 @@
                       (local.get $width) (local.get $line_height)
                       (i32.add (local.get $off) (local.get $pos)) (i32.const 1)
                       (local.get $font_index) (local.get $color) (local.get $hotspot)))
-                  (then (return (i32.const -1))))
+                  (then (return (call $help_layout_fail (i32.const 14) (local.get $i)))))
                 (local.set $x (i32.add (local.get $x) (local.get $width)))
                 (local.set $pos (i32.add (local.get $pos) (i32.const 1))))
               (else
@@ -836,7 +877,7 @@
                         (local.get $width) (local.get $line_height)
                         (i32.add (local.get $off) (local.get $pos)) (local.get $fit)
                         (local.get $font_index) (local.get $color) (local.get $hotspot)))
-                    (then (return (i32.const -1))))
+                    (then (return (call $help_layout_fail (i32.const 15) (local.get $i)))))
                   (local.set $x (i32.add (local.get $x) (local.get $width)))
                   (local.set $pos (i32.add (local.get $pos) (local.get $fit)))
                   (local.set $span (i32.sub (local.get $span) (local.get $fit)))
@@ -857,7 +898,7 @@
             (br $text_loop)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $tokens_loop)))
-    (if (i32.eqz (local.get $ended)) (then (return (i32.const -1))))
+    (if (i32.eqz (local.get $ended)) (then (return (call $help_layout_fail (i32.const 16) (local.get $i)))))
     (global.set $help_layout_extent
       (i32.add (i32.add (local.get $y) (local.get $line_height))
         (local.get $paragraph_below)))

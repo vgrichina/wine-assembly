@@ -1269,6 +1269,27 @@ async function main() {
     hoverNodes[16]?.title === 'Troubleshooting' && hoverNodes[16]?.firstChild === 17 &&
     hoverNodes[21]?.nextSibling === -1);
 
+  {
+    // notepad.hlp's first two topics are single-column tables that hold the
+    // whole topic body. Layout rejected both outright, so notepad's help
+    // could only ever open on its third topic. Fail code 6 is the margin
+    // check that a 1-unit-wide cell could not pass.
+    check('notepad.hlp reloads for the table-topic check',
+      load(fs.readFileSync(path.join(HELP, 'notepad.hlp'))) === 1);
+    const laid = [];
+    for (let index = 0; index < e.get_help_topic_count(); index++) {
+      const tokens = e.test_help_decode_topic_formatted(index, topicOutWA, topicOutCapacity,
+        topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+      laid.push(tokens < 1 ? -1 : e.test_help_layout_tokens_with_payload(
+        topicOutWA, topicOutCapacity, topicPayloadWA, e.get_help_formatted_payload_size(),
+        topicTokensWA, tokens, staging + 0x80000, 2048, 560));
+    }
+    check('every notepad.hlp topic lays out, tables included',
+      laid.length === 4 && laid.every(runs => runs >= 0) &&
+      laid[0] > 100 && laid[1] > 100,
+      `runs=${JSON.stringify(laid)} fail=${e.get_help_layout_fail_code()}`);
+  }
+
   const syntheticCnt = Buffer.from(
     ':Base fixture.hlp\n:Title Fixture\n1 Root\n2 Child=WIN_HELP_AUTOCLOSE\n' +
     '2 Macro=!ExecProgram("bad.exe")\n1 Peer=999999\n', 'latin1');
@@ -1865,10 +1886,11 @@ async function main() {
     hoverMacros.filter(macro => macro.text.startsWith('PlayWave(')).length === 23 &&
     hoverMacros.find(macro => macro.command === 0xcc).text === 'AL("a-playingtopics")',
     `macros=${JSON.stringify(hoverMacros.slice(0, 3))} n=${hoverMacros.length}`);
-  // The macro topics laid out as clickable regions; the topics still rejected
-  // are the table (record type 0x23) ones, which is a separate defect.
+  // Every topic in the file lays out, tables included. The five that used to
+  // be rejected were single-column tables whose column record was read as
+  // { gap, width } instead of { width, gap }.
   check('HOVER.HLP macro regions lay out as clickable runs',
-    hoverLaidOut === 44 && hoverMacroRuns > 0,
+    hoverLaidOut === 49 && hoverMacroRuns === 26,
     `laidOut=${hoverLaidOut} macroRuns=${hoverMacroRuns}`);
 
   const validExternalCommands = [
@@ -2014,14 +2036,18 @@ async function main() {
       (_, index) => Array.from({ length: 5 }, (_, field) =>
         dv.getUint32(layoutRunsWA + index * 40 + field * 4, true))))}`);
 
+  // Column records are { width, gap }. These fixtures were written against
+  // the reversed reading and are swapped here so they still describe the same
+  // two columns; real files (notepad.hlp, HOVER.HLP) are what settled the
+  // order, since the reversed one gave them 1-unit-wide cells.
   const tablePrefix = Buffer.alloc(12);
   tablePrefix[0] = 2;
   tablePrefix[1] = 0;
   tablePrefix.writeInt16LE(0, 2);
-  tablePrefix.writeInt16LE(0, 4);
-  tablePrefix.writeInt16LE(16384, 6);
-  tablePrefix.writeInt16LE(0, 8);
-  tablePrefix.writeInt16LE(16383, 10);
+  tablePrefix.writeInt16LE(16384, 4);
+  tablePrefix.writeInt16LE(0, 6);
+  tablePrefix.writeInt16LE(16383, 8);
+  tablePrefix.writeInt16LE(0, 10);
   const tableParagraph = layoutParagraph({
     raw: Buffer.from('cell', 'latin1'), width: 200, recordType: 0x23,
     recordPrefix: tablePrefix,
@@ -2045,10 +2071,10 @@ async function main() {
   const fixedTablePrefix = Buffer.alloc(10);
   fixedTablePrefix[0] = 2;
   fixedTablePrefix[1] = 1;
-  fixedTablePrefix.writeInt16LE(0, 2);
-  fixedTablePrefix.writeInt16LE(60, 4);
-  fixedTablePrefix.writeInt16LE(15, 6);
-  fixedTablePrefix.writeInt16LE(75, 8);
+  fixedTablePrefix.writeInt16LE(60, 2);
+  fixedTablePrefix.writeInt16LE(0, 4);
+  fixedTablePrefix.writeInt16LE(75, 6);
+  fixedTablePrefix.writeInt16LE(15, 8);
   const fixedTableParagraph = layoutParagraph({
     raw: Buffer.from('cell', 'latin1'), width: 200, recordType: 0x23,
     recordPrefix: fixedTablePrefix,
