@@ -28,10 +28,11 @@ const input = [
   '31:dump-windows:colors',
   '32:dlg-click:1122',
   `34:png:${SHOT}`,
-  '35:dump-windows:expanded',
-  '36:dlg-click:2',
-  '37:dump-windows:closed',
-  '38:stop',
+  '35:dlg-dump:hsl',
+  '36:dump-windows:expanded',
+  '37:dlg-click:2',
+  '38:dump-windows:closed',
+  '39:stop',
 ].join(',');
 
 let output = '';
@@ -63,6 +64,17 @@ assert(expandedLine.includes('size=436x330'),
   `Paint Define Custom Colors did not expand the dialog: ${expandedLine}`);
 assert(/dlg-click: id=1122/.test(output),
   'Paint Define Custom Colors button was not handled');
+const controlsLine = output.split('\n').find(line => line.includes('dlg-dump:hsl')) || '';
+for (const id of [1128, 1129, 1130]) {
+  assert(new RegExp(`id=${id} cls=2`).test(controlsLine),
+    `Paint Define Custom Colors omitted HSL edit ${id}: ${controlsLine}`);
+}
+assert(/id=1131 cls=26/.test(controlsLine),
+  `Paint Define Custom Colors omitted its Color|Solid preview: ${controlsLine}`);
+for (const label of ['Hue:', 'Sat:', 'Lum:', 'Color', '|Solid']) {
+  assert(controlsLine.includes(`text="${label}"`),
+    `Paint Define Custom Colors omitted label ${label}: ${controlsLine}`);
+}
 assert(fs.existsSync(SHOT), 'Paint expanded-color screenshot was not written');
 const image = PNG.sync.read(fs.readFileSync(SHOT));
 const pos = dialogLine.match(/pos=(-?\d+),(-?\d+)/);
@@ -86,6 +98,15 @@ for (let y = dlgY + 37; y < dlgY + 151; y += 4) {
 }
 assert(spectrumColors.size >= 40,
   `Paint Define Custom Colors omitted its spectrum (${spectrumColors.size} colors)`);
+const previewLeft = ((dlgY + 181) * image.width + dlgX + 241) * 4;
+const previewRight = ((dlgY + 181) * image.width + dlgX + 269) * 4;
+for (let c = 0; c < 3; c++) {
+  assert(Math.abs(image.data[previewLeft + c] - image.data[previewRight + c]) <= 2,
+    'Paint Color|Solid preview halves do not represent the same true-color selection');
+}
+assert(!(image.data[previewLeft] === 192 && image.data[previewLeft + 1] === 192 &&
+         image.data[previewLeft + 2] === 192),
+  'Paint Color|Solid preview remained dialog-face gray');
 assert(/dlg-click: id=2/.test(output), 'Paint Edit Colors Cancel button was not handled');
 assert(!output.split('\n').some(line =>
   line.includes('window:closed') && line.includes('dialog=true')),

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // PNG screenshot test: ChooseColor dialog. Exercises the WAT colorgrid
 // WM_PAINT (8x6 basic and 8x2 custom swatches + selection ring), plus the
-// expandable RGB editor used to add a caller-persistent custom color.
+// expandable HSL/RGB editor and Color|Solid preview used to add a
+// caller-persistent custom color.
 //
 // Output: test/output/color-dlg.png
 //
@@ -56,8 +57,13 @@ runRenderTest('color-dlg', async (h, check) => {
   check('Define Custom Colors button exists', define !== 0);
   e.send_message(dlg, 0x0111, 0x462, define);
   const red = findById(0x463), green = findById(0x464), blue = findById(0x465);
+  const hue = findById(0x468), sat = findById(0x469), lum = findById(0x46a);
+  const preview = findById(0x46b);
   const add = findById(0x466);
   check('Define expands RGB editor controls', !!(red && green && blue && add));
+  check('Define expands Hue/Sat/Lum editor controls', !!(hue && sat && lum));
+  check('Define creates Color|Solid preview', preview !== 0 && e.ctrl_get_class(preview) === 26,
+    `hwnd=0x${preview.toString(16)} class=${preview ? e.ctrl_get_class(preview) : 0}`);
   let spectrum = 0;
   for (let s = 0; s < 256; s++) {
     const ch = e.wnd_slot_hwnd(s);
@@ -67,13 +73,28 @@ runRenderTest('color-dlg', async (h, check) => {
     `hwnd=0x${spectrum.toString(16)}`);
   check('Define widens the visible dialog', h.renderer.windows[dlg].w === 436,
     `width=${h.renderer.windows[dlg].w}`);
+
+  const u8 = new Uint8Array(h.memory.buffer);
+  const wa = g => g - e.get_image_base() + e.get_guest_base();
+  const readText = hwnd => {
+    const g = e.guest_alloc(8);
+    const n = e.send_message(hwnd, 0x000d, 8, g);
+    const value = Buffer.from(u8.subarray(wa(g), wa(g) + Math.max(0, n))).toString('latin1');
+    e.guest_free(g);
+    return value;
+  };
+  check('selected custom RGB initializes exact HSL fields',
+    readText(hue) === '20' && readText(sat) === '156' && readText(lum) === '48',
+    `hsl=${readText(hue)},${readText(sat)},${readText(lum)}`);
+
   e.send_message(spectrum, 0x0201, 0, 80 | (20 << 16));
   check('spectrum click updates CHOOSECOLOR.rgbResult',
     e.test_color_dialog_result(dlg) !== 0 && e.test_color_dialog_result(dlg) !== 0x00123456,
     `rgb=0x${e.test_color_dialog_result(dlg).toString(16)}`);
+  check('spectrum click updates Hue/Sat/Lum fields',
+    readText(hue) === '117' && readText(sat) === '204' && readText(lum) === '48',
+    `hsl=${readText(hue)},${readText(sat)},${readText(lum)}`);
 
-  const u8 = new Uint8Array(h.memory.buffer);
-  const wa = g => g - e.get_image_base() + e.get_guest_base();
   const setText = (hwnd, value) => {
     const s = String(value);
     const g = e.guest_alloc(s.length + 1);
@@ -83,9 +104,27 @@ runRenderTest('color-dlg', async (h, check) => {
     e.send_message(hwnd, 0x000C, 0, g);
     e.guest_free(g);
   };
+  setText(hue, 80);
+  setText(sat, 240);
+  setText(lum, 120);
+  e.send_message(dlg, 0x0111, 0x03000000 | 0x46a, lum);
+  check('HSL edits update CHOOSECOLOR.rgbResult',
+    e.test_color_dialog_result(dlg) === 0x0000ff00,
+    `rgb=0x${e.test_color_dialog_result(dlg).toString(16)}`);
+  check('HSL edits synchronize RGB fields',
+    readText(red) === '0' && readText(green) === '255' && readText(blue) === '0',
+    `rgb=${readText(red)},${readText(green)},${readText(blue)}`);
+
   setText(red, 17);
   setText(green, 34);
   setText(blue, 51);
+  e.send_message(dlg, 0x0111, 0x03000000 | 0x465, blue);
+  check('RGB edits update CHOOSECOLOR.rgbResult',
+    e.test_color_dialog_result(dlg) === 0x00332211,
+    `rgb=0x${e.test_color_dialog_result(dlg).toString(16)}`);
+  check('RGB edits synchronize Hue/Sat/Lum fields',
+    readText(hue) === '140' && readText(sat) === '120' && readText(lum) === '32',
+    `hsl=${readText(hue)},${readText(sat)},${readText(lum)}`);
   e.send_message(dlg, 0x0111, 0x466, add);
   check('Add updates selected custom swatch from RGB fields',
     e.colorgrid_control_color(customGrid, 5) === 0x00332211);

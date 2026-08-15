@@ -1,6 +1,6 @@
 # MSPaint Win98 (test/binaries/mspaint.exe)
 
-## Current status (2026-08-13)
+## Current status (2026-08-14)
 
 The Win98 ANSI build launches reliably in the CLI and browser harness. The
 focused suite selects all 16 tools and verifies representative output from each
@@ -11,6 +11,9 @@ File menu, image Cut/Paste through the OLE/CF_DIB clipboard bridge, wide
 browser layout, flood fill, and browser airbrush position and latency.
 Tool icons now use the native Win32 color-to-monochrome mask path, so their
 red bitmap key remains transparent instead of appearing around each glyph.
+The expanded Edit Colors dialog now has the complete Win98 custom-color pane:
+interactive hue/saturation and luminance pickers, synchronized Hue/Sat/Lum and
+RGB numeric fields, the split Color|Solid preview, and Add to Custom Colors.
 
 This is broad regression coverage, not complete feature coverage. The current
 known Paint-specific gaps are:
@@ -18,8 +21,10 @@ known Paint-specific gaps are:
 - The lower tool-options panel renders distinct brush and airbrush size/shape
   glyphs. Tests cover representative smallest/largest choices, but not every
   option in the grid.
-- Canvas 2D antialiases vector paths. Pencil/line/curve and shape edges can
-  contain intermediate colors that classic Win98 GDI would not produce.
+- WAT software-GDI drawing is deterministic and non-antialiased. Thick-line
+  and brush endpoint masks still need browser pixel comparison against the
+  captured Win98 references; the focused polygon diagnosis found no raster or
+  presentation defect.
 - Tool sub-options, every menu command, printing, wallpaper commands,
   cross-process/browser-system clipboard integration, arbitrary BMP encodings,
   and exhaustive selection/text
@@ -47,6 +52,28 @@ node test/test-mspaint-clipboard.js
 node test/test-mspaint-file-roundtrip.js
 node test/test-mspaint-large-scroll.js
 node test/test-mspaint-web.js
+node test/test-render-color-dlg.js
+node test/test-mspaint-edit-colors-hook.js
+```
+
+## Status (2026-08-14): complete Define Custom Colors pane
+
+`test/test-render-color-dlg.js` now covers the complete expanded common-dialog
+state machine. A selected custom RGB color initializes exact 0..240 HSL values;
+spectrum/luminance clicks update HSL, RGB, `CHOOSECOLOR.rgbResult`, and the
+preview; manual HSL edits convert back to RGB; manual RGB values still commit
+through Add to Custom Colors. The standalone render contains the classic
+rainbow square, luminance strip, current/solid swatch, all six numeric fields,
+and Win98-style captions and spacing.
+
+`test/test-mspaint-edit-colors-hook.js` exercises the same pane through Paint's
+real `CC_ENABLEHOOK` path. It verifies the hook-provided Edit Colors caption,
+expanded control geometry and labels, spectrum diversity, Color|Solid preview,
+left-palette preservation after resize, and clean Cancel teardown.
+
+```sh
+node test/test-render-color-dlg.js       # 24/24
+node test/test-mspaint-edit-colors-hook.js
 ```
 
 ## Status (2026-08-13): native image Cut/Paste
