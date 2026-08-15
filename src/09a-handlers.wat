@@ -4355,6 +4355,35 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; operator new(size_t) / operator new[](size_t) — cdecl. The MSVC decorated
+  ;; names ??2@YAPAXI@Z and ??_U@YAPAXI@Z; both are plain allocations, and
+  ;; MSVC's own implementations are malloc with a new-handler retry loop we
+  ;; have no use for. Returning NULL on exhaustion matches the non-throwing
+  ;; behaviour of the msvcrt these binaries link against.
+  (func $cpp_operator_new (param $size i32)
+    (global.set $eax (call $heap_alloc (local.get $size)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+  (func $handle_??2@YAPAXI@Z (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $cpp_operator_new (local.get $arg0))
+  )
+  (func $handle_??_U@YAPAXI@Z (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $cpp_operator_new (local.get $arg0))
+  )
+
+  ;; operator delete(void*) / operator delete[](void*) — cdecl, and a NULL
+  ;; pointer is explicitly a no-op in C++.
+  (func $cpp_operator_delete (param $ptr i32)
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+  (func $handle_??3@YAXPAX@Z (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $cpp_operator_delete (local.get $arg0))
+  )
+  (func $handle_??_V@YAXPAX@Z (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $cpp_operator_delete (local.get $arg0))
+  )
+
   ;; 265: calloc(num, size) — cdecl
   (func $handle_calloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
@@ -10672,10 +10701,49 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
+  ;; MF_BYPOSITION is 0x400; without it uPosition names the item to insert
+  ;; before by command id. Resource-backed menu blobs are not mutable yet, so
+  ;; those handles keep reporting success as they always have.
   (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $dyn i32)
+    (local.set $dyn
+      (call $dynamic_menu_insert
+        (local.get $arg0)
+        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1)
+          (i32.and (local.get $arg2) (i32.const 0x400)))
+        (local.get $arg2) (local.get $arg3) (local.get $arg4)
+        ;; MF_POPUP: uIDNewItem is the submenu handle, not a command id.
+        (if (result i32) (i32.and (local.get $arg2) (i32.const 0x10))
+          (then (local.get $arg3))
+          (else (i32.const 0)))))
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
+        (then (i32.const 1))
+        (else (local.get $dyn))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; InsertMenuItemA/W(hMenu, uItem, fByPosition, lpmii)
+  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dyn i32) (local $flags i32)
+    (local.set $flags (call $menu_item_info_decode (local.get $arg3)))
+    (local.set $dyn
+      (call $dynamic_menu_insert
+        (local.get $arg0)
+        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1) (local.get $arg2))
+        (local.get $flags) (global.get $mii_out_id) (global.get $mii_out_data)
+        (global.get $mii_out_submenu)))
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
+        (then (i32.const 1))
+        (else (local.get $dyn))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  (func $handle_InsertMenuItemW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_InsertMenuItemA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE

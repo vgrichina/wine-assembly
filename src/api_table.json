@@ -18541,5 +18541,47 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4258577390
+  },
+  {
+    "id": 2388,
+    "name": "??2@YAPAXI@Z",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1332274017
+  },
+  {
+    "id": 2389,
+    "name": "??3@YAXPAX@Z",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2207890541
+  },
+  {
+    "id": 2390,
+    "name": "??_U@YAPAXI@Z",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2685721585
+  },
+  {
+    "id": 2391,
+    "name": "??_V@YAXPAX@Z",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 98329075
+  },
+  {
+    "id": 2392,
+    "name": "InsertMenuItemA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3697208235
+  },
+  {
+    "id": 2393,
+    "name": "InsertMenuItemW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4066315853
   }
 ]

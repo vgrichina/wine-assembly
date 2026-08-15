@@ -1024,6 +1024,16 @@ const extra = [
   { name: 'AddAtomW', nargs: 1 },
   { name: 'GetAtomNameA', nargs: 3 },
   { name: 'GetAtomNameW', nargs: 3 },
+  // USER32 — Win95-era menu item insertion; winamp.exe calls it while
+  // building its playlist menu.
+  { name: 'InsertMenuItemA', nargs: 4 },
+  { name: 'InsertMenuItemW', nargs: 4 },
+  // MSVCRT — C++ operator new/delete, scalar and array forms. winamp.exe
+  // imports ??2/??3 directly; the NSIS installers reach them through a DLL.
+  { name: '??2@YAPAXI@Z', nargs: 1, convention: 'cdecl' },
+  { name: '??3@YAXPAX@Z', nargs: 1, convention: 'cdecl' },
+  { name: '??_U@YAPAXI@Z', nargs: 1, convention: 'cdecl' },
+  { name: '??_V@YAXPAX@Z', nargs: 1, convention: 'cdecl' },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
@@ -1044,6 +1054,7 @@ for (const api of extra) {
 // stack-corrupting for CRT calls such as _controlfp and _initterm).
 const cdeclCrtApis = new Set([
   '?terminate@@YAXXZ',
+  '??2@YAPAXI@Z', '??3@YAXPAX@Z', '??_U@YAPAXI@Z', '??_V@YAXPAX@Z',
   '_XcptFilter', '__CxxFrameHandler', '__GetMainArgs', '__dllonexit',
   '__getmainargs', '__p__acmdln', '__p__commode', '__p__fmode', '__p__wcmdln',
   '__set_app_type', '__setusermatherr', '__wgetmainargs', '_adjust_fdiv',

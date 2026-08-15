@@ -27,6 +27,7 @@ UNIT=(
   test/test-storage-registry.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
+  test/test-menu-insert.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
   test/test-midi-mci.js

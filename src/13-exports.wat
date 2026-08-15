@@ -2199,6 +2199,49 @@
   (func (export "guest_free") (param $g i32)
     (call $heap_free (local.get $g)))
 
+  ;; Dynamic menus — exercised by test/test-menu-insert.js. The read-backs
+  ;; expose the MNUD item records so a test can assert insertion *order*,
+  ;; which is the part InsertMenuItem exists to get right.
+  (func (export "test_call_CreatePopupMenu") (result i32)
+    (call $handle_CreatePopupMenu (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_AppendMenuA") (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_AppendMenuA (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_InsertMenuA")
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_InsertMenuA (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_InsertMenuItemA") (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $handle_InsertMenuItemA (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_DestroyMenu") (param i32) (result i32)
+    (call $handle_DestroyMenu (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  ;; -1 when the handle is not a WAT dynamic menu.
+  (func (export "test_menu_item_count") (param $hmenu i32) (result i32)
+    (local $sw i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (i32.load offset=4 (local.get $sw)))
+  ;; $field: 0 = flags, 1 = id, 2 = itemData.
+  (func (export "test_menu_item_field") (param $hmenu i32) (param $index i32) (param $field i32) (result i32)
+    (local $sw i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (if (i32.ge_u (local.get $index) (i32.load offset=4 (local.get $sw)))
+      (then (return (i32.const -1))))
+    (i32.load
+      (i32.add
+        (i32.add (local.get $sw)
+          (i32.add (i32.const 16) (i32.mul (local.get $index) (i32.const 16))))
+        (i32.mul (local.get $field) (i32.const 4)))))
+
   ;; Atom tables — exercised by test/test-atom-table.js. The A/W and
   ;; local/global split is the part worth pinning: the same name in different
   ;; namespaces must yield independent atoms and independent reference counts.

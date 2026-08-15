@@ -166,6 +166,121 @@
     (i32.store offset=4 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
     (i32.const 1))
 
+  ;; Position of the item carrying command id $id, or -1. InsertMenu and
+  ;; InsertMenuItem both accept "insert before the item with this id" as an
+  ;; alternative to a positional index.
+  (func $dynamic_menu_index_of_id (param $sw i32) (param $id i32) (result i32)
+    (local $i i32) (local $count i32) (local $rec i32)
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec
+        (i32.add (local.get $sw)
+          (i32.add (i32.const 16) (i32.mul (local.get $i) (i32.const 16)))))
+      (if (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $id))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Insert an item *before* position $pos, shifting the tail down. A $pos at
+  ;; or past the end appends, which is what Win32 does for InsertMenu with
+  ;; MF_BYPOSITION and an out-of-range position. Returns -1 when $hmenu is not
+  ;; a WAT dynamic menu; otherwise TRUE/FALSE.
+  ;; $submenu lands in the record's fourth dword, which $dynamic_menu_append
+  ;; leaves zero. A popup item carries both a label and a submenu handle and
+  ;; itemData already holds the label, so the two cannot share one slot.
+  (func $dynamic_menu_insert
+        (param $hmenu i32) (param $pos i32) (param $flags i32) (param $id i32)
+        (param $itemData i32) (param $submenu i32)
+        (result i32)
+    (local $sw i32) (local $count i32) (local $cap i32) (local $rec i32) (local $i i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $cap (i32.load offset=8 (local.get $sw)))
+    (if (i32.ge_u (local.get $count) (local.get $cap))
+      (then (return (i32.const 0))))
+    (if (i32.lt_s (local.get $pos) (i32.const 0))
+      (then (local.set $pos (local.get $count))))
+    (if (i32.gt_u (local.get $pos) (local.get $count))
+      (then (local.set $pos (local.get $count))))
+    ;; Shift from the tail back so overlapping records copy cleanly.
+    (local.set $i (local.get $count))
+    (block $done (loop $shift
+      (br_if $done (i32.le_u (local.get $i) (local.get $pos)))
+      (local.set $rec
+        (i32.add (local.get $sw)
+          (i32.add (i32.const 16) (i32.mul (local.get $i) (i32.const 16)))))
+      (i32.store         (local.get $rec) (i32.load         (i32.sub (local.get $rec) (i32.const 16))))
+      (i32.store offset=4  (local.get $rec) (i32.load offset=4  (i32.sub (local.get $rec) (i32.const 16))))
+      (i32.store offset=8  (local.get $rec) (i32.load offset=8  (i32.sub (local.get $rec) (i32.const 16))))
+      (i32.store offset=12 (local.get $rec) (i32.load offset=12 (i32.sub (local.get $rec) (i32.const 16))))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $shift)))
+    (local.set $rec
+      (i32.add (local.get $sw)
+        (i32.add (i32.const 16) (i32.mul (local.get $pos) (i32.const 16)))))
+    (i32.store         (local.get $rec) (local.get $flags))
+    (i32.store offset=4  (local.get $rec) (local.get $id))
+    (i32.store offset=8  (local.get $rec) (local.get $itemData))
+    (i32.store offset=12 (local.get $rec) (local.get $submenu))
+    (i32.store offset=4 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+    (i32.const 1))
+
+  ;; Resolve the InsertMenu/InsertMenuItem "uItem" argument to a position.
+  ;; $by_position selects between a raw index and an item id.
+  (func $dynamic_menu_resolve_pos
+        (param $hmenu i32) (param $uItem i32) (param $by_position i32) (result i32)
+    (local $sw i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (if (local.get $by_position) (then (return (local.get $uItem))))
+    (call $dynamic_menu_index_of_id (local.get $sw) (local.get $uItem)))
+
+  ;; Fold a MENUITEMINFO at guest address $mii into the (flags, id, itemData)
+  ;; triple the dynamic menu stores. The MFT_*/MFS_* constants deliberately
+  ;; share values with the MF_* ones AppendMenu uses, so the type and state
+  ;; words carry straight across; only the string pointer needs picking out.
+  ;; Returns the flags; $out_* are written through the two globals below to
+  ;; keep the handler side free of multi-value plumbing.
+  (global $mii_out_id (mut i32) (i32.const 0))
+  (global $mii_out_data (mut i32) (i32.const 0))
+  (global $mii_out_submenu (mut i32) (i32.const 0))
+  (func $menu_item_info_decode (param $mii i32) (result i32)
+    (local $mask i32) (local $flags i32)
+    (global.set $mii_out_id (i32.const 0))
+    (global.set $mii_out_data (i32.const 0))
+    (global.set $mii_out_submenu (i32.const 0))
+    (if (i32.eqz (local.get $mii)) (then (return (i32.const 0))))
+    (local.set $mask (call $gl32 (i32.add (local.get $mii) (i32.const 4))))
+    ;; MIIM_FTYPE (0x100) and the older MIIM_TYPE (0x10) both describe fType.
+    (if (i32.and (local.get $mask) (i32.const 0x110))
+      (then (local.set $flags (call $gl32 (i32.add (local.get $mii) (i32.const 8))))))
+    ;; MIIM_STATE
+    (if (i32.and (local.get $mask) (i32.const 0x1))
+      (then (local.set $flags (i32.or (local.get $flags)
+              (call $gl32 (i32.add (local.get $mii) (i32.const 12)))))))
+    ;; MIIM_ID
+    (if (i32.and (local.get $mask) (i32.const 0x2))
+      (then (global.set $mii_out_id (call $gl32 (i32.add (local.get $mii) (i32.const 16))))))
+    ;; MIIM_SUBMENU — a non-null handle makes this a popup item.
+    (if (i32.and (local.get $mask) (i32.const 0x4))
+      (then
+        (if (call $gl32 (i32.add (local.get $mii) (i32.const 20)))
+          (then
+            (local.set $flags (i32.or (local.get $flags) (i32.const 0x10))) ;; MF_POPUP
+            (global.set $mii_out_submenu (call $gl32 (i32.add (local.get $mii) (i32.const 20))))))))
+    ;; MIIM_DATA — owner-draw payload.
+    (if (i32.and (local.get $mask) (i32.const 0x20))
+      (then (global.set $mii_out_data (call $gl32 (i32.add (local.get $mii) (i32.const 32))))))
+    ;; MIIM_STRING / MIIM_TYPE with a string type: dwTypeData is the label.
+    (if (i32.and (local.get $mask) (i32.const 0x50))
+      (then
+        (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x900))) ;; not separator/owner-draw
+          (then (global.set $mii_out_data (call $gl32 (i32.add (local.get $mii) (i32.const 36))))))))
+    (local.get $flags))
+
   (func $dynamic_menu_destroy (param $hmenu i32) (result i32)
     (local $sw i32)
     (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
