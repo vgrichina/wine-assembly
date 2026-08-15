@@ -151,6 +151,11 @@ Two adjacent 80-byte blit descriptors occupy `0x07EF1100..0x07EF119F` for
 destination/source surface resolution without per-pixel host calls.
 Extended per-DC state occupies `0x07EFC800..0x07EFE7FF` as 256 32-byte
 records for arc direction, brush origin, mapper flags, and text spacing.
+The 48-byte canonical GDI object records in `0x07EF7800..0x07EFA7FF`
+also own dynamic font handles and LOGFONT fields. Each dynamic font keeps a
+bounded 32-byte face name in a normal guest-heap allocation referenced from
+record offset `+28`; record offset `+24` points to an optional installed FNT
+strike. Canvas has no font-object allocation or authoritative font table.
 
 The provider-neutral DrawText layout uses `0x07993000..0x079B3FFF` for a
 65,540-WCHAR presentation buffer and `0x079B4000..0x079C4FFF` for parallel

@@ -569,25 +569,11 @@
   ;; GetTextFaceA(hdc, cch, face) — report the selected font face.
   ;; We do not expose host font names here; use a stable Win32-compatible face.
   (func $handle_GetTextFaceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $limit i32)
-    (if (i32.and (local.get $arg1) (local.get $arg2))
-      (then
-        (local.set $buf (call $g2w (local.get $arg2)))
-        (local.set $limit (i32.sub (local.get $arg1) (i32.const 1)))
-        (if (i32.gt_u (local.get $limit) (i32.const 5))
-          (then (local.set $limit (i32.const 5))))
-        (if (i32.gt_u (local.get $limit) (i32.const 0))
-          (then (i32.store8 (local.get $buf) (i32.const 65))))        ;; A
-        (if (i32.gt_u (local.get $limit) (i32.const 1))
-          (then (i32.store8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 114)))) ;; r
-        (if (i32.gt_u (local.get $limit) (i32.const 2))
-          (then (i32.store8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 105)))) ;; i
-        (if (i32.gt_u (local.get $limit) (i32.const 3))
-          (then (i32.store8 (i32.add (local.get $buf) (i32.const 3)) (i32.const 97))))  ;; a
-        (if (i32.gt_u (local.get $limit) (i32.const 4))
-          (then (i32.store8 (i32.add (local.get $buf) (i32.const 4)) (i32.const 108)))) ;; l
-        (i32.store8 (i32.add (local.get $buf) (local.get $limit)) (i32.const 0))))
-    (global.set $eax (i32.const 5))
+    (global.set $eax (call $gdi_font_write_text_face
+      (local.get $arg0) (local.get $arg1)
+      (if (result i32) (local.get $arg2)
+        (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -596,15 +582,12 @@
     (local $lf i32) (local $handle i32)
     (local.set $lf (call $g2w (local.get $arg0)))
     ;; LOGFONT: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28)
-    (local.set $handle (call $host_create_font
+    (local.set $handle (call $gdi_font_create
       (i32.load (local.get $lf))                              ;; height
       (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (i32.add (local.get $lf) (i32.const 28))               ;; faceName WASM ptr
     ))
-    (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
-      (i32.load (local.get $lf)) (i32.load offset=16 (local.get $lf))
-      (i32.load8_u offset=20 (local.get $lf)) (i32.const 0)))
     (call $gdi_bitmap_font_bind (local.get $handle)
       (i32.add (local.get $lf) (i32.const 28)))
     (global.set $eax (local.get $handle))
@@ -619,14 +602,12 @@
     (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $face (call $g2w (call $gl32
       (i32.add (global.get $esp) (i32.const 52)))))
-    (local.set $handle (call $host_create_font
+    (local.set $handle (call $gdi_font_create
       (local.get $arg0)                                              ;; height
       (local.get $weight)                                            ;; weight
       (local.get $italic)                                            ;; italic
       (local.get $face)                                              ;; faceName
     ))
-    (drop (call $gdi_object_adopt (local.get $handle) (i32.const 4)
-      (local.get $arg0) (local.get $weight) (local.get $italic) (i32.const 0)))
     (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)

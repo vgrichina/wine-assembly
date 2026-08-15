@@ -3478,8 +3478,8 @@
 
   ;; ---- WAT-owned GDI objects and DC state ------------------------------
   ;; Object records use 48 bytes. Types are 1=pen, 2=brush, 3=bitmap,
-  ;; 4=font, 5=palette, 6=WMF, 7=EMF. Font records keep height@8, weight@12, italic@16;
-  ;; scalable glyph masks and face resolution remain in the font-provider policy.
+  ;; 4=font, 5=palette, 6=WMF, 7=EMF. Font records keep height@8, weight@12,
+  ;; italic@16, optional FNT strike@24, and a WAT-owned guest face pointer@28.
   ;; Bitmap fields are width@8, height@12, bpp@16, flags@20 (DIB/top-down),
   ;; bitsWa@24, stride@28, paletteWa@32, paletteCount@36, surfaceId@40.
   ;; Palette fields are count@8, capacity@12, version@16, flags@20,
@@ -4344,9 +4344,8 @@
     (drop (call $gdi_rgn_delete (local.get $mapped)))
     (local.get $result))
 
-  ;; Materialize the Win16 LOGFONT carried by META_CREATEFONTINDIRECT. The
-  ;; public handle is registered with the text provider for scalable fallback,
-  ;; while the canonical object and any installed FNT strike remain WAT-owned.
+  ;; Materialize the Win16 LOGFONT carried by META_CREATEFONTINDIRECT as an
+  ;; ordinary WAT-owned font. Canvas sees it only if text later needs fallback.
   (func $gdi_metafile_wmf_create_font (param $record i32)
         (param $record_bytes i32) (result i32)
     (local $handle i32)
@@ -4357,17 +4356,12 @@
     (memory.copy (global.get $TEXT_SCRATCH)
       (i32.add (local.get $record) (i32.const 24)) (i32.const 32))
     (i32.store8 offset=32 (global.get $TEXT_SCRATCH) (i32.const 0))
-    (local.set $handle (call $host_create_font
+    (local.set $handle (call $gdi_font_create
       (i32.load16_s offset=6 (local.get $record))
       (i32.load16_s offset=14 (local.get $record))
       (i32.load8_u offset=16 (local.get $record))
       (global.get $TEXT_SCRATCH)))
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
-    (if (i32.eqz (call $gdi_object_adopt (local.get $handle) (i32.const 4)
-          (i32.load16_s offset=6 (local.get $record))
-          (i32.load16_s offset=14 (local.get $record))
-          (i32.load8_u offset=16 (local.get $record)) (i32.const 0)))
-      (then (return (i32.const 0))))
     (call $gdi_bitmap_font_bind (local.get $handle) (global.get $TEXT_SCRATCH))
     (local.get $handle))
 
@@ -6088,7 +6082,7 @@
 
   (func $gdi_object_delete_full (param $handle i32) (result i32)
     (local $p i32) (local $type i32) (local $bits i32) (local $flags i32) (local $surface i32)
-    (local $owned_bitmap i32)
+    (local $owned_bitmap i32) (local $font_face_guest i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (i32.eqz (local.get $p))
       (then (return (select (i32.const 1) (i32.const 0)
@@ -6104,6 +6098,8 @@
       (then
         (local.set $bits (i32.load offset=24 (local.get $p)))
         (local.set $flags (i32.load offset=20 (local.get $p)))))
+    (if (i32.eq (local.get $type) (i32.const 4))
+      (then (local.set $font_face_guest (i32.load offset=28 (local.get $p)))))
     (if (i32.or (i32.eq (local.get $type) (i32.const 6))
           (i32.eq (local.get $type) (i32.const 7)))
       (then
@@ -6114,6 +6110,8 @@
             (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 6))))
       (then (local.set $owned_bitmap (i32.load offset=24 (local.get $p)))))
     (drop (call $gdi_object_delete (local.get $handle)))
+    (if (local.get $font_face_guest)
+      (then (call $heap_free (local.get $font_face_guest))))
     (if (local.get $owned_bitmap)
       (then (drop (call $gdi_object_delete_full (local.get $owned_bitmap)))))
     (if (i32.and (i32.ne (local.get $bits) (i32.const 0))
@@ -6659,12 +6657,66 @@
       (then (return (i32.and (i32.load offset=16 (local.get $p)) (i32.const 1)))))
     (i32.const 0))
 
-  ;; Serialize a stable Win98-compatible LOGFONT. The scalable-font provider may
-  ;; resolve a more specific face for mask rasterization, but GDI layout callers
-  ;; receive deterministic metrics and "MS Sans Serif" here.
+  ;; Dynamic fonts are ordinary WAT-owned type-4 GDI objects. The bounded ANSI
+  ;; face name lives in the guest heap and is referenced from record +28; +24
+  ;; remains the optional installed FNT strike. Canvas receives this state only
+  ;; when the selected face has no WAT bitmap strike.
+  (func $gdi_font_create (param $height i32) (param $weight i32)
+        (param $italic i32) (param $face i32) (result i32)
+    (local $face_guest i32) (local $face_wasm i32) (local $handle i32)
+    (local $record i32) (local $i i32) (local $ch i32)
+    (local.set $face_guest (call $heap_alloc (i32.const 32)))
+    (if (i32.eqz (local.get $face_guest)) (then (return (i32.const 0))))
+    (local.set $face_wasm (call $g2w (local.get $face_guest)))
+    (memory.fill (local.get $face_wasm) (i32.const 0) (i32.const 32))
+    (if (local.get $face)
+      (then
+        (block $done (loop $copy
+          (br_if $done (i32.ge_u (local.get $i) (i32.const 31)))
+          (local.set $ch (i32.load8_u
+            (i32.add (local.get $face) (local.get $i))))
+          (br_if $done (i32.eqz (local.get $ch)))
+          (i32.store8 (i32.add (local.get $face_wasm) (local.get $i))
+            (local.get $ch))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy)))))
+    (local.set $handle (call $gdi_object_alloc (i32.const 4)
+      (local.get $height) (local.get $weight)
+      (i32.and (local.get $italic) (i32.const 1)) (i32.const 0)))
+    (if (i32.eqz (local.get $handle))
+      (then
+        (call $heap_free (local.get $face_guest))
+        (return (i32.const 0))))
+    (local.set $record (call $gdi_object_record (local.get $handle)))
+    (i32.store offset=28 (local.get $record) (local.get $face_guest))
+    (local.get $handle))
+
+  (func $gdi_font_face (param $handle i32) (result i32)
+    (local $record i32) (local $face_guest i32)
+    (local.set $record (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $record) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $record)) (i32.const 4)))
+      (then
+        (local.set $face_guest (i32.load offset=28 (local.get $record)))
+        (if (local.get $face_guest)
+          (then (return (call $g2w (local.get $face_guest)))))))
+    (if (i32.eq (local.get $handle) (i32.const 0x3001A))
+      (then (return (i32.const 0x07F0A5A0)))) ;; Terminal
+    (if (i32.eq (local.get $handle) (i32.const 0x3001B))
+      (then (return (i32.const 0x07F0A534)))) ;; Courier
+    (if (i32.eq (local.get $handle) (i32.const 0x3001D))
+      (then (return (i32.const 0x07F0A520)))) ;; System
+    (if (i32.eq (local.get $handle) (i32.const 0x30020))
+      (then (return (i32.const 0x07F0A528)))) ;; Fixedsys
+    (if (i32.or (i32.eq (local.get $handle) (i32.const 0x30021))
+          (i32.eq (local.get $handle) (i32.const 0x30022)))
+      (then (return (i32.const 0x07F0A564)))) ;; Tahoma
+    (i32.const 0x07F0A53C)) ;; MS Sans Serif/default variable face
+
+  ;; Serialize the actual WAT-owned LOGFONT rather than a provider-side alias.
   (func $gdi_font_write_logfont (param $handle i32) (param $dest i32)
         (param $size i32) (param $wide i32) (result i32)
-    (local $required i32) (local $i i32) (local $ch i32)
+    (local $required i32) (local $face i32) (local $i i32) (local $ch i32)
     (if (i32.ne (call $gdi_object_type (local.get $handle)) (i32.const 4))
       (then (return (i32.const 0))))
     (local.set $required (select (i32.const 92) (i32.const 60) (local.get $wide)))
@@ -6675,20 +6727,55 @@
     (i32.store offset=16 (local.get $dest) (call $gdi_font_weight (local.get $handle)))
     (i32.store8 offset=20 (local.get $dest) (call $gdi_font_italic (local.get $handle)))
     (i32.store8 offset=27 (local.get $dest) (i32.const 0x22))
-    ;; "MS Sans Serif" including its terminator.
-    (local.set $i (i32.const 0))
+    (local.set $face (call $gdi_font_face (local.get $handle)))
     (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 14)))
-      (local.set $ch
-        (i32.load8_u (i32.add (i32.const 0x3288) (local.get $i))))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 31)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $face) (local.get $i))))
       (if (local.get $wide)
         (then (i32.store16 (i32.add (local.get $dest)
           (i32.add (i32.const 28) (i32.shl (local.get $i) (i32.const 1)))) (local.get $ch)))
         (else (i32.store8 (i32.add (local.get $dest)
           (i32.add (i32.const 28) (local.get $i))) (local.get $ch))))
+      (br_if $done (i32.eqz (local.get $ch)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
     (local.get $required))
+
+  (func $gdi_font_write_text_face (param $hdc i32) (param $count i32)
+        (param $dest i32) (param $wide i32) (result i32)
+    (local $handle i32) (local $face i32) (local $length i32)
+    (local $copy_count i32) (local $i i32) (local $ch i32)
+    (local.set $handle (call $gdi_dc_get_field
+      (local.get $hdc) (i32.const 88) (i32.const 0x3001D)))
+    (local.set $face (call $gdi_font_face (local.get $handle)))
+    (block $length_done (loop $length_scan
+      (br_if $length_done (i32.ge_u (local.get $length) (i32.const 31)))
+      (br_if $length_done (i32.eqz
+        (i32.load8_u (i32.add (local.get $face) (local.get $length)))))
+      (local.set $length (i32.add (local.get $length) (i32.const 1)))
+      (br $length_scan)))
+    ;; The sizing form includes the terminator, matching GetTextFace Win32.
+    (if (i32.or (i32.eqz (local.get $count)) (i32.eqz (local.get $dest)))
+      (then (return (i32.add (local.get $length) (i32.const 1)))))
+    (local.set $copy_count (local.get $length))
+    (if (i32.ge_u (local.get $copy_count) (local.get $count))
+      (then (local.set $copy_count (i32.sub (local.get $count) (i32.const 1)))))
+    (block $copy_done (loop $copy
+      (br_if $copy_done (i32.ge_u (local.get $i) (local.get $copy_count)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $face) (local.get $i))))
+      (if (local.get $wide)
+        (then (i32.store16 (i32.add (local.get $dest)
+          (i32.shl (local.get $i) (i32.const 1))) (local.get $ch)))
+        (else (i32.store8 (i32.add (local.get $dest) (local.get $i))
+          (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (if (local.get $wide)
+      (then (i32.store16 (i32.add (local.get $dest)
+        (i32.shl (local.get $copy_count) (i32.const 1))) (i32.const 0)))
+      (else (i32.store8 (i32.add (local.get $dest) (local.get $copy_count))
+        (i32.const 0))))
+    (local.get $copy_count))
 
   ;; Serialize the fixed Win32 LOGPEN/LOGBRUSH contracts from canonical WAT
   ;; object records. Extended pens currently expose their base LOGPEN fields;
@@ -7163,7 +7250,7 @@
     (local $origin_x i32) (local $origin_y i32) (local $aux i32)
     (local $clip_entry i32) (local $clip_record i32) (local $system_clip i32)
     (local $effective i32) (local $clip_bands i32) (local $clip_count i32)
-    (local $bound i32)
+    (local $font i32) (local $bound i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 1)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $token (local.get $hdc))
@@ -7187,9 +7274,14 @@
           (then
             (local.set $clip_bands (call $gdi_rgn_bands (local.get $clip_record)))
             (local.set $clip_count (i32.load offset=28 (local.get $clip_record)))))))
+    (local.set $font (i32.load offset=88 (local.get $dc)))
     (local.set $bound (call $host_gdi_text_bind_raw
       (local.get $token) (local.get $dc) (local.get $origin_x) (local.get $origin_y)
-      (local.get $aux) (local.get $clip_bands) (local.get $clip_count)))
+      (local.get $aux) (local.get $clip_bands) (local.get $clip_count)
+      (call $gdi_font_height (local.get $font))
+      (call $gdi_font_weight (local.get $font))
+      (call $gdi_font_italic (local.get $font))
+      (call $gdi_font_face (local.get $font))))
     (if (local.get $effective) (then (drop (call $gdi_rgn_delete (local.get $effective)))))
     (if (i32.eqz (local.get $bound))
       (then (return (i32.const 0))))

@@ -49,6 +49,8 @@ UNIT=(
   test/test-wat-gdi-public-bitmap-region.js
   test/test-wat-gdi-public-state-format.js
   test/test-wat-gdi-public-font.js
+  test/test-wat-gdi-font-objects.js
+  test/test-gdi-text-map-font.js
   test/test-wat-gdi-bitmap-text-layout.js
   test/test-wat-gdi-bitmap-text-compat.js
   test/test-wat-gdi-multiline-ellipsis.js

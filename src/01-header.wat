@@ -135,8 +135,6 @@
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "set_wallpaper" (func $host_set_wallpaper (param i32 i32) (result i32)))
   ;; set_wallpaper(path_wa, tiled) → BOOL; loads a VFS BMP into the desktop layer.
-  (import "host" "create_font" (func $host_create_font (param i32 i32 i32 i32) (result i32)))
-  ;; create_font(height, weight, italic, facePtr) → handle
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   (import "host" "measure_text" (func $host_measure_text_raw (param i32 i32 i32 i32) (result i32)))
@@ -473,7 +471,7 @@
   (func $host_gdi_get_window_ext_y (param i32) (result i32)
     (call $gdi_dc_get_field (local.get 0) (i32.const 52) (i32.const 1)))
   (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw
-    (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+    (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_text_mask" (func $host_gdi_text_mask_raw
     (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)
@@ -1181,14 +1179,14 @@
   ;; indexes into this RGBQUAD table before a raster operation starts.
   (global $GDI_PALETTE_RESOLVE i32 (i32.const 0x07EF1330))
   (global $GDI_PALETTE_RESOLVE_SIZE i32 (i32.const 0x00000400))
-  ;; Canonical non-text DC state. JavaScript keeps a derived mirror only for
-  ;; presentation and GDI operations that have not moved to WAT yet.
+  ;; Canonical DC state. JavaScript receives a transient text-fallback view;
+  ;; presentation surfaces contain pixels only and own no GDI semantics.
   (global $GDI_DC_STATE_TABLE i32 (i32.const 0x07EF1800))
   (global $GDI_DC_STATE_TABLE_SIZE i32 (i32.const 0x00006000))
   (global $GDI_DC_STATE_COUNT i32 (i32.const 256))
   (global $GDI_DC_STATE_STRIDE i32 (i32.const 96))
-  ;; Dynamic WAT-owned pen/solid-brush records. Public handles are allocated
-  ;; by the host handle namespace, then adopted here as semantic objects.
+  ;; Dynamic WAT-owned pen, brush, bitmap, font, palette, and metafile records.
+  ;; Handles and all semantic object fields are allocated here.
   (global $GDI_OBJECT_TABLE i32 (i32.const 0x07EF7800))
   (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
@@ -1207,8 +1205,7 @@
   (global $GDI_DC_SYSTEM_CLIP_TABLE i32 (i32.const 0x07F0C000))
   (global $GDI_DC_SYSTEM_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
   (global $GDI_DC_SYSTEM_CLIP_COUNT i32 (i32.const 256))
-  ;; Keep WAT-owned namespaces disjoint from the retained Canvas font and
-  ;; compositor DC allocators (0x400001+ and 0x300001+, respectively).
+  ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
   ;; GDI batching is synchronous in this emulator, but the public limit and

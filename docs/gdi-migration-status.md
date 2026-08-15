@@ -13,11 +13,13 @@ The permanent non-text bridge has six presentation-only calls:
 - `gdi_surface_upload`
 - `gdi_surface_delete`
 
-Two `gdi_*` calls remain under the explicit Canvas text policy. Text color,
-background mode, alignment, mapping, clipping, and selected font state are
-owned by the canonical WAT DC record; `gdi_text_bind` exposes only the font and
-mapping inputs needed by `gdi_text_mask`. Canvas returns a bounded one-bit mask
-for scalable faces, and WAT writes memory, window, DirectDraw, and screen DC
+Two `gdi_*` calls remain under the explicit Canvas text policy. Font handles,
+LOGFONT properties, face-name storage, selection, text color, background mode,
+alignment, mapping, and clipping are owned by WAT. `gdi_text_bind` exposes a
+transient derived view of those properties only when `gdi_text_mask` must
+rasterize an unsupported scalable face. JavaScript neither allocates font
+handles nor stores authoritative dynamic font objects. Canvas returns a
+bounded one-bit mask, and WAT writes memory, window, DirectDraw, and screen DC
 pixels into canonical surface storage. Installed FNT 2.x/3.x strikes bypass
 both calls: WAT measures and writes
 their glyphs directly, including `ExtTextOut` rectangle/lpDx behavior and
