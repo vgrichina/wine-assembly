@@ -116,6 +116,41 @@ function sha256File(filename) {
   return sha256(fs.readFileSync(filename));
 }
 
+async function moveGuestMouse(page, x, y) {
+  await page.evaluate(async ({ x, y }) => {
+    const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+    const delta = (dx, dy) => window.emulator.bus.send("mouse-delta", [dx, dy]);
+
+    // Clamp the retained restored-state cursor to the upper-left. Large legal
+    // packets are safe here because their accelerated result only hits the
+    // screen edge, and pacing keeps v86's 1024-byte PS/2 queue below capacity.
+    for (let i = 0; i < 6; i++) {
+      delta(-127, 127);
+      await pause(10);
+    }
+    await pause(100);
+
+    // Unit packets remain below Win98's acceleration thresholds. Pace every
+    // report so the guest consumes the target position before the click.
+    const count = Math.max(x, y);
+    for (let i = 0; i < count; i++) {
+      delta(i < x ? 1 : 0, i < y ? -1 : 0);
+      await pause(2);
+    }
+    await pause(100);
+  }, { x, y });
+}
+
+async function setGuestMouseButton(page, button, down) {
+  const index = button === "right" ? 2 : button === "middle" ? 1 : 0;
+  const buttons = [false, false, false];
+  buttons[index] = down;
+  await page.evaluate(value => window.emulator.bus.send("mouse-click", value), buttons);
+  // Keep press/release as distinct guest input samples. Back-to-back button
+  // reports can be consumed as a single final state by the restored Win98 VM.
+  await new Promise(resolve => setTimeout(resolve, 50));
+}
+
 function buildProbe(entry) {
   const source = resolveRepoPath(entry.probeSource);
   const output = path.join(CACHE_ROOT, `${entry.id}.exe`);
@@ -403,7 +438,6 @@ async function main() {
     await page.evaluate(() => window.referenceVm.insertCd("/payload.iso"));
     await new Promise(resolve => setTimeout(resolve, 1000));
     await page.evaluate(command => window.referenceVm.run(command), entry.launch);
-    let mouseSynchronized = false;
     for (const action of entry.postLaunch || []) {
       await new Promise(resolve => setTimeout(resolve, action.waitMs || 0));
       if (action.scancodes) {
@@ -411,23 +445,27 @@ async function main() {
       }
       if (action.mouse) {
         const mouse = action.mouse;
-        if (!mouseSynchronized) {
-          // v86 consumes relative DOM pointer motion. Drive both axes against
-          // their lower-right clamps, then back to zero so following browser
-          // coordinates and Win98 screen coordinates have the same origin.
-          await page.mouse.move(639, 479);
-          await new Promise(resolve => setTimeout(resolve, 50));
-          await page.mouse.move(0, 0);
-          await new Promise(resolve => setTimeout(resolve, 50));
-          mouseSynchronized = true;
-        }
+        const button = mouse.button || "left";
         if (mouse.type === "click") {
-          await page.mouse.click(mouse.x, mouse.y, { button: mouse.button || "left" });
+          await moveGuestMouse(page, mouse.x, mouse.y);
+          await setGuestMouseButton(page, button, true);
+          await setGuestMouseButton(page, button, false);
         } else if (mouse.type === "drag") {
-          await page.mouse.move(mouse.x, mouse.y);
-          await page.mouse.down({ button: mouse.button || "left" });
-          await page.mouse.move(mouse.toX, mouse.toY, { steps: mouse.steps || 1 });
-          await page.mouse.up({ button: mouse.button || "left" });
+          await moveGuestMouse(page, mouse.x, mouse.y);
+          await setGuestMouseButton(page, button, true);
+          await page.evaluate(async ({ dx, dy }) => {
+            const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+            const count = Math.max(Math.abs(dx), Math.abs(dy));
+            for (let i = 0; i < count; i++) {
+              window.emulator.bus.send("mouse-delta", [
+                i < Math.abs(dx) ? Math.sign(dx) : 0,
+                i < Math.abs(dy) ? -Math.sign(dy) : 0,
+              ]);
+              await pause(2);
+            }
+            await pause(100);
+          }, { dx: mouse.toX - mouse.x, dy: mouse.toY - mouse.y });
+          await setGuestMouseButton(page, button, false);
         } else {
           throw new Error(`unsupported mouse action: ${mouse.type}`);
         }

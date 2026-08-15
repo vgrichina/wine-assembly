@@ -453,11 +453,123 @@ async function main() {
   assert(airbrush.centroidY >= 272 && airbrush.centroidY <= 288,
     `Paint browser airbrush Y is offset: ${JSON.stringify(airbrush)}`);
 
+  const referencePixels = await evaluate(`(async () => {
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const click = (x, y) => {
+      sharedRenderer.handleMouseDown(x, y, 1);
+      sharedRenderer.handleMouseUp(x, y, 1);
+    };
+    const drag = (x, y, toX, toY) => {
+      sharedRenderer.handleMouseDown(x, y, 1);
+      sharedRenderer.handleMouseMove(toX, toY);
+      sharedRenderer.handleMouseUp(toX, toY, 1);
+    };
+
+    // Start with a clean document so earlier browser interactions cannot
+    // contaminate the exact masks. Exercise Paint's native File > New command
+    // and answer its dirty-document MessageBox with IDNO, matching the focused
+    // CLI dirty-document regression rather than depending on menu key timing.
+    const app = runningApps.find(item => item && item.name === 'mspaint98');
+    const we = app && app.wine && app.wine.instance && app.wine.instance.exports;
+    if (!we || !we.post_message_q || !we.send_message) throw new Error('Paint message exports unavailable');
+    we.post_message_q(we.get_main_hwnd(), 0x0111, 57600, 0);
+    let prompt = null;
+    const promptStarted = performance.now();
+    while (performance.now() - promptStarted < 3000) {
+      await pause(50);
+      prompt = Object.values(sharedRenderer.windows || {})
+        .filter(win => win && win.visible && win.isDialog)
+        .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0))[0] || null;
+      if (prompt) break;
+    }
+    if (!prompt) throw new Error('Paint File > New did not open the dirty prompt');
+    we.send_message(prompt.hwnd, 0x0111, 7, 0); // IDNO
+    await pause(400);
+
+    click(62, 359); // black foreground
+    await pause(100);
+    click(64, 146); // brush
+    await pause(150);
+    click(37, 269); // largest round brush option
+    await pause(100);
+    drag(120, 95, 121, 95);
+    await pause(150);
+    click(62, 269); // smallest round brush option
+    await pause(100);
+    drag(150, 95, 151, 95);
+    await pause(150);
+
+    click(39, 196); // line
+    await pause(150);
+    const lines = [
+      { optionY: 271, y: 81 },
+      { optionY: 283, y: 116 },
+      { optionY: 295, y: 151 },
+      { optionY: 307, y: 186 },
+      { optionY: 319, y: 221 },
+    ];
+    for (const line of lines) {
+      click(50, line.optionY);
+      await pause(75);
+      drag(193, line.y, 233, line.y + 20);
+      await pause(125);
+    }
+    sharedRenderer.repaint();
+
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+    const ink = box => {
+      const pixels = ctx.getImageData(box.x, box.y, box.w, box.h).data;
+      let count = 0, minX = box.w, minY = box.h, maxX = -1, maxY = -1;
+      for (let y = 0; y < box.h; y++) {
+        for (let x = 0; x < box.w; x++) {
+          const i = (y * box.w + x) * 4;
+          if (pixels[i] < 32 && pixels[i + 1] < 32 && pixels[i + 2] < 32) {
+            count++;
+            minX = Math.min(minX, x); minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+          }
+        }
+      }
+      return {
+        count,
+        width: maxX < minX ? 0 : maxX - minX + 1,
+        height: maxY < minY ? 0 : maxY - minY + 1,
+      };
+    };
+    return {
+      brush: [
+        ink({ x: 110, y: 85, w: 25, h: 20 }),
+        ink({ x: 140, y: 85, w: 20, h: 20 }),
+      ],
+      lines: lines.map(line => ink({ x: 183, y: line.y - 5, w: 60, h: 31 })),
+    };
+  })()`, 18000);
   const screenshot = await evaluate(`(() => {
     sharedRenderer.repaint();
     return document.getElementById('screen').toDataURL('image/png');
   })()`);
   fs.writeFileSync(PNG, Buffer.from(screenshot.replace(/^data:image\/png;base64,/, ''), 'base64'));
+  // Exact black masks extracted from the clean-cursor paint98-tools workflow
+  // in tools/v86-reference/paint-apps.json.
+  const win98Brush = [
+    { count: 44, width: 8, height: 7 },
+    { count: 2, width: 2, height: 1 },
+  ];
+  const win98LineCounts = [41, 85, 145, 212, 242];
+  assert.deepStrictEqual(referencePixels.brush, win98Brush,
+    `Paint brush endpoints differ from Win98: ${JSON.stringify(referencePixels.brush)}`);
+  assert.deepStrictEqual(referencePixels.lines.map(mark => mark.width), [41, 42, 43, 44, 45],
+    `Paint line widths differ from Win98 bounds: ${JSON.stringify(referencePixels.lines)}`);
+  assert.deepStrictEqual(referencePixels.lines.map(mark => mark.height), [21, 22, 23, 24, 25],
+    `Paint line heights differ from Win98 bounds: ${JSON.stringify(referencePixels.lines)}`);
+  const browserLineCounts = referencePixels.lines.map(mark => mark.count);
+  assert.deepStrictEqual(browserLineCounts, [41, 84, 145, 212, 241],
+    `browser line masks changed: ${JSON.stringify(referencePixels.lines)}`);
+  assert.deepStrictEqual(browserLineCounts.map((count, index) => count - win98LineCounts[index]),
+    [0, -1, 0, 0, -1],
+    `browser/Win98 line comparison changed: ${JSON.stringify(referencePixels.lines)}`);
+
   assert(!/--- Program exited ---/.test(state.log), `Paint exited:\n${state.log.slice(-2500)}`);
   assert(appearance.brightRed < 40,
     `Paint tool buttons should not expose the red mask color (${appearance.brightRed} red pixels)`);
@@ -470,6 +582,8 @@ async function main() {
   console.log(`PASS  Paint wide diagonal uses exact colors (${wideLine.exactBlack} black, no intermediate pixels)`);
   console.log(`PASS  Paint flood fill stays running and paints the closed area (${floodFill.red} red pixels)`);
   console.log(`PASS  Paint airbrush follows DOM drag (${airbrush.red} pixels at ${airbrush.centroidX.toFixed(1)},${airbrush.centroidY.toFixed(1)} in ${airbrush.elapsedMs}ms)`);
+  console.log(`PASS  Paint browser brush endpoints match Win98 exactly (${referencePixels.brush.map(mark => mark.count).join(',')} pixels)`);
+  console.log(`PASS  Paint browser line bounds match Win98; masks are ${browserLineCounts.join(',')} vs ${win98LineCounts.join(',')} pixels`);
   console.log('PASS  Paint frame, Tools, and Colors windows are visible');
   console.log('PASS  Paint tool-strip mask color is mapped to button face');
   console.log('PASS  screenshot:', PNG);

@@ -21,10 +21,12 @@ known Paint-specific gaps are:
 - The lower tool-options panel renders distinct brush and airbrush size/shape
   glyphs. Tests cover representative smallest/largest choices, but not every
   option in the grid.
-- WAT software-GDI drawing is deterministic and non-antialiased. Thick-line
-  and brush endpoint masks still need browser pixel comparison against the
-  captured Win98 references; the focused polygon diagnosis found no raster or
-  presentation defect.
+- WAT software-GDI drawing is deterministic and non-antialiased. Browser
+  comparison against the captured Win98 marks now proves both tested brush
+  endpoints are pixel-exact and all five diagonal line options have the exact
+  Win98 bounds. Widths 1, 3, and 4 also have exact pixel counts; widths 2 and 5
+  are each one interior pixel short. The focused polygon diagnosis found no
+  separate raster or presentation defect.
 - Tool sub-options, every menu command, printing, wallpaper commands,
   cross-process/browser-system clipboard integration, arbitrary BMP encodings,
   and exhaustive selection/text
@@ -54,6 +56,28 @@ node test/test-mspaint-large-scroll.js
 node test/test-mspaint-web.js
 node test/test-render-color-dlg.js
 node test/test-mspaint-edit-colors-hook.js
+```
+
+## Status (2026-08-14): Win98 brush and line pixel comparison
+
+`tools/v86-reference/paint-apps.json` now captures two brush endpoint masks,
+two airbrush sizes, and all five diagonal line widths through paced PS/2 input.
+The final cursor is parked off the canvas marks, so the extracted reference
+counts are stable. `test/test-mspaint-web.js` repeats the deterministic brush
+and line gestures in the browser compositor.
+
+The large and small round-brush drags match Win98 exactly at 44 pixels (8x7)
+and 2 pixels (2x1). The five line bounds also match exactly at 41x21 through
+45x25. Browser counts are 41, 84, 145, 212, and 241 pixels versus Win98's 41,
+85, 145, 212, and 242: widths 1, 3, and 4 are exact, while widths 2 and 5 are
+one interior pixel short. That small difference is now measured explicitly
+instead of being mistaken for antialiasing or a browser presentation defect.
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/paint-apps.json --app paint98-tools
+node test/test-v86-reference-paint-workflows.js
+node test/test-mspaint-web.js
 ```
 
 ## Status (2026-08-14): complete Define Custom Colors pane
