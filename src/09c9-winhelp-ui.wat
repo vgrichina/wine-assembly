@@ -2054,9 +2054,28 @@
 
   ;; ---- WAT-native Help Topics window -------------------------------
 
+  ;; The dialog is a real WAT dialog built from the controls every other
+  ;; WAT-built dialog uses: a LISTBOX for the rows and BUTTONs for the tab
+  ;; selector and the two commands. Nothing here paints a row, a button or a
+  ;; tab by hand - $listbox_wndproc and $button_wndproc own their own drawing,
+  ;; scrolling, selection and keyboard, and the renderer composites them.
   (global $help_topics_hwnd (mut i32) (i32.const 0))
+  (global $help_topics_list_hwnd (mut i32) (i32.const 0))
   (global $help_topics_labels_ga (mut i32) (i32.const 0))
   (global $help_topics_labels_wa (mut i32) (i32.const 0))
+  ;; One reusable guest buffer for the row text handed to LB_ADDSTRING. The
+  ;; listbox copies each string into its own item buffer, so a single scratch
+  ;; allocation serves every row.
+  (global $help_topics_row_ga (mut i32) (i32.const 0))
+  (global $help_topics_row_wa (mut i32) (i32.const 0))
+
+  ;; Control ids. IDOK/IDCANCEL keep their Win32 values so the buttons behave
+  ;; like the default/cancel buttons of any other dialog.
+  (global $HELP_TOPICS_ID_DISPLAY i32 (i32.const 1))
+  (global $HELP_TOPICS_ID_CANCEL i32 (i32.const 2))
+  (global $HELP_TOPICS_ID_LIST i32 (i32.const 0x501))
+  (global $HELP_TOPICS_ID_CONTENTS i32 (i32.const 0x502))
+  (global $HELP_TOPICS_ID_INDEX i32 (i32.const 0x503))
 
   (func $help_topics_init_labels (result i32)
     (local $ga i32) (local $wa i32)
@@ -2082,13 +2101,22 @@
   (func $help_topics_destroy_window
     (if (global.get $help_topics_hwnd)
       (then
+        ;; The children are real control windows with their own heap state
+        ;; (ListBoxState item buffer, ButtonState text). $wnd_destroy_tree
+        ;; delivers WM_DESTROY to each so that state is freed, which a bare
+        ;; $wnd_table_remove on the parent would leak.
+        (call $wnd_destroy_tree (global.get $help_topics_hwnd))
         (call $host_destroy_window (global.get $help_topics_hwnd))
-        (call $wnd_table_remove (global.get $help_topics_hwnd))
         (global.set $help_topics_hwnd (i32.const 0))))
+    (global.set $help_topics_list_hwnd (i32.const 0))
     (if (global.get $help_topics_labels_ga)
       (then (call $heap_free (global.get $help_topics_labels_ga))))
     (global.set $help_topics_labels_ga (i32.const 0))
-    (global.set $help_topics_labels_wa (i32.const 0)))
+    (global.set $help_topics_labels_wa (i32.const 0))
+    (if (global.get $help_topics_row_ga)
+      (then (call $heap_free (global.get $help_topics_row_ga))))
+    (global.set $help_topics_row_ga (i32.const 0))
+    (global.set $help_topics_row_wa (i32.const 0)))
 
   (func $help_topics_cancel
     (if (i32.or
@@ -2097,141 +2125,206 @@
       (then (global.set $help_session_mode (global.get $help_topics_return_mode))))
     (call $help_topics_destroy_window))
 
+  ;; Build one row of list text into the shared scratch buffer and return its
+  ;; guest pointer. $marker is the leading glyph ('+', '-' or '>', 0 for the
+  ;; keyword list, which has no hierarchy), $indent the number of leading
+  ;; spaces. LB_ADDSTRING copies the bytes, so one buffer serves every row.
+  (func $help_topics_row_text
+    (param $marker i32) (param $indent i32) (param $src_wa i32) (param $len i32)
+    (result i32)
+    (local $w i32) (local $i i32)
+    (local.set $w (global.get $help_topics_row_wa))
+    (if (i32.eqz (local.get $w)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $indent) (i32.const 32))
+      (then (local.set $indent (i32.const 32))))
+    (block $pad_done (loop $pad
+      (br_if $pad_done (i32.ge_u (local.get $i) (local.get $indent)))
+      (i32.store8 (i32.add (local.get $w) (local.get $i)) (i32.const 32))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $pad)))
+    (if (local.get $marker)
+      (then
+        (i32.store8 (i32.add (local.get $w) (local.get $i)) (local.get $marker))
+        (i32.store8 (i32.add (local.get $w) (i32.add (local.get $i) (i32.const 1)))
+          (i32.const 32))
+        (local.set $i (i32.add (local.get $i) (i32.const 2)))))
+    (if (i32.gt_u (local.get $len) (i32.const 200))
+      (then (local.set $len (i32.const 200))))
+    (if (local.get $len)
+      (then (call $memcpy (i32.add (local.get $w) (local.get $i))
+        (local.get $src_wa) (local.get $len))))
+    (i32.store8 (i32.add (local.get $w) (i32.add (local.get $i) (local.get $len)))
+      (i32.const 0))
+    (global.get $help_topics_row_ga))
+
+  ;; Refill the listbox from whichever model the current tab shows, then push
+  ;; the model's selection into the control. Called on open, on tab switch, and
+  ;; after anything that changes which rows are visible (expand/collapse).
+  (func $help_topics_fill_list
+    (local $lb i32) (local $row i32) (local $index i32) (local $node i32)
+    (local $marker i32) (local $sel i32) (local $rec i32) (local $level i32)
+    (local.set $lb (global.get $help_topics_list_hwnd))
+    (if (i32.eqz (local.get $lb)) (then (return)))
+    (drop (call $wnd_send_message
+      (local.get $lb) (i32.const 0x0184) (i32.const 0) (i32.const 0)))  ;; LB_RESETCONTENT
+    (local.set $sel (i32.const -1))
+    (if (i32.eq (global.get $help_session_mode) (i32.const 3))
+      (then
+        (block $done (loop $rows
+          (local.set $index (call $help_cnt_visible_at (local.get $row)))
+          (br_if $done (i32.lt_s (local.get $index) (i32.const 0)))
+          (local.set $node (call $help_cnt_node_address (local.get $index)))
+          (br_if $done (i32.eqz (local.get $node)))
+          ;; A node with a child index is a book: it expands instead of
+          ;; navigating, so it carries '+' or '-' rather than the topic mark.
+          (local.set $marker
+            (if (result i32) (i32.ge_s (i32.load offset=4 (local.get $node)) (i32.const 0))
+              (then (select (i32.const 45) (i32.const 43)
+                (i32.ne (i32.and (i32.load16_u offset=14 (local.get $node))
+                  (global.get $HELP_CNT_EXPANDED)) (i32.const 0))))
+              (else (i32.const 62))))
+          (local.set $level (i32.load16_u offset=12 (local.get $node)))
+          (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
+            (call $help_topics_row_text (local.get $marker)
+              (i32.mul (select (i32.sub (local.get $level) (i32.const 1)) (i32.const 0)
+                (i32.gt_u (local.get $level) (i32.const 0))) (i32.const 2))
+              (i32.load offset=16 (local.get $node))
+              (i32.load offset=20 (local.get $node)))))
+          (if (i32.eq (local.get $index) (global.get $help_topics_contents_selection))
+            (then (local.set $sel (local.get $row))))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $rows))))
+      (else
+        (block $keys_done (loop $keys
+          (br_if $keys_done
+            (i32.ge_u (local.get $row) (global.get $help_doc_keyword_count)))
+          (local.set $rec (i32.add (global.get $help_doc_keywords_wa)
+            (i32.mul (local.get $row) (global.get $HELP_KEYWORD_SIZE))))
+          (drop (call $wnd_send_message (local.get $lb) (i32.const 0x0180) (i32.const 0)
+            (call $help_topics_row_text (i32.const 0) (i32.const 0)
+              (i32.add (global.get $help_doc_file_wa) (i32.load (local.get $rec)))
+              (i32.load offset=4 (local.get $rec)))))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $keys)))
+        (local.set $sel (global.get $help_session_keyword_index))))
+    (drop (call $wnd_send_message
+      (local.get $lb) (i32.const 0x0186) (local.get $sel) (i32.const 0)))  ;; LB_SETCURSEL
+    (call $invalidate_hwnd (local.get $lb)))
+
+  ;; Copy the listbox's own selection back into the help model. The control is
+  ;; authoritative once the user has clicked or arrowed within it.
+  (func $help_topics_sync_from_list
+    (local $lb i32) (local $row i32) (local $index i32)
+    (local.set $lb (global.get $help_topics_list_hwnd))
+    (if (i32.eqz (local.get $lb)) (then (return)))
+    (local.set $row (call $wnd_send_message
+      (local.get $lb) (i32.const 0x0188) (i32.const 0) (i32.const 0)))  ;; LB_GETCURSEL
+    (if (i32.lt_s (local.get $row) (i32.const 0)) (then (return)))
+    (if (i32.eq (global.get $help_session_mode) (i32.const 3))
+      (then
+        (local.set $index (call $help_cnt_visible_at (local.get $row)))
+        (if (i32.ge_s (local.get $index) (i32.const 0))
+          (then (drop (call $help_topics_select_contents (local.get $index))))))
+      (else
+        (if (i32.lt_u (local.get $row) (global.get $help_doc_keyword_count))
+          (then (global.set $help_session_keyword_index (local.get $row)))))))
+
+  ;; The tab selector is two push buttons. The active one is disabled, which
+  ;; both greys its face and makes $dialog_route_mouse skip it - the same
+  ;; "you are already here" affordance Win98 gives a current-state button.
+  ;; A real tab control would be better and needs one new control class in
+  ;; $control_wndproc_dispatch plus one entry in $dialog_route_mouse.
+  (func $help_topics_mark_tab_button (param $id i32) (param $active i32)
+    (local $h i32)
+    (local.set $h (call $ctrl_find_by_id (global.get $help_topics_hwnd) (local.get $id)))
+    (if (i32.eqz (local.get $h)) (then (return)))
+    (drop (call $wnd_set_style (local.get $h)
+      (i32.or
+        (i32.and (call $wnd_get_style (local.get $h)) (i32.const 0xF7FFFFFF))
+        (select (i32.const 0x08000000) (i32.const 0) (local.get $active)))))
+    (call $invalidate_hwnd (local.get $h)))
+
+  (func $help_topics_update_tab_buttons
+    (local $contents i32)
+    (local.set $contents (i32.eq (global.get $help_session_mode) (i32.const 3)))
+    (call $help_topics_mark_tab_button
+      (global.get $HELP_TOPICS_ID_CONTENTS) (local.get $contents))
+    (call $help_topics_mark_tab_button
+      (global.get $HELP_TOPICS_ID_INDEX) (i32.eqz (local.get $contents))))
+
+  (func $help_topics_apply_tab (param $tab i32)
+    (if (i32.eqz (call $help_topics_set_tab (local.get $tab))) (then (return)))
+    (call $help_topics_update_tab_buttons)
+    (call $help_topics_fill_list)
+    (call $invalidate_hwnd (global.get $help_topics_hwnd)))
+
   (func $help_topics_show
     (local $hwnd i32)
     (if (i32.eqz (call $help_topics_init_labels)) (then (return)))
     (if (global.get $help_topics_hwnd)
       (then
+        (call $help_topics_fill_list)
         (call $invalidate_hwnd (global.get $help_topics_hwnd))
         (return)))
+    (global.set $help_topics_row_ga (call $heap_alloc (i32.const 256)))
+    (if (i32.eqz (global.get $help_topics_row_ga)) (then (return)))
+    (global.set $help_topics_row_wa (call $g2w (global.get $help_topics_row_ga)))
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (drop (call $host_create_window
-      (local.get $hwnd) (i32.const 0x10CF0000)
-      (i32.const 140) (i32.const 80) (i32.const 440) (i32.const 330)
-      (global.get $help_topics_labels_wa) (i32.const 0)))
+    ;; Same construction order every WAT-built dialog uses: register the frame
+    ;; with the renderer, install the window record, establish the client rect
+    ;; and chrome, then create children. Registering as a dialog frame is what
+    ;; gives this window a caption, a border, a close box and - through
+    ;; $dialog_route_mouse - mouse delivery to its child controls.
+    (call $host_register_dialog_frame
+      (local.get $hwnd) (global.get $help_session_owner)
+      (global.get $help_topics_labels_wa)
+      (i32.const 400) (i32.const 300)
+      (i32.const 1))
     (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
-    ;; $wnd_table_set zeroes the record's style, and $paint_select_next_dirty
-    ;; drops the paint bit of any window without WS_VISIBLE. Without a style
-    ;; the dialog painted exactly once - at creation - and every later
-    ;; invalidate (tab switch, selection move, scroll) was silently discarded.
-    ;; WS_POPUP keeps the client rect equal to the window rect, which is the
-    ;; space this dialog both paints and hit-tests in.
-    (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x90000000)))
+    (call $title_table_set (local.get $hwnd)
+      (global.get $help_topics_labels_wa) (i32.const 11))
+    (call $wnd_set_owner (local.get $hwnd) (global.get $help_session_owner))
+    (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x90C80000)))
     (global.set $help_topics_hwnd (local.get $hwnd))
-    (drop (call $help_topics_wndproc
-      (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (call $defwndproc_do_ncpaint (local.get $hwnd))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $hwnd))
+    ;; Tab selector.
+    (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
+      (global.get $HELP_TOPICS_ID_CONTENTS)
+      (i32.const 12) (i32.const 10) (i32.const 88) (i32.const 24)
+      (i32.const 0x50010000)
+      (i32.add (global.get $help_topics_labels_ga) (i32.const 16))))
+    (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
+      (global.get $HELP_TOPICS_ID_INDEX)
+      (i32.const 104) (i32.const 10) (i32.const 88) (i32.const 24)
+      (i32.const 0x50010000)
+      (i32.add (global.get $help_topics_labels_ga) (i32.const 28))))
+    ;; Row list - WS_VSCROLL so the listbox draws and drives its own scrollbar,
+    ;; LBS_NOTIFY so selection and double-click reach this dialog as WM_COMMAND.
+    (global.set $help_topics_list_hwnd
+      (call $ctrl_create_child (local.get $hwnd) (i32.const 4)
+        (global.get $HELP_TOPICS_ID_LIST)
+        (i32.const 12) (i32.const 44) (i32.const 376) (i32.const 196)
+        (i32.const 0x50A10001) (i32.const 0)))
+    (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
+      (global.get $HELP_TOPICS_ID_DISPLAY)
+      (i32.const 216) (i32.const 252) (i32.const 80) (i32.const 24)
+      (i32.const 0x50010001)
+      (i32.add (global.get $help_topics_labels_ga) (i32.const 36))))
+    (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
+      (global.get $HELP_TOPICS_ID_CANCEL)
+      (i32.const 304) (i32.const 252) (i32.const 80) (i32.const 24)
+      (i32.const 0x50010000)
+      (i32.add (global.get $help_topics_labels_ga) (i32.const 44))))
+    (call $help_topics_update_tab_buttons)
+    (call $help_topics_fill_list)
+    (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
+    (drop (call $host_erase_background (local.get $hwnd) (i32.const 16)))
+    (drop (call $paint_flush_visible_native_children (local.get $hwnd)))
     (call $invalidate_hwnd (local.get $hwnd)))
-
-  (func $help_topics_draw_button
-    (param $hdc i32) (param $left i32) (param $right i32)
-    (param $text i32) (param $length i32)
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-      (local.get $left) (i32.const 275) (local.get $right) (i32.const 300)
-      (i32.const 0x30011)))
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
-      (local.get $left) (i32.const 275) (local.get $right) (i32.const 300)
-      (i32.const 0x05) (i32.const 0x0F)))
-    (drop (call $host_gdi_text_out (local.get $hdc)
-      (i32.add (local.get $left) (i32.const 10)) (i32.const 281)
-      (local.get $text) (local.get $length) (i32.const 0))))
-
-  (func $help_topics_paint (param $hwnd i32)
-    (local $hdc i32) (local $i i32) (local $row i32) (local $index i32)
-    (local $record i32) (local $y i32) (local $x i32)
-    (local $text i32) (local $length i32) (local $selected i32)
-    (local $flags i32) (local $marker i32)
-    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-    ;; TRANSPARENT. The selected row paints white text over a navy highlight
-    ;; bar, so an opaque background would erase the bar under every glyph cell
-    ;; and leave white-on-white - the row's text vanished entirely.
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-      (i32.const 0) (i32.const 0) (i32.const 440) (i32.const 330)
-      (i32.const 0x30011)))
-    (if (i32.eq (global.get $help_session_mode) (i32.const 3))
-      (then
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-          (i32.const 10) (i32.const 7) (i32.const 100) (i32.const 34)
-          (i32.const 0x30010))))
-      (else
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-          (i32.const 100) (i32.const 7) (i32.const 180) (i32.const 34)
-          (i32.const 0x30010)))))
-    (drop (call $host_gdi_text_out (local.get $hdc)
-      (i32.const 24) (i32.const 14)
-      (i32.add (global.get $help_topics_labels_wa) (i32.const 16))
-      (i32.const 8) (i32.const 0)))
-    (drop (call $host_gdi_text_out (local.get $hdc)
-      (i32.const 118) (i32.const 14)
-      (i32.add (global.get $help_topics_labels_wa) (i32.const 28))
-      (i32.const 5) (i32.const 0)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-      (i32.const 10) (i32.const 38) (i32.const 430) (i32.const 260)
-      (i32.const 0x30010)))
-    (block $done (loop $rows
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 13)))
-      (local.set $row (i32.add (global.get $help_topics_first_visible) (local.get $i)))
-      (local.set $index
-        (if (result i32) (i32.eq (global.get $help_session_mode) (i32.const 3))
-          (then (call $help_cnt_visible_at (local.get $row)))
-          (else (local.get $row))))
-      (if (i32.lt_s (local.get $index) (i32.const 0)) (then (br $done)))
-      (if (i32.eq (global.get $help_session_mode) (i32.const 3))
-        (then
-          (if (i32.ge_u (local.get $index) (global.get $help_doc_cnt_node_count))
-            (then (br $done)))
-          (local.set $record (call $help_cnt_node_address (local.get $index)))
-          (local.set $text (i32.load offset=16 (local.get $record)))
-          (local.set $length (i32.load offset=20 (local.get $record)))
-          (local.set $x (i32.add (i32.const 18)
-            (i32.mul (i32.sub (i32.load16_u offset=12 (local.get $record)) (i32.const 1))
-              (i32.const 14))))
-          (local.set $flags (i32.load16_u offset=14 (local.get $record)))
-          (local.set $selected
-            (i32.eq (local.get $index) (global.get $help_topics_contents_selection)))
-          (if (i32.ge_s (i32.load offset=4 (local.get $record)) (i32.const 0))
-            (then
-              (local.set $marker
-                (select (i32.const 54) (i32.const 52)
-                  (i32.ne (i32.and (local.get $flags) (global.get $HELP_CNT_EXPANDED))
-                    (i32.const 0)))))
-            (else (local.set $marker (i32.const 56)))))
-        (else
-          (if (i32.ge_u (local.get $index) (global.get $help_doc_keyword_count))
-            (then (br $done)))
-          (local.set $record (i32.add (global.get $help_doc_keywords_wa)
-            (i32.mul (local.get $index) (global.get $HELP_KEYWORD_SIZE))))
-          (local.set $text (i32.add (global.get $help_doc_file_wa)
-            (i32.load (local.get $record))))
-          (local.set $length (i32.load offset=4 (local.get $record)))
-          (local.set $x (i32.const 32))
-          (local.set $marker (i32.const 56))
-          (local.set $selected
-            (i32.eq (local.get $index) (global.get $help_session_keyword_index)))))
-      (local.set $y (i32.add (i32.const 44) (i32.mul (local.get $i) (i32.const 16))))
-      (if (local.get $selected)
-        (then
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.const 13) (local.get $y) (i32.const 427)
-            (i32.add (local.get $y) (i32.const 16)) (i32.const 14)))
-          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF)))))
-      (drop (call $host_gdi_text_out (local.get $hdc)
-        (local.get $x) (local.get $y)
-        (i32.add (global.get $help_topics_labels_wa) (local.get $marker))
-        (i32.const 1) (i32.const 0)))
-      (drop (call $host_gdi_text_out (local.get $hdc)
-        (i32.add (local.get $x) (i32.const 14)) (local.get $y)
-        (local.get $text) (local.get $length) (i32.const 0)))
-      (if (local.get $selected)
-        (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $rows)))
-    (call $help_topics_draw_button (local.get $hdc) (i32.const 250) (i32.const 335)
-      (i32.add (global.get $help_topics_labels_wa) (i32.const 36)) (i32.const 7))
-    (call $help_topics_draw_button (local.get $hdc) (i32.const 345) (i32.const 425)
-      (i32.add (global.get $help_topics_labels_wa) (i32.const 44)) (i32.const 6)))
 
   (func $help_topics_present_activation (param $hwnd i32)
     (local $result i32)
@@ -2242,52 +2335,67 @@
         (call $help_present_dispatch (i32.const 1)
           (global.get $help_session_last_command))
         (return)))
+    ;; 2 = the selection was a book, and activating it expanded or collapsed
+    ;; it. That changes which rows exist, so the listbox is rebuilt.
     (if (i32.eq (local.get $result) (i32.const 2))
-      (then (call $invalidate_hwnd (local.get $hwnd)))))
+      (then
+        (call $help_topics_fill_list)
+        (call $invalidate_hwnd (local.get $hwnd)))))
 
   (func $help_topics_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
     (result i32)
-    (local $x i32) (local $y i32) (local $row i32) (local $index i32)
+    (local $cmd i32) (local $notif i32)
     (local $node i32) (local $parent i32)
+    ;; WM_ERASEBKGND - the dialog's own client area is a plain button-face
+    ;; fill; every pixel that carries information belongs to a child control.
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
-      (then (call $help_topics_paint (local.get $hwnd)) (return (i32.const 0))))
-    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
-                (i32.eq (local.get $msg) (i32.const 0x0203)))
+      (then (return (i32.const 0))))
+    ;; Title-bar X: WM_NCLBUTTONDOWN/HTCLOSE -> WM_SYSCOMMAND/SC_CLOSE ->
+    ;; WM_CLOSE, the same translation $about_wndproc performs for a WAT dialog
+    ;; that does not run through DefWindowProcA.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x00A1))
+          (i32.eq (local.get $wParam) (i32.const 20)))
       (then
-        (local.set $x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
-        (local.set $y (i32.shr_u (local.get $lParam) (i32.const 16)))
-        (if (i32.lt_u (local.get $y) (i32.const 35))
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0112) (i32.const 0xF060) (i32.const 0)))
+        (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0112))
+          (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFF0)) (i32.const 0xF060)))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+        (return (i32.const 0))))
+    ;; WM_COMMAND from the child controls: the tab buttons, the row list, and
+    ;; Display / Cancel.
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))
+      (then
+        (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (local.set $notif (i32.shr_u (local.get $wParam) (i32.const 16)))
+        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_CONTENTS))
+          (then (call $help_topics_apply_tab (i32.const 0)) (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_INDEX))
+          (then (call $help_topics_apply_tab (i32.const 1)) (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_LIST))
           (then
-            (if (i32.lt_u (local.get $x) (i32.const 100))
-              (then (drop (call $help_topics_set_tab (i32.const 0))))
-              (else (drop (call $help_topics_set_tab (i32.const 1)))))
-            (call $invalidate_hwnd (local.get $hwnd))
-            (return (i32.const 0))))
-        (if (i32.and (i32.ge_u (local.get $y) (i32.const 44))
-              (i32.lt_u (local.get $y) (i32.const 252)))
-          (then
-            (local.set $row (i32.add (global.get $help_topics_first_visible)
-              (i32.div_u (i32.sub (local.get $y) (i32.const 44)) (i32.const 16))))
-            (if (i32.eq (global.get $help_session_mode) (i32.const 3))
-              (then
-                (local.set $index (call $help_cnt_visible_at (local.get $row)))
-                (drop (call $help_topics_select_contents (local.get $index))))
-              (else
-                (if (i32.lt_u (local.get $row) (global.get $help_doc_keyword_count))
-                  (then (global.set $help_session_keyword_index (local.get $row))))))
-            (if (i32.eq (local.get $msg) (i32.const 0x0203))
-              (then (call $help_topics_present_activation (local.get $hwnd)))
-              (else (call $invalidate_hwnd (local.get $hwnd))))
-            (return (i32.const 0))))
-        (if (i32.ge_u (local.get $y) (i32.const 270))
-          (then
-            (if (i32.and (i32.ge_u (local.get $x) (i32.const 245))
-                  (i32.lt_u (local.get $x) (i32.const 340)))
+            (call $help_topics_sync_from_list)
+            ;; LBN_DBLCLK = 2. Double-clicking a row is the shortcut for
+            ;; selecting it and pressing Display.
+            (if (i32.eq (local.get $notif) (i32.const 2))
               (then (call $help_topics_present_activation (local.get $hwnd))))
-            (if (i32.ge_u (local.get $x) (i32.const 340))
-              (then (call $help_topics_cancel)))
-            (return (i32.const 0))))))
+            (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_DISPLAY))
+          (then
+            (call $help_topics_sync_from_list)
+            (call $help_topics_present_activation (local.get $hwnd))
+            (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_CANCEL))
+          (then (call $help_topics_cancel) (return (i32.const 0))))
+        (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0100))
       (then
         (if (i32.eq (local.get $wParam) (i32.const 0x26))
@@ -2299,9 +2407,9 @@
         (if (i32.eq (local.get $wParam) (i32.const 0x22))
           (then (drop (call $help_topics_move_selection (i32.const 13)))))
         (if (i32.eq (local.get $wParam) (i32.const 0x09))
-          (then (drop (call $help_topics_set_tab
+          (then (call $help_topics_apply_tab
             (select (i32.const 0) (i32.const 1)
-              (i32.eq (global.get $help_session_mode) (i32.const 4)))))))
+              (i32.eq (global.get $help_session_mode) (i32.const 4))))))
         (if (i32.eq (local.get $wParam) (i32.const 0x27))
           (then
             (if (i32.eq (global.get $help_session_mode) (i32.const 3))
@@ -2330,8 +2438,14 @@
           (then (call $help_topics_present_activation (local.get $hwnd))))
         (if (i32.eq (local.get $wParam) (i32.const 0x1B))
           (then (call $help_topics_cancel)))
+        ;; Arrow keys, expand/collapse and Tab all change the model rather than
+        ;; the control, so the listbox is rebuilt from it afterwards. Keys that
+        ;; closed the dialog leave $help_topics_hwnd cleared - do not touch a
+        ;; destroyed window.
         (if (global.get $help_topics_hwnd)
-          (then (call $invalidate_hwnd (local.get $hwnd))))
+          (then
+            (call $help_topics_fill_list)
+            (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then (call $help_topics_cancel) (return (i32.const 0))))
@@ -2339,6 +2453,11 @@
 
   (func (export "get_help_topics_hwnd") (result i32)
     (global.get $help_topics_hwnd))
+  (func (export "get_help_topics_list_hwnd") (result i32)
+    (global.get $help_topics_list_hwnd))
+  (func (export "get_help_topics_control") (param $id i32) (result i32)
+    (if (i32.eqz (global.get $help_topics_hwnd)) (then (return (i32.const 0))))
+    (call $ctrl_find_by_id (global.get $help_topics_hwnd) (local.get $id)))
   (func (export "test_help_topics_message")
     (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
     (if (i32.eqz (global.get $help_topics_hwnd))

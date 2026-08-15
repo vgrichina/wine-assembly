@@ -2604,17 +2604,38 @@ async function main() {
   check('the Topics window carries the style its repaints depend on',
     (e.wnd_get_style_export(e.get_help_topics_hwnd()) & 0x10000000) !== 0,
     `style=0x${(e.wnd_get_style_export(e.get_help_topics_hwnd()) >>> 0).toString(16)}`);
-  check('a mouse click on the Index tab switches the Topics dialog',
-    e.test_help_topics_message(0x0201, 0, (21 << 16) | 136) === 0 &&
+  // The dialog is assembled from the controls the emulator already
+  // implements, so these assert the controls exist and are wired, not that a
+  // hand-painted rectangle landed on the right pixel. Class 4 = ListBox,
+  // class 1 = Button, per $ctrl_table_set.
+  check('the Topics dialog shows its rows in a real listbox',
+    e.ctrl_get_class(e.get_help_topics_list_hwnd()) === 4 &&
+    e.listbox_get_count(e.get_help_topics_list_hwnd()) >= 1,
+    `class=${e.ctrl_get_class(e.get_help_topics_list_hwnd())} ` +
+    `count=${e.listbox_get_count(e.get_help_topics_list_hwnd())}`);
+  check('the Topics dialog carries real buttons for its tabs and commands',
+    [0x502, 0x503, 1, 2].every(id => e.ctrl_get_class(e.get_help_topics_control(id)) === 1));
+  {
+    // Row text comes from the .cnt node, not from a marker glyph alone: the
+    // rows once rendered as bare marks because the paint erased its own text.
+    const dest = e.guest_alloc(160);
+    e.listbox_get_item_text(e.get_help_topics_list_hwnd(), 0, dest, 128);
+    let row = '';
+    for (let i = 0; i < 128; i++) {
+      const ch = e.guest_read8(dest + i);
+      if (!ch) break;
+      row += String.fromCharCode(ch);
+    }
+    check('a Topics row carries its title text',
+      row.replace(/^[\s>+-]+/, '').length > 0, JSON.stringify(row));
+  }
+  // Clicking a tab button arrives as WM_COMMAND/BN_CLICKED from the child,
+  // the same way every other WAT dialog hears from its buttons.
+  check('the Index tab button switches the Topics dialog',
+    e.test_help_topics_message(0x0111, 0x503, 0) === 0 &&
     e.get_help_session_mode() === 4 &&
-    e.test_help_topics_message(0x0201, 0, (21 << 16) | 40) === 0 &&
+    e.test_help_topics_message(0x0111, 0x502, 0) === 0 &&
     e.get_help_session_mode() === 3);
-  // A selected row paints white text over a navy highlight bar. With the
-  // background left OPAQUE, every glyph cell erased the bar back to white and
-  // the row's text became white-on-white - it vanished completely.
-  e.test_help_topics_message(0x000F, 0, 0);
-  check('Topics rows paint their text over the highlight, not through it',
-    e.test_gdi_dc_get_field(e.get_help_topics_hwnd() + 0x40000, 28, 2) === 1);
   check('Topics keyboard tab switching retains canonical dialog state',
     e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 4 &&
     e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 3 &&
@@ -2632,6 +2653,33 @@ async function main() {
   check('HELP_QUIT tears down both Topics and main help windows',
     e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_window() === 0);
+
+  {
+    // Every .cnt in the Win98 corpus is the one-line "not meant for browsing"
+    // stub, so the Contents tab alone cannot prove the listbox fills from a
+    // real model. HOVER.HLP is the file in reach that ships a |KWBTREE, and
+    // its keywords are what the Index tab lists.
+    ctx.vfs.files.set('c:\\hover.hlp', { data: new Uint8Array(hoverHelp), attrs: 0x20 });
+    const hoverPathA = allocGuestAnsi('c:\\hover.hlp');
+    const opened = e.test_invoke_WinHelpA(0x8888, hoverPathA, 0x000b, 0) === 1;
+    e.test_help_topics_message(0x0111, 0x503, 0);
+    const list = e.get_help_topics_list_hwnd();
+    const dest = e.guest_alloc(160);
+    e.listbox_get_item_text(list, 0, dest, 128);
+    let first = '';
+    for (let i = 0; i < 128; i++) {
+      const ch = e.guest_read8(dest + i);
+      if (!ch) break;
+      first += String.fromCharCode(ch);
+    }
+    check('the Index tab lists one row per keyword',
+      opened && e.get_help_session_mode() === 4 &&
+      e.get_help_keyword_count() > 0 &&
+      e.listbox_get_count(list) === e.get_help_keyword_count() && first.length > 0,
+      `keywords=${e.get_help_keyword_count()} rows=${e.listbox_get_count(list)} ` +
+      `first=${JSON.stringify(first)}`);
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0);
+  }
 
   ctx.vfs.files.set('c:\\bitmap-view.hlp', {
     data: new Uint8Array(bitmapViewHelp.file), attrs: 0x20,
