@@ -169,6 +169,7 @@ E2E=(
   test/test-pinball-controls-layout.js
   test/test-pinball-fullscreen-menu.js
   test/test-pinball-flipper.js
+  test/test-pinball-web-render.js
   test/test-aoe-menu.js
   test/test-tworld-launch.js
   test/test-winamp-about-web.js
