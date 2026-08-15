@@ -8,11 +8,11 @@ const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const canvasTextCalls = { textOut: 0, extTextOut: 0 };
+  const canvasTextCalls = { bind: 0, mask: 0 };
   const { exports: wat, memory, hostCtx } = await bootRenderHarness({
     extraHostOverrides: {
-      gdi_text_out: () => { canvasTextCalls.textOut++; return 1; },
-      gdi_ext_text_out: () => { canvasTextCalls.extTextOut++; return 1; },
+      gdi_text_bind: () => { canvasTextCalls.bind++; return 1; },
+      gdi_text_mask: () => { canvasTextCalls.mask++; return 0; },
     },
     extraWat: `
   (func (export "test_start_EnumMetaFile")
@@ -450,7 +450,7 @@ const { bootRenderHarness } = require('./render-helper');
 
     assert.strictEqual(wat.test_call_PlayMetaFile(hdc, metafile), 1);
     assert.deepStrictEqual(canvasTextCalls, beforeCanvas,
-      'installed Win9x bitmap fonts must not invoke Canvas text imports');
+      'installed Win9x bitmap fonts must not invoke Canvas font imports');
     assert(countColor(hdc, 4, 3, 40, 20, 0x000000ff) > 20,
       'META_TEXTOUT must rasterize red bitmap glyphs');
     assert(countColor(hdc, 4, 24, 13, 37, 0x000000ff) > 3,

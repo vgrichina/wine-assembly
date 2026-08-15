@@ -45,6 +45,10 @@ const { bootRenderHarness } = require('./render-helper');
   wat.test_gdi_dc_set_field(hdc, 24, 0x000000FF, 0xFFFFFF); // red COLORREF
   assert.strictEqual(
     wat.test_call_ExtTextOutA(hdc, 0, 0, 0x2, opaqueRect, 0, 0), 1);
+  wat.test_gdi_dc_set_field(hdc, 28, 2, 2); // OPAQUE
+  wat.test_gdi_dc_set_field(hdc, 20, 0x000000FF, 0); // red COLORREF
+  wat.test_gdi_dc_set_field(hdc, 24, 0x0000FF00, 0xFFFFFF); // green COLORREF
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 50, 5, textGa, 1), 1);
 
   const bitsGa = wat.guest_read32(bitsOut) >>> 0;
   const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
@@ -66,8 +70,20 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(outsideClipDark, 0, 'ETO_CLIPPED must reject glyph pixels outside its rect');
   assert.deepStrictEqual(rgb(35, 6), [255, 0, 0],
     'ETO_OPAQUE must fill its rect when text is null');
+  let redGlyphPixels = 0;
+  let greenBackgroundPixels = 0;
+  for (let y = 5; y < 20; y++) {
+    for (let x = 50; x < 70; x++) {
+      const color = rgb(x, y);
+      if (color[0] === 255 && color[1] === 0 && color[2] === 0) redGlyphPixels++;
+      if (color[0] === 0 && color[1] === 255 && color[2] === 0) greenBackgroundPixels++;
+    }
+  }
+  assert(redGlyphPixels > 0, 'WAT must apply COLORREF text color to glyph-mask pixels');
+  assert(greenBackgroundPixels > 0,
+    'WAT must apply OPAQUE background color around glyph-mask pixels');
 
-  console.log('PASS  canonical ExtTextOut clips glyphs and supports null-text opaque erases');
+  console.log('PASS  WAT text composition owns clipping, colors, and opaque backgrounds');
 })().catch(error => {
   console.error(error);
   process.exit(1);

@@ -208,7 +208,7 @@ async function main() {
   const bitsWa = new DataView(memory.buffer).getUint32(descriptor, true);
   const byteLength = new DataView(memory.buffer).getUint32(descriptor + 12, true) * 9;
   assert(bits.subarray(bitsWa, bitsWa + byteLength).some(value => value !== 0),
-    'Canvas text must synchronize rendered pixels into canonical WAT storage');
+    'WAT text composition must write rendered pixels into canonical storage');
 
   assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
   assert.strictEqual(wat.test_gdi_object_type(pen), 0);

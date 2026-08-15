@@ -29,7 +29,7 @@ const PERMANENT_NON_TEXT_BRIDGE = [
   'gdi_surface_upload',
 ];
 const CANVAS_TEXT_POLICY = [
-  'gdi_ext_text_out', 'gdi_text_bind', 'gdi_text_mask', 'gdi_text_out',
+  'gdi_text_bind', 'gdi_text_mask',
 ].sort();
 const MAX_TEMPORARY_NON_TEXT_EXCEPTIONS = 0;
 const sorted = values => [...values].sort();
@@ -72,13 +72,13 @@ assert(!/\bconst _getDC\b/.test(hostImports),
   '_getDC must not restore a JavaScript semantic DC record');
 assert(!hostImports.includes('_gdiObjects'),
   'mixed JavaScript GDI object storage must stay removed');
-const drawTargetBody = hostImports.match(
-  /const _getDrawTarget = \(hdc\) => \{([\s\S]*?)\n  \};/);
-assert(drawTargetBody, 'text draw-target resolver must remain explicit');
-assert(!drawTargetBody[1].includes('_dcTable') &&
-       !drawTargetBody[1].includes('_gdiObjects') &&
-       !drawTargetBody[1].includes('renderer.windows'),
-  'Canvas text may resolve only canonical surface presentations, not semantic HDC state');
+for (const removed of [
+  '_gdiTextOut', '_drawBinaryCanvasText', '_drawWithClip',
+  '_getDrawTarget', '_markDrawTargetDirty', '_seedDrawTargetRect',
+]) {
+  assert(!hostImports.includes(removed),
+    `${removed} must not restore Canvas destination text drawing or readback`);
+}
 assert.deepStrictEqual(sorted(status.eliminatedNonTextSemantics), internalStubs,
   'every eliminated semantic import must remain an explicit WAT unsupported stub');
 assert.deepStrictEqual(sorted(status.watUnsupportedStubs), internalStubs,

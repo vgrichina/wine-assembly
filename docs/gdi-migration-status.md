@@ -13,19 +13,20 @@ The permanent non-text bridge has six presentation-only calls:
 - `gdi_surface_upload`
 - `gdi_surface_delete`
 
-Four `gdi_*` calls remain under the explicit Canvas text policy. Text color,
-background mode, alignment, mapping, and selected font state are owned by the
-canonical WAT DC record; `gdi_text_bind` exposes that record to the retained
-Canvas text rasterizer and writes memory, window, DirectDraw, and screen DC
-text pixels back to canonical surface storage using WAT-owned clip bands.
-Installed FNT 2.x/3.x strikes bypass all four calls: WAT measures and writes
+Two `gdi_*` calls remain under the explicit Canvas text policy. Text color,
+background mode, alignment, mapping, clipping, and selected font state are
+owned by the canonical WAT DC record; `gdi_text_bind` exposes only the font and
+mapping inputs needed by `gdi_text_mask`. Canvas returns a bounded one-bit mask
+for scalable faces, and WAT writes memory, window, DirectDraw, and screen DC
+pixels into canonical surface storage. Installed FNT 2.x/3.x strikes bypass
+both calls: WAT measures and writes
 their glyphs directly, including `ExtTextOut` rectangle/lpDx behavior and
 `DrawText` wrapping, alignment, clipping, and calculated rectangles.
 The tracked Wine System, MS Sans Serif, Fixedsys, and Courier FONs plus the
 ANAKRON-derived Terminal FON are preloaded into every browser and CLI process
 and installed lazily by WAT. Stock variable UI fonts, common Win9x UI aliases,
 all three fixed stocks, and explicit requests for those bitmap faces therefore
-use this path without calling the four Canvas text-policy imports.
+use this path without calling the two Canvas text-policy imports.
 `OEM_FIXED_FONT` selects the open Terminal 8x12 strike, whose complete byte
 range is generated through CP437 and marked `OEM_CHARSET`. Explicit
 scalable/document faces and shaped text retain the Canvas fallback. See

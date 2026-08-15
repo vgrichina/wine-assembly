@@ -9,20 +9,25 @@ const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
   const calls = {
-    bind: 0, mask: 0, textOut: 0, extTextOut: 0,
-    measure: 0, metrics: 0,
+    bind: 0, mask: 0, measure: 0, metrics: 0,
   };
+  let memoryRef = null;
   const harness = await bootRenderHarness({
     extraHostOverrides: {
       gdi_text_bind: () => { calls.bind++; return 1; },
-      gdi_text_mask: () => { calls.mask++; return 0; },
-      gdi_text_out: () => { calls.textOut++; return 1; },
-      gdi_ext_text_out: () => { calls.extTextOut++; return 1; },
+      gdi_text_mask: (_token, _x, _y, _text, _count, _wide,
+        _left, _top, width, height, maskWa, stride) => {
+        calls.mask++;
+        if (!memoryRef || width <= 0 || height <= 0 || stride < width) return 0;
+        new Uint8Array(memoryRef.buffer)[maskWa] = 1;
+        return 1;
+      },
       measure_text: () => { calls.measure++; return 99; },
       get_text_metrics: () => { calls.metrics++; return 12 | (6 << 16); },
     },
   });
   const { exports: wat, memory, hostCtx } = harness;
+  memoryRef = memory;
   const root = path.join(__dirname, '..');
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
@@ -45,8 +50,7 @@ const { bootRenderHarness } = require('./render-helper');
   };
   const resetCalls = () => Object.keys(calls).forEach(key => { calls[key] = 0; });
   const assertNoCanvasText = label => assert.deepStrictEqual(calls, {
-    bind: 0, mask: 0, textOut: 0, extTextOut: 0,
-    measure: 0, metrics: 0,
+    bind: 0, mask: 0, measure: 0, metrics: 0,
   }, label);
   const writeWide = value => {
     const pointer = allocZero((value.length + 1) * 2);
@@ -114,8 +118,8 @@ const { bootRenderHarness } = require('./render-helper');
   wat.test_call_SelectObject(hdc, scalableFont);
   resetCalls();
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 10), 1);
-  assert(calls.bind > 0 && calls.textOut > 0,
-    'unsupported scalable faces should retain the documented Canvas fallback');
+  assert(calls.bind > 0 && calls.mask > 0,
+    'unsupported scalable faces should use the documented Canvas mask provider');
 
   assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
     'four Wine resources plus Terminal should install eight bitmap strikes');

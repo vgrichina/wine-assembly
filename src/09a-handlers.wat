@@ -2911,7 +2911,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 131: TabbedTextOutA — WAT-owned tab parsing and Canvas text runs.
+  ;; 131: TabbedTextOutA — WAT-owned tab parsing and glyph-mask composition.
   (func $handle_TabbedTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_tabbed_text
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -9062,7 +9062,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 575: SetTextCharacterExtra — per-DC spacing consumed by Canvas text only.
+  ;; 575: SetTextCharacterExtra — per-DC spacing consumed by WAT text layout.
   (func $handle_SetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_dc_aux_set
       (local.get $arg0) (i32.const 20) (local.get $arg1) (i32.const 0)))
@@ -9348,7 +9348,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 602: CreateFontW — convert the face name, then share the Canvas text font policy.
+  ;; 602: CreateFontW — convert the face name, then share the font-provider policy.
   (func $handle_CreateFontW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $face i32) (local $weight i32) (local $italic i32) (local $handle i32)
     (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 16))))

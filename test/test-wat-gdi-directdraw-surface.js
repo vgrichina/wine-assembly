@@ -62,7 +62,7 @@ const DX_ENTRY_SIZE = 32;
     }
   }
   assert(textChangedNativePixels > 0,
-    'Canvas text rasterization must synchronously copy its dirty pixels into the native DIB');
+    'WAT text composition must write glyph-mask pixels into the native DIB');
 
   const nativeBeforePoison = bytes.slice(bitsWa, bitsWa + stride * height);
   const canvasContext = presentation.canvas.getContext('2d');
@@ -105,7 +105,7 @@ const DX_ENTRY_SIZE = 32;
   wat.test_gdi_dc_set_field(indexedHdc, 28, 1, 2);
   assert.strictEqual(wat.test_call_TextOutA(indexedHdc, 2, 1, text, 1), 1);
   assert(bytes.subarray(indexedBitsWa, indexedBitsWa + indexedStride * height).includes(0),
-    'Canvas text must quantize its pixels back into the canonical indexed DIB');
+    'WAT text composition must quantize glyph pixels into the canonical indexed DIB');
   wat.test_gdi_dx_dc_release(indexedHdc);
 
   console.log('DirectDraw canonical GDI surface: PASS');

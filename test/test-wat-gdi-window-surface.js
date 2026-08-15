@@ -227,18 +227,20 @@ async function main() {
   wat.guest_write16(text, 0x58); // "X\0"
   const textPresentation = base.gdi.surfacePresentations.get(surfaceId);
   const rgbaRect = textPresentation.surface.rgbaRect.bind(textPresentation.surface);
-  const textSeedRects = [];
+  const destinationReads = [];
+  const dibPageMapBeforeText = Buffer.from(
+    new Uint8Array(memory.buffer, 0x07E10000, 0x4000));
   textPresentation.surface.rgbaRect = (...args) => {
-    textSeedRects.push(args);
+    destinationReads.push(args);
     return rgbaRect(...args);
   };
   assert.strictEqual(wat.test_call_TextOutA(hdc, 10, 10, text, 1), 1);
   textPresentation.surface.rgbaRect = rgbaRect;
-  assert.strictEqual(textSeedRects.length, 1,
-    'TextOut must seed its Canvas rasterizer once from canonical pixels');
-  assert(textSeedRects[0][2] < textPresentation.width &&
-    textSeedRects[0][3] < textPresentation.height,
-  'TextOut must seed only its bounded glyph rectangle, not the full surface');
+  assert.strictEqual(destinationReads.length, 0,
+    'TextOut must not read its destination presentation or canonical surface');
+  assert.deepStrictEqual(
+    Buffer.from(new Uint8Array(memory.buffer, 0x07E10000, 0x4000)),
+    dibPageMapBeforeText, 'text composition must not corrupt DIB allocator metadata');
   assert.deepStrictEqual(
     [...canvas.getContext('2d').getImageData(4, 6, 1, 1).data.subarray(0, 3)],
     [255, 0, 0], 'text synchronization must retain prior canonical geometry');
@@ -270,7 +272,7 @@ async function main() {
     'a hidden ancestor must produce an empty USER visible region');
   assert.strictEqual(wat.test_call_TextOutA(grandchildDc, 0, 0, text, 1), 1);
   assert.deepStrictEqual(Buffer.from(canvas.toBuffer('raw')), beforeHiddenText,
-    'Canvas text fallback must consume the same empty effective device clip');
+    'WAT text composition must consume the same empty effective device clip');
   wat.wnd_set_style_export(CHILD, 0x50000000);
   assert.strictEqual(wat.test_call_ReleaseDC(GRANDCHILD, grandchildDc), 1);
 
@@ -319,6 +321,11 @@ async function main() {
     const makeDragDib = (width, height) => {
       const dragBmi = wat.guest_alloc(40) >>> 0;
       const dragBitsOut = wat.guest_alloc(4) >>> 0;
+      const imageBase = wat.get_image_base() >>> 0;
+      const dragBmiWa = 0x12000 + (dragBmi - imageBase);
+      const dragBitsOutWa = 0x12000 + (dragBitsOut - imageBase);
+      new Uint8Array(memory.buffer).fill(0, dragBmiWa, dragBmiWa + 40);
+      new Uint8Array(memory.buffer).fill(0, dragBitsOutWa, dragBitsOutWa + 4);
       wat.guest_write32(dragBmi, 40);
       wat.guest_write32(dragBmi + 4, width);
       wat.guest_write32(dragBmi + 8, -height);
@@ -326,7 +333,8 @@ async function main() {
       wat.guest_write16(dragBmi + 14, 32);
       const bitmap = wat.test_call_CreateDIBSection(0, dragBmi, dragBitsOut) >>> 0;
       const dc = wat.test_call_CreateCompatibleDC(0) >>> 0;
-      assert(bitmap && dc, 'drag scratch DIB/DC allocation failed');
+      assert(bitmap && dc,
+        `drag scratch DIB/DC allocation failed (bitmap=0x${bitmap.toString(16)}, dc=0x${dc.toString(16)})`);
       assert.strictEqual(wat.test_call_SelectObject(dc, bitmap) >>> 0, 0x30007);
       return { bitmap, dc, width, height };
     };

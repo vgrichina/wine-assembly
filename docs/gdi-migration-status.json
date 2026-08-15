@@ -18,9 +18,7 @@
     ],
     "canvasTextPolicy": [
       "gdi_text_bind",
-      "gdi_text_mask",
-      "gdi_text_out",
-      "gdi_ext_text_out"
+      "gdi_text_mask"
     ],
     "resourceByteBoundaries": [],
     "temporaryNonTextExceptions": [],

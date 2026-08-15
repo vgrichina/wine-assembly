@@ -142,11 +142,11 @@ in the WAT bitmap arena while preserving `BITMAP.bmBits == NULL`. Canvas remains
 a derived cache: WAT raster writes only union a dirty rectangle in the canonical
 surface. Memory DCs perform no Canvas conversion. Attached window, desktop, and
 menu surfaces convert the accumulated rectangle immediately before compositor
-use; explicit Canvas reads and captures are synchronization boundaries as well.
-The retained Canvas text rasterizer flushes older WAT writes, receives an opaque
-WAT surface ID and canonical DC state, then copies its bounded output back into
-canonical native storage before returning. Deletion returns the private pages
-to the arena.
+use; explicit Canvas reads and captures are presentation synchronization
+boundaries only. The retained Canvas font provider receives canonical mapping
+and font state and writes a bounded one-bit mask into caller-owned WAT memory;
+it never reads or modifies a destination surface. Deletion returns the private
+pages to the arena.
 
 `LoadBitmapA/W` now materialize uncompressed `BITMAPCOREHEADER` and
 `BITMAPINFOHEADER` resources plus bounded `BI_RLE4`/`BI_RLE8`
@@ -402,18 +402,18 @@ gdi_surface_upload     upload dirty authoritative pixels to Canvas
 gdi_surface_delete     discard the derived Canvas cache
 ```
 
-Canvas text-policy imports are `gdi_text_bind`, `gdi_text_mask`,
-`gdi_text_out`, and `gdi_ext_text_out`. `DrawText` line breaking, wrapping,
-tabs, ellipsis, alignment, prefix removal, and underlines are WAT-owned and
-reuse those lower-level glyph-provider calls. Text colors, background mode,
-alignment, mapping state, font selection, DC identity, bitmap selection, and
-clip bands remain WAT-owned. `gdi_text_bind` exposes a canonical DC record,
-clip-band snapshot, and opaque surface token without constructing a semantic
-JavaScript DC mirror. Canvas output for memory, window, DirectDraw, and screen
-DCs is copied synchronously into authoritative native pixels. There is no
-current `gdi_*` resource exception. `LoadBitmapA/W` resolve raw RT_BITMAP bytes
-through the WAT PE-resource walker, validate and copy pixels and RGBQUADs into
-owned canonical storage, then publish only a derived surface presentation.
+Canvas text-policy imports are `gdi_text_bind` and `gdi_text_mask`. `DrawText`,
+`TextOut`, and `ExtTextOut` layout, tabs, ellipsis, alignment, explicit
+advances, prefix removal, underlines, colors, background mode, clipping, and
+destination writes are WAT-owned. `gdi_text_bind` exposes canonical font and
+mapping state plus an opaque surface token without constructing a semantic
+JavaScript DC mirror. For a scalable face, `gdi_text_mask` rasterizes only into
+a bounded caller-owned one-bit mask; WAT composes that mask into the same
+authoritative memory used by `.FON` strikes and every other raster operation.
+Canvas never reads or writes a GDI destination for text. There is no current
+`gdi_*` resource exception. `LoadBitmapA/W` resolve raw RT_BITMAP bytes through
+the WAT PE-resource walker, validate and copy pixels and RGBQUADs into owned
+canonical storage, then publish only a derived surface presentation.
 
 `test/test-gdi-migration-status.js` hard-codes this allowlist, verifies that
 JavaScript exports no other `gdi_*` methods, checks the zero temporary-exception
@@ -508,7 +508,7 @@ long-term form because fills, blits, and upload bounds all consume spans.
 
 WAT now owns canonical band regions for rectangle combinations,
 scan-converted polygons and ellipses, application-defined HDC clips, and the
-independent USER-derived visible region. Raster and Canvas text paths consume
+independent USER-derived visible region. Raster and scalable text composition consume
 the same target-bounds AND application-clip AND system-clip intersection.
 `SaveDC`/`RestoreDC` snapshots the application clip by value; the system region
 is re-derived from current window state.
@@ -548,17 +548,16 @@ fallback. WAT owns a screen-sized bitmap selected into a persistent memory DC,
 paints menu chrome in desktop coordinates, and calls `gdi_surface_attach` with
 the compositor-overlay target. The renderer composites only the popup's dirty
 rectangles, so opaque native bitmap storage does not cover unrelated desktop
-pixels. Canvas remains the menu text rasterizer through the normal text-policy
-bridge; no JavaScript menu geometry implementation remains.
+pixels. Scalable menu glyphs use the normal Canvas mask provider followed by
+WAT composition; no JavaScript menu geometry implementation remains.
 
 The renderer then composes window caches onto the desktop Canvas as it does
 today. Browser zoom or CSS scaling may affect display size but cannot change the
 underlying GDI pixels.
 
-Avoid reading the presentation Canvas in GDI code. The only readback is the
-bounded rectangle produced by the Canvas text rasterizer itself, immediately
-copied into the bound canonical surface. Desktop composition is one-way and
-never becomes a GDI pixel source.
+Never read the presentation Canvas in GDI code. The Canvas font provider reads
+only its private scratch mask; WAT composes those mask bytes into the canonical
+surface. Desktop composition is one-way and never becomes a GDI pixel source.
 
 ## Text
 
@@ -591,13 +590,12 @@ not a second owner of destination pixels. Reading it with `getImageData` is
 allowed. Reading the destination's presentation Canvas to recover bitmap state
 is not.
 
-Open-path scalable text renders white glyphs on transparent black, thresholds
-the scratch alpha channel into a one-bit mask, and returns only that bounded
-mask to WAT. Canvas never creates the retained path and never reads or modifies
-the destination surface in this mode. Ordinary scalable output uses bounded
-Canvas `TextOut`/`ExtTextOut` glyph-run rasterization, then synchronizes the
-result into canonical storage before returning. `DrawText` itself no longer
-crosses the JavaScript bridge.
+Scalable text renders white glyphs on transparent black, thresholds the scratch
+alpha channel into a one-bit mask, and returns only that bounded mask to WAT.
+Canvas never creates a retained path and never reads or modifies the destination
+surface. WAT converts the same mask into path geometry or composes it into
+canonical pixels with its own color, background, explicit rectangle, region
+clip, and dirty-presentation semantics.
 
 Known limitations remain explicit: browser font availability, metrics,
 hinting, shaping, and antialiasing can differ between Safari, Chromium, and
@@ -863,8 +861,8 @@ the same machine.
   guest-visible DIBs, so format adapters are required.
 - Window-surface conversion changes invalidation and child-window clipping. It
   should follow bitmap migration, not lead it.
-- Canvas text remains engine- and font-dependent. This is an accepted fidelity
-  boundary, but text must still commit into authoritative surface storage.
+- Canvas scalable-glyph masks remain engine- and font-dependent. This is an
+  accepted temporary fidelity boundary; WAT still owns all destination pixels.
 - A software rasterizer can regress performance if it uploads whole canvases or
   uses generic per-pixel dispatch in hot loops.
 

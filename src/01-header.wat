@@ -476,12 +476,6 @@
     (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_text_mask" (func $host_gdi_text_mask_raw
     (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  (import "host" "gdi_text_out" (func $host_gdi_text_out_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
-  ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.
-  (import "host" "gdi_ext_text_out" (func $host_gdi_ext_text_out_raw (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; gdi_ext_text_out(hdc, x, y, options, rectWasmAddr, textWasmAddr, nCount, isWide) → 1
-  ;; Honors ExtTextOut's ETO_OPAQUE/ETO_CLIPPED rectangle while lpDx remains ignored.
   (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)
     (call $gdi_hdc_set_pixel (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
