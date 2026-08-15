@@ -7,6 +7,7 @@ const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
+const { fontMounts } = require('../lib/font-substitutions');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -1008,6 +1009,20 @@ async function main() {
       }
       ctx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
         data: new Uint8Array(fs.readFileSync(bundledFon)), attrs: 0x20,
+      });
+    }
+    // Scalable faces mount under their Win98 filenames so the WAT TrueType
+    // rasterizer resolves ARIAL.TTF the way real GDI did, without knowing
+    // Liberation Sans is what it opens.
+    const substitutions = JSON.parse(fs.readFileSync(
+      path.join(ROOT, 'fonts', 'substitutions.json'), 'utf8'));
+    for (const mount of fontMounts(substitutions)) {
+      const file = path.join(ROOT, 'fonts', mount.file);
+      if (!fs.existsSync(file)) {
+        throw new Error(`missing substitute for ${mount.face} ${mount.style}: ${file}`);
+      }
+      ctx.vfs.files.set(mount.vfsPath, {
+        data: new Uint8Array(fs.readFileSync(file)), attrs: 0x20,
       });
     }
   }
