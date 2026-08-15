@@ -280,6 +280,22 @@
       ))
     (i32.const -1))
 
+  ;; Resolve one ordinal-only import. The WAT table above is consulted
+  ;; first, so a DLL described there behaves the same whether the EXE or
+  ;; another DLL imports it — the two loaders previously each had their own
+  ;; answer, and a name present in one was missing from the other. The host
+  ;; map still covers the DLLs whose ordinals have not moved into WAT.
+  ;; $dll_name_ga is a guest address (what $dll_name_match reads through);
+  ;; $dll_name_wa is the same string as a linear-memory address, which is
+  ;; what the host import expects.
+  (func $resolve_import_ordinal (param $dll_name_ga i32) (param $dll_name_wa i32)
+                                (param $ordinal i32) (result i32)
+    (local $id i32)
+    (local.set $id (call $system_ordinal_api_id
+      (local.get $dll_name_ga) (local.get $ordinal)))
+    (if (i32.ne (local.get $id) (i32.const -1)) (then (return (local.get $id))))
+    (call $host_resolve_ordinal (local.get $dll_name_wa) (local.get $ordinal)))
+
   ;; Process a loaded DLL's imports — create thunks for system DLLs,
   ;; resolve against other loaded DLLs if found.
   (func $process_dll_imports (param $load_addr i32) (param $import_rva i32)

@@ -31,6 +31,7 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace-dc` | Every `_getDrawTarget` resolution: hdc → resolved hwnd, top-level hwnd, canvas ox/oy, canvas size. Logs NO_CANVAS when resolution fails. Use when a draw call fires but nothing appears — shows which surface each DC lands on. |
 | `--trace-reg` | Every registry op (open/query/create/set/enum/close) with key path, value name, and result ("found"/"not found"/actual data). Use to discover which keys an app probes when storage returns empty. |
 | `--trace-fs` | Every VFS op: CreateFile (with decoded access/creation + handle/FAIL), GetFileAttributes, FindFirstFile, FindNextFile — each with path and hit/miss result. Use to see which files an app looks for but can't find in the VFS. |
+| `--trace-net` | Every `vln/1` frame on the virtual LAN wire, decoded: `-> SYN 10.77.0.2:49152 -> 10.77.0.1:8035`. Pair with `--vlan-ip=A.B.C.D` (this process's room address) and `--vlan-wire` (join the segment offered by the parent process over child IPC). |
 | `--trace-host=fn1,fn2` | Generic wrap of any host import by name — logs raw args + return. Use when no category fits yet. Example: `--trace-host=gdi_draw_edge,wnd_set_state_ptr` |
 | `--trace` | Every decoded block's EIP |
 | `--trace-seh` | SEH chain operations |
@@ -70,6 +71,7 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `09a5-handlers-window.wat` | Window creation & message dispatch (CreateWindowExA, GetMessage, etc.) |
 | `09a6-handlers-crt.wat` | C runtime/string handlers (strlen, strcmp, _mbschr, etc.) |
 | `09a7-handlers-dispatch.wat` | Sub-dispatchers (Local*, Global*, lstr*, Reg*) + misc handlers |
+| `09d-winsock.wat` | Virtual LAN Winsock core — socket table, in-process switch, and the `vln/1` frame wire that joins two emulator processes into one room |
 | `09b-dispatch.wat` | Manual dispatch helpers |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
 | `09c-help.wat` | Window table, class table, WAT-native help system |
@@ -93,6 +95,7 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `thread-manager.js` | Multi-thread support via separate WASM instances |
 | `storage.js` | localStorage-backed registry and INI file persistence |
 | `filesystem.js` | Virtual filesystem for file operations |
+| `vlan-wire.js` | Virtual LAN transport: loopback segment (instances in one process) and process wire (emulators in separate OS processes over child IPC). Carries opaque frames only — all routing lives in WAT |
 | `compile-wat.js` | Browser-side WAT → WASM compiler (wraps wabt.js) |
 
 ### Rendering surfaces
@@ -203,6 +206,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/file2va.js` — convert PE file offsets ↔ VAs: `node tools/file2va.js <exe> 0xOFFSET[,...]` or `--va=0xVA[,...]`. Use after `strings -t x` / hex-editor finds, or to translate a VA back to a file offset for patching/inspection.
 - `tools/dump_va.js` — peek static PE/DLL bytes at one or more VAs: `node tools/dump_va.js <exe> 0xVA[,0xVA,...] [len=32]`. Marks BSS ranges (no raw data) explicitly so a zeroed sentinel doesn't masquerade as initialized data. Use this instead of `--trace-at-dump` when you only need to inspect static `.rdata`/`.data`.
 - `tools/vtable_dump.js` — dump function pointers from a vtable in a PE/DLL: `node tools/vtable_dump.js <exe> 0xVTABLE_VA [n_slots=16]`. Per slot, prints slot index, slot address, target VA, and the first instruction at the target — fast way to enumerate COM/C++ vtables and verify each slot points at a real prologue rather than NULL/garbage.
+- `tools/data_offsets.js` — print the address of every NUL-terminated string in a WAT `(data ...)` segment: `node tools/data_offsets.js src/01-header.wat 0x11300 [--check=0xADDR,...]`. Ordinal-import tables in `08b-dll-loader.wat` address these strings by absolute offset, so inserting or renaming one silently shifts every later entry. Use this to confirm an offset still names what its comment claims.
 - `tools/hexdump.js` — Memory hexdump utility
 - `tools/parse-rsrc.js` — PE resource section parser
 - `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)

@@ -213,8 +213,10 @@
             ;; Store ordinal as name RVA marker, resolve API ID via host
             (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (local.get $entry))
             (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
-              (call $host_resolve_ordinal
-                ;; DLL name ptr: desc+12 = name RVA
+              (call $resolve_import_ordinal
+                ;; DLL name: desc+12 = name RVA, as a guest address...
+                (i32.add (global.get $image_base) (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+                ;; ...and as a linear-memory address
                 (i32.add (global.get $GUEST_BASE) (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
                 ;; ordinal = entry & 0xFFFF
                 (i32.and (local.get $entry) (i32.const 0xFFFF))))))

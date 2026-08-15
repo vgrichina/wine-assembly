@@ -66,7 +66,9 @@
         (i32.eq (global.get $yield_reason) (i32.const 1))
         (i32.or
           (i32.eq (global.get $yield_reason) (i32.const 5))
-          (i32.eq (global.get $yield_reason) (i32.const 7)))))
+          (i32.or
+            (i32.eq (global.get $yield_reason) (i32.const 7))
+            (i32.eq (global.get $yield_reason) (i32.const 8))))))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
       ;; dispatch the thunk directly instead of trying to decode it as x86
       (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))
@@ -2168,7 +2170,17 @@
       (br $scan)))
     (global.set $wsa_last_error (i32.const 0))
     (global.set $wsa_started (i32.const 0))
+    (global.set $vsock_sel_waiting (i32.const 0))
+    (global.set $vsock_local_ip (i32.const 0x0A4D0001))
     (global.set $vsock_next_port (i32.const 49152)))
+
+  ;; Room address of this process. The host of the room keeps 10.77.0.1;
+  ;; every other member is assigned its own address before the guest runs.
+  (func (export "set_vlan_local_ip") (param $ip i32) (global.set $vsock_local_ip (local.get $ip)))
+  (func (export "get_vlan_local_ip") (result i32) (global.get $vsock_local_ip))
+  ;; Drain the wire without going through a guest API call, so a host that
+  ;; has just delivered frames can settle them before resuming the guest.
+  (func (export "vlan_pump") (call $vsock_pump))
   (func (export "test_call_socket") (param $af i32) (param $ty i32) (param $proto i32) (result i32)
     (local $sp i32) (local.set $sp (global.get $esp))
     (call $handle_socket (local.get $af) (local.get $ty) (local.get $proto)

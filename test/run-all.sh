@@ -63,6 +63,7 @@ UNIT=(
   test/test-gdi-deferred-presentation.js
   test/test-wat-memory-map.js
   test/test-wat-winsock.js
+  test/test-vlan-wire.js
   test/test-large-dll-staging.js
   test/test-wat-gdi-state.js
   test/test-wat-gdi-text.js
@@ -173,6 +174,7 @@ E2E=(
   test/test-aoe-menu.js
   test/test-tworld-launch.js
   test/test-winamp-about-web.js
+  test/test-vlan-loopback.js
 )
 
 SMOKE=(

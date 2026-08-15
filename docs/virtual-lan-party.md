@@ -943,29 +943,63 @@ byte streams through the public Winsock handlers, and `lwwinsrv.exe -private -6
 `listen(backlog=10)`, then `select` on the listener with a 1s timeout — where
 it previously failed at `socket()` and exited 1.
 
-Deliberately deferred to Slice 2, where a second process can make a blocked
-call progress:
-
-- A blocking `accept`/`recv`/`send` that cannot complete calls
-  `$crash_unimplemented` rather than faking `WSAEWOULDBLOCK` on a blocking
-  socket. With one process there is nothing that could wake it, so the crash
-  names the next thing to build instead of hiding it.
-- `select` with a finite `timeval` returns 0 immediately rather than waiting
-  out the interval. The outcome is legal; the elapsed time is not yet real.
-- `connect` completes synchronously, so there is no `WSAEWOULDBLOCK` connect
-  path or writable-readiness completion yet.
+Blocking calls, the finite `select` timeout, and the asynchronous `connect`
+path were deferred here and are implemented in Slice 2 below.
 
 Tracing: `--trace-api` decodes `sockaddr_in`, `fd_set`, and `timeval` through
 the `LPSOCKADDR`, `LPFDSET`, and `LPTIMEVAL` types in `lib/api-format.js`, so a
 network trace reads `bind(name=&0.0.0.0:8035)` rather than a bare pointer.
 
-### Slice 2: Liquid War local loopback
+### Slice 2: Liquid War local loopback — transport complete, game pending
 
-- Run `lwwinsrv.exe -private -6 -nobeep` as its own emulator process.
-- Run one `lwwin.exe` client in another process sharing the room switch.
-- Prove the listener becomes ready on `10.77.0.1:8035`.
-- Connect a team, reach the waiting-room state, exchange chat/readiness, start a
-  match, complete a round, and reconnect for a second game.
+The wire, the blocking model, and two-process rooms are in place. Driving the
+client through its `Net game` menu is the remaining half.
+
+Done:
+
+- A socket whose peer lives in another process is marked with `peer = -2` and
+  reaches that peer over a frame wire. Frames are 28 bytes of header —
+  magic, type, source and destination endpoints, length — followed by at most
+  4096 payload bytes, with types `SYN`, `SYNACK`, `DATA`, `FIN`, and `RST`.
+- The host carries frames and nothing else. Its whole surface is
+  `net_frame_send`, `net_frame_peek`, and `net_frame_commit`; it never reads a
+  port, tracks a connection, or picks a route. Peek and commit are separate so
+  a frame whose destination ring is full stays queued rather than being
+  dropped, which a byte stream may never do.
+- The wire is a broadcast segment and each process keeps only what is
+  addressed to it, so routing stays in WAT. Malformed frames — bad magic,
+  short header, a declared length that disagrees with the frame size — are
+  dropped without stalling the stream behind them.
+- Each process has its own room address (`set_vlan_local_ip`, `--vlan-ip=`).
+  A destination the process does not answer for goes out on the wire; its own
+  address and loopback still meet inside its own table.
+- Blocking calls no longer crash. `accept`, `recv`, `send`, `connect`, and
+  `select` park the whole API call on the net_wait yield (reason 8): the
+  handler puts back the stdcall frame it had already dropped, EIP stays on the
+  thunk, and the host re-enters the same handler once the wire has moved.
+- `select` honours a finite `timeval` against the tick counter, and counts
+  readiness without rewriting the guest's `fd_set`s until it actually
+  returns — a set emptied before a yield would be gone when the call resumed.
+- Ordinal-only imports now resolve through the WAT table first for both the
+  EXE and DLL loaders. They previously had separate answers, so `__WSAFDIsSet`
+  was reachable from a DLL but not from an EXE, and the server crashed the
+  first time `select` reported a ready socket.
+
+Gates met:
+
+- `test/test-vlan-wire.js` — 20 checks. Two emulator instances with separate
+  memories and separate tables complete a TCP conversation across the wire:
+  connect handshake, ordered delivery through 40 small writes, partial send at
+  the frame limit, orderly EOF, abortive reset, refusal, foreign and malformed
+  frames, and the three parking paths.
+- `test/test-vlan-loopback.js` — 5 checks, two operating-system processes.
+  `lwwinsrv.exe -private -6 -nobeep` runs at `10.77.0.1` and a second process
+  at `10.77.0.2` opens a connection to port 8035. The server's own trace shows
+  it calling `accept()`, then reading the peer's bytes one at a time through
+  its protocol parser, then `closesocket` when the peer goes away.
+
+Remaining for the exit gate: drive `lwwin.exe` through `Net game`, connect a
+team, reach the waiting room, and complete a match.
 
 Exit gate: the original client and server complete a game in one browser with
 no network-specific binary patch or fake successful call.

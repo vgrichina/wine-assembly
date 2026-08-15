@@ -94,6 +94,15 @@ const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFi
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
+const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
+// --vlan-ip=10.77.0.2: this process's room address (host of the room keeps
+// 10.77.0.1). --vlan-wire joins the segment offered by the parent process
+// over child IPC, which is how two emulators share one room switch.
+const VLAN_IP = getArg('vlan-ip', null);
+const VLAN_WIRE = hasFlag('vlan-wire');
+// A blocking socket call parks the guest; if it never wakes, stop instead of
+// spinning forever. Each wait is one macrotask, so this is a real bound.
+const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const PROFILE_HOST = getArg('profile-host', null); // --profile-host=fn1,fn2: print count + total time for host imports
 const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
@@ -331,6 +340,7 @@ async function main() {
 
   const logs = [];
   let stopped = false;
+  let netWaits = 0;   // consecutive net_wait yields, reset by any progress
   let apiCount = 0;
   const apiCounts = TRACE_API_COUNTS ? new Map() : null;
   let lastApiName = null;  // track last API name for return value correlation
@@ -945,6 +955,7 @@ async function main() {
   if (TRACE_REG) traceCategories.add('reg');
   if (TRACE_WAVE) traceCategories.add('wave');
   if (AUDIO_STATS) traceCategories.add('audio-stats');
+  if (TRACE_NET) traceCategories.add('net');
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
@@ -960,6 +971,9 @@ async function main() {
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
+    // The room segment, when this process was launched into one. Without it
+    // the guest's sockets still work; the room is just this process alone.
+    vlanWire: VLAN_WIRE ? new (require('../lib/vlan-wire').ProcessWire)(process) : null,
     audioStatsStride: AUDIO_STATS ? AUDIO_STATS_STRIDE : 0,
     dumpSdb: DUMP_SDB ? { images: new Map(), log: [] } : null,
     _audioOutFd: AUDIO_OUT ? fs.openSync(AUDIO_OUT, 'w') : undefined,
@@ -1717,6 +1731,15 @@ async function main() {
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
+  if (VLAN_IP && instance.exports.set_vlan_local_ip) {
+    const octets = VLAN_IP.split('.').map(Number);
+    if (octets.length !== 4 || octets.some(o => !(o >= 0 && o <= 255))) {
+      console.error(`--vlan-ip: not an IPv4 address: ${VLAN_IP}`);
+      process.exit(2);
+    }
+    instance.exports.set_vlan_local_ip(octets.reduce((a, o) => ((a << 8) | o) >>> 0, 0) | 0);
+    if (TRACE_NET) console.log(`[net] room address ${VLAN_IP}`);
+  }
   if (renderer) {
     renderer.wasm = instance;
     renderer.wasmMemory = memory;
@@ -4754,6 +4777,30 @@ async function main() {
         }
       }
       instance.exports.clear_yield();
+    }
+
+    // Handle the virtual LAN net_wait yield (yield_reason=8). The guest is
+    // parked inside a blocking socket call with EIP still on the thunk, so
+    // clearing the yield re-enters the same handler with the same
+    // arguments. Yielding to the event loop first is what lets inbound
+    // frames actually arrive: on a ProcessWire they come in over IPC, and
+    // nothing is delivered while this synchronous loop holds the thread.
+    if (instance.exports.get_yield_reason() === 8) {
+      netWaits++;
+      if (netWaits > VLAN_MAX_WAITS) {
+        console.log(`[net] no progress after ${VLAN_MAX_WAITS} blocking waits; stopping`);
+        stopped = true;
+        break;
+      }
+      if (TRACE_YIELD) {
+        console.log(`[yield] T0 reason=8 (net_wait) eip=${hex(instance.exports.get_eip())} ` +
+          `esp=${hex(instance.exports.get_esp())}`);
+      }
+      instance.exports.clear_yield();
+      await new Promise(resolve => setImmediate(resolve));
+      if (instance.exports.vlan_pump) instance.exports.vlan_pump();
+    } else {
+      netWaits = 0;
     }
 
     // Handle LoadLibraryA yield (yield_reason=5)

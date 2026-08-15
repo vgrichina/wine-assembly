@@ -720,6 +720,21 @@
   (import "host" "voice_set_pan" (func $host_voice_set_pan (param i32 i32)))
   (import "host" "voice_set_freq" (func $host_voice_set_freq (param i32 i32)))
 
+  ;; --- Virtual LAN wire (docs/virtual-lan-party.md) ---------------------
+  ;; The room switch lives in WAT; the host only carries opaque vln/1 frames
+  ;; between processes. These three primitives are the whole transport
+  ;; surface: hand a frame to the wire, look at the next inbound frame, and
+  ;; consume it. Peek and commit are separate so a frame that cannot be
+  ;; delivered yet — no receive-ring space — stays queued instead of being
+  ;; dropped, which a byte stream may never do.
+  ;; net_frame_send(frameWA, len) → 1 accepted, 0 wire queue full
+  (import "host" "net_frame_send" (func $host_net_frame_send (param i32 i32) (result i32)))
+  ;; net_frame_peek(bufWA, cap) → byte length of the next inbound frame,
+  ;; 0 when the wire is empty, -1 when the frame does not fit in cap.
+  (import "host" "net_frame_peek" (func $host_net_frame_peek (param i32 i32) (result i32)))
+  ;; net_frame_commit() — discard the frame most recently peeked.
+  (import "host" "net_frame_commit" (func $host_net_frame_commit))
+
   (import "host" "memory" (memory 8192 8192 shared))
   (export "memory" (memory 0))
 
@@ -1773,7 +1788,7 @@
   (global $clip_cursor_t (mut i32) (i32.const 0))
   (global $clip_cursor_r (mut i32) (i32.const 0))
   (global $clip_cursor_b (mut i32) (i32.const 0))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $message_wait_msg_ptr (mut i32) (i32.const 0))
   (global $wait_handle  (mut i32) (i32.const 0))
