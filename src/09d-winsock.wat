@@ -57,6 +57,8 @@
   (global $wsa_started (mut i32) (i32.const 0))
   (global $vsock_ntoa_buf (mut i32) (i32.const 0))
   (global $vsock_hostent (mut i32) (i32.const 0))
+  (global $vsock_servent (mut i32) (i32.const 0))
+  (global $vsock_protoent (mut i32) (i32.const 0))
 
   ;; ---- helpers --------------------------------------------------------
 
@@ -550,7 +552,13 @@
         (local.set $idx (call $vsock_find_conn (i32.const 6) (local.get $dport)
                           (local.get $sip) (local.get $sport)))
         (if (i32.ge_s (local.get $idx) (i32.const 0))
-          (then (i32.store (call $vsock_rec (local.get $idx)) (i32.const 4))))
+          (then
+            (i32.store (call $vsock_rec (local.get $idx)) (i32.const 4))
+            ;; The connection completed. Winsock reports FD_WRITE alongside
+            ;; FD_CONNECT, because a freshly connected socket is writable and
+            ;; that first edge is the only one an app will ever get.
+            (call $vsock_async_post (local.get $idx) (i32.const 0x10) (i32.const 0))
+            (call $vsock_async_post (local.get $idx) (i32.const 0x02) (i32.const 0))))
         (return (i32.const 1))))
     ;; DATA/FIN/RST target an established connection. A refusal can also
     ;; arrive while the local half is still in the connecting state, which
@@ -578,17 +586,25 @@
         (call $vsock_ring_write (local.get $idx)
           (i32.add (global.get $vsock_frame_buf) (global.get $VLN_HDR))
           (local.get $plen))
+        (call $vsock_async_post (local.get $idx) (i32.const 0x01) (i32.const 0))
         (return (i32.const 1))))
     (if (i32.eq (local.get $type) (i32.const 4))
       (then
         (i32.store (i32.add (local.get $rec) (i32.const 56))
           (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 1)))
+        (call $vsock_async_post (local.get $idx) (i32.const 0x20) (i32.const 0))
         (return (i32.const 1))))
     (if (i32.eq (local.get $type) (i32.const 5))
       (then
         (i32.store (i32.add (local.get $rec) (i32.const 56))
           (i32.or (i32.load (i32.add (local.get $rec) (i32.const 56))) (i32.const 5)))
         (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
+        ;; A reset before the connection came up is a failed connect, and the
+        ;; app learns the reason from the error half of lParam rather than
+        ;; from a close it never opened.
+        (if (i32.eq (i32.load (local.get $rec)) (i32.const 6))
+          (then (call $vsock_async_post (local.get $idx) (i32.const 0x10) (i32.const 10061)))
+          (else (call $vsock_async_post (local.get $idx) (i32.const 0x20) (i32.const 10054))))
         (return (i32.const 1))))
     (i32.const 1))
 
@@ -1454,6 +1470,221 @@
     (i32.store16 (call $g2w (i32.add (local.get $base) (i32.const 10))) (i32.const 4))
     (i32.store (call $g2w (i32.add (local.get $base) (i32.const 12)))
       (i32.add (local.get $base) (i32.const 16)))          ;; h_addr_list
+    (global.set $eax (local.get $base)))
+
+  ;; Copy a NUL-terminated guest string into a guest buffer, bounded.
+  (func $vsock_copy_cstr (param $dst i32) (param $src i32) (param $max i32)
+    (local $i i32) (local $ch i32)
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (local.get $max)))
+      (local.set $ch (i32.load8_u (call $g2w (i32.add (local.get $src) (local.get $i)))))
+      (i32.store8 (call $g2w (i32.add (local.get $dst) (local.get $i))) (local.get $ch))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next))))
+
+  ;; The TCP services a Win98 box knows without being told. Matched with the
+  ;; lowercase-dword idiom used elsewhere; the trailing NUL becomes 0x20 under
+  ;; the same OR, which is why the constants carry it.
+  (func $vsock_service_port (param $name i32) (result i32)
+    (local $d0 i32)
+    (local.set $d0 (i32.or (i32.load (call $g2w (local.get $name))) (i32.const 0x20202020)))
+    (if (i32.eq (local.get $d0) (i32.const 0x20707466)) (then (return (i32.const 21))))   ;; ftp
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6e6c6574))
+          (i32.and
+            (i32.eq (i32.or (i32.load16_u offset=4 (call $g2w (local.get $name)))
+                            (i32.const 0x2020)) (i32.const 0x7465))
+            (i32.eqz (i32.load8_u offset=6 (call $g2w (local.get $name))))))
+      (then (return (i32.const 23))))                                                     ;; telnet
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x706d7473))
+                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+      (then (return (i32.const 25))))                                                     ;; smtp
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x70747468))
+                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+      (then (return (i32.const 80))))                                                     ;; http
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x33706f70))
+                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+      (then (return (i32.const 110))))                                                    ;; pop3
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x70746e6e))
+                 (i32.eqz (i32.load8_u offset=4 (call $g2w (local.get $name)))))
+      (then (return (i32.const 119))))                                                    ;; nntp
+    (i32.const 0))
+
+  ;; getservbyname(name, proto) → struct servent* (NULL when unknown)
+  ;;
+  ;; A miss is the normal, correct answer for anything not in the services
+  ;; file: an app that names its own protocol looks it up, gets NULL, and
+  ;; falls back to its built-in port. TetriNET does exactly that on its way to
+  ;; port 31457, so the value here is answering at all rather than trapping.
+  (func $handle_getservbyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                              (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $port i32) (local $base i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (call $vsock_set_error (i32.const 11004))          ;; WSANO_DATA
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $port (call $vsock_service_port (local.get $arg0)))
+    (if (i32.eqz (local.get $port))
+      (then
+        (call $vsock_set_error (i32.const 11004))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (if (i32.eqz (global.get $vsock_servent))
+      (then (global.set $vsock_servent (call $heap_alloc (i32.const 96)))))
+    (local.set $base (global.get $vsock_servent))
+    (if (i32.eqz (local.get $base))
+      (then
+        (call $vsock_set_error (i32.const 11004))
+        (global.set $eax (i32.const 0))
+        (return)))
+    ;; Keep our own copies: the caller's buffers may be stack temporaries.
+    (call $vsock_copy_cstr (i32.add (local.get $base) (i32.const 16))
+      (local.get $arg0) (i32.const 31))
+    (if (local.get $arg1)
+      (then (call $vsock_copy_cstr (i32.add (local.get $base) (i32.const 48))
+              (local.get $arg1) (i32.const 31)))
+      (else (i32.store8 (call $g2w (i32.add (local.get $base) (i32.const 48)))
+              (i32.const 0))))
+    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 88))) (i32.const 0))
+    (i32.store (call $g2w (local.get $base))
+      (i32.add (local.get $base) (i32.const 16)))          ;; s_name
+    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 4)))
+      (i32.add (local.get $base) (i32.const 88)))          ;; s_aliases → {NULL}
+    ;; s_port is network byte order, unlike everything around it.
+    (i32.store16 (call $g2w (i32.add (local.get $base) (i32.const 8)))
+      (i32.or (i32.shl (i32.and (local.get $port) (i32.const 0xFF)) (i32.const 8))
+              (i32.shr_u (local.get $port) (i32.const 8))))
+    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 12)))
+      (i32.add (local.get $base) (i32.const 48)))          ;; s_proto
+    (global.set $eax (local.get $base)))
+
+  ;; ---- WSAAsyncSelect: sockets that report themselves as window messages --
+  ;;
+  ;; The other half of Winsock. select() asks "is anything ready yet"; this
+  ;; says "tell my window when something happens" and then never polls. Apps
+  ;; built around a message pump use it exclusively -- TetriNET and Win98's
+  ;; own telnet both do -- so without it a socket connects and the app never
+  ;; finds out.
+  ;;
+  ;; The registration lives beside the socket table rather than inside it:
+  ;; VSOCK_TABLE is 64 records of exactly 128 bytes in an 8KB region with no
+  ;; room left, and widening the record would mean moving a memory-map
+  ;; boundary for three fields.
+  (global $vsock_async (mut i32) (i32.const 0))
+  (global $VSOCK_ASYNC_REC i32 (i32.const 12))
+
+  (func $vsock_async_rec (param $idx i32) (result i32)
+    (local $i i32) (local $base i32)
+    (if (i32.ge_u (local.get $idx) (global.get $VSOCK_MAX)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $vsock_async))
+      (then
+        (local.set $base (call $heap_alloc
+          (i32.mul (global.get $VSOCK_MAX) (global.get $VSOCK_ASYNC_REC))))
+        (if (i32.eqz (local.get $base)) (then (return (i32.const 0))))
+        (block $zdone (loop $z
+          (br_if $zdone (i32.ge_u (local.get $i)
+            (i32.mul (global.get $VSOCK_MAX) (global.get $VSOCK_ASYNC_REC))))
+          (i32.store8 (call $g2w (i32.add (local.get $base) (local.get $i))) (i32.const 0))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $z)))
+        (global.set $vsock_async (local.get $base))))
+    (i32.add (global.get $vsock_async)
+      (i32.mul (local.get $idx) (global.get $VSOCK_ASYNC_REC))))
+
+  ;; Report one event to the window that asked for it. lParam packs the event
+  ;; and the error the way WSAMAKESELECTREPLY does; wParam is the handle.
+  (func $vsock_async_post (param $idx i32) (param $event i32) (param $error i32)
+    (local $rec i32) (local $w i32)
+    (local.set $rec (call $vsock_async_rec (local.get $idx)))
+    (if (i32.eqz (local.get $rec)) (then (return)))
+    (local.set $w (call $g2w (local.get $rec)))
+    (if (i32.eqz (i32.load (local.get $w))) (then (return)))          ;; no window
+    (if (i32.eqz (i32.and (i32.load offset=8 (local.get $w)) (local.get $event)))
+      (then (return)))                                               ;; not requested
+    (drop (call $post_queue_push
+      (i32.load (local.get $w))
+      (i32.load offset=4 (local.get $w))
+      (call $vsock_handle (local.get $idx))
+      (i32.or (i32.shl (local.get $error) (i32.const 16)) (local.get $event)))))
+
+  ;; WSAAsyncSelect(s, hWnd, wMsg, lEvent) → 0 on success
+  (func $handle_WSAAsyncSelect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                               (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $idx i32) (local $rec i32) (local $w i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (local.set $idx (call $vsock_index (local.get $arg0)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0))
+      (then
+        (call $vsock_set_error (i32.const 10038))          ;; WSAENOTSOCK
+        (global.set $eax (i32.const -1))
+        (return)))
+    (local.set $rec (call $vsock_async_rec (local.get $idx)))
+    (if (i32.eqz (local.get $rec))
+      (then
+        (call $vsock_set_error (i32.const 10055))          ;; WSAENOBUFS
+        (global.set $eax (i32.const -1))
+        (return)))
+    (local.set $w (call $g2w (local.get $rec)))
+    (i32.store        (local.get $w) (local.get $arg1))    ;; hWnd
+    (i32.store offset=4 (local.get $w) (local.get $arg2))  ;; wMsg
+    (i32.store offset=8 (local.get $w) (local.get $arg3))  ;; lEvent
+    ;; Documented side effect: the socket becomes non-blocking, and stays that
+    ;; way even if the registration is later cancelled with lEvent = 0.
+    (i32.store (i32.add (call $vsock_rec (local.get $idx)) (i32.const 36)) (i32.const 1))
+    (global.set $eax (i32.const 0)))
+
+  ;; getprotobyname(name) → struct protoent* (NULL when unknown)
+  ;;
+  ;; Apps call this to turn "tcp" into the 6 they pass to socket(). The four
+  ;; protocols below are the ones a Win98 protocol file lists that anything
+  ;; here could ask for; anything else is genuinely unknown.
+  (func $handle_getprotobyname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                               (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $d0 i32) (local $proto i32) (local $base i32) (local $n i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (call $vsock_set_error (i32.const 11004))          ;; WSANO_DATA
+        (global.set $eax (i32.const 0))
+        (return)))
+    (local.set $n (call $g2w (local.get $arg0)))
+    (local.set $d0 (i32.or (i32.load (local.get $n)) (i32.const 0x20202020)))
+    (local.set $proto (i32.const -1))
+    (if (i32.eq (local.get $d0) (i32.const 0x20706374))
+      (then (local.set $proto (i32.const 6))))            ;; tcp
+    (if (i32.eq (local.get $d0) (i32.const 0x20706475))
+      (then (local.set $proto (i32.const 17))))           ;; udp
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x706d6369))
+                 (i32.eqz (i32.load8_u offset=4 (local.get $n))))
+      (then (local.set $proto (i32.const 1))))            ;; icmp
+    (if (i32.and (i32.eq (i32.or (i32.load16_u (local.get $n)) (i32.const 0x2020))
+                         (i32.const 0x7069))
+                 (i32.eqz (i32.load8_u offset=2 (local.get $n))))
+      (then (local.set $proto (i32.const 0))))            ;; ip
+    (if (i32.lt_s (local.get $proto) (i32.const 0))
+      (then
+        (call $vsock_set_error (i32.const 11004))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (if (i32.eqz (global.get $vsock_protoent))
+      (then (global.set $vsock_protoent (call $heap_alloc (i32.const 64)))))
+    (local.set $base (global.get $vsock_protoent))
+    (if (i32.eqz (local.get $base))
+      (then
+        (call $vsock_set_error (i32.const 11004))
+        (global.set $eax (i32.const 0))
+        (return)))
+    (call $vsock_copy_cstr (i32.add (local.get $base) (i32.const 16))
+      (local.get $arg0) (i32.const 31))
+    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 56))) (i32.const 0))
+    (i32.store (call $g2w (local.get $base))
+      (i32.add (local.get $base) (i32.const 16)))          ;; p_name
+    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 4)))
+      (i32.add (local.get $base) (i32.const 56)))          ;; p_aliases → {NULL}
+    ;; p_proto is a plain int, in host order — unlike servent's s_port.
+    (i32.store (call $g2w (i32.add (local.get $base) (i32.const 8))) (local.get $proto))
     (global.set $eax (local.get $base)))
 
   ;; WSAStartup(wVersionRequested, lpWSAData)

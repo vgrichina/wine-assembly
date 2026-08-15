@@ -936,6 +936,23 @@
                 (else (call $emit_store8 (global.get $mr_reg))))))
           (br $decode)))
 
+      ;; ---- 0x62: BOUND r32, m32&32 ----
+      ;; Only the memory form exists; mod=11 is an invalid encoding and is
+      ;; left to the unknown-opcode trap rather than silently decoded. The
+      ;; 16-bit form goes the same way: no Borland output uses it, and a
+      ;; wrong range check is worse than a loud one.
+      (if (i32.and (i32.eq (local.get $op) (i32.const 0x62))
+                   (i32.eqz (local.get $prefix_66)))
+        (then
+          (call $decode_modrm)
+          (if (i32.ne (global.get $mr_mod) (i32.const 3))
+            (then
+              (call $apply_seg_override)
+              (local.set $imm (call $emit_sib_or_abs))
+              (call $te (i32.const 362) (global.get $mr_reg))
+              (call $te_raw (local.get $imm))
+              (br $decode)))))
+
       ;; ---- 0x8A/0x8B: MOV r, r/m ----
       (if (i32.or (i32.eq (local.get $op) (i32.const 0x8A)) (i32.eq (local.get $op) (i32.const 0x8B)))
         (then

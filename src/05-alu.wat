@@ -579,6 +579,21 @@
   ;; re-decoded it forever — so a missing instruction was indistinguishable
   ;; from a hung guest, and cost a day to find in Liquid War. Trap instead, and
   ;; say what and where, exactly as an unimplemented API does.
+  ;; BOUND r32, m32&32 — signed range check against a pair of dwords.
+  ;; Borland's compilers emit this for range-checked array and ordinal
+  ;; accesses, so it shows up in Delphi binaries wherever a value is about to
+  ;; be narrowed. Within bounds it does nothing at all; outside, it is #BR,
+  ;; which Win32 surfaces as STATUS_ARRAY_BOUNDS_EXCEEDED.
+  (func $th_bound (param $op i32)
+    (local $addr i32) (local $idx i32)
+    (local.set $addr (call $read_addr))
+    (local.set $idx (call $get_reg (local.get $op)))
+    (if (i32.or
+          (i32.lt_s (local.get $idx) (call $gl32 (local.get $addr)))
+          (i32.gt_s (local.get $idx) (call $gl32 (i32.add (local.get $addr) (i32.const 4)))))
+      (then (call $raise_exception (i32.const 0xC000008C)) (return)))
+    (return_call $next))
+
   (func $th_bad_opcode (param $op i32)
     (global.set $eip (local.get $op))
     (call $host_log_i32 (i32.const 0xBADC0DE0))

@@ -3143,6 +3143,43 @@
   ;; Sits in the same reserved 0xFFFE_xxxx space as $WNDPROC_BUILTIN.
   (global $WNDPROC_SYSCLASS i32 (i32.const 0xFFFE0100))
 
+  ;; Give a newly adopted control the WM_CREATE it never received.
+  ;;
+  ;; Every control proc allocates its state block in WM_CREATE, and a window
+  ;; created under the app's own class name never had one routed to it. Left
+  ;; alone the state pointer stays NULL and the procs then read and write
+  ;; through guest address zero -- which superficially works, because both
+  ;; sides use the same bad pointer, while quietly corrupting low guest
+  ;; memory. Replaying creation is also how the control learns its id, caption
+  ;; and button kind, none of which it can recover later.
+  (global $sysclass_cs (mut i32) (i32.const 0))
+  (func $sysclass_replay_create (param $hwnd i32) (param $slot i32)
+    (local $cs i32) (local $cs_w i32) (local $name i32) (local $geom i32)
+    (if (i32.eqz (global.get $sysclass_cs))
+      ;; 48-byte CREATESTRUCT followed by the caption it points at.
+      (then (global.set $sysclass_cs (call $heap_alloc (i32.const 304)))))
+    (if (i32.eqz (global.get $sysclass_cs)) (then (return)))
+    (local.set $cs (global.get $sysclass_cs))
+    (local.set $name (i32.add (local.get $cs) (i32.const 48)))
+    (local.set $cs_w (call $g2w (local.get $cs)))
+    (drop (call $host_get_window_text
+      (local.get $hwnd) (call $g2w (local.get $name)) (i32.const 255)))
+    (local.set $geom (call $ctrl_geom_addr (local.get $slot)))
+    (i32.store           (local.get $cs_w) (i32.const 0))  ;; lpCreateParams
+    (i32.store offset=4  (local.get $cs_w) (i32.const 0))  ;; hInstance
+    (i32.store offset=8  (local.get $cs_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=12 (local.get $cs_w) (call $wnd_get_parent (local.get $hwnd)))
+    (i32.store offset=16 (local.get $cs_w) (i32.load16_u offset=6 (local.get $geom)))
+    (i32.store offset=20 (local.get $cs_w) (i32.load16_u offset=4 (local.get $geom)))
+    (i32.store offset=24 (local.get $cs_w) (i32.load16_u offset=2 (local.get $geom)))
+    (i32.store offset=28 (local.get $cs_w) (i32.load16_u (local.get $geom)))
+    (i32.store offset=32 (local.get $cs_w) (call $wnd_get_style (local.get $hwnd)))
+    (i32.store offset=36 (local.get $cs_w) (local.get $name))
+    (i32.store offset=40 (local.get $cs_w) (i32.const 0))  ;; lpszClass
+    (i32.store offset=44 (local.get $cs_w) (call $ctrl_get_ex_style (local.get $hwnd)))
+    (drop (call $control_wndproc_dispatch
+      (local.get $hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs))))
+
   (global $windowpos_ring (mut i32) (i32.const 0))
   (global $windowpos_depth (mut i32) (i32.const 0))
   (global $WINDOWPOS_SLOT i32 (i32.const 32))   ;; 28-byte struct, padded
@@ -9857,9 +9894,11 @@
           (then
             (local.set $thunk_idx (call $wnd_table_find (local.get $arg1)))
             (if (i32.ne (local.get $thunk_idx) (i32.const -1))
-              (then (call $ctrl_table_set (local.get $thunk_idx)
-                      (local.get $ctrl_class)
-                      (call $ctrl_table_get_id (local.get $arg1)))))))
+              (then
+                (call $ctrl_table_set (local.get $thunk_idx)
+                  (local.get $ctrl_class)
+                  (call $ctrl_table_get_id (local.get $arg1)))
+                (call $sysclass_replay_create (local.get $arg1) (local.get $thunk_idx))))))
         (global.set $eax (call $control_wndproc_dispatch
           (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))

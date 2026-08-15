@@ -3993,6 +3993,18 @@
         (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
         (return (local.get $text_len))))
 
+    ;; ---------- WM_GETTEXTLENGTH (0x000E) ----------
+    ;; Answering only WM_GETTEXT is not enough. VCL's TControl.GetText asks for
+    ;; the length first and sizes the result string from it, so a button that
+    ;; reports 0 hands every caller an empty caption however correct its
+    ;; WM_GETTEXT reply is. TetriNET compares its Connect button's caption
+    ;; against "Connect" to decide whether it is connecting or disconnecting,
+    ;; and with an empty string it always chose disconnect.
+    (if (i32.eq (local.get $msg) (i32.const 0x000E))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (return (i32.load offset=4 (call $g2w (local.get $state))))))
+
     ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0201))
       (then

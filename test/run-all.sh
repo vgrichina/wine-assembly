@@ -193,6 +193,7 @@ E2E=(
   test/test-winamp-about-web.js
   test/test-vlan-loopback.js
   test/test-wat-windowposchanged.js
+  test/test-tetrinet-connect.js
   test/test-vlan-browser.js
 )
 

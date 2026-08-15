@@ -18646,5 +18646,26 @@
     "nargs": 2,
     "convention": "cdecl",
     "hash": 1295891328
+  },
+  {
+    "id": 2403,
+    "name": "getservbyname",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1992196073
+  },
+  {
+    "id": 2404,
+    "name": "getprotobyname",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4256775693
+  },
+  {
+    "id": 2405,
+    "name": "WSAAsyncSelect",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 445374758
   }
 ]

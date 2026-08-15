@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 362 funcref)
+  (table $handlers 363 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -417,4 +417,5 @@
     $th_push_seg             ;; 359: push flat-mode segment selector (op bit16=16-bit)
     $th_pop_seg              ;; 360: discard popped segment selector (op=16-bit flag)
     $th_bad_opcode           ;; 361: undecodable opcode — trap with eip + bytes
+    $th_bound                ;; 362: BOUND r32, m32&32 (Borland range check)
   )
