@@ -202,12 +202,15 @@ const TEST_CASES = [
   { exe: 'test/binaries/wep32-community/Funpack/FourStones.exe', name: 'FourStones (TicTacDrop)' },
   { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)', knownBadRender: 'requires DirectX 9' },
   { exe: 'test/binaries/wep32-community/QBlackjack/QuickBlackjack.exe', name: 'QuickBlackjack' },
-  { exe: 'test/binaries/wep32-community/Runenlegen/Runenlegen.exe', name: 'Runenlegen (Stones)', expectedCrash: 'not a current-stage target' },
+  { exe: 'test/binaries/wep32-community/Runenlegen/Runenlegen.exe', name: 'Runenlegen (Stones)',
+    // Was an expected crash on the 0x67 address-size prefix. It now runs, but
+    // draws its board and stats only after the sprite sheets are composed.
+    maxBatches: 400, batchSize: 20000 },
   { exe: 'test/binaries/wep32-community/Tetravex/Tetravex.exe', name: 'Tetravex',
     maxBatches: 220, batchSize: 10000,
     extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 60000 },
-  { exe: 'test/binaries/wep32-community/Winarc/Winarc.exe', name: 'Winarc (Pegs/Krypto/Life)', expectedCrash: 'not a current-stage target' },
+  { exe: 'test/binaries/wep32-community/Winarc/Winarc.exe', name: 'Winarc (Pegs/Krypto/Life)' },
   { exe: 'test/binaries/wep32-community/Wordzap/CWordZap.exe', name: 'CWordZap',
     // Startup expands a BI_RLE4 splash after a comparatively expensive
     // resource decode. The default 80k budget stops before its first paint.
