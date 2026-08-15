@@ -124,7 +124,12 @@ const TEST_CASES = [
   { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi' },
   { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper (WEP)' },
   // Win98 accessories
-  { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad' },
+  { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad',
+    // WordPad is MFC: at the default 80k-instruction budget it has a titled
+    // frame but has not painted its toolbar, format bar, ruler or status bar
+    // yet, so it captured as BLANK and the whole app sat in the known-blank
+    // list. It draws all of them by ~300 batches.
+    maxBatches: 300 },
   { exe: 'test/binaries/win98-apps/write.exe', name: 'Write',
     // Win98 write.exe is a compatibility launcher for WordPad. It should
     // ShellExecute wordpad.exe and exit without drawing its own UI.
