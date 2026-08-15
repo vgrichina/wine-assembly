@@ -3129,6 +3129,66 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 141: SetWindowPos
+  ;; WINDOWPOS structs handed to guest wndprocs by $windowpos_notify. These are
+  ;; guest-visible, so they come from $heap_alloc (which returns guest
+  ;; addresses) rather than one of the emulator-private scratch regions, which
+  ;; live outside the g2w window and cannot be dereferenced by the guest.
+  ;;
+  ;; A wndproc handling WM_WINDOWPOSCHANGED routinely calls SetWindowPos again
+  ;; — VCL does it while laying out children — so a single shared struct would
+  ;; be rewritten underneath an outer frame that still holds the pointer. The
+  ;; depth counter picks the slot and bounds the recursion in one move.
+  (global $windowpos_ring (mut i32) (i32.const 0))
+  (global $windowpos_depth (mut i32) (i32.const 0))
+  (global $WINDOWPOS_SLOT i32 (i32.const 32))   ;; 28-byte struct, padded
+  (global $WINDOWPOS_DEPTH_MAX i32 (i32.const 8))
+
+  ;; Tell a window it was moved or resized.
+  ;;
+  ;; Win32 sends this synchronously from inside SetWindowPos, and VCL depends
+  ;; on that precise timing: TWinControl.SetBounds does not cache the new size
+  ;; when the window has a handle. It calls SetWindowPos and lets
+  ;; WM_WINDOWPOSCHANGED -> UpdateBounds -> GetWindowRect write FLeft/FTop/
+  ;; FWidth/FHeight back. Without the message those fields keep whatever the
+  ;; window was created with, so the next SetBounds — setting height, say —
+  ;; passes a stale width alongside it and silently undoes the previous call.
+  ;; Posting the message instead of sending it does not help: the whole
+  ;; sequence runs before the app pumps its queue again.
+  (func $windowpos_notify
+    (param $hwnd i32) (param $insert_after i32) (param $x i32) (param $y i32)
+    (param $cx i32) (param $cy i32) (param $flags i32)
+    (local $wp i32) (local $slot i32) (local $w i32)
+    (local.set $wp (call $wnd_table_get (local.get $hwnd)))
+    (if (i32.eqz (local.get $wp)) (then (return)))
+    ;; WAT-native and builtin procs keep their own geometry; only a guest
+    ;; wndproc has bookkeeping that can drift out of sync with ours.
+    (if (i32.eq (local.get $wp) (global.get $WNDPROC_BUILTIN)) (then (return)))
+    (if (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000)) (then (return)))
+    ;; WAT-owned controls are already tracked by $ctrl_geom_sync above.
+    (if (call $ctrl_table_get_class (local.get $hwnd)) (then (return)))
+    (if (i32.ge_u (global.get $windowpos_depth) (global.get $WINDOWPOS_DEPTH_MAX))
+      (then (return)))
+    (if (i32.eqz (global.get $windowpos_ring))
+      (then
+        (global.set $windowpos_ring (call $heap_alloc
+          (i32.mul (global.get $WINDOWPOS_SLOT) (global.get $WINDOWPOS_DEPTH_MAX))))))
+    (if (i32.eqz (global.get $windowpos_ring)) (then (return)))
+    (local.set $slot (i32.add (global.get $windowpos_ring)
+      (i32.mul (global.get $windowpos_depth) (global.get $WINDOWPOS_SLOT))))
+    (local.set $w (call $g2w (local.get $slot)))
+    (i32.store (local.get $w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $w) (local.get $insert_after))
+    (i32.store offset=8 (local.get $w) (local.get $x))
+    (i32.store offset=12 (local.get $w) (local.get $y))
+    (i32.store offset=16 (local.get $w) (local.get $cx))
+    (i32.store offset=20 (local.get $w) (local.get $cy))
+    (i32.store offset=24 (local.get $w) (local.get $flags))
+    (global.set $windowpos_depth (i32.add (global.get $windowpos_depth) (i32.const 1)))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x0047) (i32.const 0) (local.get $slot)))
+    (global.set $windowpos_depth (i32.sub (global.get $windowpos_depth) (i32.const 1)))
+  )
+
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
     (local $cy i32) (local $uFlags i32) (local $dlg_rec i32)
@@ -3178,6 +3238,9 @@
               (i32.ne (local.get $dlg_rec) (i32.const 0))
               (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
           (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))))
+    ;; Last, so the window sees the geometry we have already committed.
+    (call $windowpos_notify (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
