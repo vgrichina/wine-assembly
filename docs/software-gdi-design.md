@@ -539,9 +539,14 @@ cannot overwrite a DirectDraw surface.
 
 `GetDC(NULL)` and `GetDC(GetDesktopWindow())` select a persistent screen-sized
 32-bpp WAT bitmap. Its Canvas is attached as the renderer's desktop base layer.
-The final z-order desktop image remains a derived compositor result; capturing
-other windows through the screen DC is not yet implemented and must not be
-emulated by reading the compositor Canvas back into GDI storage.
+Normal presentation remains the renderer's efficient derived Canvas composite.
+Only an API that reads a screen DC materializes the final z-order image in the
+WAT bitmap. The renderer already owns the only global view of windows from
+separate processes, so it copies their canonical surface bytes directly across
+WASM memories in z-order. The 32-bpp path uses bulk typed-array rows; uncommon
+indexed and true-color formats use the canonical software decoder. No Canvas
+destination is sampled. A layout-and-surface signature caches the materialized
+snapshot until a window moves, changes z-order, or uploads new pixels.
 
 Popup menus use the same surface model rather than a semantic renderer
 fallback. WAT owns a screen-sized bitmap selected into a persistent memory DC,
@@ -557,7 +562,8 @@ underlying GDI pixels.
 
 Never read the presentation Canvas in GDI code. The Canvas font provider reads
 only its private scratch mask; WAT composes those mask bytes into the canonical
-surface. Desktop composition is one-way and never becomes a GDI pixel source.
+surface. Screen-source reads consume the same canonical surface memories that
+feed presentation, not their Canvas caches.
 
 ## Text
 

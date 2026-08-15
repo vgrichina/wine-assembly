@@ -11,6 +11,10 @@
         "name": "gdi_set_window_rgn",
         "boundary": "Apply an already-derived region mirror to browser window composition."
       },
+      {
+        "name": "gdi_screen_readback",
+        "boundary": "On an explicit screen-source read, copy globally ordered canonical surface bytes across process memories into the caller's WAT screen bitmap without sampling Canvas."
+      },
       { "name": "gdi_surface_create", "boundary": "Allocate a derived Canvas cache for an opaque WAT-owned surface and byte layout." },
       { "name": "gdi_surface_delete", "boundary": "Discard the derived Canvas cache for an opaque surface ID." },
       { "name": "gdi_surface_attach", "boundary": "Attach an opaque WAT-owned window, desktop-base, or popup-overlay surface to its compositor Canvas." },

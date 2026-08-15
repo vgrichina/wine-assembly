@@ -364,6 +364,11 @@
     (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_surface_delete" (func $host_gdi_surface_delete (param i32) (result i32)))
   (import "host" "gdi_surface_attach" (func $host_gdi_surface_attach (param i32 i32) (result i32)))
+  ;; The renderer owns global cross-process z-order. Screen-source reads ask
+  ;; it to copy canonical surface bytes directly into this WAT screen bitmap;
+  ;; no Canvas pixels are read back.
+  (import "host" "gdi_screen_readback" (func $host_gdi_screen_readback
+    (param i32 i32 i32 i32) (result i32)))
   (func $host_gdi_get_current_object (param $hdc i32) (param $type i32) (result i32)
     (if (i32.eq (local.get $type) (i32.const 1))
       (then (return (call $gdi_dc_get_field (local.get $hdc) (i32.const 4) (i32.const 0x30017)))))

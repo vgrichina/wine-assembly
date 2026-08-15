@@ -21,6 +21,7 @@ const watSource = fs.readdirSync(path.join(ROOT, 'src'))
 // inventory. Expanding the document alone must never expand JavaScript's GDI
 // authority.
 const PERMANENT_NON_TEXT_BRIDGE = [
+  'gdi_screen_readback',
   'gdi_set_region_bands',
   'gdi_set_window_rgn',
   'gdi_surface_attach',

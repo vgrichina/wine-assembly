@@ -6948,6 +6948,31 @@
   (func $host_alloc_screen_dc (result i32)
     (call $gdi_screen_dc_alloc))
 
+  (func $gdi_dc_is_screen (param $hdc i32) (result i32)
+    (local $bitmap i32) (local $dc i32)
+    (local.set $bitmap (global.get $gdi_screen_bitmap))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.or (i32.eqz (local.get $bitmap)) (i32.eqz (local.get $dc)))
+      (then (return (i32.const 0))))
+    (i32.eq (i32.load offset=84 (local.get $dc)) (local.get $bitmap)))
+
+  ;; Materialize the global desktop only for APIs that read a screen DC.
+  ;; The host walks global z-order and copies canonical surface storage from
+  ;; every process directly into this bitmap; Canvas is never sampled.
+  (func $gdi_screen_readback_sync (param $hdc i32) (result i32)
+    (local $record i32)
+    (if (i32.eqz (call $gdi_dc_is_screen (local.get $hdc)))
+      (then (return (i32.const 1))))
+    (local.set $record (call $gdi_object_record (global.get $gdi_screen_bitmap)))
+    (if (i32.or (i32.eqz (local.get $record))
+          (i32.ne (i32.load offset=16 (local.get $record)) (i32.const 32)))
+      (then (return (i32.const 0))))
+    (call $host_gdi_screen_readback
+      (i32.load offset=24 (local.get $record))
+      (i32.load offset=8 (local.get $record))
+      (i32.load offset=12 (local.get $record))
+      (i32.load offset=28 (local.get $record))))
+
   (func $gdi_printer_page_clear (param $hdc i32) (result i32)
     (local $record i32) (local $bits i32) (local $bytes i32)
     (if (i32.or
@@ -7913,6 +7938,15 @@
     (local $origin_x i32) (local $origin_y i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+    ;; Screen drawing and reading both start from the current global desktop.
+    ;; The host-side signature makes this a no-copy check until scene pixels or
+    ;; layout change, while preserving direct screen writes above that base.
+    (if (i32.and (i32.ne (global.get $gdi_screen_bitmap) (i32.const 0))
+          (i32.eq (i32.load offset=84 (local.get $dc))
+            (global.get $gdi_screen_bitmap)))
+      (then
+        (if (i32.eqz (call $gdi_screen_readback_sync (local.get $hdc)))
+          (then (return (i32.const 0))))))
     (local.set $dx (call $gdi_dx_surface_entry (local.get $hdc)))
     (local.set $bmp (call $gdi_dc_bitmap_record (local.get $hdc)))
     (if (local.get $dx)

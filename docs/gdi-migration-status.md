@@ -4,10 +4,12 @@ The machine-readable source is
 [`gdi-migration-status.json`](gdi-migration-status.json). It contains the exact
 keep/delete API lists for the JavaScript GDI bridge.
 
-The permanent non-text bridge has six presentation-only calls:
+The permanent non-text bridge has seven presentation and cross-process
+transport calls:
 
 - `gdi_set_region_bands`
 - `gdi_set_window_rgn`
+- `gdi_screen_readback`
 - `gdi_surface_create`
 - `gdi_surface_attach`
 - `gdi_surface_upload`
@@ -71,9 +73,14 @@ All named GDI32 imports in the checked-in PE corpus are now exposed. Classic
 and enhanced metafiles have WAT-owned byte objects, deep-copy/lifetime,
 header/query, and valid empty conversion-stream semantics; drawing-record
 capture and replay remain explicitly partial.
-DirectDraw HDCs now address native WAT DIB bytes,
-screen DCs select a persistent WAT bitmap, and JS no longer owns DC handles,
-semantic DC records, HDC target resolution, or Canvas-to-DIB synchronization.
+DirectDraw HDCs now address native WAT DIB bytes. Screen DCs select a
+persistent WAT bitmap. `GetPixel` and blits that use a screen DC as their
+source synchronously materialize the global renderer z-order into that bitmap.
+The host copies canonical bytes directly between process memories, using a
+bulk `Uint32Array` row path for 32-bit surfaces and the canonical decoder for
+indexed/16/24-bit DirectDraw frames. It never samples Canvas. JS still owns no
+DC handles, semantic DC records, HDC target resolution, or Canvas-to-DIB
+synchronization.
 Broader public GDI32 compatibility is tracked
 separately from this bridge-boundary inventory.
 
@@ -81,6 +88,7 @@ There are no resource-byte exceptions and the temporary non-text exception
 budget is zero. `test/test-gdi-migration-status.js` owns a separate hard-coded
 allowlist, verifies the exact JS exports and WAT stubs, and compiles the module.
 
-The remaining desktop limitation is semantic rather than an ownership split:
-the screen DC exposes the canonical desktop base bitmap but does not capture
-the renderer's derived cross-window z-order composite.
+The browser's HTML desktop icons and transient Canvas-only caret/resize
+feedback are not part of screen-DC captures. Guest windows, WAT popup-menu
+surfaces, wallpaper, window regions, child surfaces, and canonical DirectDraw
+layers are included.
