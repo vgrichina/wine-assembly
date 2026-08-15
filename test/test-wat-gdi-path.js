@@ -84,7 +84,28 @@ async function main() {
       hdc,
       bits: 0x1c000000 + (bitsGuest - 0x50000000),
       size: width * height * 4,
+      width,
     };
+  }
+
+  function pixel(dib, x, y) {
+    const p = dib.bits + (y * dib.width + x) * 4;
+    return Array.from(bytes.slice(p, p + 3));
+  }
+
+  function clearDib(dib) {
+    bytes.fill(0xff, dib.bits, dib.bits + dib.size);
+  }
+
+  function setIdentityMap(hdc) {
+    wat.test_gdi_dc_set_field(hdc, 40, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 44, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 48, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 52, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 56, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 60, 0, 0);
+    wat.test_gdi_dc_set_field(hdc, 64, 1, 1);
+    wat.test_gdi_dc_set_field(hdc, 68, 1, 1);
   }
 
   const dib = makeDib(20, 16);
@@ -170,6 +191,7 @@ async function main() {
     assert.strictEqual(wat.test_gdi_dc_clip_point_visible(dib.hdc, 4, 5), 1);
     assert.strictEqual(wat.test_gdi_dc_clip_point_visible(dib.hdc, 12, 5), 0);
     assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+    assert.notStrictEqual(wat.test_gdi_dc_clip_clear(dib.hdc), 0);
   });
 
   check('Polygon and PolylineTo preserve figure boundaries and current position', () => {
@@ -210,6 +232,136 @@ async function main() {
     });
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, -1), 6);
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, -1), 14);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+  });
+
+  check('FlattenPath converts cubic controls to exact device-space line points', () => {
+    setIdentityMap(dib.hdc);
+    const bezier = allocPoints([[1, 10], [3, 2], [7, 2], [9, 10]]);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_PolyBezier(dib.hdc, bezier, 4), 1);
+    assert.strictEqual(wat.test_call_CloseFigure(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_FlattenPath(dib.hdc), 1);
+    const path = readPath(dib.hdc);
+    assert.strictEqual(path.points.length, 33);
+    assert.deepStrictEqual(path.points[0], [1, 10]);
+    assert.deepStrictEqual(path.points[16], [5, 4]);
+    assert.deepStrictEqual(path.points[32], [9, 10]);
+    assert.deepStrictEqual(path.types, [6, ...Array(31).fill(2), 3]);
+    const region = wat.test_call_PathToRegion(dib.hdc) >>> 0;
+    assert(region);
+    assert.strictEqual(wat.test_call_PtInRegion(region, 5, 7), 1);
+    assert.strictEqual(wat.test_call_PtInRegion(region, 5, 2), 0);
+    assert.strictEqual(wat.test_call_DeleteObject(region), 1);
+  });
+
+  check('PathToRegion flattens a retained cubic without an explicit FlattenPath', () => {
+    setIdentityMap(dib.hdc);
+    const bezier = allocPoints([[1, 10], [3, 2], [7, 2], [9, 10]]);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_PolyBezier(dib.hdc, bezier, 4), 1);
+    assert.strictEqual(wat.test_call_CloseFigure(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    const region = wat.test_call_PathToRegion(dib.hdc) >>> 0;
+    assert(region);
+    assert.strictEqual(wat.test_call_PtInRegion(region, 5, 7), 1);
+    assert.strictEqual(wat.test_call_DeleteObject(region), 1);
+  });
+
+  check('FillPath uses the selected brush and consumes the closed path', () => {
+    setIdentityMap(dib.hdc);
+    clearDib(dib);
+    const brush = wat.test_call_CreateSolidBrush(0x000000ff) >>> 0;
+    assert(brush);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Rectangle(dib.hdc, 2, 3, 9, 11), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_FillPath(dib.hdc), 1);
+    assert.deepStrictEqual(pixel(dib, 4, 5), [0, 0, 255]);
+    assert.deepStrictEqual(pixel(dib, 12, 5), [255, 255, 255]);
+    assert.strictEqual(wat.test_call_GetPath(dib.hdc, 0, 0, 0) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30010) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  });
+
+  check('StrokePath paints only the selected-pen outline and consumes the path', () => {
+    setIdentityMap(dib.hdc);
+    clearDib(dib);
+    const pen = wat.test_call_CreatePen(0, 1, 0x000000ff) >>> 0;
+    assert(pen);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Rectangle(dib.hdc, 2, 3, 9, 11), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 1);
+    assert.deepStrictEqual(pixel(dib, 2, 3), [0, 0, 255]);
+    assert.deepStrictEqual(pixel(dib, 4, 5), [255, 255, 255]);
+    assert.strictEqual(wat.test_call_GetPath(dib.hdc, 0, 0, 0) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
+  });
+
+  check('StrokeAndFillPath closes open figures, fills, strokes, and consumes', () => {
+    setIdentityMap(dib.hdc);
+    clearDib(dib);
+    const pen = wat.test_call_CreatePen(0, 1, 0x000000ff) >>> 0;
+    const brush = wat.test_call_CreateSolidBrush(0x00ff0000) >>> 0;
+    assert(pen && brush);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 2), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 10), 1);
+    assert.strictEqual(wat.test_call_LineTo(dib.hdc, 2, 10), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_StrokeAndFillPath(dib.hdc), 1);
+    assert.deepStrictEqual(pixel(dib, 2, 2), [0, 0, 255]);
+    assert.deepStrictEqual(pixel(dib, 5, 5), [255, 0, 0]);
+    assert.strictEqual(wat.test_call_GetPath(dib.hdc, 0, 0, 0) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30010) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+  });
+
+  check('path consumers keep recorded device geometry after mapping changes', () => {
+    setIdentityMap(dib.hdc);
+    clearDib(dib);
+    const brush = wat.test_call_CreateSolidBrush(0x0000ff00) >>> 0;
+    assert(brush);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
+    wat.test_gdi_dc_set_field(dib.hdc, 48, 1, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 52, 1, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 56, 2, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 60, 1, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 64, 2, 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 68, 1, 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Rectangle(dib.hdc, 2, 3, 5, 8), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    wat.test_gdi_dc_set_field(dib.hdc, 56, 0, 0);
+    wat.test_gdi_dc_set_field(dib.hdc, 64, 1, 1);
+    assert.strictEqual(wat.test_call_FillPath(dib.hdc), 1);
+    assert.deepStrictEqual(pixel(dib, 7, 5), [0, 255, 0]);
+    assert.deepStrictEqual(pixel(dib, 3, 5), [255, 255, 255]);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30010) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
+    setIdentityMap(dib.hdc);
+  });
+
+  check('path consumers reject open and absent paths without hiding state', () => {
+    assert.strictEqual(wat.test_call_FillPath(dib.hdc), 0);
+    assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 0);
+    assert.strictEqual(wat.test_call_StrokeAndFillPath(dib.hdc), 0);
+    assert.strictEqual(wat.test_call_FlattenPath(dib.hdc), 0);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 1, 1), 1);
+    assert.strictEqual(wat.test_call_FillPath(dib.hdc), 0);
+    assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 0);
+    assert.strictEqual(wat.test_call_GetPath(dib.hdc, 0, 0, 0) | 0, -1);
     assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
   });
 

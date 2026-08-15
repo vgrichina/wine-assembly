@@ -18028,5 +18028,33 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 907611139
+  },
+  {
+    "id": 2367,
+    "name": "FlattenPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1147976626
+  },
+  {
+    "id": 2368,
+    "name": "FillPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2890507071
+  },
+  {
+    "id": 2369,
+    "name": "StrokePath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1975810022
+  },
+  {
+    "id": 2370,
+    "name": "StrokeAndFillPath",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 359656012
   }
 ]

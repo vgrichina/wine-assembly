@@ -312,6 +312,26 @@
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_FlattenPath") (param i32) (result i32)
+    (call $handle_FlattenPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_FillPath") (param i32) (result i32)
+    (call $handle_FillPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_StrokePath") (param i32) (result i32)
+    (call $handle_StrokePath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_StrokeAndFillPath") (param i32) (result i32)
+    (call $handle_StrokeAndFillPath
+      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_GetObjectType") (param i32) (result i32)
     (call $handle_GetObjectType
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)

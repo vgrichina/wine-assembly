@@ -1718,6 +1718,147 @@
     (i32.store offset=12 (local.get $buffer) (i32.const 1))
     (i32.const 1))
 
+  ;; Return an owned guest-buffer copy with every cubic converted to 32
+  ;; device-space line segments. The source remains unchanged so consumers can
+  ;; preflight their complete operation before modifying either pixels or path
+  ;; ownership.
+  (func $gdi_dc_path_flatten_copy (param $entry i32) (result i32)
+    (local $source_g i32) (local $source i32) (local $count i32)
+    (local $i i32) (local $point i32) (local $type i32) (local $kind i32)
+    (local $out_count i32) (local $has_current i32)
+    (local $target_g i32) (local $target i32) (local $out i32)
+    (local $p0x i32) (local $p0y i32) (local $p1 i32) (local $p2 i32) (local $p3 i32)
+    (local $step i32) (local $close i32)
+    (if (i32.or (i32.eqz (local.get $entry))
+          (i32.ne (i32.load offset=8 (local.get $entry)) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (local.set $source_g (i32.load offset=12 (local.get $entry)))
+    (if (i32.eqz (local.get $source_g)) (then (return (i32.const 0))))
+    (local.set $source (call $g2w (local.get $source_g)))
+    (local.set $count (i32.load (local.get $source)))
+    ;; Validate the typed stream and size the flattened copy before allocating.
+    (block $size_done (loop $size
+      (br_if $size_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $point (i32.add (i32.add (local.get $source) (i32.const 16))
+        (i32.mul (local.get $i) (i32.const 12))))
+      (local.set $type (i32.load offset=8 (local.get $point)))
+      (if (i32.ne (i32.and (local.get $type) (i32.const -8)) (i32.const 0))
+        (then (return (i32.const 0))))
+      (local.set $kind (i32.and (local.get $type) (i32.const 6)))
+      (if (i32.eq (local.get $kind) (i32.const 6))
+        (then
+          (if (i32.ne (i32.and (local.get $type) (i32.const 1)) (i32.const 0))
+            (then (return (i32.const 0))))
+          (local.set $has_current (i32.const 1))
+          (local.set $out_count (i32.add (local.get $out_count) (i32.const 1))))
+        (else
+          (if (i32.eq (local.get $kind) (i32.const 2))
+            (then
+              (if (i32.eqz (local.get $has_current)) (then (return (i32.const 0))))
+              (local.set $out_count (i32.add (local.get $out_count) (i32.const 1))))
+            (else
+              (if (i32.ne (local.get $kind) (i32.const 4))
+                (then (return (i32.const 0))))
+              (if (i32.or (i32.eqz (local.get $has_current))
+                    (i32.gt_u (i32.add (local.get $i) (i32.const 2))
+                      (i32.sub (local.get $count) (i32.const 1))))
+                (then (return (i32.const 0))))
+              (local.set $p1 (local.get $point))
+              (local.set $p2 (i32.add (local.get $point) (i32.const 12)))
+              (local.set $p3 (i32.add (local.get $point) (i32.const 24)))
+              (if (i32.or
+                    (i32.ne (i32.and (i32.load offset=8 (local.get $p2)) (i32.const 6)) (i32.const 4))
+                    (i32.ne (i32.and (i32.load offset=8 (local.get $p3)) (i32.const 6)) (i32.const 4)))
+                (then (return (i32.const 0))))
+              (if (i32.or
+                    (i32.ne (i32.and (i32.load offset=8 (local.get $p2)) (i32.const -8)) (i32.const 0))
+                    (i32.ne (i32.and (i32.load offset=8 (local.get $p3)) (i32.const -8)) (i32.const 0)))
+                (then (return (i32.const 0))))
+              (if (i32.or
+                    (i32.ne (i32.and (i32.load offset=8 (local.get $p1)) (i32.const 1)) (i32.const 0))
+                    (i32.ne (i32.and (i32.load offset=8 (local.get $p2)) (i32.const 1)) (i32.const 0)))
+                (then (return (i32.const 0))))
+              (if (i32.gt_u (local.get $out_count) (i32.const 65503))
+                (then (return (i32.const 0))))
+              (local.set $out_count (i32.add (local.get $out_count) (i32.const 32)))
+              (local.set $type (i32.load offset=8 (local.get $p3)))
+              (local.set $i (i32.add (local.get $i) (i32.const 2)))))))
+      (if (i32.ne (i32.and (local.get $type) (i32.const 1)) (i32.const 0))
+        (then (local.set $has_current (i32.const 0))))
+      (if (i32.gt_u (local.get $out_count) (i32.const 65535))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $size)))
+    (local.set $target_g (call $heap_alloc
+      (i32.add (i32.const 16) (i32.mul (local.get $out_count) (i32.const 12)))))
+    (if (i32.eqz (local.get $target_g)) (then (return (i32.const 0))))
+    (local.set $target (call $g2w (local.get $target_g)))
+    (memory.fill (local.get $target) (i32.const 0)
+      (i32.add (i32.const 16) (i32.mul (local.get $out_count) (i32.const 12))))
+    (i32.store (local.get $target) (local.get $out_count))
+    (i32.store offset=4 (local.get $target) (local.get $out_count))
+    (i32.store offset=8 (local.get $target) (i32.const -1))
+    (local.set $i (i32.const 0))
+    (local.set $out (i32.const 0))
+    (block $copy_done (loop $copy
+      (br_if $copy_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $point (i32.add (i32.add (local.get $source) (i32.const 16))
+        (i32.mul (local.get $i) (i32.const 12))))
+      (local.set $type (i32.load offset=8 (local.get $point)))
+      (local.set $kind (i32.and (local.get $type) (i32.const 6)))
+      (if (i32.ne (local.get $kind) (i32.const 4))
+        (then
+          (memory.copy
+            (i32.add (i32.add (local.get $target) (i32.const 16))
+              (i32.mul (local.get $out) (i32.const 12)))
+            (local.get $point) (i32.const 12))
+          (local.set $p0x (i32.load (local.get $point)))
+          (local.set $p0y (i32.load offset=4 (local.get $point)))
+          (local.set $out (i32.add (local.get $out) (i32.const 1))))
+        (else
+          (local.set $p1 (local.get $point))
+          (local.set $p2 (i32.add (local.get $point) (i32.const 12)))
+          (local.set $p3 (i32.add (local.get $point) (i32.const 24)))
+          (local.set $close (i32.and (i32.load offset=8 (local.get $p3)) (i32.const 1)))
+          (local.set $step (i32.const 1))
+          (block $steps_done (loop $steps
+            (br_if $steps_done (i32.gt_u (local.get $step) (i32.const 32)))
+            (local.set $point (i32.add (i32.add (local.get $target) (i32.const 16))
+              (i32.mul (local.get $out) (i32.const 12))))
+            (i32.store (local.get $point) (call $gdi_bezier_point
+              (local.get $p0x) (i32.load (local.get $p1))
+              (i32.load (local.get $p2)) (i32.load (local.get $p3)) (local.get $step)))
+            (i32.store offset=4 (local.get $point) (call $gdi_bezier_point
+              (local.get $p0y) (i32.load offset=4 (local.get $p1))
+              (i32.load offset=4 (local.get $p2)) (i32.load offset=4 (local.get $p3))
+              (local.get $step)))
+            (i32.store offset=8 (local.get $point)
+              (i32.or (i32.const 2)
+                (select (local.get $close) (i32.const 0)
+                  (i32.eq (local.get $step) (i32.const 32)))))
+            (local.set $out (i32.add (local.get $out) (i32.const 1)))
+            (local.set $step (i32.add (local.get $step) (i32.const 1)))
+            (br $steps)))
+          (local.set $p0x (i32.load (local.get $p3)))
+          (local.set $p0y (i32.load offset=4 (local.get $p3)))
+          (local.set $i (i32.add (local.get $i) (i32.const 2)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $target_g))
+
+  (func $gdi_dc_path_flatten (param $hdc i32) (result i32)
+    (local $entry i32) (local $flat_g i32) (local $old_g i32) (local $region i32)
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 0)))
+    (local.set $flat_g (call $gdi_dc_path_flatten_copy (local.get $entry)))
+    (if (i32.eqz (local.get $flat_g)) (then (return (i32.const 0))))
+    (local.set $old_g (i32.load offset=12 (local.get $entry)))
+    (local.set $region (i32.load offset=4 (local.get $entry)))
+    (if (local.get $region) (then (drop (call $gdi_rgn_delete (local.get $region)))))
+    (i32.store offset=4 (local.get $entry) (i32.const 0))
+    (i32.store offset=12 (local.get $entry) (local.get $flat_g))
+    (call $heap_free (local.get $old_g))
+    (i32.const 1))
+
   (func $gdi_dc_path_materialize (param $hdc i32) (param $entry i32) (result i32)
     (local $buffer_g i32) (local $buffer i32) (local $count i32)
     (local $temp_g i32) (local $points i32) (local $counts i32)
@@ -1728,7 +1869,7 @@
       (then (return (i32.const 0))))
     (if (i32.load offset=4 (local.get $entry))
       (then (return (i32.load offset=4 (local.get $entry)))))
-    (local.set $buffer_g (i32.load offset=12 (local.get $entry)))
+    (local.set $buffer_g (call $gdi_dc_path_flatten_copy (local.get $entry)))
     (if (i32.eqz (local.get $buffer_g)) (then (return (i32.const 0))))
     (local.set $buffer (call $g2w (local.get $buffer_g)))
     (local.set $count (i32.load (local.get $buffer)))
@@ -1736,10 +1877,12 @@
       (then
         (local.set $region (call $gdi_rgn_alloc_rect
           (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (call $heap_free (local.get $buffer_g))
         (if (local.get $region) (then (i32.store offset=4 (local.get $entry) (local.get $region))))
         (return (local.get $region))))
     (local.set $temp_g (call $heap_alloc (i32.mul (local.get $count) (i32.const 12))))
-    (if (i32.eqz (local.get $temp_g)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $temp_g))
+      (then (call $heap_free (local.get $buffer_g)) (return (i32.const 0))))
     (local.set $points (call $g2w (local.get $temp_g)))
     (local.set $counts (i32.add (local.get $points) (i32.shl (local.get $count) (i32.const 3))))
     (block $done (loop $entries
@@ -1757,7 +1900,10 @@
           (local.set $figure_count (i32.const 0)))
         (else
           (if (i32.ne (local.get $kind) (i32.const 2))
-            (then (call $heap_free (local.get $temp_g)) (return (i32.const 0))))))
+            (then
+              (call $heap_free (local.get $temp_g))
+              (call $heap_free (local.get $buffer_g))
+              (return (i32.const 0))))))
       (i32.store (i32.add (local.get $points) (i32.shl (local.get $out_count) (i32.const 3)))
         (i32.load (local.get $point)))
       (i32.store offset=4 (i32.add (local.get $points)
@@ -1778,8 +1924,149 @@
         (local.get $points) (local.get $counts) (local.get $polygon_count)
         (call $gdi_dc_get_field (local.get $hdc) (i32.const 76) (i32.const 1))))))
     (call $heap_free (local.get $temp_g))
+    (call $heap_free (local.get $buffer_g))
     (if (local.get $region) (then (i32.store offset=4 (local.get $entry) (local.get $region))))
     (local.get $region))
+
+  ;; Path records and regions are already in DC device coordinates. Preserve
+  ;; the surface/client origin while neutralizing logical mapping so a later
+  ;; map-mode change cannot reinterpret the recorded geometry.
+  (func $gdi_path_desc_identity (param $desc i32)
+    (i32.store offset=32 (local.get $desc) (i32.const 0))
+    (i32.store offset=36 (local.get $desc) (i32.const 0))
+    (i32.store offset=40 (local.get $desc) (i32.const 1))
+    (i32.store offset=44 (local.get $desc) (i32.const 1))
+    (i32.store offset=48 (local.get $desc) (i32.const 0))
+    (i32.store offset=52 (local.get $desc) (i32.const 0))
+    (i32.store offset=56 (local.get $desc) (i32.const 1))
+    (i32.store offset=60 (local.get $desc) (i32.const 1)))
+
+  (func $gdi_dc_path_stroke_segment (param $hdc i32) (param $desc i32)
+        (param $from_x i32) (param $from_y i32) (param $to_x i32) (param $to_y i32)
+        (param $pen i32) (param $rop2 i32) (param $paint i32) (result i32)
+    (if (result i32) (local.get $paint)
+      (then (call $gdi_line_desc
+        (local.get $hdc) (local.get $desc)
+        (local.get $from_x) (local.get $from_y) (local.get $to_x) (local.get $to_y)
+        (local.get $pen) (local.get $rop2)))
+      (else (call $gdi_line_desc_can_raster
+        (local.get $desc)
+        (local.get $from_x) (local.get $from_y) (local.get $to_x) (local.get $to_y)
+        (local.get $pen) (local.get $rop2)))))
+
+  ;; Validate or paint a flattened path without consuming it. force_close is
+  ;; used by StrokeAndFillPath, whose contract closes every open figure before
+  ;; filling and stroking; StrokePath only follows explicit PT_CLOSEFIGURE.
+  (func $gdi_dc_path_stroke_internal (param $hdc i32) (param $entry i32)
+        (param $force_close i32) (param $paint i32) (result i32)
+    (local $flat_g i32) (local $buffer i32) (local $count i32)
+    (local $desc i32) (local $pen i32) (local $rop2 i32)
+    (local $i i32) (local $point i32) (local $type i32) (local $kind i32)
+    (local $from_x i32) (local $from_y i32) (local $start_x i32) (local $start_y i32)
+    (local $x i32) (local $y i32) (local $has_current i32)
+    (local.set $flat_g (call $gdi_dc_path_flatten_copy (local.get $entry)))
+    (if (i32.eqz (local.get $flat_g)) (then (return (i32.const 0))))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
+      (then (call $heap_free (local.get $flat_g)) (return (i32.const 0))))
+    (call $gdi_path_desc_identity (local.get $desc))
+    (local.set $pen
+      (call $gdi_dc_get_field (local.get $hdc) (i32.const 4) (i32.const 0x30017)))
+    (local.set $rop2 (call $gdi_dc_get_rop2 (local.get $hdc)))
+    (local.set $buffer (call $g2w (local.get $flat_g)))
+    (local.set $count (i32.load (local.get $buffer)))
+    (block $done (loop $entries
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $point (i32.add (i32.add (local.get $buffer) (i32.const 16))
+        (i32.mul (local.get $i) (i32.const 12))))
+      (local.set $type (i32.load offset=8 (local.get $point)))
+      (local.set $kind (i32.and (local.get $type) (i32.const 6)))
+      (local.set $x (i32.load (local.get $point)))
+      (local.set $y (i32.load offset=4 (local.get $point)))
+      (if (i32.eq (local.get $kind) (i32.const 6))
+        (then
+          (if (i32.and (local.get $force_close) (local.get $has_current))
+            (then
+              (if (i32.eqz (call $gdi_dc_path_stroke_segment
+                    (local.get $hdc) (local.get $desc)
+                    (local.get $from_x) (local.get $from_y)
+                    (local.get $start_x) (local.get $start_y)
+                    (local.get $pen) (local.get $rop2) (local.get $paint)))
+                (then (call $heap_free (local.get $flat_g)) (return (i32.const 0))))))
+          (local.set $start_x (local.get $x)) (local.set $start_y (local.get $y))
+          (local.set $from_x (local.get $x)) (local.set $from_y (local.get $y))
+          (local.set $has_current (i32.const 1))
+          (if (local.get $paint)
+            (then (global.set $gdi_line_style_phase (i32.const 0)))))
+        (else
+          (if (i32.or (i32.ne (local.get $kind) (i32.const 2))
+                (i32.eqz (local.get $has_current)))
+            (then (call $heap_free (local.get $flat_g)) (return (i32.const 0))))
+          (if (i32.eqz (call $gdi_dc_path_stroke_segment
+                (local.get $hdc) (local.get $desc)
+                (local.get $from_x) (local.get $from_y) (local.get $x) (local.get $y)
+                (local.get $pen) (local.get $rop2) (local.get $paint)))
+            (then (call $heap_free (local.get $flat_g)) (return (i32.const 0))))
+          (local.set $from_x (local.get $x)) (local.set $from_y (local.get $y))
+          (if (i32.ne (i32.and (local.get $type) (i32.const 1)) (i32.const 0))
+            (then
+              (if (i32.eqz (call $gdi_dc_path_stroke_segment
+                    (local.get $hdc) (local.get $desc)
+                    (local.get $from_x) (local.get $from_y)
+                    (local.get $start_x) (local.get $start_y)
+                    (local.get $pen) (local.get $rop2) (local.get $paint)))
+                (then (call $heap_free (local.get $flat_g)) (return (i32.const 0))))
+              (local.set $has_current (i32.const 0))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $entries)))
+    (if (i32.and (local.get $force_close) (local.get $has_current))
+      (then
+        (if (i32.eqz (call $gdi_dc_path_stroke_segment
+              (local.get $hdc) (local.get $desc)
+              (local.get $from_x) (local.get $from_y)
+              (local.get $start_x) (local.get $start_y)
+              (local.get $pen) (local.get $rop2) (local.get $paint)))
+          (then (call $heap_free (local.get $flat_g)) (return (i32.const 0))))))
+    (call $heap_free (local.get $flat_g))
+    (i32.const 1))
+
+  (func $gdi_dc_path_fill (param $hdc i32) (result i32)
+    (local $entry i32) (local $region i32)
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 0)))
+    (local.set $region (call $gdi_dc_path_materialize (local.get $hdc) (local.get $entry)))
+    (if (i32.eqz (local.get $region)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_hdc_fill_rgn_device
+          (local.get $hdc) (local.get $region) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (call $gdi_dc_path_discard (local.get $entry))
+    (i32.const 1))
+
+  (func $gdi_dc_path_stroke (param $hdc i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (call $gdi_dc_path_stroke_internal
+          (local.get $hdc) (local.get $entry) (i32.const 0) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (call $gdi_dc_path_discard (local.get $entry))
+    (i32.const 1))
+
+  (func $gdi_dc_path_stroke_and_fill (param $hdc i32) (result i32)
+    (local $entry i32) (local $region i32)
+    (local.set $entry (call $gdi_dc_path_entry (local.get $hdc) (i32.const 0)))
+    (local.set $region (call $gdi_dc_path_materialize (local.get $hdc) (local.get $entry)))
+    (if (i32.eqz (local.get $region)) (then (return (i32.const 0))))
+    ;; Complete stroke admission before the fill changes any destination pixel.
+    (if (i32.eqz (call $gdi_dc_path_stroke_internal
+          (local.get $hdc) (local.get $entry) (i32.const 1) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_hdc_fill_rgn_device
+          (local.get $hdc) (local.get $region) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_dc_path_stroke_internal
+          (local.get $hdc) (local.get $entry) (i32.const 1) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (call $gdi_dc_path_discard (local.get $entry))
+    (i32.const 1))
 
   (func $gdi_dc_path_to_region (param $hdc i32) (result i32)
     (local $entry i32) (local $region i32) (local $buffer_g i32)
@@ -9882,8 +10169,8 @@
       (local.get $color) (local.get $fill_type)
       (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010))))
 
-  (func $gdi_hdc_fill_rgn (param $hdc i32) (param $hrgn i32)
-        (param $brush_in i32) (result i32)
+  (func $gdi_hdc_fill_rgn_space (param $hdc i32) (param $hrgn i32)
+        (param $brush_in i32) (param $device_space i32) (result i32)
     (local $record i32) (local $base i32) (local $count i32) (local $i i32)
     (local $rect i32) (local $desc i32) (local $brush i32) (local $ok i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
@@ -9891,6 +10178,8 @@
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
       (then (return (i32.const 0))))
+    (if (local.get $device_space)
+      (then (call $gdi_path_desc_identity (local.get $desc))))
     (local.set $brush (local.get $brush_in))
     (if (i32.eqz (local.get $brush))
       (then (local.set $brush
@@ -9912,6 +10201,16 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $rects)))
     (local.get $ok))
+
+  (func $gdi_hdc_fill_rgn (param $hdc i32) (param $hrgn i32)
+        (param $brush_in i32) (result i32)
+    (call $gdi_hdc_fill_rgn_space
+      (local.get $hdc) (local.get $hrgn) (local.get $brush_in) (i32.const 0)))
+
+  (func $gdi_hdc_fill_rgn_device (param $hdc i32) (param $hrgn i32)
+        (param $brush_in i32) (result i32)
+    (call $gdi_hdc_fill_rgn_space
+      (local.get $hdc) (local.get $hrgn) (local.get $brush_in) (i32.const 1)))
 
   (func $gdi_hdc_invert_rgn (param $hdc i32) (param $hrgn i32) (result i32)
     (local $record i32) (local $base i32) (local $count i32) (local $i i32)

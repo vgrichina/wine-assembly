@@ -11,7 +11,7 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are complete path consumption and remaining recording families, scalable glyph extraction, remaining enhanced
+gaps are remaining path recording families, scalable glyph extraction, remaining enhanced
 metafile record families, remaining classic WMF record families, and printer
 integration.
 The
@@ -60,12 +60,16 @@ bounded, growable point/type stream; points are transformed into device space
 when recorded and inverse-transformed through the current mapping when queried.
 `MoveToEx`, `LineTo`, `Rectangle`, `Polygon`, `Polyline`, `PolylineTo`,
 `PolyBezier`, `PolyBezierTo`, `PolyDraw`, and `PolyPolyline` record instead of
-painting while a bracket is open. Straight-line figures feed `PathToRegion`
-and `SelectClipPath` through canonical WAT regions, and `PathToRegion` consumes
-the closed path as Win32 specifies. Curve flattening for region conversion,
-ellipse/arc/round-rectangle/text recording, and `FillPath`, `StrokePath`,
-`StrokeAndFillPath`, `FlattenPath`, and `WidenPath` remain explicit path work;
-none of them fall back to Canvas geometry.
+painting while a bracket is open. `FlattenPath` converts cubic controls into a
+bounded 32-segment device-space line stream. Both straight and cubic figures
+feed `PathToRegion` and `SelectClipPath` through canonical WAT regions, and
+`PathToRegion` consumes the closed path as Win32 specifies. `FillPath`,
+`StrokePath`, and `StrokeAndFillPath` use the selected WAT brush/pen and
+canonical surface directly; the combined operation closes open figures and
+all successful consumers discard the path. Preflighted stroke coverage and
+device-space filling ensure mapping changes after `EndPath` do not move the
+retained geometry. Ellipse/arc/round-rectangle/text recording and `WidenPath`
+remain explicit path work; none of them fall back to Canvas geometry.
 
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the
