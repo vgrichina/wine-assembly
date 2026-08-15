@@ -161,7 +161,12 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/explorer.exe', name: 'Explorer (98)' },
   { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
   { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
-  { exe: 'test/binaries/win98-apps/welcome.exe', name: 'Welcome (98)' },
+  // On a first run Welcome registers itself as Run\Welcome = "welcome.exe /R"
+  // and exits; /R is the flag that actually shows the window, exactly as it
+  // behaves on a real install.
+  { exe: 'test/binaries/win98-apps/welcome.exe', name: 'Welcome (98)',
+    maxBatches: 400, batchSize: 20000,
+    extraArgs: ['--args=/R', '--no-close'] },
   // The visual is not broken — tour98.exe is a launcher, and it correctly
   // reports that Discover.exe (which ships on the Win98 CD, not with us) is
   // missing. It cannot do its job, but it draws the right dialog for that.
