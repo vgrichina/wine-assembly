@@ -507,7 +507,7 @@ function buildOldFont(faces, descriptors, slotSize = 32) {
 function buildSyntheticFormattedTopic({
   stringCount = 12, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
   hotspotCommand = null, closeVariableHotspot = false, variableHotspotCommand = null,
-  externalBitmapNumber = null,
+  externalBitmapNumber = null, stringPadding = 0,
 } = {}) {
   const fixedHotspot = Buffer.alloc(5);
   fixedHotspot[0] = hotspotOpcode;
@@ -532,8 +532,14 @@ function buildSyntheticFormattedTopic({
     ...(closeVariableHotspot ? [Buffer.from([0x89])] : []),
     Buffer.from([0x8b, 0x8c, 0xff]),
   ]);
+  // Padding lengthens the last LinkData2 string instead of adding commands,
+  // so a record can be grown past a block boundary without changing its
+  // command/string pairing or its token count.
   const strings = Buffer.concat(Array.from({ length: stringCount }, (_, index) =>
-    Buffer.from([65 + index, 0])));
+    index + 1 === stringCount && stringPadding
+      ? Buffer.concat([Buffer.from([65 + index]), Buffer.alloc(stringPadding, 0x58),
+        Buffer.from([0])])
+      : Buffer.from([65 + index, 0])));
   const displayFormat = Buffer.alloc(9 + commands.length);
   encodeCompressedLong(strings.length).copy(displayFormat, 0);
   displayFormat[2] = strings.length * 2;
@@ -561,7 +567,23 @@ function buildSyntheticFormattedTopic({
   header.writeInt32LE(-1, 0);
   header.writeUInt32LE(12, 4);
   const topic = Buffer.concat([header, encodeLiteralLz77(links)]);
-  return returnParts ? { topic, displayFormat, strings } : topic;
+  return returnParts ? { topic, displayFormat, strings, links } : topic;
+}
+
+// Lay a raw link stream out as uncompressed physical topic blocks. With
+// SYSTEM flags 0 the parser reads 4096-byte physical blocks whose 12-byte
+// header is not part of the logical stream, so records straddle boundaries
+// exactly as they do in a real compressed file.
+function packUncompressedTopicBlocks(links, physical = 4096) {
+  const logical = physical - 12;
+  const parts = [];
+  for (let pos = 0; pos < links.length; pos += logical) {
+    const header = Buffer.alloc(12);
+    header.writeInt32LE(-1, 0);
+    header.writeUInt32LE(12, 4);
+    parts.push(header, links.subarray(pos, Math.min(pos + logical, links.length)));
+  }
+  return Buffer.concat(parts);
 }
 
 function buildOldPhrases(values, variant = 'hc31') {
@@ -603,8 +625,8 @@ function writeSyntheticTopicRaw(document, rawOffset, value, byteLength = 4) {
 }
 
 function buildSyntheticSemanticHelp({
-  systemMinor = 33, topic = null, oldPhrases = null, font = null, extraFiles = [],
-  windows = [],
+  systemMinor = 33, systemFlags = 4, topic = null, oldPhrases = null, font = null,
+  extraFiles = [], windows = [],
 } = {}) {
   const title = Buffer.from('Synthetic Help\0', 'latin1');
   const system = Buffer.alloc(12 + 4 + title.length + 8 +
@@ -612,7 +634,7 @@ function buildSyntheticSemanticHelp({
   system.writeUInt16LE(0x036c, 0);
   system.writeUInt16LE(systemMinor, 2);
   system.writeUInt16LE(1, 4);
-  system.writeUInt16LE(4, 10);
+  system.writeUInt16LE(systemFlags, 10);
   system.writeUInt16LE(1, 12);
   system.writeUInt16LE(title.length, 14);
   title.copy(system, 16);
@@ -1715,6 +1737,55 @@ async function main() {
     e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
       topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === -1 &&
     e.get_help_last_error() === 14);
+
+  // A display record wider than one physical block: the walkers must gather
+  // it across the boundary instead of rejecting it. Real files hit this on
+  // any topic longer than a block (hover.hlp does it 20+ times).
+  const crossBlockParts = buildSyntheticFormattedTopic({
+    stringCount: 13, closeVariableHotspot: true, stringPadding: 4200,
+    returnParts: true,
+  });
+  const crossBlockHelp = buildSyntheticSemanticHelp({
+    systemFlags: 0, topic: packUncompressedTopicBlocks(crossBlockParts.links),
+  });
+  const crossBlockLoaded = load(crossBlockHelp.file);
+  const crossBlockLoadGathers = e.get_help_topic_gather_count();
+  const crossBlockTokens = e.test_help_decode_topic_formatted(0, topicOutWA,
+    topicOutCapacity, topicTokensWA, topicTokenCapacity, topicPayloadWA,
+    topicPayloadCapacity);
+  check('a topic record straddling a physical block is gathered, not rejected',
+    crossBlockLoaded === 1 && crossBlockLoadGathers === 1 &&
+    crossBlockTokens > 0 && e.get_help_topic_gather_count() === 1 &&
+    e.get_help_topic_count() === 4,
+    `loaded=${crossBlockLoaded} loadGathers=${crossBlockLoadGathers} ` +
+    `tokens=${crossBlockTokens} error=${e.get_help_last_error()}`);
+  const crossBlockRaw = e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity);
+  const crossBlockText = Buffer.from(
+    bytes.subarray(topicOutWA, topicOutWA + Math.max(crossBlockRaw, 0))).toString('latin1');
+  const expectedCrossBlockText =
+    Array.from({ length: 12 }, (_, index) => String.fromCharCode(65 + index) + '\0').join('') +
+    'M' + 'X'.repeat(4200) + '\0';
+  check('the reassembled record decodes to its exact bytes across the boundary',
+    crossBlockRaw === expectedCrossBlockText.length &&
+    crossBlockText === expectedCrossBlockText,
+    `raw=${crossBlockRaw} expected=${expectedCrossBlockText.length}`);
+  // The same fixture without padding fits inside one block and must not
+  // touch the gather path at all.
+  const singleBlockHelp = buildSyntheticSemanticHelp({
+    systemFlags: 0,
+    topic: packUncompressedTopicBlocks(buildSyntheticFormattedTopic({
+      stringCount: 13, closeVariableHotspot: true, returnParts: true,
+    }).links),
+  });
+  check('gathering is used only when a record actually crosses a boundary',
+    load(singleBlockHelp.file) === 1 && e.get_help_topic_gather_count() === 0 &&
+    e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity) === 26);
+  const truncatedCrossBlock = buildSyntheticSemanticHelp({
+    systemFlags: 0,
+    topic: packUncompressedTopicBlocks(crossBlockParts.links).subarray(0, 4096),
+  });
+  check('a record whose continuation block is missing fails before publication',
+    load(truncatedCrossBlock.file) === 0 && e.get_help_last_error() === 13);
 
   const validExternalCommands = [
     buildExternalHotspot(0xea, 0, 20),

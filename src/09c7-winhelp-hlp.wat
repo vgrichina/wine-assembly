@@ -1139,6 +1139,128 @@
         (return (local.get $source_len))))
     (i32.const -1))
 
+  ;; Decompressed-block cache shared by the topic walkers. Every walker owns
+  ;; its own 16KB scratch, so the cache is keyed on that address as well as
+  ;; the block number and is reset when a walk begins.
+  (func $help_topic_block_cache_reset
+    (global.set $help_topic_block_cache_number (i32.const -1))
+    (global.set $help_topic_block_cache_wa (i32.const 0))
+    (global.set $help_topic_gather_count (i32.const 0)))
+
+  (func $help_topic_block_fetch
+    (param $internal_record i32) (param $block_number i32) (param $temp_wa i32)
+    (result i32)
+    (local $bytes i32)
+    (if (i32.and
+          (i32.eq (local.get $temp_wa) (global.get $help_topic_block_cache_wa))
+          (i32.eq (local.get $block_number) (global.get $help_topic_block_cache_number)))
+      (then (return (global.get $help_topic_block_cache_bytes))))
+    (local.set $bytes (call $help_topic_load_block
+      (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
+    (if (i32.lt_s (local.get $bytes) (i32.const 0))
+      (then
+        (call $help_topic_block_cache_reset)
+        (return (i32.const -1))))
+    (global.set $help_topic_block_cache_wa (local.get $temp_wa))
+    (global.set $help_topic_block_cache_number (local.get $block_number))
+    (global.set $help_topic_block_cache_bytes (local.get $bytes))
+    (local.get $bytes))
+
+  ;; Copy $want bytes of the decompressed topic stream starting at logical
+  ;; position (block, offset) into the owned gather buffer, loading each
+  ;; block it crosses. Returns 1 only when every requested byte was copied.
+  (func $help_topic_gather
+    (param $internal_record i32) (param $block_number i32) (param $offset i32)
+    (param $logical_size i32) (param $temp_wa i32) (param $want i32) (result i32)
+    (local $copied i32) (local $bytes i32) (local $available i32) (local $chunk i32)
+    (if (i32.gt_u (local.get $want) (global.get $HELP_TOPIC_GATHER_BYTES))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $help_topic_gather_wa))
+      (then
+        (global.set $help_topic_gather_ga
+          (call $heap_alloc (global.get $HELP_TOPIC_GATHER_BYTES)))
+        (if (i32.eqz (global.get $help_topic_gather_ga))
+          (then (return (i32.const 0))))
+        (global.set $help_topic_gather_wa
+          (call $g2w (global.get $help_topic_gather_ga)))))
+    (block $done (loop $blocks
+      (br_if $done (i32.ge_u (local.get $copied) (local.get $want)))
+      (local.set $bytes (call $help_topic_block_fetch
+        (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
+      (if (i32.lt_s (local.get $bytes) (i32.const 0)) (then (return (i32.const 0))))
+      (if (i32.gt_u (local.get $offset) (local.get $bytes))
+        (then (return (i32.const 0))))
+      (local.set $available (i32.sub (local.get $bytes) (local.get $offset)))
+      (if (i32.eqz (local.get $available)) (then (return (i32.const 0))))
+      (local.set $chunk (i32.sub (local.get $want) (local.get $copied)))
+      (if (i32.gt_u (local.get $chunk) (local.get $available))
+        (then (local.set $chunk (local.get $available))))
+      (memory.copy
+        (i32.add (global.get $help_topic_gather_wa) (local.get $copied))
+        (i32.add (local.get $temp_wa) (local.get $offset))
+        (local.get $chunk))
+      (local.set $copied (i32.add (local.get $copied) (local.get $chunk)))
+      ;; Records continue at the start of the next block's decompressed
+      ;; payload; the physical 12-byte block header is never part of it.
+      (local.set $offset (i32.const 0))
+      (local.set $block_number (i32.add (local.get $block_number) (i32.const 1)))
+      (br $blocks)))
+    (i32.const 1))
+
+  ;; Resolve one TopicLink at a decompressed-stream position to a contiguous
+  ;; record. A record that fits inside its own block is used in place; one
+  ;; that straddles a block boundary is gathered into the owned buffer.
+  ;; Returns the record address, or 0 with $help_topic_link_bytes cleared.
+  ;; $help_topic_link_bytes is the count of readable bytes at that address.
+  (func $help_topic_link_at
+    (param $internal_record i32) (param $current i32) (param $logical_size i32)
+    (param $temp_wa i32) (result i32)
+    (local $block_number i32) (local $relative i32) (local $bytes i32)
+    (local $available i32) (local $block_size i32)
+    (global.set $help_topic_link_bytes (i32.const 0))
+    (if (i32.lt_s (local.get $current) (i32.const 12)) (then (return (i32.const 0))))
+    (local.set $block_number
+      (i32.div_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
+    (local.set $relative
+      (i32.rem_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
+    (local.set $bytes (call $help_topic_block_fetch
+      (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
+    (if (i32.lt_s (local.get $bytes) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $relative) (local.get $bytes))
+      (then (return (i32.const 0))))
+    (local.set $available (i32.sub (local.get $bytes) (local.get $relative)))
+    (if (i32.ge_u (local.get $available) (i32.const 21))
+      (then
+        (local.set $block_size
+          (i32.load (i32.add (local.get $temp_wa) (local.get $relative)))))
+      (else
+        ;; Even the fixed header can straddle a boundary, so gather it first.
+        (if (i32.eqz (call $help_topic_gather
+              (local.get $internal_record) (local.get $block_number)
+              (local.get $relative) (local.get $logical_size)
+              (local.get $temp_wa) (i32.const 21)))
+          (then (return (i32.const 0))))
+        (local.set $block_size (i32.load (global.get $help_topic_gather_wa)))))
+    (if (i32.lt_s (local.get $block_size) (i32.const 21))
+      (then (return (i32.const 0))))
+    (if (i32.le_u (local.get $block_size) (local.get $available))
+      (then
+        ;; A header gather above may have evicted the block; reload in place.
+        (local.set $bytes (call $help_topic_block_fetch
+          (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
+        (if (i32.lt_s (local.get $bytes) (i32.const 0)) (then (return (i32.const 0))))
+        (global.set $help_topic_link_bytes (local.get $available))
+        (return (i32.add (local.get $temp_wa) (local.get $relative)))))
+    (if (i32.eqz (call $help_topic_gather
+          (local.get $internal_record) (local.get $block_number)
+          (local.get $relative) (local.get $logical_size)
+          (local.get $temp_wa) (local.get $block_size)))
+      (then (return (i32.const 0))))
+    (global.set $help_topic_gather_count
+      (i32.add (global.get $help_topic_gather_count) (i32.const 1)))
+    (global.set $help_topic_link_bytes (local.get $block_size))
+    (global.get $help_topic_gather_wa))
+
   (func $help_ld1_read_cu16 (param $ptr i32) (param $end i32) (result i32)
     (local $first i32)
     (global.set $help_ld1_next (i32.const 0))
@@ -1888,7 +2010,7 @@
     (local.set $logical_size (call $help_topic_logical_block_size))
     (local.set $current (i32.const 12))
     (local.set $previous (i32.const -1))
-    (local.set $loaded_block (i32.const -1))
+    (call $help_topic_block_cache_reset)
     (block $done (loop $links
       (if (i32.ge_u (local.get $link_count) (global.get $HELP_MAX_TOPIC_LINKS))
         (then
@@ -1898,23 +2020,14 @@
         (then
           (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (i32.const 0))
           (br $done)))
-      (local.set $block_number
-        (i32.div_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
-      (local.set $relative
-        (i32.rem_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
-      (if (i32.ne (local.get $block_number) (local.get $loaded_block))
-        (then
-          (local.set $block_bytes (call $help_topic_load_block
-            (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
-          (if (i32.lt_s (local.get $block_bytes) (i32.const 0)) (then (br $done)))
-          (local.set $loaded_block (local.get $block_number))))
-      (if (i32.or
-            (i32.gt_u (local.get $relative) (local.get $block_bytes))
-            (i32.gt_u (i32.const 21) (i32.sub (local.get $block_bytes) (local.get $relative))))
+      (local.set $link (call $help_topic_link_at
+        (local.get $internal_record) (local.get $current)
+        (local.get $logical_size) (local.get $temp_wa)))
+      (if (i32.eqz (local.get $link))
         (then
           (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
-      (local.set $link (i32.add (local.get $temp_wa) (local.get $relative)))
+      (local.set $block_bytes (global.get $help_topic_link_bytes))
       (local.set $block_size (i32.load (local.get $link)))
       (local.set $data_len2 (i32.load offset=4 (local.get $link)))
       (local.set $prev_link (i32.load offset=8 (local.get $link)))
@@ -1929,10 +2042,8 @@
         (then
           (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
-      (if (i32.gt_u (local.get $block_size) (i32.sub (local.get $block_bytes) (local.get $relative)))
+      (if (i32.gt_u (local.get $block_size) (local.get $block_bytes))
         (then
-          ;; Cross-block link data is rejected until a bounded gather buffer
-          ;; is added; no checked-in fixture relies on it.
           (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
       (if (i32.ne (local.get $prev_link) (local.get $previous))
@@ -2146,26 +2257,16 @@
         (return (i32.const -1))))
     (local.set $temp_wa (call $g2w (local.get $temp_ga)))
     (local.set $logical_size (call $help_topic_logical_block_size))
-    (local.set $loaded_block (i32.const -1))
+    (call $help_topic_block_cache_reset)
     (local.set $first_header (i32.const 1))
     (block $done (loop $links
       (if (i32.ge_u (local.get $link_count) (global.get $HELP_MAX_TOPIC_LINKS))
         (then (br $done)))
-      (local.set $block_number
-        (i32.div_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
-      (local.set $relative
-        (i32.rem_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
-      (if (i32.ne (local.get $block_number) (local.get $loaded_block))
-        (then
-          (local.set $block_bytes (call $help_topic_load_block
-            (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
-          (if (i32.lt_s (local.get $block_bytes) (i32.const 0)) (then (br $done)))
-          (local.set $loaded_block (local.get $block_number))))
-      (if (i32.or
-            (i32.gt_u (local.get $relative) (local.get $block_bytes))
-            (i32.gt_u (i32.const 21) (i32.sub (local.get $block_bytes) (local.get $relative))))
-        (then (br $done)))
-      (local.set $link (i32.add (local.get $temp_wa) (local.get $relative)))
+      (local.set $link (call $help_topic_link_at
+        (local.get $internal_record) (local.get $current)
+        (local.get $logical_size) (local.get $temp_wa)))
+      (if (i32.eqz (local.get $link)) (then (br $done)))
+      (local.set $block_bytes (global.get $help_topic_link_bytes))
       (local.set $block_size (i32.load (local.get $link)))
       (local.set $data_len2 (i32.load offset=4 (local.get $link)))
       (local.set $next_link (i32.load offset=12 (local.get $link)))
@@ -2175,7 +2276,7 @@
             (i32.or (i32.lt_s (local.get $block_size) (i32.const 21))
                     (i32.lt_s (local.get $data_len1) (i32.const 21)))
             (i32.or (i32.gt_u (local.get $data_len1) (local.get $block_size))
-                    (i32.gt_u (local.get $block_size) (i32.sub (local.get $block_bytes) (local.get $relative)))))
+                    (i32.gt_u (local.get $block_size) (local.get $block_bytes))))
         (then (br $done)))
       (if (i32.eq (local.get $record_type) (i32.const 2))
         (then
@@ -2354,26 +2455,16 @@
         (return (i32.const -1))))
     (local.set $temp_wa (call $g2w (local.get $temp_ga)))
     (local.set $logical_size (call $help_topic_logical_block_size))
-    (local.set $loaded_block (i32.const -1))
+    (call $help_topic_block_cache_reset)
     (local.set $first_header (i32.const 1))
     (block $done (loop $links
       (if (i32.ge_u (local.get $link_count) (global.get $HELP_MAX_TOPIC_LINKS))
         (then (br $done)))
-      (local.set $block_number
-        (i32.div_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
-      (local.set $relative
-        (i32.rem_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
-      (if (i32.ne (local.get $block_number) (local.get $loaded_block))
-        (then
-          (local.set $block_bytes (call $help_topic_load_block
-            (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
-          (if (i32.lt_s (local.get $block_bytes) (i32.const 0)) (then (br $done)))
-          (local.set $loaded_block (local.get $block_number))))
-      (if (i32.or
-            (i32.gt_u (local.get $relative) (local.get $block_bytes))
-            (i32.gt_u (i32.const 21) (i32.sub (local.get $block_bytes) (local.get $relative))))
-        (then (br $done)))
-      (local.set $link (i32.add (local.get $temp_wa) (local.get $relative)))
+      (local.set $link (call $help_topic_link_at
+        (local.get $internal_record) (local.get $current)
+        (local.get $logical_size) (local.get $temp_wa)))
+      (if (i32.eqz (local.get $link)) (then (br $done)))
+      (local.set $block_bytes (global.get $help_topic_link_bytes))
       (local.set $block_size (i32.load (local.get $link)))
       (local.set $data_len2 (i32.load offset=4 (local.get $link)))
       (local.set $next_link (i32.load offset=12 (local.get $link)))
@@ -2383,8 +2474,7 @@
             (i32.or (i32.lt_s (local.get $block_size) (i32.const 21))
                     (i32.lt_s (local.get $data_len1) (i32.const 21)))
             (i32.or (i32.gt_u (local.get $data_len1) (local.get $block_size))
-                    (i32.gt_u (local.get $block_size)
-                      (i32.sub (local.get $block_bytes) (local.get $relative)))))
+                    (i32.gt_u (local.get $block_size) (local.get $block_bytes))))
         (then (br $done)))
       (if (i32.eq (local.get $record_type) (i32.const 2))
         (then

@@ -224,6 +224,20 @@
   ;; A zero caption length means fall back to the document title.
   (global $HELP_WINDOW_SIZE i32 (i32.const 56))
 
+  ;; Topic records may straddle physical block boundaries. The gather buffer
+  ;; owns the reassembled copy; the cache keeps the walkers from decompressing
+  ;; the same block once per link. Both are scratch, never document state.
+  (global $HELP_TOPIC_GATHER_BYTES i32 (i32.const 65536))
+  (global $help_topic_gather_ga (mut i32) (i32.const 0))
+  (global $help_topic_gather_wa (mut i32) (i32.const 0))
+  (global $help_topic_link_bytes (mut i32) (i32.const 0))
+  (global $help_topic_block_cache_wa (mut i32) (i32.const 0))
+  (global $help_topic_block_cache_number (mut i32) (i32.const -1))
+  (global $help_topic_block_cache_bytes (mut i32) (i32.const 0))
+  ;; Records reassembled by the walk in progress. Exposed so a fixture can
+  ;; prove the straddling path ran instead of merely parsing.
+  (global $help_topic_gather_count (mut i32) (i32.const 0))
+
   ;; Flag bits 0x0008..0x0040 mark a record whose x/y/width/height fields are
   ;; meaningful. A record missing any of them keeps the canonical geometry.
   (global $HELP_WINDOW_FLAG_CAPTION i32 (i32.const 0x0004))
@@ -262,6 +276,13 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_topic_gather_ga)
+      (then
+        (call $heap_free (global.get $help_topic_gather_ga))
+        (global.set $help_topic_gather_ga (i32.const 0))
+        (global.set $help_topic_gather_wa (i32.const 0))))
+    (global.set $help_topic_block_cache_wa (i32.const 0))
+    (global.set $help_topic_block_cache_number (i32.const -1))
     (if (global.get $help_doc_windows_ga)
       (then (call $heap_free (global.get $help_doc_windows_ga))))
     (if (global.get $help_doc_path_ga)
@@ -1285,6 +1306,8 @@
       (then (i32.add (global.get $help_doc_file_wa) (global.get $help_doc_cnt_off)))
       (else (i32.const 0))))
   (func (export "get_help_cnt_len") (result i32) (global.get $help_doc_cnt_len))
+  (func (export "get_help_topic_gather_count") (result i32)
+    (global.get $help_topic_gather_count))
   (func (export "get_help_window_count") (result i32)
     (global.get $help_doc_window_count))
   (func (export "get_help_window_record") (param $index i32) (result i32)

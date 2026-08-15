@@ -905,7 +905,12 @@ records, signed context-hash indexes, numeric context maps, and Hall phrase
 tables are WAT-owned. The bounded topic-block decoder now validates physical
 LZ77 blocks and the complete forward/back `TOPICLINK` chain, binds every
 canonical title entry to its type-2 record, and phrase-expands each topic's raw
-`LinkData2` stream while preserving paragraph-control bytes. All checked-in
+`LinkData2` stream while preserving paragraph-control bytes. A record wider
+than one physical block — including one whose 21-byte header itself straddles
+the boundary — is reassembled into a bounded owned gather buffer before it is
+read, so long topics no longer reject the whole file; a record larger than that
+buffer, or one whose continuation block is missing, still fails before
+publication. All checked-in
 fixtures have exact topic-reference, context-resolution, decompressed-phrase,
 raw-topic-length, and full-corpus hash coverage, supplemented by synthetic
 two-level trees and malformed semantic/topic inputs. The canonical phrase
