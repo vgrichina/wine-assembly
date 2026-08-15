@@ -908,6 +908,74 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.ok(reborn && wat.test_tt_entry_width(reborn) === direct.width,
     'the cache must still work after a flush');
 
+  // ---- composing a run --------------------------------------------------
+  //
+  // Per-glyph tests cannot catch a bearing or advance applied with the wrong
+  // sign: each glyph is right and the line is wrong. This walks a string the
+  // way a TextOut loop would — pen starts at the origin, each glyph draws at
+  // pen + left, baseline - top, then the pen moves by the advance — and
+  // checks the result reads as text.
+
+  const drawRun = (face, text, ppem) => {
+    const ascent = wat.test_tt_face_metric(face, ppem, 1);
+    const height = wat.test_tt_face_metric(face, ppem, 0);
+    const width = wat.test_tt_face_text_width(face,
+      wa(guestPath(text)), text.length, ppem);
+    const rows = Array.from({ length: height }, () => new Array(width).fill('.'));
+    let pen = 0;
+    for (const character of text) {
+      const byte = character.charCodeAt(0);
+      const entry = wat.test_tt_face_glyph(face, byte, ppem);
+      const glyphWidth = wat.test_tt_entry_width(entry);
+      const glyphHeight = wat.test_tt_entry_height(entry);
+      const left = wat.test_tt_entry_left(entry);
+      const top = wat.test_tt_entry_top(entry);
+      for (let y = 0; y < glyphHeight; y += 1) {
+        for (let x = 0; x < glyphWidth; x += 1) {
+          if (!wat.test_tt_entry_pixel(entry, x, y)) continue;
+          const px = pen + left + x;
+          const py = ascent - top + y;
+          if (px >= 0 && px < width && py >= 0 && py < height) rows[py][px] = '#';
+        }
+      }
+      pen += wat.test_tt_face_char_width(face, byte, ppem);
+    }
+    return rows.map(row => row.join(''));
+  };
+
+  const run = drawRun(arial, 'Hi!', 16);
+  assert.strictEqual(run.length, 17, 'the run is one tmHeight tall');
+  const ink = run.join('');
+  assert.ok(ink.includes('#'), 'the run must have ink');
+
+  // Descender space must stay empty for a string with no descenders, which is
+  // what proves the baseline is where tmAscent says it is rather than at the
+  // top of the box.
+  assert.strictEqual(run[16].includes('#'), false,
+    'nothing may reach the descender line for "Hi!"');
+  assert.strictEqual(run[0].includes('#'), false,
+    'nothing may reach the internal-leading line either');
+
+  // Glyphs must not overlap or collide: a column of blank separates them.
+  const columns = run[0].length;
+  let blankColumns = 0;
+  for (let x = 0; x < columns; x += 1) {
+    if (run.every(row => row[x] === '.')) blankColumns += 1;
+  }
+  assert.ok(blankColumns >= 2,
+    'advances must leave the glyphs separated rather than run together');
+
+  // The pen must land exactly where the measured width says. If the advance
+  // loop and GetTextExtentPoint32 disagree, carets and selection highlights
+  // drift a pixel per character.
+  const penEnd = [...'Hi!'].reduce((total, character) =>
+    total + wat.test_tt_face_char_width(arial, character.charCodeAt(0), 16), 0);
+  const measuredRun = wat.test_tt_face_text_width(arial,
+    wa(guestPath('Hi!')), 3, 16);
+  assert.ok(Math.abs(penEnd - measuredRun) <= 1,
+    `per-character advances (${penEnd}) must agree with the measured run ` +
+    `(${measuredRun}) to within the rounding of one pixel`);
+
   console.log('PASS  WAT reads TrueType metrics from Liberation Sans and Wine Marlett');
 })().catch(error => {
   console.error(error);
