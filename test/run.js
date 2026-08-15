@@ -147,6 +147,7 @@ const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: 
 const COUNT_SPEC = getArg('count', null);        // --count=0xADDR[,0xADDR,...]: passive hit counter per block dispatch (up to 16 slots)
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
+const DUMP_VMAP = hasFlag('dump-vmap');   // --dump-vmap: sparse VirtualAlloc map + which probes are mapped
 const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save back canvases alongside PNG snapshots
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
@@ -5266,6 +5267,36 @@ if (VERBOSE) {
     const dumpAddr = parseInt(addrStr, 16);
     const dumpLen = parseInt(lenStr) || 256;
     hexdump(dumpAddr, dumpLen);
+  }
+
+  // --dump-vmap: list the sparse VirtualAlloc mappings, and say for each
+  // --dump address whether it actually lands in one. Guest memory outside
+  // every mapping translates to the shared NULL sentinel, where writes are
+  // discarded and reads come back zero — so a hexdump of unmapped memory is
+  // an innocent-looking page of zeros rather than an error. That is worth one
+  // line of output whenever you are chasing memory that "should" hold data.
+  if (DUMP_VMAP) {
+    const dv2 = new DataView(memory.buffer);
+    const count = dv2.getUint32(0x07F02400, true) >>> 0;
+    console.log(`Virtual map: ${count} mapping(s)`);
+    const maps = [];
+    for (let i = 0; i < count; i++) {
+      const rec = 0x07F02410 + i * 16;
+      const b = dv2.getUint32(rec, true) >>> 0;
+      const sz = dv2.getUint32(rec + 4, true) >>> 0;
+      const back = dv2.getUint32(rec + 8, true) >>> 0;
+      maps.push({ b, sz });
+      console.log(`  [${i}] guest ${hex(b)}..${hex(b + sz)}  size ${hex(sz)}  backing ${hex(back)}`);
+    }
+    if (DUMP_SPEC) {
+      for (const spec of DUMP_SPEC.split(',')) {
+        const a = parseInt(spec.split(':')[0], 16) >>> 0;
+        const hit = maps.findIndex(m => a >= m.b && a < m.b + m.sz);
+        console.log(`  probe ${hex(a)}: ${hit >= 0
+          ? `mapped in [${hit}]`
+          : 'NOT MAPPED — reads return 0 and writes are discarded'}`);
+      }
+    }
   }
 
   // Dump sprite list if requested

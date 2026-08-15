@@ -188,7 +188,12 @@ const TEST_CASES = [
     extraArgs: ['--args=-quick', '--quiet-blocks', '--stuck-after=5000'],
     captureHwnd: 0x10002, captureBatch: 20, captureStopBatch: 21,
     timeoutMs: 90000 },
-  { exe: 'test/binaries/pinball-plus95/pinball.exe', name: 'Pinball (Plus! 95)' },
+  { exe: 'test/binaries/pinball-plus95/pinball.exe', name: 'Pinball (Plus! 95)',
+    // Same shape as the Space Cadet entry above: it needs a real budget to
+    // load the table. It was blank for a different reason until the VFS read
+    // stopped spanning sparse-mapping boundaries and wrecking its allocator.
+    maxBatches: 40, batchSize: 500000,
+    extraArgs: ['--args=-quick', '--quiet-blocks'], timeoutMs: 90000 },
   // Winamp extracted app
   { exe: 'test/binaries/winamp.exe', name: 'Winamp' },
   // Installers (NSIS etc.)
