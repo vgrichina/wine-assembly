@@ -33,6 +33,27 @@
   ;;   0x30014 BLACK_BRUSH    0x30017 BLACK_PEN
   ;;   0x30022 caption font (added — 11px MS Sans Serif Bold)
 
+  ;; Width of a top-level window's border, in pixels. Win98's sizing frame is
+  ;; SM_CXFRAME = 4; a fixed frame is SM_CXDLGFRAME = 3. Measured against real
+  ;; Win98 under v86 (tools/v86-reference/shell-apps.json, probed with
+  ;; tools/png-crop.js --probe): a WS_THICKFRAME window reads
+  ;;
+  ;;   top/left  outward-in:   3DFACE, 3DHILIGHT, 3DFACE, 3DFACE
+  ;;   bottom/right inward-out: 3DFACE, 3DFACE, 3DSHADOW, 3DDKSHADOW
+  ;;
+  ;; and its caption starts at (4,4). That is our raised edge with its top-left
+  ;; moved one pixel inward and the extra pixel left as frame fill; the
+  ;; bottom-right two-tone edge already sat on the window boundary.
+  ;;
+  ;; Three call sites must agree — the frame painter, WM_NCCALCSIZE and
+  ;; WM_NCHITTEST — or the chrome, the client origin and the resize bands
+  ;; drift apart.
+  (func $defwndproc_frame_width (param $hwnd i32) (result i32)
+    (select (i32.const 4) (i32.const 3)
+      (i32.ne
+        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00040000))
+        (i32.const 0))))
+
   (func $defwndproc_ncpaint (export "defwndproc_ncpaint")
         (param $hwnd i32) (param $w i32) (param $h i32)
         (param $title_wa i32) (param $title_len i32) (param $flags i32)
@@ -62,6 +83,7 @@
     (local $nc_style i32) (local $has_context i32) (local $has_min i32) (local $has_max i32)
     (local $simple_child_border i32)
     (local $glyph_brush i32)
+    (local $frame i32)
 
     ;; NC paint gets a real typed DC with a WAT-built visible clip:
     ;; window rect minus client rect. JS only applies this region to the
@@ -106,9 +128,17 @@
     ;; Outset 3D border around the whole window.
     ;; EDGE_RAISED = BDR_RAISEDOUTER(1) | BDR_RAISEDINNER(4) = 5
     ;; BF_RECT (all four sides) = 0x0F
+    ;;
+    ;; A sizing frame is one pixel wider than the edge draws, and Win98 spends
+    ;; that pixel on the top and left, outside the highlight — see
+    ;; $defwndproc_frame_width. Insetting the edge's top-left leaves the fill
+    ;; showing there and keeps the shadow/dkshadow pair on the window boundary
+    ;; where Win98 puts it.
     ;; -------------------------------------------------
+    (local.set $frame (call $defwndproc_frame_width (local.get $hwnd)))
     (drop (call $host_gdi_draw_edge (local.get $hdc)
-            (i32.const 0) (i32.const 0)
+            (i32.sub (local.get $frame) (i32.const 3))
+            (i32.sub (local.get $frame) (i32.const 3))
             (local.get $w) (local.get $h)
             (i32.const 0x05) (i32.const 0x0F)))
 
@@ -125,9 +155,9 @@
     ;; Colors are passed as 0xBBGGRR (Win32 COLORREF order); the
     ;; host primitive interprets the same way as gdi_fill_rect.
     ;; -------------------------------------------------
-    (local.set $cap_l (i32.const 3))
-    (local.set $cap_r (i32.sub (local.get $w) (i32.const 3)))
-    (local.set $cap_top (i32.const 3))
+    (local.set $cap_l (local.get $frame))
+    (local.set $cap_r (i32.sub (local.get $w) (local.get $frame)))
+    (local.set $cap_top (local.get $frame))
     (local.set $cap_bot (i32.add (local.get $cap_top) (local.get $cap_h)))
     (if (local.get $is_active)
       (then
@@ -700,7 +730,8 @@
         (local.set $cy (i32.const 1))
         (local.set $bot (i32.const 1)))
       (else
-        (local.set $bw (select (i32.const 3) (i32.const 0) (local.get $has_border)))
+        (local.set $bw (select (call $defwndproc_frame_width (local.get $hwnd))
+          (i32.const 0) (local.get $has_border)))
         (local.set $cy (local.get $bw))
         (if (local.get $has_cap) (then (local.set $cy (i32.add (local.get $cy) (i32.const 19)))))
         (if (i32.and
@@ -754,7 +785,7 @@
     (local $style i32) (local $has_cap i32) (local $is_dialog i32) (local $is_child i32)
     (local $has_context i32)
     (local $has_thick i32) (local $has_min i32) (local $has_max i32)
-    (local $corner i32) (local $border i32)
+    (local $corner i32) (local $border i32) (local $frame i32)
     (local $cap_top i32) (local $cap_bot i32) (local $cap_l i32) (local $cap_r i32)
     (local $btn_y i32) (local $btn_bot i32)
     (local $close_x i32) (local $max_x i32) (local $min_x i32)
@@ -794,12 +825,14 @@
       (then (local.set $has_thick (i32.const 0))))
     (local.set $has_min   (i32.and (local.get $style) (i32.const 0x00020000)))
     (local.set $has_max   (i32.and (local.get $style) (i32.const 0x00010000)))
-    ;; Title bar region: (3, 3)-(w-3, 3+18); button strip (3+2)..(3+16) high.
+    ;; Title bar region: (frame, frame)-(w-frame, frame+18); button strip
+    ;; (frame+2)..(frame+16) high. Same frame width the painter used.
+    (local.set $frame (call $defwndproc_frame_width (local.get $hwnd)))
     (if (local.get $has_cap)
       (then
-        (local.set $cap_l (i32.const 3))
-        (local.set $cap_r (i32.sub (local.get $w) (i32.const 3)))
-        (local.set $cap_top (i32.const 3))
+        (local.set $cap_l (local.get $frame))
+        (local.set $cap_r (i32.sub (local.get $w) (local.get $frame)))
+        (local.set $cap_top (local.get $frame))
         (local.set $cap_bot (i32.add (local.get $cap_top) (i32.const 18)))
         (if (i32.and (i32.and (i32.ge_s (local.get $lx) (local.get $cap_l))
                                 (i32.lt_s (local.get $lx) (local.get $cap_r)))
@@ -856,19 +889,19 @@
                                            (i32.lt_s (local.get $lx) (i32.add (local.get $min_x) (local.get $bw)))))
                       (then (return (i32.const 8))))))))  ;; HTMINBUTTON
             (return (i32.const 2)))))) ;; HTCAPTION
-    ;; Border band. 3 px thick for detection; thick-frame windows get
-    ;; resize codes (corners win over edges within a 12 px zone).
-    (local.set $border (i32.or (i32.or (i32.lt_s (local.get $lx) (i32.const 3))
-                                        (i32.lt_s (local.get $ly) (i32.const 3)))
-                                (i32.or (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (i32.const 3)))
-                                        (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (i32.const 3))))))
+    ;; Border band, as wide as the frame the painter drew; thick-frame windows
+    ;; get resize codes (corners win over edges within a 12 px zone).
+    (local.set $border (i32.or (i32.or (i32.lt_s (local.get $lx) (local.get $frame))
+                                        (i32.lt_s (local.get $ly) (local.get $frame)))
+                                (i32.or (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (local.get $frame)))
+                                        (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $frame))))))
     (if (local.get $border)
       (then
         (if (i32.eqz (local.get $has_thick))
           (then (return (i32.const 18)))) ;; HTBORDER — non-resizable
         (local.set $corner (i32.const 12))
         ;; Top edges
-        (if (i32.lt_s (local.get $ly) (i32.const 3))
+        (if (i32.lt_s (local.get $ly) (local.get $frame))
           (then
             (if (i32.lt_s (local.get $lx) (local.get $corner))
               (then (return (i32.const 13))))                              ;; HTTOPLEFT
@@ -876,7 +909,7 @@
               (then (return (i32.const 14))))                              ;; HTTOPRIGHT
             (return (i32.const 12))))                                      ;; HTTOP
         ;; Bottom edges
-        (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (i32.const 3)))
+        (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $frame)))
           (then
             (if (i32.lt_s (local.get $lx) (local.get $corner))
               (then (return (i32.const 16))))                              ;; HTBOTTOMLEFT
@@ -884,8 +917,8 @@
               (then (return (i32.const 17))))                              ;; HTBOTTOMRIGHT
             (return (i32.const 15))))                                      ;; HTBOTTOM
         ;; Left / right edges (corner-y check too, in case the top/bottom
-        ;; branches didn't fire because ly was in [3, h-3)).
-        (if (i32.lt_s (local.get $lx) (i32.const 3))
+        ;; branches didn't fire because ly was inside the band).
+        (if (i32.lt_s (local.get $lx) (local.get $frame))
           (then
             (if (i32.lt_s (local.get $ly) (local.get $corner))
               (then (return (i32.const 13))))                              ;; HTTOPLEFT

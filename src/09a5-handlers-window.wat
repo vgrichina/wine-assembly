@@ -632,11 +632,26 @@
         (global.set $main_win_cx (local.get $win_cx))
         (global.set $main_win_cy (local.get $win_cy))
         ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
-        (global.set $main_nc_height (select (i32.const 45) (i32.const 25)
-          (i32.ne (local.get $menu_id) (i32.const 0))))
+        ;; The startup WM_SIZE carries the client size, so it has to be the
+        ;; client size USER will report from then on. This used to subtract
+        ;; hardcoded chrome (6 across, 45 or 25 down), a second copy of the
+        ;; metrics $defwndproc_do_nccalcsize owns; when the sizing frame grew
+        ;; to its Win98 width of 4 the two disagreed by a pixel and Notepad
+        ;; sized its edit control over the window frame. Ask nccalcsize.
+        (call $defwndproc_do_nccalcsize (local.get $hwnd))
+        (global.set $main_nc_height
+          (i32.sub (global.get $main_win_cy)
+            (i32.sub (call $client_rect_get_b (local.get $hwnd))
+                     (call $client_rect_get_t (local.get $hwnd)))))
         (global.set $pending_wm_size (i32.or
-          (i32.and (i32.sub (global.get $main_win_cx) (i32.const 6)) (i32.const 0xFFFF))
-          (i32.shl (i32.sub (global.get $main_win_cy) (global.get $main_nc_height)) (i32.const 16))))
+          (i32.and
+            (i32.sub (call $client_rect_get_r (local.get $hwnd))
+                     (call $client_rect_get_l (local.get $hwnd)))
+            (i32.const 0xFFFF))
+          (i32.shl
+            (i32.sub (call $client_rect_get_b (local.get $hwnd))
+                     (call $client_rect_get_t (local.get $hwnd)))
+            (i32.const 16))))
         ;; If WS_VISIBLE (0x10000000) is set on the main window's style and the activation
         ;; chain hasn't already run (no prior ShowWindow), arm CACA0001 to run the
         ;; implicit-show activation chain after WM_CREATE returns. This matches real

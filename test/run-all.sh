@@ -76,6 +76,7 @@ UNIT=(
   test/test-gdi-surface.js
   test/test-gdi-deferred-presentation.js
   test/test-wat-memory-map.js
+  test/test-wat-window-frame.js
   test/test-wat-winsock.js
   test/test-vlan-wire.js
   test/test-large-dll-staging.js

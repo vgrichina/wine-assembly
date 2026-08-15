@@ -6,10 +6,16 @@
 //
 //   node tools/png-crop.js <in.png> --rect=X,Y,W,H [--scale=N] [--out=path]
 //   node tools/png-crop.js <in.png> --boxes[=Y0,Y1]   [--min=8]
+//   node tools/png-crop.js <in.png> --probe=X,Y,W,H
 //
 // --rect crops and nearest-neighbour scales, so a control can be read pixel by
 // pixel instead of squinted at. macOS `sips -c` crops from the centre and
 // ignores an offset, which silently gives you the wrong region.
+//
+// --probe prints the region as a grid of one-character symbols with a legend
+// giving each symbol's exact color, naming the Win98 system colors it knows.
+// Chrome work turns on questions like "is that outermost row face or white",
+// which a zoomed image answers by eye and therefore not at all.
 //
 // --boxes reports the rectangles of Win98 control borders in a band of rows,
 // found by scanning for the white edge runs a raised BUTTON draws. Use it to
@@ -45,6 +51,43 @@ const at = (x, y) => {
   const i = (y * png.width + x) * 4;
   return (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
 };
+
+const probe = argOf('probe');
+if (probe) {
+  const NAMES = new Map([
+    [0xFFFFFF, '3DHILIGHT/white'],
+    [0xC0C0C0, '3DFACE'],
+    [0x808080, '3DSHADOW'],
+    [0xDFDFDF, '3DLIGHT'],
+    [0x000000, '3DDKSHADOW/black'],
+    [0x000080, 'ACTIVECAPTION'],
+    [0x1084D0, 'GRADIENTACTIVECAPTION'],
+    [0x008080, 'desktop teal'],
+  ]);
+  const [px, py, pw, ph] = probe.split(',').map(Number);
+  const symbols = '#o+=-:*%&$@abcdefghijklmnpqrstuvwxyz';
+  const seen = new Map();
+  const rows = [];
+  for (let y = py; y < Math.min(py + ph, png.height); y += 1) {
+    let row = '';
+    for (let x = px; x < Math.min(px + pw, png.width); x += 1) {
+      const color = at(x, y);
+      if (!seen.has(color)) {
+        seen.set(color, seen.size < symbols.length ? symbols[seen.size] : '?');
+      }
+      row += seen.get(color);
+    }
+    rows.push(`${String(y).padStart(4)} ${row}`);
+  }
+  console.log(`${path.basename(file)} ${png.width}x${png.height}  probe ${px},${py} ${pw}x${ph}`);
+  for (const [color, symbol] of seen) {
+    const hex = `#${color.toString(16).padStart(6, '0')}`;
+    console.log(`  ${symbol} = ${hex}${NAMES.has(color) ? `  ${NAMES.get(color)}` : ''}`);
+  }
+  console.log(`     ${'x'.padEnd(1)}${String(px)} ->`);
+  for (const row of rows) console.log(row);
+  process.exit(0);
+}
 
 const boxes = argOf('boxes');
 if (boxes) {
