@@ -1639,6 +1639,9 @@
   (global $current_thread_id (mut i32) (i32.const 1))
   ;; Current segment prefix during decoding (set before decode_modrm)
   (global $d_seg (mut i32) (i32.const 0))
+  ;; 0x67 address-size override for the instruction being decoded, so
+  ;; $decode_modrm can tell 16-bit ModRM encodings from 32-bit ones.
+  (global $d_addr16 (mut i32) (i32.const 0))
 
   ;; Runtime EA temp for SIB addressing
   (global $ea_temp (mut i32) (i32.const 0))

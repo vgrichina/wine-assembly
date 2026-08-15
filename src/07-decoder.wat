@@ -77,6 +77,26 @@
     (if (i32.eq (local.get $mod) (i32.const 3))
       (then (global.set $mr_val (local.get $rm)) (return)))
 
+    ;; 16-bit addressing (0x67 prefix). The ModRM byte means something else
+    ;; entirely: rm selects one of the [BX+SI]-style pairs rather than a
+    ;; 32-bit base/SIB. Only the register-free form is implemented — mod=00
+    ;; with rm=6, a plain 16-bit displacement — because that is what real
+    ;; 32-bit code uses it for (Borland reads the TIB as `mov edx, fs:[4]`
+    ;; encoded 64 67 8b 16 04 00). The register forms would additionally need
+    ;; the effective address truncated to 16 bits, which the emitters do not
+    ;; model, so they keep trapping rather than computing a wrong address.
+    (if (global.get $d_addr16)
+      (then
+        (if (i32.and (i32.eq (local.get $mod) (i32.const 0)) (i32.eq (local.get $rm) (i32.const 6)))
+          (then
+            (global.set $mr_disp (call $d_fetch16))
+            (call $apply_seg_override)
+            (return)))
+        (call $host_log_i32 (i32.const 0xCA5E1667)) ;; addr16 ModRM form
+        (call $host_log_i32 (local.get $modrm))
+        (call $host_log_i32 (global.get $d_pc))
+        (unreachable)))
+
     (block $ea_done
       ;; mod=00
       (if (i32.eq (local.get $mod) (i32.const 0))
@@ -662,19 +682,30 @@
 
       ;; Propagate segment prefix to global for ModRM decoder
       (global.set $d_seg (local.get $prefix_seg))
+      (global.set $d_addr16 (local.get $prefix_67))
 
-      ;; 0x67 (address-size override) is parsed but not implemented for ModRM.
-      ;; Decoding 16-bit addressing as 32-bit ModRM/SIB silently corrupts
-      ;; EAs, so trap explicitly until 16-bit addressing exists. The exception
-      ;; is LOOP/LOOPE/LOOPNE (0xE0..0xE2) and JCXZ (0xE3): these have no
-      ;; ModRM, the prefix only swaps the implicit counter ECX→CX, which is
-      ;; handled by passing an addr16 flag through to handlers 46 / 216.
+      ;; 0x67 (address-size override) changes how an instruction forms its
+      ;; effective address, so every opcode has to opt in deliberately —
+      ;; decoding 16-bit addressing as 32-bit ModRM/SIB silently corrupts EAs.
+      ;; Anything not listed here still traps, and the log carries the opcode
+      ;; so the next case is easy to add.
+      ;;   0xE0..0xE3  LOOP/LOOPE/LOOPNE/JCXZ — no ModRM; the prefix only
+      ;;               swaps the implicit counter ECX→CX, passed through to
+      ;;               handlers 46 / 216.
+      ;;   0x88..0x8B  MOV r/m,r and MOV r,r/m — $decode_modrm handles the
+      ;;               16-bit form and traps on the ones it cannot model.
+      ;;   0xA0..0xA3  MOV AL/eAX ↔ moffs — the offset itself becomes 16-bit.
       (if (local.get $prefix_67)
         (then
-          (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xE0)) (i32.le_u (local.get $op) (i32.const 0xE3)))
-            (then) ;; allow — handled in the LOOP/JCXZ blocks below
+          (if (i32.or
+                (i32.and (i32.ge_u (local.get $op) (i32.const 0xE0)) (i32.le_u (local.get $op) (i32.const 0xE3)))
+                (i32.or
+                  (i32.and (i32.ge_u (local.get $op) (i32.const 0x88)) (i32.le_u (local.get $op) (i32.const 0x8B)))
+                  (i32.and (i32.ge_u (local.get $op) (i32.const 0xA0)) (i32.le_u (local.get $op) (i32.const 0xA3)))))
+            (then) ;; allow — handled below
             (else
               (call $host_log_i32 (i32.const 0xCA5E0067))
+              (call $host_log_i32 (local.get $op))
               (call $host_log_i32 (global.get $d_pc))
               (unreachable)))))
 
@@ -961,18 +992,24 @@
           (br $decode)))
 
       ;; ---- 0xA0-0xA3: MOV AL/EAX, [abs] / MOV [abs], AL/EAX ----
-      ;; Apply FS base if segment override is active
-      (if (i32.eq (local.get $op) (i32.const 0xA0)) (then (call $te (i32.const 24) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      ;; Apply FS base if segment override is active. The operand here is a
+      ;; moffs, not a ModRM, so the 0x67 prefix shrinks the offset itself to
+      ;; 16 bits — Borland emits `mov eax, fs:[0]` as 64 67 a1 00 00.
+      (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xA0)) (i32.le_u (local.get $op) (i32.const 0xA3)))
+        (then (local.set $imm (call $seg_adj
+          (if (result i32) (local.get $prefix_67) (then (call $d_fetch16)) (else (call $d_fetch32)))
+          (local.get $prefix_seg)))))
+      (if (i32.eq (local.get $op) (i32.const 0xA0)) (then (call $te (i32.const 24) (i32.const 0)) (call $te_raw (local.get $imm)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA1)) (then
         (if (local.get $prefix_66)
-          (then (call $te (i32.const 164) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))))  ;; mov ax, [addr]
-          (else (call $te (i32.const 20) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg)))))   ;; mov eax, [addr]
+          (then (call $te (i32.const 164) (i32.const 0)) (call $te_raw (local.get $imm)))  ;; mov ax, [addr]
+          (else (call $te (i32.const 20) (i32.const 0)) (call $te_raw (local.get $imm))))   ;; mov eax, [addr]
         (br $decode)))
-      (if (i32.eq (local.get $op) (i32.const 0xA2)) (then (call $te (i32.const 25) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))) (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xA2)) (then (call $te (i32.const 25) (i32.const 0)) (call $te_raw (local.get $imm)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA3)) (then
         (if (local.get $prefix_66)
-          (then (call $te (i32.const 163) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg))))  ;; mov [addr], ax
-          (else (call $te (i32.const 21) (i32.const 0)) (call $te_raw (call $seg_adj (call $d_fetch32) (local.get $prefix_seg)))))   ;; mov [addr], eax
+          (then (call $te (i32.const 163) (i32.const 0)) (call $te_raw (local.get $imm)))  ;; mov [addr], ax
+          (else (call $te (i32.const 21) (i32.const 0)) (call $te_raw (local.get $imm))))   ;; mov [addr], eax
         (br $decode)))
 
       ;; ---- 0xC6: MOV r/m8, imm8 ----

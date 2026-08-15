@@ -442,6 +442,42 @@ async function main() {
   test('Bignum shrd+shr edx', e.get_edx(), 0);
 
   // ================================================================
+  // 0x67 address-size override (16-bit addressing in 32-bit code)
+  // ================================================================
+  // Borland-built apps read the TIB as `mov edx, fs:[4]` encoded
+  // 64 67 8b 16 04 00 — a segment override plus a 16-bit ModRM whose rm=6
+  // form is a bare 16-bit displacement. Decoding that as 32-bit ModRM reads
+  // two bytes too many and lands on a wrong address, so the decoder used to
+  // refuse the prefix outright. Runenlegen, Winarc and the mIRC installer all
+  // died on it.
+  //
+  // Both checks below compare the addr16 encoding against the 32-bit encoding
+  // of the same access, so they assert the effective address without needing
+  // to know what the TIB actually holds.
+
+  // mov edx, fs:[4] (addr16), then mov ecx, imm32. If the displacement were
+  // read as 4 bytes instead of 2, the following instruction would be decoded
+  // from the wrong offset and ecx would not survive.
+  runCode([0x64, 0x67, 0x8B, 0x16, 0x04, 0x00, 0xB9, ...le32(0x11223344)]);
+  const addr16Edx = e.get_edx();
+  test('addr16 disp16 consumes exactly two displacement bytes', e.get_ecx(), 0x11223344);
+
+  // The 32-bit spelling of the same access: mov edx, fs:[00000004]
+  runCode([0x64, 0x8B, 0x15, 0x04, 0x00, 0x00, 0x00]);
+  test('addr16 disp16 forms the same address as the 32-bit encoding',
+    addr16Edx, e.get_edx());
+
+  // mov eax, fs:[0] as a 16-bit moffs (64 67 a1 00 00) — here the prefix
+  // shrinks the offset operand itself rather than a ModRM.
+  runCode([0x64, 0x67, 0xA1, 0x00, 0x00, 0xB9, ...le32(0x55667788)]);
+  const addr16Eax = e.get_eax();
+  test('addr16 moffs consumes exactly two offset bytes', e.get_ecx(), 0x55667788);
+
+  runCode([0x64, 0xA1, 0x00, 0x00, 0x00, 0x00]);
+  test('addr16 moffs reads the same address as the 32-bit encoding',
+    addr16Eax, e.get_eax());
+
+  // ================================================================
   // Summary
   // ================================================================
   console.log(`\n${pass} passed, ${fail} failed`);
