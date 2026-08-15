@@ -65,6 +65,7 @@ UNIT=(
   test/test-font-subsets.js
   test/test-wat-truetype-substitution.js
   test/test-wat-gdi-scalable-text.js
+  test/test-wat-font-resource.js
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js

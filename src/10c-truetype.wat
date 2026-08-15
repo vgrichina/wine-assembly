@@ -231,6 +231,119 @@
         (i32.const 1))
       (i32.const 0)))
 
+  ;; ---- name -------------------------------------------------------------
+  ;;
+  ;; Only the family name (name ID 1) is read, and only to answer "what face
+  ;; did the guest just install?" for AddFontResourceA. Everything else in the
+  ;; stack is keyed by a face name the guest already supplied.
+
+  ;; Rank a name record as a source for the family name. Higher wins; 0 means
+  ;; unusable. Windows records are preferred over Macintosh ones because a
+  ;; Windows record is what GDI itself reported, and an English-language
+  ;; record over any other because the family name is a lookup key that the
+  ;; guest will spell the English way.
+  (func $tt_name_rank (param $platform i32) (param $encoding i32)
+        (param $language i32) (result i32)
+    (if (i32.eq (local.get $platform) (i32.const 3))
+      (then
+        ;; Unicode BMP (1) and Symbol (0) both store the name as UTF-16BE.
+        (if (i32.gt_u (local.get $encoding) (i32.const 1))
+          (then (return (i32.const 0))))
+        (return (select (i32.const 4) (i32.const 3)
+          (i32.eq (local.get $language) (i32.const 0x0409))))))
+    (if (i32.eq (local.get $platform) (i32.const 1))
+      (then
+        (if (i32.ne (local.get $encoding) (i32.const 0))
+          (then (return (i32.const 0))))
+        (return (select (i32.const 2) (i32.const 1)
+          (i32.eqz (local.get $language))))))
+    (i32.const 0))
+
+  ;; Copy the family name into $out as a NUL-terminated Latin-1 string and
+  ;; return its length, or 0 when the font declares none that fits.
+  ;;
+  ;; A code unit outside Latin-1 fails the whole call rather than being
+  ;; substituted: the result is a lookup key, and a key that is subtly wrong
+  ;; finds nothing in a way that reads as "the font failed to load" while the
+  ;; font loaded fine.
+  (func $tt_family_name (param $data i32) (param $size i32) (param $out i32)
+        (param $out_max i32) (result i32)
+    (local $name i32) (local $count i32) (local $strings i32) (local $index i32)
+    (local $record i32) (local $rank i32) (local $best i32) (local $best_rec i32)
+    (local $platform i32) (local $length i32) (local $offset i32)
+    (local $units i32) (local $unit i32) (local $wide i32)
+    (if (i32.or (i32.eqz (local.get $out)) (i32.lt_s (local.get $out_max) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (local.set $name (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x6E616D65)))
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $count
+      (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $name) (i32.const 2))))
+    (local.set $strings (i32.add (local.get $name)
+      (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $name) (i32.const 4)))))
+
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $record (i32.add (local.get $name)
+        (i32.add (i32.const 6) (i32.mul (local.get $index) (i32.const 12)))))
+      (if (i32.eq (call $tt_u16 (local.get $data) (local.get $size)
+            (i32.add (local.get $record) (i32.const 6))) (i32.const 1))
+        (then
+          (local.set $rank (call $tt_name_rank
+            (call $tt_u16 (local.get $data) (local.get $size) (local.get $record))
+            (call $tt_u16 (local.get $data) (local.get $size)
+              (i32.add (local.get $record) (i32.const 2)))
+            (call $tt_u16 (local.get $data) (local.get $size)
+              (i32.add (local.get $record) (i32.const 4)))))
+          (if (i32.gt_u (local.get $rank) (local.get $best))
+            (then
+              (local.set $best (local.get $rank))
+              (local.set $best_rec (local.get $record))))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $best)) (then (return (i32.const 0))))
+
+    (local.set $platform
+      (call $tt_u16 (local.get $data) (local.get $size) (local.get $best_rec)))
+    (local.set $wide (i32.eq (local.get $platform) (i32.const 3)))
+    (local.set $length (call $tt_u16 (local.get $data) (local.get $size)
+      (i32.add (local.get $best_rec) (i32.const 8))))
+    (local.set $offset (i32.add (local.get $strings)
+      (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $best_rec) (i32.const 10)))))
+    (if (i32.or (i32.eqz (local.get $length))
+          (i32.gt_u (i32.add (local.get $offset) (local.get $length))
+            (local.get $size)))
+      (then (return (i32.const 0))))
+    (local.set $units (select
+      (i32.shr_u (local.get $length) (i32.const 1)) (local.get $length)
+      (local.get $wide)))
+    ;; One byte of the destination belongs to the terminator.
+    (if (i32.gt_u (local.get $units)
+          (i32.sub (local.get $out_max) (i32.const 1)))
+      (then (return (i32.const 0))))
+
+    (local.set $index (i32.const 0))
+    (block $copied (loop $copy
+      (br_if $copied (i32.ge_u (local.get $index) (local.get $units)))
+      (local.set $unit
+        (if (result i32) (local.get $wide)
+          (then (call $tt_u16 (local.get $data) (local.get $size)
+            (i32.add (local.get $offset)
+              (i32.mul (local.get $index) (i32.const 2)))))
+          (else (call $tt_u8 (local.get $data) (local.get $size)
+            (i32.add (local.get $offset) (local.get $index))))))
+      (if (i32.or (i32.eqz (local.get $unit))
+            (i32.gt_u (local.get $unit) (i32.const 0xFF)))
+        (then (return (i32.const 0))))
+      (i32.store8 (i32.add (local.get $out) (local.get $index)) (local.get $unit))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (local.get $out) (local.get $units)) (i32.const 0))
+    (local.get $units))
+
   ;; ---- hmtx -------------------------------------------------------------
   ;;
   ;; hmtx stores numberOfHMetrics {advance, lsb} pairs followed by lsb-only
@@ -2432,8 +2545,12 @@
         (result i32)
     (local $p i32) (local $end i32)
     (local $regular i32) (local $bold i32)
-    (local $slanted i32) (local $bold_slanted i32)
+    (local $slanted i32) (local $bold_slanted i32) (local $registered i32)
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    ;; A font the guest installed itself outranks the substitute for it.
+    (local.set $registered (call $tt_reg_path (local.get $name)
+      (local.get $weight) (local.get $italic)))
+    (if (local.get $registered) (then (return (local.get $registered))))
     (local.set $p (global.get $TT_SUBST_TABLE))
     (local.set $end (i32.add (global.get $TT_SUBST_TABLE)
       (global.get $TT_SUBST_TABLE_SIZE)))
@@ -2455,6 +2572,187 @@
         (call $tt_subst_skip (local.get $bold_slanted) (local.get $end)))
       (br $scan)))
     (i32.const 0))
+
+  ;; ---- runtime-registered faces -----------------------------------------
+  ;;
+  ;; The table above is what Win98 shipped. A guest may also install a font of
+  ;; its own with AddFontResourceA, naming a file that no table could know
+  ;; about - fontview.exe does exactly this to display the file it was opened
+  ;; on, and refuses to draw anything when the call fails.
+  ;;
+  ;; So registration is a small mutable table beside the static one, keyed by
+  ;; the family name read out of the file rather than by the filename: the
+  ;; guest installs ARIALBD.TTF by path and then asks for "Arial" bold, and
+  ;; only the name table connects the two.
+  ;;
+  ;; Registered entries are consulted BEFORE the substitution table. A guest
+  ;; that ships its own copy of a face means that copy, and the substitute
+  ;; exists only to answer for files this emulator has no license to carry.
+
+  ;; Matches the face table: a guest that installs more files than the face
+  ;; cache can hold open would fail at the open rather than here, and a
+  ;; registry smaller than the cache would fail first for no stated reason.
+  (global $TT_REG_MAX i32 (i32.const 32))
+  (global $TT_REG_NAME_MAX i32 (i32.const 64))
+  (global $TT_REG_PATH_MAX i32 (i32.const 132))
+  (global $TT_REG_STRIDE i32 (i32.const 208))
+  (global $TT_REG_NAME_OFF i32 (i32.const 12))
+  (global $TT_REG_PATH_OFF i32 (i32.const 76))
+  (global $tt_reg (mut i32) (i32.const 0))
+
+  (func $tt_reg_ensure (result i32)
+    (local $guest i32) (local $bytes i32)
+    (if (global.get $tt_reg)
+      (then (return (call $g2w (global.get $tt_reg)))))
+    (local.set $bytes
+      (i32.mul (global.get $TT_REG_MAX) (global.get $TT_REG_STRIDE)))
+    (local.set $guest (call $heap_alloc (local.get $bytes)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $bytes))
+    (global.set $tt_reg (local.get $guest))
+    (call $g2w (local.get $guest)))
+
+  (func $tt_reg_record (param $table i32) (param $index i32) (result i32)
+    (i32.add (local.get $table)
+      (i32.mul (local.get $index) (global.get $TT_REG_STRIDE))))
+
+  ;; Copy a NUL-terminated string, returning its length, or 0 when it does not
+  ;; fit. A truncated path names a different file and a truncated face name
+  ;; matches nothing, so neither is worth storing.
+  (func $tt_reg_copy_str (param $dst i32) (param $src i32) (param $max i32)
+        (result i32)
+    (local $len i32) (local $byte i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $len) (local.get $max)))
+      (local.set $byte (i32.load8_u (i32.add (local.get $src) (local.get $len))))
+      (i32.store8 (i32.add (local.get $dst) (local.get $len)) (local.get $byte))
+      (br_if $done (i32.eqz (local.get $byte)))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $scan)))
+    (if (i32.ge_u (local.get $len) (local.get $max)) (then (return (i32.const 0))))
+    (local.get $len))
+
+  ;; Index of the entry holding this path, or -1. Paths are compared with the
+  ;; same case-folding the face cache uses, so re-installing the same file
+  ;; under a different spelling updates one entry rather than filling the
+  ;; table with copies of it.
+  (func $tt_reg_find_path (param $table i32) (param $path i32) (result i32)
+    (local $index i32) (local $record i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_REG_MAX)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $index)))
+      (if (i32.load (local.get $record))
+        (then (if (call $tt_subst_name_equal (local.get $path)
+                (i32.add (local.get $record) (global.get $TT_REG_PATH_OFF)))
+          (then (return (local.get $index))))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Install a font file. Returns 1 when the file is a TrueType font whose
+  ;; family name could be read, 0 otherwise - which is the AddFontResourceA
+  ;; return value, a count of fonts added.
+  (func $tt_reg_add (param $path_guest i32) (result i32)
+    (local $table i32) (local $path i32) (local $face i32)
+    (local $data i32) (local $size i32) (local $index i32) (local $free i32)
+    (local $record i32) (local $weight i32)
+    (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
+    (local.set $face (call $tt_face_open (local.get $path_guest)))
+    (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (if (i32.eqz (local.get $data)) (then (return (i32.const 0))))
+    (local.set $table (call $tt_reg_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (local.set $path (call $g2w (local.get $path_guest)))
+
+    (local.set $index (call $tt_reg_find_path (local.get $table) (local.get $path)))
+    (if (i32.ge_s (local.get $index) (i32.const 0))
+      (then (return (i32.const 1))))
+
+    (local.set $free (i32.const -1))
+    (local.set $index (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_REG_MAX)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $index)))
+      (if (i32.eqz (i32.load (local.get $record)))
+        (then (local.set $free (local.get $index)) (br $done)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $free) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $record (call $tt_reg_record (local.get $table) (local.get $free)))
+
+    (if (i32.eqz (call $tt_family_name (local.get $data) (local.get $size)
+          (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF))
+          (global.get $TT_REG_NAME_MAX)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $tt_reg_copy_str
+          (i32.add (local.get $record) (global.get $TT_REG_PATH_OFF))
+          (local.get $path) (global.get $TT_REG_PATH_MAX)))
+      (then (return (i32.const 0))))
+
+    ;; A font with no OS/2 table reports weight 0, which would rank below
+    ;; every real weight when a style is chosen. Regular is the honest reading.
+    (local.set $weight (call $tt_weight_class (local.get $data) (local.get $size)))
+    (i32.store offset=4 (local.get $record)
+      (select (local.get $weight) (i32.const 400) (local.get $weight)))
+    (i32.store offset=8 (local.get $record)
+      (call $tt_is_italic (local.get $data) (local.get $size)))
+    (i32.store (local.get $record) (i32.const 1))
+    (i32.const 1))
+
+  (func $tt_reg_remove (param $path_guest i32) (result i32)
+    (local $table i32) (local $index i32)
+    (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
+    (local.set $table (call $tt_reg_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (local.set $index (call $tt_reg_find_path (local.get $table)
+      (call $g2w (local.get $path_guest))))
+    (if (i32.lt_s (local.get $index) (i32.const 0)) (then (return (i32.const 0))))
+    (i32.store (call $tt_reg_record (local.get $table) (local.get $index))
+      (i32.const 0))
+    (i32.const 1))
+
+  ;; Best registered file for a face name, or 0. Unlike the static table,
+  ;; which has a named slot per style, registered entries arrive one file at a
+  ;; time in any order - so the style is scored rather than indexed, and a
+  ;; family installed regular-only still answers a bold request with the file
+  ;; it has.
+  (func $tt_reg_path (param $name i32) (param $weight i32) (param $italic i32)
+        (result i32)
+    (local $table i32) (local $index i32) (local $record i32)
+    (local $want_bold i32) (local $score i32) (local $best i32) (local $found i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
+    (local.set $table (call $tt_reg_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
+    (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
+    (local.set $best (i32.const -1))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_REG_MAX)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $index)))
+      (if (i32.load (local.get $record))
+        (then (if (call $tt_subst_name_equal (local.get $name)
+                (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF)))
+          (then
+            ;; Weight is worth more than slant because a bold request answered
+            ;; with an italic file is further from what was asked for than a
+            ;; bold request answered upright.
+            (local.set $score (i32.add
+              (i32.mul (i32.const 2) (i32.eq (local.get $want_bold)
+                (i32.ge_s (i32.load offset=4 (local.get $record)) (i32.const 700))))
+              (i32.eq (local.get $italic)
+                (i32.ne (i32.load offset=8 (local.get $record)) (i32.const 0)))))
+            (if (i32.gt_s (local.get $score) (local.get $best))
+              (then
+                (local.set $best (local.get $score))
+                (local.set $found
+                  (i32.add (local.get $record) (global.get $TT_REG_PATH_OFF)))))))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (local.get $found))
 
   ;; Open the substitute for a LOGFONT face name. Returns a face index, or -1
   ;; when the face has no substitute or the file is not in the VFS.
@@ -3096,6 +3394,15 @@
         (param i32) (result i32)
     (call $tt_strike_ensure (local.get 0) (local.get 1) (local.get 2)
       (local.get 3)))
+
+  (func (export "test_tt_family_name") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_family_name (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_reg_path") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_reg_path (local.get 0) (local.get 1) (local.get 2)))
 
 
 

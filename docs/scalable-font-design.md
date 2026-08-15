@@ -44,6 +44,23 @@ by `lib/font-substitutions.js` in both `test/run.js` and `host.js`. WAT
 therefore carries no licensing knowledge and resolves faces exactly the way
 the bundled `.FON` strikes already do.
 
+A guest can also install a scalable font of its own. `AddFontResourceA` tries
+the bitmap-strike loader first and, when the file carries no strikes, registers
+it in a small mutable table beside the substitution one — keyed by the family
+name read out of the file's `name` table, because the guest installs
+`ARIALBD.TTF` by path and then asks for that family in bold, and only the name
+table connects the two. Registered entries are consulted *before* the
+substitution table: a guest that ships its own copy of a face means that copy.
+Style is scored rather than indexed, since registered files arrive one at a
+time in any order — weight is worth more than slant, the way the Windows font
+mapper scored it (a weight mismatch cost `|requested - actual| / 5`, so 60
+points from bold to regular, against a flat 4 for the wrong slant).
+
+This is what `fontview.exe` needs. It tests the `AddFontResourceA` return
+value and destroys its own window without painting when it is zero, so while a
+`.TTF` was rejected by the bitmap loader and the call returned "no fonts
+added", the file it was launched on never appeared.
+
 Two limits worth stating rather than discovering later. An FNT cell width is
 the advance, so ink that overhangs the advance is clipped, the same way a
 bitmap font clips it. And a face with no italic file falls back to its upright
@@ -60,7 +77,12 @@ $tt_face_char_width(face, byte, ppem)
 $tt_face_glyph(face, byte, ppem)       -> cache entry, or 0
 $tt_entry_width/height/left/top/pixel(entry, ...)
 
-$tt_subst_path(name, weight, italic)   -> Win98 font path, or 0
+$tt_family_name(data, size, out, max)  -> family name length, or 0
+$tt_reg_add(path_guest)                -> 1 when installed, else 0
+$tt_reg_remove(path_guest)
+$tt_reg_path(name, weight, italic)     -> registered font path, or 0
+
+$tt_subst_path(name, weight, italic)   -> registered or Win98 font path, or 0
 $tt_face_for_logfont(name, weight, italic)
 $tt_strike_ensure(name, lfHeight, weight, italic)
                                        -> installed strike record, or 0

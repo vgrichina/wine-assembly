@@ -1151,19 +1151,32 @@
     (global.set $eax (i32.const -1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; Install Win16/Win9x bitmap-font resources in the WAT text rasterizer.
+  ;; Install a font resource: Win16/Win9x bitmap strikes in the WAT text
+  ;; rasterizer, or a TrueType file in the scalable face registry.
+  ;;
+  ;; A .TTF carries no FNT strikes, so the bitmap loader rejects it and the
+  ;; call used to return 0 - and 0 is not a soft failure to a guest, it is
+  ;; "no fonts were added". fontview.exe tests the result and destroys its own
+  ;; window without painting, so the file it was launched on never appeared.
   (func $handle_AddFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (if (result i32) (local.get $arg0)
-        (then (call $gdi_bitmap_font_add_resource (local.get $arg0)))
-        (else (i32.const 0))))
+    (local $added i32)
+    (if (local.get $arg0)
+      (then
+        (local.set $added (call $gdi_bitmap_font_add_resource (local.get $arg0)))
+        (if (i32.le_s (local.get $added) (i32.const 0))
+          (then (local.set $added (call $tt_reg_add (local.get $arg0)))))))
+    (global.set $eax (local.get $added))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_RemoveFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (if (result i32) (local.get $arg0)
-        (then (call $gdi_bitmap_font_remove_resource (local.get $arg0)))
-        (else (i32.const 0))))
+    (local $removed i32)
+    (if (local.get $arg0)
+      (then
+        (local.set $removed
+          (call $gdi_bitmap_font_remove_resource (local.get $arg0)))
+        (if (i32.le_s (local.get $removed) (i32.const 0))
+          (then (local.set $removed (call $tt_reg_remove (local.get $arg0)))))))
+    (global.set $eax (local.get $removed))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_EnumFontsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
