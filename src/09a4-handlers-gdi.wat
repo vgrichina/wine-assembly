@@ -322,6 +322,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 40))) (return)
   )
 
+  ;; The remaining public arc-shape APIs share the canonical WAT path engine.
+  (func $handle_AngleArc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+        (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_draw_angle_arc
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (f64.promote_f32 (f32.reinterpret_i32 (local.get $arg4)))
+      (f64.promote_f32 (f32.reinterpret_i32
+        (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  (func $handle_Chord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+        (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_draw_arc_shape
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+
+  (func $handle_Pie (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+        (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_dc_draw_arc_shape
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 36))) (i32.const 2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+
   ;; 158: BitBlt
   (func $handle_BitBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32) (local $src i32) (local $src_hdc i32)

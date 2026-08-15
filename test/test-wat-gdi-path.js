@@ -10,6 +10,12 @@ const { compileWat } = require('../lib/compile-wat');
 
 async function main() {
   const root = path.join(__dirname, '..');
+  const apiTable = JSON.parse(fs.readFileSync(path.join(root, 'src', 'api_table.json'), 'utf8'));
+  for (const [name, nargs] of [['AngleArc', 6], ['Chord', 9], ['Pie', 9]]) {
+    const api = apiTable.find(entry => entry.name === name);
+    assert(api, `${name} must be exposed through the public API table`);
+    assert.strictEqual(api.nargs, nargs, `${name} stdcall arity`);
+  }
   const wasm = await compileWat(file => fs.promises.readFile(path.join(root, 'src', file), 'utf8'));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
@@ -316,6 +322,116 @@ async function main() {
     assert.deepStrictEqual(path.types, [6, ...Array(11).fill(4), 5]);
     assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 1), 2);
+  });
+
+  check('Chord and Pie record exact closed arc figures without painting', () => {
+    clearDib(dib);
+    const before = bytes.slice(dib.bits, dib.bits + dib.size);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Chord(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [18, 8], [18, 5], [14, 2], [10, 2],
+        [10, 2], [10, 2], [10, 2],
+      ],
+      types: [6, 4, 4, 4, 4, 4, 5],
+    });
+    assert.deepStrictEqual(bytes.slice(dib.bits, dib.bits + dib.size), before);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Pie(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [18, 8], [18, 5], [14, 2], [10, 2],
+        [10, 2], [10, 2], [10, 2], [10, 8],
+      ],
+      types: [6, 4, 4, 4, 4, 4, 4, 3],
+    });
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+  });
+
+  check('AngleArc records its connector and sweep while preserving arc direction', () => {
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 2), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, 90), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [2, 8], [16, 8], [16, 5], [13, 2], [10, 2],
+        [10, 2], [10, 2], [10, 2],
+      ],
+      types: [6, 2, 4, 4, 4, 4, 4, 4],
+    });
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, -1), 10);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, -1), 2);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 1), 2);
+  });
+
+  check('AngleArc retains complete multi-turn sweeps instead of normalizing them away', () => {
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, 450), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    const path = readPath(dib.hdc);
+    assert.strictEqual(path.points.length, 24);
+    assert.deepStrictEqual(path.points[0], [2, 8]);
+    assert.deepStrictEqual(path.points[1], [16, 8]);
+    assert.deepStrictEqual(path.points[13], [16, 8]);
+    assert.deepStrictEqual(path.points[16], [16, 8]);
+    assert.deepStrictEqual(path.points[17], [16, 8]);
+    assert.deepStrictEqual(path.points[23], [10, 2]);
+    assert.deepStrictEqual(path.types, [6, 2, ...Array(15).fill(4), 2, ...Array(6).fill(4)]);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, -1), 10);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, -1), 2);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+  });
+
+  check('AngleArc rejects invalid radius and float inputs without changing current position', () => {
+    const x = wat.test_gdi_dc_get_field(dib.hdc, 12, -1);
+    const y = wat.test_gdi_dc_get_field(dib.hdc, 16, -1);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 0, 0, 90), 0);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, NaN, 90), 0);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, Infinity, 90), 0);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, Infinity), 0);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, -1), x);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, -1), y);
+  });
+
+  check('direct Chord/Pie rasterization preserves a retained application path', () => {
+    clearDib(dib);
+    const pen = wat.test_call_CreatePen(0, 1, 0x000000ff) >>> 0;
+    const brush = wat.test_call_CreateSolidBrush(0x0000ff00) >>> 0;
+    assert(pen && brush);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Rectangle(dib.hdc, 1, 1, 4, 4), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    const retained = readPath(dib.hdc);
+    assert.strictEqual(wat.test_call_Chord(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), retained);
+    assert.deepStrictEqual(pixel(dib, 14, 4), [0, 255, 0]);
+    assert.deepStrictEqual(pixel(dib, 5, 12), [255, 255, 255]);
+    assert.strictEqual(wat.test_call_Pie(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), retained);
+    assert.deepStrictEqual(pixel(dib, 13, 5), [0, 255, 0]);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, 90), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), retained);
+    assert.deepStrictEqual(pixel(dib, 5, 8), [0, 0, 255]);
+    assert.deepStrictEqual(pixel(dib, 16, 5), [0, 0, 255]);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, -1), 10);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, -1), 2);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30017) | 0, -1);
+    assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, 0x30010) | 0, -1);
+    assert.strictEqual(wat.test_call_DeleteObject(pen), 1);
+    assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
   });
 
   check('FlattenPath converts cubic controls to exact device-space line points', () => {

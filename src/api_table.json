@@ -18366,5 +18366,131 @@
         "type": "INT"
       }
     ]
+  },
+  {
+    "id": 2379,
+    "name": "AngleArc",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3484032984,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "radius",
+        "type": "DWORD"
+      },
+      {
+        "name": "startAngle",
+        "type": "FLOAT"
+      },
+      {
+        "name": "sweepAngle",
+        "type": "FLOAT"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 2380,
+    "name": "Chord",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 272082677,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "left",
+        "type": "INT"
+      },
+      {
+        "name": "top",
+        "type": "INT"
+      },
+      {
+        "name": "right",
+        "type": "INT"
+      },
+      {
+        "name": "bottom",
+        "type": "INT"
+      },
+      {
+        "name": "xRadial1",
+        "type": "INT"
+      },
+      {
+        "name": "yRadial1",
+        "type": "INT"
+      },
+      {
+        "name": "xRadial2",
+        "type": "INT"
+      },
+      {
+        "name": "yRadial2",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 2381,
+    "name": "Pie",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 3477574229,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "left",
+        "type": "INT"
+      },
+      {
+        "name": "top",
+        "type": "INT"
+      },
+      {
+        "name": "right",
+        "type": "INT"
+      },
+      {
+        "name": "bottom",
+        "type": "INT"
+      },
+      {
+        "name": "xRadial1",
+        "type": "INT"
+      },
+      {
+        "name": "yRadial1",
+        "type": "INT"
+      },
+      {
+        "name": "xRadial2",
+        "type": "INT"
+      },
+      {
+        "name": "yRadial2",
+        "type": "INT"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
