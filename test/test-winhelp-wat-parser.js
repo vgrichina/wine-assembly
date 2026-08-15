@@ -507,7 +507,7 @@ function buildOldFont(faces, descriptors, slotSize = 32) {
 function buildSyntheticFormattedTopic({
   stringCount = null, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
   hotspotCommand = null, closeVariableHotspot = false, variableHotspotCommand = null,
-  externalBitmapNumber = null, stringPadding = 0,
+  externalBitmapNumber = null, stringPadding = 0, trailingNuls = 0,
 } = {}) {
   const fixedHotspot = Buffer.alloc(5);
   fixedHotspot[0] = hotspotOpcode;
@@ -543,11 +543,17 @@ function buildSyntheticFormattedTopic({
   // Padding lengthens the last LinkData2 string instead of adding commands,
   // so a record can be grown past a block boundary without changing its
   // command/string pairing or its token count.
-  const strings = Buffer.concat(Array.from({ length: stringTotal }, (_, index) =>
-    index + 1 === stringTotal && stringPadding
-      ? Buffer.concat([Buffer.from([65 + index]), Buffer.alloc(stringPadding, 0x58),
-        Buffer.from([0])])
-      : Buffer.from([65 + index, 0])));
+  // trailingNuls models the tail a phrase-compressed stream is allowed to
+  // omit: DataLen2 bytes the commands never claim, which the reader supplies
+  // as NUL because it decompresses into a zeroed buffer of that size.
+  const strings = Buffer.concat([
+    ...Array.from({ length: stringTotal }, (_, index) =>
+      index + 1 === stringTotal && stringPadding
+        ? Buffer.concat([Buffer.from([65 + index]), Buffer.alloc(stringPadding, 0x58),
+          Buffer.from([0])])
+        : Buffer.from([65 + index, 0])),
+    Buffer.alloc(trailingNuls, 0),
+  ]);
   const displayFormat = Buffer.alloc(9 + commands.length);
   encodeCompressedLong(strings.length).copy(displayFormat, 0);
   displayFormat[2] = strings.length * 2;
@@ -1852,6 +1858,34 @@ async function main() {
       topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === -1 &&
     e.get_help_last_error() === 14);
 
+  // The two sides of the omitted-tail rule. A record whose text ends in bytes
+  // no command claims is fine when they are NUL - that is what a Hall stream
+  // that stopped early leaves behind - and is still malformed when they are
+  // not, because then real text went unread.
+  const pairedTokens = (() => {
+    const paired = buildSyntheticSemanticHelp({ topic: buildSyntheticFormattedTopic() });
+    load(paired.file);
+    return e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+  })();
+  const nulTailFormatted = buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({ trailingNuls: 6 }),
+  });
+  const nulTailLoaded = load(nulTailFormatted.file);
+  const nulTailTokens = e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+    topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+  check('a text tail of unclaimed NULs is accepted and adds no tokens',
+    nulTailLoaded === 1 && pairedTokens > 1 && nulTailTokens === pairedTokens,
+    `loaded=${nulTailLoaded} paired=${pairedTokens} withTail=${nulTailTokens}`);
+  const textTailFormatted = buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({ stringCount: 15 }),
+  });
+  check('a text tail carrying real bytes is still rejected',
+    load(textTailFormatted.file) === 1 &&
+    e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === -1 &&
+    e.get_help_last_error() === 14);
+
   // A display record wider than one physical block: the walkers must gather
   // it across the boundary instead of rejecting it. Real files hit this on
   // any topic longer than a block (hover.hlp does it 20+ times).
@@ -1949,6 +1983,35 @@ async function main() {
   check('HOVER.HLP macro regions lay out as clickable runs',
     hoverLaidOut === 49 && hoverMacroRuns === 26,
     `laidOut=${hoverLaidOut} macroRuns=${hoverMacroRuns}`);
+
+  // EMPIPEE.HLP is the file that proved a Hall stream may simply stop: every
+  // one of its text records ends 3-13 bytes before DataLen2, and it was the
+  // only reason 7 of its 8 topics were unreadable. The six shipped help files
+  // never take that path, so this is the only guard on it.
+  const empipeeHelp = fs.readFileSync(
+    path.join(ROOT, 'test', 'binaries', 'wep32-community', 'EmPipe', 'EMPIPEE.HLP'));
+  const empipeeLoaded = load(empipeeHelp);
+  let empipeeLaidOut = 0;
+  let empipeePadded = 0;
+  let empipeePadBytes = 0;
+  for (let index = 0; index < e.get_help_topic_count(); index++) {
+    const tokens = e.test_help_decode_topic_formatted(index, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+    if (tokens < 1) continue;
+    if (e.get_help_hall_pad_bytes()) {
+      empipeePadded++;
+      empipeePadBytes += e.get_help_hall_pad_bytes();
+    }
+    if (e.test_help_layout_tokens_with_payload(topicOutWA, topicOutCapacity,
+      topicPayloadWA, e.get_help_formatted_payload_size(), topicTokensWA, tokens,
+      layoutRunsWA, 2048, 560) >= 0) empipeeLaidOut++;
+  }
+  check('EMPIPEE.HLP decodes and lays out every topic despite omitted tails',
+    empipeeLoaded === 1 && e.get_help_topic_count() === 8 && empipeeLaidOut === 8,
+    `loaded=${empipeeLoaded} topics=${e.get_help_topic_count()} laidOut=${empipeeLaidOut}`);
+  check('EMPIPEE.HLP is the file that exercises the omitted-tail rule',
+    empipeePadded === 7 && empipeePadBytes === 50,
+    `padded=${empipeePadded} bytes=${empipeePadBytes}`);
 
   const validExternalCommands = [
     buildExternalHotspot(0xea, 0, 20),

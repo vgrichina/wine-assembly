@@ -110,6 +110,9 @@ async function main() {
     let ok = 0;
     const lines = [];
     for (let index = 0; index < topics; index++) {
+      // The parser keeps the first error since load, so without this every
+      // topic after a failure would report the first topic's code.
+      if (e.test_help_clear_error) e.test_help_clear_error();
       const tokens = e.test_help_decode_topic_formatted(index, outWA, 0x20000,
         tokensWA, 4096, payloadWA, 0x20000);
       let runs = -1;
@@ -118,11 +121,20 @@ async function main() {
         const code = e.get_help_last_error();
         note = `decode failed err=${code} (${ERRORS[code] || '?'}) ` +
           `at 0x${(e.get_help_last_error_offset() >>> 0).toString(16)}`;
+        if (code === 14 && e.get_help_ld1_last_command) {
+          const cmd = e.get_help_ld1_last_command();
+          note += `  ld1: ` + (cmd & 0x100
+            ? `${(cmd & 3) === 1 ? 'LinkData1' : 'text'} ended early`
+            : `cmd 0x${cmd.toString(16)}`) +
+            ` at ld1+${e.get_help_ld1_last_offset()}` +
+            ` text ${e.get_help_ld1_last_raw()}/${e.get_help_ld1_last_raw_end()}`;
+        }
         if (code === 13 && e.get_help_hall_fail_code) {
           note += `  hall=${e.get_help_hall_fail_code()} ` +
             `(${HALL_FAILS[e.get_help_hall_fail_code()] || '?'}) ` +
-            `pos=${e.get_help_hall_fail_pos()} phrase=${e.get_help_hall_fail_phrase()} ` +
-            `produced=${e.get_help_hall_fail_dest()}`;
+            `pos=${e.get_help_hall_fail_pos()}/${e.get_help_hall_fail_srclen()} ` +
+            `phrase=${e.get_help_hall_fail_phrase()} ` +
+            `produced=${e.get_help_hall_fail_dest()}/${e.get_help_hall_fail_expect()}`;
         }
       } else {
         runs = e.test_help_layout_tokens_with_payload(outWA, 0x20000, payloadWA,
@@ -135,6 +147,8 @@ async function main() {
           ok++;
         }
       }
+      const pad = e.get_help_hall_pad_bytes ? e.get_help_hall_pad_bytes() : 0;
+      if (pad) note += `${note ? '  ' : ''}hall padded ${pad} omitted tail bytes`;
       if (note || listAll) {
         lines.push(`    topic ${index}: tokens=${tokens} runs=${runs}` +
           (note ? `  ${note}` : ''));

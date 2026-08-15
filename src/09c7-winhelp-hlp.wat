@@ -1371,6 +1371,22 @@
         (global.set $help_ld1_next (i32.add (local.get $ptr) (i32.const 2)))))
     (i32.const 1))
 
+  ;; The LinkData1 tokenizer refuses from ~60 places and they all funnel here,
+  ;; so a bare error code cannot say which invariant broke. Rather than number
+  ;; every site, the command loop records what it was working on: the command
+  ;; byte, its offset inside LinkData1, and how far into the record's decoded
+  ;; text the reader had got. That triple names the failing command in
+  ;; practice, and the two cursors show which of the two streams ran out.
+  (global $help_ld1_last_command (mut i32) (i32.const 0))
+  (global $help_ld1_last_offset (mut i32) (i32.const 0))
+  (global $help_ld1_last_raw (mut i32) (i32.const 0))
+  (global $help_ld1_last_raw_end (mut i32) (i32.const 0))
+
+  (func (export "get_help_ld1_last_command") (result i32) (global.get $help_ld1_last_command))
+  (func (export "get_help_ld1_last_offset") (result i32) (global.get $help_ld1_last_offset))
+  (func (export "get_help_ld1_last_raw") (result i32) (global.get $help_ld1_last_raw))
+  (func (export "get_help_ld1_last_raw_end") (result i32) (global.get $help_ld1_last_raw_end))
+
   (func $help_ld1_fail (param $topic_pos i32) (result i32)
     (call $help_set_error (global.get $HELP_ERROR_TOPIC_FORMAT) (local.get $topic_pos))
     (i32.const 0))
@@ -1623,9 +1639,29 @@
       (block $commands_done (loop $commands
         (if (i32.or (i32.ge_u (local.get $ptr) (local.get $end))
                     (i32.ge_u (local.get $raw_ptr) (local.get $raw_end)))
-          (then (return (call $help_ld1_fail (local.get $topic_pos)))))
+          (then
+            ;; Neither stream may end before an explicit end-of-paragraph
+            ;; command. Report which one did: 1 = LinkData1, 2 = decoded text.
+            (global.set $help_ld1_last_command
+              (i32.or (i32.const 0x100)
+                (if (result i32) (i32.ge_u (local.get $ptr) (local.get $end))
+                  (then (i32.const 1)) (else (i32.const 2)))))
+            (global.set $help_ld1_last_offset
+              (i32.sub (local.get $ptr) (local.get $ld1_start)))
+            (global.set $help_ld1_last_raw
+              (i32.sub (local.get $raw_ptr)
+                (i32.add (global.get $help_fmt_raw_out) (local.get $raw_start))))
+            (global.set $help_ld1_last_raw_end (local.get $raw_len))
+            (return (call $help_ld1_fail (local.get $topic_pos)))))
         (local.set $command_start (local.get $ptr))
         (local.set $command (i32.load8_u (local.get $ptr)))
+        (global.set $help_ld1_last_command (local.get $command))
+        (global.set $help_ld1_last_offset
+          (i32.sub (local.get $command_start) (local.get $ld1_start)))
+        (global.set $help_ld1_last_raw
+          (i32.sub (local.get $raw_ptr)
+            (i32.add (global.get $help_fmt_raw_out) (local.get $raw_start))))
+        (global.set $help_ld1_last_raw_end (local.get $raw_len))
         (local.set $ptr (i32.add (local.get $ptr) (i32.const 1)))
         (local.set $string_start (local.get $raw_ptr))
         (block $string_done (loop $string
@@ -1782,9 +1818,20 @@
         (br $commands)))
       (local.set $paragraph_index (i32.add (local.get $paragraph_index) (i32.const 1)))
       (br $paragraphs)))
-    (if (i32.or (i32.ne (local.get $ptr) (local.get $end))
-                (i32.ne (local.get $raw_ptr) (local.get $raw_end)))
+    (if (i32.ne (local.get $ptr) (local.get $end))
       (then (return (call $help_ld1_fail (local.get $topic_pos)))))
+    ;; LinkData1 decides how many strings the record has, so the text stream
+    ;; may legitimately end with strings nobody reads - a Hall stream stops as
+    ;; soon as its remaining output would be NUL, and those unread NULs are
+    ;; exactly what is left over here. Tolerate that tail, but only if it is
+    ;; genuinely all NUL: one non-zero byte means real text went unclaimed and
+    ;; the record is still malformed.
+    (block $tail_done (loop $tail
+      (br_if $tail_done (i32.ge_u (local.get $raw_ptr) (local.get $raw_end)))
+      (if (i32.load8_u (local.get $raw_ptr))
+        (then (return (call $help_ld1_fail (local.get $topic_pos)))))
+      (local.set $raw_ptr (i32.add (local.get $raw_ptr) (i32.const 1)))
+      (br $tail)))
     (i32.const 1))
 
   ;; Validate every conditional LinkData1 field before topic tokens refer to
@@ -2140,7 +2187,7 @@
   ;; at, readable through get_help_hall_fail_code / _pos / _phrase, so an
   ;; undecodable real file says which of the four token forms broke rather
   ;; than only that something did. Codes, in source order:
-  ;;   1 source exhausted before output was complete
+  ;;   1 retired - source exhaustion is legal, see the pad branch below
   ;;   2 two-byte phrase code truncated
   ;;   3 literal run longer than the source or the output
   ;;   4 space/zero run longer than the output
@@ -2150,6 +2197,12 @@
   (global $help_hall_fail_pos (mut i32) (i32.const 0))
   (global $help_hall_fail_phrase (mut i32) (i32.const 0))
   (global $help_hall_fail_dest (mut i32) (i32.const 0))
+  ;; The two sizes the decoder was handed. A refusal is far easier to read
+  ;; when you can see whether the source was short or the expectation long.
+  (global $help_hall_fail_srclen (mut i32) (i32.const 0))
+  (global $help_hall_fail_expect (mut i32) (i32.const 0))
+  ;; Bytes supplied by the omitted-tail rule in the most recent Hall record.
+  (global $help_hall_pad_bytes (mut i32) (i32.const 0))
 
   (func $help_hall_fail
     (param $code i32) (param $pos i32) (param $phrase i32) (param $dest i32)
@@ -2159,6 +2212,10 @@
     (global.set $help_hall_fail_phrase (local.get $phrase))
     (global.set $help_hall_fail_dest (local.get $dest))
     (i32.const 0))
+
+  (func (export "get_help_hall_pad_bytes") (result i32) (global.get $help_hall_pad_bytes))
+  (func (export "get_help_hall_fail_srclen") (result i32) (global.get $help_hall_fail_srclen))
+  (func (export "get_help_hall_fail_expect") (result i32) (global.get $help_hall_fail_expect))
 
   (func (export "get_help_hall_fail_dest") (result i32) (global.get $help_hall_fail_dest))
 
@@ -2172,10 +2229,27 @@
     (local $source_pos i32) (local $dest_pos i32) (local $ch i32)
     (local $next i32) (local $phrase_index i32) (local $phrase_start i32)
     (local $phrase_end i32) (local $length i32) (local $fill i32)
+    (global.set $help_hall_fail_srclen (local.get $source_len))
+    (global.set $help_hall_fail_expect (local.get $expected_len))
+    (global.set $help_hall_pad_bytes (i32.const 0))
     (block $decoded (loop $tokens
       (br_if $decoded (i32.ge_u (local.get $dest_pos) (local.get $expected_len)))
       (if (i32.ge_u (local.get $source_pos) (local.get $source_len))
-        (then (return (call $help_hall_fail (i32.const 1) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
+        (then
+          ;; Running out of source is not corruption: a Hall stream stops as
+          ;; soon as the rest of the record would be NUL, because the reader
+          ;; is decompressing into a zeroed DataLen2-sized buffer. Real files
+          ;; rely on this - EMPIPEE.HLP ends every topic a few bytes early -
+          ;; so produce the tail the stream is entitled to omit. The count is
+          ;; recorded rather than ignored, so a genuinely truncated stream
+          ;; still shows up as an implausibly large pad.
+          (local.set $length (i32.sub (local.get $expected_len) (local.get $dest_pos)))
+          (memory.fill (i32.add (local.get $dest) (local.get $dest_pos))
+            (i32.const 0) (local.get $length))
+          (global.set $help_hall_pad_bytes
+            (i32.add (global.get $help_hall_pad_bytes) (local.get $length)))
+          (local.set $dest_pos (local.get $expected_len))
+          (br $decoded)))
       (local.set $ch (i32.load8_u (i32.add (local.get $source) (local.get $source_pos))))
       (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
       (block $classified
@@ -4730,6 +4804,13 @@
     (param $bitmap_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
     (call $help_decode_bitmap
       (local.get $bitmap_index) (local.get $out_wa) (local.get $capacity)))
+  ;; $help_set_error keeps the FIRST error since the load, which is the right
+  ;; rule for reporting why a file failed but makes per-topic diagnosis lie:
+  ;; every later topic reports topic 0's code and offset. Diagnostic callers
+  ;; clear it between topics so each answer is its own.
+  (func (export "test_help_clear_error")
+    (global.set $help_last_error (i32.const 0))
+    (global.set $help_last_error_offset (i32.const 0)))
   (func (export "test_help_decode_topic_raw")
     (param $topic_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
     (call $help_decode_topic_raw
