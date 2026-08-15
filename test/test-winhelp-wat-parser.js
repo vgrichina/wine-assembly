@@ -635,6 +635,11 @@ async function main() {
       : e.test_help_load_buffer(staging, data.length);
   }
 
+  function loadCnt(data) {
+    bytes.set(data, staging);
+    return e.test_help_load_cnt_buffer(staging, data.length);
+  }
+
   function readLatin1(ptr, len) {
     return Buffer.from(bytes.subarray(ptr, ptr + len)).toString('latin1');
   }
@@ -966,6 +971,134 @@ async function main() {
       JSON.stringify(formattedKinds) === JSON.stringify(semantic.formattedKinds),
       `${formattedDetail} payload=${formattedPayloadBytes} kinds=${JSON.stringify(formattedKinds)}`);
   }
+
+  const cntHashText = Buffer.from('WIN_HELP_AUTOCLOSE', 'latin1');
+  bytes.set(cntHashText, nameWA);
+  check('CNT context-name hash matches the WinHelp compiler algorithm',
+    (e.test_help_cnt_hash(nameWA, cntHashText.length) >>> 0) === 3742568226);
+  function expectedCntHashByte(ch) {
+    if (ch === 0) return 0;
+    if (ch === 33) return 11;
+    if (ch === 46) return 12;
+    if (ch <= 90) return ch - 48;
+    if (ch <= 94) return ch - 80;
+    if (ch === 95) return 13;
+    if (ch === 96) return 16;
+    if (ch <= 127) return ch - 80;
+    if (ch === 132) return 11;
+    return ch - 256;
+  }
+  check('CNT hash implements every entry in the documented signed-byte table',
+    Array.from({ length: 256 }, (_, ch) => {
+      bytes[nameWA] = ch;
+      return e.test_help_cnt_hash(nameWA, 1) === expectedCntHashByte(ch);
+    }).every(Boolean) && e.test_help_cnt_hash(nameWA, 0) === 1);
+  check('CNT recognizes every standard directive case-insensitively',
+    [['bAsE', 1], ['TITLE', 2], ['Index', 3], ['include', 4], ['LINK', 5], ['NoDef', 6]]
+      .every(([name, kind]) => {
+        bytes.set(Buffer.from(name, 'latin1'), nameWA);
+        return e.test_help_cnt_directive_kind(nameWA, name.length) === kind;
+      }));
+
+  function readCntNode(index) {
+    const record = e.get_help_cnt_node(index);
+    if (!record) return null;
+    return {
+      parent: dv.getInt32(record, true),
+      firstChild: dv.getInt32(record + 4, true),
+      nextSibling: dv.getInt32(record + 8, true),
+      depth: dv.getUint16(record + 12, true),
+      flags: dv.getUint16(record + 14, true),
+      title: readLatin1(dv.getUint32(record + 16, true), dv.getUint32(record + 20, true)),
+      topicRef: dv.getInt32(record + 24, true),
+      target: dv.getUint32(record + 28, true)
+        ? readLatin1(dv.getUint32(record + 28, true),
+          bytes.indexOf(0, dv.getUint32(record + 28, true)) - dv.getUint32(record + 28, true))
+        : '',
+    };
+  }
+
+  const cntFixtures = [
+    ['calc', 'calc.hlp', 'calc.hlp', 'Calculator Help', 1],
+    ['freecell', 'freecell.hlp', 'freecell.hlp>proc4', 'FreeCell Help', 3],
+    ['mspaint', 'mspaint.hlp', 'mspaint.hlp', 'Paint Help', 1],
+    ['notepad', 'notepad.hlp', 'notepad.hlp', 'Notepad Help', 1],
+    ['wordpad', 'wordpad.hlp', 'wordpad.hlp', 'WordPad Help', 1],
+  ];
+  for (const [name, hlpName, base, title, nodeCount] of cntFixtures) {
+    const hlp = fs.readFileSync(path.join(HELP, hlpName));
+    const cnt = fs.readFileSync(path.join(HELP, `${name}.cnt`));
+    check(`${name}.cnt HLP fixture reloads`, load(hlp) === 1);
+    check(`${name}.cnt parses transactionally`, loadCnt(cnt) === 1,
+      `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
+    check(`${name}.cnt exact directives and inventory`,
+      readLatin1(e.get_help_cnt_base_ptr(), e.get_help_cnt_base_length()) === base &&
+      readLatin1(e.get_help_cnt_title_ptr(), e.get_help_cnt_title_length()) === title &&
+      e.get_help_cnt_node_count() === nodeCount);
+    const nodes = Array.from({ length: nodeCount }, (_, index) => readCntNode(index));
+    check(`${name}.cnt canonical root sibling chain`, nodes.every((node, index) =>
+      node && node.parent === -1 && node.firstChild === -1 && node.depth === 1 &&
+      node.nextSibling === (index + 1 < nodeCount ? index + 1 : -1) &&
+      (node.flags & 2) !== 0 && node.target !== ''));
+    if (name === 'notepad') {
+      check('notepad.cnt leaf binds through the exact context hash',
+        nodes[0].topicRef === 994 && (nodes[0].flags & 8) === 0);
+    }
+    if (name === 'freecell') {
+      check('freecell.cnt retains explicit unresolved leaves',
+        nodes.every(node => node.topicRef === -1 && (node.flags & 8) !== 0));
+    }
+  }
+
+  const hoverCnt = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'shareware', 'HOVER!', 'HOVER.CNT'));
+  check('HOVER.CNT parses its real compact-depth syntax', loadCnt(hoverCnt) === 1,
+    `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
+  const hoverNodes = Array.from({ length: e.get_help_cnt_node_count() }, (_, index) => readCntNode(index));
+  check('HOVER.CNT exact directives and node inventory',
+    readLatin1(e.get_help_cnt_base_ptr(), e.get_help_cnt_base_length()) === 'Hover.hlp>PROC4' &&
+    readLatin1(e.get_help_cnt_title_ptr(), e.get_help_cnt_title_length()) === 'Hover! Help' &&
+    hoverNodes.length === 22);
+  check('HOVER.CNT canonical hierarchy and macro flags',
+    hoverNodes[0]?.title === 'Introduction' && hoverNodes[1]?.title === 'ReadMe' &&
+    (hoverNodes[1]?.flags & (2 | 8 | 16)) === (2 | 8 | 16) &&
+    hoverNodes[2]?.title === 'Getting Started' && hoverNodes[2]?.firstChild === 3 &&
+    hoverNodes[3]?.parent === 2 && hoverNodes[9]?.title === 'Tips and strategies' &&
+    hoverNodes[10]?.title === 'Customizing Hover!' && hoverNodes[10]?.firstChild === 11 &&
+    hoverNodes[16]?.title === 'Troubleshooting' && hoverNodes[16]?.firstChild === 17 &&
+    hoverNodes[21]?.nextSibling === -1);
+
+  const syntheticCnt = Buffer.from(
+    ':Base fixture.hlp\n:Title Fixture\n1 Root\n2 Child=WIN_HELP_AUTOCLOSE\n' +
+    '2 Macro=!ExecProgram("bad.exe")\n1 Peer=999999\n', 'latin1');
+  check('synthetic CNT hierarchy parses', loadCnt(syntheticCnt) === 1);
+  const syntheticCntNodes = Array.from({ length: e.get_help_cnt_node_count() }, (_, index) => readCntNode(index));
+  check('synthetic CNT publishes exact parent/child/sibling records',
+    syntheticCntNodes.length === 4 && syntheticCntNodes[0].firstChild === 1 &&
+    syntheticCntNodes[0].nextSibling === 3 && syntheticCntNodes[1].parent === 0 &&
+    syntheticCntNodes[1].nextSibling === 2 && syntheticCntNodes[2].parent === 0 &&
+    (syntheticCntNodes[2].flags & (2 | 8 | 16)) === (2 | 8 | 16) &&
+    (syntheticCntNodes[3].flags & (2 | 8)) === (2 | 8));
+  const preservedCntNode = e.get_help_cnt_node(0);
+  const malformedCntCases = [
+    ['depth jump', '1 Root\n3 Bad\n', 18],
+    ['empty title', '1 =WIN_HELP_AUTOCLOSE\n', 18],
+    ['child below leaf', '1 Leaf=WIN_HELP_AUTOCLOSE\n2 Child\n', 18],
+    ['unknown directive', ':Mystery value\n1 Root\n', 18],
+    ['embedded NUL', '1 Root\0Hidden\n', 18],
+  ];
+  for (const [name, source, error] of malformedCntCases) {
+    check(`CNT rejects ${name} without replacing the published hierarchy`,
+      loadCnt(Buffer.from(source, 'latin1')) === 0 && e.get_help_last_error() === error &&
+      e.get_help_cnt_node_count() === 4 && e.get_help_cnt_node(0) === preservedCntNode);
+  }
+  const excessiveCnt = Buffer.from(`${'1 x\n'.repeat(16385)}`, 'latin1');
+  check('CNT node cap is enforced transactionally',
+    loadCnt(excessiveCnt) === 0 && e.get_help_last_error() === 6 &&
+    e.get_help_cnt_node_count() === 4 && e.get_help_cnt_node(0) === preservedCntNode);
+  check('CNT byte cap precedes source access',
+    e.test_help_load_cnt_buffer(staging, 0x00100001) === 0 && e.get_help_last_error() === 6);
+  check('CNT source range is bounded',
+    e.test_help_load_cnt_buffer(memory.buffer.byteLength - 1, 2) === 0 && e.get_help_last_error() === 1);
 
   const capacityFixture = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
   check('topic decoder fixture reloads for capacity test', load(capacityFixture) === 1);
@@ -1965,6 +2098,8 @@ async function main() {
     e.get_help_font_face_count() === 0 && e.get_help_font_count() === 0 &&
     e.get_help_bitmap_count() === 0 && e.get_help_keyword_count() === 0 &&
     e.get_help_keyword_posting_count() === 0 &&
+    e.get_help_cnt_node_count() === 0 && e.get_help_cnt_node(0) === 0 &&
+    e.get_help_cnt_title_ptr() === 0 && e.get_help_cnt_base_ptr() === 0 &&
     e.get_help_display_record_count() === 0 && e.get_help_paragraph_count() === 0 &&
     e.get_help_table_count() === 0 && e.get_help_format_command_count() === 0 &&
     e.get_help_last_error() === 0);

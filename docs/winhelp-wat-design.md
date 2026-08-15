@@ -941,6 +941,19 @@ close/reopen and multiple paths do not reuse stale state.
 
 ### Phase 4: CNT and Help Topics dialog
 
+Status: **partially implemented**. A bounded two-pass WAT CNT parser owns an
+exact copy of the source, recognizes the standard directives, and publishes
+canonical 32-byte hierarchy records only after the complete file validates.
+It supports compact depth syntax used by HOVER!, enforces the byte, node,
+line, and nesting caps, computes the documented 256-entry signed context hash,
+binds resolvable leaves to canonical topics, and retains explicit unresolved,
+external, and disabled-macro flags. Exact inventories cover every checked-in
+CNT fixture plus the HOVER! hierarchy; synthetic tests cover parent/child and
+sibling construction, macros, malformed depth/title/directive data, hostile
+capacity, source bounds, and preservation of the previously published tree.
+Automatic same-directory CNT mounting and the interactive Contents/Index
+dialog remain to complete this phase.
+
 - Parse CNT hierarchy.
 - Bind books/leaves to canonical topics.
 - Implement Contents and Index/Find tabs with keyboard/mouse interaction.

@@ -21,6 +21,9 @@
   (global $HELP_MAX_BITMAP_INTERMEDIATE_BYTES i32 (i32.const 0x04000000))
   (global $HELP_MAX_KEYWORDS i32 (i32.const 65536))
   (global $HELP_MAX_KEYWORD_POSTINGS i32 (i32.const 262144))
+  (global $HELP_MAX_CNT_BYTES i32 (i32.const 0x00100000))
+  (global $HELP_MAX_CNT_NODES i32 (i32.const 16384))
+  (global $HELP_MAX_CNT_DEPTH i32 (i32.const 64))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -41,6 +44,7 @@
   (global $HELP_ERROR_FONT_TABLE i32 (i32.const 15))
   (global $HELP_ERROR_BITMAP_TABLE i32 (i32.const 16))
   (global $HELP_ERROR_KEYWORD_INDEX i32 (i32.const 17))
+  (global $HELP_ERROR_CNT i32 (i32.const 18))
 
   ;; WinHelp command values from winuser.h. HELP_CONTENTS and HELP_INDEX are
   ;; the same legacy command value.
@@ -127,6 +131,16 @@
   (global $help_doc_keyword_postings_ga (mut i32) (i32.const 0))
   (global $help_doc_keyword_postings_wa (mut i32) (i32.const 0))
   (global $help_doc_keyword_posting_count (mut i32) (i32.const 0))
+  (global $help_doc_cnt_file_ga (mut i32) (i32.const 0))
+  (global $help_doc_cnt_file_wa (mut i32) (i32.const 0))
+  (global $help_doc_cnt_file_size (mut i32) (i32.const 0))
+  (global $help_doc_cnt_nodes_ga (mut i32) (i32.const 0))
+  (global $help_doc_cnt_nodes_wa (mut i32) (i32.const 0))
+  (global $help_doc_cnt_node_count (mut i32) (i32.const 0))
+  (global $help_doc_cnt_title_wa (mut i32) (i32.const 0))
+  (global $help_doc_cnt_title_len (mut i32) (i32.const 0))
+  (global $help_doc_cnt_base_wa (mut i32) (i32.const 0))
+  (global $help_doc_cnt_base_len (mut i32) (i32.const 0))
   (global $help_doc_system_minor (mut i32) (i32.const 0))
   (global $help_doc_system_major (mut i32) (i32.const 0))
   (global $help_doc_system_flags (mut i32) (i32.const 0))
@@ -180,6 +194,17 @@
   ;; HelpKeywordPosting is {topic_ref, flags}; flag 1 marks a |Rose macro.
   (global $HELP_KEYWORD_SIZE i32 (i32.const 16))
   (global $HELP_KEYWORD_POSTING_SIZE i32 (i32.const 8))
+
+  ;; HelpContentsNode is 32 bytes:
+  ;; parent, first_child, next_sibling, depth:u16, flags:u16,
+  ;; title_wa, title_len, topic_ref, target_wa.
+  (global $HELP_CNT_NODE_SIZE i32 (i32.const 32))
+  (global $HELP_CNT_BOOK i32 (i32.const 1))
+  (global $HELP_CNT_LEAF i32 (i32.const 2))
+  (global $HELP_CNT_EXPANDED i32 (i32.const 4))
+  (global $HELP_CNT_UNRESOLVED i32 (i32.const 8))
+  (global $HELP_CNT_MACRO i32 (i32.const 16))
+  (global $HELP_CNT_EXTERNAL i32 (i32.const 32))
   (global $HELP_KEYWORD_POSTING_MACRO i32 (i32.const 1))
 
   ;; HelpSlice is 16 bytes:
@@ -192,6 +217,10 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_cnt_nodes_ga)
+      (then (call $heap_free (global.get $help_doc_cnt_nodes_ga))))
+    (if (global.get $help_doc_cnt_file_ga)
+      (then (call $heap_free (global.get $help_doc_cnt_file_ga))))
     (if (global.get $help_doc_keyword_postings_ga)
       (then (call $heap_free (global.get $help_doc_keyword_postings_ga))))
     (if (global.get $help_doc_keywords_ga)
@@ -262,6 +291,16 @@
     (global.set $help_doc_keyword_postings_ga (i32.const 0))
     (global.set $help_doc_keyword_postings_wa (i32.const 0))
     (global.set $help_doc_keyword_posting_count (i32.const 0))
+    (global.set $help_doc_cnt_file_ga (i32.const 0))
+    (global.set $help_doc_cnt_file_wa (i32.const 0))
+    (global.set $help_doc_cnt_file_size (i32.const 0))
+    (global.set $help_doc_cnt_nodes_ga (i32.const 0))
+    (global.set $help_doc_cnt_nodes_wa (i32.const 0))
+    (global.set $help_doc_cnt_node_count (i32.const 0))
+    (global.set $help_doc_cnt_title_wa (i32.const 0))
+    (global.set $help_doc_cnt_title_len (i32.const 0))
+    (global.set $help_doc_cnt_base_wa (i32.const 0))
+    (global.set $help_doc_cnt_base_len (i32.const 0))
     (global.set $help_doc_system_minor (i32.const 0))
     (global.set $help_doc_system_major (i32.const 0))
     (global.set $help_doc_system_flags (i32.const 0))
@@ -965,7 +1004,7 @@
     (global.get $help_session_last_command))
   (func (export "get_help_dispatch_status") (result i32)
     (global.get $help_session_status))
-  (func (export "test_help_resolve_context_hash") (param $hash i32) (result i32)
+  (func $help_resolve_context_hash (param $hash i32) (result i32)
     (local $lo i32) (local $hi i32) (local $mid i32)
     (local $record i32) (local $value i32)
     (local.set $hi (global.get $help_doc_context_count))
@@ -984,3 +1023,5 @@
         (else (local.set $hi (local.get $mid))))
       (br $search)))
     (i32.const -1))
+  (func (export "test_help_resolve_context_hash") (param $hash i32) (result i32)
+    (call $help_resolve_context_hash (local.get $hash)))
