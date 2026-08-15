@@ -2639,8 +2639,9 @@ async function main() {
     e.listbox_get_count(e.get_help_topics_list_hwnd()) >= 1,
     `class=${e.ctrl_get_class(e.get_help_topics_list_hwnd())} ` +
     `count=${e.listbox_get_count(e.get_help_topics_list_hwnd())}`);
-  check('the Topics dialog carries real buttons for its tabs and commands',
-    [0x502, 0x503, 1, 2].every(id => e.ctrl_get_class(e.get_help_topics_control(id)) === 1));
+  check('the Topics dialog carries a real tab control and real buttons',
+    e.ctrl_get_class(e.get_help_topics_control(0x502)) === 27 &&
+    [1, 2].every(id => e.ctrl_get_class(e.get_help_topics_control(id)) === 1));
   {
     // Row text comes from the .cnt node, not from a marker glyph alone: the
     // rows once rendered as bare marks because the paint erased its own text.
@@ -2655,13 +2656,19 @@ async function main() {
     check('a Topics row carries its title text',
       row.replace(/^[\s>+-]+/, '').length > 0, JSON.stringify(row));
   }
-  // Clicking a tab button arrives as WM_COMMAND/BN_CLICKED from the child,
-  // the same way every other WAT dialog hears from its buttons.
-  check('the Index tab button switches the Topics dialog',
-    e.test_help_topics_message(0x0111, 0x503, 0) === 0 &&
-    e.get_help_session_mode() === 4 &&
-    e.test_help_topics_message(0x0111, 0x502, 0) === 0 &&
-    e.get_help_session_mode() === 3);
+  // A click lands on the tab control itself. COMCTL32's tab mirror records
+  // the new selection before any wndproc runs, and the strip's wndproc reads
+  // it back - so this drives the real control, not a shortcut into the model.
+  // Tab widths are len*5+16, so "Contents" spans x 0..55 and "Index" 56..96.
+  {
+    const tabs = e.get_help_topics_control(0x502);
+    const click = x => e.send_message(tabs, 0x0201, 0, (8 << 16) | x);
+    click(70);
+    const switched = e.get_help_session_mode() === 4;
+    click(20);
+    check('clicking the tab control switches the Topics dialog',
+      switched && e.get_help_session_mode() === 3);
+  }
   check('Topics keyboard tab switching retains canonical dialog state',
     e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 4 &&
     e.test_help_topics_message(0x0100, 0x09, 0) === 0 && e.get_help_session_mode() === 3 &&
@@ -2701,7 +2708,7 @@ async function main() {
     ctx.vfs.files.set('c:\\hover.hlp', { data: new Uint8Array(hoverHelp), attrs: 0x20 });
     const hoverPathA = allocGuestAnsi('c:\\hover.hlp');
     const opened = e.test_invoke_WinHelpA(0x8888, hoverPathA, 0x000b, 0) === 1;
-    e.test_help_topics_message(0x0111, 0x503, 0);
+    e.send_message(e.get_help_topics_control(0x502), 0x0201, 0, (8 << 16) | 70);
     const list = e.get_help_topics_list_hwnd();
     const dest = e.guest_alloc(160);
     e.listbox_get_item_text(list, 0, dest, 128);

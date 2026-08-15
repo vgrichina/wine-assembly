@@ -289,6 +289,15 @@
     (i32.store offset=4 (local.get $empty) (local.get $state))
     (local.get $state))
 
+  ;; Selected tab, or -1 when this window has no mirror state yet. The mirror
+  ;; is updated by $tab_native_note_message before any wndproc sees the click,
+  ;; so a WAT-owned tab strip can read its own new selection on WM_LBUTTONDOWN.
+  (func $tab_native_cursel (param $hwnd i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 0)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const -1))))
+    (i32.load offset=4 (call $g2w (local.get $state))))
+
   (func $tab_native_state_release (param $hwnd i32)
     (local $i i32) (local $addr i32) (local $state i32)
     (block $done (loop $scan
@@ -718,6 +727,9 @@
     ;; Class 26 = ChooseColor current/solid preview
     (if (i32.eq (local.get $class) (i32.const 26))
       (then (return (call $colorpreview_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 27 = Help Topics tab strip (WAT-owned SysTabControl32 page)
+    (if (i32.eq (local.get $class) (i32.const 27))
+      (then (return (call $help_topics_tab_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -13029,7 +13041,8 @@
                         (i32.eq (local.get $cls) (i32.const 7)))
                 (i32.or (i32.eq (local.get $cls) (i32.const 8))
                         (i32.or (i32.eq (local.get $cls) (i32.const 9))
-                                (i32.eq (local.get $cls) (i32.const 19)))))))
+                          (i32.or (i32.eq (local.get $cls) (i32.const 19))
+                                  (i32.eq (local.get $cls) (i32.const 27))))))))
           (if (local.get $dispatchable)
             (then
               (if (i32.and

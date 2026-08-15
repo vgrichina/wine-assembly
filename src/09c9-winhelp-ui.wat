@@ -2102,6 +2102,7 @@
   ;; scrolling, selection and keyboard, and the renderer composites them.
   (global $help_topics_hwnd (mut i32) (i32.const 0))
   (global $help_topics_list_hwnd (mut i32) (i32.const 0))
+  (global $help_topics_tab_hwnd (mut i32) (i32.const 0))
   (global $help_topics_labels_ga (mut i32) (i32.const 0))
   (global $help_topics_labels_wa (mut i32) (i32.const 0))
   ;; One reusable guest buffer for the row text handed to LB_ADDSTRING. The
@@ -2115,8 +2116,7 @@
   (global $HELP_TOPICS_ID_DISPLAY i32 (i32.const 1))
   (global $HELP_TOPICS_ID_CANCEL i32 (i32.const 2))
   (global $HELP_TOPICS_ID_LIST i32 (i32.const 0x501))
-  (global $HELP_TOPICS_ID_CONTENTS i32 (i32.const 0x502))
-  (global $HELP_TOPICS_ID_INDEX i32 (i32.const 0x503))
+  (global $HELP_TOPICS_ID_TABS i32 (i32.const 0x502))
 
   (func $help_topics_init_labels (result i32)
     (local $ga i32) (local $wa i32)
@@ -2150,6 +2150,7 @@
         (call $host_destroy_window (global.get $help_topics_hwnd))
         (global.set $help_topics_hwnd (i32.const 0))))
     (global.set $help_topics_list_hwnd (i32.const 0))
+    (global.set $help_topics_tab_hwnd (i32.const 0))
     (if (global.get $help_topics_labels_ga)
       (then (call $heap_free (global.get $help_topics_labels_ga))))
     (global.set $help_topics_labels_ga (i32.const 0))
@@ -2270,34 +2271,62 @@
         (if (i32.lt_u (local.get $row) (global.get $help_doc_keyword_count))
           (then (global.set $help_session_keyword_index (local.get $row)))))))
 
-  ;; The tab selector is two push buttons. The active one is disabled, which
-  ;; both greys its face and makes $dialog_route_mouse skip it - the same
-  ;; "you are already here" affordance Win98 gives a current-state button.
-  ;; A real tab control would be better and needs one new control class in
-  ;; $control_wndproc_dispatch plus one entry in $dialog_route_mouse.
-  (func $help_topics_mark_tab_button (param $id i32) (param $active i32)
-    (local $h i32)
-    (local.set $h (call $ctrl_find_by_id (global.get $help_topics_hwnd) (local.get $id)))
-    (if (i32.eqz (local.get $h)) (then (return)))
-    (drop (call $wnd_set_style (local.get $h)
-      (i32.or
-        (i32.and (call $wnd_get_style (local.get $h)) (i32.const 0xF7FFFFFF))
-        (select (i32.const 0x08000000) (i32.const 0) (local.get $active)))))
-    (call $invalidate_hwnd (local.get $h)))
-
-  (func $help_topics_update_tab_buttons
-    (local $contents i32)
-    (local.set $contents (i32.eq (global.get $help_session_mode) (i32.const 3)))
-    (call $help_topics_mark_tab_button
-      (global.get $HELP_TOPICS_ID_CONTENTS) (local.get $contents))
-    (call $help_topics_mark_tab_button
-      (global.get $HELP_TOPICS_ID_INDEX) (i32.eqz (local.get $contents))))
+  ;; Push the model's current tab into the tab control, so a switch made from
+  ;; the keyboard shows on the strip too.
+  (func $help_topics_update_tab_control
+    (if (i32.eqz (global.get $help_topics_tab_hwnd)) (then (return)))
+    (drop (call $wnd_send_message (global.get $help_topics_tab_hwnd)
+      (i32.const 0x130C)   ;; TCM_SETCURSEL
+      (select (i32.const 0) (i32.const 1)
+        (i32.eq (global.get $help_session_mode) (i32.const 3)))
+      (i32.const 0))))
 
   (func $help_topics_apply_tab (param $tab i32)
     (if (i32.eqz (call $help_topics_set_tab (local.get $tab))) (then (return)))
-    (call $help_topics_update_tab_buttons)
+    (call $help_topics_update_tab_control)
     (call $help_topics_fill_list)
     (call $invalidate_hwnd (global.get $help_topics_hwnd)))
+
+  ;; Tab strip wndproc (control class 27). COMCTL32's tab mirror has already
+  ;; recorded the new selection by the time any message reaches here -
+  ;; $wnd_send_message routes every message for a native-tab window through
+  ;; $tab_native_note_message first - so the click handler just reads it back
+  ;; rather than repeating the hit-test arithmetic.
+  (func $help_topics_tab_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
+    (result i32)
+    (local $tab i32)
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then (return (call $tab_native_paint (local.get $hwnd)))))
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
+                (i32.eq (local.get $msg) (i32.const 0x0203)))
+      (then
+        (local.set $tab (call $tab_native_cursel (local.get $hwnd)))
+        (if (i32.ge_s (local.get $tab) (i32.const 0))
+          (then
+            (if (i32.ne (local.get $tab)
+                  (select (i32.const 0) (i32.const 1)
+                    (i32.eq (global.get $help_session_mode) (i32.const 3))))
+              (then
+                (drop (call $help_topics_set_tab (local.get $tab)))
+                (call $help_topics_fill_list)
+                (call $invalidate_hwnd (global.get $help_topics_hwnd))))))
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; Add one tab. TCM_INSERTITEMA reads a TCITEM whose mask says TCIF_TEXT and
+  ;; whose pszText is at +12.
+  (func $help_topics_add_tab (param $tab_hwnd i32) (param $index i32) (param $text_ga i32)
+    (local $item_ga i32) (local $item_wa i32)
+    (local.set $item_ga (call $heap_alloc (i32.const 40)))
+    (if (i32.eqz (local.get $item_ga)) (then (return)))
+    (local.set $item_wa (call $g2w (local.get $item_ga)))
+    (memory.fill (local.get $item_wa) (i32.const 0) (i32.const 40))
+    (i32.store (local.get $item_wa) (i32.const 1))            ;; TCIF_TEXT
+    (i32.store offset=12 (local.get $item_wa) (local.get $text_ga))
+    (drop (call $wnd_send_message (local.get $tab_hwnd)
+      (i32.const 0x1307) (local.get $index) (local.get $item_ga)))  ;; TCM_INSERTITEMA
+    (call $heap_free (local.get $item_ga)))
 
   (func $help_topics_show
     (local $hwnd i32)
@@ -2332,23 +2361,28 @@
     (call $defwndproc_do_ncpaint (local.get $hwnd))
     (call $nc_flags_set (local.get $hwnd) (i32.const 3))
     (call $dlg_fill_bkgnd (local.get $hwnd))
-    ;; Tab selector.
-    (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
-      (global.get $HELP_TOPICS_ID_CONTENTS)
-      (i32.const 12) (i32.const 10) (i32.const 88) (i32.const 24)
-      (i32.const 0x50010000)
-      (i32.add (global.get $help_topics_labels_ga) (i32.const 16))))
-    (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
-      (global.get $HELP_TOPICS_ID_INDEX)
-      (i32.const 104) (i32.const 10) (i32.const 88) (i32.const 24)
-      (i32.const 0x50010000)
-      (i32.add (global.get $help_topics_labels_ga) (i32.const 28))))
+    ;; Tab strip. Control class 27 routes it to $help_topics_tab_wndproc; the
+    ;; native-tab bit is what makes COMCTL32's mirror observe the TCM_* traffic
+    ;; and paint the Win98 tab chrome.
+    (global.set $help_topics_tab_hwnd
+      (call $ctrl_create_child (local.get $hwnd) (i32.const 27)
+        (global.get $HELP_TOPICS_ID_TABS)
+        (i32.const 8) (i32.const 8) (i32.const 384) (i32.const 236)
+        (i32.const 0x50000000) (i32.const 0)))
+    (call $tab_native_mark_slot
+      (call $wnd_table_find (global.get $help_topics_tab_hwnd)) (i32.const 1))
+    (call $help_topics_add_tab (global.get $help_topics_tab_hwnd) (i32.const 0)
+      (i32.add (global.get $help_topics_labels_ga) (i32.const 16)))
+    (call $help_topics_add_tab (global.get $help_topics_tab_hwnd) (i32.const 1)
+      (i32.add (global.get $help_topics_labels_ga) (i32.const 28)))
     ;; Row list - WS_VSCROLL so the listbox draws and drives its own scrollbar,
     ;; LBS_NOTIFY so selection and double-click reach this dialog as WM_COMMAND.
+    ;; It sits inside the tab control's page area as a sibling, which is how
+    ;; the renderer composites it above the page frame.
     (global.set $help_topics_list_hwnd
       (call $ctrl_create_child (local.get $hwnd) (i32.const 4)
         (global.get $HELP_TOPICS_ID_LIST)
-        (i32.const 12) (i32.const 44) (i32.const 376) (i32.const 196)
+        (i32.const 20) (i32.const 40) (i32.const 360) (i32.const 192)
         (i32.const 0x50A10001) (i32.const 0)))
     (drop (call $ctrl_create_child (local.get $hwnd) (i32.const 1)
       (global.get $HELP_TOPICS_ID_DISPLAY)
@@ -2360,7 +2394,7 @@
       (i32.const 304) (i32.const 252) (i32.const 80) (i32.const 24)
       (i32.const 0x50010000)
       (i32.add (global.get $help_topics_labels_ga) (i32.const 44))))
-    (call $help_topics_update_tab_buttons)
+    (call $help_topics_update_tab_control)
     (call $help_topics_fill_list)
     (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
     (drop (call $host_erase_background (local.get $hwnd) (i32.const 16)))
@@ -2417,10 +2451,6 @@
       (then
         (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
         (local.set $notif (i32.shr_u (local.get $wParam) (i32.const 16)))
-        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_CONTENTS))
-          (then (call $help_topics_apply_tab (i32.const 0)) (return (i32.const 0))))
-        (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_INDEX))
-          (then (call $help_topics_apply_tab (i32.const 1)) (return (i32.const 0))))
         (if (i32.eq (local.get $cmd) (global.get $HELP_TOPICS_ID_LIST))
           (then
             (call $help_topics_sync_from_list)
