@@ -293,6 +293,107 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.strictEqual(wat.test_tt_ppem_from_lfheight(sans.at, 64, 16), 16,
     'with no OS/2 cell to invert, a positive lfHeight passes through');
 
+  // ---- loca / glyf ------------------------------------------------------
+  //
+  // Liberation Sans uses long loca and Wine Tahoma uses short, so both
+  // formats are exercised; short loca stores half the real offset, and
+  // forgetting the doubling reads every glyph from the wrong place.
+
+  const tahoma = loadFont('fonts/wine/tahoma.ttf');
+  assert.strictEqual(wat.test_tt_index_to_loc_format(tahoma.at, tahoma.size), 0,
+    'Wine Tahoma is the short-loca case this test exists to cover');
+
+  const gid = (font, character) =>
+    wat.test_tt_glyph_index(font.at, font.size, character.charCodeAt(0));
+  const glyf = (font, character) => ({
+    contours: wat.test_tt_glyph_num_contours(font.at, font.size, gid(font, character)),
+    composite: wat.test_tt_glyph_is_composite(font.at, font.size, gid(font, character)),
+    xMin: wat.test_tt_glyph_x_min(font.at, font.size, gid(font, character)),
+    yMin: wat.test_tt_glyph_y_min(font.at, font.size, gid(font, character)),
+    xMax: wat.test_tt_glyph_x_max(font.at, font.size, gid(font, character)),
+    yMax: wat.test_tt_glyph_y_max(font.at, font.size, gid(font, character)),
+  });
+
+  assert.deepStrictEqual(glyf(sans, 'A'),
+    { contours: 2, composite: 0, xMin: 4, yMin: 0, xMax: 1362, yMax: 1409 });
+  assert.deepStrictEqual(glyf(sans, 'j'),
+    { contours: 2, composite: 0, xMin: -50, yMin: -425, xMax: 317, yMax: 1484 });
+  assert.deepStrictEqual(glyf(tahoma, 'A'),
+    { contours: 2, composite: 0, xMin: -10, yMin: 0, xMax: 1238, yMax: 1493 },
+    'short loca must resolve to the same glyph a long one would');
+
+  // A composite glyph still carries its own bounding box, so nothing above
+  // has to recurse into the components to size or place it.
+  assert.deepStrictEqual(glyf(sans, 'Á'),
+    { contours: -1, composite: 1, xMin: 4, yMin: 0, xMax: 1362, yMax: 1776 },
+    'A-acute is a composite and reports a negative contour count');
+
+  // An empty glyph is normal data, not a damaged file: space has no outline
+  // and still has an advance.
+  assert.strictEqual(wat.test_tt_glyph_offset(sans.at, sans.size, gid(sans, ' ')), 0,
+    'space has no glyf record');
+  assert.strictEqual(wat.test_tt_glyph_length(sans.at, sans.size, gid(sans, ' ')), 0);
+  assert.strictEqual(wat.test_tt_glyph_num_contours(sans.at, sans.size, gid(sans, ' ')), 0);
+  assert.ok(wat.test_tt_glyph_length(sans.at, sans.size, gid(sans, 'A')) > 0,
+    'a drawn glyph must have a non-empty record');
+  assert.strictEqual(wat.test_tt_glyph_offset(sans.at, sans.size, 0xFFFF), 0,
+    'a glyph id past numGlyphs must not read out of the table');
+  assert.strictEqual(wat.test_tt_glyph_offset(sans.at, 64, 1), 0,
+    'a truncated file has no glyph records');
+
+  // ---- ABC widths -------------------------------------------------------
+  //
+  // A and C are signed and routinely negative: 'j' overhangs to its left and
+  // Tahoma's 'A' overhangs on both sides. Clamping either to zero is what
+  // clips the overhanging edge of a glyph, so the negatives are the point.
+
+  const abc = (font, character) => [
+    wat.test_tt_abc_a_fu(font.at, font.size, gid(font, character)),
+    wat.test_tt_abc_b_fu(font.at, font.size, gid(font, character)),
+    wat.test_tt_abc_c_fu(font.at, font.size, gid(font, character)),
+  ];
+
+  assert.deepStrictEqual(abc(sans, 'A'), [4, 1358, 4]);
+  assert.deepStrictEqual(abc(sans, 'j'), [-50, 367, 138],
+    'j hangs left of its origin, so A is negative');
+  assert.deepStrictEqual(abc(tahoma, 'A'), [-10, 1248, -9],
+    'Tahoma A overhangs on both sides, so A and C are both negative');
+  assert.deepStrictEqual(abc(sans, ' '), [0, 0, 569],
+    'an empty glyph has no black box, so the advance is all bearing');
+
+  for (const character of ['A', 'j', ' ', 'Á']) {
+    const [a, b, c] = abc(sans, character);
+    assert.strictEqual(a + b + c,
+      wat.test_tt_advance_fu(sans.at, sans.size, gid(sans, character)),
+      `ABC must sum to the advance for "${character}"`);
+  }
+
+  // ---- kern -------------------------------------------------------------
+  //
+  // GetKerningPairs reads the legacy `kern` table, not GPOS: Win98 GDI had no
+  // OpenType layout engine, so a face that kerns only through GPOS kerns
+  // nothing on Win98, and reading GPOS here would render text the guest could
+  // never have produced.
+
+  const kern = (font, left, right, ppem) => ppem === undefined
+    ? wat.test_tt_kern_pair_fu(font.at, font.size, gid(font, left), gid(font, right))
+    : wat.test_tt_kern_pair_px(font.at, font.size,
+        gid(font, left), gid(font, right), ppem);
+
+  assert.strictEqual(kern(sans, 'A', 'V'), -152);
+  assert.strictEqual(kern(sans, 'T', 'o'), -227);
+  assert.strictEqual(kern(sans, ' ', 'A'), -113);
+  assert.strictEqual(kern(sans, 'A', 'A'), 0, 'an absent pair kerns zero');
+  assert.strictEqual(kern(sans, 'A', 'V', 16), wat.test_tt_scale(-152, 16, 2048));
+  assert.strictEqual(kern(sans, 'A', 'V', 16), -1);
+
+  // Tahoma's kerning lives in GPOS only, which is precisely the case that
+  // must report nothing rather than quietly reaching for the modern table.
+  assert.strictEqual(wat.test_tt_table_off(tahoma.at, tahoma.size, tag('kern')), 0);
+  assert.strictEqual(kern(tahoma, 'A', 'V'), 0);
+  assert.strictEqual(wat.test_tt_kern_pair_fu(sans.at, 64, 1, 2), 0,
+    'a truncated file kerns nothing instead of trapping');
+
   console.log('PASS  WAT reads TrueType metrics from Liberation Sans and Wine Marlett');
 })().catch(error => {
   console.error(error);

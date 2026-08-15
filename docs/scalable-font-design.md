@@ -5,8 +5,9 @@
 Design started 2026-08-14. Assets are committed, `fonts/substitutions.json` is
 written, and `src/10c-truetype.wat` parses font tables and derives metrics:
 table directory, `head`/`hhea`/`maxp`/`OS/2`/`post`, `hmtx` advances and
-bearings, `cmap` formats 0/4/6 with the symbol-face `0xF000` bias, CP1252, and
-the full pixel `TEXTMETRIC` derivation. What is still missing from milestone 1
+bearings, `cmap` formats 0/4/6 with the symbol-face `0xF000` bias, CP1252, the
+full pixel `TEXTMETRIC` derivation, `loca`/`glyf` record bounds in both loca
+formats, ABC widths, and `kern` format 0. What is still missing from milestone 1
 is the *wiring*: a font arena to hold file bytes, a face-selection path from
 `CreateFontIndirectA`, and the public `GetTextExtentPoint32` /
 `GetCharWidth32` / `GetTextMetrics` handlers reading from it instead of from
@@ -442,7 +443,11 @@ shrinks monotonically.
    once `glyf` is parsed, and currently a documented gap in
    `software-gdi-design.md`), `GetCharABCWidths` from `hmtx` lsb plus glyph
    `xMax`, `GetKerningPairs` from `kern`, synthetic bold by outline embolden,
-   synthetic italic by shear.
+   synthetic italic by shear. The ABC and `kern` computations exist in
+   `src/10c-truetype.wat`; the handlers that would expose them do not, and
+   both wait on the same arena milestone 1 waits on. `kern` is read rather
+   than GPOS on purpose: Win98 GDI had no OpenType layout engine, so a face
+   that kerns only through GPOS must kern nothing here too.
 
 7. **Enumeration** — `EnumFontFamiliesEx` reports substituted faces under their
    *Win98* names with correct `TEXTMETRIC` and charset, so apps that enumerate

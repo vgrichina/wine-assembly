@@ -269,6 +269,135 @@
           (i32.mul (i32.sub (local.get $gid) (local.get $count))
             (i32.const 2))))))
 
+  ;; ---- loca / glyf ------------------------------------------------------
+  ;;
+  ;; `loca` holds numGlyphs+1 offsets into `glyf`, either as u16 halves (short
+  ;; format) or u32 (long). Consecutive equal entries mean the glyph has no
+  ;; outline at all, which is how space is stored: an empty glyph is normal
+  ;; data, not a damaged file, and it still has an advance.
+  ;;
+  ;; Only the glyph record's header is read here — bounds and contour count.
+  ;; That is everything ABC widths need, and it is what the scan converter
+  ;; will need to size its bitmap before it walks any points.
+
+  (func $tt_loca_entry (param $data i32) (param $size i32) (param $index i32)
+        (result i32)
+    (local $loca i32)
+    (local.set $loca (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x6C6F6361)))
+    (if (i32.eqz (local.get $loca)) (then (return (i32.const 0))))
+    (if (call $tt_index_to_loc_format (local.get $data) (local.get $size))
+      (then (return (call $tt_u32 (local.get $data) (local.get $size)
+        (i32.add (local.get $loca) (i32.mul (local.get $index) (i32.const 4)))))))
+    ;; Short loca stores half the real offset, which is why every glyph in a
+    ;; short-loca font is padded to an even length.
+    (i32.mul (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $loca) (i32.mul (local.get $index) (i32.const 2))))
+      (i32.const 2)))
+
+  ;; Absolute file offset of a glyph record, or 0 when the glyph is empty,
+  ;; out of range, or described by a `loca` pair that leaves `glyf`. `glyf`
+  ;; itself never starts at 0, so 0 is unambiguous.
+  (func $tt_glyph_offset (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (local $glyf i32) (local $start i32) (local $end i32)
+    (local.set $glyf (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x676C7966)))
+    (if (i32.eqz (local.get $glyf)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $gid)
+          (call $tt_num_glyphs (local.get $data) (local.get $size)))
+      (then (return (i32.const 0))))
+    (local.set $start
+      (call $tt_loca_entry (local.get $data) (local.get $size) (local.get $gid)))
+    (local.set $end (call $tt_loca_entry (local.get $data) (local.get $size)
+      (i32.add (local.get $gid) (i32.const 1))))
+    (if (i32.le_u (local.get $end) (local.get $start))
+      (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $end)
+          (call $tt_table_len (local.get $data) (local.get $size)
+            (i32.const 0x676C7966)))
+      (then (return (i32.const 0))))
+    (i32.add (local.get $glyf) (local.get $start)))
+
+  (func $tt_glyph_length (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (if (i32.eqz (call $tt_glyph_offset (local.get $data) (local.get $size)
+          (local.get $gid)))
+      (then (return (i32.const 0))))
+    (i32.sub
+      (call $tt_loca_entry (local.get $data) (local.get $size)
+        (i32.add (local.get $gid) (i32.const 1)))
+      (call $tt_loca_entry (local.get $data) (local.get $size) (local.get $gid))))
+
+  ;; Field 0 is numberOfContours, then xMin, yMin, xMax, yMax. A negative
+  ;; contour count marks a composite; its bounding box is still stored here,
+  ;; so ABC widths never have to recurse into the components.
+  (func $tt_glyph_header (param $data i32) (param $size i32) (param $gid i32)
+        (param $field i32) (result i32)
+    (local $record i32)
+    (local.set $record
+      (call $tt_glyph_offset (local.get $data) (local.get $size) (local.get $gid)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (call $tt_s16 (local.get $data) (local.get $size)
+      (i32.add (local.get $record) (i32.mul (local.get $field) (i32.const 2)))))
+
+  (func $tt_glyph_num_contours (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (call $tt_glyph_header (local.get $data) (local.get $size) (local.get $gid)
+      (i32.const 0)))
+
+  (func $tt_glyph_is_composite (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (i32.lt_s (call $tt_glyph_num_contours (local.get $data) (local.get $size)
+        (local.get $gid))
+      (i32.const 0)))
+
+  (func $tt_glyph_x_min (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (call $tt_glyph_header (local.get $data) (local.get $size) (local.get $gid)
+      (i32.const 1)))
+
+  (func $tt_glyph_y_min (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (call $tt_glyph_header (local.get $data) (local.get $size) (local.get $gid)
+      (i32.const 2)))
+
+  (func $tt_glyph_x_max (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (call $tt_glyph_header (local.get $data) (local.get $size) (local.get $gid)
+      (i32.const 3)))
+
+  (func $tt_glyph_y_max (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (call $tt_glyph_header (local.get $data) (local.get $size) (local.get $gid)
+      (i32.const 4)))
+
+  ;; ---- ABC widths -------------------------------------------------------
+  ;;
+  ;; GetCharABCWidths splits the advance into left bearing, black width, and
+  ;; right bearing. A and C are signed and routinely negative — 'j' overhangs
+  ;; to its left, italic faces overhang to their right — and code that clamps
+  ;; them to zero is exactly what clips the overhanging edge of a glyph.
+  ;; An empty glyph has no black box, so its whole advance is bearing A.
+
+  (func $tt_abc_a_fu (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (call $tt_lsb_fu (local.get $data) (local.get $size) (local.get $gid)))
+
+  (func $tt_abc_b_fu (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (i32.sub
+      (call $tt_glyph_x_max (local.get $data) (local.get $size) (local.get $gid))
+      (call $tt_glyph_x_min (local.get $data) (local.get $size) (local.get $gid))))
+
+  (func $tt_abc_c_fu (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (i32.sub
+      (i32.sub
+        (call $tt_advance_fu (local.get $data) (local.get $size) (local.get $gid))
+        (call $tt_abc_a_fu (local.get $data) (local.get $size) (local.get $gid)))
+      (call $tt_abc_b_fu (local.get $data) (local.get $size) (local.get $gid))))
+
   ;; ---- cmap -------------------------------------------------------------
 
   (func $tt_cmap_subtable (param $data i32) (param $size i32)
@@ -705,6 +834,88 @@
   (func $tt_tm_last_char (param $data i32) (param $size i32) (result i32)
     (call $tt_os2_u16 (local.get $data) (local.get $size) (i32.const 66)))
 
+  ;; ---- kern -------------------------------------------------------------
+  ;;
+  ;; GetKerningPairs reads the legacy `kern` table, not GPOS: Win98 GDI had no
+  ;; OpenType layout engine, so a face whose kerning lives only in GPOS simply
+  ;; kerns nothing on Win98, and reaching into GPOS here would render text the
+  ;; guest never could have produced.
+  ;;
+  ;; Only format 0 horizontal, non-minimum subtables are honoured. Pairs are
+  ;; sorted by (left, right) as a single 32-bit key, which is what makes the
+  ;; binary search below legal rather than merely convenient.
+
+  (func $tt_kern_subtable_lookup (param $data i32) (param $size i32)
+        (param $sub i32) (param $key i32) (result i32)
+    (local $pairs i32) (local $low i32) (local $high i32) (local $mid i32)
+    (local $entry i32) (local $probe i32)
+    (local.set $pairs
+      (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $sub) (i32.const 6))))
+    (local.set $high (local.get $pairs))
+    (block $done (loop $search
+      (br_if $done (i32.ge_u (local.get $low) (local.get $high)))
+      (local.set $mid (i32.shr_u
+        (i32.add (local.get $low) (local.get $high)) (i32.const 1)))
+      (local.set $entry (i32.add (local.get $sub)
+        (i32.add (i32.const 14) (i32.mul (local.get $mid) (i32.const 6)))))
+      (local.set $probe (i32.or
+        (i32.shl (call $tt_u16 (local.get $data) (local.get $size)
+            (local.get $entry)) (i32.const 16))
+        (call $tt_u16 (local.get $data) (local.get $size)
+          (i32.add (local.get $entry) (i32.const 2)))))
+      (if (i32.eq (local.get $probe) (local.get $key))
+        (then (return (call $tt_s16 (local.get $data) (local.get $size)
+          (i32.add (local.get $entry) (i32.const 4))))))
+      (if (i32.lt_u (local.get $probe) (local.get $key))
+        (then (local.set $low (i32.add (local.get $mid) (i32.const 1))))
+        (else (local.set $high (local.get $mid))))
+      (br $search)))
+    (i32.const 0))
+
+  (func $tt_kern_pair_fu (param $data i32) (param $size i32) (param $left i32)
+        (param $right i32) (result i32)
+    (local $kern i32) (local $count i32) (local $index i32) (local $sub i32)
+    (local $length i32) (local $coverage i32) (local $value i32) (local $key i32)
+    (local.set $kern (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x6B65726E)))
+    (if (i32.eqz (local.get $kern)) (then (return (i32.const 0))))
+    (local.set $count (call $tt_u16 (local.get $data) (local.get $size)
+      (i32.add (local.get $kern) (i32.const 2))))
+    (local.set $key (i32.or
+      (i32.shl (i32.and (local.get $left) (i32.const 0xFFFF)) (i32.const 16))
+      (i32.and (local.get $right) (i32.const 0xFFFF))))
+    (local.set $sub (i32.add (local.get $kern) (i32.const 4)))
+    (block $done (loop $tables
+      (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $length (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $sub) (i32.const 2))))
+      ;; A zero-length subtable would loop forever on a corrupt file.
+      (br_if $done (i32.lt_u (local.get $length) (i32.const 14)))
+      (local.set $coverage (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $sub) (i32.const 4))))
+      ;; coverage: high byte is the format, bit 0 is horizontal, bit 1 marks a
+      ;; minimum table whose values are floors rather than adjustments.
+      (if (i32.and
+            (i32.eqz (i32.shr_u (local.get $coverage) (i32.const 8)))
+            (i32.eq (i32.and (local.get $coverage) (i32.const 3)) (i32.const 1)))
+        (then
+          (local.set $value (call $tt_kern_subtable_lookup (local.get $data)
+            (local.get $size) (local.get $sub) (local.get $key)))
+          (if (local.get $value) (then (return (local.get $value))))))
+      (local.set $sub (i32.add (local.get $sub) (local.get $length)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $tables)))
+    (i32.const 0))
+
+  (func $tt_kern_pair_px (param $data i32) (param $size i32) (param $left i32)
+        (param $right i32) (param $ppem i32) (result i32)
+    (call $tt_scale
+      (call $tt_kern_pair_fu (local.get $data) (local.get $size)
+        (local.get $left) (local.get $right))
+      (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size))))
+
   ;; ---- test surface -----------------------------------------------------
   ;;
   ;; Exported here rather than in 13-exports.wat so this layer stays a single
@@ -846,3 +1057,57 @@
 
   (func (export "test_tt_tm_last_char") (param i32) (param i32) (result i32)
     (call $tt_tm_last_char (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_glyph_offset") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_offset (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_length") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_length (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_num_contours") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_num_contours (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_is_composite") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_is_composite (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_x_min") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_x_min (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_y_min") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_y_min (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_x_max") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_x_max (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_y_max") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_y_max (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_abc_a_fu") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_abc_a_fu (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_abc_b_fu") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_abc_b_fu (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_abc_c_fu") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_abc_c_fu (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_kern_pair_fu") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_kern_pair_fu (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_kern_pair_px") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $tt_kern_pair_px (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3) (local.get 4)))
