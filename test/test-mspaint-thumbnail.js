@@ -25,15 +25,15 @@ fs.mkdirSync(path.dirname(SHOT), { recursive: true });
 try { fs.unlinkSync(SHOT); } catch (_) {}
 
 const input = [
-  '30:click:39:146',
-  '38:mousedown:110:110',
-  '39:mousemove:130:125',
-  '40:mouseup:150:140',
-  '55:wait-title-command:untitled_-_Paint:50:37671:zoom',
-  '65:wait-title-command:untitled_-_Paint:50:37676:thumbnail',
-  '82:dump-windows:thumbnail',
-  `84:png:${SHOT}`,
-  '85:stop',
+  '7:click:39:146',
+  '10:mousedown:110:110',
+  '11:mousemove:130:125',
+  '12:mouseup:150:140',
+  '15:wait-title-command:untitled_-_Paint:20:37671:zoom',
+  '18:wait-title-command:untitled_-_Paint:20:37676:thumbnail',
+  '22:dump-windows:thumbnail',
+  `23:png:${SHOT}`,
+  '24:stop',
 ].join(',');
 
 let output = '';
@@ -42,12 +42,12 @@ try {
     RUN,
     `--exe=${EXE}`,
     `--input=${input}`,
-    '--max-batches=90',
+    '--max-batches=30',
     '--batch-size=50000',
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 9000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   output = `${error.stdout || ''}${error.stderr || ''}`;
   assert.fail(`Paint thumbnail run failed:\n${output.slice(-4000)}`);
