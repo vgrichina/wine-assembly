@@ -242,9 +242,10 @@ const TEST_CASES = [
     extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 90000 },
   { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)',
-    // RCT's pre-window loader is instruction-heavy; this focused budget
-    // reaches the 640x480 splash/menu DirectDraw frame.
-    maxBatches: 40, batchSize: 5000000, extraArgs: ['--quiet-blocks'], timeoutMs: 45000 },
+    // RCT's pre-window loader is instruction-heavy. 40 batches only reached a
+    // black window — it needs roughly 200 to decode and present the Hasbro
+    // Interactive splash, which is the first real DirectDraw frame.
+    maxBatches: 200, batchSize: 5000000, extraArgs: ['--quiet-blocks'], timeoutMs: 180000 },
   // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
   // ddex1 and ddex2 draw one line of text on an otherwise black flipping
   // surface — "Back buffer (F12 to quit)" and "Front buffer (F12 to quit)".
