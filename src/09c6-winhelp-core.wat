@@ -19,6 +19,8 @@
   (global $HELP_MAX_BITMAP_RESOURCES i32 (i32.const 4096))
   (global $HELP_MAX_BITMAP_BYTES i32 (i32.const 0x01000000))
   (global $HELP_MAX_BITMAP_INTERMEDIATE_BYTES i32 (i32.const 0x04000000))
+  (global $HELP_MAX_KEYWORDS i32 (i32.const 65536))
+  (global $HELP_MAX_KEYWORD_POSTINGS i32 (i32.const 262144))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -38,6 +40,7 @@
   (global $HELP_ERROR_TOPIC_FORMAT i32 (i32.const 14))
   (global $HELP_ERROR_FONT_TABLE i32 (i32.const 15))
   (global $HELP_ERROR_BITMAP_TABLE i32 (i32.const 16))
+  (global $HELP_ERROR_KEYWORD_INDEX i32 (i32.const 17))
 
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
@@ -81,6 +84,12 @@
   (global $help_doc_bitmaps_ga (mut i32) (i32.const 0))
   (global $help_doc_bitmaps_wa (mut i32) (i32.const 0))
   (global $help_doc_bitmap_count (mut i32) (i32.const 0))
+  (global $help_doc_keywords_ga (mut i32) (i32.const 0))
+  (global $help_doc_keywords_wa (mut i32) (i32.const 0))
+  (global $help_doc_keyword_count (mut i32) (i32.const 0))
+  (global $help_doc_keyword_postings_ga (mut i32) (i32.const 0))
+  (global $help_doc_keyword_postings_wa (mut i32) (i32.const 0))
+  (global $help_doc_keyword_posting_count (mut i32) (i32.const 0))
   (global $help_doc_system_minor (mut i32) (i32.const 0))
   (global $help_doc_system_major (mut i32) (i32.const 0))
   (global $help_doc_system_flags (mut i32) (i32.const 0))
@@ -130,6 +139,11 @@
   ;; HelpBitmap is 80 bytes; see the formatted-topic design for fields. The
   ;; decoded_size field is the exact caller-buffer requirement after packing.
   (global $HELP_BITMAP_SIZE i32 (i32.const 80))
+  ;; HelpKeyword is {text_off, text_len, first_posting, posting_count}.
+  ;; HelpKeywordPosting is {topic_ref, flags}; flag 1 marks a |Rose macro.
+  (global $HELP_KEYWORD_SIZE i32 (i32.const 16))
+  (global $HELP_KEYWORD_POSTING_SIZE i32 (i32.const 8))
+  (global $HELP_KEYWORD_POSTING_MACRO i32 (i32.const 1))
 
   ;; HelpSlice is 16 bytes:
   ;;   base_wa:u32, file_size:u32, offset:u32, length:u32.
@@ -141,6 +155,10 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_keyword_postings_ga)
+      (then (call $heap_free (global.get $help_doc_keyword_postings_ga))))
+    (if (global.get $help_doc_keywords_ga)
+      (then (call $heap_free (global.get $help_doc_keywords_ga))))
     (if (global.get $help_doc_bitmaps_ga)
       (then (call $heap_free (global.get $help_doc_bitmaps_ga))))
     (if (global.get $help_doc_fonts_ga)
@@ -201,6 +219,12 @@
     (global.set $help_doc_bitmaps_ga (i32.const 0))
     (global.set $help_doc_bitmaps_wa (i32.const 0))
     (global.set $help_doc_bitmap_count (i32.const 0))
+    (global.set $help_doc_keywords_ga (i32.const 0))
+    (global.set $help_doc_keywords_wa (i32.const 0))
+    (global.set $help_doc_keyword_count (i32.const 0))
+    (global.set $help_doc_keyword_postings_ga (i32.const 0))
+    (global.set $help_doc_keyword_postings_wa (i32.const 0))
+    (global.set $help_doc_keyword_posting_count (i32.const 0))
     (global.set $help_doc_system_minor (i32.const 0))
     (global.set $help_doc_system_major (i32.const 0))
     (global.set $help_doc_system_flags (i32.const 0))
@@ -328,6 +352,36 @@
     (if (i32.gt_u (local.get $alen) (local.get $blen)) (then (return (i32.const 1))))
     (i32.const 0))
 
+  (func $help_ascii_fold (param $ch i32) (result i32)
+    (if (result i32)
+      (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
+               (i32.le_u (local.get $ch) (i32.const 0x5a)))
+      (then (i32.add (local.get $ch) (i32.const 0x20)))
+      (else (local.get $ch))))
+
+  ;; Keyword lookup is ASCII case-insensitive, matching WinHelp's default K
+  ;; table behavior. Bytes outside ASCII are retained and compared exactly.
+  (func $help_keyword_bytes_compare
+    (param $a i32) (param $alen i32) (param $b i32) (param $blen i32)
+    (result i32)
+    (local $i i32) (local $limit i32) (local $av i32) (local $bv i32)
+    (local.set $limit (local.get $alen))
+    (if (i32.lt_u (local.get $blen) (local.get $limit))
+      (then (local.set $limit (local.get $blen))))
+    (block $same_prefix (loop $loop
+      (br_if $same_prefix (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $av (call $help_ascii_fold
+        (i32.load8_u (i32.add (local.get $a) (local.get $i)))))
+      (local.set $bv (call $help_ascii_fold
+        (i32.load8_u (i32.add (local.get $b) (local.get $i)))))
+      (if (i32.lt_u (local.get $av) (local.get $bv)) (then (return (i32.const -1))))
+      (if (i32.gt_u (local.get $av) (local.get $bv)) (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)))
+    (if (i32.lt_u (local.get $alen) (local.get $blen)) (then (return (i32.const -1))))
+    (if (i32.gt_u (local.get $alen) (local.get $blen)) (then (return (i32.const 1))))
+    (i32.const 0))
+
   ;; Lookup always verifies hash, length, and bytes. Hash collisions cannot
   ;; select an unrelated internal file.
   (func $help_find_internal_file
@@ -400,8 +454,74 @@
       (then
         (i64.store (local.get $scratch) (i64.const 0x000000544E4F467C))
         (local.set $length (i32.const 5))))
+    (if (i32.eq (local.get $kind) (i32.const 10))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x4545525442574B7C))
+        (local.set $length (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 11))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x0041544144574B7C))
+        (local.set $length (i32.const 7))))
     (if (i32.eqz (local.get $length)) (then (return (i32.const -1))))
     (call $help_find_internal_file (local.get $scratch) (local.get $length)))
+
+  (func $help_find_keyword
+    (param $query i32) (param $query_len i32) (param $prefix i32) (result i32)
+    (local $memory_bytes i32) (local $i i32) (local $record i32)
+    (local $stored_len i32) (local $compare_len i32)
+    (if (i32.eqz (local.get $query_len)) (then (return (i32.const -1))))
+    (local.set $memory_bytes (i32.shl (memory.size) (i32.const 16)))
+    (if (i32.or
+          (i32.gt_u (local.get $query) (local.get $memory_bytes))
+          (i32.gt_u (local.get $query_len)
+            (i32.sub (local.get $memory_bytes) (local.get $query))))
+      (then (return (i32.const -1))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_doc_keyword_count)))
+      (local.set $record (i32.add (global.get $help_doc_keywords_wa)
+        (i32.mul (local.get $i) (global.get $HELP_KEYWORD_SIZE))))
+      (local.set $stored_len (i32.load offset=4 (local.get $record)))
+      (if (i32.or
+            (i32.and (i32.eqz (local.get $prefix))
+              (i32.eq (local.get $stored_len) (local.get $query_len)))
+            (i32.and (local.get $prefix)
+              (i32.ge_u (local.get $stored_len) (local.get $query_len))))
+        (then
+          (local.set $compare_len
+            (if (result i32) (local.get $prefix)
+              (then (local.get $query_len)) (else (local.get $stored_len))))
+          (if (i32.eqz (call $help_keyword_bytes_compare
+                (local.get $query) (local.get $compare_len)
+                (i32.add (global.get $help_doc_file_wa) (i32.load (local.get $record)))
+                (local.get $compare_len)))
+            (then (return (local.get $i))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  (func $help_resolve_keyword
+    (param $query i32) (param $query_len i32) (param $prefix i32) (result i32)
+    (local $index i32) (local $record i32) (local $first i32)
+    (local $count i32) (local $i i32) (local $posting i32)
+    (local.set $index (call $help_find_keyword
+      (local.get $query) (local.get $query_len) (local.get $prefix)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.set $record (i32.add (global.get $help_doc_keywords_wa)
+      (i32.mul (local.get $index) (global.get $HELP_KEYWORD_SIZE))))
+    (local.set $first (i32.load offset=8 (local.get $record)))
+    (local.set $count (i32.load offset=12 (local.get $record)))
+    (block $missing (loop $postings
+      (br_if $missing (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $posting (i32.add (global.get $help_doc_keyword_postings_wa)
+        (i32.mul (i32.add (local.get $first) (local.get $i))
+          (global.get $HELP_KEYWORD_POSTING_SIZE))))
+      (if (i32.eqz (i32.and (i32.load offset=4 (local.get $posting))
+            (global.get $HELP_KEYWORD_POSTING_MACRO)))
+        (then (return (i32.load (local.get $posting)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $postings)))
+    (i32.const -1))
 
   (func $help_find_topic_index_in
     (param $topics_wa i32) (param $count i32) (param $topic_ref i32)
@@ -531,6 +651,44 @@
       (then (return (i32.const 0))))
     (i32.add (global.get $help_doc_bitmaps_wa)
       (i32.mul (local.get $index) (global.get $HELP_BITMAP_SIZE))))
+  (func (export "get_help_keyword_count") (result i32)
+    (global.get $help_doc_keyword_count))
+  (func (export "get_help_keyword_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_keyword_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_keywords_wa)
+      (i32.mul (local.get $index) (global.get $HELP_KEYWORD_SIZE))))
+  (func (export "get_help_keyword_ptr") (param $index i32) (result i32)
+    (local $record i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_keyword_count))
+      (then (return (i32.const 0))))
+    (local.set $record (i32.add (global.get $help_doc_keywords_wa)
+      (i32.mul (local.get $index) (global.get $HELP_KEYWORD_SIZE))))
+    (i32.add (global.get $help_doc_file_wa) (i32.load (local.get $record))))
+  (func (export "get_help_keyword_len") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_keyword_count))
+      (then (return (i32.const 0))))
+    (i32.load offset=4 (i32.add (global.get $help_doc_keywords_wa)
+      (i32.mul (local.get $index) (global.get $HELP_KEYWORD_SIZE)))))
+  (func (export "get_help_keyword_posting_count") (result i32)
+    (global.get $help_doc_keyword_posting_count))
+  (func (export "get_help_keyword_posting") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_keyword_posting_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_keyword_postings_wa)
+      (i32.mul (local.get $index) (global.get $HELP_KEYWORD_POSTING_SIZE))))
+  (func (export "test_help_find_keyword")
+    (param $query i32) (param $length i32) (result i32)
+    (call $help_find_keyword (local.get $query) (local.get $length) (i32.const 0)))
+  (func (export "test_help_find_keyword_prefix")
+    (param $query i32) (param $length i32) (result i32)
+    (call $help_find_keyword (local.get $query) (local.get $length) (i32.const 1)))
+  (func (export "test_help_resolve_keyword")
+    (param $query i32) (param $length i32) (result i32)
+    (call $help_resolve_keyword (local.get $query) (local.get $length) (i32.const 0)))
+  (func (export "test_help_resolve_keyword_prefix")
+    (param $query i32) (param $length i32) (result i32)
+    (call $help_resolve_keyword (local.get $query) (local.get $length) (i32.const 1)))
   (func (export "test_help_find_bitmap")
     (param $resource_number i32) (param $picture_index i32) (result i32)
     (local $i i32) (local $record i32)

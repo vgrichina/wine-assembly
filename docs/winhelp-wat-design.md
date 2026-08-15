@@ -20,7 +20,9 @@ The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
 WinHelp packing modes into preflighted caller-owned buffers. Layout, GDI bitmap
-materialization, and the runtime UI cutover remain.
+materialization, and the runtime UI cutover remain. Paired `|KWBTREE` and
+`|KWDATA` files now publish a case-folded default keyword index with canonical
+topic postings and explicit `|Rose` macro sentinels.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -447,6 +449,14 @@ This avoids version/staleness problems and keeps clean test runs independent
 of a machine-generated file. A future GID reader/writer must be an optimization
 with identical results, never the only path to content.
 
+The default K-footnote index is represented by 16-byte keyword records
+`{text_off, text_len, first_posting, posting_count}` and 8-byte posting records
+`{topic_ref, flags}`. Keyword strings remain bounded offsets into the immutable
+HLP image; comparisons fold ASCII case and retain non-ASCII bytes exactly.
+Every non-macro posting must resolve to the canonical `HelpTopic` table before
+publication. A `topic_ref` of `-1` is retained only with the macro flag for
+later `|Rose` interpretation, and exact/prefix resolution skips such sentinels.
+
 ## Document and session memory model
 
 All structures are heap-backed. Do not reserve another fixed low-memory table;
@@ -812,6 +822,8 @@ Proposed starting envelope:
 | Decompressed bytes for one topic | 4 MiB |
 | Decoded bytes for one picture | 16 MiB |
 | Intermediate picture expansion | 64 MiB |
+| Keywords | 65,536 |
+| Keyword postings | 262,144 |
 | Hotspots for one topic | 16,384 |
 | History entries | 256 |
 | Live documents per process | 4 |
@@ -872,8 +884,10 @@ records cover every checked-in resource, with transactional malformed-offset,
 descriptor, hotspot, duplicate-ID, and capacity tests. Exact decoded payload
 hashes cover every checked-in picture, while synthetic fixtures exercise all
 four packing modes plus truncated RLE, invalid LZ77, alias, capacity, and
-integer-overflow failures without partial output. Keyword indexes and layout
-remain before Phase 2 is complete.
+integer-overflow failures without partial output. The paired default keyword
+tree/data parser validates multi-level pages, linked leaves, occurrence slices,
+case-folded ordering, canonical topic references, macro sentinels, and capacity
+limits transactionally. Layout remains before Phase 2 is complete.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.
@@ -913,7 +927,8 @@ reference for fixtures containing `|FONT` and `|bmN` data.
 
 ### Phase 6: keyword/search and safe macros
 
-- Parse keyword indexes and implement exact/prefix lookup.
+- Extend the implemented default keyword exact/prefix index to named
+  `HELP_MULTIKEY` tables.
 - Build the in-memory Find index without requiring GID.
 - Add the fixture-driven safe macro subset.
 - Remove `lib/hlp-parser.js` from the browser runtime and delete semantic help

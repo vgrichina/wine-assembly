@@ -236,6 +236,69 @@ function buildSemanticBtree(kind) {
   return b;
 }
 
+function buildKeywordIndex(entries, { leafCycle = false, indexCycle = false } = {}) {
+  const pageSize = 512;
+  const pageCount = 3;
+  const tree = Buffer.alloc(38 + pageSize * pageCount);
+  const postingOffsets = [];
+  const dataParts = [];
+  let dataSize = 0;
+  for (const [, refs] of entries) {
+    postingOffsets.push(dataSize);
+    const part = Buffer.alloc(refs.length * 4);
+    refs.forEach((ref, index) => part.writeInt32LE(ref, index * 4));
+    dataParts.push(part);
+    dataSize += part.length;
+  }
+  const data = Buffer.concat(dataParts);
+  tree.writeUInt16LE(0x293b, 0);
+  tree.writeUInt16LE(0x0002, 2);
+  tree.writeUInt16LE(pageSize, 4);
+  tree.write('z24', 6, 'ascii');
+  tree.writeUInt16LE(0, 22);
+  tree.writeUInt16LE(0, 24);
+  tree.writeUInt16LE(0, 26);
+  tree.writeUInt16LE(0xffff, 28);
+  tree.writeUInt16LE(pageCount, 30);
+  tree.writeUInt16LE(2, 32);
+  tree.writeUInt32LE(entries.length, 34);
+
+  const split = Math.ceil(entries.length / 2);
+  const root = 38;
+  let rootPos = root + 6;
+  tree.writeUInt16LE(1, root + 2);
+  tree.writeUInt16LE(indexCycle ? 0 : 1, root + 4);
+  rootPos += tree.write(entries[split][0], rootPos, 'latin1');
+  tree[rootPos++] = 0;
+  tree.writeUInt16LE(2, rootPos);
+  rootPos += 2;
+  tree.writeUInt16LE(root + pageSize - rootPos, root);
+
+  const leafEntries = [];
+  for (let leafNo = 1; leafNo <= 2; leafNo++) {
+    const leaf = 38 + leafNo * pageSize;
+    const first = leafNo === 1 ? 0 : split;
+    const last = leafNo === 1 ? split : entries.length;
+    let pos = leaf + 8;
+    tree.writeUInt16LE(last - first, leaf + 2);
+    tree.writeUInt16LE(leafNo === 1 ? 0xffff : 1, leaf + 4);
+    tree.writeUInt16LE(leafNo === 1 ? 2 : (leafCycle ? 1 : 0xffff), leaf + 6);
+    for (let entryIndex = first; entryIndex < last; entryIndex++) {
+      const [keyword, refs] = entries[entryIndex];
+      const entryStart = pos;
+      pos += tree.write(keyword, pos, 'latin1');
+      tree[pos++] = 0;
+      tree.writeUInt16LE(refs.length, pos);
+      pos += 2;
+      tree.writeUInt32LE(postingOffsets[entryIndex], pos);
+      leafEntries.push({ entryStart, dataOffsetField: pos });
+      pos += 4;
+    }
+    tree.writeUInt16LE(leaf + pageSize - pos, leaf);
+  }
+  return { tree, data, leafEntries };
+}
+
 function encodeLiteralLz77(raw) {
   const chunks = [];
   for (let pos = 0; pos < raw.length; pos += 8) {
@@ -722,6 +785,27 @@ async function main() {
     check(`${file} exact decoded bitmap payloads`,
       JSON.stringify(decodedBitmaps) === JSON.stringify(bitmapPayloads),
       `decoded=${JSON.stringify(decodedBitmaps)}`);
+    const expectedKeywords = semantic.keywords || [];
+    const keywords = Array.from({ length: e.get_help_keyword_count() }, (_, index) => {
+      const record = e.get_help_keyword_record(index);
+      return [
+        readLatin1(e.get_help_keyword_ptr(index), e.get_help_keyword_len(index)),
+        dv.getUint32(record + 8, true), dv.getUint32(record + 12, true),
+      ];
+    });
+    const keywordPostings = Array.from({ length: e.get_help_keyword_posting_count() }, (_, index) => {
+      const posting = e.get_help_keyword_posting(index);
+      return [dv.getUint32(posting, true), dv.getUint32(posting + 4, true)];
+    });
+    check(`${file} exact normalized keyword index`,
+      JSON.stringify(keywords) === JSON.stringify(expectedKeywords) &&
+      JSON.stringify(keywordPostings) === JSON.stringify(semantic.keywordPostings || []),
+      `keywords=${JSON.stringify(keywords)} postings=${JSON.stringify(keywordPostings)}`);
+    check(`${file} keyword inspection is bounded`,
+      e.get_help_keyword_record(expectedKeywords.length) === 0 &&
+      e.get_help_keyword_ptr(expectedKeywords.length) === 0 &&
+      e.get_help_keyword_len(expectedKeywords.length) === 0 &&
+      e.get_help_keyword_posting((semantic.keywordPostings || []).length) === 0);
 
     const rawParts = [];
     const rawTopics = [];
@@ -909,6 +993,115 @@ async function main() {
     e.test_help_resolve_context_hash(-10) === 0 && e.test_help_resolve_context_hash(20) === 30);
   check('synthetic numeric maps resolve canonical topics',
     e.test_help_resolve_context_id(7) === 20 && e.test_help_resolve_context_id(8) === 0);
+
+  const keywordEntries = [
+    ['Alpha', [0,20]],
+    ['Beta', [10]],
+    ['Gamma', [-1,30]],
+    ['zeta', [20]],
+  ];
+  const keywordIndex = buildKeywordIndex(keywordEntries);
+  const keywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', keywordIndex.tree], ['|KWDATA', keywordIndex.data],
+  ] });
+  check('two-level keyword B+tree and KWDATA parse transactionally',
+    load(keywordHelp.file) === 1 && e.get_help_keyword_count() === 4 &&
+    e.get_help_keyword_posting_count() === 6,
+    `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
+  const syntheticKeywords = Array.from({ length: e.get_help_keyword_count() }, (_, index) => {
+    const record = e.get_help_keyword_record(index);
+    return [readLatin1(e.get_help_keyword_ptr(index), e.get_help_keyword_len(index)),
+      dv.getUint32(record + 8, true), dv.getUint32(record + 12, true)];
+  });
+  const syntheticPostings = Array.from({ length: e.get_help_keyword_posting_count() }, (_, index) => {
+    const posting = e.get_help_keyword_posting(index);
+    return [dv.getUint32(posting, true), dv.getUint32(posting + 4, true)];
+  });
+  check('keyword records retain exact sorted strings and posting ranges',
+    JSON.stringify(syntheticKeywords) === JSON.stringify([
+      ['Alpha',0,2],['Beta',2,1],['Gamma',3,2],['zeta',5,1],
+    ]) && JSON.stringify(syntheticPostings) === JSON.stringify([
+      [0,0],[20,0],[10,0],[0xffffffff,1],[30,0],[20,0],
+    ]));
+  bytes.set(Buffer.from('ALPHA', 'latin1'), nameWA);
+  const exactKeyword = e.test_help_find_keyword(nameWA, 5);
+  bytes.set(Buffer.from('ga', 'latin1'), nameWA);
+  const prefixKeyword = e.test_help_find_keyword_prefix(nameWA, 2);
+  const resolvedGamma = e.test_help_resolve_keyword_prefix(nameWA, 2);
+  bytes.set(Buffer.from('ZE', 'latin1'), nameWA);
+  const resolvedZeta = e.test_help_resolve_keyword_prefix(nameWA, 2);
+  bytes.set(Buffer.from('missing', 'latin1'), nameWA);
+  check('keyword lookup is case-insensitive with deterministic prefix selection',
+    exactKeyword === 0 && prefixKeyword === 2 && resolvedGamma === 30 && resolvedZeta === 20 &&
+    e.test_help_find_keyword(nameWA, 7) === -1 &&
+    e.test_help_resolve_keyword(nameWA, 7) === -1 &&
+    e.test_help_find_keyword(memory.buffer.byteLength - 1, 2) === -1);
+  check('keyword inspection is bounded',
+    e.get_help_keyword_record(4) === 0 && e.get_help_keyword_ptr(4) === 0 &&
+    e.get_help_keyword_len(4) === 0 && e.get_help_keyword_posting(6) === 0);
+
+  const halfKeywordHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|KWBTREE', keywordIndex.tree]],
+  });
+  check('half of a keyword index pair is a missing-internal error',
+    load(halfKeywordHelp.file) === 0 && e.get_help_last_error() === 8 &&
+    e.get_help_keyword_count() === 0 && e.get_help_topic_count() === 0);
+  const badKeywordSlice = Buffer.from(keywordIndex.tree);
+  badKeywordSlice.writeUInt32LE(0xfffffffc, keywordIndex.leafEntries[0].dataOffsetField);
+  const badKeywordSliceHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', badKeywordSlice], ['|KWDATA', keywordIndex.data],
+  ] });
+  check('keyword posting slices are bounded by KWDATA',
+    load(badKeywordSliceHelp.file) === 0 && e.get_help_last_error() === 17 &&
+    e.get_help_keyword_count() === 0 && e.get_help_topic_count() === 0);
+  const badKeywordTopicData = Buffer.from(keywordIndex.data);
+  badKeywordTopicData.writeUInt32LE(999, 0);
+  const badKeywordTopicHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', keywordIndex.tree], ['|KWDATA', badKeywordTopicData],
+  ] });
+  check('keyword postings must resolve canonical topics or macro sentinels',
+    load(badKeywordTopicHelp.file) === 0 && e.get_help_last_error() === 17 &&
+    e.get_help_keyword_count() === 0 && e.get_help_topic_count() === 0);
+  const unsortedKeywordIndex = buildKeywordIndex([
+    ['Beta',[0]],['alpha',[10]],['Gamma',[20]],['zeta',[30]],
+  ]);
+  const unsortedKeywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', unsortedKeywordIndex.tree], ['|KWDATA', unsortedKeywordIndex.data],
+  ] });
+  check('keyword leaves must be strictly case-folded sorted',
+    load(unsortedKeywordHelp.file) === 0 && e.get_help_last_error() === 17 &&
+    e.get_help_keyword_count() === 0);
+  const cyclicKeywordIndex = buildKeywordIndex(keywordEntries, { leafCycle: true });
+  const cyclicKeywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', cyclicKeywordIndex.tree], ['|KWDATA', cyclicKeywordIndex.data],
+  ] });
+  check('cyclic keyword leaf links fail before publication',
+    load(cyclicKeywordHelp.file) === 0 && e.get_help_last_error() === 17 &&
+    e.get_help_keyword_count() === 0);
+  const cyclicKeywordRoot = buildKeywordIndex(keywordEntries, { indexCycle: true });
+  const cyclicKeywordRootHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', cyclicKeywordRoot.tree], ['|KWDATA', cyclicKeywordRoot.data],
+  ] });
+  check('cyclic keyword index descent fails before publication',
+    load(cyclicKeywordRootHelp.file) === 0 && e.get_help_last_error() === 17 &&
+    e.get_help_keyword_count() === 0);
+  const oversizedKeywordTree = Buffer.from(keywordIndex.tree);
+  oversizedKeywordTree.writeUInt32LE(65537, 34);
+  const oversizedKeywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', oversizedKeywordTree], ['|KWDATA', keywordIndex.data],
+  ] });
+  check('keyword count cap is enforced before allocation',
+    load(oversizedKeywordHelp.file) === 0 && e.get_help_last_error() === 6 &&
+    e.get_help_keyword_count() === 0);
+  const oddKeywordDataHelp = buildSyntheticSemanticHelp({ extraFiles: [
+    ['|KWBTREE', keywordIndex.tree],
+    ['|KWDATA', Buffer.concat([keywordIndex.data, Buffer.from([0])])],
+  ] });
+  check('KWDATA must be a complete topic-reference array',
+    load(oddKeywordDataHelp.file) === 0 && e.get_help_last_error() === 17 &&
+    e.get_help_keyword_count() === 0);
+  check('keyword fixture reloads after transactional failure tests',
+    load(keywordHelp.file) === 1 && e.get_help_keyword_count() === 4);
   check('synthetic header-only topics decode to empty raw streams',
     [0,1,2,3].every(index => e.test_help_decode_topic_raw(index, topicOutWA, topicOutCapacity) === 0));
   check('empty synthetic topic emits only END_TOPIC',
@@ -1526,6 +1719,8 @@ async function main() {
     e.get_help_topic_count() === 0 && e.get_help_context_count() === 0 &&
     e.get_help_map_count() === 0 && e.get_help_phrase_count() === 0 &&
     e.get_help_font_face_count() === 0 && e.get_help_font_count() === 0 &&
+    e.get_help_bitmap_count() === 0 && e.get_help_keyword_count() === 0 &&
+    e.get_help_keyword_posting_count() === 0 &&
     e.get_help_display_record_count() === 0 && e.get_help_paragraph_count() === 0 &&
     e.get_help_table_count() === 0 && e.get_help_format_command_count() === 0 &&
     e.get_help_last_error() === 0);
