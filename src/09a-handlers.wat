@@ -3138,6 +3138,11 @@
   ;; — VCL does it while laying out children — so a single shared struct would
   ;; be rewritten underneath an outer frame that still holds the pointer. The
   ;; depth counter picks the slot and bounds the recursion in one move.
+  ;; Base of the wndproc markers GetClassInfo hands out for USER's own control
+  ;; classes; the low byte carries the $control_wndproc_dispatch class id.
+  ;; Sits in the same reserved 0xFFFE_xxxx space as $WNDPROC_BUILTIN.
+  (global $WNDPROC_SYSCLASS i32 (i32.const 0xFFFE0100))
+
   (global $windowpos_ring (mut i32) (i32.const 0))
   (global $windowpos_depth (mut i32) (i32.const 0))
   (global $WINDOWPOS_SLOT i32 (i32.const 32))   ;; 28-byte struct, padded
@@ -5139,6 +5144,96 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
+  ;; Identify one of USER's own control classes by name, case-insensitively,
+  ;; returning the $control_wndproc_dispatch class id (0 = not a system class).
+  ;; Same lowercase-LE-dword idiom CreateWindowExA uses to classify a window.
+  (func $system_class_id (param $name i32) (result i32)
+    (local $d0 i32)
+    (local.set $d0 (i32.or (i32.load (local.get $name)) (i32.const 0x20202020)))
+    ;; "button"
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74747562))
+          (i32.and
+            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
+                    (i32.const 0x6e6f))
+            (i32.eqz (i32.load8_u offset=6 (local.get $name)))))
+      (then (return (i32.const 1))))
+    ;; "edit"
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74696465))
+                 (i32.eqz (i32.load8_u offset=4 (local.get $name))))
+      (then (return (i32.const 2))))
+    ;; "static"
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74617473))
+          (i32.and
+            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
+                    (i32.const 0x6369))
+            (i32.eqz (i32.load8_u offset=6 (local.get $name)))))
+      (then (return (i32.const 3))))
+    ;; "listbox"
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x7473696c))
+          (i32.and
+            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
+                    (i32.const 0x6f62))
+            (i32.and
+              (i32.eq (i32.or (i32.load8_u offset=6 (local.get $name)) (i32.const 0x20))
+                      (i32.const 0x78))
+              (i32.eqz (i32.load8_u offset=7 (local.get $name))))))
+      (then (return (i32.const 4))))
+    ;; "combobox"
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x626d6f63))
+          (i32.and
+            (i32.eq (i32.or (i32.load offset=4 (local.get $name)) (i32.const 0x20202020))
+                    (i32.const 0x786f626f))
+            (i32.eqz (i32.load8_u offset=8 (local.get $name)))))
+      (then (return (i32.const 5))))
+    ;; "scrollbar"
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6f726373))
+          (i32.and
+            (i32.eq (i32.or (i32.load offset=4 (local.get $name)) (i32.const 0x20202020))
+                    (i32.const 0x61626c6c))
+            (i32.and
+              (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name)) (i32.const 0x20))
+                      (i32.const 0x72))
+              (i32.eqz (i32.load8_u offset=9 (local.get $name))))))
+      (then (return (i32.const 7))))
+    (i32.const 0))
+
+  ;; Describe a system control class to an app that asked about it.
+  ;;
+  ;; Neither VCL nor MFC creates a BUTTON window directly. They call
+  ;; GetClassInfo on the system class, keep its lpfnWndProc, register their own
+  ;; class name (TButton, Afx:...) with their own wndproc, and chain whatever
+  ;; they do not handle back to the proc they kept. Painting is one of the
+  ;; things they do not handle. Returning FALSE here sends VCL down its
+  ;; DefWindowProc fallback, and the control is then painted by nobody.
+  ;;
+  ;; The wndproc handed out is a marker carrying the class id, because by the
+  ;; time it is called back the window's own class name is the app's, not
+  ;; USER's — the marker is the only remaining link to what it started as.
+  (func $system_class_describe (param $name_guest i32) (param $out_guest i32)
+        (param $hinstance i32) (result i32)
+    (local $class i32) (local $out i32)
+    ;; An atom, not a string. Our class table already handles the atoms USER
+    ;; predefines for these classes.
+    (if (i32.lt_u (local.get $name_guest) (i32.const 0x10000))
+      (then (return (i32.const 0))))
+    (local.set $class (call $system_class_id (call $g2w (local.get $name_guest))))
+    (if (i32.eqz (local.get $class)) (then (return (i32.const 0))))
+    (local.set $out (call $g2w (local.get $out_guest)))
+    ;; CS_VREDRAW|CS_HREDRAW|CS_DBLCLKS, as USER registers these. VCL masks the
+    ;; DC bits off and forces CS_PARENTDC regardless of what it is told.
+    (i32.store (local.get $out) (i32.const 0x000B))
+    (i32.store offset=4 (local.get $out)
+      (i32.or (global.get $WNDPROC_SYSCLASS) (local.get $class)))
+    (i32.store offset=8 (local.get $out) (i32.const 0))   ;; cbClsExtra
+    (i32.store offset=12 (local.get $out) (i32.const 0))  ;; cbWndExtra
+    (i32.store offset=16 (local.get $out) (local.get $hinstance))
+    (i32.store offset=20 (local.get $out) (i32.const 0))  ;; hIcon
+    (i32.store offset=24 (local.get $out) (i32.const 0))  ;; hCursor
+    (i32.store offset=28 (local.get $out) (i32.const 0))  ;; hbrBackground
+    (i32.store offset=32 (local.get $out) (i32.const 0))  ;; lpszMenuName
+    (i32.store offset=36 (local.get $out) (local.get $name_guest))
+    (i32.const 1))
+
   (func $handle_GetClassInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) → BOOL
     ;; Look up class in our class table; if found, copy saved WNDCLASS to output
@@ -5149,6 +5244,12 @@
         ;; Found — copy 40-byte WNDCLASS from class record to output buffer
         (local.set $src (call $class_wndclass_addr (local.get $slot)))
         (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Not one of the app's own classes — it may be one of USER's.
+    (if (call $system_class_describe (local.get $arg1) (local.get $arg2) (local.get $arg0))
+      (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
@@ -6761,6 +6862,60 @@
     (global.set $eax (call $host_fs_filetime_to_systemtime
       (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
+  )
+
+  ;; FileTimeToDosDateTime(lpFileTime, LPWORD lpFatDate, LPWORD lpFatTime)
+  ;; — 3 args stdcall. The FAT packing MS-DOS used, and still what a ZIP
+  ;; directory entry stores, which is why archive code reaches for it.
+  ;;
+  ;; Built on the SYSTEMTIME conversion we already have rather than redoing
+  ;; the 1601-epoch arithmetic: the calendar is the hard part and it is
+  ;; already solved. The scratch SYSTEMTIME is ours alone, so it comes from
+  ;; the heap once and is reused.
+  (global $dosdate_scratch (mut i32) (i32.const 0))
+  (func $handle_FileTimeToDosDateTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $st i32) (local $year i32)
+    (if (i32.eqz (global.get $dosdate_scratch))
+      (then (global.set $dosdate_scratch (call $heap_alloc (i32.const 16)))))
+    (if (i32.eqz (global.get $dosdate_scratch))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $st (call $g2w (global.get $dosdate_scratch)))
+    (if (i32.eqz (call $host_fs_filetime_to_systemtime
+                   (call $g2w (local.get $arg0)) (local.get $st)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; The FAT epoch is 1980, and the field is 7 bits wide. Anything outside
+    ;; 1980..2107 has no representation at all; Win32 reports failure rather
+    ;; than wrapping into a wrong-but-plausible date.
+    (local.set $year (i32.load16_u (local.get $st)))
+    (if (i32.or (i32.lt_u (local.get $year) (i32.const 1980))
+                (i32.gt_u (local.get $year) (i32.const 2107)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (local.get $arg1)
+      (then (i32.store16 (call $g2w (local.get $arg1))
+        (i32.or
+          (i32.shl (i32.sub (local.get $year) (i32.const 1980)) (i32.const 9))
+          (i32.or
+            (i32.shl (i32.load16_u offset=2 (local.get $st)) (i32.const 5))
+            (i32.load16_u offset=6 (local.get $st)))))))
+    (if (local.get $arg2)
+      (then (i32.store16 (call $g2w (local.get $arg2))
+        (i32.or
+          (i32.shl (i32.load16_u offset=8 (local.get $st)) (i32.const 11))
+          (i32.or
+            (i32.shl (i32.load16_u offset=10 (local.get $st)) (i32.const 5))
+            ;; Two-second resolution: the low bit does not exist in FAT.
+            (i32.shr_u (i32.load16_u offset=12 (local.get $st)) (i32.const 1)))))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 415: FileTimeToLocalFileTime(const FILETIME *src, LPFILETIME dst) → BOOL.
@@ -9682,6 +9837,30 @@
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
             (return)))
         (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    ;; A system class marker handed out by GetClassInfo. The app subclassed one
+    ;; of USER's controls and is chaining back to it for default handling, so
+    ;; this is where the control actually gets drawn and where it learns about
+    ;; clicks. Unlike $WNDPROC_BUILTIN below, WM_PAINT belongs here: nothing
+    ;; else in the system knows this window is a button.
+    ;;
+    ;; The window was created under the app's own class name, so it is not in
+    ;; the control table yet. Adopt it on the first chained call — the app has
+    ;; just told us what it started life as, which is the only evidence we get.
+    (if (i32.eq (i32.and (local.get $arg0) (i32.const 0xFFFFFF00))
+                (global.get $WNDPROC_SYSCLASS))
+      (then
+        (local.set $ctrl_class (i32.and (local.get $arg0) (i32.const 0xFF)))
+        (if (i32.eqz (call $ctrl_table_get_class (local.get $arg1)))
+          (then
+            (local.set $thunk_idx (call $wnd_table_find (local.get $arg1)))
+            (if (i32.ne (local.get $thunk_idx) (i32.const -1))
+              (then (call $ctrl_table_set (local.get $thunk_idx)
+                      (local.get $ctrl_class)
+                      (call $ctrl_table_get_id (local.get $arg1)))))))
+        (global.set $eax (call $control_wndproc_dispatch
+          (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
     ;; Sentinel 0xFFFE0001 = built-in control default wndproc.

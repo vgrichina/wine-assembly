@@ -18604,5 +18604,12 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2588105842
+  },
+  {
+    "id": 2397,
+    "name": "FileTimeToDosDateTime",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1499149534
   }
 ]
