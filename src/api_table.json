@@ -18611,5 +18611,40 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1499149534
+  },
+  {
+    "id": 2398,
+    "name": "OpenFileMappingA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2837445910
+  },
+  {
+    "id": 2399,
+    "name": "OpenFileMappingW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2602559244
+  },
+  {
+    "id": 2400,
+    "name": "_itoa",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 832952031
+  },
+  {
+    "id": 2401,
+    "name": "_ltoa",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2196289006
+  },
+  {
+    "id": 2402,
+    "name": "_getcwd",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1295891328
   }
 ]

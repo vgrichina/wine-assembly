@@ -2,18 +2,26 @@
   "schemaVersion": 1,
   "scope": "Distinct named GDI32.dll imports in PE files under test/binaries.",
   "corpus": {
-    "peFileCount": 231,
-    "importCount": 225,
-    "sortedImportSha256": "f2cf3514cb7624a349a41a3828fa04b3e2145bab6528f8cf54ba888146acdb80",
+    "peFileCount": 235,
+    "importCount": 228,
+    "sortedImportSha256": "f06b5d82415127cf6c9daebf24818fba392e10411d25d8725a7dfffe9968e7b5",
     "representedInApiTable": 225
   },
   "handlerCoverage": {
     "dispatchable": 225,
-    "missing": [],
+    "missing": [
+      "ColorMatchToTarget",
+      "SetICMMode",
+      "SetICMProfileA"
+    ],
     "crashStub": [],
     "meaning": "Every named corpus import reaches a WAT handler without crash_unimplemented. This is a dispatchability gate; the partial-fidelity contracts below remain explicit and are not counted as complete semantics."
   },
-  "notExposed": [],
+  "notExposed": [
+    "ColorMatchToTarget",
+    "SetICMMode",
+    "SetICMProfileA"
+  ],
   "knownPartialOrUnsupported": {
     "metafile": [
       "CopyMetaFileA",

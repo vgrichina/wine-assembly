@@ -1028,6 +1028,15 @@ const extra = [
   // the right frame, the table was under-counting, which mis-decodes traces.
   { name: 'SetDIBits', nargs: 7 },
   { name: 'DirectDrawEnumerateExA', nargs: 3 },
+  // MSVCRT — Kodak Preview asks where it is running from.
+  { name: '_getcwd', nargs: 2, convention: 'cdecl' },
+  // MSVCRT — integer to string. Kodak Preview formats its page numbers with it.
+  { name: '_itoa', nargs: 3, convention: 'cdecl' },
+  { name: '_ltoa', nargs: 3, convention: 'cdecl' },
+  // KERNEL32 — named shared sections. Kodak Imaging and Preview use one to
+  // discover each other; without OpenFileMapping the lookup traps.
+  { name: 'OpenFileMappingA', nargs: 3 },
+  { name: 'OpenFileMappingW', nargs: 3 },
   // MSVCRT — cdplayer.exe parses its disc database with sscanf.
   { name: 'sscanf', nargs: 2, convention: 'cdecl' },
   // USER32 — Win95-era menu item insertion; winamp.exe calls it while
@@ -1064,8 +1073,8 @@ const cdeclCrtApis = new Set([
   '_XcptFilter', '__CxxFrameHandler', '__GetMainArgs', '__dllonexit',
   '__getmainargs', '__p__acmdln', '__p__commode', '__p__fmode', '__p__wcmdln',
   '__set_app_type', '__setusermatherr', '__wgetmainargs', '_adjust_fdiv',
-  '_controlfp', '_exit', '_ftol', '_getdcwd', '_global_unwind2', '_initterm',
-  '_itow', '_mbschr', '_mbsinc', '_mbsnbcmp', '_mbsrchr', '_onexit',
+  '_controlfp', '_exit', '_ftol', '_getcwd', '_getdcwd', '_global_unwind2', '_initterm',
+  '_itoa', '_itow', '_ltoa', '_mbschr', '_mbsinc', '_mbsnbcmp', '_mbsrchr', '_onexit',
   '_purecall', '_splitpath', '_strdup', '_stricmp', '_strlwr', '_strrev',
   '_wcsicmp', '_wtoi',
   'atoi', 'atol', 'bsearch', 'calloc', 'exit', 'free', 'malloc', 'memcpy',

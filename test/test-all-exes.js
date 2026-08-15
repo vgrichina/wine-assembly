@@ -144,10 +144,15 @@ const TEST_CASES = [
   // make them run, and each dies on the first import it needs from one.
   // Recording the specific DLL means a *different* crash here would stand out
   // instead of blending into a generic "not a target" note.
+  // Kodak Imaging gets its DLLs and its shared section now, then stops on
+  // sti.dll — the Still Image scanner API, which has nothing to talk to here.
   { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging',
-    expectedCrash: 'needs IMGCMN.dll (?UpdateVersion@@YGJH@Z and ~29 more)' },
+    maxBatches: 800, batchSize: 50000, timeoutMs: 60000,
+    knownBadRender: 'stops at sti.dll (Still Image scanner API), no device to bind' },
   { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview',
-    expectedCrash: 'needs OIDIS400.dll and OIADM400.dll, imported by ordinal' },
+    // Draws its Imaging Preview frame, menus and split panes once OIDIS400 and
+    // OIADM400 are present beside the exe.
+    maxBatches: 500, batchSize: 20000, timeoutMs: 60000 },
   { exe: 'test/binaries/win98-apps/hypertrm.exe', name: 'HyperTerminal',
     expectedCrash: 'needs HYPERTRM.dll (InitInstance)' },
   { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control',

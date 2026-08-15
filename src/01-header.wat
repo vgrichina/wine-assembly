@@ -638,8 +638,12 @@
   (import "host" "fs_search_path" (func $host_fs_search_path (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_search_path(pathWA, fileNameWA, extWA, bufLen, bufGA, filePartPtrGA, isWide) → len or 0
   (import "host" "fs_get_short_path_name" (func $host_fs_get_short_path_name (param i32 i32 i32 i32) (result i32)))
-  (import "host" "fs_create_file_mapping" (func $host_fs_create_file_mapping (param i32 i32 i32 i32) (result i32)))
-  ;; fs_create_file_mapping(hFile, protect, sizeHi, sizeLo) → mapping handle
+  (import "host" "fs_create_file_mapping" (func $host_fs_create_file_mapping (param i32 i32 i32 i32 i32) (result i32)))
+  ;; fs_create_file_mapping(hFile, protect, sizeHi, sizeLo, nameWA) → mapping handle
+  ;; nameWA is 0 for an unnamed section. A named one can be reopened by name,
+  ;; which is how an app asks "is my other instance already running?".
+  (import "host" "fs_open_file_mapping" (func $host_fs_open_file_mapping (param i32) (result i32)))
+  ;; fs_open_file_mapping(nameWA) → mapping handle, or 0 when no such name exists
   (import "host" "fs_map_view_of_file" (func $host_fs_map_view_of_file (param i32 i32 i32 i32 i32) (result i32)))
   ;; fs_map_view_of_file(hMapping, access, offsetHi, offsetLo, size) → guest addr
   (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))

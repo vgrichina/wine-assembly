@@ -1987,7 +1987,13 @@ async function main() {
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
     const LOADABLE_DLLS = new Set(['msvcrt20.dll', 'mfc30.dll', 'msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
       'msvcp60.dll', 'msvcp50.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll',
-      'd3drm.dll', 'kvdd.dll', 'sdl.dll']);
+      'd3drm.dll', 'kvdd.dll', 'sdl.dll',
+      // Win98 accessories that ship their engine beside the .exe rather than
+      // linking it: HyperTerminal's protocol engine and the Kodak Imaging
+      // common/display/admin libraries. Without these the apps die on their
+      // first import from one — InitInstance, ?UpdateVersion@@YGJH@Z, and a
+      // pile of ordinals respectively.
+      'hypertrm.dll', 'imgcmn.dll', 'oidis400.dll', 'oiadm400.dll']);
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,

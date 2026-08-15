@@ -4531,7 +4531,8 @@
 
   ;; 274: _itow — int to wide string (STUB: unimplemented: write "0")
   (func $handle__itow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $crt_itoa (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 275: wcscmp — STUB: unimplemented

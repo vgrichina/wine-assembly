@@ -360,6 +360,108 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; _itoa / _itow(value, buffer, radix) — cdecl, returns the buffer.
+  ;; Radix 10 is the only one MSVC formats as signed; every other radix prints
+  ;; the raw 32-bit pattern, which is what a caller asking for hex expects.
+  ;; Digits come out least-significant first, so the run is reversed in place.
+  (func $crt_itoa (param $value i32) (param $buf i32) (param $radix i32) (param $wide i32) (result i32)
+    (local $i i32) (local $neg i32) (local $u i32) (local $d i32)
+    (local $lo i32) (local $hi i32) (local $a i32) (local $b i32)
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (if (i32.or (i32.lt_s (local.get $radix) (i32.const 2))
+                (i32.gt_s (local.get $radix) (i32.const 36)))
+      (then
+        (if (local.get $wide)
+          (then (call $gs16 (local.get $buf) (i32.const 0)))
+          (else (call $gs8 (local.get $buf) (i32.const 0))))
+        (return (local.get $buf))))
+    (local.set $u (local.get $value))
+    (if (i32.and (i32.eq (local.get $radix) (i32.const 10))
+                 (i32.lt_s (local.get $value) (i32.const 0)))
+      (then
+        (local.set $neg (i32.const 1))
+        (local.set $u (i32.sub (i32.const 0) (local.get $value)))))
+    (block $done (loop $emit
+      (local.set $d (i32.rem_u (local.get $u) (local.get $radix)))
+      (local.set $d
+        (if (result i32) (i32.lt_u (local.get $d) (i32.const 10))
+          (then (i32.add (local.get $d) (i32.const 48)))       ;; '0'
+          (else (i32.add (local.get $d) (i32.const 87)))))     ;; 'a' - 10
+      (if (local.get $wide)
+        (then (call $gs16 (i32.add (local.get $buf) (i32.shl (local.get $i) (i32.const 1))) (local.get $d)))
+        (else (call $gs8 (i32.add (local.get $buf) (local.get $i)) (local.get $d))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $u (i32.div_u (local.get $u) (local.get $radix)))
+      (br_if $emit (local.get $u))
+      (br $done)))
+    (if (local.get $neg)
+      (then
+        (if (local.get $wide)
+          (then (call $gs16 (i32.add (local.get $buf) (i32.shl (local.get $i) (i32.const 1))) (i32.const 45)))
+          (else (call $gs8 (i32.add (local.get $buf) (local.get $i)) (i32.const 45))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+    (if (local.get $wide)
+      (then (call $gs16 (i32.add (local.get $buf) (i32.shl (local.get $i) (i32.const 1))) (i32.const 0)))
+      (else (call $gs8 (i32.add (local.get $buf) (local.get $i)) (i32.const 0))))
+    ;; Reverse the digits (and the sign) into their printed order.
+    (local.set $lo (i32.const 0))
+    (local.set $hi (i32.sub (local.get $i) (i32.const 1)))
+    (block $rdone (loop $rev
+      (br_if $rdone (i32.ge_s (local.get $lo) (local.get $hi)))
+      (if (local.get $wide)
+        (then
+          (local.set $a (call $gl16 (i32.add (local.get $buf) (i32.shl (local.get $lo) (i32.const 1)))))
+          (local.set $b (call $gl16 (i32.add (local.get $buf) (i32.shl (local.get $hi) (i32.const 1)))))
+          (call $gs16 (i32.add (local.get $buf) (i32.shl (local.get $lo) (i32.const 1))) (local.get $b))
+          (call $gs16 (i32.add (local.get $buf) (i32.shl (local.get $hi) (i32.const 1))) (local.get $a)))
+        (else
+          (local.set $a (call $gl8 (i32.add (local.get $buf) (local.get $lo))))
+          (local.set $b (call $gl8 (i32.add (local.get $buf) (local.get $hi))))
+          (call $gs8 (i32.add (local.get $buf) (local.get $lo)) (local.get $b))
+          (call $gs8 (i32.add (local.get $buf) (local.get $hi)) (local.get $a))))
+      (local.set $lo (i32.add (local.get $lo) (i32.const 1)))
+      (local.set $hi (i32.sub (local.get $hi) (i32.const 1)))
+      (br $rev)))
+    (local.get $buf))
+
+  ;; _getcwd(buffer, maxlen) — cdecl. With a NULL buffer the CRT allocates one
+  ;; of at least maxlen bytes; otherwise it fills the caller's. Returns the
+  ;; buffer, or NULL when the path will not fit, matching the C runtime.
+  (func $handle__getcwd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32) (local $len i32) (local $cap i32)
+    (local.set $cap (local.get $arg1))
+    (if (i32.le_s (local.get $cap) (i32.const 0)) (then (local.set $cap (i32.const 260))))
+    (local.set $buf (local.get $arg0))
+    (if (i32.eqz (local.get $buf))
+      (then (local.set $buf (call $heap_alloc (local.get $cap)))))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $len (call $host_fs_get_current_directory
+      (local.get $cap) (local.get $buf) (i32.const 0)))
+    ;; GetCurrentDirectory returns the needed size when the buffer is too
+    ;; small; _getcwd reports that as failure.
+    (global.set $eax
+      (if (result i32)
+        (i32.and (i32.ne (local.get $len) (i32.const 0))
+                 (i32.lt_u (local.get $len) (local.get $cap)))
+        (then (local.get $buf))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__itoa (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $crt_itoa (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $handle__ltoa (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $crt_itoa (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; ============================================================
   ;; sscanf — the inverse of the wsprintf in 12-wsprintf.wat
   ;; ============================================================

@@ -10550,9 +10550,41 @@
 
   ;; 777: CreateFileMappingA(hFile, lpAttr, flProtect, dwMaxHi, dwMaxLo, lpName) — 6 args
   (func $handle_CreateFileMappingA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $section i32)
+    ;; lpName is the sixth argument, past the five in registers.
+    (local.set $section (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (global.set $eax (call $host_fs_create_file_mapping
-      (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+      (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (if (result i32) (local.get $section)
+        (then (call $g2w (local.get $section))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args
+  )
+
+  ;; OpenFileMappingA/W(dwDesiredAccess, bInheritHandle, lpName) — 3 args.
+  ;; Returns 0 when nothing created that section, which is the honest answer
+  ;; for a name another process would have published: Kodak Imaging opens
+  ;; "EastManSoftwarePrvFile" purely to find out whether its Preview
+  ;; counterpart is already live, and copes fine with being told it is not.
+  (func $handle_OpenFileMappingA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (local.get $arg2)
+        (then (call $host_fs_open_file_mapping (call $g2w (local.get $arg2))))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; The section namespace is shared between the A and W entry points, so
+  ;; narrow the name and look it up in the same table. $atom_narrow_w is the
+  ;; generic UTF-16-to-ANSI copy helper; it happens to live with the atoms.
+  (func $handle_OpenFileMappingW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $narrow i32)
+    (local.set $narrow (call $atom_narrow_w (local.get $arg2)))
+    (global.set $eax
+      (if (result i32) (local.get $narrow)
+        (then (call $host_fs_open_file_mapping (call $g2w (local.get $narrow))))
+        (else (i32.const 0))))
+    (call $atom_narrow_free (local.get $arg2) (local.get $narrow))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 778: MapViewOfFile(hMapping, dwAccess, dwOffsetHi, dwOffsetLo, dwSize) — 5 args
