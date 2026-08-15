@@ -106,7 +106,7 @@
         (param $hwnd i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $flags i32)
     (local $idx i32) (local $a i32) (local $parent i32) (local $moved i32)
     (local $ox i32) (local $oy i32) (local $ow i32) (local $oh i32)
-    (local $hdc i32) (local $brush i32)
+    (local $hdc i32) (local $brush i32) (local $slot i32)
     (if (i32.and
           (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
           (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
@@ -122,6 +122,14 @@
         ;; over the uncovered region for exactly this reason. fontview.exe
         ;; right-aligns its Print button on startup, and the strip it moved off
         ;; stayed on screen as a slice of a second button.
+        ;;
+        ;; Only for WAT-native controls, whose pixels WAT owns and must
+        ;; therefore clean up after. An application's own child window paints
+        ;; itself from its own WM_PAINT and lays itself out against siblings
+        ;; this code knows nothing about; erasing under one of those with the
+        ;; parent's brush wipes application output that nothing will redraw.
+        ;; mspaint moves its canvas and toolbars during startup layout and the
+        ;; ungated erase blanked its client area.
         (local.set $ox (i32.load16_s (local.get $a)))
         (local.set $oy (i32.load16_s offset=2 (local.get $a)))
         (local.set $ow (i32.load16_u offset=4 (local.get $a)))
@@ -132,7 +140,9 @@
         (i32.store16        (local.get $a) (local.get $x))
         (i32.store16 offset=2 (local.get $a) (local.get $y))
         (if (i32.and
-              (local.get $moved)
+              (i32.and
+                (local.get $moved)
+                (i32.ne (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 0)))
               (i32.and (i32.gt_s (local.get $ow) (i32.const 0))
                        (i32.gt_s (local.get $oh) (i32.const 0))))
           (then
@@ -154,7 +164,17 @@
                       (i32.add (local.get $oy) (local.get $oh))
                       (local.get $brush)))
                     (drop (call $host_release_dc (local.get $hdc)))))
-                (call $invalidate_hwnd (local.get $parent))))))))
+                (call $invalidate_hwnd (local.get $parent))
+                ;; A sibling may overlap what was just erased, so repaint the
+                ;; whole set rather than leaving a hole where one of them was.
+                (local.set $slot (i32.const 0))
+                (block $sib_done (loop $sib
+                  (local.set $slot
+                    (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+                  (br_if $sib_done (i32.eq (local.get $slot) (i32.const -1)))
+                  (call $invalidate_hwnd (call $wnd_slot_hwnd (local.get $slot)))
+                  (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+                  (br $sib)))))))))
     (if (i32.eqz (i32.and (local.get $flags) (i32.const 1)))
       (then
         (i32.store16 offset=4 (local.get $a) (local.get $w))
