@@ -862,6 +862,35 @@
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+  ;; The three calls an application uses to lay text out, exported so the
+  ;; pinned Windows 98 metric reference can be compared without an emulated
+  ;; application in the way.
+  (func (export "test_call_GetTextMetricsA") (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextMetricsA
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetCharWidthA")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetCharWidthA
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextExtentPoint32A")
+        (param i32) (param i32) (param i32) (param i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextExtentPoint32A
+      (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_GetTextExtentExPointA")
         (param i32 i32 i32 i32 i32 i32 i32) (result i32)
     (local $saved_esp i32)

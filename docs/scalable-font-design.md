@@ -423,15 +423,37 @@ Plan:
    advance widths, and an explicit documented tolerance for anything derived
    from rasterization.
 
-An assertion that "Liberation is metric-compatible with Arial" is a claim about
-Red Hat's design intent until this test exists. Until then the doc says only
-that it is *designed* to be, and the test is a required deliverable, not a
-nice-to-have.
+**Done, and it found things.** `probes/font-metrics.c` reads `GetTextMetricsA`,
+`GetCharWidthA` for `0x20..0x7E` and `GetTextExtentPoint32A` over COM1 for eight
+faces across twelve requested heights; `font-metrics-to-json.js` pins the
+capture as `test/fixtures/font-metrics.json`, and
+`test/test-wat-font-metrics-reference.js` compares ours against it.
 
-Known risk: metric compatibility is defined at the *font design* level (advance
-widths in font units). Win98 GDI's integer rounding of those widths at a given
-ppem, with its own hinting, may still differ by a pixel at some sizes. The
-reference capture is what tells us where, and whether it matters.
+What it measured:
+
+- **The compatibility claim holds where it is claimed.** Courier New matches
+  Windows 98 on all 1140 measured advance widths. Arial matches on 84.5% and
+  Times New Roman on 80.6%; the rest are one pixel out.
+- **The residual is hinting, as predicted.** Win98's Arial `i` advances 3px at
+  10px, 2px at 11px and 3px at 12px. That non-monotonic sequence is a hinting
+  program snapping a stem, and no unhinted rasterizer reproduces it. It is the
+  strongest argument yet for milestone 2's FreeType-hinted `.FON` ladder at UI
+  sizes, and against a bytecode interpreter.
+- **Vertical metrics are not part of metric compatibility.** Liberation keeps
+  its own OS/2 vertical values, so cell heights differ from Arial's by up to
+  4px at the same requested size. Win98 honours `tmHeight - tmInternalLeading
+  == |lfHeight|` exactly; so do we, with different leading.
+- **Tahoma is substituted by Wine's independently drawn `tahoma.ttf`**, which
+  is not a metric-compatible design and measures like it (40% of advances).
+  Reported, not gated: a gate there would pin a mismatch in place.
+- **A defect the reference uncovered, still open.** On one DC with one font
+  selected, `sum(GetCharWidthA)` over a string does not equal
+  `GetTextExtentPoint32A` of that string — they disagree on 20 to 24 of every
+  24 sentences, by up to 18px. `GetCharWidthA` is the one that matches Win98
+  exactly for Courier New, so the extent path is wrong and every dialog that
+  lays out with `GetTextExtentPoint32` inherits it. The test prints this as its
+  `SELF` line and gates only advance widths until it is fixed; gating extents
+  now would pin the disagreement in place. **This is the next font task.**
 
 ## Determinism across hosts
 

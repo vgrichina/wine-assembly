@@ -78,6 +78,7 @@ UNIT=(
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
   test/test-wat-statusbar-grip.js
+  test/test-wat-font-metrics-reference.js
   test/test-wat-winsock.js
   test/test-vlan-wire.js
   test/test-large-dll-staging.js
