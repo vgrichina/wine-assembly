@@ -2650,6 +2650,19 @@ async function main() {
     e.get_help_topics_hwnd() === 0 && e.get_help_window() !== 0 &&
     e.get_help_session_mode() === 1 && e.get_help_session_topic_ref() === 994 &&
     e.get_help_view_topic_index() === 2);
+  // $gdi_dc_state_entry binds a window DC to its HWND only when it first
+  // creates the record, and the host composites during $host_create_window -
+  // so registering the window afterwards left the viewer's DC unbound
+  // forever. Every paint then drew into a record with no window and
+  // $gdi_surface_descriptor refused it: the window was visible, sized, laid
+  // out, and blank.
+  // (Whether that surface then materialises depends on a renderer, which this
+  // harness has none of - the binding is the part that was broken.)
+  check('the help viewer client DC is bound to its window',
+    e.test_gdi_dc_get_field(e.get_help_window() + 0x40000, 92, 0)
+      === e.get_help_window());
+  check('the help viewer closes from its title bar',
+    e.test_help_window_message(0x00A1, 20, 0) === 0 && e.get_help_window() === 0);
   check('HELP_QUIT tears down both Topics and main help windows',
     e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_window() === 0);

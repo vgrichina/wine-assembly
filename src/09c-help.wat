@@ -1277,6 +1277,30 @@
         ;; VK_NEXT / Page Down (0x22)
         (if (i32.eq (local.get $wParam) (i32.const 0x22))
           (then (call $help_scroll_by (local.get $hwnd) (i32.const 200)) (return (i32.const 0))))
+        ;; Escape closes the viewer, as it does every other help surface.
+        (if (i32.eq (local.get $wParam) (i32.const 0x1B))
+          (then
+            (drop (call $wnd_send_message
+              (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+            (return (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; Title-bar X. A WAT-native window never reaches DefWindowProcA, so the
+    ;; standard WM_NCLBUTTONDOWN/HTCLOSE -> SC_CLOSE -> WM_CLOSE chain is made
+    ;; here. Without it the viewer had no way to be closed at all.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x00A1))
+          (i32.eq (local.get $wParam) (i32.const 20)))  ;; HTCLOSE
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0112) (i32.const 0xF060) (i32.const 0)))
+        (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0112))
+          (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFF0)) (i32.const 0xF060)))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
         (return (i32.const 0))))
 
     ;; Owned context popups dismiss when focus leaves them.
@@ -1478,6 +1502,20 @@
     ;; Allocate hwnd
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    ;; Register in the window table BEFORE the host creates the window.
+    ;; $host_create_window composites immediately, and that pass paints this
+    ;; window - the first GDI call on hwnd+0x40000 is what creates the DC
+    ;; state record, and $gdi_dc_state_entry binds that record to an HWND only
+    ;; if the HWND is already in WND_RECORDS. Registering afterwards left the
+    ;; viewer's DC permanently unbound: every later paint drew into a record
+    ;; with no window, so $gdi_surface_descriptor refused it and not one pixel
+    ;; ever reached a surface. The window was there, sized and visible, and
+    ;; completely blank.
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
+    ;; $wnd_table_set zeroes the record's style, and $paint_select_next_dirty
+    ;; drops the paint bit of any window that is not WS_VISIBLE.
+    (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x10CF0000)))
+    (global.set $help_hwnd (local.get $hwnd))
     ;; Create via host: style=WS_OVERLAPPEDWINDOW|WS_VISIBLE (0x10CF0000)
     (drop (call $host_create_window
       (local.get $hwnd)
@@ -1489,9 +1527,23 @@
       (call $help_window_present_caption)
       (i32.const 0)))         ;; no menu
     (global.set $help_window_applied_index (global.get $help_session_window_index))
-    ;; Register in window table as WAT-native (wndproc = 0xFFFF0001)
-    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
-    (global.set $help_hwnd (local.get $hwnd))
+    ;; USER establishes the client rect and paints the frame before the first
+    ;; client paint; without this the client DC's origin is the window origin
+    ;; and the content draws under the caption.
+    ;; The NC painter draws the caption from the title table, not from the
+    ;; string handed to the host, so both need it or the bar comes out blank.
+    (call $title_table_set (local.get $hwnd)
+      (call $help_window_present_caption)
+      (call $strlen (call $help_window_present_caption)))
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (call $defwndproc_do_ncpaint (local.get $hwnd))
+    ;; Bind the client DC to this window explicitly. $gdi_dc_state_entry binds
+    ;; a window DC only at the moment it first creates the record, so whoever
+    ;; touches hwnd+0x40000 first decides whether it is bound for the rest of
+    ;; the window's life. Doing it here is independent of that race.
+    (drop (call $gdi_dc_set_field
+      (i32.add (local.get $hwnd) (i32.const 0x40000))
+      (i32.const 92) (local.get $hwnd) (i32.const 0)))
     ;; Trigger immediate paint so content shows right away
     (drop (call $help_wndproc (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
   )
