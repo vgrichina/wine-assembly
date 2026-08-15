@@ -8591,6 +8591,29 @@
             (if (i32.eq (local.get $color) (i32.const -1))
               (then (return (i32.const 0x01000000))))
             (return (local.get $color))))
+        ;; CreatePatternBrush on a monochrome bitmap draws in the destination
+        ;; DC's text and background colors rather than as literal black and
+        ;; white: a set bit takes the background color, a clear bit the text
+        ;; color, the same rule a monochrome BitBlt follows. mspaint builds its
+        ;; halftone brush this way (CreateBitmap 8x8x1 + SetTextColor C0C0C0 +
+        ;; SetBkColor white) for the checkerboard behind the foreground/
+        ;; background color indicator; read as raw bits it came out black on
+        ;; white where Win98 shows face grey on white. DIB pattern brushes
+        ;; (style 6) carry their own color table and keep it.
+        (if (i32.and
+              (i32.and (i32.eq (local.get $style) (i32.const 3))
+                       (i32.ne (local.get $bitmap_record) (i32.const 0)))
+              (i32.eq (i32.load offset=16 (local.get $bitmap_record)) (i32.const 1)))
+          (then
+            (local.set $index (call $gdi_raster_read_index
+              (local.get $desc) (local.get $px) (local.get $py)))
+            (if (i32.lt_s (local.get $index) (i32.const 0))
+              (then (return (i32.const 0x01000000))))
+            (if (local.get $index)
+              (then (return (call $gdi_dc_get_field
+                (local.get $hdc) (i32.const 24) (i32.const 0xFFFFFF)))))
+            (return (call $gdi_dc_get_field
+              (local.get $hdc) (i32.const 20) (i32.const 0)))))
         (local.set $color (call $gdi_raster_read
           (local.get $desc) (local.get $px) (local.get $py)))
         (if (i32.eq (local.get $color) (i32.const -1))

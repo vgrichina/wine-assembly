@@ -76,6 +76,7 @@ function analyze(file) {
   let brightRed = 0;
   let buttonFace = 0;
   const iconInk = [];
+  const iconWhite = [];
 
   for (let y = 62; y < 262; y++) {
     for (let x = 26; x < 78; x++) {
@@ -93,6 +94,7 @@ function analyze(file) {
   for (let row = 0; row < 8; row++) {
     for (let column = 0; column < 2; column++) {
       let ink = 0;
+      let whitePixels = 0;
       for (let y = 64 + row * 25; y < 82 + row * 25; y++) {
         for (let x = 29 + column * 25; x < 48 + column * 25; x++) {
           const i = (y * image.width + x) * 4;
@@ -101,10 +103,12 @@ function analyze(file) {
           const b = image.data[i + 2];
           const face = Math.abs(r - 192) <= 2 && Math.abs(g - 192) <= 2 && Math.abs(b - 192) <= 2;
           const white = r > 245 && g > 245 && b > 245;
+          if (white) whitePixels++;
           if (!face && !white) ink++;
         }
       }
       iconInk.push(ink);
+      iconWhite.push(whitePixels);
     }
   }
 
@@ -120,7 +124,7 @@ function analyze(file) {
       }
     }
   }
-  return { brightRed, buttonFace, iconInk, optionsInk };
+  return { brightRed, buttonFace, iconInk, iconWhite, optionsInk };
 }
 
 assert(!runFailed, `Paint repaint run failed:\n${output.slice(-3000)}`);
@@ -136,13 +140,17 @@ for (const [name, result] of Object.entries(results)) {
     `${name}: one or more tool glyphs disappeared (${result.iconInk.join(',')})`);
 }
 
-// A pressed owner-draw button has a dithered interior, making its inner-pixel
-// count much larger than an unpressed glyph. These indices follow Paint's
-// row-major 2x8 tool layout.
-assert(results.brush.iconInk[7] > 150, 'brush button did not repaint pressed');
-assert(results.airbrush.iconInk[8] > 150, 'airbrush button did not repaint pressed');
-assert(results.text.iconInk[9] > 150, 'text button did not repaint pressed');
-assert(results.select.iconInk[0] > 150, 'selection button did not repaint pressed');
+// Win98 draws a pressed owner-draw button over a face/white checkerboard —
+// Paint's monochrome halftone brush, colored by the DC's text and background
+// colors — so about half of a pressed interior is white against 36 or fewer
+// white pixels in any unpressed one. Counting dark ink instead used to work
+// only because our monochrome pattern brushes came out black on white.
+// These indices follow Paint's row-major 2x8 tool layout.
+assert(results.start.iconWhite[6] > 80, 'default pencil tool did not paint pressed');
+assert(results.brush.iconWhite[7] > 80, 'brush button did not repaint pressed');
+assert(results.airbrush.iconWhite[8] > 80, 'airbrush button did not repaint pressed');
+assert(results.text.iconWhite[9] > 80, 'text button did not repaint pressed');
+assert(results.select.iconWhite[0] > 80, 'selection button did not repaint pressed');
 
 assert(results.brush.optionsInk > results.start.optionsInk + 100, 'brush options did not render');
 assert(results.airbrush.optionsInk > results.start.optionsInk + 300, 'airbrush options did not render');
@@ -153,7 +161,11 @@ assert(/Draws using a brush/.test(output) && /Draws using an airbrush/.test(outp
 
 assert(/dump-focus-state paint-text:.*class=2 id=114 .*len=4 .*lineCount=2 text="Ab\\nd"/.test(output),
   'Paint text entry did not preserve multiline typing and Backspace in its native EDIT control');
-assert(/send-focus-message paint-font:.*msg=0x31 .*ret=0x4000[0-9a-f]+/.test(output),
+// A real GDI object handle back from WM_GETFONT, not zero. The exact value is
+// an allocation counter: it moved from 0x4000xx to 0x41xxxx when the scalable
+// font work started registering faces at startup, so pinning its leading
+// digits tested the allocation order rather than the font install.
+assert(/send-focus-message paint-font:.*msg=0x31 .*ret=0x4[0-9a-f]{5}\b/.test(output),
   'Paint text edit did not retain the HFONT installed from its Fonts palette');
 assert(/window:text .*parent=0x0 .*visible=true .*title="Fonts"/.test(output),
   'Paint Fonts palette is not a visible top-level floating toolbar');

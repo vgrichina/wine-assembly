@@ -338,6 +338,25 @@ const { bootRenderHarness } = require('./render-helper');
     assert.deepStrictEqual([packed(dst, 0, 1), packed(dst, 1, 1)], [0xFF0000, 0x00FF00]);
   });
 
+  check('monochrome pattern brushes take the destination text and background colors', () => {
+    const bits = wat.guest_alloc(2) >>> 0;
+    wat.guest_write16(bits, 0x0040); // MSB-first pixels: clear, set.
+    const bitmap = wat.test_call_CreateBitmap(2, 1, 1, 1, bits) >>> 0;
+    const brush = wat.test_call_CreatePatternBrush(bitmap) >>> 0;
+    assert(bitmap && brush);
+    wat.test_gdi_dc_set_field(dst.hdc, 20, 0x000000FF, 0); // text = red COLORREF
+    wat.test_gdi_dc_set_field(dst.hdc, 24, 0x0000FF00, 0xFFFFFF); // background = green
+    assert.strictEqual(wat.test_gdi_brush_sample(dst.hdc, brush, 0, 0) >>> 0, 0x000000FF);
+    assert.strictEqual(wat.test_gdi_brush_sample(dst.hdc, brush, 1, 0) >>> 0, 0x0000FF00);
+
+    // The colors are read when the brush is used, not captured when it is
+    // created: mspaint sets them right before each halftone fill.
+    wat.test_gdi_dc_set_field(dst.hdc, 20, 0x00C0C0C0, 0);
+    wat.test_gdi_dc_set_field(dst.hdc, 24, 0x00FFFFFF, 0xFFFFFF);
+    assert.strictEqual(wat.test_gdi_brush_sample(dst.hdc, brush, 0, 0) >>> 0, 0x00C0C0C0);
+    assert.strictEqual(wat.test_gdi_brush_sample(dst.hdc, brush, 1, 0) >>> 0, 0x00FFFFFF);
+  });
+
   check('color-to-mono BitBlt keys masks against the source background color', () => {
     const sprite = makeDib(2, 1);
     const target = makeDib(2, 1);
