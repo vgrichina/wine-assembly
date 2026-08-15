@@ -1264,11 +1264,17 @@ Resource-aware Win98 emulator
       'custom/music/colossus.mid',
     ].map(name => liquidWarRoot + name);
 
+    // A guest reaches its help file only through the VFS, and the CLI harness
+    // has a fallback that silently resolves any name against binaries/help.
+    // The browser has no such fallback, so each app must mount its own .hlp
+    // (and .cnt, which drives the Help Topics contents tree).
+    const helpFiles = name => [`binaries/help/${name}.hlp`, `binaries/help/${name}.cnt`];
+
     const apps = {
-      notepad:  { exe: 'binaries/notepad.exe' },
-      calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'] },
-      freecell: { exe: 'binaries/entertainment-pack/freecell.exe', dlls: ['binaries/entertainment-pack/cards.dll'] },
-      sol:      { exe: 'binaries/entertainment-pack/sol.exe', dlls: ['binaries/entertainment-pack/cards.dll'] },
+      notepad:  { exe: 'binaries/notepad.exe', files: helpFiles('notepad') },
+      calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'], files: helpFiles('calc') },
+      freecell: { exe: 'binaries/entertainment-pack/freecell.exe', dlls: ['binaries/entertainment-pack/cards.dll'], files: helpFiles('freecell') },
+      sol:      { exe: 'binaries/entertainment-pack/sol.exe', dlls: ['binaries/entertainment-pack/cards.dll'], files: ['binaries/help/sol.hlp'] },
       cruel:    { exe: 'binaries/entertainment-pack/cruel.exe', dlls: ['binaries/entertainment-pack/cards.dll'] },
       golf:     { exe: 'binaries/entertainment-pack/golf.exe', dlls: ['binaries/entertainment-pack/cards.dll'] },
       pegged:   { exe: 'binaries/entertainment-pack/pegged.exe' },
@@ -1277,10 +1283,11 @@ Resource-aware Win98 emulator
       tictac:   { exe: 'binaries/entertainment-pack/tictac.exe' },
       reversi:  { exe: 'binaries/entertainment-pack/reversi.exe' },
       winmine_wep: { exe: 'binaries/entertainment-pack/winmine.exe' },
-      mspaint98: { exe: 'binaries/mspaint.exe' },
-      notepad98: { exe: 'binaries/win98-apps/notepad98.exe' },
+      mspaint98: { exe: 'binaries/mspaint.exe', files: helpFiles('mspaint') },
+      notepad98: { exe: 'binaries/win98-apps/notepad98.exe', files: helpFiles('notepad') },
       wordpad:   {
         exe: 'binaries/win98-apps/wordpad.exe',
+        files: helpFiles('wordpad'),
         // WordPad calls LoadLibrary for RichEdit during document-view setup.
         // Preload the native editor and its shaping dependency so their
         // DllMain/import initialization completes before WordPad creates the
