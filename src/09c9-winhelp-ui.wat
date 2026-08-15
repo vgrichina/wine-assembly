@@ -660,7 +660,13 @@
               (i32.mul (local.get $value) (global.get $HELP_FONT_SIZE)))))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_COLOR))
         (then (local.set $color (local.get $value))))
-      (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
+      ;; A macro command opens a hotspot region exactly like a jump does: both
+      ;; 0xC8 and its 0xCC without-font-change variant are closed by the same
+      ;; 0x89 end command, so the run carries the macro token instead of a
+      ;; topic selector and activation dispatches on the token kind.
+      (if (i32.or
+            (i32.eq (local.get $kind) (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
+            (i32.eq (local.get $kind) (global.get $HELP_TOKEN_MACRO)))
         (then
           (if (local.get $hotspot) (then (return (i32.const -1))))
           ;; Store token_index+1 in each run; zero remains "not a hotspot".
@@ -1677,6 +1683,13 @@
       (then (return (i32.const 0))))
     (local.set $token (i32.add (global.get $help_view_tokens_wa)
       (i32.mul (local.get $index) (global.get $HELP_TOPIC_TOKEN_SIZE))))
+    ;; Macro regions share the hotspot run representation but carry a macro
+    ;; string rather than a topic selector. They report UNSUPPORTED explicitly
+    ;; instead of silently swallowing the click.
+    (if (i32.eq (i32.load (local.get $token)) (global.get $HELP_TOKEN_MACRO))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
     (if (i32.ne (i32.load (local.get $token))
           (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
       (then (return (i32.const 0))))

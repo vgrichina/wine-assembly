@@ -505,7 +505,7 @@ function buildOldFont(faces, descriptors, slotSize = 32) {
 }
 
 function buildSyntheticFormattedTopic({
-  stringCount = 12, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
+  stringCount = null, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
   hotspotCommand = null, closeVariableHotspot = false, variableHotspotCommand = null,
   externalBitmapNumber = null, stringPadding = 0,
 } = {}) {
@@ -523,20 +523,28 @@ function buildSyntheticFormattedTopic({
       Buffer.from([0x86, 0x22]), encodeCompressedLong(4), Buffer.from([0]),
       Buffer.from([0, 0, externalBitmapNumber & 0xff, externalBitmapNumber >>> 8 & 0xff]),
     ]);
-  const commands = Buffer.concat([
-    Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
+  // One LinkData2 string per LinkData1 command, so the exact count is derived
+  // rather than restated at every call site; stringCount only overrides it for
+  // the tests that deliberately mispair the two.
+  const commandList = [
+    Buffer.from([0x80, 2, 0]), Buffer.from([0x81]), Buffer.from([0x82]),
+    Buffer.from([0x83]),
     bitmapCommand,
     primaryHotspot, Buffer.from([0x89]),
-    Buffer.from([0xc8, 2, 0, 'X'.charCodeAt(0), 0]),
+    // A macro command opens a hotspot region and is closed by the same 0x89
+    // terminator a jump uses, so the fixture spells that pairing out.
+    Buffer.from([0xc8, 2, 0, 'X'.charCodeAt(0), 0]), Buffer.from([0x89]),
     secondaryHotspot,
     ...(closeVariableHotspot ? [Buffer.from([0x89])] : []),
-    Buffer.from([0x8b, 0x8c, 0xff]),
-  ]);
+    Buffer.from([0x8b]), Buffer.from([0x8c]), Buffer.from([0xff]),
+  ];
+  const commands = Buffer.concat(commandList);
+  const stringTotal = stringCount === null ? commandList.length : stringCount;
   // Padding lengthens the last LinkData2 string instead of adding commands,
   // so a record can be grown past a block boundary without changing its
   // command/string pairing or its token count.
-  const strings = Buffer.concat(Array.from({ length: stringCount }, (_, index) =>
-    index + 1 === stringCount && stringPadding
+  const strings = Buffer.concat(Array.from({ length: stringTotal }, (_, index) =>
+    index + 1 === stringTotal && stringPadding
       ? Buffer.concat([Buffer.from([65 + index]), Buffer.alloc(stringPadding, 0x58),
         Buffer.from([0])])
       : Buffer.from([65 + index, 0])));
@@ -1581,16 +1589,16 @@ async function main() {
   check('documented LinkData1 command payload families parse',
     load(formattedCommands.file) === 1 &&
     e.get_help_display_record_count() === 1 && e.get_help_paragraph_count() === 1 &&
-    e.get_help_table_count() === 0 && e.get_help_format_command_count() === 12);
+    e.get_help_table_count() === 0 && e.get_help_format_command_count() === 13);
   check('formatted-command fixture retains one string per command',
     e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity,
-      topicTokensWA, topicTokenCapacity) === 13 &&
-    Array.from({ length: 12 }, (_, index) =>
+      topicTokensWA, topicTokenCapacity) === 14 &&
+    Array.from({ length: 13 }, (_, index) =>
       dv.getUint32(topicTokensWA + index * 16, true) === 1 &&
       dv.getUint32(topicTokensWA + index * 16 + 8, true) === 1).every(Boolean) &&
-    dv.getUint32(topicTokensWA + 12 * 16, true) === 13);
+    dv.getUint32(topicTokensWA + 13 * 16, true) === 13);
   const formattedTokenKinds = [
-    4, 1, 5, 1, 3, 1, 3, 1, 2, 1, 9, 1, 7, 1, 8, 1, 10, 1, 7, 1, 2, 1, 2, 1, 13,
+    4, 1, 5, 1, 3, 1, 3, 1, 2, 1, 9, 1, 7, 1, 8, 1, 10, 1, 8, 1, 7, 1, 2, 1, 2, 1, 13,
   ];
   const formattedTokenCount = e.test_help_decode_topic_formatted(
     0, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity,
@@ -1610,7 +1618,7 @@ async function main() {
     .map(([, token]) => [dv.getUint32(token + 4, true), dv.getUint32(token + 8, true)]);
   check('formatted TEXT tokens retain exact LinkData2 offsets',
     JSON.stringify(formattedTextTokens) ===
-      JSON.stringify(Array.from({ length: 12 }, (_, index) => [index * 2, 1])));
+      JSON.stringify(Array.from({ length: 13 }, (_, index) => [index * 2, 1])));
   check('formatted variable tokens address their copied command payloads',
     formattedTokenKinds.every((kind, index) => {
       if (![7, 8, 10].includes(kind)) return true;
@@ -1689,6 +1697,34 @@ async function main() {
   check('typed layout rejects an orphan hotspot terminator',
     e.test_help_layout_tokens(topicOutWA, hotspotText.length,
       topicTokensWA, 3, layoutRunsWA, 1, 200) === -1);
+
+  // Both 0xC8 and its 0xCC without-font-change variant are closed by the same
+  // 0x89 end command, so a macro command opens a hotspot region exactly like a
+  // jump does. Real files rely on it: hover.hlp closes all 24 of its macros
+  // that way, and a macro that did not open a region left every one of those
+  // terminators orphaned and failed the whole topic.
+  bytes.fill(0, topicTokensWA, topicTokensWA + 64);
+  dv.setUint32(topicTokensWA, 10, true);
+  dv.setUint32(topicTokensWA + 16, 1, true);
+  dv.setUint32(topicTokensWA + 20, 0, true);
+  dv.setUint32(topicTokensWA + 24, hotspotText.length, true);
+  dv.setUint32(topicTokensWA + 32, 8, true);
+  dv.setUint32(topicTokensWA + 48, 13, true);
+  check('typed layout opens a hotspot region on a macro command',
+    e.test_help_layout_tokens(topicOutWA, hotspotText.length,
+      topicTokensWA, 4, layoutRunsWA, 1, 200) === 1 &&
+    dv.getUint32(layoutRunsWA + 36, true) === 1);
+  dv.setUint32(topicTokensWA + 32, 13, true);
+  check('typed layout rejects an unterminated macro region',
+    e.test_help_layout_tokens(topicOutWA, hotspotText.length,
+      topicTokensWA, 3, layoutRunsWA, 1, 200) === -1);
+  dv.setUint32(topicTokensWA, 7, true);
+  dv.setUint32(topicTokensWA + 16, 10, true);
+  dv.setUint32(topicTokensWA + 32, 8, true);
+  dv.setUint32(topicTokensWA + 48, 13, true);
+  check('typed layout rejects a macro region nested inside a hotspot',
+    e.test_help_layout_tokens(topicOutWA, hotspotText.length,
+      topicTokensWA, 4, layoutRunsWA, 1, 200) === -1);
   bytes.set(layoutText, topicOutWA);
   bytes.fill(0, topicTokensWA, topicTokensWA + 32);
   dv.setUint32(topicTokensWA, 1, true);
@@ -1742,7 +1778,7 @@ async function main() {
   // it across the boundary instead of rejecting it. Real files hit this on
   // any topic longer than a block (hover.hlp does it 20+ times).
   const crossBlockParts = buildSyntheticFormattedTopic({
-    stringCount: 13, closeVariableHotspot: true, stringPadding: 4200,
+    closeVariableHotspot: true, stringPadding: 4200,
     returnParts: true,
   });
   const crossBlockHelp = buildSyntheticSemanticHelp({
@@ -1763,8 +1799,8 @@ async function main() {
   const crossBlockText = Buffer.from(
     bytes.subarray(topicOutWA, topicOutWA + Math.max(crossBlockRaw, 0))).toString('latin1');
   const expectedCrossBlockText =
-    Array.from({ length: 12 }, (_, index) => String.fromCharCode(65 + index) + '\0').join('') +
-    'M' + 'X'.repeat(4200) + '\0';
+    Array.from({ length: 13 }, (_, index) => String.fromCharCode(65 + index) + '\0').join('') +
+    'N' + 'X'.repeat(4200) + '\0';
   check('the reassembled record decodes to its exact bytes across the boundary',
     crossBlockRaw === expectedCrossBlockText.length &&
     crossBlockText === expectedCrossBlockText,
@@ -1774,18 +1810,66 @@ async function main() {
   const singleBlockHelp = buildSyntheticSemanticHelp({
     systemFlags: 0,
     topic: packUncompressedTopicBlocks(buildSyntheticFormattedTopic({
-      stringCount: 13, closeVariableHotspot: true, returnParts: true,
+      closeVariableHotspot: true, returnParts: true,
     }).links),
   });
   check('gathering is used only when a record actually crosses a boundary',
     load(singleBlockHelp.file) === 1 && e.get_help_topic_gather_count() === 0 &&
-    e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity) === 26);
+    e.test_help_decode_topic_raw(0, topicOutWA, topicOutCapacity) === 28);
   const truncatedCrossBlock = buildSyntheticSemanticHelp({
     systemFlags: 0,
     topic: packUncompressedTopicBlocks(crossBlockParts.links).subarray(0, 4096),
   });
   check('a record whose continuation block is missing fails before publication',
     load(truncatedCrossBlock.file) === 0 && e.get_help_last_error() === 13);
+
+  // HOVER.HLP is the only real file in reach that uses macro commands at all,
+  // and it is where the macro/hotspot pairing was discovered: all 24 of its
+  // macros are closed by an 0x89 that had nothing to close before this.
+  const hoverHelp = fs.readFileSync(
+    path.join(ROOT, 'test', 'binaries', 'shareware', 'HOVER!', 'HOVER.HLP'));
+  check('HOVER.HLP parses completely', load(hoverHelp) === 1 &&
+    e.get_help_topic_count() === 49,
+    `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
+  const hoverMacros = [];
+  let hoverLaidOut = 0;
+  let hoverMacroRuns = 0;
+  for (let index = 0; index < e.get_help_topic_count(); index++) {
+    const tokens = e.test_help_decode_topic_formatted(index, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+    if (tokens < 1) continue;
+    const payloadSize = e.get_help_formatted_payload_size();
+    for (let token = 0; token < tokens; token++) {
+      if (dv.getUint32(topicTokensWA + token * 16, true) !== 10) continue;
+      const off = dv.getUint32(topicTokensWA + token * 16 + 4, true);
+      hoverMacros.push({
+        command: bytes[topicPayloadWA + off],
+        text: readLatin1(topicPayloadWA + off + 3,
+          dv.getUint16(topicPayloadWA + off + 1, true)).replace(/\0+$/, ''),
+      });
+    }
+    const runs = e.test_help_layout_tokens_with_payload(topicOutWA, topicOutCapacity,
+      topicPayloadWA, payloadSize, topicTokensWA, tokens, layoutRunsWA, 2048, 560);
+    if (runs < 0) continue;
+    hoverLaidOut++;
+    for (let run = 0; run < runs; run++) {
+      const flags = dv.getUint32(layoutRunsWA + run * 40 + 36, true) & 0x0fffffff;
+      if (!flags) continue;
+      if (dv.getUint32(topicTokensWA + (flags - 1) * 16, true) === 10) hoverMacroRuns++;
+    }
+  }
+  check('HOVER.HLP macro commands are exactly the two documented forms',
+    hoverMacros.length === 24 &&
+    hoverMacros.filter(macro => macro.command === 0xc8).length === 23 &&
+    hoverMacros.filter(macro => macro.command === 0xcc).length === 1 &&
+    hoverMacros.filter(macro => macro.text.startsWith('PlayWave(')).length === 23 &&
+    hoverMacros.find(macro => macro.command === 0xcc).text === 'AL("a-playingtopics")',
+    `macros=${JSON.stringify(hoverMacros.slice(0, 3))} n=${hoverMacros.length}`);
+  // The macro topics laid out as clickable regions; the topics still rejected
+  // are the table (record type 0x23) ones, which is a separate defect.
+  check('HOVER.HLP macro regions lay out as clickable runs',
+    hoverLaidOut === 44 && hoverMacroRuns > 0,
+    `laidOut=${hoverLaidOut} macroRuns=${hoverMacroRuns}`);
 
   const validExternalCommands = [
     buildExternalHotspot(0xea, 0, 20),
@@ -2006,7 +2090,7 @@ async function main() {
     dv.getUint32(layoutRunsWA + 28, true) === 0 &&
     dv.getUint32(layoutRunsWA + 32, true) === 0x112233);
   const fontViewParts = buildSyntheticFormattedTopic({
-    returnParts: true, stringCount: 13, closeVariableHotspot: true,
+    returnParts: true, closeVariableHotspot: true,
   });
   const fontViewHelp = buildSyntheticSemanticHelp({
     topic: fontViewParts.topic,
@@ -2136,7 +2220,7 @@ async function main() {
       Buffer.from([0,0,0,0,1,0,1,0])));
   const bitmapViewParts = buildSyntheticFormattedTopic({
     returnParts: true, externalBitmapNumber: 7,
-    stringCount: 13, closeVariableHotspot: true,
+    closeVariableHotspot: true,
   });
   const bitmapViewHelp = buildSyntheticSemanticHelp({
     topic: bitmapViewParts.topic,
@@ -2554,7 +2638,7 @@ async function main() {
 
   const hotspotHelp = buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({
-      stringCount: 13, hotspotOpcode: 0xe3, hotspotHash: 20, closeVariableHotspot: true,
+      hotspotOpcode: 0xe3, hotspotHash: 20, closeVariableHotspot: true,
     }),
     font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
   });
@@ -2591,8 +2675,19 @@ async function main() {
   check('Back returns from a clicked hotspot without reparsing through JS',
     e.get_help_session_topic_ref() === 0 && e.get_help_view_topic_index() === 0 &&
     e.get_help_view_back_count() === 0);
-  const variableHotspotRun = hotspotRuns.find(run =>
-    fixedHotspotRun && run.token !== fixedHotspotRun.token);
+  // The fixture emits three regions in command order: the fixed hash hotspot,
+  // the macro, then the variable external hotspot.
+  const macroRun = hotspotRuns[1];
+  const variableHotspotRun = hotspotRuns[2];
+  check('a macro region is clickable and reports the macro explicitly',
+    macroRun && variableHotspotRun &&
+    macroRun.token > fixedHotspotRun.token &&
+    variableHotspotRun.token > macroRun.token &&
+    e.test_help_view_hotspot_token_at(macroRun.x, macroRun.y) === macroRun.token &&
+    e.test_help_activate_hotspot_at(0x8888, macroRun.x, macroRun.y) === 0 &&
+    e.get_help_dispatch_status() === 6 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0,
+    `runs=${hotspotRuns.length} status=${e.get_help_dispatch_status()}`);
   // The variable hotspot names window 5, which this fixture's document does
   // not define, so activation fails as unresolved rather than misrouting.
   check('unresolvable variable hotspots fail safely without changing topic or history',
@@ -2622,7 +2717,7 @@ async function main() {
   for (const [opcode, expectedRef, expectedMode, label] of fixedOpcodeCases) {
     const fixedCaseHelp = buildSyntheticSemanticHelp({
       topic: buildSyntheticFormattedTopic({
-        stringCount: 13, hotspotOpcode: opcode, hotspotHash: 20,
+        hotspotOpcode: opcode, hotspotHash: 20,
         closeVariableHotspot: true,
       }),
       font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
@@ -2654,7 +2749,7 @@ async function main() {
   for (const [command, expectedMode, label] of currentFileExternalCases) {
     const currentFileHelp = buildSyntheticSemanticHelp({
       topic: buildSyntheticFormattedTopic({
-        stringCount: 13, hotspotCommand: command, closeVariableHotspot: true,
+        hotspotCommand: command, closeVariableHotspot: true,
       }),
       font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
     });
@@ -2691,7 +2786,7 @@ async function main() {
   };
   const buildWindowSelectorHelp = command => buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({
-      stringCount: 13, hotspotCommand: command, closeVariableHotspot: true,
+      hotspotCommand: command, closeVariableHotspot: true,
     }),
     font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
     windows: secondaryWindowTable,
@@ -2756,7 +2851,7 @@ async function main() {
 
   const popupHelp = buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({
-      stringCount: 13, hotspotOpcode: 0xe2, hotspotHash: 20, closeVariableHotspot: true,
+      hotspotOpcode: 0xe2, hotspotHash: 20, closeVariableHotspot: true,
     }),
     font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
   });
@@ -2848,7 +2943,7 @@ async function main() {
     ['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0]));
   const buildRuntimeHotspotHelp = command => buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({
-      stringCount: 13, hotspotCommand: command, closeVariableHotspot: true,
+      hotspotCommand: command, closeVariableHotspot: true,
     }),
     font: hotspotFont,
   });
@@ -2889,7 +2984,7 @@ async function main() {
   ctx.vfs.files.set(namedWindowTargetPath, {
     data: new Uint8Array(buildSyntheticSemanticHelp({
       topic: buildSyntheticFormattedTopic({
-        stringCount: 13, hotspotCommand: Buffer.from([0xe3, 20, 0, 0, 0]),
+        hotspotCommand: Buffer.from([0xe3, 20, 0, 0, 0]),
         closeVariableHotspot: true,
       }),
       font: hotspotFont, windows: secondaryWindowTable,
