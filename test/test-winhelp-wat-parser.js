@@ -639,6 +639,12 @@ async function main() {
     return Buffer.from(bytes.subarray(ptr, ptr + len)).toString('latin1');
   }
 
+  function writeCString(ptr, value) {
+    const encoded = Buffer.from(value, 'latin1');
+    bytes.fill(0, ptr, ptr + encoded.length + 1);
+    bytes.set(encoded, ptr);
+  }
+
   function readDirectory() {
     const fileWA = e.get_help_file_ptr();
     const out = [];
@@ -1040,6 +1046,84 @@ async function main() {
     e.get_help_keyword_record(4) === 0 && e.get_help_keyword_ptr(4) === 0 &&
     e.get_help_keyword_len(4) === 0 && e.get_help_keyword_posting(6) === 0);
 
+  const dispatchOwner = 0x1111;
+  check('HELP_CONTEXT resolves and atomically owns the loaded session',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0001, 7) === 1 &&
+    e.get_help_session_owner() === dispatchOwner &&
+    e.get_help_session_topic_ref() === 20 && e.get_help_session_topic_index() === 2 &&
+    e.get_help_session_mode() === 1 && e.get_help_dispatch_status() === 1);
+  check('unresolved HELP_CONTEXT preserves the visible topic',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0001, 0x7fffffff) === 0 &&
+    e.get_help_session_topic_ref() === 20 && e.get_help_session_topic_index() === 2 &&
+    e.get_help_session_mode() === 1 && e.get_help_dispatch_status() === 4);
+  writeCString(nameWA, 'BETA');
+  check('HELP_KEY performs an exact case-insensitive keyword navigation',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA) === 1 &&
+    e.get_help_session_topic_ref() === 10 && e.get_help_session_topic_index() === 1 &&
+    e.get_help_session_mode() === 1 && e.get_help_session_keyword_index() === -1);
+  writeCString(nameWA, 'missing');
+  check('missing HELP_KEY preserves the current topic transactionally',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA) === 0 &&
+    e.get_help_session_topic_ref() === 10 && e.get_help_session_topic_index() === 1 &&
+    e.get_help_dispatch_status() === 4);
+  check('HELP_KEY rejects a null string pointer without changing topic state',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, 0) === 0 &&
+    e.get_help_session_topic_ref() === 10 && e.get_help_dispatch_status() === 5);
+  bytes.fill(0x61, nameWA, nameWA + 512);
+  check('HELP_KEY bounds unterminated command data',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA) === 0 &&
+    e.get_help_session_topic_ref() === 10 && e.get_help_dispatch_status() === 5);
+  bytes[memory.buffer.byteLength - 1] = 0x61;
+  check('HELP_KEY bounds command data at the end of linear memory',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, memory.buffer.byteLength - 1) === 0 &&
+    e.get_help_session_topic_ref() === 10 && e.get_help_dispatch_status() === 5);
+  writeCString(nameWA, 'ga');
+  check('HELP_PARTIALKEY opens Index with deterministic prefix selection',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0105, nameWA) === 1 &&
+    e.get_help_session_mode() === 4 && e.get_help_session_keyword_index() === 2 &&
+    e.get_help_session_topic_ref() === 10);
+  writeCString(nameWA, '');
+  check('empty HELP_PARTIALKEY opens Index without a selection',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0105, nameWA) === 1 &&
+    e.get_help_session_mode() === 4 && e.get_help_session_keyword_index() === -1);
+  check('HELP_FINDER opens the Topics dialog without changing topic state',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x000b, 0) === 1 &&
+    e.get_help_session_mode() === 3 && e.get_help_session_topic_ref() === 10);
+  check('a different owner cannot reuse the active document session',
+    e.test_help_dispatch_loaded(0x2222, 0x0001, 8) === 0 &&
+    e.get_help_session_owner() === dispatchOwner && e.get_help_session_topic_ref() === 10 &&
+    e.get_help_dispatch_status() === 3);
+  check('HELP_SETCONTENTS resolves a context before publishing the override',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0005, 8) === 1 &&
+    e.get_help_session_contents_override() === 0 && e.get_help_session_topic_ref() === 10);
+  check('HELP_CONTENTS and HELP_INDEX use the configured override',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0003, 0) === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_session_topic_index() === 0 &&
+    e.get_help_session_mode() === 1);
+  check('HELP_CONTEXTPOPUP resolves the numeric context into popup state',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0008, 7) === 1 &&
+    e.get_help_session_topic_ref() === 20 && e.get_help_session_mode() === 2);
+  check('known but not-yet-parsed structured commands fail explicitly',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x000a, nameWA) === 0 &&
+    e.get_help_session_topic_ref() === 20 && e.get_help_session_mode() === 2 &&
+    e.get_help_dispatch_status() === 6);
+  check('unknown WinHelp commands fail explicitly without falling through',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x7777, 0) === 0 &&
+    e.get_help_session_topic_ref() === 20 && e.get_help_session_mode() === 2 &&
+    e.get_help_dispatch_status() === 6);
+  check('HELP_QUIT rejects an unrelated owner without releasing the document',
+    e.test_help_dispatch_loaded(0x2222, 0x0002, 0) === 0 &&
+    e.get_help_file_ptr() !== 0 && e.get_help_session_owner() === dispatchOwner &&
+    e.get_help_dispatch_status() === 3);
+  check('HELP_QUIT releases the matching owner and document state',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0002, 0) === 1 &&
+    e.get_help_file_ptr() === 0 && e.get_help_session_owner() === 0 &&
+    e.get_help_session_topic_ref() === -1 && e.get_help_session_mode() === 0 &&
+    e.get_help_dispatch_status() === 1);
+  check('non-QUIT dispatch without a document fails deterministically',
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0001, 7) === 0 &&
+    e.get_help_dispatch_status() === 2 && e.get_help_session_topic_ref() === -1);
+
   const halfKeywordHelp = buildSyntheticSemanticHelp({
     extraFiles: [['|KWBTREE', keywordIndex.tree]],
   });
@@ -1410,8 +1494,17 @@ async function main() {
   check('mounted file loads through raw VFS boundary', e.test_help_load_vfs(nameWA) === 1,
     `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
   check('VFS load publishes exact directory', e.get_help_directory_count() === EXPECTED['freecell.hlp'].length);
+  bytes.set(mountedPath, nameWA);
+  check('unified dispatcher loads a mounted path and applies its command',
+    e.test_help_dispatch(0x3333, nameWA, 0x0003, 0, 0) === 1 &&
+    e.get_help_session_owner() === 0x3333 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_session_mode() === 1 && e.get_help_dispatch_status() === 1,
+    `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
   bytes.set(Buffer.from('c:\\missing.hlp\0', 'latin1'), nameWA);
-  check('missing VFS file reports stable error', e.test_help_load_vfs(nameWA) === 0 && e.get_help_last_error() === 7);
+  check('unified dispatcher reports a missing VFS path without stale state',
+    e.test_help_dispatch(0x3333, nameWA, 0x0003, 0, 0) === 0 &&
+    e.get_help_last_error() === 7 && e.get_help_dispatch_status() === 7 &&
+    e.get_help_file_ptr() === 0 && e.get_help_session_owner() === 0);
 
   const badMagic = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
   badMagic[0] = 0;

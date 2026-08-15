@@ -4195,6 +4195,28 @@
     (call $heap_free (local.get $temp_ga))
     (local.get $ok))
 
+  ;; Unified API engine. The A/W boundary owns normalization; path_wa and any
+  ;; command-specific string data are bounded WA pointers by the time they
+  ;; reach this function. source_is_wide remains part of the stable call shape
+  ;; so both entry points can be audited through the same path.
+  (func $help_dispatch
+    (param $caller i32) (param $path_wa i32) (param $command i32)
+    (param $data i32) (param $source_is_wide i32) (result i32)
+    (drop (local.get $source_is_wide))
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_QUIT))
+      (then
+        (return (call $help_dispatch_loaded
+          (local.get $caller) (local.get $command) (local.get $data)))))
+    (if (local.get $path_wa)
+      (then
+        (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+          (then
+            (global.set $help_session_last_command (local.get $command))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+            (return (i32.const 0))))))
+    (call $help_dispatch_loaded
+      (local.get $caller) (local.get $command) (local.get $data)))
+
   (func (export "test_help_load_buffer")
     (param $source_wa i32) (param $source_size i32) (result i32)
     (call $help_document_load_buffer (local.get $source_wa) (local.get $source_size)))
@@ -4203,6 +4225,12 @@
     (call $help_document_load_buffer_core (local.get $source_wa) (local.get $source_size)))
   (func (export "test_help_load_vfs") (param $path_wa i32) (result i32)
     (call $help_document_load_vfs (local.get $path_wa)))
+  (func (export "test_help_dispatch")
+    (param $caller i32) (param $path_wa i32) (param $command i32)
+    (param $data i32) (param $source_is_wide i32) (result i32)
+    (call $help_dispatch
+      (local.get $caller) (local.get $path_wa) (local.get $command)
+      (local.get $data) (local.get $source_is_wide)))
   (func (export "test_help_decode_bitmap")
     (param $bitmap_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
     (call $help_decode_bitmap

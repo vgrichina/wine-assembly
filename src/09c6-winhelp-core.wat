@@ -42,6 +42,43 @@
   (global $HELP_ERROR_BITMAP_TABLE i32 (i32.const 16))
   (global $HELP_ERROR_KEYWORD_INDEX i32 (i32.const 17))
 
+  ;; WinHelp command values from winuser.h. HELP_CONTENTS and HELP_INDEX are
+  ;; the same legacy command value.
+  (global $HELP_COMMAND_CONTEXT i32 (i32.const 0x0001))
+  (global $HELP_COMMAND_QUIT i32 (i32.const 0x0002))
+  (global $HELP_COMMAND_CONTENTS i32 (i32.const 0x0003))
+  (global $HELP_COMMAND_SETCONTENTS i32 (i32.const 0x0005))
+  (global $HELP_COMMAND_CONTEXTPOPUP i32 (i32.const 0x0008))
+  (global $HELP_COMMAND_CONTEXTMENU i32 (i32.const 0x000a))
+  (global $HELP_COMMAND_FINDER i32 (i32.const 0x000b))
+  (global $HELP_COMMAND_WM_HELP i32 (i32.const 0x000c))
+  (global $HELP_COMMAND_KEY i32 (i32.const 0x0101))
+  (global $HELP_COMMAND_MACRO i32 (i32.const 0x0102))
+  (global $HELP_COMMAND_PARTIALKEY i32 (i32.const 0x0105))
+  (global $HELP_COMMAND_MULTIKEY i32 (i32.const 0x0201))
+  (global $HELP_COMMAND_SETWINPOS i32 (i32.const 0x0203))
+
+  ;; Dispatcher diagnostics are deliberately separate from file parser errors.
+  (global $HELP_DISPATCH_NONE i32 (i32.const 0))
+  (global $HELP_DISPATCH_ACCEPTED i32 (i32.const 1))
+  (global $HELP_DISPATCH_NO_DOCUMENT i32 (i32.const 2))
+  (global $HELP_DISPATCH_OWNER_MISMATCH i32 (i32.const 3))
+  (global $HELP_DISPATCH_UNRESOLVED i32 (i32.const 4))
+  (global $HELP_DISPATCH_BAD_DATA i32 (i32.const 5))
+  (global $HELP_DISPATCH_UNSUPPORTED i32 (i32.const 6))
+  (global $HELP_DISPATCH_LOAD_FAILED i32 (i32.const 7))
+
+  ;; One canonical viewer session. Modes are 0=idle, 1=topic, 2=popup,
+  ;; 3=Topics dialog, and 4=Index dialog with an optional prefix selection.
+  (global $help_session_owner (mut i32) (i32.const 0))
+  (global $help_session_topic_ref (mut i32) (i32.const -1))
+  (global $help_session_topic_index (mut i32) (i32.const -1))
+  (global $help_session_contents_override (mut i32) (i32.const -1))
+  (global $help_session_mode (mut i32) (i32.const 0))
+  (global $help_session_keyword_index (mut i32) (i32.const -1))
+  (global $help_session_last_command (mut i32) (i32.const 0))
+  (global $help_session_status (mut i32) (i32.const 0))
+
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
   (global $help_doc_file_ga (mut i32) (i32.const 0))
@@ -235,8 +272,19 @@
     (global.set $help_doc_cnt_off (i32.const 0))
     (global.set $help_doc_cnt_len (i32.const 0)))
 
+  (func $help_session_reset
+    (global.set $help_session_owner (i32.const 0))
+    (global.set $help_session_topic_ref (i32.const -1))
+    (global.set $help_session_topic_index (i32.const -1))
+    (global.set $help_session_contents_override (i32.const -1))
+    (global.set $help_session_mode (i32.const 0))
+    (global.set $help_session_keyword_index (i32.const -1))
+    (global.set $help_session_last_command (i32.const 0))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_NONE)))
+
   (func $help_document_reset
     (call $help_document_release_storage)
+    (call $help_session_reset)
     (global.set $help_last_error (i32.const 0))
     (global.set $help_last_error_offset (i32.const 0)))
 
@@ -544,6 +592,193 @@
       (br $search)))
     (i32.const -1))
 
+  (func $help_resolve_context_id (param $map_id i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_doc_map_count)))
+      (local.set $record (i32.add (global.get $help_doc_maps_wa)
+        (i32.mul (local.get $i) (global.get $HELP_CONTEXT_SIZE))))
+      (if (i32.eq (i32.load (local.get $record)) (local.get $map_id))
+        (then (return (i32.load offset=4 (local.get $record)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  (func $help_cstring_length_memory (param $ptr i32) (param $limit i32) (result i32)
+    (local $memory_bytes i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $ptr)) (i32.eqz (local.get $limit)))
+      (then (return (i32.const -1))))
+    (local.set $memory_bytes (i32.shl (memory.size) (i32.const 16)))
+    (if (i32.ge_u (local.get $ptr) (local.get $memory_bytes))
+      (then (return (i32.const -1))))
+    (block $terminated (loop $scan
+      (if (i32.ge_u (local.get $i) (local.get $limit))
+        (then (return (i32.const -1))))
+      (if (i32.ge_u (i32.add (local.get $ptr) (local.get $i)) (local.get $memory_bytes))
+        (then (return (i32.const -1))))
+      (br_if $terminated
+        (i32.eqz (i32.load8_u (i32.add (local.get $ptr) (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  (func $help_session_owner_matches (param $caller i32) (result i32)
+    (i32.or
+      (i32.eqz (global.get $help_session_owner))
+      (i32.eq (global.get $help_session_owner) (local.get $caller))))
+
+  ;; Resolve completely before publishing state. A failed request cannot
+  ;; clobber the visible topic or transfer ownership to another caller.
+  (func $help_session_commit_topic
+    (param $caller i32) (param $command i32) (param $topic_ref i32)
+    (param $mode i32) (result i32)
+    (local $topic_index i32)
+    (local.set $topic_index (call $help_find_topic_index_in
+      (global.get $help_doc_topics_wa) (global.get $help_doc_topic_count)
+      (local.get $topic_ref)))
+    (if (i32.lt_s (local.get $topic_index) (i32.const 0))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+        (return (i32.const 0))))
+    (if (i32.eqz (global.get $help_session_owner))
+      (then (global.set $help_session_owner (local.get $caller))))
+    (global.set $help_session_topic_ref (local.get $topic_ref))
+    (global.set $help_session_topic_index (local.get $topic_index))
+    (global.set $help_session_mode (local.get $mode))
+    (global.set $help_session_keyword_index (i32.const -1))
+    (global.set $help_session_last_command (local.get $command))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+    (i32.const 1))
+
+  (func $help_session_commit_dialog
+    (param $caller i32) (param $command i32) (param $mode i32)
+    (param $keyword_index i32) (result i32)
+    (if (i32.eqz (global.get $help_session_owner))
+      (then (global.set $help_session_owner (local.get $caller))))
+    (global.set $help_session_mode (local.get $mode))
+    (global.set $help_session_keyword_index (local.get $keyword_index))
+    (global.set $help_session_last_command (local.get $command))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+    (i32.const 1))
+
+  ;; Dispatch against the currently loaded WAT-owned document. String data is
+  ;; already normalized to a WA pointer by the ANSI/Unicode ABI boundary.
+  (func $help_dispatch_loaded
+    (param $caller i32) (param $command i32) (param $data i32) (result i32)
+    (local $topic_ref i32) (local $length i32) (local $keyword_index i32)
+    (global.set $help_session_last_command (local.get $command))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_NONE))
+
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_QUIT))
+      (then
+        (if (i32.eqz (call $help_session_owner_matches (local.get $caller)))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_OWNER_MISMATCH))
+            (return (i32.const 0))))
+        (call $help_document_reset)
+        (global.set $help_session_last_command (local.get $command))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+        (return (i32.const 1))))
+
+    (if (i32.eqz (global.get $help_doc_file_wa))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_NO_DOCUMENT))
+        (return (i32.const 0))))
+    (if (i32.eqz (call $help_session_owner_matches (local.get $caller)))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_OWNER_MISMATCH))
+        (return (i32.const 0))))
+
+    (if (i32.or
+          (i32.eq (local.get $command) (global.get $HELP_COMMAND_CONTEXT))
+          (i32.eq (local.get $command) (global.get $HELP_COMMAND_CONTEXTPOPUP)))
+      (then
+        (local.set $topic_ref (call $help_resolve_context_id (local.get $data)))
+        (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (return (call $help_session_commit_topic
+          (local.get $caller) (local.get $command) (local.get $topic_ref)
+          (if (result i32)
+            (i32.eq (local.get $command) (global.get $HELP_COMMAND_CONTEXTPOPUP))
+            (then (i32.const 2)) (else (i32.const 1)))))))
+
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_CONTENTS))
+      (then
+        (local.set $topic_ref
+          (if (result i32)
+            (i32.ge_s (global.get $help_session_contents_override) (i32.const 0))
+            (then (global.get $help_session_contents_override))
+            (else (global.get $help_doc_contents_ref))))
+        (return (call $help_session_commit_topic
+          (local.get $caller) (local.get $command) (local.get $topic_ref)
+          (i32.const 1)))))
+
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_FINDER))
+      (then
+        (return (call $help_session_commit_dialog
+          (local.get $caller) (local.get $command) (i32.const 3) (i32.const -1)))))
+
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_KEY))
+      (then
+        (local.set $length (call $help_cstring_length_memory
+          (local.get $data) (i32.const 512)))
+        (if (i32.le_s (local.get $length) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $topic_ref (call $help_resolve_keyword
+          (local.get $data) (local.get $length) (i32.const 0)))
+        (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (return (call $help_session_commit_topic
+          (local.get $caller) (local.get $command) (local.get $topic_ref)
+          (i32.const 1)))))
+
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_PARTIALKEY))
+      (then
+        (local.set $length (call $help_cstring_length_memory
+          (local.get $data) (i32.const 512)))
+        (if (i32.lt_s (local.get $length) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $keyword_index (i32.const -1))
+        (if (local.get $length)
+          (then
+            (local.set $keyword_index (call $help_find_keyword
+              (local.get $data) (local.get $length) (i32.const 1)))
+            (if (i32.lt_s (local.get $keyword_index) (i32.const 0))
+              (then
+                (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+                (return (i32.const 0))))))
+        (return (call $help_session_commit_dialog
+          (local.get $caller) (local.get $command) (i32.const 4)
+          (local.get $keyword_index)))))
+
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_SETCONTENTS))
+      (then
+        (local.set $topic_ref (call $help_resolve_context_id (local.get $data)))
+        (if (i32.lt_s (call $help_find_topic_index_in
+              (global.get $help_doc_topics_wa) (global.get $help_doc_topic_count)
+              (local.get $topic_ref)) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (if (i32.eqz (global.get $help_session_owner))
+          (then (global.set $help_session_owner (local.get $caller))))
+        (global.set $help_session_contents_override (local.get $topic_ref))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+        (return (i32.const 1))))
+
+    ;; Context tables, MULTIKEY, placement, and macro execution are separate
+    ;; bounded data formats. Until those parsers land they fail explicitly.
+    (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+    (i32.const 0))
+
   ;; Focused parser/inspection exports. They expose immutable WAT-owned
   ;; records and never introduce an alternate host semantic path.
   (func (export "test_help_reset") (call $help_document_reset))
@@ -704,16 +939,27 @@
       (br $scan)))
     (i32.const -1))
   (func (export "test_help_resolve_context_id") (param $map_id i32) (result i32)
-    (local $i i32) (local $record i32)
-    (block $missing (loop $scan
-      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_doc_map_count)))
-      (local.set $record (i32.add (global.get $help_doc_maps_wa)
-        (i32.mul (local.get $i) (global.get $HELP_CONTEXT_SIZE))))
-      (if (i32.eq (i32.load (local.get $record)) (local.get $map_id))
-        (then (return (i32.load offset=4 (local.get $record)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (i32.const -1))
+    (call $help_resolve_context_id (local.get $map_id)))
+  (func (export "test_help_dispatch_loaded")
+    (param $caller i32) (param $command i32) (param $data i32) (result i32)
+    (call $help_dispatch_loaded
+      (local.get $caller) (local.get $command) (local.get $data)))
+  (func (export "get_help_session_owner") (result i32)
+    (global.get $help_session_owner))
+  (func (export "get_help_session_topic_ref") (result i32)
+    (global.get $help_session_topic_ref))
+  (func (export "get_help_session_topic_index") (result i32)
+    (global.get $help_session_topic_index))
+  (func (export "get_help_session_contents_override") (result i32)
+    (global.get $help_session_contents_override))
+  (func (export "get_help_session_mode") (result i32)
+    (global.get $help_session_mode))
+  (func (export "get_help_session_keyword_index") (result i32)
+    (global.get $help_session_keyword_index))
+  (func (export "get_help_session_last_command") (result i32)
+    (global.get $help_session_last_command))
+  (func (export "get_help_dispatch_status") (result i32)
+    (global.get $help_session_status))
   (func (export "test_help_resolve_context_hash") (param $hash i32) (result i32)
     (local $lo i32) (local $hi i32) (local $mid i32)
     (local $record i32) (local $value i32)

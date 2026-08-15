@@ -16,6 +16,12 @@ tabs, fonts, pictures, hotspots, and macros—before any document is published.
 Each character command must pair with exactly one `LinkData2` string. Stable
 copies of validated records and variable command payloads live in a separate
 caller-owned arena, never in the reusable TOPIC-block scratch buffer.
+The Phase 3 command engine now owns viewer session state and dispatches loaded
+documents transactionally: Contents/Index, Context, ContextPopup, Finder,
+exact Key, PartialKey prefix selection, SetContents, and owner-scoped Quit have
+explicit success/failure semantics. Unknown and not-yet-parsed structured
+commands return false without changing the visible topic. ANSI/Unicode ABI
+normalization and the window/layout binding remain in progress.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
@@ -898,6 +904,17 @@ Exit criterion: known context IDs resolve and decoded plain text matches native
 reference content for all fixtures.
 
 ### Phase 3: real API dispatcher and basic topic window
+
+Status: **partially implemented**. The unified WAT dispatcher can load a raw
+VFS path or reuse the matching owner's active document. It retains canonical
+topic references/indexes, dialog/popup mode, keyword selection, contents
+override, owner, command, and diagnostic status. Context and keyword targets
+are fully resolved before publication, so failed and foreign-owner requests do
+not mutate visible state. Matching-owner Quit releases both the session and
+the WAT-owned document. Focused tests cover bounded command strings, missing
+paths, unsupported-command failure, and every implemented transition. The
+`WinHelpA`/`WinHelpW` handler hookup is waiting on the shared handler-file
+boundary; rendering still uses the legacy topic window.
 
 - Implement ANSI/Unicode normalization and transactional requests.
 - Support P0 commands and correct return/lifecycle semantics.
