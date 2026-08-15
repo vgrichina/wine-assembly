@@ -24,7 +24,7 @@ const STYLES = ['regular', 'bold', 'italic', 'boldItalic'];
 
 // The address and size the WAT table declares. Read rather than assumed so a
 // region move fails here instead of silently parsing whatever moved in.
-const TT_SUBST_TABLE = 0x07F0AC00;
+const TT_SUBST_TABLE = 0x07F0B400;
 const TT_SUBST_TABLE_SIZE = 0x800;
 
 const manifest = JSON.parse(fs.readFileSync(
@@ -206,10 +206,155 @@ const manifest = JSON.parse(fs.readFileSync(
   // A face with no substitute must not open one anyway.
   assert.strictEqual(wat.test_tt_face_for_logfont(guestPath('Verdana'), 400, 0), -1);
 
+  // ---- synthetic strikes ------------------------------------------------
+  //
+  // A scalable face is rasterized into an FNT 3.00 image and installed as an
+  // ordinary strike, so the existing bitmap text path renders it with no
+  // knowledge that the glyphs came from an outline. The image is read back
+  // here straight out of linear memory rather than through the WAT accessors,
+  // so a builder that agrees with a matching reader bug still fails.
+
+  const u8 = at => bytes[at];
+  const u16 = at => bytes[at] | (bytes[at + 1] << 8);
+  const u32 = at => (bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16) |
+    (bytes[at + 3] << 24)) >>> 0;
+
+  const readStrike = record => {
+    assert.ok(record, 'expected an installed strike');
+    const data = u32(record + 8);
+    return {
+      record,
+      data,
+      size: u32(record + 12),
+      version: u32(record + 16),
+      height: u32(record + 20),
+      ascent: u32(record + 24),
+      first: u32(record + 36),
+      last: u32(record + 40),
+      face: readStr(data + u32(record + 56)),
+      // FNT 3.00 char table: u16 width, u32 offset, from byte 148.
+      glyph(code) {
+        const entry = data + 148 + code * 6;
+        return { width: u16(entry), offset: u32(entry + 2) };
+      },
+      // Column-major: byte (x>>3)*height + y, bit 0x80 >> (x&7).
+      pixel(code, x, y) {
+        const { width, offset } = this.glyph(code);
+        if (x >= width || y >= this.height) return 0;
+        const at = data + offset + (x >> 3) * this.height + y;
+        return (bytes[at] & (0x80 >> (x & 7))) ? 1 : 0;
+      },
+    };
+  };
+
+  const strike = readStrike(
+    wat.test_tt_strike_ensure(guestPath('Arial'), -16, 400, 0) >>> 0);
+
+  assert.strictEqual(strike.version, 0x0300, 'a synthetic strike is FNT 3.00');
+  assert.strictEqual(strike.face, 'Arial',
+    'the strike installs under the Win98 face name, not the substitute name');
+  assert.strictEqual(strike.first, 0);
+  assert.strictEqual(strike.last, 255, 'the whole ANSI range gets a cell');
+
+  // The strike must report exactly what the face reports, or text laid out
+  // from the strike will not match text measured from the face.
+  const arialFace = wat.test_tt_face_for_logfont(guestPath('Arial'), 400, 0);
+  const ppem = wat.test_tt_face_ppem(arialFace, -16);
+  assert.strictEqual(ppem, 16);
+  assert.strictEqual(strike.height,
+    wat.test_tt_face_metric(arialFace, ppem, 0), 'tmHeight');
+  assert.strictEqual(strike.ascent,
+    wat.test_tt_face_metric(arialFace, ppem, 1), 'tmAscent');
+
+  // Every cell is at least as wide as the advance, so a run laid out cell by
+  // cell is never narrower than the measured string.
+  for (const ch of 'The quick brown fox, 0123456789!') {
+    const code = ch.charCodeAt(0);
+    assert.ok(strike.glyph(code).width >=
+      wat.test_tt_face_char_width(arialFace, code, ppem),
+      `cell for "${ch}" is narrower than its advance`);
+  }
+  assert.ok(strike.glyph(0x20).width > 0, 'space still occupies a cell');
+
+  // Ink, in the right place. 'A' must be solid at the baseline row and empty
+  // below it; 'g' must put ink below the baseline. Getting the vertical
+  // origin wrong is the failure that still looks like text.
+  const inkRow = (code, y) => {
+    const { width } = strike.glyph(code);
+    for (let x = 0; x < width; x += 1) if (strike.pixel(code, x, y)) return true;
+    return false;
+  };
+  const capital = 'A'.charCodeAt(0);
+  assert.ok(inkRow(capital, strike.ascent - 1), 'A must reach the baseline');
+  assert.ok(!inkRow(capital, strike.ascent), 'A must not descend below it');
+  assert.ok(inkRow('g'.charCodeAt(0), strike.ascent), 'g must descend');
+  assert.ok(!inkRow(0x20, strike.ascent - 1), 'space must be blank');
+
+  // The cell and the cached glyph must hold the same ink, offset by the
+  // bearings: this is the step where a bitmap gets copied between two
+  // origins, and an off-by-one here is a permanently smudged font.
+  const entry = wat.test_tt_face_glyph(arialFace, capital, ppem) >>> 0;
+  assert.ok(entry, 'A must rasterize');
+  const gw = wat.test_tt_entry_width(entry);
+  const gh = wat.test_tt_entry_height(entry);
+  const left = wat.test_tt_entry_left(entry);
+  const top = wat.test_tt_entry_top(entry);
+  let compared = 0;
+  for (let gy = 0; gy < gh; gy += 1) {
+    for (let gx = 0; gx < gw; gx += 1) {
+      const expectedInk = wat.test_tt_entry_pixel(entry, gx, gy) ? 1 : 0;
+      const got = strike.pixel(capital, left + gx, strike.ascent - top + gy);
+      assert.strictEqual(got, expectedInk,
+        `A differs at glyph (${gx},${gy})`);
+      compared += 1;
+    }
+  }
+  assert.ok(compared > 0, 'A must have compared some pixels');
+
+  // One strike per face and size: a second request must not rebuild it.
+  assert.strictEqual(
+    wat.test_tt_strike_ensure(guestPath('Arial'), -16, 400, 0) >>> 0,
+    strike.record, 'the same request reuses the installed strike');
+  assert.strictEqual(
+    wat.test_tt_strike_ensure(guestPath('arial'), -16, 400, 0) >>> 0,
+    strike.record, 'case does not make a second strike');
+
+  const bold = readStrike(
+    wat.test_tt_strike_ensure(guestPath('Arial'), -16, 700, 0) >>> 0);
+  assert.notStrictEqual(bold.record, strike.record, 'bold is its own strike');
+  assert.ok(bold.glyph(capital).width > strike.glyph(capital).width,
+    'bold A must be wider than regular A');
+
+  const large = readStrike(
+    wat.test_tt_strike_ensure(guestPath('Arial'), -32, 400, 0) >>> 0);
+  assert.ok(large.height > strike.height, 'a larger size is a taller strike');
+  assert.notStrictEqual(large.record, strike.record);
+
+  // A positive lfHeight is a cell height, not an em size. Both conventions
+  // must reach a strike, and they must not reach the same one.
+  const byCell = readStrike(
+    wat.test_tt_strike_ensure(guestPath('Arial'), 16, 400, 0) >>> 0);
+  assert.ok(byCell.height <= strike.height,
+    'a 16px cell is no taller than a 16ppem em');
+
+  // Faces with no substitute report nothing, so the caller falls back exactly
+  // as it did before rather than rendering some other font.
+  assert.strictEqual(wat.test_tt_strike_ensure(guestPath('Verdana'), -16, 400, 0), 0);
+  assert.strictEqual(wat.test_tt_strike_ensure(0, -16, 400, 0), 0);
+
+  // Symbol faces keep their own encoding: byte 0xF0 is a real Wingdings
+  // glyph, and going through CP1252 on the way in would lose it.
+  const wingdings = readStrike(
+    wat.test_tt_strike_ensure(guestPath('Wingdings'), -16, 400, 0) >>> 0);
+  assert.strictEqual(wingdings.face, 'Wingdings');
+  assert.ok(wingdings.glyph(0x6C).width > 0);
+
   console.log(
     `PASS  face substitution: ${watTable.size} faces and ${mounts.length} ` +
     `Win98 font files, WAT table and fonts/substitutions.json agree, ` +
-    `every named file opens from the VFS`);
+    `every named file opens from the VFS; Arial rasterizes to a ` +
+    `${strike.height}px FNT strike with ${compared} pixels of 'A' matching ` +
+    `the cached glyph`);
   process.exit(0);
 })().catch(err => {
   console.error(err);

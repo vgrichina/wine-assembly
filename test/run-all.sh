@@ -30,6 +30,8 @@ UNIT=(
   test/test-wide-api.js
   test/test-midi-mci.js
   test/test-thread-manager.js
+  test/test-dev-server.js
+  test/test-vlan-rtc.js
   test/test-waveout-audio.js
   test/test-wavein-audio.js
   test/test-audio-mixer.js
@@ -61,6 +63,7 @@ UNIT=(
   test/test-wat-truetype-metrics.js
   test/test-font-substitutions.js
   test/test-wat-truetype-substitution.js
+  test/test-wat-gdi-scalable-text.js
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js

@@ -276,7 +276,7 @@
   ;; outline at all, which is how space is stored: an empty glyph is normal
   ;; data, not a damaged file, and it still has an advance.
   ;;
-  ;; Only the glyph record's header is read here — bounds and contour count.
+  ;; Only the glyph record's header is read here - bounds and contour count.
   ;; That is everything ABC widths need, and it is what the scan converter
   ;; will need to size its bitmap before it walks any points.
 
@@ -776,7 +776,7 @@
   ;;
   ;; Edge records are four i32: x0, y0, x1, y1. Horizontal edges are dropped
   ;; because scan conversion crosses edges against horizontal sample lines and
-  ;; a horizontal edge has no crossing to contribute — keeping them would only
+  ;; a horizontal edge has no crossing to contribute - keeping them would only
   ;; add a division by a zero height later.
 
   (func $tt_fu_to_26_6 (param $value i32) (param $ppem i32) (param $upem i32)
@@ -1332,8 +1332,8 @@
   ;; ---- ABC widths -------------------------------------------------------
   ;;
   ;; GetCharABCWidths splits the advance into left bearing, black width, and
-  ;; right bearing. A and C are signed and routinely negative — 'j' overhangs
-  ;; to its left, italic faces overhang to their right — and code that clamps
+  ;; right bearing. A and C are signed and routinely negative - 'j' overhangs
+  ;; to its left, italic faces overhang to their right - and code that clamps
   ;; them to zero is exactly what clips the overhanging edge of a glyph.
   ;; An empty glyph has no black box, so its whole advance is bearing A.
 
@@ -2334,10 +2334,10 @@
   ;; pointers means inserting a face never renumbers an address, which is the
   ;; failure mode tools/data_offsets.js exists to catch.
 
-  (global $TT_SUBST_TABLE i32 (i32.const 0x07F0AC00))
+  (global $TT_SUBST_TABLE i32 (i32.const 0x07F0B400))
   (global $TT_SUBST_TABLE_SIZE i32 (i32.const 0x00000800))
 
-  (data (i32.const 0x07F0AC00)
+  (data (i32.const 0x07F0B400)
     "Arial\00"
       "C:\\WINDOWS\\FONTS\\ARIAL.TTF\00"
       "C:\\WINDOWS\\FONTS\\ARIALBD.TTF\00"
@@ -2465,6 +2465,297 @@
       (local.get $italic)))
     (if (i32.eqz (local.get $path)) (then (return (i32.const -1))))
     (call $tt_face_open (call $w2g (local.get $path))))
+
+  ;; ---- synthetic strikes ------------------------------------------------
+  ;;
+  ;; The bitmap-font path already owns everything a text call needs: layout,
+  ;; alignment, clipping, colours, background modes, paths, TA_UPDATECP,
+  ;; justification, GetGlyphOutline. It reaches all of it through one parsed
+  ;; FNT image. So a scalable face does not get a second renderer here - it
+  ;; gets rasterized at one ppem into an FNT 3.00 image and installed as an
+  ;; ordinary strike, after which nothing downstream cares that the glyphs
+  ;; came from an outline.
+  ;;
+  ;; That the glyph cache already stores bitmaps in the FNT column-major bit
+  ;; layout is what makes this a copy rather than a conversion.
+  ;;
+  ;; What is lost by going through a bitmap cell: a negative left bearing is
+  ;; clipped, because an FNT cell starts at the pen. Win98 GDI clipped the
+  ;; same way for its own bitmap fonts, and the alternative is a parallel
+  ;; renderer that would have to re-derive every policy listed above.
+
+  (global $TT_FNT_HEADER i32 (i32.const 148))
+  (global $TT_FNT_ENTRY i32 (i32.const 6))
+  ;; 0..255 plus the sentinel entry every FNT carries after the last glyph.
+  (global $TT_FNT_ENTRIES i32 (i32.const 257))
+  ;; A face this tall is not a Win98 UI font, and the image would be megabytes.
+  (global $TT_FNT_MAX_HEIGHT i32 (i32.const 200))
+
+  (func $tt_fnt_data_off (result i32)
+    (i32.add (global.get $TT_FNT_HEADER)
+      (i32.mul (global.get $TT_FNT_ENTRIES) (global.get $TT_FNT_ENTRY))))
+
+  ;; Cell width for one code. In an FNT the char-table width IS the advance -
+  ;; the renderer moves the pen by exactly this - so a cell widened to hold an
+  ;; overhanging glyph would widen the letter spacing with it. Ink that runs
+  ;; past the advance is clipped instead, which is what a bitmap font does.
+  (func $tt_fnt_cell_width (param $face i32) (param $ppem i32) (param $code i32)
+        (result i32)
+    (local $width i32)
+    (local.set $width
+      (call $tt_face_char_width (local.get $face) (local.get $code)
+        (local.get $ppem)))
+    ;; A zero-width cell is rejected by the strike parser, and a control code
+    ;; with no glyph still needs a slot, so an empty cell is one column wide.
+    (select (local.get $width) (i32.const 1)
+      (i32.gt_s (local.get $width) (i32.const 0))))
+
+  (func $tt_fnt_cell_bytes (param $width i32) (param $height i32) (result i32)
+    (i32.mul (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
+      (local.get $height)))
+
+  ;; Byte length of the image this face and size would produce, or 0 when it
+  ;; is not one this layer will build.
+  (func $tt_fnt_size (param $face i32) (param $ppem i32) (param $name_len i32)
+        (result i32)
+    (local $height i32) (local $code i32) (local $total i32)
+    (local.set $height (call $tt_face_metric (local.get $face) (local.get $ppem)
+      (i32.const 0)))
+    (if (i32.or (i32.le_s (local.get $height) (i32.const 0))
+          (i32.gt_s (local.get $height) (global.get $TT_FNT_MAX_HEIGHT)))
+      (then (return (i32.const 0))))
+    (local.set $total (call $tt_fnt_data_off))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $code) (i32.const 255)))
+      (local.set $total (i32.add (local.get $total)
+        (call $tt_fnt_cell_bytes
+          (call $tt_fnt_cell_width (local.get $face) (local.get $ppem)
+            (local.get $code))
+          (local.get $height))))
+      (local.set $code (i32.add (local.get $code) (i32.const 1)))
+      (br $scan)))
+    (i32.add (local.get $total) (i32.add (local.get $name_len) (i32.const 1))))
+
+  ;; Blit one cached glyph into its FNT cell. The cache and the cell share a
+  ;; bit layout, but not an origin: the cache stores ink with bearings, the
+  ;; cell is a full box whose baseline sits at `ascent`.
+  (func $tt_fnt_blit_cell (param $entry i32) (param $cell i32) (param $width i32)
+        (param $height i32) (param $ascent i32)
+    (local $gw i32) (local $gh i32) (local $ox i32) (local $oy i32)
+    (local $gx i32) (local $gy i32) (local $dx i32) (local $dy i32)
+    (local $slot i32)
+    (if (i32.eqz (local.get $entry)) (then (return)))
+    (local.set $gw (call $tt_entry_width (local.get $entry)))
+    (local.set $gh (call $tt_entry_height (local.get $entry)))
+    (local.set $ox (call $tt_entry_left (local.get $entry)))
+    (local.set $oy (i32.sub (local.get $ascent)
+      (call $tt_entry_top (local.get $entry))))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $gy) (local.get $gh)))
+      (local.set $dy (i32.add (local.get $oy) (local.get $gy)))
+      (if (i32.lt_u (local.get $dy) (local.get $height))
+        (then
+          (local.set $gx (i32.const 0))
+          (block $cols_done (loop $cols
+            (br_if $cols_done (i32.ge_u (local.get $gx) (local.get $gw)))
+            (local.set $dx (i32.add (local.get $ox) (local.get $gx)))
+            (if (i32.and (i32.lt_u (local.get $dx) (local.get $width))
+                  (call $tt_entry_pixel (local.get $entry) (local.get $gx)
+                    (local.get $gy)))
+              (then
+                (local.set $slot (i32.add (local.get $cell)
+                  (i32.add (i32.mul (i32.shr_u (local.get $dx) (i32.const 3))
+                      (local.get $height))
+                    (local.get $dy))))
+                (i32.store8 (local.get $slot)
+                  (i32.or (i32.load8_u (local.get $slot))
+                    (i32.shr_u (i32.const 0x80)
+                      (i32.and (local.get $dx) (i32.const 7)))))))
+            (local.set $gx (i32.add (local.get $gx) (i32.const 1)))
+            (br $cols)))))
+      (local.set $gy (i32.add (local.get $gy) (i32.const 1)))
+      (br $rows))))
+
+  ;; Write a complete FNT 3.00 image for one face at one ppem. Returns the
+  ;; byte length written, or 0. `$name` is the face name the strike installs
+  ;; under, so face matching keeps working on the Win98 name.
+  (func $tt_fnt_build (param $face i32) (param $ppem i32) (param $name i32)
+        (param $out i32) (param $capacity i32) (result i32)
+    (local $height i32) (local $ascent i32) (local $name_len i32)
+    (local $total i32) (local $code i32) (local $width i32)
+    (local $entry i32) (local $data_off i32) (local $face_off i32)
+    (local $table i32) (local $ch i32)
+    (local.set $name_len (call $tt_strlen (local.get $name)))
+    (local.set $total (call $tt_fnt_size (local.get $face) (local.get $ppem)
+      (local.get $name_len)))
+    (if (i32.or (i32.eqz (local.get $total))
+          (i32.gt_u (local.get $total) (local.get $capacity)))
+      (then (return (i32.const 0))))
+    (local.set $height (call $tt_face_metric (local.get $face) (local.get $ppem)
+      (i32.const 0)))
+    (local.set $ascent (call $tt_face_metric (local.get $face) (local.get $ppem)
+      (i32.const 1)))
+    (memory.fill (local.get $out) (i32.const 0) (local.get $total))
+
+    (local.set $data_off (call $tt_fnt_data_off))
+    (local.set $table (i32.add (local.get $out) (global.get $TT_FNT_HEADER)))
+    (block $done (loop $glyphs
+      (br_if $done (i32.gt_u (local.get $code) (i32.const 255)))
+      (local.set $width (call $tt_fnt_cell_width (local.get $face)
+        (local.get $ppem) (local.get $code)))
+      (i32.store16 (i32.add (local.get $table)
+          (i32.mul (local.get $code) (global.get $TT_FNT_ENTRY)))
+        (local.get $width))
+      (i32.store (i32.add (i32.add (local.get $table)
+            (i32.mul (local.get $code) (global.get $TT_FNT_ENTRY)))
+          (i32.const 2))
+        (local.get $data_off))
+      (local.set $entry (call $tt_face_glyph (local.get $face) (local.get $code)
+        (local.get $ppem)))
+      (call $tt_fnt_blit_cell (local.get $entry)
+        (i32.add (local.get $out) (local.get $data_off))
+        (local.get $width) (local.get $height) (local.get $ascent))
+      (local.set $data_off (i32.add (local.get $data_off)
+        (call $tt_fnt_cell_bytes (local.get $width) (local.get $height))))
+      (local.set $code (i32.add (local.get $code) (i32.const 1)))
+      (br $glyphs)))
+
+    (local.set $face_off (local.get $data_off))
+    (local.set $code (i32.const 0))
+    (block $name_done (loop $copy
+      (br_if $name_done (i32.ge_u (local.get $code) (local.get $name_len)))
+      (local.set $ch (i32.load8_u
+        (i32.add (local.get $name) (local.get $code))))
+      (i32.store8 (i32.add (local.get $out)
+          (i32.add (local.get $face_off) (local.get $code)))
+        (local.get $ch))
+      (local.set $code (i32.add (local.get $code) (i32.const 1)))
+      (br $copy)))
+
+    ;; FNT 3.00 header. Only the fields the strike parser reads are meaningful
+    ;; here; the rest stay zero rather than carrying invented values.
+    (i32.store16 (local.get $out) (i32.const 0x0300))
+    (i32.store offset=2 (local.get $out) (local.get $total))
+    (i32.store16 offset=74 (local.get $out) (local.get $ascent))
+    (i32.store16 offset=76 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 3)))
+    (i32.store16 offset=78 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 4)))
+    (i32.store8 offset=80 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 8)))
+    (i32.store16 offset=83 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 7)))
+    (i32.store8 offset=85 (local.get $out) (i32.const 0))
+    (i32.store16 offset=88 (local.get $out) (local.get $height))
+    (i32.store8 offset=90 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 9)))
+    (i32.store16 offset=91 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 5)))
+    (i32.store16 offset=93 (local.get $out)
+      (call $tt_face_metric (local.get $face) (local.get $ppem) (i32.const 6)))
+    (i32.store8 offset=95 (local.get $out) (i32.const 0))
+    (i32.store8 offset=96 (local.get $out) (i32.const 255))
+    ;; Both are stored relative to dfFirstChar, which is 0 here.
+    (i32.store8 offset=97 (local.get $out) (i32.const 0x3F))
+    (i32.store8 offset=99 (local.get $out) (i32.const 0x20))
+    (i32.store offset=105 (local.get $out) (local.get $face_off))
+    (i32.store offset=117 (local.get $out) (call $tt_fnt_data_off))
+    (local.get $total))
+
+  (func $tt_strlen (param $text i32) (result i32)
+    (local $n i32)
+    (if (i32.eqz (local.get $text)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $text) (local.get $n)))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  ;; One synthetic strike per (face name, ppem, weight, italic). Folding the
+  ;; case here means "Arial" and "arial" share a strike the way they already
+  ;; share a face.
+  (func $tt_strike_hash (param $name i32) (param $ppem i32) (param $weight i32)
+        (param $italic i32) (result i32)
+    (local $hash i32) (local $byte i32)
+    (local.set $hash (i32.const 0x811C9DC5))
+    (block $done (loop $scan
+      (local.set $byte (i32.load8_u (local.get $name)))
+      (br_if $done (i32.eqz (local.get $byte)))
+      (local.set $hash (i32.mul
+        (i32.xor (local.get $hash) (call $tt_subst_fold (local.get $byte)))
+        (i32.const 16777619)))
+      (local.set $name (i32.add (local.get $name) (i32.const 1)))
+      (br $scan)))
+    (local.set $hash (i32.mul (i32.xor (local.get $hash) (local.get $ppem))
+      (i32.const 16777619)))
+    (local.set $hash (i32.mul (i32.xor (local.get $hash) (local.get $weight))
+      (i32.const 16777619)))
+    (local.set $hash (i32.mul (i32.xor (local.get $hash) (local.get $italic))
+      (i32.const 16777619)))
+    ;; Zero is the empty-slot marker in the strike table.
+    (select (local.get $hash) (i32.const 1) (local.get $hash)))
+
+  (func $tt_strike_find (param $hash i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_BITMAP_FONT_COUNT)))
+      (local.set $record (call $gdi_bitmap_font_record (local.get $i)))
+      (if (i32.and (i32.ne (i32.load (local.get $record)) (i32.const 0))
+            (i32.eq (i32.load offset=4 (local.get $record)) (local.get $hash)))
+        (then (return (local.get $record))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; The strike for a LOGFONT, building it on first use. Returns a strike
+  ;; record the ordinary bitmap text path can render from, or 0 when the face
+  ;; has no scalable substitute and the caller should fall back as before.
+  (func $tt_strike_ensure (param $name i32) (param $lf_height i32)
+        (param $weight i32) (param $italic i32) (result i32)
+    (local $face i32) (local $ppem i32) (local $hash i32) (local $found i32)
+    (local $size i32) (local $buffer_guest i32) (local $buffer i32)
+    (local $written i32) (local $ok i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $face (call $tt_face_for_logfont (local.get $name)
+      (local.get $weight) (local.get $italic)))
+    (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $ppem (call $tt_face_ppem (local.get $face) (local.get $lf_height)))
+    (if (i32.le_s (local.get $ppem) (i32.const 0)) (then (return (i32.const 0))))
+
+    (local.set $hash (call $tt_strike_hash (local.get $name) (local.get $ppem)
+      (local.get $weight) (local.get $italic)))
+    (local.set $found (call $tt_strike_find (local.get $hash)))
+    (if (local.get $found) (then (return (local.get $found))))
+
+    (local.set $size (call $tt_fnt_size (local.get $face) (local.get $ppem)
+      (call $tt_strlen (local.get $name))))
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (local.set $buffer_guest (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $buffer_guest)) (then (return (i32.const 0))))
+    (local.set $buffer (call $g2w (local.get $buffer_guest)))
+    (local.set $written (call $tt_fnt_build (local.get $face) (local.get $ppem)
+      (local.get $name) (local.get $buffer) (local.get $size)))
+    (if (i32.eqz (local.get $written))
+      (then
+        (call $heap_free (local.get $buffer_guest))
+        (return (i32.const 0))))
+    ;; The strike parser validates the image and takes its own copy into the
+    ;; DIB arena, so this scratch is freed either way. Going through the same
+    ;; validation as a real .FON is deliberate: a synthetic image that would
+    ;; not survive it is a bug worth failing on, not one worth trusting.
+    (local.set $ok (call $gdi_bitmap_font_copy_strike (local.get $buffer)
+      (local.get $written) (local.get $hash)))
+    (call $heap_free (local.get $buffer_guest))
+    (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
+    (local.set $found (call $tt_strike_find (local.get $hash)))
+    ;; Mark it state 2: installed strikes are state 1. A rasterized substitute
+    ;; must be reachable only through its exact (face, size, weight, italic)
+    ;; key, never through face-and-nearest-height matching, or the first size a
+    ;; guest asks for would be bound to every later size of the same face. It
+    ;; is also not an installed bitmap font, so it stays out of enumeration.
+    (if (local.get $found)
+      (then (i32.store (local.get $found) (i32.const 2))))
+    (local.get $found))
 
   ;; ---- test surface -----------------------------------------------------
   ;;
@@ -2791,3 +3082,22 @@
   (func (export "test_tt_face_for_logfont") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_face_for_logfont (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_fnt_size") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_fnt_size (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_fnt_build") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $tt_fnt_build (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4)))
+
+  (func (export "test_tt_strike_ensure") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_strike_ensure (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+
+
+
+

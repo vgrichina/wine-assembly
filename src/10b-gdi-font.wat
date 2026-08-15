@@ -5,8 +5,8 @@
   ;; owned FNT WA/size, version, height/ascent/average/max width,
   ;; first/last/default char, weight/charset, face offset, leading values.
   (global $GDI_BITMAP_FONT_TABLE i32 (i32.const 0x07F0A800))
-  (global $GDI_BITMAP_FONT_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $GDI_BITMAP_FONT_COUNT i32 (i32.const 16))
+  (global $GDI_BITMAP_FONT_TABLE_SIZE i32 (i32.const 0x00000C00))
+  (global $GDI_BITMAP_FONT_COUNT i32 (i32.const 48))
   (global $GDI_BITMAP_FONT_STRIDE i32 (i32.const 64))
   (global $GDI_BITMAP_FONT_IO i32 (i32.const 0x07F0A420))
   (global $GDI_BITMAP_FONT_IO_SIZE i32 (i32.const 0x00000004))
@@ -150,7 +150,7 @@
       (then (return (i32.const 0))))
     (local.set $record (call $gdi_bitmap_font_record
       (i32.sub (local.get $candidate) (i32.const 2))))
-    (if (result i32) (i32.load (local.get $record))
+    (if (result i32) (i32.eq (i32.load (local.get $record)) (i32.const 1))
       (then (i32.add (i32.load offset=8 (local.get $record))
         (i32.load offset=56 (local.get $record))))
       (else (i32.const 0))))
@@ -732,7 +732,12 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_BITMAP_FONT_COUNT)))
       (local.set $strike (call $gdi_bitmap_font_record (local.get $i)))
-      (if (i32.and (i32.load (local.get $strike))
+      ;; Only installed strikes (state 1) are matched by face and height.
+      ;; Strikes rasterized from a scalable substitute (state 2) are reachable
+      ;; only through their exact (face, size, weight, italic) key: matching
+      ;; one by name and nearest height would bind, say, a 17px Arial built for
+      ;; one control to every other size the guest later asks for.
+      (if (i32.and (i32.eq (i32.load (local.get $strike)) (i32.const 1))
             (call $gdi_bitmap_font_face_matches (local.get $face)
               (i32.add (i32.load offset=8 (local.get $strike))
                 (i32.load offset=56 (local.get $strike)))))
@@ -765,6 +770,7 @@
 
   (func $gdi_bitmap_font_selected (param $hdc i32) (result i32)
     (local $dc i32) (local $handle i32) (local $object i32) (local $strike i32)
+    (local $substitute i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $handle (i32.load offset=88 (local.get $dc)))
@@ -775,7 +781,31 @@
         (local.set $strike (i32.load offset=24 (local.get $object)))
         (if (i32.and (i32.ne (local.get $strike) (i32.const 0))
               (i32.ne (i32.load (local.get $strike)) (i32.const 0)))
-          (then (return (local.get $strike))))))
+          (then
+            ;; The bound strike was chosen at CreateFont time by face name and
+            ;; height alone, so a bold or italic request can land on the
+            ;; upright regular strike of the same face. When the style does not
+            ;; match, a scalable substitute rasterized at the exact requested
+            ;; style is closer to what was asked for than a mismatched bitmap;
+            ;; when it does match, the bitmap wins, because an installed strike
+            ;; is pixel-exact and an outline rasterized at UI sizes is not.
+            (if (i32.or
+                  (i32.ne
+                    (i32.ge_s (i32.load offset=48 (local.get $strike))
+                      (i32.const 700))
+                    (i32.ge_s (call $gdi_font_weight (local.get $handle))
+                      (i32.const 700)))
+                  (i32.ne (call $gdi_font_italic (local.get $handle))
+                    (i32.const 0)))
+              (then
+                (local.set $substitute (call $tt_strike_ensure
+                  (call $gdi_font_face (local.get $handle))
+                  (call $gdi_font_height (local.get $handle))
+                  (call $gdi_font_weight (local.get $handle))
+                  (call $gdi_font_italic (local.get $handle))))
+                (if (local.get $substitute)
+                  (then (return (local.get $substitute))))))
+            (return (local.get $strike))))))
     (if (i32.eq (local.get $handle) (i32.const 0x3001A))
       (then
         (drop (call $gdi_bitmap_font_ensure_terminal))
@@ -805,7 +835,13 @@
         (drop (call $gdi_bitmap_font_ensure_ms_sans))
         (return (call $gdi_bitmap_font_best
           (i32.const 0x07F0A53C) (call $gdi_font_height (local.get $handle))))))
-    (i32.const 0))
+    ;; No installed strike carries this face. If it is a scalable face with a
+    ;; substitute, rasterize it into a strike and render it through this same
+    ;; path; Canvas stays the fallback only for faces with neither.
+    (call $tt_strike_ensure (call $gdi_font_face (local.get $handle))
+      (call $gdi_font_height (local.get $handle))
+      (call $gdi_font_weight (local.get $handle))
+      (call $gdi_font_italic (local.get $handle))))
 
   (func $gdi_bitmap_font_height (param $hdc i32) (param $strike i32) (result i32)
     (local $dc i32) (local $handle i32) (local $object i32)
