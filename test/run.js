@@ -1920,8 +1920,19 @@ async function main() {
   });
 
   const mem = new Uint8Array(memory.buffer);
-  mem.set(exeBytes, instance.exports.get_staging());
-  const entry = instance.exports.load_pe(exeBytes.length);
+  // Self-extracting installers append their archive after the PE image, so the
+  // file can be far larger than anything the loader needs. The staging buffer
+  // sits below emulator-private tables — the API hash table among them — and an
+  // unbounded copy walks straight through them, after which every import
+  // resolves to api_id 0xFFFF and the app dies on its first call.
+  const stagingCap = instance.exports.get_staging_size();
+  const staged = Math.min(exeBytes.length, stagingCap);
+  if (staged < exeBytes.length) {
+    console.log(`[pe] staging ${staged} of ${exeBytes.length} bytes ` +
+      `(buffer is ${stagingCap}); the tail is appended data, read via the VFS`);
+  }
+  mem.set(exeBytes.subarray(0, staged), instance.exports.get_staging());
+  const entry = instance.exports.load_pe(staged);
   console.log('PE loaded. Entry: ' + hex(entry));
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
   const requiredDlls = detectRequiredDlls(exeBytes);
