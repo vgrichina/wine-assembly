@@ -973,11 +973,19 @@ Status: **partially implemented**. Typed topic arenas and deterministic
 positioned text runs are live in the production WinHelp window. Layout uses an
 exact no-write preflight, retains raw/token/payload/run state transactionally,
 wraps words and overlong spans, carries font/color and hotspot state into each
-run, and repaints visible runs without decoding again. Embedded pictures retain
-positioned placeholders until their decoded pixels become GDI bitmaps.
+run, and repaints visible runs without decoding again. Hotspot runs retain the
+exact begin-token identity, bounded hit testing accounts for scrolling, and
+fixed in-document hash jumps and popups resolve through canonical topic state,
+the shared transactional history, and the production window-message path.
+Nested, orphaned, and unterminated hotspot regions are rejected; unsupported
+variable, external, and macro forms fail without changing topic or history.
+Embedded pictures retain positioned placeholders until their decoded pixels
+become GDI bitmaps. Separate native-style popup window geometry remains to
+complete the popup presentation path.
 
 - Complete font/paragraph token decoding and deterministic layout.
-- Implement jump/popup hotspots and context popups.
+- Extend implemented fixed-hash jumps/popups with bounded external forms and
+  native-style context popup presentation.
 - Materialize decoded embedded bitmap payloads as WAT-owned GDI bitmaps.
 
 Exit criterion: visual topic captures and hotspot target transitions match the

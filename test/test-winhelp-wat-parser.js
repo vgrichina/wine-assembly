@@ -422,13 +422,21 @@ function buildOldFont(faces, descriptors, slotSize = 32) {
   return result;
 }
 
-function buildSyntheticFormattedTopic({ stringCount = 12, returnParts = false } = {}) {
+function buildSyntheticFormattedTopic({
+  stringCount = 12, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
+  closeVariableHotspot = false,
+} = {}) {
+  const fixedHotspot = Buffer.alloc(5);
+  fixedHotspot[0] = hotspotOpcode;
+  fixedHotspot.writeInt32LE(hotspotHash, 1);
   const commands = Buffer.concat([
     Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
     Buffer.from([0x86, 3]), encodeCompressedLong(4), Buffer.from([0, 0, 7, 0]),
-    Buffer.from([0xe2, 0x78, 0x56, 0x34, 0x12, 0x89]),
+    fixedHotspot, Buffer.from([0x89]),
     Buffer.from([0xc8, 2, 0, 'X'.charCodeAt(0), 0]),
-    Buffer.from([0xea, 6, 0, 0, 1, 2, 3, 4, 5]),
+    Buffer.from(closeVariableHotspot
+      ? [0xea, 6, 0, 0, 1, 2, 3, 4, 5, 0x89]
+      : [0xea, 6, 0, 0, 1, 2, 3, 4, 5]),
     Buffer.from([0x8b, 0x8c, 0xff]),
   ]);
   const strings = Buffer.concat(Array.from({ length: stringCount }, (_, index) =>
@@ -1455,6 +1463,33 @@ async function main() {
     JSON.stringify(actualLayout) === JSON.stringify(expectedLayout) &&
     e.get_help_layout_extent() === 56,
     `actual=${JSON.stringify(actualLayout)} extent=${e.get_help_layout_extent()}`);
+  const hotspotText = Buffer.from('link', 'latin1');
+  bytes.set(hotspotText, topicOutWA);
+  bytes.fill(0, topicTokensWA, topicTokensWA + 64);
+  dv.setUint32(topicTokensWA, 7, true);
+  dv.setUint32(topicTokensWA + 16, 1, true);
+  dv.setUint32(topicTokensWA + 20, 0, true);
+  dv.setUint32(topicTokensWA + 24, hotspotText.length, true);
+  dv.setUint32(topicTokensWA + 32, 8, true);
+  dv.setUint32(topicTokensWA + 48, 13, true);
+  check('typed layout retains exact hotspot token identity in each run',
+    e.test_help_layout_tokens(topicOutWA, hotspotText.length,
+      topicTokensWA, 4, layoutRunsWA, 1, 200) === 1 &&
+    dv.getUint32(layoutRunsWA + 36, true) === 1);
+  dv.setUint32(topicTokensWA + 32, 13, true);
+  check('typed layout rejects an unterminated hotspot',
+    e.test_help_layout_tokens(topicOutWA, hotspotText.length,
+      topicTokensWA, 3, layoutRunsWA, 1, 200) === -1);
+  dv.setUint32(topicTokensWA, 8, true);
+  check('typed layout rejects an orphan hotspot terminator',
+    e.test_help_layout_tokens(topicOutWA, hotspotText.length,
+      topicTokensWA, 3, layoutRunsWA, 1, 200) === -1);
+  bytes.set(layoutText, topicOutWA);
+  bytes.fill(0, topicTokensWA, topicTokensWA + 32);
+  dv.setUint32(topicTokensWA, 1, true);
+  dv.setUint32(topicTokensWA + 8, layoutText.length, true);
+  dv.setUint32(topicTokensWA + 16, 13, true);
+  dv.setUint32(topicTokensWA + 20, layoutText.length, true);
   bytes.fill(0xa5, layoutRunsWA, layoutRunsWA + 4 * 40);
   check('typed layout rejects short run capacity before writing',
     e.test_help_layout_tokens(topicOutWA, layoutText.length,
@@ -1826,6 +1861,83 @@ async function main() {
   check('HELP_QUIT tears down both Topics and main help windows',
     e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_window() === 0);
+
+  const hotspotHelp = buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({
+      stringCount: 13, hotspotOpcode: 0xe3, hotspotHash: 20, closeVariableHotspot: true,
+    }),
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+  });
+  ctx.vfs.files.set('c:\\hotspot.hlp', {
+    data: new Uint8Array(hotspotHelp.file), attrs: 0x20,
+  });
+  const hotspotPathA = allocGuestAnsi('c:\\hotspot.hlp');
+  const hotspotAccepted = e.test_invoke_WinHelpA(0x8888, hotspotPathA, 0x0001, 8);
+  check('formatted hotspot fixture opens through the real WinHelp handler',
+    hotspotAccepted === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_view_run_count() > 0,
+    `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} ` +
+      `ref=${e.get_help_session_topic_ref()} runs=${e.get_help_view_run_count()}`);
+  const hotspotRuns = Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
+    const record = e.get_help_view_run_ptr() + index * 40;
+    return {
+      token: dv.getUint32(record + 36, true) - 1,
+      x: dv.getInt32(record + 4, true), y: dv.getInt32(record + 8, true),
+      width: dv.getInt32(record + 12, true), height: dv.getInt32(record + 16, true),
+      flagged: dv.getUint32(record + 36, true) !== 0,
+    };
+  }).filter(run => run.flagged && run.width > 0 && run.height > 0);
+  const fixedHotspotRun = hotspotRuns[0];
+  check('hotspot hit-testing returns the exact retained begin token',
+    fixedHotspotRun &&
+    e.test_help_view_hotspot_token_at(fixedHotspotRun.x, fixedHotspotRun.y) === fixedHotspotRun.token &&
+    e.test_help_view_hotspot_token_at(399, 270) === -1);
+  check('hotspot click uses canonical hash navigation and Back history',
+    fixedHotspotRun && e.test_help_window_message(0x0201, 0,
+      (fixedHotspotRun.y << 16) | (fixedHotspotRun.x & 0xffff)) === 0 &&
+    e.get_help_session_topic_ref() === 30 && e.get_help_session_mode() === 1 &&
+    e.get_help_view_topic_index() === 3 && e.get_help_view_back_count() === 1);
+  e.test_help_view_go_back();
+  check('Back returns from a clicked hotspot without reparsing through JS',
+    e.get_help_session_topic_ref() === 0 && e.get_help_view_topic_index() === 0 &&
+    e.get_help_view_back_count() === 0);
+  const variableHotspotRun = hotspotRuns.find(run =>
+    fixedHotspotRun && run.token !== fixedHotspotRun.token);
+  check('unsupported variable hotspots fail safely without changing topic or history',
+    variableHotspotRun &&
+    e.test_help_activate_hotspot_at(0x8888,
+      variableHotspotRun.x, variableHotspotRun.y) === 0 &&
+    e.get_help_dispatch_status() === 6 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0);
+
+  const popupHelp = buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({
+      stringCount: 13, hotspotOpcode: 0xe1, hotspotHash: 20, closeVariableHotspot: true,
+    }),
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+  });
+  ctx.vfs.files.set('c:\\popup.hlp', {
+    data: new Uint8Array(popupHelp.file), attrs: 0x20,
+  });
+  const popupPathA = allocGuestAnsi('c:\\popup.hlp');
+  check('fixed popup hotspot fixture replaces the active document transactionally',
+    e.test_invoke_WinHelpA(0x8888, popupPathA, 0x0001, 8) === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_session_mode() === 1 &&
+    e.get_help_view_back_count() === 0);
+  const popupRun = Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
+    const record = e.get_help_view_run_ptr() + index * 40;
+    return {
+      x: dv.getInt32(record + 4, true), y: dv.getInt32(record + 8, true),
+      flagged: dv.getUint32(record + 36, true) !== 0,
+    };
+  }).find(run => run.flagged);
+  check('fixed popup hotspot commits canonical popup mode through the window path',
+    popupRun && e.test_help_window_message(0x0201, 0,
+      (popupRun.y << 16) | (popupRun.x & 0xffff)) === 0 &&
+    e.get_help_session_topic_ref() === 30 && e.get_help_session_mode() === 2 &&
+    e.get_help_view_topic_index() === 3 && e.get_help_view_back_count() === 1);
+  check('hotspot fixture cleanup uses normal HELP_QUIT lifecycle',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 && e.get_help_window() === 0);
 
   check('WinHelpA handler opens a window from WAT-owned title/topic state',
     e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&

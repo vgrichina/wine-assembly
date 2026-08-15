@@ -1031,7 +1031,11 @@
                   (local.get $click_line) (global.get $HELP_COMMAND_CONTENTS)))
               (else (call $help_go_back)))
             (return (i32.const 0))))
-        ;; Body clicks are inert until formatted hotspot rectangles are bound.
+        (local.set $click_line (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (if (call $help_activate_hotspot_at
+              (global.get $help_session_owner) (local.get $click_line) (local.get $click_y))
+          (then (call $help_present_dispatch
+            (i32.const 1) (global.get $help_session_last_command))))
         (return (i32.const 0))))
 
     ;; WM_KEYDOWN (0x0100)

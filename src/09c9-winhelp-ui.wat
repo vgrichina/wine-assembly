@@ -174,6 +174,7 @@
       (local.set $value (i32.load offset=12 (local.get $token)))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_END_TOPIC))
         (then
+          (if (local.get $hotspot) (then (return (i32.const -1))))
           (local.set $ended (i32.const 1))
           (br $done)))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_PARAGRAPH))
@@ -195,9 +196,14 @@
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_COLOR))
         (then (local.set $color (local.get $value))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
-        (then (local.set $hotspot (i32.const 1))))
+        (then
+          (if (local.get $hotspot) (then (return (i32.const -1))))
+          ;; Store token_index+1 in each run; zero remains "not a hotspot".
+          (local.set $hotspot (i32.add (local.get $i) (i32.const 1)))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_HOTSPOT_END))
-        (then (local.set $hotspot (i32.const 0))))
+        (then
+          (if (i32.eqz (local.get $hotspot)) (then (return (i32.const -1))))
+          (local.set $hotspot (i32.const 0))))
       (if (i32.eq (local.get $kind) (global.get $HELP_TOKEN_LINE_BREAK))
         (then
           (local.set $y (i32.add (local.get $y) (local.get $line_height)))
@@ -479,6 +485,95 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $runs))))
 
+  (func $help_view_hotspot_token_at
+    (param $x i32) (param $y i32) (result i32)
+    (local $i i32) (local $run i32) (local $id i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (if (i32.or (i32.lt_s (local.get $x) (i32.const 0))
+          (i32.or (i32.lt_s (local.get $y) (i32.const 0))
+                  (i32.ge_s (local.get $y) (i32.const 270))))
+      (then (return (i32.const -1))))
+    (block $missing (loop $runs
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_view_run_count)))
+      (local.set $run (i32.add (global.get $help_view_runs_wa)
+        (i32.mul (local.get $i) (global.get $HELP_LAYOUT_RUN_SIZE))))
+      (local.set $id (i32.load offset=36 (local.get $run)))
+      (if (local.get $id)
+        (then
+          (local.set $left (i32.load offset=4 (local.get $run)))
+          (local.set $top (i32.sub (i32.load offset=8 (local.get $run))
+            (global.get $help_scroll_y)))
+          (local.set $right (i32.add (local.get $left)
+            (i32.load offset=12 (local.get $run))))
+          (local.set $bottom (i32.add (local.get $top)
+            (i32.load offset=16 (local.get $run))))
+          (if (i32.and
+                (i32.and (i32.ge_s (local.get $x) (local.get $left))
+                         (i32.lt_s (local.get $x) (local.get $right)))
+                (i32.and (i32.ge_s (local.get $y) (local.get $top))
+                         (i32.lt_s (local.get $y) (local.get $bottom))))
+            (then (return (i32.sub (local.get $id) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $runs)))
+    (i32.const -1))
+
+  ;; Fixed hash hotspots: E0/E1 popup, E2/E3 topic jump. External/string
+  ;; variants and macros remain disabled until their path/window grammars are
+  ;; independently bounded.
+  (func $help_activate_hotspot_at
+    (param $caller i32) (param $x i32) (param $y i32) (result i32)
+    (local $index i32) (local $token i32) (local $off i32) (local $len i32)
+    (local $payload i32) (local $command i32) (local $hash i32)
+    (local $topic_ref i32) (local $mode i32) (local $api_command i32)
+    (local.set $index (call $help_view_hotspot_token_at
+      (local.get $x) (local.get $y)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $index) (global.get $help_view_token_count))
+      (then (return (i32.const 0))))
+    (local.set $token (i32.add (global.get $help_view_tokens_wa)
+      (i32.mul (local.get $index) (global.get $HELP_TOPIC_TOKEN_SIZE))))
+    (if (i32.ne (i32.load (local.get $token))
+          (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
+      (then (return (i32.const 0))))
+    (local.set $off (i32.load offset=4 (local.get $token)))
+    (local.set $len (i32.load offset=8 (local.get $token)))
+    (if (i32.or (i32.eqz (local.get $len))
+          (i32.or (i32.gt_u (local.get $off) (global.get $help_view_payload_len))
+            (i32.gt_u (local.get $len)
+              (i32.sub (global.get $help_view_payload_len) (local.get $off)))))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (local.set $payload (i32.add (global.get $help_view_payload_wa) (local.get $off)))
+    (local.set $command (i32.load8_u (local.get $payload)))
+    (if (i32.and (i32.ne (local.get $command) (i32.const 0xE0))
+          (i32.and (i32.ne (local.get $command) (i32.const 0xE1))
+            (i32.and (i32.ne (local.get $command) (i32.const 0xE2))
+                     (i32.ne (local.get $command) (i32.const 0xE3)))))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (if (i32.ne (local.get $len) (i32.const 5))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (local.set $hash (i32.load offset=1 (local.get $payload)))
+    (local.set $topic_ref (call $help_resolve_context_hash (local.get $hash)))
+    (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+        (return (i32.const 0))))
+    (local.set $mode (i32.const 1))
+    (local.set $api_command (global.get $HELP_COMMAND_CONTEXT))
+    (if (i32.or (i32.eq (local.get $command) (i32.const 0xE0))
+                (i32.eq (local.get $command) (i32.const 0xE1)))
+      (then
+        (local.set $mode (i32.const 2))
+        (local.set $api_command (global.get $HELP_COMMAND_CONTEXTPOPUP))))
+    (call $help_session_commit_topic (local.get $caller)
+      (local.get $api_command) (local.get $topic_ref) (local.get $mode)))
+
   (func (export "test_help_layout_tokens")
     (param $raw i32) (param $raw_len i32)
     (param $tokens i32) (param $token_count i32)
@@ -497,6 +592,18 @@
     (global.get $help_view_runs_wa))
   (func (export "get_help_view_extent_height") (result i32)
     (global.get $help_view_extent_height))
+  (func (export "test_help_view_hotspot_token_at")
+    (param $x i32) (param $y i32) (result i32)
+    (call $help_view_hotspot_token_at (local.get $x) (local.get $y)))
+  (func (export "test_help_activate_hotspot_at")
+    (param $caller i32) (param $x i32) (param $y i32) (result i32)
+    (call $help_activate_hotspot_at
+      (local.get $caller) (local.get $x) (local.get $y)))
+  (func (export "test_help_window_message")
+    (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
+    (if (i32.eqz (global.get $help_hwnd)) (then (return (i32.const 0))))
+    (call $help_wndproc (global.get $help_hwnd)
+      (local.get $msg) (local.get $wparam) (local.get $lparam)))
 
   ;; ---- WAT-native Help Topics window -------------------------------
 
