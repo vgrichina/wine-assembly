@@ -2,7 +2,11 @@
 
 ## Status
 
-Design started 2026-08-14. Assets obtained; no runtime code written yet.
+Design started 2026-08-14. Assets obtained and committed; no runtime code
+written yet. The end state is **no Canvas text at all**: WAT parses TrueType
+files, owns metrics, and rasterizes glyphs onto the canonical GDI surface, the
+same way it already does for `.FON` strikes. JavaScript keeps only the
+canonical-surface-to-screen blit, which is presentation, not logic.
 
 The deterministic Win9x **stock** font path is complete and pixel-exact: WAT
 parses `.FON`/`.FNT` resources and blits one-bit glyph pixels directly onto the
@@ -138,36 +142,63 @@ None of these are vendored yet. Each should be added only when a corpus
 application actually names the face — the license and size cost is real, and an
 unused font in `fonts/` is a liability, not a feature.
 
+## Font format scope
+
+**TrueType `glyf` outlines only.** CFF/Type2 (`.otf`) is explicitly out of
+scope, and this is a faithfulness decision rather than a shortcut: Windows 98
+GDI rasterized TrueType natively and had no CFF rasterizer. Type 1 worked only
+when Adobe Type Manager was installed; native Type 1 and OpenType/CFF support
+arrived in Windows 2000. Supporting exactly `glyf` *is* the Win98 behavior.
+
+Every font vendored for this effort is `glyf`-based. `W95FA.otf` is CFF, but it
+exists only for the emulator shell's own CSS and never enters the GDI path, so
+nothing needs converting.
+
+The TrueType bytecode interpreter is a separate question from the format and is
+addressed under "Hinting" below.
+
 ## Rendering architecture
 
-Three paths, in decreasing fidelity. The first two already exist; only the
-third needs new substitution logic.
+Everything converges on one contract that already exists in
+`src/10b-gdi-font.wat`:
+
+```
+$gdi_bitmap_font_glyph_pixel(strike, glyph_offset,
+                             native_w, native_h, x, y) -> 0 | 1
+```
+
+Every consumer above it — layout, measurement, tab stops, ellipsification, path
+recording, ROP composite, `GetGlyphOutline` — reads only that. **Any producer of
+a one-bit glyph bitmap plus bearings plugs into the entire existing text stack
+unchanged.** That is what makes removing Canvas tractable: the work is a new
+glyph *producer*, not a new text pipeline.
 
 ```
 CreateFontIndirectA(face, height)
         │
-        ├─ face has an .FON strike at this size?
-        │     → WAT FNT blit onto canonical GDI surface        [PIXEL-EXACT]
+        ├─ .FON strike installed at this size?
+        │     → WAT FNT blit onto canonical GDI surface
         │       System, MS Sans Serif, Fixedsys, Courier, Terminal
         │
-        ├─ face has an embedded EBDT strike at this ppem?
-        │     → generate .FON at build time, same WAT blit      [PIXEL-EXACT]
-        │       NEW: Tahoma 8-16, Small Fonts 11
+        ├─ embedded EBDT strike at this ppem?
+        │     → build-time .FON, same WAT blit
+        │       Tahoma 8-16, Small Fonts 11
         │
-        └─ otherwise: scalable outline
-              → gdi_text_mask() rasterizes into a one-bit mask  [APPROXIMATE]
-                WAT converts mask bytes to retained path geometry
-                and composites exact GDI text-color pixels
+        ├─ outline face at a hinted ladder size (8-20 ppem)?
+        │     → build-time FreeType-hinted .FON, same WAT blit
+        │       Liberation Sans / Serif / Mono
+        │
+        └─ otherwise: outline, large / rotated / sheared / arbitrary
+              → WAT TrueType scan converter -> cached one-bit glyph
+                -> same WAT blit
 ```
 
-The third path's seam is already built: `gdi_text_mask` in
-`lib/host-imports.js` renders into an offscreen alpha mask, thresholds coverage
-to one bit, and hands bytes back to WAT. Canvas never touches the destination
-surface and never creates a path. WAT owns layout, alignment, `charExtra`,
-justification, and clipping. **Canvas is a glyph provider, not a text
-renderer** — that boundary is already correct and this work does not move it.
+Advance widths come from `hmtx` on **every** path, never from a strike's own
+metrics. If the two disagree, text visibly re-flows as it crosses the ladder
+boundary; a single metric source is what prevents that.
 
-What changes is only *which font file Canvas rasterizes from*.
+Canvas appears nowhere in this diagram. `gdi_text_mask` in
+`lib/host-imports.js` is deleted at the end of the sequence below.
 
 ### Font substitution must be data, not a hardcoded CSS string
 
@@ -184,19 +215,90 @@ real Arial to win the cascade on some machines and lose on others — which is
 the exact non-determinism being removed. An explicit private name means the
 bundled file is the only thing that can ever match.
 
-### Rejected: a TrueType rasterizer in WAT
+### The WAT TrueType rasterizer
 
-Parsing `glyf` outlines and scan-converting them in WAT is a large amount of
-work and still would not be pixel-exact against Win98, because Win98 rendered
-TrueType at UI sizes with **no antialiasing** and with Microsoft's hinting
-applied — matching it means implementing the TrueType bytecode interpreter
-(delta instructions, drop-out control, and the specific hinting programs in
-fonts we cannot ship). The result would be an enormous effort that lands in the
-same "approximate" bucket as the Canvas mask.
+An earlier revision of this document rejected a WAT rasterizer on the grounds
+that it would still not be pixel-exact against Win98. That criterion does not
+discriminate: the Canvas mask is not pixel-exact either, so it cannot decide
+between them. The criteria that do discriminate are determinism and WAT
+ownership, and the rasterizer wins both. Pixel-exactness against Win98 is
+unavailable for outline faces regardless of who rasterizes, because Win98
+applied Microsoft's own hinting programs from fonts that cannot be shipped.
 
-The pixel-exactness goal stays scoped to faces with real bitmap strikes, where
-it is achievable and already achieved. For outline faces the goal is **metric
-fidelity**, not pixel fidelity.
+Structure:
+
+**Table parse.** SFNT is big-endian, so byte-swapping loads are the base layer;
+the rest is offset arithmetic.
+
+```
+head  unitsPerEm, indexToLocFormat, bounding box
+hhea  ascender, descender, lineGap, numberOfHMetrics
+hmtx  advanceWidth[gid], lsb[gid]            <- the metric authority
+maxp  numGlyphs
+loca  glyph offsets, short or long per head
+glyf  outlines
+cmap  format 4 (BMP), format 0/6, (3,0) symbol with the 0xF000 bias
+OS/2  sTypoAscender, usWinAscent, sxHeight, sCapHeight, panose, codepage ranges
+kern  format 0, for GetKerningPairs
+```
+
+**Character mapping** is the fiddly part, not the table walk. Guest text arrives
+as CP1252, OEM, or Symbol bytes and must reach a glyph index through
+codepage to Unicode to `cmap`. CP437 already exists for Terminal; CP1252 adds 27
+mappings in `0x80-0x9F`. Symbol faces bypass Unicode through the `(3,0)` cmap.
+
+**Outline extraction.** Simple glyphs are `endPtsOfContours`, an instruction
+block that is skipped, run-length-encoded flags, and delta-8 / same-as-previous
+/ delta-16 coordinates. Composite glyphs recurse over components with
+`ARGS_ARE_XY_VALUES` offsets or point-matching plus an optional 2x2 transform;
+the recursion needs an explicit depth limit.
+
+**Transform** in 26.6 fixed point, with `scale = (ppem << 6) / unitsPerEm`
+folded together with `lfEscapement` rotation and any synthetic italic shear
+into a single 2x2 matrix. Rotated text becomes *easier* here than under Canvas,
+which has no equivalent of GDI's escapement semantics.
+
+**Flattening.** TrueType quadratics store on- and off-curve points with implied
+on-curve midpoints between consecutive off-curve points; those must be
+reconstructed before subdivision. Fixed subdivision is adequate at UI sizes;
+adaptive subdivision by control-polygon deviation is only needed for large text.
+
+**Scan conversion**, nonzero winding. Two candidate rules:
+
+- pixel-center sampling with drop-out control, which is what GDI's
+  non-antialiased scan converter does and what the TrueType specification
+  describes; it emits one bit directly but the drop-out rules are intricate;
+- signed-area cell accumulation, producing 8-bit coverage that is thresholded at
+  50 percent, which sidesteps most drop-out handling and leaves real
+  antialiasing available if the Win98 "smooth edges of screen fonts" option is
+  ever emulated.
+
+Prefer the cell accumulator for that second reason.
+
+**Cache.** Required, not an optimization. Key on face, glyph index, ppem,
+matrix, and synthesis flags; store the bitmap in the *same column-major layout*
+`$gdi_bitmap_font_glyph_pixel` already reads. A cached glyph is then
+indistinguishable from an FNT glyph to every caller, and rasterization happens
+once per glyph and size rather than per `TextOut`.
+
+### Hinting, without a bytecode interpreter
+
+Unhinted outlines at 8 to 12 ppem look poor in one bit, which is exactly where
+TrueType hinting earns its keep. Implementing the bytecode interpreter in WAT
+is still rejected: it is a large virtual machine whose whole purpose is running
+hinting programs from fonts this project cannot ship.
+
+It is also unnecessary, because `tools/gen-bitmap-fon.c` already links FreeType
+at build time. Extend it to *rasterize outlines* across a fixed ppem ladder with
+FreeType's hinter and emit `.FON` strikes, exactly as it already emits strikes
+extracted from Wine's bitmaps. Small text then gets real hinting through the
+existing exact blit, the WAT scan converter only handles sizes where hinting
+stops mattering, and FreeType remains a build-time tool that is never linked
+into the emulator.
+
+The ladder must be bounded — faces times sizes times styles multiplies quickly.
+Start at 8-20 ppem for the Tier 1 faces only, driven by what the corpus
+actually requests.
 
 ### Vector fonts
 
@@ -240,6 +342,16 @@ reference capture is what tells us where, and whether it matters.
 
 ## Determinism across hosts
 
+Once text leaves Canvas, host determinism stops being a property that has to be
+arranged and becomes structural: the same font bytes go through the same WAT
+code and produce the same pixels in the browser, in the Node CLI, and in CI.
+Browser and Node use different Canvas rasterizers, so any text that still goes
+through `gdi_text_mask` can differ between them — which is a correctness reason
+to finish the removal, not merely a philosophical one.
+
+Until milestone 4 lands, the interim substitution path must still avoid naming
+host fonts:
+
 - **Browser** — `@font-face` blocks in `index.html` alongside the existing W95FA
   and Fixedsys Excelsior entries; `document.fonts.load()` must complete before
   the first guest paint, or early `measureText` calls silently use a fallback.
@@ -248,46 +360,99 @@ reference capture is what tells us where, and whether it matters.
   `skia-canvas`'s `FontLibrary.use`, so the same files register by private
   family name.
 
-Browser and Node still use different rasterizers, so Tier 3 *pixels* will
-differ between them. Tier 1 and 2 *metrics* come from the font file and will
-not. Tests that compare pixels must therefore continue to target the bitmap
-paths; tests that compare layout can target all tiers.
+Both hosts' font registration is deleted along with `gdi_text_mask`.
 
 ## Web payload
 
 The vendored TTFs are 4.2 MB (Liberation) + 2.3 MB (Wine). Shipping those raw
 to the browser is unacceptable for a page that currently loads a ~200 KB
-`w95fa.woff2`. The build must emit WOFF2 subsets — Win98 apps in the corpus are
-Latin-1/CP1252, so subsetting to the Windows-1252 repertoire plus the box and
+`w95fa.woff2`. The build must emit **subset TTFs** — Win98 apps in the corpus
+are CP1252/OEM, so subsetting to the Windows-1252 repertoire plus the box and
 symbol ranges each face actually needs cuts this by roughly an order of
-magnitude. The full TTFs stay in the repo as the pinned, reproducible source;
-only subsets are deployed, generated by a build step next to
-`tools/gen-wine-fonts.sh` and hash-pinned the same way.
+magnitude, and the same subsets shrink the resident WASM memory arena.
 
-Do not subset by hand or check in a subset without its generator — an
-unreproducible font binary in `fonts/` is exactly the provenance problem the
-rest of this directory is set up to avoid.
+Deliberately **not** WOFF2: the emulator loads font bytes into linear memory and
+parses them in WAT, so a Brotli-compressed container would require a decoder
+inside the emulator to buy something HTTP transport compression already
+provides for free. Subset TTF is both the wire format and the in-memory format.
+
+The same reasoning retires the `@font-face` and `FontLibrary.use` registrations
+entirely once milestone 4 lands — the browser never needs to know these fonts
+exist. Only the emulator does.
+
+The full TTFs stay in the repo as the pinned, reproducible source; only subsets
+are deployed, generated by a build step next to `tools/gen-wine-fonts.sh` and
+hash-pinned the same way. Do not subset by hand or check in a subset without its
+generator — an unreproducible font binary in `fonts/` is exactly the provenance
+problem the rest of this directory is set up to avoid.
 
 ## Milestones
 
-1. **Assets and manifest** — fonts vendored with pinned hashes and licenses
-   (done for Tier 1 and 2); `fonts/substitutions.json` written; `fonts/README.md`
-   and `fonts/wine/UPSTREAM.md` updated.
-2. **Deterministic substitution** — `_buildCssFont` reads the manifest, private
-   family names registered in both hosts, no host font ever named. Removes the
-   `'arial': 'Arial, sans-serif'` class of fallback entirely.
-3. **Tahoma bitmap strikes** — extend `tools/gen-wine-fonts.sh` to emit
-   `Tahoma.fon` (8–16 ppem) and `SmallFonts.fon` (11 ppem); wire into the
-   existing WAT strike table and `gdi_bitmap_font_best`. Pure win: moves the
-   Win98 shell font onto the pixel-exact path.
-4. **Metric reference** — v86 probe, pinned capture, comparison test.
-5. **Enumeration** — `EnumFontFamiliesEx` reports substituted faces under their
+Ordered so that each one is independently useful and the Canvas dependency
+shrinks monotonically.
+
+0. **Assets and manifest** — fonts vendored with pinned hashes and licenses
+   (done, commit `3ebdf08`); `fonts/substitutions.json` written; `fonts/README.md`
+   and `fonts/wine/UPSTREAM.md` updated (done).
+
+1. **Metrics in WAT — no rasterizer.** Parse `head`/`hhea`/`hmtx`/`maxp`/`cmap`/
+   `OS/2`, add the codepage tables, and serve `GetTextExtentPoint32`,
+   `GetCharWidth32`, `GetTextMetrics`, and `GetTextFace` from the font file.
+   **Start here regardless of whether the rasterizer is ever built.** It is
+   independent of rendering, it is exact rather than approximate, it makes
+   Liberation's metric compatibility real instead of aspirational, and it fixes
+   the layout, wrapping, and caret bugs that actually bite. Canvas keeps
+   producing glyph pixels in the meantime. Roughly 800-1200 lines of WAT.
+
+2. **Bitmap strikes** — extend `tools/gen-wine-fonts.sh` to emit `Tahoma.fon`
+   (8-16 ppem) and `SmallFonts.fon` (11 ppem) from the embedded EBDT strikes,
+   then extend `tools/gen-bitmap-fon.c` to rasterize the Tier 1 outlines across
+   the hinted ladder. Wire both into the existing strike table and
+   `gdi_bitmap_font_best`. No new rendering code; moves the Win98 shell font and
+   the common UI sizes of Arial, Times, and Courier onto the exact blit.
+
+3. **Interim deterministic substitution** — `_buildCssFont` reads the manifest
+   and uses private family names, so whatever text still reaches Canvas stops
+   depending on host fonts. Skippable if milestone 4 lands quickly.
+
+4. **WAT rasterizer** — `glyf` parse, transform, flatten, scan-convert, cache.
+   Delete `gdi_text_mask` and both hosts' font registration when the corpus
+   renders without it.
+
+5. **Metric reference** — v86 probe, pinned capture, comparison test. Gates any
+   claim of metric correctness; can run against milestone 1 immediately.
+
+6. **API completion** — `GetGlyphOutline` `GGO_NATIVE`/`GGO_BEZIER` (nearly free
+   once `glyf` is parsed, and currently a documented gap in
+   `software-gdi-design.md`), `GetCharABCWidths` from `hmtx` lsb plus glyph
+   `xMax`, `GetKerningPairs` from `kern`, synthetic bold by outline embolden,
+   synthetic italic by shear.
+
+7. **Enumeration** — `EnumFontFamiliesEx` reports substituted faces under their
    *Win98* names with correct `TEXTMETRIC` and charset, so apps that enumerate
    and pick by name find what they expect.
-6. **Tier 3 on demand** — add faces only when a corpus binary requests one.
 
-Milestones 2 and 3 are independent and can land in either order. Milestone 4
-gates any claim of metric correctness.
+8. **Tier 3 on demand** — add faces only when a corpus binary requests one.
+
+## Cost and risk
+
+Milestones 1 and 4 together are roughly 4000 lines of WAT, comparable to the
+existing `src/10b-gdi-font.wat`.
+
+- **Memory** — Liberation Sans alone is 410 KB and several faces may be resident
+  alongside a glyph cache. This needs a dedicated arena and a
+  [`memory-map.md`](memory-map.md) entry. Build-time subsetting to the CP1252
+  repertoire cuts the resident cost substantially and is shared with the WOFF2
+  subsetting described above.
+- **Performance** — bounded by the glyph cache; rasterization is once per glyph
+  and size, not once per `TextOut`. Without the cache this path would be far
+  slower than Canvas.
+- **Unhinted appearance** — mitigated by the build-time hinted ladder, not by
+  the rasterizer. If the ladder is ever bypassed, small text quality regresses
+  visibly and that will read as a rasterizer bug when it is not.
+- **Character mapping breadth** — codepages and `cmap` subtable formats are
+  where unbounded scope hides. Implement CP1252, CP437, and Symbol; add others
+  only when a corpus binary needs them.
 
 ## Coordination
 
