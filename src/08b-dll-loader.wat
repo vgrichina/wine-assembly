@@ -278,6 +278,13 @@
         (if (i32.eq (local.get $ordinal) (i32.const 151)) (then (return (call $lookup_api_id (i32.const 0x113BF))))) ;; __WSAFDIsSet
         (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id (i32.const 0x113CC))))) ;; WSASetLastError
       ))
+    ;; WINMM. Welcome98 imports PlaySound purely by ordinal; the name is
+    ;; resolved from the real Win98 winmm.dll export table rather than guessed
+    ;; (tools/pe-exports.js --ordinal=2).
+    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x113DC))
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (call $lookup_api_id (i32.const 0x113E6))))) ;; PlaySoundA
+      ))
     (i32.const -1))
 
   ;; Resolve one ordinal-only import. The WAT table above is consulted

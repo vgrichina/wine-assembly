@@ -811,6 +811,12 @@
   ;; supported ordinals to these normal API-table names.
   (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
 
+  ;; WINMM ordinal-import names, in the free space right after the WSOCK32
+  ;; block. $system_ordinal_api_id addresses these by absolute offset, so
+  ;; append here rather than inserting above — tools/data_offsets.js prints
+  ;; the resulting addresses.
+  (data (i32.const 0x113DC) "winmm.dll\00PlaySoundA\00")
+
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
   ;; dialog helpers, but apps can disturb that scratch/null-page area during
