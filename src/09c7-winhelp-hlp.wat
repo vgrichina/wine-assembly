@@ -2097,6 +2097,37 @@
     (call $heap_free (local.get $temp_ga))
     (local.get $ok))
 
+  ;; Hall decompression refuses a topic by returning 0. Each refusal records a
+  ;; numbered reason plus the source position and phrase index it was looking
+  ;; at, readable through get_help_hall_fail_code / _pos / _phrase, so an
+  ;; undecodable real file says which of the four token forms broke rather
+  ;; than only that something did. Codes, in source order:
+  ;;   1 source exhausted before output was complete
+  ;;   2 two-byte phrase code truncated
+  ;;   3 literal run longer than the source or the output
+  ;;   4 space/zero run longer than the output
+  ;;   5 phrase index past the phrase table
+  ;;   6 phrase longer than the remaining output
+  (global $help_hall_fail_code (mut i32) (i32.const 0))
+  (global $help_hall_fail_pos (mut i32) (i32.const 0))
+  (global $help_hall_fail_phrase (mut i32) (i32.const 0))
+  (global $help_hall_fail_dest (mut i32) (i32.const 0))
+
+  (func $help_hall_fail
+    (param $code i32) (param $pos i32) (param $phrase i32) (param $dest i32)
+    (result i32)
+    (global.set $help_hall_fail_code (local.get $code))
+    (global.set $help_hall_fail_pos (local.get $pos))
+    (global.set $help_hall_fail_phrase (local.get $phrase))
+    (global.set $help_hall_fail_dest (local.get $dest))
+    (i32.const 0))
+
+  (func (export "get_help_hall_fail_dest") (result i32) (global.get $help_hall_fail_dest))
+
+  (func (export "get_help_hall_fail_code") (result i32) (global.get $help_hall_fail_code))
+  (func (export "get_help_hall_fail_pos") (result i32) (global.get $help_hall_fail_pos))
+  (func (export "get_help_hall_fail_phrase") (result i32) (global.get $help_hall_fail_phrase))
+
   (func $help_decode_hall_topic_data
     (param $source i32) (param $source_len i32)
     (param $dest i32) (param $expected_len i32) (result i32)
@@ -2106,7 +2137,7 @@
     (block $decoded (loop $tokens
       (br_if $decoded (i32.ge_u (local.get $dest_pos) (local.get $expected_len)))
       (if (i32.ge_u (local.get $source_pos) (local.get $source_len))
-        (then (return (i32.const 0))))
+        (then (return (call $help_hall_fail (i32.const 1) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
       (local.set $ch (i32.load8_u (i32.add (local.get $source) (local.get $source_pos))))
       (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
       (block $classified
@@ -2117,7 +2148,7 @@
         (if (i32.eq (i32.and (local.get $ch) (i32.const 3)) (i32.const 1))
           (then
             (if (i32.ge_u (local.get $source_pos) (local.get $source_len))
-              (then (return (i32.const 0))))
+              (then (return (call $help_hall_fail (i32.const 2) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
             (local.set $next (i32.load8_u (i32.add (local.get $source) (local.get $source_pos))))
             (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
             (local.set $phrase_index
@@ -2130,7 +2161,7 @@
             (if (i32.or
                   (i32.gt_u (local.get $length) (i32.sub (local.get $source_len) (local.get $source_pos)))
                   (i32.gt_u (local.get $length) (i32.sub (local.get $expected_len) (local.get $dest_pos))))
-              (then (return (i32.const 0))))
+              (then (return (call $help_hall_fail (i32.const 3) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
             (memory.copy (i32.add (local.get $dest) (local.get $dest_pos))
               (i32.add (local.get $source) (local.get $source_pos)) (local.get $length))
             (local.set $source_pos (i32.add (local.get $source_pos) (local.get $length)))
@@ -2138,7 +2169,7 @@
             (br $tokens)))
         (local.set $length (i32.add (i32.shr_u (local.get $ch) (i32.const 4)) (i32.const 1)))
         (if (i32.gt_u (local.get $length) (i32.sub (local.get $expected_len) (local.get $dest_pos)))
-          (then (return (i32.const 0))))
+          (then (return (call $help_hall_fail (i32.const 4) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
         (local.set $fill
           (if (result i32) (i32.eq (i32.and (local.get $ch) (i32.const 15)) (i32.const 7))
             (then (i32.const 0x20)) (else (i32.const 0))))
@@ -2149,14 +2180,14 @@
       ;; Phrase cases branch here with phrase_index populated. Literal/fill
       ;; cases branch directly back to the loop above.
       (if (i32.ge_u (local.get $phrase_index) (global.get $help_doc_phrase_count))
-        (then (return (i32.const 0))))
+        (then (return (call $help_hall_fail (i32.const 5) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
       (local.set $phrase_start (i32.load (i32.add (global.get $help_doc_phrase_offsets_wa)
         (i32.mul (local.get $phrase_index) (i32.const 4)))))
       (local.set $phrase_end (i32.load (i32.add (global.get $help_doc_phrase_offsets_wa)
         (i32.mul (i32.add (local.get $phrase_index) (i32.const 1)) (i32.const 4)))))
       (local.set $length (i32.sub (local.get $phrase_end) (local.get $phrase_start)))
       (if (i32.gt_u (local.get $length) (i32.sub (local.get $expected_len) (local.get $dest_pos)))
-        (then (return (i32.const 0))))
+        (then (return (call $help_hall_fail (i32.const 6) (local.get $source_pos) (local.get $phrase_index) (local.get $dest_pos)))))
       (memory.copy (i32.add (local.get $dest) (local.get $dest_pos))
         (i32.add (global.get $help_doc_phrase_image_wa) (local.get $phrase_start))
         (local.get $length))
