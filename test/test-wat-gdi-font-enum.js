@@ -128,13 +128,23 @@ const { bootRenderHarness } = require('./render-helper');
   }
   const faces = candidates.map(candidate =>
     readAnsi(wat.test_gdi_bitmap_font_enum_face(candidate) >>> 0));
-  assert.deepStrictEqual(faces,
-    ['Arial', 'System', 'MS Sans Serif', 'Fixedsys', 'Courier', 'Terminal'],
-    'enumeration must retain Arial first and collapse duplicate FNT strikes');
+  // The installed strikes first, then every scalable face an application can
+  // actually ask for: the substitution table's Win98 names. An application
+  // that enumerates before it picks must be offered the names
+  // CreateFontIndirect will honour, or its font list contains faces this
+  // renderer cannot draw — and, worse, omits ones it can.
+  assert.deepStrictEqual(faces, [
+    'Arial', 'System', 'MS Sans Serif', 'Fixedsys', 'Courier', 'Terminal',
+    'Times New Roman', 'Courier New', 'Tahoma', 'Marlett', 'Symbol',
+    'Wingdings', 'Webdings',
+  ], 'enumeration must retain Arial first, collapse duplicate FNT strikes, '
+    + 'and report the substituted scalable faces');
   assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
     'enumeration should lazily install all bundled FNT strikes');
   assert.deepStrictEqual(candidates.map(candidate =>
-    wat.test_gdi_bitmap_font_enum_type(candidate) >>> 0), [4, 1, 1, 1, 1, 1]);
+    wat.test_gdi_bitmap_font_enum_type(candidate) >>> 0),
+    [4, 1, 1, 1, 1, 1, 4, 4, 4, 4, 4, 4, 4],
+    'strikes report RASTER_FONTTYPE and scalable faces TRUETYPE_FONTTYPE');
 
   const ansiFilter = writeAnsi('fixedSYS');
   const ansiCandidate = wat.test_gdi_bitmap_font_enum_next(0, wa(ansiFilter), 0) >>> 0;
@@ -184,23 +194,23 @@ const { bootRenderHarness } = require('./render-helper');
   assert.deepStrictEqual(calls, { measure: 0, metrics: 0 },
     'installed face enumeration must not consult Canvas font providers');
 
+  const EXPECTED = [
+    ['Aria', 4], ['Syst', 1], ['MS S', 1], ['Fixe', 1], ['Cour', 1],
+    ['Term', 1], ['Time', 4], ['Cour', 4], ['Taho', 4], ['Marl', 4],
+    ['Symb', 4], ['Wing', 4], ['Webd', 4],
+  ];
   const callback = makeCallback(false);
-  const callbackData = allocZero(4 + 16 * 8);
+  const callbackData = allocZero(4 + 16 * (EXPECTED.length + 2));
   assert(wat.test_start_EnumFontsA(0, callback, callbackData));
   runCallbacks();
-  assert.strictEqual(wat.guest_read32(callbackData), 6);
-  assert.deepStrictEqual(Array.from({ length: 6 }, (_, index) => [
+  assert.strictEqual(wat.guest_read32(callbackData), EXPECTED.length);
+  assert.deepStrictEqual(Array.from({ length: EXPECTED.length }, (_, index) => [
     wat.guest_read32(callbackData + 4 + index * 16),
     wat.guest_read32(callbackData + 8 + index * 16),
-  ]), [
-    [Buffer.from('Aria').readUInt32LE(), 4],
-    [Buffer.from('Syst').readUInt32LE(), 1],
-    [Buffer.from('MS S').readUInt32LE(), 1],
-    [Buffer.from('Fixe').readUInt32LE(), 1],
-    [Buffer.from('Cour').readUInt32LE(), 1],
-    [Buffer.from('Term').readUInt32LE(), 1],
-  ]);
-  for (let index = 0; index < 6; index++) {
+  ]), EXPECTED.map(([name, type]) => [Buffer.from(name).readUInt32LE(), type]));
+  // Every face reaches the guest with real metrics — a scalable one measured
+  // from its own head/hhea/OS-2 at the nominal em, not a filled-in constant.
+  for (let index = 0; index < EXPECTED.length; index++) {
     assert(wat.guest_read32(callbackData + 12 + index * 16) > 0,
       `callback ${index} must receive native text metrics`);
   }

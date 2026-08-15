@@ -145,6 +145,14 @@
     (local $record i32)
     (if (i32.eq (local.get $candidate) (i32.const 1))
       (then (return (i32.const 0x0000027E))))
+    ;; Past the installed strikes lie the scalable faces: every substitution
+    ;; entry with a mounted file, then anything the guest installed itself.
+    ;; An application that enumerates before it picks — a font dialog, a word
+    ;; processor's face list — must see the names CreateFontIndirect will
+    ;; honour, or it offers the user a list our renderer cannot satisfy.
+    (if (i32.gt_u (local.get $candidate) (i32.const 17))
+      (then (return (call $tt_enum_face_name
+        (i32.sub (local.get $candidate) (i32.const 18))))))
     (if (i32.or (i32.lt_u (local.get $candidate) (i32.const 2))
           (i32.gt_u (local.get $candidate) (i32.const 17)))
       (then (return (i32.const 0))))
@@ -157,15 +165,23 @@
 
   (func $gdi_bitmap_font_enum_unique (param $candidate i32) (result i32)
     (local $face i32) (local $i i32) (local $prior i32) (local $prior_face i32)
+    (local $limit i32)
     (if (i32.eq (local.get $candidate) (i32.const 1))
       (then (return (i32.const 1))))
     (local.set $face (call $gdi_bitmap_font_enum_face (local.get $candidate)))
     (if (i32.eqz (local.get $face)) (then (return (i32.const 0))))
     (if (call $gdi_bitmap_font_face_equal (local.get $face) (i32.const 0x0000027E))
       (then (return (i32.const 0))))
+    ;; A scalable face compares against every installed strike, not just the
+    ;; ones before it: drawing text in a substituted face installs a strike
+    ;; under that same name, so after any Arial has been drawn the family would
+    ;; otherwise be reported twice.
+    (local.set $limit
+      (if (result i32) (i32.gt_u (local.get $candidate) (i32.const 17))
+        (then (i32.const 16))
+        (else (i32.sub (local.get $candidate) (i32.const 2)))))
     (block $unique (loop $scan
-      (br_if $unique (i32.ge_u (local.get $i)
-        (i32.sub (local.get $candidate) (i32.const 2))))
+      (br_if $unique (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $prior (call $gdi_bitmap_font_record (local.get $i)))
       (if (i32.load (local.get $prior))
         (then
@@ -187,7 +203,11 @@
     (drop (call $gdi_bitmap_font_ensure_stock))
     (local.set $candidate (i32.add (local.get $after) (i32.const 1)))
     (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $candidate) (i32.const 17)))
+      ;; The scalable list ends where it runs out of names rather than at a
+      ;; fixed candidate, so ask for the name and stop when there is none.
+      (if (i32.gt_u (local.get $candidate) (i32.const 17))
+        (then (br_if $done (i32.eqz (call $tt_enum_face_name
+          (i32.sub (local.get $candidate) (i32.const 18)))))))
       (local.set $face (call $gdi_bitmap_font_enum_face (local.get $candidate)))
       (if (i32.and (i32.ne (local.get $face) (i32.const 0))
             (call $gdi_bitmap_font_enum_unique (local.get $candidate)))
@@ -231,13 +251,17 @@
         (i32.shl (local.get $i) (i32.const 1))) (i32.const 0)))
       (else (i32.store8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0)))))
 
+  ;; TRUETYPE_FONTTYPE (4) for the scalable fallback and every substituted or
+  ;; registered face; RASTER_FONTTYPE (1) for an installed strike.
   (func $gdi_bitmap_font_enum_type (param $candidate i32) (result i32)
-    (if (result i32) (i32.eq (local.get $candidate) (i32.const 1))
+    (if (result i32) (i32.or (i32.eq (local.get $candidate) (i32.const 1))
+          (i32.gt_u (local.get $candidate) (i32.const 17)))
       (then (i32.const 4)) (else (i32.const 1))))
 
   (func $gdi_bitmap_font_enum_charset (param $candidate i32) (result i32)
-    (if (i32.eq (local.get $candidate) (i32.const 1))
-      (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $candidate) (i32.const 1))
+          (i32.gt_u (local.get $candidate) (i32.const 17)))
+      (then (return (i32.const 0))))  ;; ANSI_CHARSET
     (if (i32.or (i32.lt_u (local.get $candidate) (i32.const 2))
           (i32.gt_u (local.get $candidate) (i32.const 17)))
       (then (return (i32.const -1))))
@@ -255,11 +279,13 @@
     (local $pitch i32) (local $first i32) (local $last i32)
     (local $default i32) (local $break i32) (local $internal i32) (local $external i32)
     (local $italic i32) (local $underlined i32) (local $struck i32)
+    (local $metrics i32)
     (if (i32.or (i32.eqz (local.get $lf)) (i32.eqz (local.get $tm)))
       (then (return (i32.const 0))))
     (local.set $face (call $gdi_bitmap_font_enum_face (local.get $candidate)))
     (if (i32.eqz (local.get $face)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $candidate) (i32.const 1))
+    (if (i32.or (i32.eq (local.get $candidate) (i32.const 1))
+          (i32.gt_u (local.get $candidate) (i32.const 17)))
       (then
         (local.set $height (i32.const 16))
         (local.set $ascent (i32.const 13))
@@ -270,7 +296,29 @@
         (local.set $first (i32.const 32))
         (local.set $last (i32.const 255))
         (local.set $default (i32.const 31))
-        (local.set $break (i32.const 32)))
+        (local.set $break (i32.const 32))
+        ;; Report the face's own metrics at the same nominal 16-pixel em the
+        ;; fallback uses. Enumeration answers "what is available", so a
+        ;; nominal size is the honest answer; the numbers still come from the
+        ;; file rather than from a table of guesses. Zero means the file could
+        ;; not be opened, and the fallback metrics above stand.
+        (if (i32.gt_u (local.get $candidate) (i32.const 17))
+          (then
+            (local.set $metrics
+              (call $tt_enum_face_metrics (local.get $face) (i32.const 16)))
+            (if (local.get $metrics)
+              (then
+                (local.set $height
+                  (i32.and (local.get $metrics) (i32.const 0xFF)))
+                (local.set $ascent (i32.and
+                  (i32.shr_u (local.get $metrics) (i32.const 8))
+                  (i32.const 0xFF)))
+                (local.set $average (i32.and
+                  (i32.shr_u (local.get $metrics) (i32.const 16))
+                  (i32.const 0xFF)))
+                (local.set $maximum (i32.and
+                  (i32.shr_u (local.get $metrics) (i32.const 24))
+                  (i32.const 0xFF))))))))
       (else
         (local.set $record (call $gdi_bitmap_font_record
           (i32.sub (local.get $candidate) (i32.const 2))))

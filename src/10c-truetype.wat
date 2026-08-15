@@ -2573,6 +2573,34 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Name of the nth substitution-table entry that actually has a file, as a
+  ;; WASM address, or 0 once the table runs out. Entries with an empty regular
+  ;; file are skipped: they name a face nothing is mounted for, and reporting
+  ;; one to an enumerating application would offer a face that cannot be drawn.
+  (func $tt_subst_enum_name (param $index i32) (result i32)
+    (local $p i32) (local $end i32) (local $regular i32) (local $bold i32)
+    (local $slanted i32) (local $bold_slanted i32) (local $seen i32)
+    (local.set $p (global.get $TT_SUBST_TABLE))
+    (local.set $end (i32.add (global.get $TT_SUBST_TABLE)
+      (global.get $TT_SUBST_TABLE_SIZE)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
+      (local.set $regular (call $tt_subst_skip (local.get $p) (local.get $end)))
+      (local.set $bold (call $tt_subst_skip (local.get $regular) (local.get $end)))
+      (local.set $slanted (call $tt_subst_skip (local.get $bold) (local.get $end)))
+      (local.set $bold_slanted
+        (call $tt_subst_skip (local.get $slanted) (local.get $end)))
+      (if (i32.load8_u (local.get $regular))
+        (then
+          (if (i32.eq (local.get $seen) (local.get $index))
+            (then (return (local.get $p))))
+          (local.set $seen (i32.add (local.get $seen) (i32.const 1)))))
+      (local.set $p
+        (call $tt_subst_skip (local.get $bold_slanted) (local.get $end)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; ---- runtime-registered faces -----------------------------------------
   ;;
   ;; The table above is what Win98 shipped. A guest may also install a font of
@@ -2753,6 +2781,139 @@
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
     (local.get $found))
+
+  ;; ---- enumeration ------------------------------------------------------
+  ;;
+  ;; Scalable faces an application can ask for by name: every substitution
+  ;; entry with a file, then every face the guest installed itself that the
+  ;; table does not already name. An application that enumerates before it
+  ;; picks — a font dialog, a word processor's face list — sees the same set of
+  ;; names that CreateFontIndirect will actually honour, which is the whole
+  ;; point of reporting them.
+  ;;
+  ;; The registry is searched by name against the substitution table so a guest
+  ;; installing its own Arial does not produce two "Arial" entries; Win98
+  ;; reports one family once.
+
+  (func $tt_reg_enum_name (param $index i32) (result i32)
+    (local $table i32) (local $i i32) (local $record i32) (local $name i32)
+    (local $seen i32)
+    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
+    (local.set $table (call $tt_reg_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $TT_REG_MAX)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $i)))
+      (if (i32.load (local.get $record))
+        (then
+          (local.set $name
+            (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF)))
+          ;; Skip a name the substitution table already reports, and a name an
+          ;; earlier registry entry already reported (bold and italic files of
+          ;; one family each carry that family's name).
+          (if (i32.and
+                (i32.eqz (call $tt_subst_enum_index (local.get $name)))
+                (i32.eqz (call $tt_reg_enum_earlier
+                  (local.get $table) (local.get $i) (local.get $name))))
+            (then
+              (if (i32.eq (local.get $seen) (local.get $index))
+                (then (return (local.get $name))))
+              (local.set $seen (i32.add (local.get $seen) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; 1 when the substitution table reports this name, else 0.
+  (func $tt_subst_enum_index (param $name i32) (result i32)
+    (local $i i32) (local $entry i32)
+    (block $done (loop $scan
+      (local.set $entry (call $tt_subst_enum_name (local.get $i)))
+      (br_if $done (i32.eqz (local.get $entry)))
+      (if (call $tt_subst_name_equal (local.get $name) (local.get $entry))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $tt_reg_enum_earlier (param $table i32) (param $limit i32)
+        (param $name i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $i)))
+      (if (i32.load (local.get $record))
+        (then (if (call $tt_subst_name_equal (local.get $name)
+                (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF)))
+          (then (return (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; The nth enumerable scalable face name, substitutes first, or 0 past the
+  ;; end. One flat index so the GDI enumerator can walk it as candidates.
+  (func $tt_enum_face_name (param $index i32) (result i32)
+    (local $name i32) (local $count i32)
+    (local.set $name (call $tt_subst_enum_name (local.get $index)))
+    (if (local.get $name) (then (return (local.get $name))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (call $tt_subst_enum_name (local.get $count))))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (br $scan)))
+    (call $tt_reg_enum_name (i32.sub (local.get $index) (local.get $count))))
+
+  ;; Cell metrics for an enumerated face at a nominal em, packed as
+  ;; height | ascent<<8 | average<<16 | maximum<<24, or 0 when the file cannot
+  ;; be opened or its head/hhea are unusable. Every field is a byte, which
+  ;; holds for any em an enumeration would report.
+  (func $tt_enum_face_metrics (param $name i32) (param $em i32) (result i32)
+    (local $face i32) (local $data i32) (local $size i32) (local $upem i32)
+    (local $ascent i32) (local $descent i32) (local $height i32)
+    (local $average i32) (local $maximum i32)
+    (local.set $face (call $tt_face_for_logfont
+      (local.get $name) (i32.const 400) (i32.const 0)))
+    (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (if (i32.eqz (local.get $data)) (then (return (i32.const 0))))
+    (local.set $upem (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (if (i32.le_s (local.get $upem) (i32.const 0)) (then (return (i32.const 0))))
+    ;; usWinAscent/usWinDescent bound the inked cell, which is what a
+    ;; TEXTMETRIC height means; hhea is the line box and would over-report.
+    (local.set $ascent (call $tt_win_ascent (local.get $data) (local.get $size)))
+    (local.set $descent (call $tt_win_descent (local.get $data) (local.get $size)))
+    (if (i32.le_s (local.get $ascent) (i32.const 0))
+      (then (local.set $ascent (call $tt_ascender (local.get $data) (local.get $size)))))
+    (if (i32.le_s (local.get $ascent) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.lt_s (local.get $descent) (i32.const 0))
+      (then (local.set $descent (i32.sub (i32.const 0) (local.get $descent)))))
+    (local.set $ascent (i32.div_s
+      (i32.add (i32.mul (local.get $ascent) (local.get $em))
+        (i32.div_s (local.get $upem) (i32.const 2)))
+      (local.get $upem)))
+    (local.set $descent (i32.div_s
+      (i32.add (i32.mul (local.get $descent) (local.get $em))
+        (i32.div_s (local.get $upem) (i32.const 2)))
+      (local.get $upem)))
+    (local.set $height (i32.add (local.get $ascent) (local.get $descent)))
+    ;; Advance of 'n' as the average character width, the same measure Win98's
+    ;; tmAveCharWidth reports for a proportional face.
+    (local.set $average (call $tt_advance_fu (local.get $data) (local.get $size)
+      (call $tt_glyph_index (local.get $data) (local.get $size) (i32.const 110))))
+    (local.set $average (i32.div_s
+      (i32.add (i32.mul (local.get $average) (local.get $em))
+        (i32.div_s (local.get $upem) (i32.const 2)))
+      (local.get $upem)))
+    (if (i32.le_s (local.get $average) (i32.const 0))
+      (then (local.set $average (i32.div_s (local.get $em) (i32.const 2)))))
+    (local.set $maximum (local.get $height))
+    (if (i32.or (i32.gt_u (local.get $height) (i32.const 255))
+          (i32.or (i32.gt_u (local.get $ascent) (i32.const 255))
+                  (i32.gt_u (local.get $average) (i32.const 255))))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.or (local.get $height) (i32.shl (local.get $ascent) (i32.const 8)))
+      (i32.or (i32.shl (local.get $average) (i32.const 16))
+              (i32.shl (local.get $maximum) (i32.const 24)))))
 
   ;; Open the substitute for a LOGFONT face name. Returns a face index, or -1
   ;; when the face has no substitute or the file is not in the VFS.
