@@ -688,6 +688,14 @@ class WineAssembly {
       },
     ], { required: true });
 
+    // Scalable faces mount under the filenames a real C:\WINDOWS\FONTS had, so
+    // WAT opens ARIAL.TTF the way Win98 GDI did and never learns that
+    // Liberation Sans is what answers. Without these the WAT TrueType
+    // rasterizer has nothing to rasterize and every scalable face silently
+    // falls back to Canvas - which still draws text, in whatever the host
+    // machine happens to have, at whatever metrics it happens to use.
+    await this.loadSubstituteFonts();
+
     // Create shared memory externally
     this.memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     imports.host.memory = this.memory;
@@ -976,6 +984,35 @@ class WineAssembly {
     }
 
     return entry;
+  }
+
+  // Mount every vendored open font at the Win98 filename it substitutes.
+  // fonts/substitutions.json is the same map the CLI harness and the WAT face
+  // table read, so the browser cannot end up offering a different set of faces
+  // than the tests cover.
+  //
+  // Deliberately not `required`: a font that fails to fetch costs that one
+  // face its exact metrics and drops it to the Canvas fallback, which is a
+  // much better outcome than refusing to launch the app.
+  async loadSubstituteFonts() {
+    if (this._substituteFontsLoaded) return;
+    this._substituteFontsLoaded = true;
+    const fontMounts = (typeof window !== 'undefined' && window.fontMounts) || null;
+    if (!fontMounts) return;
+    let manifest;
+    try {
+      const response = await fetch('fonts/substitutions.json?v=1');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      manifest = await response.json();
+    } catch (err) {
+      console.warn('font substitutions unavailable, scalable text falls back ' +
+        'to Canvas:', err);
+      return;
+    }
+    await this.loadFiles(fontMounts(manifest).map(mount => ({
+      url: 'fonts/' + mount.file,
+      vfsPath: mount.vfsPath,
+    })), { required: false });
   }
 
   async loadFiles(urls, options = {}) {

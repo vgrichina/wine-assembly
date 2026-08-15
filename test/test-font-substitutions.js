@@ -151,6 +151,35 @@ for (const name of Object.keys(manifest.unsubstituted || {})) {
     `"${name}" is both substituted and listed as unsubstituted`);
 }
 
+// Both hosts must actually mount these. The CLI harness is exercised by the
+// WAT gates; the browser is not reachable from here, so its wiring is checked
+// as text. A browser that never seeds the fonts still renders text - Canvas
+// draws it - so nothing would fail to report a missing mount.
+const ROOT = path.join(__dirname, '..');
+const hostJs = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
+const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const runJs = fs.readFileSync(path.join(ROOT, 'test', 'run.js'), 'utf8');
+
+assert.ok(hostJs.includes('loadSubstituteFonts()'),
+  'host.js must mount the substitute fonts, or the web build cannot use the ' +
+  'WAT rasterizer at all');
+assert.ok(indexHtml.includes('lib/font-substitutions.js'),
+  'index.html must load lib/font-substitutions.js, which host.js needs to ' +
+  'turn the manifest into mounts');
+assert.ok(runJs.includes("require('../lib/font-substitutions')"),
+  'test/run.js must seed the same fonts, or CLI and browser disagree');
+
+// Both hosts read the manifest rather than carrying their own copy of the
+// list; a hardcoded filename here is how the two drift apart.
+for (const face of manifest.faces) {
+  for (const style of Object.keys(face.win98Files || {})) {
+    const win98File = face.win98Files[style];
+    assert.ok(!hostJs.includes(win98File) && !runJs.includes(win98File),
+      `${win98File} is hardcoded in a host; both must go through ` +
+      `fontMounts(substitutions.json)`);
+  }
+}
+
 console.log(
   `PASS  fonts/substitutions.json: ${manifest.faces.length} faces, ` +
   `${files} font files, all present, all glyf TrueType, all privately named, ` +
