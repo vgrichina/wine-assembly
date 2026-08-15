@@ -5212,7 +5212,7 @@
   {
     "id": 608,
     "name": "SetDIBits",
-    "nargs": 6,
+    "nargs": 7,
     "convention": "stdcall",
     "hash": 1466503316
   },
@@ -9256,7 +9256,7 @@
   {
     "id": 1115,
     "name": "DirectDrawEnumerateExA",
-    "nargs": 2,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 1037142952
   },

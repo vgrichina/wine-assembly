@@ -5595,7 +5595,7 @@
           (i32.load (global.get $PAINT_SCRATCH))
           (i32.load offset=4 (global.get $PAINT_SCRATCH))
           (i32.load offset=8 (global.get $PAINT_SCRATCH))
-          (i32.load offset=12 (global.get $PAINT_SCRATCH)))))))
+          (i32.load offset=12 (global.get $PAINT_SCRATCH))))))
     (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $rv)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -9461,7 +9461,7 @@
           (then
             (global.set $pending_input_packed (local.get $packed))
             (global.set $pending_input_hwnd (call $host_check_input_hwnd))
-            (global.set $pending_input_lparam (call $host_check_input_lparam)))))))
+            (global.set $pending_input_lparam (call $host_check_input_lparam))))))
     (if (i32.or
           (i32.or
             (i32.or (global.get $quit_flag)
@@ -10803,7 +10803,7 @@
             (call $dc_apply_window_clip (local.get $hdc) (local.get $arg0)))
           (else
             (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
-            (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0)))))))
+            (call $dc_apply_client_clip (local.get $hdc) (local.get $arg0))))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )

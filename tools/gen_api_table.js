@@ -1024,6 +1024,10 @@ const extra = [
   { name: 'AddAtomW', nargs: 1 },
   { name: 'GetAtomNameA', nargs: 3 },
   { name: 'GetAtomNameW', nargs: 3 },
+  // nargs corrections found by tools/check-handler-esp.js — the handlers pop
+  // the right frame, the table was under-counting, which mis-decodes traces.
+  { name: 'SetDIBits', nargs: 7 },
+  { name: 'DirectDrawEnumerateExA', nargs: 3 },
   // MSVCRT — cdplayer.exe parses its disc database with sscanf.
   { name: 'sscanf', nargs: 2, convention: 'cdecl' },
   // USER32 — Win95-era menu item insertion; winamp.exe calls it while
