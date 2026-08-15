@@ -243,8 +243,17 @@ const TEST_CASES = [
     // reaches the 640x480 splash/menu DirectDraw frame.
     maxBatches: 40, batchSize: 5000000, extraArgs: ['--quiet-blocks'], timeoutMs: 45000 },
   // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
-  { exe: 'test/binaries/dx-sdk/bin/ddex1.exe', name: 'DX5 DDraw Sample 1 (ddex1)' },
-  { exe: 'test/binaries/dx-sdk/bin/ddex2.exe', name: 'DX5 DDraw Sample 2 (ddex2)' },
+  // ddex1 and ddex2 draw one line of text on an otherwise black flipping
+  // surface — "Back buffer (F12 to quit)" and "Front buffer (F12 to quit)".
+  // That is the whole sample, so the frame is legitimately ~99% one colour and
+  // the generic blank heuristic cannot distinguish it from a dead screen. Gate
+  // on the text band actually being lit instead.
+  { exe: 'test/binaries/dx-sdk/bin/ddex1.exe', name: 'DX5 DDraw Sample 1 (ddex1)',
+    contentRegion: { x: 0, y: 0, width: 260, height: 24 },
+    minRegionNonBlackPixels: 300 },   // renders 569; a dead surface gives 0
+  { exe: 'test/binaries/dx-sdk/bin/ddex2.exe', name: 'DX5 DDraw Sample 2 (ddex2)',
+    contentRegion: { x: 0, y: 0, width: 260, height: 24 },
+    minRegionNonBlackPixels: 1200 },  // renders 2464 (filled blue label)
   { exe: 'test/binaries/dx-sdk/bin/ddex3.exe', name: 'DX5 DDraw Sample 3 (ddex3)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex4.exe', name: 'DX5 DDraw Sample 4 (ddex4)' },
   { exe: 'test/binaries/dx-sdk/bin/ddex5.exe', name: 'DX5 DDraw Sample 5 (ddex5)', maxBatches: 500 },
@@ -505,7 +514,13 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
       const a = await analyzePng(pngPath, tc.contentRegion);
       if (a) {
         r.colors = a.colors;
-        const isBlank = a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.97;
+        // A case that declares its own region gate is making a sharper claim
+        // than the generic heuristic can — "these pixels must be lit" beats
+        // "the whole frame should not be near-solid". Some correct renders are
+        // one line of text on a solid field (the ddex samples draw exactly
+        // that), which the whole-frame test cannot tell from nothing at all.
+        const isBlank = !tc.minRegionNonBlackPixels &&
+          a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.97;
         if (isBlank) {
           r.status = 'WARN';
           r.reason = `${r.reason} — BLANK (${a.colors} colors, ${(a.topShare*100).toFixed(1)}% one color)`;
