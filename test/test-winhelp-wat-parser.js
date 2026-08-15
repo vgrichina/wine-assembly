@@ -717,6 +717,20 @@ async function main() {
     }
   }
 
+  const semanticHelpImports = new Set(['help_open', 'help_get_topic', 'help_get_title']);
+  const wasmImports = WebAssembly.Module.imports(new WebAssembly.Module(wasm));
+  check('production WASM has no semantic JavaScript WinHelp imports',
+    wasmImports.every(entry => !semanticHelpImports.has(entry.name)) &&
+    [...semanticHelpImports].every(name => !(name in imports.host)));
+  const runtimeHelpReferences = [
+    fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'test', 'run.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8'),
+  ].join('\n');
+  check('browser and CLI no longer load or initialize the semantic HlpParser',
+    !/HlpParser|hlp-parser|_helpParser|_helpPendingPath/.test(runtimeHelpReferences));
+
   function load(data, directoryOnly = false) {
     bytes.set(data, staging);
     return directoryOnly

@@ -1208,39 +1208,6 @@ class WineAssembly {
     }
   }
 
-  async handleHelpLoad() {
-    const ctx = this._helpCtx;
-    const baseName = (ctx._helpPendingPath || '').replace(/^.*[\\\/]/, '');
-    if (!baseName) {
-      this.instance.exports.clear_yield();
-      return;
-    }
-    const paths = ['binaries/help/' + baseName, 'binaries/' + baseName];
-    let data = null;
-    for (const url of paths) {
-      try {
-        const resp = await fetch(url);
-        if (resp.ok) {
-          data = new Uint8Array(await resp.arrayBuffer());
-          break;
-        }
-      } catch (_) {}
-    }
-    if (data && typeof HlpParser !== 'undefined') {
-      try {
-        const parser = new HlpParser(data);
-        if (parser.parse()) {
-          ctx._helpParser = parser;
-          console.log(`[HelpLoad] Parsed ${baseName}: ${parser.topics.length} topics`);
-        }
-      } catch (e) {
-        console.error('[HelpLoad] Parse error:', e);
-      }
-    }
-    ctx._helpPendingPath = null;
-    this.instance.exports.clear_yield();
-  }
-
   _registerDllBitmapResources(name, bytes, loadAddr) {
     const _extractBitmapBytes = (typeof extractBitmapBytes === 'function')
       ? extractBitmapBytes
@@ -1502,11 +1469,6 @@ class WineAssembly {
         const yieldReason = self.instance.exports.get_yield_reason();
         if (yieldReason === 3) {
           await self.handleComDllLoad();
-          if (self.running) { setTimeout(step, 0); }
-          return;
-        }
-        if (yieldReason === 4) {
-          await self.handleHelpLoad();
           if (self.running) { setTimeout(step, 0); }
           return;
         }

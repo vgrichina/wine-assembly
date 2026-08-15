@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
-const { HlpParser } = require('../lib/hlp-parser');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');

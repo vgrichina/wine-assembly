@@ -53,6 +53,10 @@ and released on replacement or Quit. Inline picture unions and metafiles remain
 explicit placeholders. Paired `|KWBTREE` and
 `|KWDATA` files now publish a case-folded default keyword index with canonical
 topic postings and explicit `|Rose` macro sentinels.
+The obsolete JavaScript `HlpParser` production runtime and the semantic `help_open`,
+`help_get_topic`, and `help_get_title` WASM imports have been removed. Browser
+and CLI production paths now expose only raw VFS bytes and presentation
+primitives to the WAT-owned parser/session/viewer.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -727,7 +731,7 @@ tables out of the parser:
 | `src/09c8-winhelp-cnt.wat` | CNT parser, contents hierarchy, generated in-memory indexes. |
 | `src/09c9-winhelp-ui.wat` | Topic IR/layout, wndprocs, dialogs, toolbar/menu actions, hotspots, painting. |
 | `lib/host-imports.js` | Raw VFS mount/fetch and existing rendering primitives only. |
-| `lib/hlp-parser.js` | Temporary runtime fallback/comparison point; delete after WAT cutover. It is not a correctness oracle. |
+| `lib/hlp-parser.js` | Offline diagnostic-tool parser only; never loaded by browser/CLI production. |
 
 Names may change during implementation, but parser and UI code should not be
 folded into the already-large generic handlers file.
@@ -1052,12 +1056,17 @@ reference for fixtures containing `|FONT` and `|bmN` data.
 
 ### Phase 6: keyword/search and safe macros
 
+Status: **partially implemented**. The default exact/prefix keyword index and
+its canonical postings are WAT-owned. The semantic JavaScript HLP parser's
+browser script, async continuation, CLI require, host callbacks, and WASM imports have been deleted,
+so production has no alternate host-owned topic-selection path. Named keyword
+tables, the full-text Find model, and the fixture-driven safe macro subset
+remain.
+
 - Extend the implemented default keyword exact/prefix index to named
   `HELP_MULTIKEY` tables.
 - Build the in-memory Find index without requiring GID.
 - Add the fixture-driven safe macro subset.
-- Remove `lib/hlp-parser.js` from the browser runtime and delete semantic help
-  imports.
 
 Exit criterion: all supported commands use WAT-owned state, production loads no
 JS HLP parser, and the archived viewer remains test-only.
