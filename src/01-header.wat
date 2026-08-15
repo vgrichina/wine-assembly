@@ -817,6 +817,13 @@
   ;; the resulting addresses.
   (data (i32.const 0x113DC) "winmm.dll\00PlaySoundA\00")
 
+  ;; OLEAUT32 ordinal-import names. Kodak Imaging imports the whole VARIANT
+  ;; and BSTR set by ordinal only; the numbers come from the real Win98
+  ;; oleaut32.dll export table (tools/pe-exports.js --ordinal=...).
+  ;; NB 0x11400..0x11500 is DI_DIK_VK_TABLE in 09a8-handlers-directx.wat, which
+  ;; concatenates later and would silently overwrite anything placed there.
+  (data (i32.const 0x11500) "oleaut32.dll\00SysAllocString\00SysAllocStringLen\00SysFreeString\00SysStringLen\00VariantInit\00VariantClear\00VariantCopy\00")
+
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
   ;; dialog helpers, but apps can disturb that scratch/null-page area during

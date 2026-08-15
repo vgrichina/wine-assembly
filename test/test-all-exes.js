@@ -146,9 +146,12 @@ const TEST_CASES = [
   // instead of blending into a generic "not a target" note.
   // Kodak Imaging gets its DLLs and its shared section now, then stops on
   // sti.dll — the Still Image scanner API, which has nothing to talk to here.
+  // Its DLLs now load (IMGCMN pulls in OIFIL400 which pulls in OIGFS400) and it
+  // gets ~3x further, but the Kodak libraries import each other through a long
+  // tail of undocumented ordinals and it stops on one of those.
   { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging',
     maxBatches: 800, batchSize: 50000, timeoutMs: 60000,
-    knownBadRender: 'stops at sti.dll (Still Image scanner API), no device to bind' },
+    expectedCrash: 'unmapped ordinal in the OI*400 imaging libraries' },
   { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview',
     // Draws its Imaging Preview frame, menus and split panes once OIDIS400 and
     // OIADM400 are present beside the exe.

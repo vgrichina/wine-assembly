@@ -285,6 +285,17 @@
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (call $lookup_api_id (i32.const 0x113E6))))) ;; PlaySoundA
       ))
+    ;; OLEAUT32. Kodak Imaging imports the VARIANT/BSTR set by ordinal only.
+    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11500))
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 2))  (then (return (call $lookup_api_id (i32.const 0x1150D))))) ;; SysAllocString
+        (if (i32.eq (local.get $ordinal) (i32.const 4))  (then (return (call $lookup_api_id (i32.const 0x1151C))))) ;; SysAllocStringLen
+        (if (i32.eq (local.get $ordinal) (i32.const 6))  (then (return (call $lookup_api_id (i32.const 0x1152E))))) ;; SysFreeString
+        (if (i32.eq (local.get $ordinal) (i32.const 7))  (then (return (call $lookup_api_id (i32.const 0x1153C))))) ;; SysStringLen
+        (if (i32.eq (local.get $ordinal) (i32.const 8))  (then (return (call $lookup_api_id (i32.const 0x11549))))) ;; VariantInit
+        (if (i32.eq (local.get $ordinal) (i32.const 9))  (then (return (call $lookup_api_id (i32.const 0x11555))))) ;; VariantClear
+        (if (i32.eq (local.get $ordinal) (i32.const 10)) (then (return (call $lookup_api_id (i32.const 0x11562))))) ;; VariantCopy
+      ))
     (i32.const -1))
 
   ;; Resolve one ordinal-only import. The WAT table above is consulted

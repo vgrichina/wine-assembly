@@ -1028,6 +1028,9 @@ const extra = [
   // the right frame, the table was under-counting, which mis-decodes traces.
   { name: 'SetDIBits', nargs: 7 },
   { name: 'DirectDrawEnumerateExA', nargs: 3 },
+  // OLEAUT32 — Kodak Imaging imports these by ordinal.
+  { name: 'VariantInit', nargs: 1 },
+  { name: 'VariantCopy', nargs: 2 },
   // MSVCRT — Kodak Preview asks where it is running from.
   { name: '_getcwd', nargs: 2, convention: 'cdecl' },
   // MSVCRT — integer to string. Kodak Preview formats its page numbers with it.

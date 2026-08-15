@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scope": "Distinct named GDI32.dll imports in PE files under test/binaries.",
   "corpus": {
-    "peFileCount": 235,
+    "peFileCount": 244,
     "importCount": 228,
     "sortedImportSha256": "f06b5d82415127cf6c9daebf24818fba392e10411d25d8725a7dfffe9968e7b5",
     "representedInApiTable": 225

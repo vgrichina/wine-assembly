@@ -1993,7 +1993,13 @@ async function main() {
       // common/display/admin libraries. Without these the apps die on their
       // first import from one — InitInstance, ?UpdateVersion@@YGJH@Z, and a
       // pile of ordinals respectively.
-      'hypertrm.dll', 'imgcmn.dll', 'oidis400.dll', 'oiadm400.dll']);
+      'hypertrm.dll', 'imgcmn.dll', 'sti.dll',
+      // The Kodak Imaging suite splits itself across ten OI*400 libraries and
+      // they import each other, so the whole set has to be loadable or the
+      // first cross-DLL ordinal fails.
+      'oiadm400.dll', 'oicom400.dll', 'oidis400.dll', 'oifil400.dll',
+      'oigfs400.dll', 'oiprt400.dll', 'oislb400.dll', 'oissq400.dll',
+      'oitwa400.dll', 'oiui400.dll']);
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,
@@ -2009,15 +2015,33 @@ async function main() {
       const rank = name => name.toLowerCase() === 'msvcrt20.dll' ? 0 : 1;
       return rank(a) - rank(b);
     });
-    for (const name of orderedRequired) {
-      if (!LOADABLE_DLLS.has(name.toLowerCase())) continue;
+    // A DLL's own imports have to be satisfied too. Kodak Imaging pulls in
+    // IMGCMN, which imports OIFIL400, which imports its siblings — leave any
+    // of them unloaded and the first cross-DLL ordinal resolves to a system
+    // thunk and traps. Walk the dependency graph, not just the EXE's row of it.
+    const findDllFile = name => {
       for (const dir of dllSearchDirs) {
         const p = path.join(dir, name);
-        if (fs.existsSync(p)) {
-          dlls.push({ name, bytes: fs.readFileSync(p) });
-          break;
-        }
+        if (fs.existsSync(p)) return p;
       }
+      return null;
+    };
+    const queued = new Set();
+    const queue = [...orderedRequired];
+    while (queue.length) {
+      const name = queue.shift();
+      const key = name.toLowerCase();
+      if (queued.has(key) || !LOADABLE_DLLS.has(key)) continue;
+      const p = findDllFile(name);
+      if (!p) continue;
+      queued.add(key);
+      const bytes = fs.readFileSync(p);
+      dlls.push({ name, bytes });
+      try {
+        for (const dep of detectRequiredDlls(bytes)) {
+          if (!queued.has(dep.toLowerCase())) queue.push(dep);
+        }
+      } catch (_) { /* a DLL we cannot parse simply contributes no deps */ }
     }
   }
   // Register exe in moduleBases so `exe+0xVA` and basename-relative specs work.

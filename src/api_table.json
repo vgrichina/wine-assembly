@@ -18667,5 +18667,19 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 445374758
+  },
+  {
+    "id": 2406,
+    "name": "VariantInit",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1224367452
+  },
+  {
+    "id": 2407,
+    "name": "VariantCopy",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1951625147
   }
 ]

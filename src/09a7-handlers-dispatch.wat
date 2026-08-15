@@ -10316,6 +10316,48 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; VariantInit(pvarg) — mark the VARIANT as VT_EMPTY. Unlike VariantClear
+  ;; this must NOT release anything: the struct is assumed to hold garbage.
+  ;; Zeroing all 16 bytes both sets VT_EMPTY and leaves the union clean.
+  (func $handle_VariantInit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 16))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; VariantCopy(pvargDest, pvargSrc) → HRESULT. Release the destination, then
+  ;; take a copy of the source. A BSTR has to be duplicated rather than
+  ;; aliased, since both variants are independently owned and either may be
+  ;; cleared first; every other type in a VARIANT is inline.
+  (func $handle_VariantCopy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $vt i32) (local $src_bstr i32) (local $len i32) (local $copy i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0x80070057))  ;; E_INVALIDARG
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 16))
+    (memory.copy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (i32.const 16))
+    (local.set $vt (call $gl16 (local.get $arg1)))
+    (if (i32.eq (local.get $vt) (i32.const 8))    ;; VT_BSTR
+      (then
+        (local.set $src_bstr (call $gl32 (i32.add (local.get $arg1) (i32.const 8))))
+        (if (local.get $src_bstr)
+          (then
+            ;; A BSTR stores its byte length in the dword before the data.
+            (local.set $len (call $gl32 (i32.sub (local.get $src_bstr) (i32.const 4))))
+            (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 6))))
+            (if (local.get $copy)
+              (then
+                (local.set $copy (i32.add (local.get $copy) (i32.const 4)))
+                (call $gs32 (i32.sub (local.get $copy) (i32.const 4)) (local.get $len))
+                (memory.copy (call $g2w (local.get $copy)) (call $g2w (local.get $src_bstr))
+                  (i32.add (local.get $len) (i32.const 2)))))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $copy))))))
+    (global.set $eax (i32.const 0))  ;; S_OK
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; LoadTypeLib(szFile: LPCOLESTR, pptlib: ITypeLib**) → HRESULT. We don't
   ;; implement type libraries; return TYPE_E_CANTLOADLIBRARY (0x80029C4A) so the
   ;; caller can take its "no typelib" fallback path. Zero out *pptlib.
@@ -11535,7 +11577,7 @@
       (else
         (if (local.get $wide)
           (then (call $zero_memory (local.get $p) (i32.const 80)))
-          (else (call $zero_memory (local.get $p) (i32.const 48)))))))
+          (else (call $zero_memory (local.get $p) (i32.const 48))))))
     (i32.store16 (local.get $p) (i32.const 1))                         ;; wMid
     (i32.store16 (i32.add (local.get $p) (i32.const 2)) (i32.const 1))  ;; wPid
     (i32.store (i32.add (local.get $p) (i32.const 4)) (i32.const 0x0400))
