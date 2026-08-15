@@ -282,6 +282,13 @@
   ;; 156: Ellipse
   (func $handle_Ellipse (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32)
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then
+        (global.set $eax (call $gdi_dc_path_record_ellipse
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
       (then (global.set $eax (call $gdi_ellipse_desc
@@ -296,6 +303,16 @@
 
   ;; 157: Arc
   (func $handle_Arc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $gdi_dc_path_is_open (local.get $arg0))
+      (then
+        (global.set $eax (call $gdi_dc_path_record_arc
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+          (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+          (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
+          (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
+          (call $gl32 (i32.add (global.get $esp) (i32.const 36))) (i32.const 0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
+        (return)))
     (global.set $eax (call $host_gdi_arc
     (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
     (call $gl32 (i32.add (global.get $esp) (i32.const 24)))

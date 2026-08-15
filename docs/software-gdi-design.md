@@ -60,16 +60,21 @@ bounded, growable point/type stream; points are transformed into device space
 when recorded and inverse-transformed through the current mapping when queried.
 `MoveToEx`, `LineTo`, `Rectangle`, `Polygon`, `Polyline`, `PolylineTo`,
 `PolyBezier`, `PolyBezierTo`, `PolyDraw`, and `PolyPolyline` record instead of
-painting while a bracket is open. `FlattenPath` converts cubic controls into a
-bounded 32-segment device-space line stream. Both straight and cubic figures
-feed `PathToRegion` and `SelectClipPath` through canonical WAT regions, and
-`PathToRegion` consumes the closed path as Win32 specifies. `FillPath`,
+painting while a bracket is open. `Ellipse` and `RoundRect` add closed
+four-cubic figures with explicit straight side records, and `Arc`/`ArcTo`
+split at quadrant boundaries into bounded cubic segments. Arc direction,
+`ArcTo`'s connector and current-position update, and device-space retention
+are WAT-owned. `FlattenPath` converts cubic controls into a bounded 32-segment
+device-space line stream. Both straight and cubic figures feed `PathToRegion`
+and `SelectClipPath` through canonical WAT regions, and `PathToRegion` consumes
+the closed path as Win32 specifies. `FillPath`,
 `StrokePath`, and `StrokeAndFillPath` use the selected WAT brush/pen and
 canonical surface directly; the combined operation closes open figures and
 all successful consumers discard the path. Preflighted stroke coverage and
 device-space filling ensure mapping changes after `EndPath` do not move the
-retained geometry. Ellipse/arc/round-rectangle/text recording and `WidenPath`
-remain explicit path work; none of them fall back to Canvas geometry.
+retained geometry. `AngleArc`, `Chord`, `Pie`, text-outline recording, and
+`WidenPath` remain explicit path work; none of them fall back to Canvas
+geometry.
 
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the

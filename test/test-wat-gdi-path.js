@@ -235,6 +235,89 @@ async function main() {
     assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
   });
 
+  check('Ellipse records a closed four-cubic device-space figure without painting', () => {
+    setIdentityMap(dib.hdc);
+    bytes.fill(0x5a, dib.bits, dib.bits + dib.size);
+    const before = bytes.slice(dib.bits, dib.bits + dib.size);
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 1), 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Ellipse(dib.hdc, 2, 2, 18, 14), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(bytes.slice(dib.bits, dib.bits + dib.size), before);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [18, 8], [18, 5], [14, 2], [10, 2],
+        [6, 2], [2, 5], [2, 8],
+        [2, 11], [6, 14], [10, 14],
+        [14, 14], [18, 11], [18, 8],
+      ],
+      types: [6, ...Array(11).fill(4), 5],
+    });
+    const region = wat.test_call_PathToRegion(dib.hdc) >>> 0;
+    assert(region);
+    assert.strictEqual(wat.test_call_PtInRegion(region, 10, 8), 1);
+    assert.strictEqual(wat.test_call_PtInRegion(region, 2, 2), 0);
+    assert.strictEqual(wat.test_call_DeleteObject(region), 1);
+  });
+
+  check('RoundRect records cubic corners and straight sides with exact types', () => {
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_RoundRect(dib.hdc, 2, 2, 18, 14, 8, 6), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [18, 5], [18, 3], [16, 2], [14, 2],
+        [6, 2], [4, 2], [2, 3], [2, 5],
+        [2, 11], [2, 13], [4, 14], [6, 14],
+        [14, 14], [16, 14], [18, 13], [18, 11],
+      ],
+      types: [6, 4, 4, 4, 2, 4, 4, 4, 2, 4, 4, 4, 2, 4, 4, 5],
+    });
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+  });
+
+  check('Arc and ArcTo record quadrant cubics and ArcTo connector/current position', () => {
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 1), 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Arc(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [18, 8], [18, 5], [14, 2], [10, 2],
+        [10, 2], [10, 2], [10, 2],
+      ],
+      types: [6, 4, 4, 4, 4, 4, 4],
+    });
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_ArcTo(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    assert.deepStrictEqual(readPath(dib.hdc), {
+      points: [
+        [2, 8], [18, 8], [18, 5], [14, 2], [10, 2],
+        [10, 2], [10, 2], [10, 2],
+      ],
+      types: [6, 2, 4, 4, 4, 4, 4, 4],
+    });
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, -1), 10);
+    assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, -1), 2);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+  });
+
+  check('clockwise shape paths reverse their cubic traversal', () => {
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 2), 1);
+    assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_Ellipse(dib.hdc, 2, 2, 18, 14), 1);
+    assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
+    const path = readPath(dib.hdc);
+    assert.deepStrictEqual(path.points.slice(0, 4), [[18, 8], [18, 11], [14, 14], [10, 14]]);
+    assert.deepStrictEqual(path.types, [6, ...Array(11).fill(4), 5]);
+    assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
+    assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 1), 2);
+  });
+
   check('FlattenPath converts cubic controls to exact device-space line points', () => {
     setIdentityMap(dib.hdc);
     const bezier = allocPoints([[1, 10], [3, 2], [7, 2], [9, 10]]);
