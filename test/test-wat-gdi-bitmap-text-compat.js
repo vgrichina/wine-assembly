@@ -78,8 +78,39 @@ const { bootRenderHarness } = require('./render-helper');
   const pixel = (x, y) => wat.guest_read32(dibBits + (y * width + x) * 4) & 0xffffff;
   const clear = () => assert.strictEqual(
     wat.test_call_PatBlt(hdc, 0, 0, width, height, 0x00F00021), 1);
+  const readPath = () => {
+    const count = wat.test_call_GetPath(hdc, 0, 0, 0) | 0;
+    assert(count >= 0);
+    const points = allocZero(Math.max(1, count) * 8);
+    const types = allocZero(Math.max(1, count));
+    assert.strictEqual(wat.test_call_GetPath(hdc, points, types, count) | 0, count);
+    return {
+      points: Array.from({ length: count }, (_, index) => [
+        wat.guest_read32(points + index * 8) | 0,
+        wat.guest_read32(points + index * 8 + 4) | 0,
+      ]),
+      types: Array.from(bytes.subarray(wa(types), wa(types) + count)),
+    };
+  };
   wat.test_gdi_dc_set_field(hdc, 28, 1, 2); // TRANSPARENT
   wat.test_gdi_dc_set_field(hdc, 20, 0x000000, 0); // black
+
+  const glyphA = writeAnsi('A');
+  clear();
+  const beforePath = bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, glyphA, 1), 1);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.deepStrictEqual(bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4), beforePath,
+    'FNT TextOut inside a bracket must record geometry without touching pixels');
+  const glyphPath = readPath();
+  assert.strictEqual(glyphPath.points.length, 8 * 8 * 4);
+  assert.deepStrictEqual(glyphPath.points.slice(0, 4), [[2, 2], [3, 2], [3, 3], [2, 3]]);
+  assert.deepStrictEqual(glyphPath.types.slice(0, 4), [6, 2, 2, 3]);
+  assert.notStrictEqual(wat.test_call_SelectObject(hdc, 0x30014) | 0, -1); // BLACK_BRUSH
+  assert.strictEqual(wat.test_call_FillPath(hdc), 1);
+  assert.strictEqual(pixel(2, 2), 0);
+  assert.notStrictEqual(wat.test_call_SelectObject(hdc, 0x30010) | 0, -1); // WHITE_BRUSH
 
   const calc = allocZero(16);
   const prefixed = writeAnsi('A&A');
@@ -138,6 +169,20 @@ const { bootRenderHarness } = require('./render-helper');
   wat.guest_write32(paired + 4, 4);
   wat.guest_write32(paired + 8, 12);
   wat.guest_write32(paired + 12, -2);
+  wat.test_gdi_dc_set_field(hdc, 32, 0, 0); // TA_LEFT | TA_TOP
+  clear();
+  const beforePairedPath = bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+    hdc, 0, 0, 0x2000, 0, textAA, 2, paired), 1);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.deepStrictEqual(bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4),
+    beforePairedPath, 'FNT ExtTextOut with ETO_PDY must record without rasterizing');
+  const pairedPath = readPath();
+  assert.strictEqual(pairedPath.points.length, 2 * 8 * 8 * 4);
+  assert(pairedPath.points.some(([x, y]) => x === 12 && y === 4),
+    'the second glyph path must honor its paired X/Y advance');
+  assert.strictEqual(wat.test_call_AbortPath(hdc), 1);
   clear();
   assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
     hdc, 0, 0, 0x2000, 0, textAA, 2, paired), 1);
@@ -157,8 +202,45 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 16, 0), 22,
     'TA_UPDATECP must store the final paired Y advance');
 
+  const arialFace = allocZero(32);
+  [...'Arial'].forEach((character, index) =>
+    wat.guest_write16(arialFace + index * 2, character.charCodeAt(0)));
+  const scalable = wat.test_call_CreateFontW(-13, 400, 0, arialFace) >>> 0;
+  assert(scalable);
+  assert.notStrictEqual(wat.test_call_SelectObject(hdc, scalable) | 0, -1);
+  assert.strictEqual(wat.test_gdi_bitmap_font_selected(hdc), 0,
+    'Arial must exercise the scalable Canvas font-provider boundary');
+  wat.test_gdi_dc_set_field(hdc, 32, 0, 0); // TA_LEFT | TA_TOP
+  clear();
+  const beforeScalablePath = bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4);
+  assert.strictEqual(wat.test_call_BeginPath(hdc), 1);
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 10, 10, glyphA, 1), 1);
+  assert.strictEqual(wat.test_call_EndPath(hdc), 1);
+  assert.deepStrictEqual(bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4),
+    beforeScalablePath,
+    'scalable TextOut must return only a glyph mask and leave destination pixels untouched');
+  const scalablePath = readPath();
+  assert(scalablePath.points.length > 0 && scalablePath.points.length % 4 === 0);
+  assert(scalablePath.types.every((type, index) => type === [6, 2, 2, 3][index % 4]));
+  assert.notStrictEqual(wat.test_call_SelectObject(hdc, 0x30014) | 0, -1); // BLACK_BRUSH
+  assert.strictEqual(wat.test_call_FillPath(hdc), 1);
+  assert(Array.from({ length: 20 * 20 }, (_, index) =>
+    pixel(5 + index % 20, 5 + Math.floor(index / 20)) === 0).some(Boolean),
+  'filling the scalable glyph path must paint canonical WAT pixels');
+  assert.notStrictEqual(wat.test_call_SelectObject(hdc, 0x30010) | 0, -1); // WHITE_BRUSH
+
+  wat.test_gdi_dc_set_field(hdc, 32, 1, 0); // TA_LEFT | TA_TOP | TA_UPDATECP
+  wat.test_gdi_current_pos_set(hdc, 5, 30);
+  clear();
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 70, 40, glyphA, 1), 1);
+  assert(wat.test_gdi_dc_get_field(hdc, 12, 0) > 5,
+    'scalable Canvas fallback must publish its advance into WAT current-position state');
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 16, 0), 30);
+
+  assert.strictEqual(wat.test_call_DeleteObject(scalable), 1);
+
   assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
-  console.log('PASS  WAT bitmap text honors prefixes, tabs, ellipsis, ETO_PDY, and TA_UPDATECP');
+  console.log('PASS  WAT text paths own FNT geometry and scalable Canvas masks');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

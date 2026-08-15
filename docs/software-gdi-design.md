@@ -11,8 +11,9 @@ are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The public compatibility surface is not complete yet. Current high-priority
-gaps are remaining path recording families, scalable glyph extraction, remaining enhanced
-metafile record families, remaining classic WMF record families, and printer
+gaps are scalable `ExtTextOut` path recording with explicit advances,
+scalable `DrawText` path layout, native/Bezier scalable glyph outlines,
+remaining enhanced and classic metafile record families, and printer
 integration.
 The
 checked-in PE corpus has a machine-checked public API inventory in
@@ -75,12 +76,18 @@ feed `PathToRegion` and `SelectClipPath` through canonical WAT regions, and
 canonical surface directly; the combined operation closes open figures and
 all successful consumers discard the path. Preflighted stroke coverage and
 device-space filling ensure mapping changes after `EndPath` do not move the
-retained geometry. `WidenPath` flattens curves, derives the exact device-space
+retained geometry. Text from an installed FNT strike records each covered
+bitmap pixel as a closed device-space figure. Scalable `TextOut` and
+`ExtTextOut` without explicit advances obtain only a bounded one-bit glyph
+mask from the Canvas font provider; WAT converts that mask into retained path
+geometry and owns `TA_UPDATECP`. `WidenPath` flattens curves, derives the exact device-space
 coverage of the current integer square-stamp wide-pen rasterizer, and replaces
 the retained path atomically with non-overlapping band rectangles. It does not
-use Canvas geometry or pixel readback. Text-outline recording, adaptive curve
-subdivision, and distinct geometric cap/join styles remain explicit path
-fidelity work; none of the implemented shape APIs fall back to Canvas geometry.
+use Canvas geometry or destination pixel readback. Scalable `ExtTextOut` with
+an explicit advance array, scalable `DrawText` layout inside a path bracket,
+adaptive curve subdivision, and distinct geometric cap/join styles remain
+explicit path fidelity work; none of the implemented shape APIs fall back to
+Canvas geometry.
 
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the
@@ -569,14 +576,14 @@ TextOut/ExtTextOut/DrawText (scalable fallback)
 Canvas scratch surface renders glyphs
         |
         v
-coverage or RGBA rectangle is read from scratch
+coverage is read from scratch
         |
         v
-software composition applies GDI text/background colors,
-clipping, opaque/transparent background mode, and supported ROP
+WAT either converts a thresholded one-bit mask into retained path
+geometry or commits the bounded raster result to canonical storage
         |
         v
-authoritative GdiSurface + dirty rectangle
+authoritative WAT path or GdiSurface + dirty rectangle
 ```
 
 The scratch Canvas is temporary source material, not a presentation cache and
@@ -584,11 +591,12 @@ not a second owner of destination pixels. Reading it with `getImageData` is
 allowed. Reading the destination's presentation Canvas to recover bitmap state
 is not.
 
-Initially, existing Canvas text output may be copied as RGBA into the surface
-to reduce migration risk. The preferred follow-up is to render white glyphs on
-transparent black, interpret the alpha channel as a coverage mask, and apply
-the DC's text semantics in the software compositor. A compatibility option may
-threshold coverage for non-antialiased Win98-style text where appropriate.
+Open-path scalable text renders white glyphs on transparent black, thresholds
+the scratch alpha channel into a one-bit mask, and returns only that bounded
+mask to WAT. Canvas never creates the retained path and never reads or modifies
+the destination surface in this mode. Ordinary scalable output still uses the
+bounded Canvas raster fallback, then synchronizes the result into canonical
+storage before returning.
 
 Known limitations remain explicit: browser font availability, metrics,
 hinting, shaping, and antialiasing can differ between Safari, Chromium, and
@@ -617,8 +625,10 @@ additionally applies validated `DRAWTEXTPARAMS` left/right margins, its separate
 tab-cell interval, and `uiLengthDrawn` output without encoding the tab count
 over unrelated format bits. `DT_MODIFYSTRING` copies an ellipsified byte-oriented
 presentation back to ANSI or UTF-16 caller storage.
-Unsupported formats and shaped/scalable faces continue through the Canvas
-fallback.
+Inside a path bracket, the same FNT operations append exact closed pixel
+figures without changing destination pixels; a later path consumer supplies
+the brush, pen, clipping, and raster operation. Unsupported formats and
+shaped/scalable faces continue through the Canvas font fallback.
 
 The target selection order is:
 

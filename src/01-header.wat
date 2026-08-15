@@ -474,6 +474,8 @@
     (call $gdi_dc_get_field (local.get 0) (i32.const 52) (i32.const 1)))
   (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw
     (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "gdi_text_mask" (func $host_gdi_text_mask_raw
+    (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_text_out" (func $host_gdi_text_out_raw (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; gdi_text_out(hdc, x, y, textWasmAddr, nCount, isWide) → 1
   ;; When isWide=1 the buffer is UTF-16 LE (nCount = wchar count); otherwise ANSI bytes.

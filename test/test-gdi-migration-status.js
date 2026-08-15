@@ -29,7 +29,7 @@ const PERMANENT_NON_TEXT_BRIDGE = [
   'gdi_surface_upload',
 ];
 const CANVAS_TEXT_POLICY = [
-  'gdi_draw_text', 'gdi_ext_text_out', 'gdi_text_bind', 'gdi_text_out',
+  'gdi_draw_text', 'gdi_ext_text_out', 'gdi_text_bind', 'gdi_text_mask', 'gdi_text_out',
 ].sort();
 const MAX_TEMPORARY_NON_TEXT_EXCEPTIONS = 0;
 const sorted = values => [...values].sort();
