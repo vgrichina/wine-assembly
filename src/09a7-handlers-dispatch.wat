@@ -332,12 +332,39 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
-  ;; 717: GetDCOrgEx(hdc, lppt) — return (0,0) as DC origin
+  ;; 717: GetDCOrgEx(hdc, lppt) — final device origin in screen coordinates.
+  ;; Memory, DirectDraw, printer, and screen DCs have no USER window binding
+  ;; and therefore retain the device origin (0,0). Window DC bindings live in
+  ;; the canonical DC record: positive hwnd for client DCs, sign-bit hwnd for
+  ;; whole-window DCs.
   (func $handle_GetDCOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
+    (local $wa i32) (local $dc i32) (local $binding i32) (local $hwnd i32)
+    (local $x i32) (local $y i32)
+    (local.set $dc (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+    (if (i32.or (i32.eqz (local.get $dc)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $binding (i32.load offset=92 (local.get $dc)))
+    (if (local.get $binding)
+      (then
+        (local.set $hwnd (i32.and (local.get $binding) (i32.const 0x7FFFFFFF)))
+        (if (i32.eq (call $wnd_table_find (local.get $hwnd)) (i32.const -1))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
+        (if (i32.lt_s (local.get $binding) (i32.const 0))
+          (then
+            (local.set $x (call $wnd_window_screen_x (local.get $hwnd)))
+            (local.set $y (call $wnd_window_screen_y (local.get $hwnd))))
+          (else
+            (local.set $x (call $wnd_client_screen_x (local.get $hwnd)))
+            (local.set $y (call $wnd_client_screen_y (local.get $hwnd)))))))
     (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (local.get $wa) (i32.const 0))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
+    (i32.store (local.get $wa) (local.get $x))
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (local.get $y))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )

@@ -1580,6 +1580,14 @@
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_GetDCOrgEx") (param i32 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDCOrgEx
+      (local.get 0) (local.get 1) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_call_GetWindowDC") (param i32) (result i32)
     (call $handle_GetWindowDC
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)

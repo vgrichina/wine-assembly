@@ -78,10 +78,46 @@ function gdiImports(file) {
   return imports;
 }
 
+function watFunctionBody(source, name) {
+  const marker = `(func $handle_${name}`;
+  const start = source.indexOf(marker);
+  if (start < 0) return null;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index++) {
+    const character = source[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') {
+      quoted = true;
+    } else if (character === '(') {
+      depth++;
+    } else if (character === ')' && --depth === 0) {
+      return source.slice(start, index + 1);
+    }
+  }
+  throw new Error(`unterminated WAT handler: ${name}`);
+}
+
 const peFiles = walk(BINARY_ROOT);
 const imports = [...new Set(peFiles.flatMap(gdiImports))].sort();
 const digest = crypto.createHash('sha256').update(imports.join('\n')).digest('hex');
 const notExposed = imports.filter(name => !apiNames.has(name));
+const watSource = fs.readdirSync(path.join(ROOT, 'src'))
+  .filter(file => file.endsWith('.wat'))
+  .sort()
+  .map(file => fs.readFileSync(path.join(ROOT, 'src', file), 'utf8'))
+  .join('\n');
+const missingHandlers = imports.filter(name => !watFunctionBody(watSource, name));
+const crashHandlers = imports.filter(name => {
+  const body = watFunctionBody(watSource, name);
+  return body && body.includes('$crash_unimplemented');
+});
 
 assert.strictEqual(peFiles.length, status.corpus.peFileCount,
   'checked-in PE corpus changed; refresh the GDI public API inventory');
@@ -90,6 +126,13 @@ assert.strictEqual(digest, status.corpus.sortedImportSha256,
   'GDI32 import set changed; classify the new public surface explicitly');
 assert.deepStrictEqual(notExposed, [...status.notExposed].sort());
 assert.strictEqual(imports.length - notExposed.length, status.corpus.representedInApiTable);
+assert.deepStrictEqual(missingHandlers, status.handlerCoverage.missing,
+  'GDI corpus import is exposed but has no WAT handler');
+assert.deepStrictEqual(crashHandlers, status.handlerCoverage.crashStub,
+  'GDI corpus handler regressed to crash_unimplemented');
+assert.strictEqual(imports.length - missingHandlers.length,
+  status.handlerCoverage.dispatchable);
 
 console.log(`PASS  GDI corpus inventory: ${imports.length} imports from ${peFiles.length} PE files`);
 console.log(`PASS  API table covers ${imports.length - notExposed.length}; ${notExposed.length} remain explicit`);
+console.log(`PASS  WAT dispatches ${imports.length - missingHandlers.length}; ${crashHandlers.length} crash stubs`);

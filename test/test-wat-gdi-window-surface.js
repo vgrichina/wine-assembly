@@ -102,6 +102,16 @@ async function main() {
 
   const hdc = wat.test_call_GetDC(HWND) >>> 0;
   assert(hdc, 'GetDC must allocate a real window DC');
+  const dcOrigin = wat.guest_alloc(8) >>> 0;
+  assert.strictEqual(wat.test_call_GetDCOrgEx(hdc, dcOrigin), 1);
+  assert.deepStrictEqual([
+    wat.guest_read32(dcOrigin) | 0,
+    wat.guest_read32(dcOrigin + 4) | 0,
+  ], [103, 55], 'client DC origin must be the client top-left in screen coordinates');
+  assert.strictEqual(wat.test_call_GetDCOrgEx(hdc, 0), 0,
+    'GetDCOrgEx must reject a null output pointer');
+  assert.strictEqual(wat.test_call_GetDCOrgEx(0x7FFFFFF0, dcOrigin), 0,
+    'GetDCOrgEx must reject an unknown DC');
   const desc = 0x07EF1000;
   const paintScratch = 0x0000AD40;
   const paintSentinel = [7, 3, 37, 21];
@@ -216,6 +226,11 @@ async function main() {
   const sourceBitmap = wat.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
   const sourceDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert(sourceBitmap && sourceDc);
+  assert.strictEqual(wat.test_call_GetDCOrgEx(sourceDc, dcOrigin), 1);
+  assert.deepStrictEqual([
+    wat.guest_read32(dcOrigin) | 0,
+    wat.guest_read32(dcOrigin + 4) | 0,
+  ], [0, 0], 'memory DC origin must remain device-local');
   assert.strictEqual(wat.test_call_SelectObject(sourceDc, sourceBitmap) >>> 0, 0x30007);
   assert.strictEqual(wat.test_call_SetPixel(sourceDc, 0, 0, 0x0000FF00), 0x0000FF00);
   assert.strictEqual(wat.test_call_BitBlt(hdc, 2, 2, 1, 1, sourceDc, 0, 0, 0x00CC0020), 1);
@@ -312,6 +327,11 @@ async function main() {
     [0, 0, 255], 'WAT line pixels must upload to the renderer window canvas');
 
   const whole = wat.test_call_GetWindowDC(HWND) >>> 0;
+  assert.strictEqual(wat.test_call_GetDCOrgEx(whole, dcOrigin), 1);
+  assert.deepStrictEqual([
+    wat.guest_read32(dcOrigin) | 0,
+    wat.guest_read32(dcOrigin + 4) | 0,
+  ], [100, 50], 'whole-window DC origin must be the window top-left in screen coordinates');
   assert.strictEqual(wat.test_gdi_surface_descriptor(whole, desc), 1);
   assert.deepStrictEqual([
     dv.getInt32(desc + 72, true), dv.getInt32(desc + 76, true),

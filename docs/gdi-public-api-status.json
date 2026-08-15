@@ -7,6 +7,12 @@
     "sortedImportSha256": "f2cf3514cb7624a349a41a3828fa04b3e2145bab6528f8cf54ba888146acdb80",
     "representedInApiTable": 225
   },
+  "handlerCoverage": {
+    "dispatchable": 225,
+    "missing": [],
+    "crashStub": [],
+    "meaning": "Every named corpus import reaches a WAT handler without crash_unimplemented. This is a dispatchability gate; the partial-fidelity contracts below remain explicit and are not counted as complete semantics."
+  },
   "notExposed": [],
   "knownPartialOrUnsupported": {
     "metafile": [
