@@ -84,11 +84,13 @@ The candidate comparisons, licensing audit, style findings, CP437 conversion,
 and runtime design are recorded in
 [`docs/bitmap-font-review.md`](../docs/bitmap-font-review.md).
 
-## Scalable substitutes (design stage, not yet wired)
+## Scalable substitutes
 
 Vendored for the work described in
-[`../docs/scalable-font-design.md`](../docs/scalable-font-design.md). No runtime
-code consumes these yet.
+[`../docs/scalable-font-design.md`](../docs/scalable-font-design.md). These are
+the *sources*: what ships is the subset built from them, see "Deployed subsets"
+below. WAT rasterizes them into FNT strikes and renders them through the same
+bitmap text path as the stock faces above.
 
 `substitutions.json` records which open face stands in for each Win98 face,
 with its tier, license, per-style files, and the **private** family name it
@@ -121,6 +123,57 @@ sources; see `wine/UPSTREAM.md` for hashes and caveats.
 Metric compatibility is a statement of upstream design intent until the v86
 Win98 reference comparison described in the design doc exists. It has not been
 measured in this repository yet.
+
+## Deployed subsets
+
+The vendored TTFs above are 4.7 MB, all of which the browser would fetch before
+a guest could draw its first character. `tools/gen-font-subsets.sh` cuts each
+ANSI face to the Windows-1252 repertoire — the only codepoints
+`$tt_cp1252_to_unicode` can ask for — and drops hinting, since
+`docs/scalable-font-design.md` deliberately has no TrueType bytecode
+interpreter. That is 302 KB deployed instead of 4,577 KB.
+
+The four symbol faces are copied **verbatim**. They are addressed through the
+Microsoft `(3,0)` cmap with the `0xF000` bias, and subsetting them by codepoint
+produced an empty cmap — every glyph unreachable — because a `(3,0)` table is
+not indexed by Unicode. Together they are 46 KB, so the saving would have been
+a rounding error against the risk of a face that silently stops resolving.
+
+Subsetting recomputes `hhea` and `OS/2` over the surviving glyphs, which moves
+`advanceWidthMax` and with it `tmMaxCharWidth`. Windows reported the full
+font's value, so `tools/restore-font-metrics.py` copies both tables back from
+the source — every field except `numberOfHMetrics`, which has to keep
+describing the subset's own `hmtx`.
+
+`test/test-font-subsets.js` reads both the full font and its subset through the
+emulator's own TrueType parser and requires identical advance widths, left
+bearings and `TEXTMETRIC` fields. It never asks fontTools anything, so it
+cannot pass by sharing an assumption with the subsetter.
+
+Regenerate with `bash tools/gen-font-subsets.sh`; verify the committed files
+match with `--check`. The full TTFs stay in the repo as the pinned,
+reproducible source, and are not deployed.
+
+| Runtime file | Bytes | SHA-256 |
+|---|---|---|
+| `LiberationMono-Bold.ttf` | 17,776 | `9412f3acea216a3899fd5cecb6733bb7674ca2f5cb728b667e1edf90bf5f713d` |
+| `LiberationMono-BoldItalic.ttf` | 18,796 | `3b0f02b007e241feec75128575f81ada171029cbe23a67f40659975007d32366` |
+| `LiberationMono-Italic.ttf` | 18,796 | `3a3c724c5d7747befe26cbe01e56d907ae2c95e9b9a68f1f607d7f0c81c32338` |
+| `LiberationMono-Regular.ttf` | 17,636 | `656b5ff9fe4dc8e1e738573ab62a0bdfb79693a49d13a26820c14da2726950a0` |
+| `LiberationSans-Bold.ttf` | 18,344 | `8faceadd14e4aedc30b50f01deefe4f514faefa2697888b0c6f974d740ffad91` |
+| `LiberationSans-BoldItalic.ttf` | 19,088 | `b5a6dd30998f2706ba31b71ec25d2a7ed69e9d4d26194d915db5d48c30035139` |
+| `LiberationSans-Italic.ttf` | 18,988 | `e42a058e3af5110c5c16a7b45746923ff999c014eaf92c8154ff94a2827ea1dc` |
+| `LiberationSans-Regular.ttf` | 18,228 | `c6ec3a6ecba473216118ec094aba94b9e79d2f1fd0a8d3c167b5e77a50de10aa` |
+| `LiberationSerif-Bold.ttf` | 19,388 | `b4b4c5877b64959130847c9f78c27444e0697645bdfed97f4011a69efd6f2473` |
+| `LiberationSerif-BoldItalic.ttf` | 20,004 | `050e371b1c01b92adce36c029c4a68451070709de72bfccba9d4107cf783823c` |
+| `LiberationSerif-Italic.ttf` | 20,016 | `c097d63930b70a21c755bcd19d77311695693da304619a85dcda93830e508b3d` |
+| `LiberationSerif-Regular.ttf` | 19,256 | `0509a0fcc1e9fd0d25f11e277f68fd240a20e50385e7dbce4ae65339a05a16a6` |
+| `marlett.ttf` | 6,136 | `1a9b951ca1815344050ae6158263991e2145918bc74ad65d82bc6ec4056a57d1` |
+| `symbol.ttf` | 26,028 | `d79da0fbd9a9f3cf806059bb1f2c9d7ce43dd9e3e4c7d4dcc5d9f2759b81196f` |
+| `tahoma.ttf` | 18,692 | `badded24db63cbbc65af1b98b31ed2cf66328e1fd4e346b3ad3d0de9b67c7b2d` |
+| `tahomabd.ttf` | 19,196 | `afbee425b5ac39c199432849690e32d42c65f628096c598f5c92e9a4ad60d6e9` |
+| `webdings.ttf` | 4,300 | `bbaf4df7911928cbb196fc48f1c7237f68aba2aec3e53c01761b89fdd038ac7a` |
+| `wingding.ttf` | 9,524 | `cf5784b53e365ecfad1661b8b23d133effa1d3b54fb7a51137c8a9548f0db08e` |
 
 ## Legacy web/CSS substitutes
 

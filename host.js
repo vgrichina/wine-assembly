@@ -1009,7 +1009,7 @@ class WineAssembly {
         'to Canvas:', err);
       return;
     }
-    await this.loadFiles(fontMounts(manifest).map(mount => ({
+    await this.loadFiles(fontMounts(manifest, { subset: true }).map(mount => ({
       url: 'fonts/' + mount.file,
       vfsPath: mount.vfsPath,
     })), { required: false });

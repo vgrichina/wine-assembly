@@ -62,6 +62,7 @@ UNIT=(
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-truetype-metrics.js
   test/test-font-substitutions.js
+  test/test-font-subsets.js
   test/test-wat-truetype-substitution.js
   test/test-wat-gdi-scalable-text.js
   test/test-wat-gdi-public-metafile.js

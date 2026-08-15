@@ -215,6 +215,48 @@ function collectBinaries() {
   return files;
 }
 
+// fonts/ ships neither as a text dir nor as a binary dir, so before this it was
+// not deployed at all: the bundled .FON strikes, the scalable substitutes, and
+// even the @font-face files the page's own CSS asks for were all missing from
+// the live site, which silently fell back to whatever the visitor's machine
+// had. That is the exact non-determinism the font work exists to remove.
+//
+// Only what the running app opens goes up. fonts/liberation and fonts/wine are
+// the vendored *sources*: 6.5 MB that tools/gen-font-subsets.sh reduces to the
+// ~300 KB in fonts/subset, and nothing fetches them at runtime.
+function collectFonts() {
+  const files = [];
+  const dir = path.join(ROOT, 'fonts');
+  if (!fs.existsSync(dir)) return files;
+
+  const push = (rel, full) => {
+    files.push({
+      name: rel,
+      content: fs.readFileSync(full).toString('base64'),
+      encoding: 'base64',
+    });
+  };
+
+  // Bitmap strikes, the CSS webfonts, and the manifest host.js reads to know
+  // which substitute answers which Win98 filename.
+  for (const entry of fs.readdirSync(dir)) {
+    const full = path.join(dir, entry);
+    if (!fs.statSync(full).isFile()) continue;
+    const ext = path.extname(entry).toLowerCase();
+    if (!['.fon', '.ttf', '.otf', '.woff2', '.json'].includes(ext)) continue;
+    push('fonts/' + entry, full);
+  }
+
+  const subsetDir = path.join(dir, 'subset');
+  if (fs.existsSync(subsetDir)) {
+    for (const entry of fs.readdirSync(subsetDir)) {
+      if (path.extname(entry).toLowerCase() !== '.ttf') continue;
+      push('fonts/subset/' + entry, path.join(subsetDir, entry));
+    }
+  }
+  return files;
+}
+
 async function apiJson(method, endpoint, body) {
   const r = await fetch(API_BASE + endpoint, {
     method,
@@ -325,7 +367,7 @@ async function deploy() {
     console.log('Total text: ' + (textBytes / 1024).toFixed(0) + 'KB, ' + textFiles.length + ' files\n');
 
     console.log('Collecting binaries...');
-    binFiles = collectBinaries();
+    binFiles = collectBinaries().concat(collectFonts());
     let binBytes = 0;
     for (const f of binFiles) { const sz = f.content.length * 3 / 4; binBytes += sz; console.log('  ' + f.name + ' (' + (sz / 1024).toFixed(1) + 'KB)'); }
     console.log('Total binaries: ' + (binBytes / 1024).toFixed(0) + 'KB, ' + binFiles.length + ' files\n');

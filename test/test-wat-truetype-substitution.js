@@ -151,7 +151,7 @@ const manifest = JSON.parse(fs.readFileSync(
 
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  const mounts = fontMounts(manifest);
+  const mounts = fontMounts(manifest, { subset: true });
   assert.strictEqual(mounts.length, [...expected.values()]
     .reduce((n, files) => n + Object.keys(files).length, 0),
     'every mapped Win98 file must produce a mount');

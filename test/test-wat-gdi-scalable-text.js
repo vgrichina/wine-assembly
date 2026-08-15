@@ -42,7 +42,7 @@ const REPO = path.join(__dirname, '..');
     path.join(REPO, 'fonts', 'substitutions.json'), 'utf8'));
   hostCtx.vfs.dirs.add('c:\\windows');
   hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  for (const mount of fontMounts(manifest)) {
+  for (const mount of fontMounts(manifest, { subset: true })) {
     hostCtx.vfs.files.set(mount.vfsPath, {
       data: new Uint8Array(fs.readFileSync(path.join(REPO, 'fonts', mount.file))),
       attrs: 0x20,

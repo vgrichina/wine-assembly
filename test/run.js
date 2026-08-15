@@ -1016,7 +1016,7 @@ async function main() {
     // Liberation Sans is what it opens.
     const substitutions = JSON.parse(fs.readFileSync(
       path.join(ROOT, 'fonts', 'substitutions.json'), 'utf8'));
-    for (const mount of fontMounts(substitutions)) {
+    for (const mount of fontMounts(substitutions, { subset: true })) {
       const file = path.join(ROOT, 'fonts', mount.file);
       if (!fs.existsSync(file)) {
         throw new Error(`missing substitute for ${mount.face} ${mount.style}: ${file}`);
