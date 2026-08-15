@@ -9,7 +9,13 @@
     "family as 'Arial' invites the host's own Arial to win the cascade on some",
     "machines and lose on others, which is the exact non-determinism this",
     "effort removes. The names disappear entirely once the WAT rasterizer",
-    "lands and the hosts stop being told these fonts exist."
+    "lands and the hosts stop being told these fonts exist.",
+    "win98Files names the file each style occupies in a real C:\\WINDOWS\\FONTS.",
+    "The host mounts the vendored substitute at that VFS path, so WAT asks for",
+    "ARIAL.TTF exactly as Win98 GDI would and never learns that Liberation",
+    "Sans is what answers. Which open font stands in stays entirely host-side,",
+    "matching how the bundled .FON strikes already load. Faces with no real",
+    "Win98 TrueType file (Small Fonts shipped as SMALLE.FON) have no entry."
   ],
   "tiers": {
     "1": "Metric-compatible: identical advance widths, different outlines. Guest layout math is exactly right.",
@@ -29,6 +35,12 @@
         "bold": "liberation/LiberationSans-Bold.ttf",
         "italic": "liberation/LiberationSans-Italic.ttf",
         "boldItalic": "liberation/LiberationSans-BoldItalic.ttf"
+      },
+      "win98Files": {
+        "regular": "arial.ttf",
+        "bold": "arialbd.ttf",
+        "italic": "ariali.ttf",
+        "boldItalic": "arialbi.ttf"
       }
     },
     {
@@ -43,6 +55,12 @@
         "bold": "liberation/LiberationSerif-Bold.ttf",
         "italic": "liberation/LiberationSerif-Italic.ttf",
         "boldItalic": "liberation/LiberationSerif-BoldItalic.ttf"
+      },
+      "win98Files": {
+        "regular": "times.ttf",
+        "bold": "timesbd.ttf",
+        "italic": "timesi.ttf",
+        "boldItalic": "timesbi.ttf"
       }
     },
     {
@@ -57,6 +75,12 @@
         "bold": "liberation/LiberationMono-Bold.ttf",
         "italic": "liberation/LiberationMono-Italic.ttf",
         "boldItalic": "liberation/LiberationMono-BoldItalic.ttf"
+      },
+      "win98Files": {
+        "regular": "cour.ttf",
+        "bold": "courbd.ttf",
+        "italic": "couri.ttf",
+        "boldItalic": "courbi.ttf"
       }
     },
     {
@@ -69,6 +93,10 @@
       "styles": {
         "regular": "wine/tahoma.ttf",
         "bold": "wine/tahomabd.ttf"
+      },
+      "win98Files": {
+        "regular": "tahoma.ttf",
+        "bold": "tahomabd.ttf"
       },
       "embeddedStrikes": {
         "regular": [8, 9, 10, 11, 12, 13, 15, 16],
@@ -107,6 +135,9 @@
       "styles": {
         "regular": "wine/marlett.ttf"
       },
+      "win98Files": {
+        "regular": "marlett.ttf"
+      },
       "note": "Hidden face carrying the title-bar and checkbox glyphs. 39 glyphs covers its full set."
     },
     {
@@ -118,6 +149,9 @@
       "charset": "SYMBOL",
       "styles": {
         "regular": "wine/symbol.ttf"
+      },
+      "win98Files": {
+        "regular": "symbol.ttf"
       }
     },
     {
@@ -130,6 +164,9 @@
       "styles": {
         "regular": "wine/wingding.ttf"
       },
+      "win98Files": {
+        "regular": "wingding.ttf"
+      },
       "note": "Wine drew only 53 of the ~220 Wingdings glyphs. A codepoint Wine never drew resolves to .notdef; this is a known hole, not a bug to hunt."
     },
     {
@@ -141,6 +178,9 @@
       "charset": "SYMBOL",
       "styles": {
         "regular": "wine/webdings.ttf"
+      },
+      "win98Files": {
+        "regular": "webdings.ttf"
       },
       "note": "10 glyphs only. Severely partial; listed so a guest asking for the face gets a deterministic answer rather than a host font."
     }

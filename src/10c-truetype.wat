@@ -1889,7 +1889,10 @@
   ;; Faces are keyed by path hash so opening the same file twice returns the
   ;; same slot instead of a second copy of a 400 KB file.
 
-  (global $TT_MAX_FACES i32 (i32.const 16))
+  ;; Every style of every substituted face is 18 files, and a guest may also
+  ;; name a face by path. 16 slots looked generous until the substitution
+  ;; table existed and the last two faces silently failed to open.
+  (global $TT_MAX_FACES i32 (i32.const 32))
   (global $TT_FACE_STRIDE i32 (i32.const 32))
   (global $TT_CACHE_SLOTS i32 (i32.const 1024))
   (global $TT_CACHE_STRIDE i32 (i32.const 24))
@@ -2315,6 +2318,154 @@
       (call $tt_face_ansi_glyph (local.get $face) (local.get $byte))
       (local.get $ppem)))
 
+  ;; ---- face substitution ------------------------------------------------
+  ;;
+  ;; A LOGFONT names a Win98 face. WAT turns that into the file real GDI would
+  ;; have opened and asks the VFS for it. Which vendored open font actually
+  ;; answers `C:\WINDOWS\FONTS\ARIAL.TTF` is the host's decision, recorded in
+  ;; fonts/substitutions.json and applied when the VFS is seeded. Keeping
+  ;; substitution host-side means this layer carries no licensing knowledge and
+  ;; resolves faces exactly the way the bundled `.FON` path already does.
+  ;;
+  ;; The table is a flat blob of NUL-terminated strings, five per record: the
+  ;; face name, then the regular, bold, italic and bold-italic files. An empty
+  ;; string means the face has no such file and the lookup falls back toward
+  ;; regular. An empty face name ends the table. A blob rather than records of
+  ;; pointers means inserting a face never renumbers an address, which is the
+  ;; failure mode tools/data_offsets.js exists to catch.
+
+  (global $TT_SUBST_TABLE i32 (i32.const 0x07F0AC00))
+  (global $TT_SUBST_TABLE_SIZE i32 (i32.const 0x00000800))
+
+  (data (i32.const 0x07F0AC00)
+    "Arial\00"
+      "C:\\WINDOWS\\FONTS\\ARIAL.TTF\00"
+      "C:\\WINDOWS\\FONTS\\ARIALBD.TTF\00"
+      "C:\\WINDOWS\\FONTS\\ARIALI.TTF\00"
+      "C:\\WINDOWS\\FONTS\\ARIALBI.TTF\00"
+    "Times New Roman\00"
+      "C:\\WINDOWS\\FONTS\\TIMES.TTF\00"
+      "C:\\WINDOWS\\FONTS\\TIMESBD.TTF\00"
+      "C:\\WINDOWS\\FONTS\\TIMESI.TTF\00"
+      "C:\\WINDOWS\\FONTS\\TIMESBI.TTF\00"
+    "Courier New\00"
+      "C:\\WINDOWS\\FONTS\\COUR.TTF\00"
+      "C:\\WINDOWS\\FONTS\\COURBD.TTF\00"
+      "C:\\WINDOWS\\FONTS\\COURI.TTF\00"
+      "C:\\WINDOWS\\FONTS\\COURBI.TTF\00"
+    "Tahoma\00"
+      "C:\\WINDOWS\\FONTS\\TAHOMA.TTF\00"
+      "C:\\WINDOWS\\FONTS\\TAHOMABD.TTF\00"
+      "\00"
+      "\00"
+    "Marlett\00"
+      "C:\\WINDOWS\\FONTS\\MARLETT.TTF\00"
+      "\00" "\00" "\00"
+    "Symbol\00"
+      "C:\\WINDOWS\\FONTS\\SYMBOL.TTF\00"
+      "\00" "\00" "\00"
+    "Wingdings\00"
+      "C:\\WINDOWS\\FONTS\\WINGDING.TTF\00"
+      "\00" "\00" "\00"
+    "Webdings\00"
+      "C:\\WINDOWS\\FONTS\\WEBDINGS.TTF\00"
+      "\00" "\00" "\00"
+    "\00")
+
+  (func $tt_subst_fold (param $byte i32) (result i32)
+    (if (i32.and (i32.ge_u (local.get $byte) (i32.const 65))
+          (i32.le_u (local.get $byte) (i32.const 90)))
+      (then (return (i32.add (local.get $byte) (i32.const 32)))))
+    (local.get $byte))
+
+  ;; GDI matched face names without regard to case, and a guest is as likely
+  ;; to write "arial" as "Arial".
+  (func $tt_subst_name_equal (param $a i32) (param $b i32) (result i32)
+    (local $ca i32) (local $cb i32)
+    (block $done (loop $scan
+      (local.set $ca (call $tt_subst_fold (i32.load8_u (local.get $a))))
+      (local.set $cb (call $tt_subst_fold (i32.load8_u (local.get $b))))
+      (if (i32.ne (local.get $ca) (local.get $cb))
+        (then (return (i32.const 0))))
+      (br_if $done (i32.eqz (local.get $ca)))
+      (local.set $a (i32.add (local.get $a) (i32.const 1)))
+      (local.set $b (i32.add (local.get $b) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; Address just past one NUL-terminated string. Bounded by the table end so
+  ;; a mis-edited blob walks off into a stop rather than into memory.
+  (func $tt_subst_skip (param $p i32) (param $end i32) (result i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $scan)))
+    (i32.add (local.get $p) (i32.const 1)))
+
+  (func $tt_subst_pick (param $regular i32) (param $bold i32)
+        (param $slanted i32) (param $bold_slanted i32)
+        (param $weight i32) (param $italic i32) (result i32)
+    (local $want_bold i32)
+    (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
+    (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
+    (if (i32.and (local.get $want_bold) (local.get $italic))
+      (then (if (i32.load8_u (local.get $bold_slanted))
+        (then (return (local.get $bold_slanted))))))
+    ;; A face with no italic file is not synthesized here. GDI would have
+    ;; sheared the outline; until this layer does that, returning the upright
+    ;; file is an honest approximation rather than a wrong glyph shape.
+    (if (local.get $want_bold)
+      (then (if (i32.load8_u (local.get $bold))
+        (then (return (local.get $bold))))))
+    (if (local.get $italic)
+      (then (if (i32.load8_u (local.get $slanted))
+        (then (return (local.get $slanted))))))
+    (if (i32.load8_u (local.get $regular)) (then (return (local.get $regular))))
+    (i32.const 0))
+
+  ;; Font file for a face name, or 0 when the face has no substitute and the
+  ;; caller should keep doing whatever it did before. `$name` is a WASM
+  ;; address; face names live in a guest heap allocation, so GDI callers pass
+  ;; `(call $g2w ...)`.
+  (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
+        (result i32)
+    (local $p i32) (local $end i32)
+    (local $regular i32) (local $bold i32)
+    (local $slanted i32) (local $bold_slanted i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $p (global.get $TT_SUBST_TABLE))
+    (local.set $end (i32.add (global.get $TT_SUBST_TABLE)
+      (global.get $TT_SUBST_TABLE_SIZE)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
+      (local.set $regular (call $tt_subst_skip (local.get $p) (local.get $end)))
+      (local.set $bold
+        (call $tt_subst_skip (local.get $regular) (local.get $end)))
+      (local.set $slanted
+        (call $tt_subst_skip (local.get $bold) (local.get $end)))
+      (local.set $bold_slanted
+        (call $tt_subst_skip (local.get $slanted) (local.get $end)))
+      (if (call $tt_subst_name_equal (local.get $name) (local.get $p))
+        (then (return (call $tt_subst_pick (local.get $regular) (local.get $bold)
+          (local.get $slanted) (local.get $bold_slanted)
+          (local.get $weight) (local.get $italic)))))
+      (local.set $p
+        (call $tt_subst_skip (local.get $bold_slanted) (local.get $end)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Open the substitute for a LOGFONT face name. Returns a face index, or -1
+  ;; when the face has no substitute or the file is not in the VFS.
+  (func $tt_face_for_logfont (param $name i32) (param $weight i32)
+        (param $italic i32) (result i32)
+    (local $path i32)
+    (local.set $path (call $tt_subst_path (local.get $name) (local.get $weight)
+      (local.get $italic)))
+    (if (i32.eqz (local.get $path)) (then (return (i32.const -1))))
+    (call $tt_face_open (call $w2g (local.get $path))))
+
   ;; ---- test surface -----------------------------------------------------
   ;;
   ;; Exported here rather than in 13-exports.wat so this layer stays a single
@@ -2632,3 +2783,11 @@
         (param i32) (param i32) (result i32)
     (call $tt_kern_pair_px (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4)))
+
+  (func (export "test_tt_subst_path") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_subst_path (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_face_for_logfont") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_face_for_logfont (local.get 0) (local.get 1) (local.get 2)))

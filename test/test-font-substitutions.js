@@ -19,6 +19,7 @@ const manifest = JSON.parse(
 const STYLES = ['regular', 'bold', 'italic', 'boldItalic'];
 const seenWin98 = new Set();
 const seenCss = new Set();
+const seenWin98File = new Map();
 let files = 0;
 
 assert.ok(Array.isArray(manifest.faces) && manifest.faces.length > 0,
@@ -81,6 +82,36 @@ for (const face of manifest.faces) {
     }
   }
 
+  // win98Files is what WAT asks the VFS for. A style listed here with no
+  // substitute behind it would have the host mount nothing at that path, and
+  // the guest would silently fall back rather than fail — so the two maps are
+  // required to agree exactly.
+  if (face.win98Files) {
+    for (const style of Object.keys(face.win98Files)) {
+      assert.ok(STYLES.includes(style),
+        `${where} win98Files has unknown style "${style}"`);
+      assert.ok(face.styles[style],
+        `${where} maps ${style} to a Win98 file with no substitute to mount there`);
+
+      const win98File = face.win98Files[style];
+      assert.ok(/^[a-z0-9_]+\.ttf$/.test(win98File),
+        `${where} ${style} win98File "${win98File}" must be a lowercase bare ` +
+        `.ttf filename: it is joined onto c:\\windows\\fonts\\ and the VFS is ` +
+        `case-folded`);
+      assert.ok(!seenWin98File.has(win98File),
+        `${where} ${style} claims "${win98File}", already claimed by ` +
+        `${seenWin98File.get(win98File)}: one VFS path cannot hold two faces`);
+      seenWin98File.set(win98File, `${face.win98} ${style}`);
+    }
+
+    // A face that ships bold/italic substitutes but forgets to map them would
+    // resolve every weight to the regular file — bold text silently unbolded.
+    for (const style of Object.keys(face.styles)) {
+      assert.ok(face.win98Files[style],
+        `${where} ships a ${style} substitute but maps no Win98 file for it`);
+    }
+  }
+
   if (face.embeddedStrikes) {
     for (const style of Object.keys(face.embeddedStrikes)) {
       assert.ok(face.styles[style],
@@ -122,4 +153,5 @@ for (const name of Object.keys(manifest.unsubstituted || {})) {
 
 console.log(
   `PASS  fonts/substitutions.json: ${manifest.faces.length} faces, ` +
-  `${files} font files, all present, all glyf TrueType, all privately named`);
+  `${files} font files, all present, all glyf TrueType, all privately named, ` +
+  `${seenWin98File.size} Win98 font filenames mapped`);
