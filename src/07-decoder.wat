@@ -1884,9 +1884,30 @@
           (if (i32.eq (local.get $op) (i32.const 0xA2))
             (then (call $te (i32.const 175) (i32.const 0)) (br $decode)))
 
-          ;; Unknown 0x0F xx
+          ;; ---- 0x0F 0xA0/0xA8: PUSH FS/GS, 0x0F 0xA1/0xA9: POP FS/GS ----
+          ;; The one-byte segment pushes (06/0E/16/1E) were handled but not
+          ;; these. Allegro's bank-switched bitmap code saves FS alongside ES
+          ;; at the top of its inner loops, so every Allegro game reached this
+          ;; and stopped. Flat mode: the selector is decorative, but the stack
+          ;; width is not, and 66h makes it a 2-byte push.
+          (if (i32.or (i32.eq (local.get $op) (i32.const 0xA0))
+                      (i32.eq (local.get $op) (i32.const 0xA8)))
+            (then
+              (local.set $imm (select (i32.const 0x00) (i32.const 0x3B)
+                                (i32.eq (local.get $op) (i32.const 0xA8))))  ;; GS : FS
+              (if (local.get $prefix_66)
+                (then (local.set $imm (i32.or (local.get $imm) (i32.const 0x10000)))))
+              (call $te (i32.const 359) (local.get $imm))
+              (br $decode)))
+          (if (i32.or (i32.eq (local.get $op) (i32.const 0xA1))
+                      (i32.eq (local.get $op) (i32.const 0xA9)))
+            (then
+              (call $te (i32.const 360) (local.get $prefix_66))
+              (br $decode)))
+
+          ;; Unknown 0x0F xx — trap rather than loop on it.
           (call $host_log_i32 (i32.or (i32.const 0x0F00) (local.get $op)))
-          (call $te (i32.const 45) (i32.sub (global.get $d_pc) (i32.const 2)))
+          (call $te (i32.const 361) (i32.sub (global.get $d_pc) (i32.const 2)))
           (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- XCHG r/m32, r32 (0x87) / XCHG r/m8 (0x86) ----
@@ -1969,7 +1990,7 @@
 
       ;; ---- Unrecognized opcode ----
       (call $host_log_i32 (local.get $op))
-      (call $te (i32.const 45) (i32.sub (global.get $d_pc) (i32.const 1)))
+      (call $te (i32.const 361) (i32.sub (global.get $d_pc) (i32.const 1)))
       (local.set $done (i32.const 1))
       (br $decode)
     ))

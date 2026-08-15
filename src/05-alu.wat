@@ -574,6 +574,19 @@
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF)))))
     (return_call $next))
+  ;; An opcode the decoder does not know. This used to be emitted as a
+  ;; block_end pointing at the instruction itself, which set EIP back to it and
+  ;; re-decoded it forever — so a missing instruction was indistinguishable
+  ;; from a hung guest, and cost a day to find in Liquid War. Trap instead, and
+  ;; say what and where, exactly as an unimplemented API does.
+  (func $th_bad_opcode (param $op i32)
+    (global.set $eip (local.get $op))
+    (call $host_log_i32 (i32.const 0xBADC0DE0))
+    (call $host_log_i32 (local.get $op))
+    ;; The instruction bytes, little-endian: 0x0FA0 shows up as ..a00f.
+    (call $host_log_i32 (i32.load (call $g2w (local.get $op))))
+    (unreachable))
+
   (func $th_pop_seg (param $op i32)
     (global.set $esp (i32.add (global.get $esp)
       (select (i32.const 2) (i32.const 4) (i32.ne (local.get $op) (i32.const 0)))))
