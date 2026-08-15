@@ -499,6 +499,74 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.strictEqual(
     wat.test_tt_glyph_load_outline(sans.at, 64, 1, wa(POINTS), 64), 0);
 
+  // ---- flattening -------------------------------------------------------
+  //
+  // Contours become straight edges in 26.6 fixed point. Horizontal edges are
+  // dropped: scan conversion crosses edges against horizontal sample lines,
+  // and an edge parallel to those lines has no crossing to contribute.
+
+  assert.strictEqual(wat.test_tt_fu_to_26_6(2048, 16, 2048), 1024,
+    'one em at 16ppem is 16 pixels, which is 1024 in 26.6');
+  assert.strictEqual(wat.test_tt_fu_to_26_6(1024, 16, 2048), 512);
+  assert.strictEqual(wat.test_tt_fu_to_26_6(-434, 16, 2048), -217,
+    'negative coordinates keep signed rounding');
+  assert.strictEqual(wat.test_tt_fu_to_26_6(100, 16, 0), 0);
+
+  const EDGES = wat.guest_alloc(512 * 16) >>> 0;
+  const readEdges = (font, character, ppem, capacity = 512) => {
+    const count = wat.test_tt_glyph_edges(font.at, font.size,
+      gid(font, character), ppem, wa(POINTS), 64, wa(EDGES), capacity);
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      out.push([0, 1, 2, 3].map(field =>
+        wat.test_tt_edge_field(wa(EDGES), i, field)));
+    }
+    return out;
+  };
+
+  // A rectangle has four sides and exactly two of them can be crossed.
+  assert.deepStrictEqual(readEdges(sans, '.', 16), [
+    [94, 0, 94, 110],
+    [191, 110, 191, 0],
+  ], 'the two horizontal sides of the period contribute no crossings');
+
+  assert.strictEqual(readEdges(sans, 'i', 16).length, 4,
+    'two rectangles give two crossable sides each');
+
+  for (const edge of readEdges(sans, 'o', 16)) {
+    assert.notStrictEqual(edge[1], edge[3], 'no horizontal edge may survive');
+  }
+
+  // The flattened outline must reach exactly the glyph's own bounding box.
+  // Curves stay inside the hull of their control points, so falling short
+  // means subdivision dropped an extreme and overshooting means a control
+  // point leaked into the output as if it were on the curve.
+  const oEdges = readEdges(sans, 'o', 16);
+  assert.ok(oEdges.length > 20, 'a curved glyph flattens to many edges');
+  const oBox = glyf(sans, 'o');
+  const xs = oEdges.flatMap(edge => [edge[0], edge[2]]);
+  const ys = oEdges.flatMap(edge => [edge[1], edge[3]]);
+  const to266 = value => wat.test_tt_fu_to_26_6(value, 16, 2048);
+  assert.strictEqual(Math.min(...xs), to266(oBox.xMin));
+  assert.strictEqual(Math.max(...xs), to266(oBox.xMax));
+  assert.strictEqual(Math.min(...ys), to266(oBox.yMin));
+  assert.strictEqual(Math.max(...ys), to266(oBox.yMax));
+
+  // Larger text gets more segments per curve, which is the whole point of
+  // sizing subdivision from the control polygon.
+  assert.ok(readEdges(sans, 'o', 64).length > oEdges.length,
+    'a bigger ppem must subdivide more finely');
+
+  // Composites flatten through the same path, so accented glyphs are not a
+  // separate case for anything downstream.
+  assert.ok(readEdges(sans, 'Á', 16).length > 0);
+
+  assert.strictEqual(
+    wat.test_tt_glyph_edges(sans.at, sans.size, gid(sans, ' '), 16,
+      wa(POINTS), 64, wa(EDGES), 512), 0, 'an empty glyph has no edges');
+  assert.strictEqual(readEdges(sans, 'o', 16, 4).length, 0,
+    'a truncated edge list must report nothing rather than a partial outline');
+
   // ---- ABC widths -------------------------------------------------------
   //
   // A and C are signed and routinely negative: 'j' overhangs to its left and

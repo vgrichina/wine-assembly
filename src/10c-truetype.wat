@@ -762,6 +762,264 @@
     (i32.load8_u (i32.add (local.get $out)
       (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 5)))))
 
+  ;; ---- flattening -------------------------------------------------------
+  ;;
+  ;; Contours become a list of straight edges in 26.6 fixed point (1/64 pixel),
+  ;; which is the unit GDI itself works in and enough precision that rounding
+  ;; never decides a pixel at UI sizes.
+  ;;
+  ;; TrueType stores quadratics with the on-curve point *between* two
+  ;; consecutive off-curve points left implied at their midpoint. Omitting
+  ;; that reconstruction does not produce a slightly wrong curve; it produces
+  ;; a curve through the wrong points entirely, and a contour that may not
+  ;; even close.
+  ;;
+  ;; Edge records are four i32: x0, y0, x1, y1. Horizontal edges are dropped
+  ;; because scan conversion crosses edges against horizontal sample lines and
+  ;; a horizontal edge has no crossing to contribute — keeping them would only
+  ;; add a division by a zero height later.
+
+  (func $tt_fu_to_26_6 (param $value i32) (param $ppem i32) (param $upem i32)
+        (result i32)
+    (if (i32.le_s (local.get $upem) (i32.const 0))
+      (then (return (i32.const 0))))
+    (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_s (local.get $value))
+        (i64.extend_i32_s (i32.mul (local.get $ppem) (i32.const 64))))
+      (i64.extend_i32_s (local.get $upem))))
+
+  ;; Returns the new edge count, or -1 when the buffer is full. -1 propagates
+  ;; so a truncated edge list can never be mistaken for a complete outline.
+  (func $tt_emit_edge (param $edges i32) (param $capacity i32) (param $count i32)
+        (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32)
+        (result i32)
+    (local $slot i32)
+    (if (i32.lt_s (local.get $count) (i32.const 0))
+      (then (return (i32.const -1))))
+    (if (i32.eq (local.get $y0) (local.get $y1))
+      (then (return (local.get $count))))
+    (if (i32.ge_u (local.get $count) (local.get $capacity))
+      (then (return (i32.const -1))))
+    (local.set $slot
+      (i32.add (local.get $edges) (i32.mul (local.get $count) (i32.const 16))))
+    (i32.store (local.get $slot) (local.get $x0))
+    (i32.store offset=4 (local.get $slot) (local.get $y0))
+    (i32.store offset=8 (local.get $slot) (local.get $x1))
+    (i32.store offset=12 (local.get $slot) (local.get $y1))
+    (i32.add (local.get $count) (i32.const 1)))
+
+  ;; Fixed subdivision, sized from the control polygon so a tight curve gets
+  ;; more segments than a shallow one. Adaptive subdivision by deviation only
+  ;; pays off well above UI sizes, where the hinted strike ladder no longer
+  ;; applies.
+  (func $tt_quad_segments (param $x0 i32) (param $y0 i32) (param $cx i32)
+        (param $cy i32) (param $x1 i32) (param $y1 i32) (result i32)
+    (local $span i32)
+    (local.set $span (i32.add
+      (i32.add (call $tt_abs (i32.sub (local.get $cx) (local.get $x0)))
+        (call $tt_abs (i32.sub (local.get $cy) (local.get $y0))))
+      (i32.add (call $tt_abs (i32.sub (local.get $x1) (local.get $cx)))
+        (call $tt_abs (i32.sub (local.get $y1) (local.get $cy))))))
+    (local.set $span
+      (i32.add (i32.const 2) (i32.shr_u (local.get $span) (i32.const 8))))
+    (select (i32.const 16) (local.get $span)
+      (i32.gt_u (local.get $span) (i32.const 16))))
+
+  (func $tt_abs (param $value i32) (result i32)
+    (select (i32.sub (i32.const 0) (local.get $value)) (local.get $value)
+      (i32.lt_s (local.get $value) (i32.const 0))))
+
+  ;; de Casteljau evaluated as an exact rational at t = step/segments, so the
+  ;; endpoints land on the real curve rather than on an accumulated sum.
+  (func $tt_quad_at (param $p0 i32) (param $control i32) (param $p1 i32)
+        (param $step i32) (param $segments i32) (result i32)
+    (local $rest i32)
+    (local.set $rest (i32.sub (local.get $segments) (local.get $step)))
+    (call $gdi_round_ratio
+      (i64.add
+        (i64.add
+          (i64.mul (i64.extend_i32_s (i32.mul (local.get $rest) (local.get $rest)))
+            (i64.extend_i32_s (local.get $p0)))
+          (i64.mul (i64.extend_i32_s
+              (i32.mul (i32.const 2) (i32.mul (local.get $rest) (local.get $step))))
+            (i64.extend_i32_s (local.get $control))))
+        (i64.mul (i64.extend_i32_s (i32.mul (local.get $step) (local.get $step)))
+          (i64.extend_i32_s (local.get $p1))))
+      (i64.extend_i32_s (i32.mul (local.get $segments) (local.get $segments)))))
+
+  (func $tt_emit_quad (param $edges i32) (param $capacity i32) (param $count i32)
+        (param $x0 i32) (param $y0 i32) (param $cx i32) (param $cy i32)
+        (param $x1 i32) (param $y1 i32) (result i32)
+    (local $segments i32) (local $step i32) (local $px i32) (local $py i32)
+    (local $nx i32) (local $ny i32)
+    (local.set $segments (call $tt_quad_segments (local.get $x0) (local.get $y0)
+      (local.get $cx) (local.get $cy) (local.get $x1) (local.get $y1)))
+    (local.set $px (local.get $x0))
+    (local.set $py (local.get $y0))
+    (local.set $step (i32.const 1))
+    (block $done (loop $walk
+      (br_if $done (i32.gt_u (local.get $step) (local.get $segments)))
+      (local.set $nx (call $tt_quad_at (local.get $x0) (local.get $cx)
+        (local.get $x1) (local.get $step) (local.get $segments)))
+      (local.set $ny (call $tt_quad_at (local.get $y0) (local.get $cy)
+        (local.get $y1) (local.get $step) (local.get $segments)))
+      (local.set $count (call $tt_emit_edge (local.get $edges) (local.get $capacity)
+        (local.get $count) (local.get $px) (local.get $py)
+        (local.get $nx) (local.get $ny)))
+      (local.set $px (local.get $nx))
+      (local.set $py (local.get $ny))
+      (local.set $step (i32.add (local.get $step) (i32.const 1)))
+      (br $walk)))
+    (local.get $count))
+
+  ;; Point accessors in 26.6 pixels, so the contour walk never mixes units.
+  (func $tt_point_x_26_6 (param $points i32) (param $index i32) (param $ppem i32)
+        (param $upem i32) (result i32)
+    (call $tt_fu_to_26_6 (call $tt_point_x (local.get $points) (local.get $index))
+      (local.get $ppem) (local.get $upem)))
+
+  (func $tt_point_y_26_6 (param $points i32) (param $index i32) (param $ppem i32)
+        (param $upem i32) (result i32)
+    (call $tt_fu_to_26_6 (call $tt_point_y (local.get $points) (local.get $index))
+      (local.get $ppem) (local.get $upem)))
+
+  (func $tt_glyph_edges (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (param $points i32) (param $points_cap i32)
+        (param $edges i32) (param $edges_cap i32) (result i32)
+    (local $count i32) (local $upem i32) (local $start i32) (local $end i32)
+    (local $length i32) (local $first i32) (local $index i32) (local $step i32)
+    (local $edge_count i32) (local $sx i32) (local $sy i32) (local $cur_x i32)
+    (local $cur_y i32) (local $ctrl_x i32) (local $ctrl_y i32) (local $pending i32)
+    (local $px i32) (local $py i32) (local $mid_x i32) (local $mid_y i32)
+    (local.set $count (call $tt_glyph_load_outline (local.get $data)
+      (local.get $size) (local.get $gid) (local.get $points) (local.get $points_cap)
+      (i32.const 0)))
+    (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
+    (local.set $upem (call $tt_units_per_em (local.get $data) (local.get $size)))
+
+    (block $contours_done (loop $contours
+      (br_if $contours_done (i32.ge_u (local.get $start) (local.get $count)))
+      ;; Find this contour's last point. A missing end marker would run to the
+      ;; end of the glyph, which is the bounded reading of a malformed font.
+      (local.set $end (local.get $start))
+      (block $end_found (loop $seek
+        (br_if $end_found (i32.ge_u (local.get $end)
+          (i32.sub (local.get $count) (i32.const 1))))
+        (br_if $end_found
+          (call $tt_point_ends_contour (local.get $points) (local.get $end)))
+        (local.set $end (i32.add (local.get $end) (i32.const 1)))
+        (br $seek)))
+      (local.set $length
+        (i32.add (i32.sub (local.get $end) (local.get $start)) (i32.const 1)))
+
+      ;; The contour must begin at an on-curve point. When neither the first
+      ;; nor the last point is on-curve the real start is their midpoint,
+      ;; which is the same implied-point rule applied to the seam.
+      (if (call $tt_point_on_curve (local.get $points) (local.get $start))
+        (then
+          (local.set $sx (call $tt_point_x_26_6 (local.get $points)
+            (local.get $start) (local.get $ppem) (local.get $upem)))
+          (local.set $sy (call $tt_point_y_26_6 (local.get $points)
+            (local.get $start) (local.get $ppem) (local.get $upem)))
+          (local.set $first (i32.add (local.get $start) (i32.const 1))))
+        (else (if (call $tt_point_on_curve (local.get $points) (local.get $end))
+          (then
+            (local.set $sx (call $tt_point_x_26_6 (local.get $points)
+              (local.get $end) (local.get $ppem) (local.get $upem)))
+            (local.set $sy (call $tt_point_y_26_6 (local.get $points)
+              (local.get $end) (local.get $ppem) (local.get $upem)))
+            (local.set $first (local.get $start)))
+          (else
+            (local.set $sx (i32.shr_s (i32.add
+              (call $tt_point_x_26_6 (local.get $points) (local.get $start)
+                (local.get $ppem) (local.get $upem))
+              (call $tt_point_x_26_6 (local.get $points) (local.get $end)
+                (local.get $ppem) (local.get $upem))) (i32.const 1)))
+            (local.set $sy (i32.shr_s (i32.add
+              (call $tt_point_y_26_6 (local.get $points) (local.get $start)
+                (local.get $ppem) (local.get $upem))
+              (call $tt_point_y_26_6 (local.get $points) (local.get $end)
+                (local.get $ppem) (local.get $upem))) (i32.const 1)))
+            (local.set $first (local.get $start))))))
+      (local.set $cur_x (local.get $sx))
+      (local.set $cur_y (local.get $sy))
+      (local.set $pending (i32.const 0))
+
+      (local.set $step (i32.const 0))
+      (block $walk_done (loop $walk
+        (br_if $walk_done (i32.ge_u (local.get $step) (local.get $length)))
+        (local.set $index (i32.add (local.get $start)
+          (i32.rem_u (i32.add (i32.sub (local.get $first) (local.get $start))
+              (local.get $step))
+            (local.get $length))))
+        (local.set $px (call $tt_point_x_26_6 (local.get $points) (local.get $index)
+          (local.get $ppem) (local.get $upem)))
+        (local.set $py (call $tt_point_y_26_6 (local.get $points) (local.get $index)
+          (local.get $ppem) (local.get $upem)))
+        (if (call $tt_point_on_curve (local.get $points) (local.get $index))
+          (then
+            (if (local.get $pending)
+              (then
+                (local.set $edge_count (call $tt_emit_quad (local.get $edges)
+                  (local.get $edges_cap) (local.get $edge_count)
+                  (local.get $cur_x) (local.get $cur_y)
+                  (local.get $ctrl_x) (local.get $ctrl_y)
+                  (local.get $px) (local.get $py)))
+                (local.set $pending (i32.const 0)))
+              (else
+                (local.set $edge_count (call $tt_emit_edge (local.get $edges)
+                  (local.get $edges_cap) (local.get $edge_count)
+                  (local.get $cur_x) (local.get $cur_y)
+                  (local.get $px) (local.get $py)))))
+            (local.set $cur_x (local.get $px))
+            (local.set $cur_y (local.get $py)))
+          (else
+            ;; Two off-curve points in a row imply an on-curve point at their
+            ;; midpoint; that implied point ends one quadratic and starts the
+            ;; next.
+            (if (local.get $pending)
+              (then
+                (local.set $mid_x (i32.shr_s
+                  (i32.add (local.get $ctrl_x) (local.get $px)) (i32.const 1)))
+                (local.set $mid_y (i32.shr_s
+                  (i32.add (local.get $ctrl_y) (local.get $py)) (i32.const 1)))
+                (local.set $edge_count (call $tt_emit_quad (local.get $edges)
+                  (local.get $edges_cap) (local.get $edge_count)
+                  (local.get $cur_x) (local.get $cur_y)
+                  (local.get $ctrl_x) (local.get $ctrl_y)
+                  (local.get $mid_x) (local.get $mid_y)))
+                (local.set $cur_x (local.get $mid_x))
+                (local.set $cur_y (local.get $mid_y))))
+            (local.set $ctrl_x (local.get $px))
+            (local.set $ctrl_y (local.get $py))
+            (local.set $pending (i32.const 1))))
+        (local.set $step (i32.add (local.get $step) (i32.const 1)))
+        (br $walk)))
+
+      ;; Close the contour. An unclosed contour makes the winding rule read
+      ;; the outside of the glyph as inside.
+      (if (local.get $pending)
+        (then (local.set $edge_count (call $tt_emit_quad (local.get $edges)
+          (local.get $edges_cap) (local.get $edge_count)
+          (local.get $cur_x) (local.get $cur_y) (local.get $ctrl_x)
+          (local.get $ctrl_y) (local.get $sx) (local.get $sy))))
+        (else (local.set $edge_count (call $tt_emit_edge (local.get $edges)
+          (local.get $edges_cap) (local.get $edge_count)
+          (local.get $cur_x) (local.get $cur_y) (local.get $sx) (local.get $sy)))))
+
+      (local.set $start (i32.add (local.get $end) (i32.const 1)))
+      (br $contours)))
+
+    (if (i32.lt_s (local.get $edge_count) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.get $edge_count))
+
+  (func $tt_edge_field (param $edges i32) (param $index i32) (param $field i32)
+        (result i32)
+    (i32.load (i32.add (local.get $edges)
+      (i32.add (i32.mul (local.get $index) (i32.const 16))
+        (i32.mul (local.get $field) (i32.const 4))))))
+
   ;; ---- ABC widths -------------------------------------------------------
   ;;
   ;; GetCharABCWidths splits the advance into left bearing, black width, and
@@ -1505,6 +1763,19 @@
         (param i32) (param i32) (result i32)
     (call $tt_glyph_load_outline (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4) (i32.const 0)))
+
+  (func (export "test_tt_fu_to_26_6") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_fu_to_26_6 (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_edges") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (param i32) (param i32) (param i32) (result i32)
+    (call $tt_glyph_edges (local.get 0) (local.get 1) (local.get 2) (local.get 3)
+      (local.get 4) (local.get 5) (local.get 6) (local.get 7)))
+
+  (func (export "test_tt_edge_field") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_edge_field (local.get 0) (local.get 1) (local.get 2)))
 
   (func (export "test_tt_point_x") (param i32) (param i32) (result i32)
     (call $tt_point_x (local.get 0) (local.get 1)))
