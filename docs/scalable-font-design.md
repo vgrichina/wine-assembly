@@ -7,7 +7,10 @@ written, and `src/10c-truetype.wat` parses font tables and derives metrics:
 table directory, `head`/`hhea`/`maxp`/`OS/2`/`post`, `hmtx` advances and
 bearings, `cmap` formats 0/4/6 with the symbol-face `0xF000` bias, CP1252, the
 full pixel `TEXTMETRIC` derivation, `loca`/`glyf` record bounds in both loca
-formats, ABC widths, and `kern` format 0. What is still missing from milestone 1
+formats, ABC widths, `kern` format 0, simple-glyph outline points, and
+composite recursion with an explicit depth limit. What is still missing from
+the rasterizer is flattening and scan conversion. What is still missing from
+milestone 1
 is the *wiring*: a font arena to hold file bytes, a face-selection path from
 `CreateFontIndirectA`, and the public `GetTextExtentPoint32` /
 `GetCharWidth32` / `GetTextMetrics` handlers reading from it instead of from

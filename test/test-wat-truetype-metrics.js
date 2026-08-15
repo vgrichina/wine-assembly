@@ -341,6 +341,164 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.strictEqual(wat.test_tt_glyph_offset(sans.at, 64, 1), 0,
     'a truncated file has no glyph records');
 
+  // ---- outline points ---------------------------------------------------
+  //
+  // Points are stored as flags with a repeat byte, then all x deltas, then
+  // all y deltas, and the arrays can only be located in that order. The
+  // fixtures below came from fontTools reading the same files.
+
+  const POINTS = wat.guest_alloc(64 * 6) >>> 0;
+  const readPoints = (font, character) => {
+    const count = wat.test_tt_glyph_load_points(
+      font.at, font.size, gid(font, character), wa(POINTS), 64);
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      out.push([
+        wat.test_tt_point_x(wa(POINTS), i),
+        wat.test_tt_point_y(wa(POINTS), i),
+        wat.test_tt_point_on_curve(wa(POINTS), i),
+        wat.test_tt_point_ends_contour(wa(POINTS), i),
+      ]);
+    }
+    return out;
+  };
+
+  // A box: four on-curve points, one contour, and every delta short.
+  assert.deepStrictEqual(readPoints(sans, '.'), [
+    [187, 0, 1, 0], [187, 219, 1, 0], [382, 219, 1, 0], [382, 0, 1, 1],
+  ]);
+
+  // Two contours: the end marker must land on the last point of each, not
+  // only on the last point of the glyph.
+  assert.deepStrictEqual(readPoints(sans, 'i'), [
+    [137, 1312, 1, 0], [137, 1484, 1, 0], [317, 1484, 1, 0], [317, 1312, 1, 1],
+    [137, 0, 1, 0], [137, 1082, 1, 0], [317, 1082, 1, 0], [317, 0, 1, 1],
+  ]);
+
+  // A curved glyph, where most points are off-curve control points. A decoder
+  // that ignores the on-curve bit still produces plausible coordinates and a
+  // completely wrong shape, so the bit is asserted per point.
+  assert.deepStrictEqual(readPoints(sans, 'o'), [
+    [1053, 542, 1, 0], [1053, 258, 0, 0], [803, -20, 0, 0], [565, -20, 1, 0],
+    [328, -20, 0, 0], [86, 269, 0, 0], [86, 542, 1, 0], [86, 1102, 0, 0],
+    [571, 1102, 1, 0], [819, 1102, 0, 0], [1053, 829, 0, 1],
+    [864, 542, 1, 0], [864, 766, 0, 0], [731, 969, 0, 0], [574, 969, 1, 0],
+    [416, 969, 0, 0], [275, 762, 0, 0], [275, 542, 1, 0], [275, 328, 0, 0],
+    [414, 113, 0, 0], [563, 113, 1, 0], [725, 113, 0, 0], [864, 321, 0, 1],
+  ]);
+
+  // The decoded points must span exactly the bounding box the glyph header
+  // declares. This is the check that catches a delta accumulated with the
+  // wrong sign or an x array measured wrong: the coordinates stay plausible
+  // and the extents stop matching.
+  for (const character of ['.', 'i', 'o', 'A', 'j']) {
+    const points = readPoints(sans, character);
+    const xs = points.map(point => point[0]);
+    const ys = points.map(point => point[1]);
+    assert.strictEqual(Math.min(...xs), glyf(sans, character).xMin,
+      `"${character}" xMin from points must match the glyph header`);
+    assert.strictEqual(Math.max(...xs), glyf(sans, character).xMax);
+    assert.strictEqual(Math.min(...ys), glyf(sans, character).yMin);
+    assert.strictEqual(Math.max(...ys), glyf(sans, character).yMax);
+    assert.strictEqual(points.filter(point => point[3]).length,
+      glyf(sans, character).contours,
+      `"${character}" must end exactly as many contours as it has`);
+  }
+
+  assert.strictEqual(
+    wat.test_tt_glyph_point_count(sans.at, sans.size, gid(sans, 'o')), 23);
+  assert.strictEqual(readPoints(tahoma, 'A').length,
+    wat.test_tt_glyph_point_count(tahoma.at, tahoma.size, gid(tahoma, 'A')),
+    'short-loca glyphs decode through the same path');
+
+  // Composites hold components, not points; the caller has to recurse, and a
+  // silent empty result would look like a blank glyph instead.
+  assert.strictEqual(
+    wat.test_tt_glyph_load_points(sans.at, sans.size, gid(sans, 'Á'),
+      wa(POINTS), 64), 0, 'a composite yields no points of its own');
+  assert.strictEqual(
+    wat.test_tt_glyph_load_points(sans.at, sans.size, gid(sans, ' '),
+      wa(POINTS), 64), 0, 'an empty glyph yields no points');
+  assert.strictEqual(
+    wat.test_tt_glyph_load_points(sans.at, sans.size, gid(sans, 'o'),
+      wa(POINTS), 22), 0,
+    'a buffer one point short must refuse, not overrun');
+  assert.strictEqual(
+    wat.test_tt_glyph_load_points(sans.at, 64, 1, wa(POINTS), 64), 0,
+    'a truncated file yields no points');
+
+  // ---- composite glyphs -------------------------------------------------
+  //
+  // 'Á' is 'A' at the origin plus an acute shifted 475 units right. Treating
+  // a composite as an empty glyph renders every accented character as a
+  // blank, so this is not an exotic path for a Western corpus.
+
+  const readOutline = (font, character) => {
+    const count = wat.test_tt_glyph_load_outline(
+      font.at, font.size, gid(font, character), wa(POINTS), 64);
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      out.push([
+        wat.test_tt_point_x(wa(POINTS), i),
+        wat.test_tt_point_y(wa(POINTS), i),
+        wat.test_tt_point_on_curve(wa(POINTS), i),
+        wat.test_tt_point_ends_contour(wa(POINTS), i),
+      ]);
+    }
+    return out;
+  };
+
+  // A simple glyph must come back identically through the outline entry
+  // point, or callers would need to know which kind they hold.
+  assert.deepStrictEqual(readOutline(sans, 'o'), readPoints(sans, 'o'));
+
+  const aAcute = readOutline(sans, 'Á');
+  assert.strictEqual(aAcute.length, 23);
+  assert.deepStrictEqual(aAcute.map(point => point[3]), [
+    0, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 0, 0, 0, 1,
+    0, 0, 0, 0, 0, 1,
+  ], 'each component keeps its own contour ends after placement');
+  assert.deepStrictEqual(aAcute, [
+    [1167, 0, 1, 0], [1006, 412, 1, 0], [364, 412, 1, 0], [202, 0, 1, 0],
+    [4, 0, 1, 0], [579, 1409, 1, 0], [796, 1409, 1, 0], [1362, 0, 1, 1],
+    [685, 1265, 1, 0], [676, 1237, 1, 0], [651, 1154, 0, 0], [602, 1024, 1, 0],
+    [422, 561, 1, 0], [949, 561, 1, 0], [768, 1026, 1, 0], [740, 1095, 0, 0],
+    [712, 1182, 1, 1],
+    [547, 1530, 1, 0], [547, 1550, 1, 0], [764, 1776, 1, 0], [971, 1776, 1, 0],
+    [971, 1747, 1, 0], [661, 1530, 1, 1],
+  ], 'the acute must land 475 units right of its own origin');
+
+  // The composite's assembled extents must match the bounding box its header
+  // declares, which is the check that catches an offset applied in the wrong
+  // direction or dropped entirely.
+  const box = glyf(sans, 'Á');
+  assert.strictEqual(Math.min(...aAcute.map(point => point[0])), box.xMin);
+  assert.strictEqual(Math.max(...aAcute.map(point => point[0])), box.xMax);
+  assert.strictEqual(Math.min(...aAcute.map(point => point[1])), box.yMin);
+  assert.strictEqual(Math.max(...aAcute.map(point => point[1])), box.yMax);
+
+  for (const character of ['é', 'Ä', 'ü']) {
+    const points = readOutline(sans, character);
+    const bounds = glyf(sans, character);
+    assert.ok(points.length > 0, `"${character}" must decompose to points`);
+    assert.strictEqual(Math.min(...points.map(point => point[0])), bounds.xMin,
+      `"${character}" assembled extents must match its declared box`);
+    assert.strictEqual(Math.max(...points.map(point => point[1])), bounds.yMax);
+  }
+
+  // Half a composite is worse than none: with room for the acute but not the
+  // 'A', a partial result is indistinguishable from a real glyph, so the
+  // whole thing is refused.
+  assert.strictEqual(
+    wat.test_tt_glyph_load_outline(sans.at, sans.size, gid(sans, 'Á'),
+      wa(POINTS), 16), 0);
+  assert.strictEqual(
+    wat.test_tt_glyph_load_outline(sans.at, sans.size, gid(sans, 'Á'),
+      wa(POINTS), 23), 23, 'exactly enough room still succeeds');
+  assert.strictEqual(
+    wat.test_tt_glyph_load_outline(sans.at, 64, 1, wa(POINTS), 64), 0);
+
   // ---- ABC widths -------------------------------------------------------
   //
   // A and C are signed and routinely negative: 'j' overhangs to its left and

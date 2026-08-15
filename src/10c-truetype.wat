@@ -372,6 +372,396 @@
     (call $tt_glyph_header (local.get $data) (local.get $size) (local.get $gid)
       (i32.const 4)))
 
+  ;; ---- outline points ---------------------------------------------------
+  ;;
+  ;; A simple glyph stores its points in three run-length-ish encodings that
+  ;; have to be walked in order: flags with a repeat byte, then all x deltas,
+  ;; then all y deltas. The x array cannot be located without decoding every
+  ;; flag first, and the y array cannot be located without measuring the x
+  ;; array, so a single pass is not available however tempting it looks.
+  ;;
+  ;; Points are written to a caller-supplied buffer as 6-byte records:
+  ;;
+  ;;   +0 i16 x        font units, absolute (deltas are accumulated here)
+  ;;   +2 i16 y
+  ;;   +4 u8  on-curve
+  ;;   +5 u8  last point of its contour
+  ;;
+  ;; The contour-end bit is carried per point rather than as a separate array
+  ;; because every consumer walks points in order and needs to know where to
+  ;; close the loop; a parallel array would have to be passed alongside and
+  ;; kept in step.
+  ;;
+  ;; The output buffer is emulator-owned, not guest input, so its capacity is
+  ;; trusted; the font bytes are not, and every read of them is bounds-checked
+  ;; like the rest of this layer.
+
+  (func $tt_glyph_point_count (param $data i32) (param $size i32) (param $gid i32)
+        (result i32)
+    (local $record i32) (local $contours i32)
+    (local.set $record
+      (call $tt_glyph_offset (local.get $data) (local.get $size) (local.get $gid)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.set $contours
+      (call $tt_glyph_num_contours (local.get $data) (local.get $size)
+        (local.get $gid)))
+    (if (i32.le_s (local.get $contours) (i32.const 0))
+      (then (return (i32.const 0))))
+    ;; endPtsOfContours is indexed from the last entry: the final end point
+    ;; plus one is the count, and there is no separate count field.
+    (i32.add (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $record) (i32.add (i32.const 10)
+          (i32.mul (i32.sub (local.get $contours) (i32.const 1))
+            (i32.const 2)))))
+      (i32.const 1)))
+
+  (func $tt_glyph_load_points (param $data i32) (param $size i32) (param $gid i32)
+        (param $out i32) (param $capacity i32) (result i32)
+    (local $record i32) (local $contours i32) (local $count i32) (local $ends i32)
+    (local $cursor i32) (local $index i32) (local $flag i32) (local $repeat i32)
+    (local $value i32) (local $slot i32)
+    (local.set $record
+      (call $tt_glyph_offset (local.get $data) (local.get $size) (local.get $gid)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.set $contours
+      (call $tt_glyph_num_contours (local.get $data) (local.get $size)
+        (local.get $gid)))
+    ;; Composites are not points and must be recursed into by the caller.
+    (if (i32.le_s (local.get $contours) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $count
+      (call $tt_glyph_point_count (local.get $data) (local.get $size)
+        (local.get $gid)))
+    (if (i32.or (i32.eqz (local.get $count))
+          (i32.gt_u (local.get $count) (local.get $capacity)))
+      (then (return (i32.const 0))))
+    (local.set $ends (i32.add (local.get $record) (i32.const 10)))
+    ;; Skip the endPts array, the instruction length, and the hinting program
+    ;; itself: this layer never runs bytecode.
+    (local.set $cursor (i32.add (local.get $ends)
+      (i32.add (i32.mul (local.get $contours) (i32.const 2))
+        (i32.add (i32.const 2)
+          (call $tt_u16 (local.get $data) (local.get $size)
+            (i32.add (local.get $ends)
+              (i32.mul (local.get $contours) (i32.const 2))))))))
+
+    ;; Pass 1: flags, with bit 3 repeating the previous flag. The raw byte is
+    ;; parked in the record's on-curve slot and narrowed at the end.
+    (block $flags_done (loop $flags
+      (br_if $flags_done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $flag
+        (call $tt_u8 (local.get $data) (local.get $size) (local.get $cursor)))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+      (i32.store8 (i32.add (local.get $out)
+          (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 4)))
+        (local.get $flag))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (if (i32.and (local.get $flag) (i32.const 0x08))
+        (then
+          (local.set $repeat
+            (call $tt_u8 (local.get $data) (local.get $size) (local.get $cursor)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+          (block $repeat_done (loop $repeats
+            (br_if $repeat_done (i32.eqz (local.get $repeat)))
+            (br_if $repeat_done (i32.ge_u (local.get $index) (local.get $count)))
+            (i32.store8 (i32.add (local.get $out)
+                (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 4)))
+              (local.get $flag))
+            (local.set $index (i32.add (local.get $index) (i32.const 1)))
+            (local.set $repeat (i32.sub (local.get $repeat) (i32.const 1)))
+            (br $repeats)))))
+      (br $flags)))
+
+    ;; Pass 2: x deltas. Bit 1 means a one-byte delta whose sign lives in bit
+    ;; 4; with bit 1 clear, bit 4 instead means "same as previous", which is
+    ;; how a vertical run costs nothing.
+    (local.set $index (i32.const 0))
+    (local.set $value (i32.const 0))
+    (block $x_done (loop $xs
+      (br_if $x_done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $slot
+        (i32.add (local.get $out) (i32.mul (local.get $index) (i32.const 6))))
+      (local.set $flag (i32.load8_u (i32.add (local.get $slot) (i32.const 4))))
+      (if (i32.and (local.get $flag) (i32.const 0x02))
+        (then
+          (local.set $repeat
+            (call $tt_u8 (local.get $data) (local.get $size) (local.get $cursor)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+          (if (i32.eqz (i32.and (local.get $flag) (i32.const 0x10)))
+            (then (local.set $repeat (i32.sub (i32.const 0) (local.get $repeat)))))
+          (local.set $value (i32.add (local.get $value) (local.get $repeat))))
+        (else
+          (if (i32.eqz (i32.and (local.get $flag) (i32.const 0x10)))
+            (then
+              (local.set $value (i32.add (local.get $value)
+                (call $tt_s16 (local.get $data) (local.get $size)
+                  (local.get $cursor))))
+              (local.set $cursor (i32.add (local.get $cursor) (i32.const 2)))))))
+      (i32.store16 (local.get $slot) (local.get $value))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $xs)))
+
+    ;; Pass 3: y deltas, same encoding one bit over.
+    (local.set $index (i32.const 0))
+    (local.set $value (i32.const 0))
+    (block $y_done (loop $ys
+      (br_if $y_done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $slot
+        (i32.add (local.get $out) (i32.mul (local.get $index) (i32.const 6))))
+      (local.set $flag (i32.load8_u (i32.add (local.get $slot) (i32.const 4))))
+      (if (i32.and (local.get $flag) (i32.const 0x04))
+        (then
+          (local.set $repeat
+            (call $tt_u8 (local.get $data) (local.get $size) (local.get $cursor)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+          (if (i32.eqz (i32.and (local.get $flag) (i32.const 0x20)))
+            (then (local.set $repeat (i32.sub (i32.const 0) (local.get $repeat)))))
+          (local.set $value (i32.add (local.get $value) (local.get $repeat))))
+        (else
+          (if (i32.eqz (i32.and (local.get $flag) (i32.const 0x20)))
+            (then
+              (local.set $value (i32.add (local.get $value)
+                (call $tt_s16 (local.get $data) (local.get $size)
+                  (local.get $cursor))))
+              (local.set $cursor (i32.add (local.get $cursor) (i32.const 2)))))))
+      (i32.store16 (i32.add (local.get $slot) (i32.const 2)) (local.get $value))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $ys)))
+
+    ;; Narrow the parked flag byte to the on-curve bit and clear the contour
+    ;; marker, then set it on each contour's last point.
+    (local.set $index (i32.const 0))
+    (block $narrow_done (loop $narrow
+      (br_if $narrow_done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $slot (i32.add (local.get $out)
+        (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 4))))
+      (i32.store8 (local.get $slot)
+        (i32.and (i32.load8_u (local.get $slot)) (i32.const 1)))
+      (i32.store8 (i32.add (local.get $slot) (i32.const 1)) (i32.const 0))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $narrow)))
+
+    (local.set $index (i32.const 0))
+    (block $ends_done (loop $mark
+      (br_if $ends_done (i32.ge_u (local.get $index) (local.get $contours)))
+      (local.set $value (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $ends) (i32.mul (local.get $index) (i32.const 2)))))
+      (if (i32.lt_u (local.get $value) (local.get $count))
+        (then (i32.store8 (i32.add (local.get $out)
+            (i32.add (i32.mul (local.get $value) (i32.const 6)) (i32.const 5)))
+          (i32.const 1))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $mark)))
+
+    (local.get $count))
+
+  ;; ---- composite glyphs -------------------------------------------------
+  ;;
+  ;; A composite names other glyphs and places them, which is how nearly every
+  ;; accented character is stored: 'Á' is 'A' at the origin plus an acute
+  ;; shifted right. Treating a composite as an empty glyph renders accented
+  ;; text as blanks, so the recursion is not optional for a Western corpus.
+  ;;
+  ;; Placement comes either as an explicit offset or, when ARGS_ARE_XY_VALUES
+  ;; is clear, as a pair of point indices to be brought into coincidence —
+  ;; one already placed, one in the component. Point matching happens after
+  ;; the component's own 2x2 transform, because matching first would align
+  ;; points that then move.
+  ;;
+  ;; Depth is bounded explicitly: a font is untrusted input and a composite
+  ;; that names itself would otherwise recurse until the stack gives out.
+
+  (func $tt_s8 (param $data i32) (param $size i32) (param $off i32) (result i32)
+    (i32.shr_s
+      (i32.shl (call $tt_u8 (local.get $data) (local.get $size) (local.get $off))
+        (i32.const 24))
+      (i32.const 24)))
+
+  ;; F2Dot14: a signed 16-bit fraction with 14 bits after the point, so 0x4000
+  ;; is exactly 1.0.
+  (func $tt_f2dot14 (param $data i32) (param $size i32) (param $off i32)
+        (result i32)
+    (call $tt_s16 (local.get $data) (local.get $size) (local.get $off)))
+
+  (func $tt_apply_2x2 (param $out i32) (param $count i32)
+        (param $a i32) (param $b i32) (param $c i32) (param $d i32)
+    (local $index i32) (local $x i32) (local $y i32) (local $slot i32)
+    (if (i32.and
+          (i32.and (i32.eq (local.get $a) (i32.const 0x4000))
+            (i32.eq (local.get $d) (i32.const 0x4000)))
+          (i32.and (i32.eqz (local.get $b)) (i32.eqz (local.get $c))))
+      (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $slot
+        (i32.add (local.get $out) (i32.mul (local.get $index) (i32.const 6))))
+      (local.set $x (call $tt_point_x (local.get $out) (local.get $index)))
+      (local.set $y (call $tt_point_y (local.get $out) (local.get $index)))
+      (i32.store16 (local.get $slot) (call $gdi_round_ratio
+        (i64.add
+          (i64.mul (i64.extend_i32_s (local.get $a)) (i64.extend_i32_s (local.get $x)))
+          (i64.mul (i64.extend_i32_s (local.get $c)) (i64.extend_i32_s (local.get $y))))
+        (i64.const 16384)))
+      (i32.store16 (i32.add (local.get $slot) (i32.const 2))
+        (call $gdi_round_ratio
+          (i64.add
+            (i64.mul (i64.extend_i32_s (local.get $b)) (i64.extend_i32_s (local.get $x)))
+            (i64.mul (i64.extend_i32_s (local.get $d)) (i64.extend_i32_s (local.get $y))))
+          (i64.const 16384)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan))))
+
+  (func $tt_translate (param $out i32) (param $count i32) (param $dx i32)
+        (param $dy i32)
+    (local $index i32) (local $slot i32)
+    (if (i32.and (i32.eqz (local.get $dx)) (i32.eqz (local.get $dy)))
+      (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
+      (local.set $slot
+        (i32.add (local.get $out) (i32.mul (local.get $index) (i32.const 6))))
+      (i32.store16 (local.get $slot)
+        (i32.add (call $tt_point_x (local.get $out) (local.get $index))
+          (local.get $dx)))
+      (i32.store16 (i32.add (local.get $slot) (i32.const 2))
+        (i32.add (call $tt_point_y (local.get $out) (local.get $index))
+          (local.get $dy)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan))))
+
+  (func $tt_glyph_load_outline (param $data i32) (param $size i32) (param $gid i32)
+        (param $out i32) (param $capacity i32) (param $depth i32) (result i32)
+    (local $contours i32) (local $cursor i32) (local $flags i32) (local $part i32)
+    (local $arg1 i32) (local $arg2 i32) (local $a i32) (local $b i32)
+    (local $c i32) (local $d i32) (local $total i32) (local $added i32)
+    (local $dx i32) (local $dy i32) (local $slot i32)
+    (if (i32.gt_u (local.get $depth) (i32.const 4))
+      (then (return (i32.const 0))))
+    (local.set $contours
+      (call $tt_glyph_num_contours (local.get $data) (local.get $size)
+        (local.get $gid)))
+    (if (i32.gt_s (local.get $contours) (i32.const 0))
+      (then (return (call $tt_glyph_load_points (local.get $data) (local.get $size)
+        (local.get $gid) (local.get $out) (local.get $capacity)))))
+    (if (i32.eqz (local.get $contours)) (then (return (i32.const 0))))
+
+    (local.set $cursor
+      (i32.add (call $tt_glyph_offset (local.get $data) (local.get $size)
+          (local.get $gid))
+        (i32.const 10)))
+    (block $done (loop $components
+      (local.set $flags
+        (call $tt_u16 (local.get $data) (local.get $size) (local.get $cursor)))
+      (local.set $part (call $tt_u16 (local.get $data) (local.get $size)
+        (i32.add (local.get $cursor) (i32.const 2))))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 4)))
+      (if (i32.and (local.get $flags) (i32.const 0x0001))
+        (then
+          (local.set $arg1
+            (call $tt_s16 (local.get $data) (local.get $size) (local.get $cursor)))
+          (local.set $arg2 (call $tt_s16 (local.get $data) (local.get $size)
+            (i32.add (local.get $cursor) (i32.const 2))))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 4))))
+        (else
+          (local.set $arg1
+            (call $tt_s8 (local.get $data) (local.get $size) (local.get $cursor)))
+          (local.set $arg2 (call $tt_s8 (local.get $data) (local.get $size)
+            (i32.add (local.get $cursor) (i32.const 1))))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 2)))))
+      (local.set $a (i32.const 0x4000))
+      (local.set $b (i32.const 0))
+      (local.set $c (i32.const 0))
+      (local.set $d (i32.const 0x4000))
+      (if (i32.and (local.get $flags) (i32.const 0x0008))
+        (then
+          (local.set $a
+            (call $tt_f2dot14 (local.get $data) (local.get $size) (local.get $cursor)))
+          (local.set $d (local.get $a))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 2))))
+        (else (if (i32.and (local.get $flags) (i32.const 0x0040))
+          (then
+            (local.set $a (call $tt_f2dot14 (local.get $data) (local.get $size)
+              (local.get $cursor)))
+            (local.set $d (call $tt_f2dot14 (local.get $data) (local.get $size)
+              (i32.add (local.get $cursor) (i32.const 2))))
+            (local.set $cursor (i32.add (local.get $cursor) (i32.const 4))))
+          (else (if (i32.and (local.get $flags) (i32.const 0x0080))
+            (then
+              (local.set $a (call $tt_f2dot14 (local.get $data) (local.get $size)
+                (local.get $cursor)))
+              (local.set $b (call $tt_f2dot14 (local.get $data) (local.get $size)
+                (i32.add (local.get $cursor) (i32.const 2))))
+              (local.set $c (call $tt_f2dot14 (local.get $data) (local.get $size)
+                (i32.add (local.get $cursor) (i32.const 4))))
+              (local.set $d (call $tt_f2dot14 (local.get $data) (local.get $size)
+                (i32.add (local.get $cursor) (i32.const 6))))
+              (local.set $cursor (i32.add (local.get $cursor) (i32.const 8)))))))))
+
+      ;; A composite that only half fits is worse than none: a caller cannot
+      ;; tell an acute with no 'A' under it from a real glyph, so running out
+      ;; of room, exceeding the depth limit, or hitting a malformed component
+      ;; refuses the whole glyph rather than returning part of it. A component
+      ;; that is genuinely empty contributes nothing and is not a failure.
+      (if (i32.ge_u (local.get $total) (local.get $capacity))
+        (then (return (i32.const 0))))
+      (local.set $slot
+        (i32.add (local.get $out) (i32.mul (local.get $total) (i32.const 6))))
+      (local.set $added (call $tt_glyph_load_outline (local.get $data)
+        (local.get $size) (local.get $part) (local.get $slot)
+        (i32.sub (local.get $capacity) (local.get $total))
+        (i32.add (local.get $depth) (i32.const 1))))
+      (if (i32.eqz (local.get $added))
+        (then
+          (if (call $tt_glyph_num_contours (local.get $data) (local.get $size)
+                (local.get $part))
+            (then (return (i32.const 0))))))
+      (if (local.get $added)
+        (then
+          (call $tt_apply_2x2 (local.get $slot) (local.get $added)
+            (local.get $a) (local.get $b) (local.get $c) (local.get $d))
+          (if (i32.and (local.get $flags) (i32.const 0x0002))
+            (then
+              (local.set $dx (local.get $arg1))
+              (local.set $dy (local.get $arg2)))
+            (else
+              ;; Point matching. Out-of-range indices mean a malformed font;
+              ;; placing the component at the origin is the bounded answer.
+              (local.set $dx (i32.const 0))
+              (local.set $dy (i32.const 0))
+              (if (i32.and (i32.lt_u (local.get $arg1) (local.get $total))
+                    (i32.lt_u (local.get $arg2) (local.get $added)))
+                (then
+                  (local.set $dx (i32.sub
+                    (call $tt_point_x (local.get $out) (local.get $arg1))
+                    (call $tt_point_x (local.get $slot) (local.get $arg2))))
+                  (local.set $dy (i32.sub
+                    (call $tt_point_y (local.get $out) (local.get $arg1))
+                    (call $tt_point_y (local.get $slot) (local.get $arg2))))))))
+          (call $tt_translate (local.get $slot) (local.get $added)
+            (local.get $dx) (local.get $dy))
+          (local.set $total (i32.add (local.get $total) (local.get $added)))))
+      (br_if $done (i32.eqz (i32.and (local.get $flags) (i32.const 0x0020))))
+      (br $components)))
+    (local.get $total))
+
+  ;; Signed accessors for the packed records, so callers never re-derive the
+  ;; stride or forget that coordinates are signed.
+  (func $tt_point_x (param $out i32) (param $index i32) (result i32)
+    (i32.load16_s (i32.add (local.get $out)
+      (i32.mul (local.get $index) (i32.const 6)))))
+
+  (func $tt_point_y (param $out i32) (param $index i32) (result i32)
+    (i32.load16_s (i32.add (local.get $out)
+      (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 2)))))
+
+  (func $tt_point_on_curve (param $out i32) (param $index i32) (result i32)
+    (i32.load8_u (i32.add (local.get $out)
+      (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 4)))))
+
+  (func $tt_point_ends_contour (param $out i32) (param $index i32) (result i32)
+    (i32.load8_u (i32.add (local.get $out)
+      (i32.add (i32.mul (local.get $index) (i32.const 6)) (i32.const 5)))))
+
   ;; ---- ABC widths -------------------------------------------------------
   ;;
   ;; GetCharABCWidths splits the advance into left bearing, black width, and
@@ -1101,6 +1491,32 @@
   (func (export "test_tt_abc_c_fu") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_abc_c_fu (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_point_count") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_glyph_point_count (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_glyph_load_points") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $tt_glyph_load_points (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3) (local.get 4)))
+
+  (func (export "test_tt_glyph_load_outline") (param i32) (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $tt_glyph_load_outline (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3) (local.get 4) (i32.const 0)))
+
+  (func (export "test_tt_point_x") (param i32) (param i32) (result i32)
+    (call $tt_point_x (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_point_y") (param i32) (param i32) (result i32)
+    (call $tt_point_y (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_point_on_curve") (param i32) (param i32) (result i32)
+    (call $tt_point_on_curve (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_point_ends_contour") (param i32) (param i32) (result i32)
+    (call $tt_point_ends_contour (local.get 0) (local.get 1)))
 
   (func (export "test_tt_kern_pair_fu") (param i32) (param i32) (param i32)
         (param i32) (result i32)
