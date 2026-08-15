@@ -25,10 +25,16 @@
   (global $help_view_bitmap_slot_count (mut i32) (i32.const 0))
   (global $help_view_bitmap_materialized_count (mut i32) (i32.const 0))
   (global $help_view_bitmap_dc (mut i32) (i32.const 0))
+  (global $help_view_font_handles_ga (mut i32) (i32.const 0))
+  (global $help_view_font_handles_wa (mut i32) (i32.const 0))
+  (global $help_view_font_slot_count (mut i32) (i32.const 0))
+  (global $help_view_font_materialized_count (mut i32) (i32.const 0))
+  (global $help_view_font_hdc (mut i32) (i32.const 0))
 
   ;; Private result channel used while a replacement view is still local.
   (global $help_materialize_bitmap_dc (mut i32) (i32.const 0))
   (global $help_materialize_bitmap_count (mut i32) (i32.const 0))
+  (global $help_materialize_font_count (mut i32) (i32.const 0))
 
   ;; Private two-pass layout channel. A zero output pointer counts and
   ;; validates exact run requirements without writing any records.
@@ -61,12 +67,24 @@
         (i32.store offset=24 (local.get $run) (local.get $raw_len))
         (i32.store offset=28 (local.get $run) (local.get $font_index))
         (i32.store offset=32 (local.get $run) (local.get $color))
+        ;; Low 28 bits retain hotspot begin-token identity. High bits retain
+        ;; decorations so a failed replacement can keep painting the prior
+        ;; view without consulting the newly loaded document's FONT table.
+        (if (i32.lt_u (local.get $font_index) (global.get $help_doc_font_count))
+          (then
+            (local.set $flags (i32.or (local.get $flags)
+              (i32.shl
+                (i32.and (i32.load offset=12
+                  (i32.add (global.get $help_doc_fonts_wa)
+                    (i32.mul (local.get $font_index) (global.get $HELP_FONT_SIZE))))
+                  (i32.const 0x0C))
+                (i32.const 28))))))
         (i32.store offset=36 (local.get $run) (local.get $flags))))
     (global.set $help_layout_count
       (i32.add (global.get $help_layout_count) (i32.const 1)))
     (i32.const 1))
 
-  (func $help_layout_font_height (param $font_index i32) (result i32)
+  (func $help_font_pixel_height (param $font_index i32) (result i32)
     (local $font i32) (local $height i32)
     (if (i32.ge_u (local.get $font_index) (global.get $help_doc_font_count))
       (then (return (i32.const 16))))
@@ -90,7 +108,30 @@
       (then (local.set $height (i32.const 8))))
     (if (i32.gt_u (local.get $height) (i32.const 96))
       (then (local.set $height (i32.const 96))))
-    (i32.add (local.get $height) (i32.const 3)))
+    (local.get $height))
+
+  (func $help_layout_font_height (param $font_index i32) (result i32)
+    (i32.add (call $help_font_pixel_height (local.get $font_index)) (i32.const 3)))
+
+  (func $help_layout_select_font
+    (param $hdc i32) (param $handles i32) (param $count i32)
+    (param $font_index i32) (result i32)
+    (local $handle i32) (local $metrics i32) (local $height i32)
+    (if (i32.and (i32.ne (local.get $handles) (i32.const 0))
+          (i32.lt_u (local.get $font_index) (local.get $count)))
+      (then
+        (local.set $handle (i32.load (i32.add (local.get $handles)
+          (i32.shl (local.get $font_index) (i32.const 2)))))
+        (if (local.get $handle)
+          (then
+            (drop (call $gdi_dc_select_owned_object
+              (local.get $hdc) (local.get $handle)))
+            (local.set $metrics (call $host_get_text_metrics (local.get $hdc)))
+            (local.set $height (i32.and (local.get $metrics) (i32.const 0xFFFF)))
+            (if (i32.and (i32.ge_u (local.get $height) (i32.const 1))
+                  (i32.le_u (local.get $height) (i32.const 256)))
+              (then (return (local.get $height))))))))
+    (call $help_layout_font_height (local.get $font_index)))
 
   (func $help_layout_measure
     (param $hdc i32) (param $text i32) (param $length i32) (result i32)
@@ -132,7 +173,8 @@
     (param $raw i32) (param $raw_len i32)
     (param $tokens i32) (param $token_count i32)
     (param $runs i32) (param $run_capacity i32)
-    (param $client_width i32) (param $hdc i32) (result i32)
+    (param $client_width i32) (param $hdc i32)
+    (param $font_handles i32) (param $font_count i32) (result i32)
     (local $memory_bytes i32) (local $token i32) (local $kind i32)
     (local $off i32) (local $len i32) (local $value i32)
     (local $i i32) (local $pos i32) (local $span i32) (local $ch i32)
@@ -145,6 +187,13 @@
     (global.set $help_layout_extent (i32.const 0))
     (global.set $help_layout_out (local.get $runs))
     (global.set $help_layout_capacity (local.get $run_capacity))
+    ;; Counting and writing passes must start from identical default state;
+    ;; the first pass may otherwise leave its final dynamic font selected.
+    (if (local.get $font_handles)
+      (then
+        (drop (call $gdi_dc_set_field
+          (local.get $hdc) (i32.const 88) (i32.const 0x3001D)
+          (i32.const 0x3001D)))))
     (local.set $memory_bytes (i32.shl (memory.size) (i32.const 16)))
     (if (i32.or
           (i32.or (i32.lt_u (local.get $client_width) (i32.const 32))
@@ -201,7 +250,9 @@
           (if (i32.ge_u (local.get $value) (global.get $help_doc_font_count))
             (then (return (i32.const -1))))
           (local.set $font_index (local.get $value))
-          (local.set $font_height (call $help_layout_font_height (local.get $value)))
+          (local.set $font_height (call $help_layout_select_font
+            (local.get $hdc) (local.get $font_handles) (local.get $font_count)
+            (local.get $value)))
           (if (i32.gt_u (local.get $font_height) (local.get $line_height))
             (then (local.set $line_height (local.get $font_height))))
           (local.set $color (i32.load offset=20
@@ -362,7 +413,8 @@
     (param $raw i32) (param $raw_len i32)
     (param $tokens i32) (param $token_count i32)
     (param $runs i32) (param $run_capacity i32)
-    (param $client_width i32) (param $hdc i32) (result i32)
+    (param $client_width i32) (param $hdc i32)
+    (param $font_handles i32) (param $font_count i32) (result i32)
     (local $required i32)
     (if (local.get $runs)
       (then
@@ -370,7 +422,8 @@
           (local.get $raw) (local.get $raw_len)
           (local.get $tokens) (local.get $token_count)
           (i32.const 0) (global.get $HELP_MAX_LAYOUT_RUNS)
-          (local.get $client_width) (local.get $hdc)))
+          (local.get $client_width) (local.get $hdc)
+          (local.get $font_handles) (local.get $font_count)))
         (if (i32.or (i32.lt_s (local.get $required) (i32.const 0))
               (i32.gt_u (local.get $required) (local.get $run_capacity)))
           (then (return (i32.const -1))))))
@@ -378,7 +431,101 @@
       (local.get $raw) (local.get $raw_len)
       (local.get $tokens) (local.get $token_count)
       (local.get $runs) (local.get $run_capacity)
-      (local.get $client_width) (local.get $hdc)))
+      (local.get $client_width) (local.get $hdc)
+      (local.get $font_handles) (local.get $font_count)))
+
+  (func $help_font_handles_release
+    (param $handles i32) (param $count i32) (param $hdc i32)
+    (local $i i32) (local $handle i32)
+    ;; Never leave a DC pointing at an object that this transaction deletes.
+    (if (i32.and (i32.ne (local.get $hdc) (i32.const 0))
+          (i32.ne (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0))
+            (i32.const 0)))
+      (then
+        (drop (call $gdi_dc_set_field
+          (local.get $hdc) (i32.const 88) (i32.const 0x3001D)
+          (i32.const 0x3001D)))))
+    (if (local.get $handles)
+      (then
+        (block $done (loop $objects
+          (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $handle (i32.load (i32.add (local.get $handles)
+            (i32.shl (local.get $i) (i32.const 2)))))
+          (if (local.get $handle)
+            (then (drop (call $gdi_object_delete_full (local.get $handle)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $objects))))))
+
+  ;; Create each distinct referenced logical font before layout. Face names
+  ;; are copied through a bounded scratch buffer because an HLP face slot may
+  ;; legally consume every byte without a trailing NUL.
+  (func $help_materialize_view_fonts
+    (param $tokens i32) (param $token_count i32)
+    (param $handles i32) (param $slot_count i32) (result i32)
+    (local $i i32) (local $token i32) (local $index i32)
+    (local $font i32) (local $face_index i32) (local $face i32)
+    (local $name i32) (local $name_len i32) (local $copy_len i32)
+    (local $height i32) (local $attributes i32) (local $handle i32)
+    (global.set $help_materialize_font_count (i32.const 0))
+    (block $failed
+      (block $done (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (local.get $token_count)))
+        (local.set $token (i32.add (local.get $tokens)
+          (i32.mul (local.get $i) (global.get $HELP_TOPIC_TOKEN_SIZE))))
+        (if (i32.ne (i32.load (local.get $token)) (global.get $HELP_TOKEN_FONT))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $scan)))
+        (local.set $index (i32.load offset=12 (local.get $token)))
+        (if (i32.ge_u (local.get $index) (local.get $slot_count))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_FONT_TABLE)
+              (i32.const 0))
+            (br $failed)))
+        (if (i32.load (i32.add (local.get $handles)
+              (i32.shl (local.get $index) (i32.const 2))))
+          (then
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $scan)))
+        (local.set $font (i32.add (global.get $help_doc_fonts_wa)
+          (i32.mul (local.get $index) (global.get $HELP_FONT_SIZE))))
+        (local.set $face_index (i32.load (local.get $font)))
+        (if (i32.ge_u (local.get $face_index) (global.get $help_doc_font_face_count))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_FONT_TABLE)
+              (i32.const 0))
+            (br $failed)))
+        (local.set $face (i32.add (global.get $help_doc_font_faces_wa)
+          (i32.mul (local.get $face_index) (global.get $HELP_FONT_FACE_SIZE))))
+        (local.set $name (i32.add (global.get $help_doc_file_wa)
+          (i32.load (local.get $face))))
+        (local.set $name_len (i32.load offset=4 (local.get $face)))
+        (local.set $copy_len (local.get $name_len))
+        (if (i32.gt_u (local.get $copy_len) (i32.const 31))
+          (then (local.set $copy_len (i32.const 31))))
+        (memory.fill (global.get $TEXT_SCRATCH) (i32.const 0) (i32.const 32))
+        (memory.copy (global.get $TEXT_SCRATCH) (local.get $name) (local.get $copy_len))
+        (local.set $height (call $help_font_pixel_height (local.get $index)))
+        (local.set $attributes (i32.load offset=12 (local.get $font)))
+        (local.set $handle (call $gdi_font_create
+          (i32.sub (i32.const 0) (local.get $height))
+          (i32.load offset=16 (local.get $font))
+          (i32.ne (i32.and (local.get $attributes) (i32.const 2)) (i32.const 0))
+          (global.get $TEXT_SCRATCH)))
+        (if (i32.eqz (local.get $handle))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION)
+              (i32.const 0))
+            (br $failed)))
+        (call $gdi_bitmap_font_bind (local.get $handle) (global.get $TEXT_SCRATCH))
+        (i32.store (i32.add (local.get $handles)
+          (i32.shl (local.get $index) (i32.const 2))) (local.get $handle))
+        (global.set $help_materialize_font_count
+          (i32.add (global.get $help_materialize_font_count) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+      (return (i32.const 1)))
+    (i32.const 0))
 
   (func $help_bitmap_handles_release
     (param $handles i32) (param $count i32) (param $dc i32)
@@ -498,6 +645,12 @@
     (i32.const 0))
 
   (func $help_typed_view_release
+    (call $help_font_handles_release
+      (global.get $help_view_font_handles_wa)
+      (global.get $help_view_font_slot_count)
+      (global.get $help_view_font_hdc))
+    (if (global.get $help_view_font_handles_ga)
+      (then (call $heap_free (global.get $help_view_font_handles_ga))))
     (call $help_bitmap_handles_release
       (global.get $help_view_bitmap_handles_wa)
       (global.get $help_view_bitmap_slot_count)
@@ -528,6 +681,11 @@
     (global.set $help_view_bitmap_slot_count (i32.const 0))
     (global.set $help_view_bitmap_materialized_count (i32.const 0))
     (global.set $help_view_bitmap_dc (i32.const 0))
+    (global.set $help_view_font_handles_ga (i32.const 0))
+    (global.set $help_view_font_handles_wa (i32.const 0))
+    (global.set $help_view_font_slot_count (i32.const 0))
+    (global.set $help_view_font_materialized_count (i32.const 0))
+    (global.set $help_view_font_hdc (i32.const 0))
     (global.set $help_topic_wa (i32.const 0))
     (global.set $help_topic_len (i32.const 0)))
 
@@ -542,6 +700,8 @@
     (local $bitmap_handles_ga i32) (local $bitmap_handles_wa i32)
     (local $bitmap_slot_count i32) (local $bitmap_materialized_count i32)
     (local $bitmap_dc i32)
+    (local $font_handles_ga i32) (local $font_handles_wa i32)
+    (local $font_slot_count i32) (local $font_materialized_count i32)
     (local $hdc i32) (local $ok i32)
     (block $cleanup
     (local.set $raw_ga (call $heap_alloc (i32.const 65536)))
@@ -594,11 +754,30 @@
       (select (global.get $help_hwnd) (global.get $next_hwnd)
         (i32.ne (global.get $help_hwnd) (i32.const 0)))
       (i32.const 0x40000)))
+    (local.set $font_slot_count (global.get $help_doc_font_count))
+    (if (local.get $font_slot_count)
+      (then
+        (local.set $font_handles_ga (call $heap_alloc
+          (i32.shl (local.get $font_slot_count) (i32.const 2))))
+        (if (i32.eqz (local.get $font_handles_ga))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+            (br $cleanup)))
+        (local.set $font_handles_wa (call $g2w (local.get $font_handles_ga)))
+        (memory.fill (local.get $font_handles_wa) (i32.const 0)
+          (i32.shl (local.get $font_slot_count) (i32.const 2)))))
+    (if (i32.eqz (call $help_materialize_view_fonts
+          (local.get $tokens_wa) (local.get $token_count)
+          (local.get $font_handles_wa) (local.get $font_slot_count)))
+      (then (br $cleanup)))
+    (local.set $font_materialized_count
+      (global.get $help_materialize_font_count))
     (local.set $run_count (call $help_layout_tokens
       (local.get $raw_wa) (local.get $raw_len)
       (local.get $tokens_wa) (local.get $token_count)
       (i32.const 0) (global.get $HELP_MAX_LAYOUT_RUNS)
-      (i32.const 400) (local.get $hdc)))
+      (i32.const 400) (local.get $hdc)
+      (local.get $font_handles_wa) (local.get $font_slot_count)))
     (if (i32.lt_s (local.get $run_count) (i32.const 0)) (then (br $cleanup)))
     (if (local.get $run_count)
       (then
@@ -613,7 +792,9 @@
           (local.get $raw_wa) (local.get $raw_len)
           (local.get $tokens_wa) (local.get $token_count)
           (local.get $runs_wa) (local.get $run_count)
-          (i32.const 400) (local.get $hdc)) (local.get $run_count))
+          (i32.const 400) (local.get $hdc)
+          (local.get $font_handles_wa) (local.get $font_slot_count))
+          (local.get $run_count))
       (then (br $cleanup)))
     (local.set $bitmap_slot_count (global.get $help_doc_bitmap_count))
     (if (local.get $bitmap_slot_count)
@@ -656,6 +837,12 @@
     (global.set $help_view_bitmap_materialized_count
       (local.get $bitmap_materialized_count))
     (global.set $help_view_bitmap_dc (local.get $bitmap_dc))
+    (global.set $help_view_font_handles_ga (local.get $font_handles_ga))
+    (global.set $help_view_font_handles_wa (local.get $font_handles_wa))
+    (global.set $help_view_font_slot_count (local.get $font_slot_count))
+    (global.set $help_view_font_materialized_count
+      (local.get $font_materialized_count))
+    (global.set $help_view_font_hdc (local.get $hdc))
     (global.set $help_last_error (global.get $HELP_ERROR_NONE))
     (global.set $help_last_error_offset (i32.const 0))
     (local.set $raw_ga (i32.const 0))
@@ -664,6 +851,7 @@
     (local.set $runs_ga (i32.const 0))
     (local.set $bitmap_handles_ga (i32.const 0))
     (local.set $bitmap_dc (i32.const 0))
+    (local.set $font_handles_ga (i32.const 0))
     (local.set $ok (i32.const 1)))
     (if (local.get $bitmap_handles_ga)
       (then
@@ -671,6 +859,12 @@
           (local.get $bitmap_handles_wa) (local.get $bitmap_slot_count)
           (local.get $bitmap_dc))
         (call $heap_free (local.get $bitmap_handles_ga))))
+    (if (local.get $font_handles_ga)
+      (then
+        (call $help_font_handles_release
+          (local.get $font_handles_wa) (local.get $font_slot_count)
+          (local.get $hdc))
+        (call $heap_free (local.get $font_handles_ga))))
     (if (local.get $runs_ga) (then (call $heap_free (local.get $runs_ga))))
     (if (local.get $payload_ga) (then (call $heap_free (local.get $payload_ga))))
     (if (local.get $tokens_ga) (then (call $heap_free (local.get $tokens_ga))))
@@ -680,7 +874,8 @@
   (func $help_paint_typed_view (param $hdc i32)
     (local $i i32) (local $run i32) (local $kind i32)
     (local $y i32) (local $height i32) (local $color i32)
-    (local $index i32) (local $handle i32)
+    (local $index i32) (local $handle i32) (local $flags i32)
+    (local $pixel_x i32) (local $line_y i32)
     (block $done (loop $runs
       (br_if $done (i32.ge_u (local.get $i) (global.get $help_view_run_count)))
       (local.set $run (i32.add (global.get $help_view_runs_wa)
@@ -693,14 +888,54 @@
             (i32.and (i32.gt_s (i32.add (local.get $y) (local.get $height)) (i32.const 0))
                      (i32.lt_s (local.get $y) (i32.const 272))))
         (then
+          (local.set $index (i32.load offset=28 (local.get $run)))
+          (if (i32.and
+                (i32.lt_u (local.get $index) (global.get $help_view_font_slot_count))
+                (i32.ne (global.get $help_view_font_handles_wa) (i32.const 0)))
+            (then
+              (local.set $handle (i32.load
+                (i32.add (global.get $help_view_font_handles_wa)
+                  (i32.shl (local.get $index) (i32.const 2)))))
+              (if (local.get $handle)
+                (then (drop (call $gdi_dc_select_owned_object
+                  (local.get $hdc) (local.get $handle)))))))
           (local.set $color (i32.load offset=32 (local.get $run)))
-          (if (i32.load offset=36 (local.get $run))
+          (local.set $flags (i32.load offset=36 (local.get $run)))
+          (if (i32.and (local.get $flags) (i32.const 0x0FFFFFFF))
             (then (local.set $color (i32.const 0xFF0000))))
           (drop (call $host_gdi_set_text_color (local.get $hdc) (local.get $color)))
           (drop (call $host_gdi_text_out
             (local.get $hdc) (i32.load offset=4 (local.get $run)) (local.get $y)
             (i32.add (global.get $help_topic_wa) (i32.load offset=20 (local.get $run)))
-            (i32.load offset=24 (local.get $run)) (i32.const 0)))))
+            (i32.load offset=24 (local.get $run)) (i32.const 0)))
+          (if (i32.and (local.get $flags) (i32.const 0x40000000))
+            (then
+              (local.set $line_y
+                (i32.add (local.get $y) (i32.sub (local.get $height) (i32.const 2))))
+              (local.set $pixel_x (i32.load offset=4 (local.get $run)))
+              (block $underline_done (loop $underline
+                (br_if $underline_done (i32.ge_u (local.get $pixel_x)
+                  (i32.add (i32.load offset=4 (local.get $run))
+                    (i32.load offset=12 (local.get $run)))))
+                (drop (call $host_gdi_set_pixel
+                  (local.get $hdc) (local.get $pixel_x) (local.get $line_y)
+                  (local.get $color)))
+                (local.set $pixel_x (i32.add (local.get $pixel_x) (i32.const 1)))
+                (br $underline)))))
+          (if (i32.and (local.get $flags) (i32.const 0x80000000))
+            (then
+              (local.set $line_y (i32.add (local.get $y)
+                (i32.shr_u (local.get $height) (i32.const 1))))
+              (local.set $pixel_x (i32.load offset=4 (local.get $run)))
+              (block $strike_done (loop $strike
+                (br_if $strike_done (i32.ge_u (local.get $pixel_x)
+                  (i32.add (i32.load offset=4 (local.get $run))
+                    (i32.load offset=12 (local.get $run)))))
+                (drop (call $host_gdi_set_pixel
+                  (local.get $hdc) (local.get $pixel_x) (local.get $line_y)
+                  (local.get $color)))
+                (local.set $pixel_x (i32.add (local.get $pixel_x) (i32.const 1)))
+                (br $strike)))))))
       (if (i32.and (i32.eq (local.get $kind) (global.get $HELP_LAYOUT_BITMAP))
             (i32.and (i32.gt_s (i32.add (local.get $y) (local.get $height)) (i32.const 0))
                      (i32.lt_s (local.get $y) (i32.const 272))))
@@ -738,7 +973,8 @@
       (br_if $missing (i32.ge_u (local.get $i) (global.get $help_view_run_count)))
       (local.set $run (i32.add (global.get $help_view_runs_wa)
         (i32.mul (local.get $i) (global.get $HELP_LAYOUT_RUN_SIZE))))
-      (local.set $id (i32.load offset=36 (local.get $run)))
+      (local.set $id (i32.and (i32.load offset=36 (local.get $run))
+        (i32.const 0x0FFFFFFF)))
       (if (local.get $id)
         (then
           (local.set $left (i32.load offset=4 (local.get $run)))
@@ -824,7 +1060,8 @@
       (local.get $raw) (local.get $raw_len)
       (local.get $tokens) (local.get $token_count)
       (local.get $runs) (local.get $run_capacity)
-      (local.get $width) (i32.const 0x40001)))
+      (local.get $width) (i32.const 0x40001)
+      (i32.const 0) (i32.const 0)))
   (func (export "get_help_layout_extent") (result i32)
     (global.get $help_layout_extent))
   (func (export "get_help_view_run_count") (result i32)
@@ -844,6 +1081,34 @@
       (i32.shl (local.get $index) (i32.const 2)))))
   (func (export "get_help_view_bitmap_dc") (result i32)
     (global.get $help_view_bitmap_dc))
+  (func (export "get_help_view_font_slot_count") (result i32)
+    (global.get $help_view_font_slot_count))
+  (func (export "get_help_view_font_count") (result i32)
+    (global.get $help_view_font_materialized_count))
+  (func (export "get_help_view_font_handle") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_view_font_slot_count))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $help_view_font_handles_wa)
+      (i32.shl (local.get $index) (i32.const 2)))))
+  (func (export "get_help_view_font_hdc") (result i32)
+    (global.get $help_view_font_hdc))
+  (func (export "test_help_view_font_height") (param $index i32) (result i32)
+    (call $gdi_font_height (call $get_help_view_font_handle_for_test
+      (local.get $index))))
+  (func $get_help_view_font_handle_for_test (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_view_font_slot_count))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $help_view_font_handles_wa)
+      (i32.shl (local.get $index) (i32.const 2)))))
+  (func (export "test_help_view_font_weight") (param $index i32) (result i32)
+    (call $gdi_font_weight (call $get_help_view_font_handle_for_test
+      (local.get $index))))
+  (func (export "test_help_view_font_italic") (param $index i32) (result i32)
+    (call $gdi_font_italic (call $get_help_view_font_handle_for_test
+      (local.get $index))))
+  (func (export "test_help_view_font_face") (param $index i32) (result i32)
+    (call $gdi_font_face (call $get_help_view_font_handle_for_test
+      (local.get $index))))
   (func (export "test_help_replace_typed_view")
     (param $topic_index i32) (result i32)
     (call $help_replace_typed_view (local.get $topic_index)))

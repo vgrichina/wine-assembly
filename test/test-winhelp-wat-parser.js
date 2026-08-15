@@ -1573,6 +1573,74 @@ async function main() {
     dv.getUint32(layoutRunsWA + 16, true) === 17 &&
     dv.getUint32(layoutRunsWA + 28, true) === 0 &&
     dv.getUint32(layoutRunsWA + 32, true) === 0x112233);
+  const fontViewParts = buildSyntheticFormattedTopic({
+    returnParts: true, stringCount: 13, closeVariableHotspot: true,
+  });
+  const fontViewHelp = buildSyntheticSemanticHelp({
+    topic: fontViewParts.topic,
+    font: buildOldFont(['MS Sans Serif'], [
+      [0,16,3,0], [0,18,3,0], [0,20,3,0x0f,0x112233,0x445566],
+    ]),
+  });
+  check('typed view materializes each referenced logical font as an owned HFONT',
+    load(fontViewHelp.file) === 1 && e.test_help_replace_typed_view(0) === 1 && (() => {
+      const handle = e.get_help_view_font_handle(2);
+      return e.get_help_view_font_slot_count() === 3 && e.get_help_view_font_count() === 1 &&
+        e.get_help_view_font_handle(0) === 0 && e.get_help_view_font_handle(1) === 0 &&
+        handle !== 0 && e.test_gdi_object_type(handle) === 4 &&
+        e.test_help_view_font_height(2) === -14 &&
+        e.test_help_view_font_weight(2) === 700 &&
+        e.test_help_view_font_italic(2) === 1 &&
+        readLatin1(e.test_help_view_font_face(2), 13) === 'MS Sans Serif';
+    })(), `error=${e.get_help_last_error()} count=${e.get_help_view_font_count()}`);
+  const fontViewHandle = e.get_help_view_font_handle(2);
+  const fontViewHdc = e.get_help_view_font_hdc();
+  const decoratedFontRun = Array.from({ length: e.get_help_view_run_count() }, (_, index) =>
+    e.get_help_view_run_ptr() + index * 40).find(run =>
+    dv.getUint32(run, true) === 1 && dv.getUint32(run + 28, true) === 2 &&
+    (dv.getUint32(run + 36, true) & 0x0fffffff) === 0);
+  check('font-aware layout uses realized metrics and retains decorations in positioned runs',
+    decoratedFontRun && dv.getUint32(decoratedFontRun + 16, true) >= 8 &&
+    dv.getUint32(decoratedFontRun + 16, true) < 17 &&
+    (dv.getUint32(decoratedFontRun + 36, true) >>> 28) === 0x0c);
+  e.test_help_paint_typed_view(fontViewHdc);
+  check('production repaint selects the run HFONT into the canonical target DC',
+    e.test_gdi_dc_get_field(fontViewHdc, 88, 0) === fontViewHandle);
+  const fontProbeA = e.test_help_paint_bitmap_probe(512, 128);
+  const fontProbeB = e.test_help_paint_bitmap_probe(512, 128);
+  check('production repaint draws retained underline and strikeout geometry deterministically',
+    decoratedFontRun && fontProbeA !== 0 && fontProbeB !== 0 && (() => {
+      const x = dv.getUint32(decoratedFontRun + 4, true);
+      const y = dv.getUint32(decoratedFontRun + 8, true);
+      const width = dv.getUint32(decoratedFontRun + 12, true);
+      const height = dv.getUint32(decoratedFontRun + 16, true);
+      const rows = [y + height - 2, y + Math.floor(height / 2)];
+      const line = (storage, row) => Array.from({ length: width }, (_, dx) =>
+        dv.getUint32(storage + (row * 512 + x + dx) * 4, true));
+      const a = e.test_gdi_bitmap_storage(fontProbeA);
+      const b = e.test_gdi_bitmap_storage(fontProbeB);
+      return rows.every(row => line(a, row).every(pixel => pixel !== 0) &&
+        JSON.stringify(line(a, row)) === JSON.stringify(line(b, row)));
+    })());
+  if (fontProbeA) e.test_help_release_bitmap_probe(fontProbeA);
+  if (fontProbeB) e.test_help_release_bitmap_probe(fontProbeB);
+  const retainedFontRuns = e.get_help_view_run_ptr();
+  const occupiedGdiHandles = [];
+  for (let i = 0; i < 512; i++) {
+    const handle = 0x510000 + i;
+    if (!e.test_gdi_object_adopt(handle, 1, 1, 1, 0, 0)) break;
+    occupiedGdiHandles.push(handle);
+  }
+  check('font allocation failure retains the prior complete view transaction',
+    occupiedGdiHandles.length > 0 && e.test_help_replace_typed_view(0) === 0 &&
+    e.get_help_last_error() === 2 && e.get_help_view_run_ptr() === retainedFontRuns &&
+    e.get_help_view_font_handle(2) === fontViewHandle &&
+    e.test_gdi_object_type(fontViewHandle) === 4);
+  occupiedGdiHandles.forEach(handle => e.test_gdi_object_delete(handle));
+  check('topic replacement releases prior HFONTs and clears selected DC references',
+    e.test_help_replace_typed_view(2) === 1 && e.get_help_view_font_count() === 0 &&
+    e.test_gdi_object_type(fontViewHandle) === 0 &&
+    e.test_gdi_dc_get_field(fontViewHdc, 88, 0) === 0x3001d);
   const badFontFace = Buffer.from(syntheticFont);
   badFontFace.writeUInt16LE(1, badFontFace.readUInt16LE(6) + 3);
   const badFontFaceHelp = buildSyntheticSemanticHelp({ font: badFontFace });
@@ -2038,14 +2106,19 @@ async function main() {
   const bitmapWindowAccepted = e.test_invoke_WinHelpA(
     0x8888, bitmapViewPathA, 0x0001, 8);
   const bitmapWindowHandle = e.get_help_view_bitmap_handle(0);
-  check('real WinHelp window path publishes the WAT-owned embedded bitmap',
+  const bitmapWindowFont = e.get_help_view_font_handle(2);
+  check('real WinHelp window path publishes WAT-owned bitmap and font objects',
     bitmapWindowAccepted === 1 && e.get_help_window() !== 0 &&
     e.get_help_view_bitmap_count() === 1 && bitmapWindowHandle !== 0 &&
-    e.test_gdi_object_type(bitmapWindowHandle) === 3);
-  check('HELP_QUIT releases embedded bitmap objects and source DC state',
+    e.test_gdi_object_type(bitmapWindowHandle) === 3 &&
+    e.get_help_view_font_count() === 1 && bitmapWindowFont !== 0 &&
+    e.test_gdi_object_type(bitmapWindowFont) === 4);
+  check('HELP_QUIT releases embedded bitmap/font objects and source DC state',
     e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_view_bitmap_count() === 0 &&
-    e.get_help_view_bitmap_dc() === 0 && e.test_gdi_object_type(bitmapWindowHandle) === 0);
+    e.get_help_view_bitmap_dc() === 0 && e.get_help_view_font_count() === 0 &&
+    e.test_gdi_object_type(bitmapWindowHandle) === 0 &&
+    e.test_gdi_object_type(bitmapWindowFont) === 0);
 
   const hotspotHelp = buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({

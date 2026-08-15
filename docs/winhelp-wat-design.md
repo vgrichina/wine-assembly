@@ -24,7 +24,11 @@ commands return false without changing the visible topic. ANSI/Unicode ABI
 normalization now feeds the same engine. The existing help window owns exact
 formatted-token/payload arenas plus positioned text/space/bitmap runs, and
 paints visible WAT-laid-out text and embedded rasters without reparsing while
-scrolling.
+scrolling. Each referenced normalized font descriptor is now realized as a
+WAT-owned HFONT inside the same view transaction. Layout and paint select the
+same face, negative character height, weight, and italic state; positioned
+runs retain underline/strikeout decoration bits, and replacement/Quit deletes
+every dynamic font after removing it from the target DC.
 Complete paragraph/table geometry and asynchronous browser VFS mounting remain
 in progress.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
@@ -929,11 +933,11 @@ populate the existing help window directly from the WAT-owned title and decoded
 `LinkData2` strings, with no semantic JS callback. Topic presentation now
 decodes the typed IR transactionally, preflights exact viewer allocations, and
 publishes retained positioned runs only after layout succeeds. Text wrapping,
-explicit breaks, semantic spaces, normalized font height/color, hotspot
-membership, visible-run painting, bounded scrolling, intrinsic bitmap geometry,
-and raster painting are WAT-owned. The current viewer path has a temporary
-64 KiB decoded-topic cap; complete paragraph/table metrics, exact font
-selection, and dynamic sizing remain Phase 5 work. Browser assets not already
+explicit breaks, semantic spaces, realized font selection/metrics/decorations,
+normalized color, hotspot membership, visible-run painting, bounded scrolling,
+intrinsic bitmap geometry, and raster painting are WAT-owned. The current
+viewer path has a temporary 64 KiB decoded-topic cap; complete paragraph/table
+metrics and dynamic sizing remain Phase 5 work. Browser assets not already
 mounted in the VFS still need the raw-byte async continuation described above.
 
 - Implement ANSI/Unicode normalization and transactional requests.
@@ -984,6 +988,12 @@ fixed in-document hash jumps and popups resolve through canonical topic state,
 the shared transactional history, and the production window-message path.
 Nested, orphaned, and unterminated hotspot regions are rejected; unsupported
 variable, external, and macro forms fail without changing topic or history.
+Referenced logical fonts materialize once per view as owned type-4 GDI objects;
+bounded face copies, half-point/twip conversion, weight/italic selection, exact
+selected-font measurement, repaint selection, and retained underline/strikeout
+geometry share the normal WAT GDI path. Allocation failure retains the prior
+complete view, and replacement/document/Quit teardown removes selected DC
+references before deleting every font.
 External embedded-picture references now retain exact command bytes alongside
 a canonical normalized bitmap index. Referenced DDB/DIB resources decode and
 materialize as owned GDI bitmap/source-DC state inside the same view
@@ -994,7 +1004,7 @@ metafiles keep bounded placeholders pending their independent decoders.
 Separate native-style popup window geometry remains to complete the popup
 presentation path.
 
-- Complete font/paragraph token decoding and deterministic layout.
+- Complete paragraph/table geometry and deterministic layout.
 - Extend implemented fixed-hash jumps/popups with bounded external forms and
   native-style context popup presentation.
 - Extend raster materialization to inline picture unions and metafiles.
