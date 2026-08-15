@@ -411,6 +411,53 @@ async function main() {
 
     await alpha.leave();
 
+    // ---- lobby role assignment -------------------------------------------
+    // The rule that keeps two people clicking each other at the same moment
+    // from both offering and both waiting. It needs no DOM, so it is tested
+    // here rather than left to a browser nobody runs headless.
+    const lobby = require('../lib/vlan-lobby');
+    const { roleFor, INVITE_PREFIX } = lobby;
+
+    await check('no invite means no role', () => {
+      assert.strictEqual(roleFor('aaa', { userId: 'bbb', status: 'available' }), null);
+    });
+
+    await check('being invited gives a role', () => {
+      assert.ok(roleFor('aaa', { userId: 'bbb', status: INVITE_PREFIX + 'aaa' }));
+    });
+
+    await check('inviting gives a role', () => {
+      assert.ok(roleFor('aaa', { userId: 'bbb', status: 'available', invitedByMe: true }));
+    });
+
+    await check('an invite aimed at someone else is not ours', () => {
+      assert.strictEqual(
+        roleFor('aaa', { userId: 'bbb', status: INVITE_PREFIX + 'ccc' }), null);
+    });
+
+    await check('exactly one side offers, whoever clicked', () => {
+      // Every combination of who clicked: one-sided either way, and both at
+      // once. In all of them the pair must agree on opposite roles.
+      const cases = [
+        [{ userId: 'bbb', status: INVITE_PREFIX + 'aaa' }, { userId: 'aaa', status: 'available', invitedByMe: true }],
+        [{ userId: 'bbb', status: 'available', invitedByMe: true }, { userId: 'aaa', status: INVITE_PREFIX + 'bbb' }],
+        [{ userId: 'bbb', status: INVITE_PREFIX + 'aaa', invitedByMe: true },
+         { userId: 'aaa', status: INVITE_PREFIX + 'bbb', invitedByMe: true }],
+      ];
+      for (const [peerFromA, peerFromB] of cases) {
+        const a = roleFor('aaa', peerFromA);
+        const b = roleFor('bbb', peerFromB);
+        assert.ok(a && b, 'both sides must find a role');
+        assert.notStrictEqual(a, b, `glare: both chose ${a}`);
+      }
+    });
+
+    await check('the role does not depend on who asked first', () => {
+      const asA = roleFor('aaa', { userId: 'bbb', status: INVITE_PREFIX + 'aaa' });
+      const asAInviting = roleFor('aaa', { userId: 'bbb', status: 'available', invitedByMe: true });
+      assert.strictEqual(asA, asAInviting);
+    });
+
     // ---- the wire contract ----------------------------------------------
     await check('an inbound message becomes a peekable frame', () => {
       const ch = new FakeChannel();

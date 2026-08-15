@@ -185,6 +185,7 @@ E2E=(
   test/test-tworld-launch.js
   test/test-winamp-about-web.js
   test/test-vlan-loopback.js
+  test/test-vlan-browser.js
 )
 
 SMOKE=(

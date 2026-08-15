@@ -533,6 +533,10 @@
           <option value="pinball_plus95">Space Cadet Pinball (Plus! 95)</option>
           <option value="mspaint_ep">MSPaint (EP)</option>
           <option value="winamp">Winamp 2.91</option>
+          <!-- Local only: initDesktop drops any option not in the desktop app
+               set, and the Liquid War entries are local candidates. -->
+          <option value="liquid_war">Liquid War</option>
+          <option value="liquid_war_server">Liquid War server</option>
         </optgroup>
         <optgroup label="Installers">
           <option value="winamp291_inst">Winamp 2.91 Installer</option>
@@ -654,6 +658,7 @@ Resource-aware Win98 emulator
   <script src="lib/thread-manager.js?v=170"></script>
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
+  <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="host.js?v=207"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script>
@@ -1321,6 +1326,10 @@ Resource-aware Win98 emulator
         exe: liquidWarRoot + 'lwwin.exe',
         files: liquidWarFiles,
         requiredFiles: true,
+        // Opens the lobby before booting. The channel is keyed on the
+        // executable, so a Liquid War player only ever sees other Liquid War
+        // players — see scopeFor() in lib/vlan-rtc.js.
+        lan: { exe: 'lwwin.exe', label: 'Liquid War' },
       },
       // The dedicated server is the same tree's other executable. It has no
       // game window of its own — it prints to a console and waits — so it is
@@ -1330,6 +1339,9 @@ Resource-aware Win98 emulator
         files: liquidWarFiles,
         requiredFiles: true,
         args: '-private -2 -nobeep',
+        // The server shares the client's channel: it is the thing the other
+        // player's client is looking for, so they have to be on one segment.
+        lan: { exe: 'lwwin.exe', label: 'Liquid War server' },
       },
       winmine:  { exe: 'binaries/xp/winmine.exe' },
       sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
@@ -2214,12 +2226,37 @@ Resource-aware Win98 emulator
       }
       sharedRenderer.repaint();
 
+      // A LAN-capable app asks who else is out there before it boots. The
+      // wire and the room address have to be in place before init(), because
+      // host imports capture them at instantiate time and the guest may bind
+      // a socket on its first slice.
+      let lanLink = null;
+      if (app.lan && window.VlanLobby) {
+        try {
+          lanLink = await VlanLobby.showLobby({
+            exe: app.lan.exe || sel,
+            label: app.lan.label || sel,
+          });
+        } catch (e) {
+          console.error('[lan] lobby failed:', e);
+        }
+        if (lanLink === null) {
+          log.textContent += `Launch of ${sel} cancelled.\n`;
+          return;
+        }
+        if (lanLink && lanLink.wire) {
+          log.textContent += `LAN: connected to ${lanLink.peer && lanLink.peer.name}`
+            + ` — you are ${lanLink.address}\n`;
+        }
+      }
+
       wine = new WineAssembly();
       wine.onStopped = unregisterRunningApp;
       wine._sharedMixer = sharedAudioMixer;
       wine.primeAudio();
       wine.renderer = sharedRenderer;  // set before init so it won't create a new one
       wine._multiApp = true;
+      if (lanLink && lanLink.wire) wine.joinVlan(lanLink.wire, lanLink.address);
       await wine.init(canvas);
 
       // Set unique hwnd range for this app
