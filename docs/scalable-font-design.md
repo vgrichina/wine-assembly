@@ -530,12 +530,34 @@ shrinks monotonically.
 2. **Bitmap strikes** — `Tahoma.fon` (8-16 ppem), `TahomaBold.fon` (9-16, with
    `dfWeight` 700), and `SmallFonts.fon` (11 ppem) are generated from the
    embedded EBDT strikes and checked by `test/test-generated-wine-fonts.js`
-   (done). Still to do: extend `tools/gen-bitmap-fon.c` to rasterize the Tier 1
-   outlines across the hinted ladder, and install these three files at startup
-   the way the other five are — nothing selects them at runtime yet. Less
-   urgent than it was: a face with no installed strike is now rasterized on
-   demand rather than falling to Canvas, so the ladder buys pixel-exactness at
-   UI sizes rather than buying determinism, which is already won.
+   (done). Still to do: install the ladder at startup — nothing selects one at
+   runtime yet.
+
+   **The ladder is now measured, not assumed.** `tools/gen-bitmap-fon.c`
+   already rasterizes outlines with selectable hinting, so a Tier 1 ladder is
+   one command:
+
+   ```
+   gen-bitmap-fon fonts/liberation/LiberationSans-Regular.ttf Arial.fon Arial \
+     --hinting=native --raster=exact 10 11 12 13 14 16 18 20
+   ```
+
+   Installed through `AddFontResourceA` and measured against
+   `test/fixtures/font-metrics.json`, that ladder reproduces Windows 98's Arial
+   advance widths on **759 of 760** samples (99.9%), against 644/760 (84.7%)
+   for the runtime unhinted rasterization it would replace. The font's own
+   hinting is what does it: FreeType's autohinter scores 474/760 (62.4%), worse
+   than no hinting at all, because it is a different hinter making its own
+   decisions. Use `--hinting=native`.
+
+   **The hazard to handle when wiring it.** `$gdi_bitmap_font_best` matches an
+   installed strike by face and *nearest* height, so an installed Arial ladder
+   would also capture Arial at 30px and scale a 20px strike up to it — worse
+   than today's on-demand outline rasterization at that size. A ladder strike
+   must therefore match on *exact* height only and fall through to
+   `$tt_strike_ensure` otherwise, which is a third state beside the existing
+   "installed" (nearest height) and "synthesized" (exact key) states rather
+   than a change to either.
 
 3. **Interim deterministic substitution** — `_buildCssFont` reads the manifest
    and uses private family names, so whatever text still reaches Canvas stops
