@@ -270,7 +270,7 @@ The two planes have deliberately different trust and lifetime rules:
 | Plane | Contains | Must not contain |
 |---|---|---|
 | Control | Room ID, Berrry user IDs, public keys, encrypted SDP/ICE envelopes, presence | Game packets, guest memory, room secret, game authority |
-| Data | Encrypted virtual-socket frames and health probes | Account tokens, arbitrary host-network access |
+| Data | DTLS-protected virtual-socket frames and health probes | Account tokens, arbitrary host-network access |
 
 ### Topology
 
@@ -520,7 +520,7 @@ pointer sizes or structure packing. Multi-byte header fields use network byte
 order.
 
 ```text
-vln/1 frame header (24 bytes before authentication tag)
+vln/1 frame header (24 bytes)
 
   0               1               2               3
   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -536,13 +536,15 @@ vln/1 frame header (24 bytes before authentication tag)
  |                    direction-local counter                    |
  |                                                               |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- |             encrypted payload ...             | AES-GCM tag   |
+ |   payload ...                 | reserved for AEAD tag         |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-The counter is monotonic per direction and participates in the AES-GCM nonce
-and authenticated data. Counter reuse closes the peer link. Frames larger than
-the negotiated limit are rejected before allocation.
+The counter is monotonic per direction. In version 1 it serves replay
+detection, ordering assertions, and diagnostics; it is also the intended nonce
+input should the deferred record layer be enabled (see `Link protection`).
+Counter reuse closes the peer link. Frames larger than the negotiated limit are
+rejected before allocation.
 
 Initial frame types are:
 
@@ -656,6 +658,19 @@ The host verifies the proof, checks the user's room-lifetime ban and capacity,
 then creates the per-peer offer. Possession of the capability is the initial
 admission decision; there is no second private-room approval queue.
 
+The secret itself is never published, since Berrry public data is readable by
+anyone. The joiner proves possession instead:
+
+```text
+K_cap = HKDF(capability, room-id ‖ epoch ‖ "vln1/cap")
+proof = MAC(K_cap, joiner-user-id ‖ joiner-ephemeral-public-key ‖ epoch ‖ nonce)
+```
+
+The joiner's ephemeral public key must be inside the MAC input. Without it, any
+reader of the join record could replay the proof under a key of their own and
+receive an offer sealed to them. The epoch input is what makes rotation take
+effect.
+
 ```text
 Friend                       Berrry public data                    Host
    │ encrypted JOIN + proof         │                               │
@@ -724,9 +739,12 @@ remains the game server.
 
 ### Link protection
 
-WebRTC DataChannels are encrypted in transit. In addition, `vln/1` should use
-application-level authenticated encryption so that TURN and any future
-WebSocket relay have the same privacy properties:
+Version 1 places its cryptography at the signaling layer and relies on WebRTC's
+own DTLS for the data plane. WebRTC authenticates a peer by comparing the
+certificate fingerprint carried in its SDP — and here that SDP travels through
+Berrry public data, so anyone able to write that record could substitute a
+fingerprint and terminate DTLS themselves. Sealing the envelope is therefore
+what protects the data plane:
 
 1. each browser creates an ephemeral ECDH key pair;
 2. a private join authenticates its key with the capability proof, while a
@@ -734,9 +752,28 @@ WebSocket relay have the same privacy properties:
    host's acceptance decision;
 3. ECDH output feeds HKDF with room, link, peer, and membership-epoch context;
    private links include the capability secret as additional key material;
-4. each direction receives a separate AES-GCM key and nonce prefix; and
-5. frame headers are authenticated, counters are never reused, and replayed or
-   malformed frames close the link.
+4. the derived AEAD key seals the entire offer/answer envelope, DTLS
+   fingerprint and ICE candidates included; and
+5. because that fingerprint can be neither read nor forged by the signaling
+   infrastructure, the resulting DTLS session is authenticated end to end with
+   the intended peer.
+
+Membership binding is then an ordinary application check over an already
+authenticated channel rather than a key-derivation trick: the first `HELLO`
+carries room ID, assigned virtual IP, and membership epoch, and any mismatch
+closes the link. A host at a newer epoch simply never publishes an offer for a
+revoked member.
+
+#### Deferred record layer
+
+An additional AEAD layer over `vln/1` frames is specified but not required for
+version 1. TURN forwards packets without terminating DTLS, so a relay learns
+nothing extra from it — the common justification for double encryption does not
+apply here. The record layer becomes necessary only if a transport that
+terminates at a server is introduced, a WebSocket relay being the likely case,
+since such a server would otherwise observe plaintext frames. The frame header,
+per-direction counters, and length limits are specified as they are so the tag
+can be added without a wire-format break.
 
 Do not place private capability secrets, derived keys, game bytes, plaintext
 SDP, or guest memory in telemetry. Clipboard copies and invite displays should
@@ -765,7 +802,10 @@ its admitted game room, not scan the host LAN through this feature.
 - The host can observe and manipulate game state by definition.
 - Signaling infrastructure learns room timing and network metadata. Depending
   on browser behavior and ICE policy, it may learn candidate addresses.
-- Application encryption hides bytes, not traffic volume and timing.
+- Transport encryption hides bytes, not traffic volume and timing.
+- The private capability is a shared secret. Its proof establishes that a
+  joiner holds the link, never which friend they are; kick and ban rely on the
+  authenticated Berrry identity instead.
 
 ## Failure behavior
 
@@ -852,7 +892,7 @@ lib/virtual-lan-room.js
              │
              ▼
 lib/virtual-lan-protocol.js
-  VLN1 framing, validation, counters, flow-control messages, encryption
+  VLN1 framing, validation, counters, flow-control messages
              │
              ▼
 lib/webrtc-peer-link.js
@@ -927,13 +967,14 @@ Exit gate: both clients connect to the host's original `lwwinsrv.exe` at
 
 ### Slice 5: relay-quality rooms
 
-- Configure TURN and enforce application-level frame encryption.
+- Configure TURN and confirm sealed signaling envelopes hold across relayed
+  paths, including rejection of a substituted DTLS fingerprint.
 - Add reconnect status, admission denial, capacity limits, rate limits, and
   stable failure messages.
 - Exercise symmetric/restrictive NAT cases and deliberate direct-path failure.
 
 Exit gate: the same complete-match test passes through a forced relay, while
-the relay observes only encrypted frame traffic.
+the relay observes only DTLS traffic it cannot decrypt.
 
 ### Slice 6: broader virtual LAN
 
@@ -956,10 +997,14 @@ the relay observes only encrypted frame traffic.
 - listener backlog and ephemeral-port allocation;
 - `select` readiness, unique result counts, zero timeout, finite timeout, and
   cancellation on process exit;
-- frame encoding/decoding, version rejection, authentication failure, replay,
-  length limits, credit accounting, and counter exhaustion.
-- private capability proof/rotation, public listing expiry, public open versus
-  pre-approval admission, capacity, kick, ban, and membership-epoch rejection.
+- frame encoding/decoding, version rejection, replay, length limits, credit
+  accounting, and counter exhaustion;
+- signaling envelope sealing and unsealing, rejection of a substituted DTLS
+  fingerprint, and `HELLO` room/IP/epoch mismatch;
+- private capability proof/rotation, including rejection of a proof replayed
+  under a different ephemeral public key; and
+- public listing expiry, public open versus pre-approval admission, capacity,
+  kick, ban, and membership-epoch rejection.
 
 ### Deterministic integration tests
 
@@ -1003,7 +1048,9 @@ relay route.
 - Keep Liquid War's original server authoritative.
 - Use a host-centered star topology for version 1.
 - Use reliable ordered WebRTC DataChannels and multiplex virtual streams.
-- Add application encryption above WebRTC for uniform relay privacy.
+- Seal signaling envelopes so the DTLS fingerprint authenticates the peer, and
+  defer a record layer above WebRTC until a transport that terminates at a
+  server exists.
 - Use room-only addresses and deny arbitrary Internet/LAN egress.
 - Implement genuine byte-stream and wait semantics before connecting WebRTC.
 - Treat loss of a live peer link as reset of its existing virtual sockets.
