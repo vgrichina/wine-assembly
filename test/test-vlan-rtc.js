@@ -275,7 +275,7 @@ async function main() {
       exe: 'lwwin.exe', name, signaling: client(),
     });
 
-    const alpha = await netFor('alpha');
+    let alpha = await netFor('alpha');
     const beta = await netFor('beta');
 
     await check('joining claims an address on the segment', () => {
@@ -336,7 +336,9 @@ async function main() {
       const [betaSeen] = await alpha.peers();
       const key = await sharedKeyWith(alpha.identity, betaSeen.publicKey);
       const inbox = await inboxKeyFor(alpha.scope, beta.userId);
-      await alpha.signaling.publish(inbox, Object.assign(
+      // Through _post, the way connect() does it, so the record is tracked
+      // as ours to withdraw later.
+      await alpha._post(inbox, Object.assign(
         { from: alpha.userId, publicKey: alpha.identity.publicKey },
         await sealed(key, { role: 'offer', sdp: 'v=0 CANDIDATE-SECRET' })));
 
@@ -368,6 +370,38 @@ async function main() {
       const got = await beta._readInbox(inbox, alphaSeen, betaKey, 'offer');
       assert.ok(!got || got.sdp !== 'IMPOSTOR',
         'a record must not be trusted when its author is not who it names');
+    });
+
+    await check('an inbox record belongs to its sender, not the recipient', async () => {
+      // The point of the model: to reach beta, alpha publishes ALPHA's record
+      // under a key derived from BETA's id. Beta owns nothing there and can
+      // delete nothing there — so cleanup has to be done by the sender.
+      const inbox = await inboxKeyFor(alpha.scope, beta.userId);
+      const owners = await beta.signaling.publishers(inbox);
+      assert.ok(owners.users.some(u => u.userId === alpha.userId),
+        'the record under beta\'s inbox key must be owned by alpha');
+      assert.ok(!owners.users.some(u => u.userId === beta.userId),
+        'beta must not own anything under its own inbox key');
+
+      // Beta deleting "its" inbox does nothing, because there is nothing of
+      // beta's to delete. An earlier version cleaned up this way and left
+      // every SDP it had ever sent published.
+      await beta.signaling.withdraw(inbox);
+      const after = await beta.signaling.publishers(inbox);
+      assert.ok(after.users.some(u => u.userId === alpha.userId),
+        'a recipient must not be able to remove a sender\'s record');
+    });
+
+    await check('leaving withdraws what this peer posted to others', async () => {
+      const inbox = await inboxKeyFor(alpha.scope, beta.userId);
+      const before = await beta.signaling.publishers(inbox);
+      assert.ok(before.users.some(u => u.userId === alpha.userId), 'precondition');
+      await alpha.leave();
+      const after = await beta.signaling.publishers(inbox);
+      assert.ok(!after.users.some(u => u.userId === alpha.userId),
+        'leaving must retract the offers this peer left in other inboxes');
+      // Rejoin so the checks after this one still have a live alpha.
+      alpha = await netFor('alpha');
     });
 
     await check('leaving withdraws presence', async () => {
