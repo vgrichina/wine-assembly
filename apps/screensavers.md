@@ -9,9 +9,10 @@
 ### Pure GDI
 | Screensaver | /s Visuals | Notes |
 |-------------|-----------|-------|
-| PEANUTS / CATHY / DOONBURY | Renders | Sprite compositing fixed |
-| FOXTROT | White silhouettes | See Task 1 |
-| GA_SAVER | Renders | Garfield/Odie on pogo sticks |
+| PEANUTS / CATHY | **Regressed to blank** | Rendered until 78d7289 — see Task 0 |
+| DOONBURY | Renders | Sprite compositing fixed |
+| FOXTROT | **Regressed to blank** | Was white silhouettes (Task 1), now flat fill — see Task 0 |
+| GA_SAVER | **Regressed to blank** | Rendered Garfield/Odie on pogo sticks until 78d7289 — see Task 0 |
 | CITYSCAP | Blank | Spins in GetMessageA, render fn never runs (Task 2) |
 | PHODISC | Desktop teal only | Asset-load path missing (Task 2) |
 
@@ -37,6 +38,46 @@ ARCHITEC / FALLINGL / GEOMETRY / JAZZ / OASAVER / ROCKROLL / SCIFI: Config OK; `
 | SCIFI | 800x600 | 84 | 44.2% |
 
 ## Open Tasks
+
+### 0. GDI-bridge regression blanked four GDI savers (HIGH)
+
+2026-08-15: GA_SAVER, PEANUTS, CATHY and FOXTROT all render a flat fill and
+nothing else. They are not "never worked" — GA_SAVER still draws the
+Garfield/Odie pogo-stick frame at `72bacf9` (25,276-byte PNG against 2,061
+today).
+
+Bisected across the 546 commits since this doc was written. First bad commit
+is **78d7289 "Enforce minimal JavaScript GDI bridge"**, which deleted ~3,000
+lines from `lib/host-imports.js`. `git bisect` reports it together with
+**48a468f "Fix WAT indices for interleaved imports"** because 78d7289 alone
+does not build; 48a468f is its fixup, and the commit before the pair
+(72bacf9) is good.
+
+Reproduce either side with:
+
+```
+node test/run.js --exe=test/binaries/screensavers/GA_SAVER.SCR --args=/s \
+  --png=/tmp/ga.png --max-batches=400 --batch-size=20000
+```
+
+**Symptom.** The guest stopped issuing its sprite mask-blit sequence. Each
+frame at 72bacf9 is `FillRect`, then `GetBkColor`/`SetBkColor`/
+`GetTextColor`/`SetTextColor`, two `CreateCompatibleDC`, two `SelectObject`,
+a `BitBlt` with ROP `0x008800C6` (SRCAND — the monochrome mask) and a
+`BitBlt` with ROP `0x00EE0086` (SRCPAINT — the colour art). Today the frame
+is `FillRect` straight to one 640x480 SRCCOPY of that flat fill: the whole
+mask-blit block is skipped by a branch *inside guest code*, so something the
+emulator reports back is steering a guest decision — this is not a blit bug.
+
+The branch is `cmp [ebp-0x8], ebx` / `jz 0x401e97` at `0x401cf7`, in the
+frame function entered at `0x401b76`. `[ebp-0x8]` is only set to 1 when the
+global at `0x40cad8` is still zero; that global reads 1 in both builds by end
+of run, so the divergence is in *when* it becomes 1, not its final value.
+
+Unclosed clue: the current build delivers an extra `WM_PAINT` (0x0F) after
+`WM_ERASEBKGND` that 72bacf9 never sent. The app passes it straight to
+`DefWindowProcA` without `BeginPaint`, so it never validates the update
+region.
 
 ### 1. FOXTROT white silhouettes (LOW)
 
