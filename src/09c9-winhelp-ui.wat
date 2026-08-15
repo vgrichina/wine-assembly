@@ -546,6 +546,10 @@
   ;;  11 run capacity, bitmap token             12 text offset past raw buffer
   ;;  13 text length past raw buffer            14 run capacity, space in text
   ;;  15 run capacity, word in text             16 stream ended with no END_TOPIC
+  ;;  17 caller's run buffer is smaller than the counted layout - this one is
+  ;;     the caller's problem, not the topic's, so the token field carries the
+  ;;     run count the topic actually needs. The viewer counts with
+  ;;     HELP_MAX_LAYOUT_RUNS and then allocates exactly, so it never sees it.
   (global $help_layout_fail_code (mut i32) (i32.const 0))
   (global $help_layout_fail_token (mut i32) (i32.const 0))
 
@@ -923,9 +927,11 @@
           (i32.const 0) (global.get $HELP_MAX_LAYOUT_RUNS)
           (local.get $client_width) (local.get $hdc)
           (local.get $font_handles) (local.get $font_count)))
-        (if (i32.or (i32.lt_s (local.get $required) (i32.const 0))
-              (i32.gt_u (local.get $required) (local.get $run_capacity)))
-          (then (return (i32.const -1))))))
+        (if (i32.lt_s (local.get $required) (i32.const 0))
+          (then (return (i32.const -1))))
+        (if (i32.gt_u (local.get $required) (local.get $run_capacity))
+          (then (return (call $help_layout_fail
+            (i32.const 17) (local.get $required)))))))
     (call $help_layout_tokens_core
       (local.get $raw) (local.get $raw_len)
       (local.get $payload) (local.get $payload_len)

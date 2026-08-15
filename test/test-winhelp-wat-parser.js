@@ -1294,6 +1294,19 @@ async function main() {
       laid.length === 4 && laid.every(runs => runs >= 0) &&
       laid[0] > 100 && laid[1] > 100,
       `runs=${JSON.stringify(laid)} fail=${e.get_help_layout_fail_code()}`);
+    // A caller whose run buffer is too small used to get a bare -1 with no
+    // fail code, which reads as "this topic is broken" when the topic is
+    // merely long. Code 17 says so and reports the count the caller needs.
+    const tokens = e.test_help_decode_topic_formatted(2, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+    const short = e.test_help_layout_tokens_with_payload(topicOutWA, topicOutCapacity,
+      topicPayloadWA, e.get_help_formatted_payload_size(), topicTokensWA, tokens,
+      staging + 0x80000, 4, 560);
+    check('too small a run buffer reports its own code and the count needed',
+      tokens > 1 && short === -1 && e.get_help_layout_fail_code() === 17 &&
+      e.get_help_layout_fail_token() > 4 && e.get_help_layout_fail_token() === laid[2],
+      `short=${short} code=${e.get_help_layout_fail_code()} ` +
+      `needs=${e.get_help_layout_fail_token()} actual=${laid[2]}`);
   }
 
   const syntheticCnt = Buffer.from(

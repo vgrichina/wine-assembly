@@ -40,7 +40,12 @@ const LAYOUT_FAILS = {
   11: 'run capacity, bitmap token', 12: 'text offset past raw buffer',
   13: 'text length past raw buffer', 14: 'run capacity, space in text',
   15: 'run capacity, word in text', 16: 'stream ended with no END_TOPIC',
+  17: 'run buffer smaller than the counted layout',
 };
+// The viewer counts a topic's runs and then allocates exactly that many, so it
+// is never bounded by a fixed capacity. A long topic is not a broken one, and
+// reporting it as a layout refusal is how qbob.hlp came to look damaged.
+const RUN_CAPACITY = 16384;
 
 // $help_hall_fail_code, listed above $help_decode_hall_topic_data.
 const HALL_FAILS = {
@@ -138,11 +143,14 @@ async function main() {
         }
       } else {
         runs = e.test_help_layout_tokens_with_payload(outWA, 0x20000, payloadWA,
-          e.get_help_formatted_payload_size(), tokensWA, tokens, runsWA, 2048, 560);
+          e.get_help_formatted_payload_size(), tokensWA, tokens, runsWA,
+          RUN_CAPACITY, 560);
         if (runs < 0) {
           const code = e.get_help_layout_fail_code();
           note = `layout refused: ${code} (${LAYOUT_FAILS[code] || '?'}) ` +
-            `at token ${e.get_help_layout_fail_token()}`;
+            (code === 17
+              ? `needs ${e.get_help_layout_fail_token()} runs`
+              : `at token ${e.get_help_layout_fail_token()}`);
         } else {
           ok++;
         }
