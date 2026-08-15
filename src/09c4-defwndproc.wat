@@ -582,23 +582,39 @@
       (local.get $hwnd) (local.get $w) (local.get $h)
       (local.get $title_wa) (local.get $title_len)
       (local.get $flags) (i32.const 0)))
-    ;; WS_EX_CLIENTEDGE: the sunken 3D frame around the whole window rect.
-    ;; Drawn before the scrollbars because it is the outermost chrome —
-    ;; $defwndproc_do_nccalcsize has already moved the client rect and the
-    ;; scrollbar strips inside it. Gated the same way as the nccalcsize inset:
-    ;; WAT-native controls draw their own edge.
+    ;; WS_EX_CLIENTEDGE sinks the CLIENT area, not the window. It is the
+    ;; innermost chrome, drawn in the two-pixel band $defwndproc_do_nccalcsize
+    ;; reserved just outside the client rect — inside any sizing frame and
+    ;; caption, and outside the scrollbars, which Win98 places within the sunk
+    ;; area. Drawing it at the window rect instead paints EDGE_SUNKEN over the
+    ;; raised outer frame, which turns a normal window's top-left border from
+    ;; face-and-highlight into black-and-shadow. mspaint's main window carries
+    ;; WS_EX_CLIENTEDGE, so it wore that inverted frame.
+    ;;
+    ;; Gated like the nccalcsize inset: WAT-native controls draw their own.
     (if (i32.and
           (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
           (i32.ne
             (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
             (i32.const 0)))
       (then
+        (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+        (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+        (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+        (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+        (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+          (then (local.set $cr (i32.add (local.get $cr) (i32.const 16)))))
+        (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+          (then (local.set $cb (i32.add (local.get $cb) (i32.const 16)))))
         (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
         (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd)
           (local.get $w) (local.get $h))
         ;; EDGE_SUNKEN (BDR_SUNKENOUTER|BDR_SUNKENINNER) | BF_RECT
         (drop (call $host_gdi_draw_edge (local.get $hdc)
-          (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+          (i32.sub (local.get $cl) (i32.const 2))
+          (i32.sub (local.get $ct) (i32.const 2))
+          (i32.add (local.get $cr) (i32.const 2))
+          (i32.add (local.get $cb) (i32.const 2))
           (i32.const 0x0A) (i32.const 0x0F)))
         (drop (call $host_release_dc (local.get $hdc)))))
     (if (i32.and (local.get $style) (i32.const 0x00300000))
