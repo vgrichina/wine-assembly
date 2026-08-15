@@ -911,7 +911,7 @@
     (i32.const 1))
 
   (func $help_prepare_wat_view (result i32)
-    (call $help_prepare_wat_view_for (i32.const 400)
+    (call $help_prepare_wat_view_for (call $help_window_present_metric (i32.const 2))
       (select (global.get $help_hwnd) (global.get $next_hwnd)
         (i32.ne (global.get $help_hwnd) (i32.const 0)))))
 
@@ -1125,7 +1125,9 @@
           (then
             (if (i32.eqz (global.get $help_hwnd))
               (then (call $help_create_window))
-              (else (call $invalidate_hwnd (global.get $help_hwnd)))))))))
+              (else
+                (call $help_apply_window_presentation)
+                (call $invalidate_hwnd (global.get $help_hwnd)))))))))
 
   ;; Scroll help window by delta pixels (positive = down, negative = up), clamp to 0
   (func $help_scroll_by (param $hwnd i32) (param $delta i32)
@@ -1332,6 +1334,7 @@
         (if (call $help_prepare_wat_view)
           (then
             (global.set $help_scroll_y (local.get $restored_scroll))
+            (call $help_apply_window_presentation)
             (call $invalidate_hwnd (global.get $help_hwnd))))
         (return)))
     ;; Pop from back stack
@@ -1348,16 +1351,130 @@
           (i32.load (local.get $record)) (i32.const 1))
       (then
         (if (call $help_prepare_wat_view)
-          (then (call $invalidate_hwnd (global.get $help_hwnd))))))
+          (then
+            (call $help_apply_window_presentation)
+            (call $invalidate_hwnd (global.get $help_hwnd))))))
   )
+
+  ;; |SYSTEM stores window geometry in 1024ths of the screen, matching the
+  ;; HCW [WINDOWS] coordinate space. Scale against the live screen size and
+  ;; fall back to the canonical 640x480 desktop before the first mode set.
+  (func $help_window_screen_span (param $vertical i32) (result i32)
+    (local $packed i32) (local $span i32)
+    (local.set $packed (call $host_get_screen_size))
+    (local.set $span
+      (if (result i32) (local.get $vertical)
+        (then (i32.shr_u (local.get $packed) (i32.const 16)))
+        (else (i32.and (local.get $packed) (i32.const 0xFFFF)))))
+    (if (i32.eqz (local.get $span))
+      (then (local.set $span
+        (select (i32.const 480) (i32.const 640) (local.get $vertical)))))
+    (local.get $span))
+
+  ;; field: 0 = x, 1 = y, 2 = width, 3 = height. Without a selected record,
+  ;; or with one whose geometry flags are incomplete, every field keeps the
+  ;; canonical 400x300 main-viewer presentation the layout width assumes.
+  (func $help_window_present_metric (param $field i32) (result i32)
+    (local $record i32) (local $vertical i32) (local $span i32)
+    (local $value i32) (local $extent i32) (local $flags i32)
+    (local.set $vertical (i32.and (local.get $field) (i32.const 1)))
+    (local.set $record (call $help_active_window_record))
+    (if (local.get $record)
+      (then (local.set $flags (i32.load (local.get $record)))))
+    (if (i32.ne (i32.and (local.get $flags) (global.get $HELP_WINDOW_FLAG_GEOMETRY))
+                (global.get $HELP_WINDOW_FLAG_GEOMETRY))
+      (then
+        (if (i32.eq (local.get $field) (i32.const 0)) (then (return (i32.const 100))))
+        (if (i32.eq (local.get $field) (i32.const 1)) (then (return (i32.const 50))))
+        (if (i32.eq (local.get $field) (i32.const 2)) (then (return (i32.const 400))))
+        (return (i32.const 300))))
+    (local.set $span (call $help_window_screen_span (local.get $vertical)))
+    (local.set $value (i32.div_s
+      (i32.mul (i32.load offset=28
+                 (i32.add (local.get $record) (i32.shl (local.get $field) (i32.const 2))))
+        (local.get $span))
+      (i32.const 1024)))
+    (if (i32.lt_u (local.get $field) (i32.const 2))
+      (then
+        ;; Position: keep the window on the desktop without resizing it.
+        (local.set $extent (call $help_window_present_metric
+          (i32.add (local.get $field) (i32.const 2))))
+        (if (i32.gt_s (i32.add (local.get $value) (local.get $extent)) (local.get $span))
+          (then (local.set $value (i32.sub (local.get $span) (local.get $extent)))))
+        (if (i32.lt_s (local.get $value) (i32.const 0))
+          (then (local.set $value (i32.const 0))))
+        (return (local.get $value))))
+    ;; Extent: bounded below so a degenerate record cannot collapse the view.
+    (local.set $extent (select (i32.const 120) (i32.const 160) (local.get $vertical)))
+    (if (i32.lt_s (local.get $value) (local.get $extent))
+      (then (local.set $value (local.get $extent))))
+    (if (i32.gt_s (local.get $value) (local.get $span))
+      (then (local.set $value (local.get $span))))
+    (local.get $value))
+
+  ;; The caption field is fixed-width and need not be terminated, so publish
+  ;; an owned NUL-terminated copy. A record without one, or an allocation
+  ;; failure, falls back to the document title and then the "Help" literal.
+  (func $help_window_present_caption (result i32)
+    (local $record i32) (local $length i32) (local $ga i32)
+    (local.set $record (call $help_active_window_record))
+    (if (local.get $record)
+      (then
+        (if (i32.and (i32.load (local.get $record))
+              (global.get $HELP_WINDOW_FLAG_CAPTION))
+          (then
+            (local.set $length (i32.load offset=24 (local.get $record)))
+            (if (i32.gt_u (local.get $length)
+                  (i32.sub (global.get $HELP_WINDOW_CAPTION_BYTES) (i32.const 1)))
+              (then (local.set $length
+                (i32.sub (global.get $HELP_WINDOW_CAPTION_BYTES) (i32.const 1)))))
+            (if (local.get $length)
+              (then
+                (if (i32.eqz (global.get $help_window_caption_wa))
+                  (then
+                    (local.set $ga (call $heap_alloc
+                      (global.get $HELP_WINDOW_CAPTION_BYTES)))
+                    (if (local.get $ga)
+                      (then
+                        (global.set $help_window_caption_ga (local.get $ga))
+                        (global.set $help_window_caption_wa
+                          (call $g2w (local.get $ga)))))))
+                (if (global.get $help_window_caption_wa)
+                  (then
+                    (memory.copy (global.get $help_window_caption_wa)
+                      (i32.add (global.get $help_doc_file_wa)
+                        (i32.load offset=20 (local.get $record)))
+                      (local.get $length))
+                    (i32.store8
+                      (i32.add (global.get $help_window_caption_wa) (local.get $length))
+                      (i32.const 0))
+                    (return (global.get $help_window_caption_wa))))))))))
+    (if (i32.and (i32.ne (global.get $help_title_wa) (i32.const 0))
+                 (i32.ne (global.get $help_title_len) (i32.const 0)))
+      (then (return (global.get $help_title_wa))))
+    (i32.const 0x108)) ;; "Help"
+
+  ;; Push the selected presentation onto an existing viewer. The caption
+  ;; tracks every document, but geometry moves only when the selector itself
+  ;; changed, so a window the user repositioned survives ordinary jumps.
+  (func $help_apply_window_presentation
+    (if (i32.eqz (global.get $help_hwnd)) (then (return)))
+    (call $host_set_window_text (global.get $help_hwnd)
+      (call $help_window_present_caption))
+    (if (i32.eq (global.get $help_window_applied_index)
+                (global.get $help_session_window_index))
+      (then (return)))
+    (global.set $help_window_applied_index (global.get $help_session_window_index))
+    (call $host_move_window (global.get $help_hwnd)
+      (call $help_window_present_metric (i32.const 0))
+      (call $help_window_present_metric (i32.const 1))
+      (call $help_window_present_metric (i32.const 2))
+      (call $help_window_present_metric (i32.const 3))
+      (i32.const 1)))
 
   ;; Create help window via host
   (func $help_create_window
-    (local $title_wa i32) (local $hwnd i32)
-    ;; Use parsed title or fallback
-    (if (i32.and (i32.ne (global.get $help_title_wa) (i32.const 0)) (i32.ne (global.get $help_title_len) (i32.const 0)))
-      (then (local.set $title_wa (global.get $help_title_wa)))
-      (else (local.set $title_wa (i32.const 0x108)))) ;; "Help"
+    (local $hwnd i32)
     ;; Allocate hwnd
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -1365,12 +1482,13 @@
     (drop (call $host_create_window
       (local.get $hwnd)
       (i32.const 0x10CF0000)  ;; WS_OVERLAPPEDWINDOW | WS_VISIBLE
-      (i32.const 100)         ;; x
-      (i32.const 50)          ;; y
-      (i32.const 400)         ;; cx
-      (i32.const 300)         ;; cy
-      (local.get $title_wa)   ;; title (WASM addr)
+      (call $help_window_present_metric (i32.const 0))
+      (call $help_window_present_metric (i32.const 1))
+      (call $help_window_present_metric (i32.const 2))
+      (call $help_window_present_metric (i32.const 3))
+      (call $help_window_present_caption)
       (i32.const 0)))         ;; no menu
+    (global.set $help_window_applied_index (global.get $help_session_window_index))
     ;; Register in window table as WAT-native (wndproc = 0xFFFF0001)
     (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
     (global.set $help_hwnd (local.get $hwnd))
@@ -1392,6 +1510,11 @@
       (then (call $heap_free (call $w2g (global.get $help_title_wa)))))
     (if (global.get $help_back_stack)
       (then (call $heap_free (call $w2g (global.get $help_back_stack)))))
+    (if (global.get $help_window_caption_ga)
+      (then (call $heap_free (global.get $help_window_caption_ga))))
+    (global.set $help_window_caption_ga (i32.const 0))
+    (global.set $help_window_caption_wa (i32.const 0))
+    (global.set $help_window_applied_index (i32.const -1))
     (global.set $help_title_wa (i32.const 0))
     (global.set $help_title_len (i32.const 0))
     (global.set $help_topic_count (i32.const 0))

@@ -384,6 +384,8 @@
     (local $contents_ref i32) (local $cnt_off i32) (local $cnt_len i32)
     (local $minor i32) (local $major i32) (local $flags i32)
     (local $date i32)
+    (local $window_count i32) (local $window_ga i32) (local $window_wa i32)
+    (local $window_index i32) (local $window i32) (local $window_flags i32)
     (local.set $contents_ref (i32.const -1))
     (local.set $index (call $help_find_internal_literal (i32.const 1)))
     (if (i32.lt_s (local.get $index) (i32.const 0))
@@ -473,9 +475,102 @@
                   (return (i32.const 0))))
               (local.set $contents_ref
                 (i32.load offset=4 (i32.add (local.get $data) (local.get $pos))))))
+          (if (i32.eq (local.get $type) (i32.const 6))
+            (then
+              ;; The standard HC31/HCW window payload is exactly 90 bytes.
+              ;; Its fixed-width strings are bounded fields: a compiler may
+              ;; consume the entire field without adding a terminator.
+              (if (i32.ne (local.get $size) (i32.const 90))
+                (then
+                  (call $help_set_error (global.get $HELP_ERROR_SYSTEM)
+                    (i32.add (local.get $data_off) (local.get $pos)))
+                  (return (i32.const 0))))
+              (if (i32.ge_u (local.get $window_count)
+                    (global.get $HELP_MAX_WINDOWS))
+                (then
+                  (call $help_set_error (global.get $HELP_ERROR_CAPACITY)
+                    (i32.add (local.get $data_off) (local.get $pos)))
+                  (return (i32.const 0))))
+              (local.set $window_count
+                (i32.add (local.get $window_count) (i32.const 1)))))
           (local.set $pos (i32.add (local.get $pos)
             (i32.add (local.get $size) (i32.const 4))))
           (br $records)))))
+    (if (local.get $window_count)
+      (then
+        (local.set $window_ga (call $heap_alloc
+          (i32.mul (local.get $window_count) (global.get $HELP_WINDOW_SIZE))))
+        (if (i32.eqz (local.get $window_ga))
+          (then
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION)
+              (local.get $data_off))
+            (return (i32.const 0))))
+        (local.set $window_wa (call $g2w (local.get $window_ga)))
+        (memory.fill (local.get $window_wa) (i32.const 0)
+          (i32.mul (local.get $window_count) (global.get $HELP_WINDOW_SIZE)))
+        (local.set $pos (i32.const 12))
+        (block $windows_done (loop $windows
+          (br_if $windows_done (i32.eq (local.get $pos) (local.get $data_len)))
+          (local.set $type
+            (i32.load16_u (i32.add (local.get $data) (local.get $pos))))
+          (local.set $size
+            (i32.load16_u offset=2 (i32.add (local.get $data) (local.get $pos))))
+          (if (i32.eq (local.get $type) (i32.const 6))
+            (then
+              (local.set $window (i32.add (local.get $window_wa)
+                (i32.mul (local.get $window_index) (global.get $HELP_WINDOW_SIZE))))
+              (local.set $window_flags
+                (i32.load16_u offset=4 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store (local.get $window) (local.get $window_flags))
+              (if (i32.and (local.get $window_flags) (i32.const 0x0001))
+                (then
+                  (i32.store offset=4 (local.get $window)
+                    (i32.add (local.get $data_off)
+                      (i32.add (local.get $pos) (i32.const 6))))
+                  (i32.store offset=8 (local.get $window)
+                    (call $help_fixed_string_length
+                      (i32.add (local.get $data)
+                        (i32.add (local.get $pos) (i32.const 6)))
+                      (i32.const 10)))))
+              (if (i32.and (local.get $window_flags) (i32.const 0x0002))
+                (then
+                  (i32.store offset=12 (local.get $window)
+                    (i32.add (local.get $data_off)
+                      (i32.add (local.get $pos) (i32.const 16))))
+                  (i32.store offset=16 (local.get $window)
+                    (call $help_fixed_string_length
+                      (i32.add (local.get $data)
+                        (i32.add (local.get $pos) (i32.const 16)))
+                      (i32.const 9)))))
+              (if (i32.and (local.get $window_flags) (i32.const 0x0004))
+                (then
+                  (i32.store offset=20 (local.get $window)
+                    (i32.add (local.get $data_off)
+                      (i32.add (local.get $pos) (i32.const 25))))
+                  (i32.store offset=24 (local.get $window)
+                    (call $help_fixed_string_length
+                      (i32.add (local.get $data)
+                        (i32.add (local.get $pos) (i32.const 25)))
+                      (i32.const 51)))))
+              (i32.store offset=28 (local.get $window)
+                (i32.load16_s offset=76 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store offset=32 (local.get $window)
+                (i32.load16_s offset=78 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store offset=36 (local.get $window)
+                (i32.load16_s offset=80 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store offset=40 (local.get $window)
+                (i32.load16_s offset=82 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store offset=44 (local.get $window)
+                (i32.load16_u offset=84 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store offset=48 (local.get $window)
+                (i32.load offset=86 (i32.add (local.get $data) (local.get $pos))))
+              (i32.store offset=52 (local.get $window)
+                (i32.load offset=90 (i32.add (local.get $data) (local.get $pos))))
+              (local.set $window_index
+                (i32.add (local.get $window_index) (i32.const 1)))))
+          (local.set $pos
+            (i32.add (local.get $pos) (i32.add (local.get $size) (i32.const 4))))
+          (br $windows)))))
     (global.set $help_doc_system_minor (local.get $minor))
     (global.set $help_doc_system_major (local.get $major))
     (global.set $help_doc_system_flags (local.get $flags))
@@ -485,6 +580,9 @@
     (global.set $help_doc_contents_ref (local.get $contents_ref))
     (global.set $help_doc_cnt_off (local.get $cnt_off))
     (global.set $help_doc_cnt_len (local.get $cnt_len))
+    (global.set $help_doc_windows_ga (local.get $window_ga))
+    (global.set $help_doc_windows_wa (local.get $window_wa))
+    (global.set $help_doc_window_count (local.get $window_count))
     (i32.const 1))
 
   ;; Parse either |TTLBTREE (kind 1, Lz leaves) or |CONTEXT (kind 2,

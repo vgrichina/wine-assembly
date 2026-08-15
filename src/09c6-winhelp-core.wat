@@ -24,6 +24,7 @@
   (global $HELP_MAX_CNT_BYTES i32 (i32.const 0x00100000))
   (global $HELP_MAX_CNT_NODES i32 (i32.const 16384))
   (global $HELP_MAX_CNT_DEPTH i32 (i32.const 64))
+  (global $HELP_MAX_WINDOWS i32 (i32.const 256))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -82,6 +83,9 @@
   (global $help_session_keyword_index (mut i32) (i32.const -1))
   (global $help_session_last_command (mut i32) (i32.const 0))
   (global $help_session_status (mut i32) (i32.const 0))
+  ;; -1 retains the canonical main viewer presentation. Non-negative values
+  ;; select a normalized |SYSTEM type-6 HelpWindow record for normal jumps.
+  (global $help_session_window_index (mut i32) (i32.const -1))
   (global $help_topics_contents_selection (mut i32) (i32.const -1))
   (global $help_topics_first_visible (mut i32) (i32.const 0))
   (global $help_topics_return_mode (mut i32) (i32.const 0))
@@ -156,14 +160,18 @@
   (global $help_doc_contents_ref (mut i32) (i32.const -1))
   (global $help_doc_cnt_off (mut i32) (i32.const 0))
   (global $help_doc_cnt_len (mut i32) (i32.const 0))
+  (global $help_doc_windows_ga (mut i32) (i32.const 0))
+  (global $help_doc_windows_wa (mut i32) (i32.const 0))
+  (global $help_doc_window_count (mut i32) (i32.const 0))
   (global $help_last_error (mut i32) (i32.const 0))
   (global $help_last_error_offset (mut i32) (i32.const 0))
 
   ;; External hotspot navigation suspends at most four complete documents.
-  ;; Each 400-byte heap record owns the detached document roots plus the
+  ;; Each 412-byte heap record owns the detached document roots plus the
   ;; session/view-navigation scalars needed by cross-file Back or popup close.
-  ;; The trailing 64 bytes preserve the shared 16-entry Back stack contents.
-  (global $HELP_DOCUMENT_SNAPSHOT_SIZE i32 (i32.const 400))
+  ;; Bytes 336..399 preserve the shared 16-entry Back stack contents; the
+  ;; trailing triple owns the normalized secondary-window table.
+  (global $HELP_DOCUMENT_SNAPSHOT_SIZE i32 (i32.const 412))
   (global $HELP_MAX_DOCUMENT_SNAPSHOTS i32 (i32.const 4))
   (global $help_document_snapshots_ga (mut i32) (i32.const 0))
   (global $help_document_snapshot_count (mut i32) (i32.const 0))
@@ -210,6 +218,28 @@
   (global $HELP_KEYWORD_SIZE i32 (i32.const 16))
   (global $HELP_KEYWORD_POSTING_SIZE i32 (i32.const 8))
 
+  ;; HelpWindow is 56 bytes. String offsets address the canonical HLP image:
+  ;; flags, type_off/type_len, name_off/name_len, caption_off/caption_len,
+  ;; signed x/y/width/height, show/style word, scroll/non-scroll RGB colors.
+  ;; A zero caption length means fall back to the document title.
+  (global $HELP_WINDOW_SIZE i32 (i32.const 56))
+
+  ;; Flag bits 0x0008..0x0040 mark a record whose x/y/width/height fields are
+  ;; meaningful. A record missing any of them keeps the canonical geometry.
+  (global $HELP_WINDOW_FLAG_CAPTION i32 (i32.const 0x0004))
+  (global $HELP_WINDOW_FLAG_GEOMETRY i32 (i32.const 0x0078))
+
+  ;; Geometry already pushed to the host, so an ordinary jump inside one
+  ;; presentation never moves a window the user has repositioned.
+  (global $help_window_applied_index (mut i32) (i32.const -1))
+
+  ;; Owned NUL-terminated copy of the presented window caption. The |SYSTEM
+  ;; field is fixed-width and need not be terminated, so the viewer never
+  ;; hands the host a pointer into the HLP image itself.
+  (global $HELP_WINDOW_CAPTION_BYTES i32 (i32.const 64))
+  (global $help_window_caption_ga (mut i32) (i32.const 0))
+  (global $help_window_caption_wa (mut i32) (i32.const 0))
+
   ;; HelpContentsNode is 32 bytes:
   ;; parent, first_child, next_sibling, depth:u16, flags:u16,
   ;; title_wa, title_len, topic_ref, target_wa.
@@ -232,6 +262,8 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_windows_ga)
+      (then (call $heap_free (global.get $help_doc_windows_ga))))
     (if (global.get $help_doc_path_ga)
       (then (call $heap_free (global.get $help_doc_path_ga))))
     (if (global.get $help_doc_cnt_nodes_ga)
@@ -329,7 +361,10 @@
     (global.set $help_doc_title_len (i32.const 0))
     (global.set $help_doc_contents_ref (i32.const -1))
     (global.set $help_doc_cnt_off (i32.const 0))
-    (global.set $help_doc_cnt_len (i32.const 0)))
+    (global.set $help_doc_cnt_len (i32.const 0))
+    (global.set $help_doc_windows_ga (i32.const 0))
+    (global.set $help_doc_windows_wa (i32.const 0))
+    (global.set $help_doc_window_count (i32.const 0)))
 
   (func $help_session_reset
     (global.set $help_session_owner (i32.const 0))
@@ -340,6 +375,7 @@
     (global.set $help_session_keyword_index (i32.const -1))
     (global.set $help_session_last_command (i32.const 0))
     (global.set $help_session_status (global.get $HELP_DISPATCH_NONE))
+    (global.set $help_session_window_index (i32.const -1))
     (global.set $help_topics_contents_selection (i32.const -1))
     (global.set $help_topics_first_visible (i32.const 0))
     (global.set $help_topics_return_mode (i32.const 0)))
@@ -379,6 +415,8 @@
     (local.set $owned (i32.load offset=192 (local.get $p)))
     (if (local.get $owned) (then (call $heap_free (local.get $owned))))
     (local.set $owned (i32.load offset=204 (local.get $p)))
+    (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+    (local.set $owned (i32.load offset=400 (local.get $p)))
     (if (local.get $owned) (then (call $heap_free (local.get $owned))))
     (call $heap_free (local.get $snapshot_ga)))
 
@@ -475,12 +513,16 @@
     (i32.store offset=312 (local.get $p) (global.get $help_cur_topic))
     (i32.store offset=316 (local.get $p) (global.get $help_scroll_y))
     (i32.store offset=320 (local.get $p) (global.get $help_back_count))
+    (i32.store offset=324 (local.get $p) (global.get $help_session_window_index))
     (i32.store offset=328 (local.get $p) (global.get $help_last_error))
     (i32.store offset=332 (local.get $p) (global.get $help_last_error_offset))
     (if (global.get $help_back_stack)
       (then
         (memory.copy (i32.add (local.get $p) (i32.const 336))
           (global.get $help_back_stack) (i32.const 64))))
+    (i32.store offset=400 (local.get $p) (global.get $help_doc_windows_ga))
+    (i32.store offset=404 (local.get $p) (global.get $help_doc_windows_wa))
+    (i32.store offset=408 (local.get $p) (global.get $help_doc_window_count))
     ;; Prevent release_storage from freeing the detached owned roots.
     (global.set $help_doc_path_ga (i32.const 0))
     (global.set $help_doc_file_ga (i32.const 0))
@@ -498,6 +540,7 @@
     (global.set $help_doc_keyword_postings_ga (i32.const 0))
     (global.set $help_doc_cnt_file_ga (i32.const 0))
     (global.set $help_doc_cnt_nodes_ga (i32.const 0))
+    (global.set $help_doc_windows_ga (i32.const 0))
     (call $help_document_release_storage)
     (global.set $help_document_snapshots_ga (local.get $ga))
     (global.set $help_document_snapshot_count
@@ -590,12 +633,16 @@
     (global.set $help_cur_topic (i32.load offset=312 (local.get $p)))
     (global.set $help_scroll_y (i32.load offset=316 (local.get $p)))
     (global.set $help_back_count (i32.load offset=320 (local.get $p)))
+    (global.set $help_session_window_index (i32.load offset=324 (local.get $p)))
     (global.set $help_last_error (i32.load offset=328 (local.get $p)))
     (global.set $help_last_error_offset (i32.load offset=332 (local.get $p)))
     (if (global.get $help_back_stack)
       (then
         (memory.copy (global.get $help_back_stack)
           (i32.add (local.get $p) (i32.const 336)) (i32.const 64))))
+    (global.set $help_doc_windows_ga (i32.load offset=400 (local.get $p)))
+    (global.set $help_doc_windows_wa (i32.load offset=404 (local.get $p)))
+    (global.set $help_doc_window_count (i32.load offset=408 (local.get $p)))
     (global.set $help_document_snapshots_ga (i32.load (local.get $p)))
     (global.set $help_document_snapshot_count
       (i32.sub (global.get $help_document_snapshot_count) (i32.const 1)))
@@ -691,6 +738,19 @@
       (br $scan)))
     (local.get $i))
 
+  ;; Return the meaningful length of a fixed-width byte string. Unlike a
+  ;; STRINGZ field, consuming the complete field is valid.
+  (func $help_fixed_string_length
+    (param $ptr i32) (param $width i32) (result i32)
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $width)))
+      (br_if $done (i32.eqz (i32.load8_u
+        (i32.add (local.get $ptr) (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
   (func $help_hash_bytes (param $wa i32) (param $length i32) (result i32)
     (local $i i32) (local $hash i32)
     (local.set $hash (i32.const 0x811C9DC5))
@@ -767,6 +827,50 @@
     (if (i32.lt_u (local.get $alen) (local.get $blen)) (then (return (i32.const -1))))
     (if (i32.gt_u (local.get $alen) (local.get $blen)) (then (return (i32.const 1))))
     (i32.const 0))
+
+  ;; Normalized |SYSTEM window records. Index -1 always means the canonical
+  ;; main viewer presentation, so callers can hold a selector without first
+  ;; proving a window table exists.
+  (func $help_window_record_at (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_window_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_windows_wa)
+      (i32.mul (local.get $index) (global.get $HELP_WINDOW_SIZE))))
+
+  (func $help_active_window_record (result i32)
+    (if (i32.lt_s (global.get $help_session_window_index) (i32.const 0))
+      (then (return (i32.const 0))))
+    (call $help_window_record_at (global.get $help_session_window_index)))
+
+  ;; Window names are ASCII case-insensitive, exactly like the `>window`
+  ;; selectors HCW writes. Records without a name field never match.
+  (func $help_find_window_index
+    (param $name i32) (param $name_len i32) (result i32)
+    (local $i i32) (local $record i32)
+    (if (i32.eqz (local.get $name_len)) (then (return (i32.const -1))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $help_doc_window_count)))
+      (local.set $record (i32.add (global.get $help_doc_windows_wa)
+        (i32.mul (local.get $i) (global.get $HELP_WINDOW_SIZE))))
+      (if (i32.eqz (call $help_keyword_bytes_compare
+            (i32.add (global.get $help_doc_file_wa)
+              (i32.load offset=12 (local.get $record)))
+            (i32.load offset=16 (local.get $record))
+            (local.get $name) (local.get $name_len)))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; A numeric type-1 selector indexes the same table. 0xFF is the documented
+  ;; "current window" sentinel; any other out-of-range number is a hard error
+  ;; rather than a silent fall back to the main window.
+  (func $help_window_index_for_number (param $number i32) (result i32)
+    (if (i32.eq (local.get $number) (i32.const 0xFF))
+      (then (return (i32.const -1))))
+    (if (i32.ge_u (local.get $number) (global.get $help_doc_window_count))
+      (then (return (i32.const -2))))
+    (local.get $number))
 
   ;; Lookup always verifies hash, length, and bytes. Hash collisions cannot
   ;; select an unrelated internal file.
@@ -1050,6 +1154,9 @@
       (then
         (global.set $help_session_status (global.get $HELP_DISPATCH_OWNER_MISMATCH))
         (return (i32.const 0))))
+    ;; Only hotspot selectors choose a secondary window. An API-issued command
+    ;; always presents in the canonical main viewer.
+    (global.set $help_session_window_index (i32.const -1))
 
     (if (i32.or
           (i32.eq (local.get $command) (global.get $HELP_COMMAND_CONTEXT))
@@ -1178,6 +1285,15 @@
       (then (i32.add (global.get $help_doc_file_wa) (global.get $help_doc_cnt_off)))
       (else (i32.const 0))))
   (func (export "get_help_cnt_len") (result i32) (global.get $help_doc_cnt_len))
+  (func (export "get_help_window_count") (result i32)
+    (global.get $help_doc_window_count))
+  (func (export "get_help_window_record") (param $index i32) (result i32)
+    (call $help_window_record_at (local.get $index)))
+  (func (export "test_help_find_window_index")
+    (param $name i32) (param $name_len i32) (result i32)
+    (call $help_find_window_index (local.get $name) (local.get $name_len)))
+  (func (export "get_help_active_window_index") (result i32)
+    (global.get $help_session_window_index))
   (func (export "get_help_topic_count") (result i32) (global.get $help_doc_topic_count))
   (func (export "get_help_topic_record") (param $index i32) (result i32)
     (if (i32.ge_u (local.get $index) (global.get $help_doc_topic_count))

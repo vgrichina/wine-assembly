@@ -1667,6 +1667,8 @@
     (local $structure i32) (local $type i32) (local $name i32) (local $name_len i32)
     (local $path_ga i32) (local $path_wa i32) (local $snapshot_base i32)
     (local $parse_error i32) (local $parse_error_offset i32) (local $accepted i32)
+    (local $selected i32) (local $window_ga i32) (local $window_wa i32)
+    (local $window_len i32)
     (local.set $index (call $help_view_hotspot_token_at
       (local.get $x) (local.get $y)))
     (if (i32.lt_s (local.get $index) (i32.const 0))
@@ -1756,15 +1758,19 @@
     (local.set $structure (i32.add (local.get $payload) (i32.const 3)))
     (local.set $type (i32.load8_u (local.get $structure)))
     (local.set $hash (i32.load offset=1 (local.get $structure)))
-    (if (i32.or
-          (i32.and (i32.eq (local.get $type) (i32.const 1))
-            (i32.ne (i32.load8_u offset=5 (local.get $structure)) (i32.const 0)))
-          (i32.eq (local.get $type) (i32.const 6)))
+    ;; -1 keeps the canonical main presentation; a non-negative selector names
+    ;; a normalized |SYSTEM record in the document that owns the target topic.
+    (local.set $selected (i32.const -1))
+    (if (i32.eq (local.get $type) (i32.const 1))
       (then
-        ;; Secondary numeric/named windows require the SYSTEM window table,
-        ;; which is not yet normalized. Refuse rather than misroute to main.
-        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
-        (return (i32.const 0))))
+        (local.set $selected (call $help_window_index_for_number
+          (i32.load8_u offset=5 (local.get $structure))))
+        (if (i32.lt_s (local.get $selected) (i32.const -1))
+          (then
+            ;; A number this document has no window for is a hard failure
+            ;; rather than a silent fall back to the main window.
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))))
     (if (i32.or (i32.eqz (local.get $type))
                 (i32.eq (local.get $type) (i32.const 1)))
       (then
@@ -1774,9 +1780,13 @@
             (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
             (return (i32.const 0))))
         (if (local.get $popup) (then (call $help_popup_capture_session)))
-        (return (call $help_session_commit_topic (local.get $caller)
-          (local.get $api_command) (local.get $topic_ref) (local.get $mode)))))
-    (if (i32.ne (local.get $type) (i32.const 4))
+        (local.set $accepted (call $help_session_commit_topic (local.get $caller)
+          (local.get $api_command) (local.get $topic_ref) (local.get $mode)))
+        (if (i32.and (local.get $accepted) (i32.eqz (local.get $popup)))
+          (then (global.set $help_session_window_index (local.get $selected))))
+        (return (local.get $accepted))))
+    (if (i32.and (i32.ne (local.get $type) (i32.const 4))
+                 (i32.ne (local.get $type) (i32.const 6)))
       (then
         (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
         (return (i32.const 0))))
@@ -1788,10 +1798,46 @@
         (return (i32.const 0))))
     (local.set $name (i32.add (local.get $structure) (i32.const 5)))
     (local.set $name_len (i32.sub (local.get $size) (i32.const 6)))
+    (if (i32.eq (local.get $type) (i32.const 6))
+      (then
+        ;; type 6 packs filename NUL window NUL inside the same structure.
+        ;; The window belongs to the target file, so retain an owned copy of
+        ;; its name and resolve it only after that document is live.
+        (local.set $name_len (i32.const 0))
+        (block $file_done (loop $file
+          (if (i32.ge_u (i32.add (local.get $name_len) (i32.const 7))
+                (local.get $size))
+            (then
+              (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+              (return (i32.const 0))))
+          (br_if $file_done (i32.eqz (i32.load8_u
+            (i32.add (local.get $name) (local.get $name_len)))))
+          (local.set $name_len (i32.add (local.get $name_len) (i32.const 1)))
+          (br $file)))
+        (local.set $window_len
+          (i32.sub (i32.sub (local.get $size) (i32.const 7)) (local.get $name_len)))
+        (if (i32.or (i32.eqz (local.get $window_len))
+              (i32.gt_u (local.get $window_len) (i32.const 63)))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $window_ga
+          (call $heap_alloc (i32.add (local.get $window_len) (i32.const 1))))
+        (if (i32.eqz (local.get $window_ga))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+            (return (i32.const 0))))
+        (local.set $window_wa (call $g2w (local.get $window_ga)))
+        (memory.copy (local.get $window_wa)
+          (i32.add (local.get $name) (i32.add (local.get $name_len) (i32.const 1)))
+          (local.get $window_len))
+        (i32.store8 (i32.add (local.get $window_wa) (local.get $window_len))
+          (i32.const 0))))
     (local.set $path_ga
       (call $help_external_path_copy (local.get $name) (local.get $name_len)))
     (if (i32.eqz (local.get $path_ga))
       (then
+        (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
     (local.set $path_wa (call $g2w (local.get $path_ga)))
@@ -1800,6 +1846,7 @@
     (if (i32.eqz (call $help_document_snapshot_push))
       (then
         (call $heap_free (local.get $path_ga))
+        (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (if (local.get $popup)
           (then (global.set $help_popup_saved_session_valid (i32.const 0))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
@@ -1809,6 +1856,7 @@
         (local.set $parse_error (global.get $help_last_error))
         (local.set $parse_error_offset (global.get $help_last_error_offset))
         (call $heap_free (local.get $path_ga))
+        (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (drop (call $help_document_snapshot_restore_top))
         (global.set $help_last_error (local.get $parse_error))
         (global.set $help_last_error_offset (local.get $parse_error_offset))
@@ -1817,6 +1865,19 @@
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
     (call $heap_free (local.get $path_ga))
+    (if (local.get $window_ga)
+      (then
+        (local.set $selected (call $help_find_window_index
+          (local.get $window_wa) (local.get $window_len)))
+        (call $heap_free (local.get $window_ga))
+        (local.set $window_ga (i32.const 0))
+        (if (i32.lt_s (local.get $selected) (i32.const 0))
+          (then
+            (drop (call $help_document_snapshot_restore_top))
+            (if (local.get $popup)
+              (then (global.set $help_popup_saved_session_valid (i32.const 0))))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))))
     (local.set $topic_ref (call $help_resolve_context_hash (local.get $hash)))
     (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
       (then
@@ -1833,6 +1894,8 @@
         (if (local.get $popup)
           (then (global.set $help_popup_saved_session_valid (i32.const 0))))
         (return (i32.const 0))))
+    (if (i32.eqz (local.get $popup))
+      (then (global.set $help_session_window_index (local.get $selected))))
     (if (local.get $popup)
       (then
         (global.set $help_popup_external_snapshot_base (local.get $snapshot_base))))

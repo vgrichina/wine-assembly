@@ -40,8 +40,10 @@ type 0/1/4/6 payloads. The current document retains its canonical VFS path;
 relative type-4 filenames load mounted sibling HLP/CNT files through WAT, while
 failed loads or unresolved hashes restore the source document, session, view,
 and history. Normal external navigation and external popups suspend up to four
-documents for Back/dismissal. Non-default numeric and named secondary-window
-selectors fail explicitly until `|SYSTEM` window records are normalized.
+documents for Back/dismissal. `|SYSTEM` type-6 records normalize into a bounded
+window table, so numeric type-1 and named type-6 selectors resolve against the
+document that owns the target topic; an unknown number or name fails explicitly
+without changing topic, history, or presentation.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
@@ -1018,9 +1020,23 @@ the retained source directory. A four-record owning document stack makes
 cross-file Back and popup dismissal LIFO transactions, including restoration
 of the source path, session scalars, scroll, and 16-entry topic Back contents.
 Missing files, malformed targets, unresolved target hashes, allocation failure,
-and a fifth suspension leave the visible source transaction intact. Named or
-non-default numeric secondary windows and macro forms fail explicitly without
-changing topic or history.
+and a fifth suspension leave the visible source transaction intact. Macro forms
+still fail explicitly without changing topic or history.
+
+`|SYSTEM` type-6 records normalize into a bounded 56-byte window table holding
+flags, the type/name/caption slices, signed geometry, the show word, and both
+region colors; fixed-width fields may consume their full field, and a record
+whose size is not the documented 90 bytes rejects the file. A type-1 hotspot
+number indexes that table, with `0xFF` retaining the current viewer, and a
+type-6 window name resolves case-insensitively inside the file it names, after
+that document is live. The selector rides with the session: it is captured and
+restored by the document snapshot stack, so cross-file Back returns to the
+presentation its source used, and any API-issued command returns to the
+canonical main viewer. Presentation applies through the ordinary viewer path —
+geometry scales from the |SYSTEM 1024ths coordinate space against the live
+screen size and moves the window only when the selector itself changed, the
+layout width follows the presented width, and the caption is published as an
+owned NUL-terminated copy that falls back to the document title.
 Referenced logical fonts materialize once per view as owned type-4 GDI objects;
 bounded face copies, half-point/twip conversion, weight/italic selection, exact
 selected-font measurement, repaint selection, and retained underline/strikeout
@@ -1047,8 +1063,6 @@ session topic, mode, and Back count. A normal jump from a popup rejoins the
 ordinary primary navigation transaction instead. `HELP_QUIT` reunites and
 frees both views exactly once.
 
-- Normalize `|SYSTEM` secondary-window records for non-default type-1/type-6
-  hotspot presentation.
 - Extend raster materialization to inline picture unions and metafiles.
 
 Exit criterion: visual topic captures and hotspot target transitions match the
