@@ -484,6 +484,31 @@ The local route must deliberately fragment writes in tests. A one-call
 `send`/one-call `recv` correspondence would hide bugs because TCP exposes a byte
 stream, not message boundaries.
 
+### Browser wiring
+
+`index.html` already runs several apps at once, each its own `WineAssembly`
+with its own `WebAssembly.Memory`, sharing one renderer — which is exactly the
+two-processes-one-room shape. The server and the client are two entries in the
+app table, joined by a `LoopbackSegment`, with no IPC and no service involved.
+What the browser path still needs, all small:
+
+- `lib/vlan-wire.js` ends with a bare `module.exports` and has no browser
+  global shim like its neighbours, and no `<script>` tag in `index.html`;
+- the host context built in `host.js` must carry `vlanWire`;
+- each launched instance needs its room address through `set_vlan_local_ip`,
+  and each worker instance inherits it through `lib/thread-manager.js`;
+- the run loop in `host.js` must handle yield 8 alongside 3, 4 and 5. Loopback
+  delivery is synchronous, so no `setImmediate` hop is needed there — unlike
+  the child-IPC path in `test/run.js`;
+- two app-table entries under `binaries/candidates/liquid-war/LW5/`, the server
+  carrying `args: '-private -2 -nobeep'`.
+
+Two things that a zero-latency loopback hides and a real transport will not:
+the run loop reschedules with `setTimeout(step, 0)`, which busy-polls a parked
+socket instead of backing off, and `--vlan-max-waits` is a harness bound rather
+than a timeout, so the browser needs a real deadline on a park that never
+completes.
+
 ## Remote connection lifecycle
 
 One reliable, ordered WebRTC DataChannel named `vln/1` is established per
@@ -998,8 +1023,69 @@ Gates met:
   it calling `accept()`, then reading the peer's bytes one at a time through
   its protocol parser, then `closesocket` when the peer goes away.
 
-Remaining for the exit gate: drive `lwwin.exe` through `Net game`, connect a
-team, reach the waiting room, and complete a match.
+#### Reaching the client's own Net game menu
+
+Driving the client turned out to be blocked on input rather than on anything
+network-related. Allegro reads the keyboard **only** through buffered
+DirectInput — it sets `DIPROP_BUFFERSIZE`, registers an event with
+`SetEventNotification`, and drains `GetDeviceData` — and never calls
+`GetDeviceState`. `GetDeviceData` reported mouse button transitions but
+deliberately kept the keyboard buffer empty, so no keystroke had ever reached
+any Allegro-based game. The menu rendered correctly and then ignored every key,
+which reads as a rendering or timing bug and is neither.
+
+`src/09a8-handlers-directx.wat` now reports keyboard edges:
+
+- a 256-byte DIK-to-VK table, declared with a `_SIZE` global so
+  `test-wat-memory-map.js` covers it. `$di_dik_to_vk` became a table lookup
+  rather than a comparison chain because `GetDeviceData` walks all 256 scan
+  codes on every poll, and an Allegro input thread polls continuously;
+- `$di_dik_to_vk_strict`, which returns 0 for an unmapped scan code. The
+  original mapper falls back to the raw index for VK-shaped callers, and that
+  fallback would otherwise make DIK 0x28 (apostrophe) alias VK 0x28 (VK_DOWN)
+  and report a phantom key on every arrow press;
+- the last state reported to the guest as a 256-bit map across eight globals,
+  which `GetDeviceData` diffs to emit one `DIDEVICEOBJECTDATA` per edge. A
+  count query (`rgdod == NULL`) never consumes, and `DIGDD_PEEK` leaves the map
+  in place;
+- the right-hand duplicates that share a VK with their left-hand twin — RSHIFT,
+  RCONTROL, RMENU, NUMPADENTER — are skipped, so one Shift press is not
+  delivered twice.
+
+With that in place the client is fully keyboard-drivable: Down selects
+`Net game`, Enter opens it, an arrow focuses the `Server addr` field, and text
+entry replaces the default `127.0.0.1` with a room address.
+
+#### The room is per process, and threads are part of the process
+
+`lwwin.exe` does not connect on its main thread. It allocates a context, hands
+a callback to a worker, and its main thread sits in a progress loop polling a
+done flag — so the socket, bind, htons, inet_addr and connect calls all happen
+on a worker instance.
+
+Worker instances share linear memory, so the socket table itself was already
+shared, but the room address is a WAT *global* and therefore per instance. A
+worker would have emitted every frame from address 0, and its host context
+carried no wire at all. Three fixes, matching the existing `dll_count`
+precedent:
+
+- `lib/thread-manager.js` copies `vlan_local_ip` from the main instance to each
+  new thread instance;
+- the worker host context carries the same `vlanWire`, since a wire belongs to
+  the process, not to one thread;
+- yield 8 (`net_wait`) is handled per thread: clear the yield, pump, and give up
+  the slice rather than spinning, since frames arrive on the host event loop.
+
+This also exposed a diagnostic gap worth remembering: `--count`, `--break` and
+`--watch` are main-instance only, so a worker thread reads as *never executed*.
+Worse, worker-thread API calls log ordinal-only imports as `[API T3] <ord>`
+with no name, so the client's own socket calls are invisible in its own trace.
+The two-process gate therefore asserts on the **server's** `accept`, which is
+the far end of the same connection and is named properly.
+
+Remaining for the exit gate: frames are not yet crossing — the client reaches
+its connect and the server is still in `select`. After that, the waiting room
+and a completed match.
 
 Exit gate: the original client and server complete a game in one browser with
 no network-specific binary patch or fake successful call.
@@ -1026,6 +1112,38 @@ bounded delay, reports resets accurately, and never exceeds queue limits.
 
 Exit gate: both clients connect to the host's original `lwwinsrv.exe` at
 `10.77.0.1:8035` and complete a match over a direct path.
+
+#### Backend surface and the local development server
+
+Signaling needs no new service. The Berrry backend already provides
+authenticated per-user JSON records, which is exactly the shape a poll-based
+SDP exchange needs:
+
+```text
+POST   /api/data/:key?visibility=public     publish a record in your namespace
+GET    /api/public-data/users/:key          who has published this key  <- discovery
+GET    /api/public-data/:userId/:key        read one user's record
+PUT    /api/data/:key                       update
+DELETE /api/data/:key                       clean up after the channel opens
+GET    /api/auth/user  (401 -> /api/auth/login)   identity, and the moderation handle
+```
+
+There is no push or socket, so signaling polls. That is acceptable for the few
+seconds an offer/answer exchange takes, and game bytes never touch it — they go
+over the DataChannel. Both players therefore need Berrry accounts, since
+`/api/data` writes are application-user authenticated. The `brry_rw_*`
+deployment token used by `tools/deploy-berrry.js` is a deploy-time secret and
+must never reach browser code; the in-page path uses the viewer's own session.
+
+Public records are readable by anyone, so the SDP is encrypted under a room
+secret carried in the invite fragment and never published. Otherwise the room
+ID alone would let a stranger answer the offer.
+
+For local development, `tools/dev-server.js` serves the repository over HTTP
+**and** implements those same routes in memory with no login, so two browsers
+on one machine can find each other before any Berrry account exists. It is the
+same server that serves the page, so a demo needs one command. The in-memory
+store is deliberately not persisted: a restart is the reset.
 
 ### Slice 5: relay-quality rooms
 

@@ -219,6 +219,21 @@
   (global $di_mouse_data_last_buttons (mut i32) (i32.const 0))
   (global $di_mouse_data_initialized (mut i32) (i32.const 0))
   (global $di_mouse_data_sequence (mut i32) (i32.const 0))
+  ;; DirectInput buffered keyboard data for GetDeviceData. The last state
+  ;; reported to the guest is a 256-bit map (one bit per DIK scancode) held in
+  ;; eight globals, so buffered keys need no memory region of their own.
+  ;; GetDeviceData diffs the live host key state against this map and reports
+  ;; one DIDEVICEOBJECTDATA record per edge, which is how Allegro-based games
+  ;; (Liquid War) learn about key presses — they never call GetDeviceState.
+  (global $di_kbd_prev0 (mut i32) (i32.const 0))
+  (global $di_kbd_prev1 (mut i32) (i32.const 0))
+  (global $di_kbd_prev2 (mut i32) (i32.const 0))
+  (global $di_kbd_prev3 (mut i32) (i32.const 0))
+  (global $di_kbd_prev4 (mut i32) (i32.const 0))
+  (global $di_kbd_prev5 (mut i32) (i32.const 0))
+  (global $di_kbd_prev6 (mut i32) (i32.const 0))
+  (global $di_kbd_prev7 (mut i32) (i32.const 0))
+  (global $di_kbd_data_sequence (mut i32) (i32.const 0))
 
   ;; WASM address of the palette data for the primary surface (256 RGBQUAD entries)
   ;; Set by IDirectDrawSurface::SetPalette
@@ -3236,27 +3251,144 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; DIK scan code -> Win32 VK, one byte per scan code. 0 means the scan code
+  ;; has no VK, which the buffered-keyboard scan uses to skip it. A table
+  ;; rather than a comparison chain because GetDeviceData walks all 256 codes
+  ;; on every poll, and an Allegro input thread polls continuously.
+  (global $DI_DIK_VK_TABLE i32 (i32.const 0x11400))
+  (global $DI_DIK_VK_TABLE_SIZE i32 (i32.const 256))
+  (data (i32.const 0x11400)
+    "\00\1b\31\32\33\34\35\36\37\38\39\30\bd\bb\08\09"  ;; DIK 00-0F
+    "\51\57\45\52\54\59\55\49\4f\50\db\dd\0d\11\41\53"  ;; DIK 10-1F
+    "\44\46\47\48\4a\4b\4c\ba\de\c0\10\dc\5a\58\43\56"  ;; DIK 20-2F
+    "\42\4e\4d\bc\be\bf\10\6a\12\20\14\70\71\72\73\74"  ;; DIK 30-3F
+    "\75\76\77\78\79\90\91\67\68\69\6d\64\65\66\6b\61"  ;; DIK 40-4F
+    "\62\63\60\6e\00\00\00\7a\7b\00\00\00\00\00\00\00"  ;; DIK 50-5F
+    "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00"  ;; DIK 60-6F
+    "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00"  ;; DIK 70-7F
+    "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00"  ;; DIK 80-8F
+    "\00\00\00\00\00\00\00\00\00\00\00\00\0d\11\00\00"  ;; DIK 90-9F
+    "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00"  ;; DIK A0-AF
+    "\00\00\00\00\00\6f\00\00\12\00\00\00\00\00\00\00"  ;; DIK B0-BF
+    "\00\00\00\00\00\00\00\24\26\21\00\25\00\27\00\23"  ;; DIK C0-CF
+    "\28\22\2d\2e\00\00\00\00\00\00\00\00\00\00\00\00"  ;; DIK D0-DF
+    "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00"  ;; DIK E0-EF
+    "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00") ;; DIK F0-FF
+
+  ;; Strict lookup: 0 when this scan code has no VK. The buffered scan needs
+  ;; that distinction, because $di_dik_to_vk below deliberately falls back to
+  ;; the raw index for VK-shaped callers — a fallback that would otherwise make
+  ;; DIK 0x28 (apostrophe) alias VK 0x28 (VK_DOWN) and report a phantom key.
+  (func $di_dik_to_vk_strict (param $dik i32) (result i32)
+    (if (i32.ge_u (local.get $dik) (global.get $DI_DIK_VK_TABLE_SIZE))
+      (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $DI_DIK_VK_TABLE) (local.get $dik))))
+
+  ;; The right-hand duplicates of keys that share one VK with their left-hand
+  ;; twin. Reporting both would deliver every Shift press twice.
+  (func $di_kbd_scan_skip (param $dik i32) (result i32)
+    (i32.or
+      (i32.or (i32.eq (local.get $dik) (i32.const 0x36))   ;; RSHIFT  -> VK_SHIFT
+              (i32.eq (local.get $dik) (i32.const 0x9C)))  ;; NUMPADENTER -> VK_RETURN
+      (i32.or (i32.eq (local.get $dik) (i32.const 0x9D))   ;; RCONTROL -> VK_CONTROL
+              (i32.eq (local.get $dik) (i32.const 0xB8))))) ;; RMENU -> VK_MENU
+
+  ;; Live host state for one scan code, as 0 or 1.
+  (func $di_kbd_live (param $dik i32) (result i32)
+    (local $vk i32)
+    (local.set $vk (call $di_dik_to_vk_strict (local.get $dik)))
+    (if (i32.eqz (local.get $vk)) (then (return (i32.const 0))))
+    (i32.ne
+      (i32.and (call $host_get_key_down_state (local.get $vk)) (i32.const 0x8000))
+      (i32.const 0)))
+
+  ;; Last state reported to the guest, as a 256-bit map across eight globals.
+  (func $di_kbd_prev_word (param $idx i32) (result i32)
+    (if (i32.eq (local.get $idx) (i32.const 0)) (then (return (global.get $di_kbd_prev0))))
+    (if (i32.eq (local.get $idx) (i32.const 1)) (then (return (global.get $di_kbd_prev1))))
+    (if (i32.eq (local.get $idx) (i32.const 2)) (then (return (global.get $di_kbd_prev2))))
+    (if (i32.eq (local.get $idx) (i32.const 3)) (then (return (global.get $di_kbd_prev3))))
+    (if (i32.eq (local.get $idx) (i32.const 4)) (then (return (global.get $di_kbd_prev4))))
+    (if (i32.eq (local.get $idx) (i32.const 5)) (then (return (global.get $di_kbd_prev5))))
+    (if (i32.eq (local.get $idx) (i32.const 6)) (then (return (global.get $di_kbd_prev6))))
+    (global.get $di_kbd_prev7))
+
+  (func $di_kbd_prev_store (param $idx i32) (param $word i32)
+    (if (i32.eq (local.get $idx) (i32.const 0)) (then (global.set $di_kbd_prev0 (local.get $word)) (return)))
+    (if (i32.eq (local.get $idx) (i32.const 1)) (then (global.set $di_kbd_prev1 (local.get $word)) (return)))
+    (if (i32.eq (local.get $idx) (i32.const 2)) (then (global.set $di_kbd_prev2 (local.get $word)) (return)))
+    (if (i32.eq (local.get $idx) (i32.const 3)) (then (global.set $di_kbd_prev3 (local.get $word)) (return)))
+    (if (i32.eq (local.get $idx) (i32.const 4)) (then (global.set $di_kbd_prev4 (local.get $word)) (return)))
+    (if (i32.eq (local.get $idx) (i32.const 5)) (then (global.set $di_kbd_prev5 (local.get $word)) (return)))
+    (if (i32.eq (local.get $idx) (i32.const 6)) (then (global.set $di_kbd_prev6 (local.get $word)) (return)))
+    (global.set $di_kbd_prev7 (local.get $word)))
+
+  (func $di_kbd_prev_bit (param $dik i32) (result i32)
+    (i32.and
+      (i32.shr_u (call $di_kbd_prev_word (i32.shr_u (local.get $dik) (i32.const 5)))
+                 (i32.and (local.get $dik) (i32.const 31)))
+      (i32.const 1)))
+
+  (func $di_kbd_prev_set (param $dik i32) (param $down i32)
+    (local $idx i32) (local $mask i32) (local $word i32)
+    (local.set $idx (i32.shr_u (local.get $dik) (i32.const 5)))
+    (local.set $mask (i32.shl (i32.const 1) (i32.and (local.get $dik) (i32.const 31))))
+    (local.set $word (call $di_kbd_prev_word (local.get $idx)))
+    (call $di_kbd_prev_store (local.get $idx)
+      (if (result i32) (local.get $down)
+        (then (i32.or (local.get $word) (local.get $mask)))
+        (else (i32.and (local.get $word) (i32.xor (local.get $mask) (i32.const -1)))))))
+
+  ;; Fill up to $max buffered keyboard records at $rgdod (0 to count only) and
+  ;; return how many edges were reported. When $commit is 0 the caller peeked,
+  ;; so the reported state is left in place for the next read.
+  (func $di_kbd_collect (param $rgdod i32) (param $cb i32) (param $max i32) (param $commit i32)
+                        (result i32)
+    (local $dik i32) (local $count i32) (local $live i32) (local $rec i32)
+    (local.set $dik (i32.const 0))
+    (local.set $count (i32.const 0))
+    ;; A DX5 DIDEVICEOBJECTDATA is 16 bytes. A caller that understates the
+    ;; stride would otherwise stack every record on the first one.
+    (if (i32.lt_u (local.get $cb) (i32.const 16))
+      (then (local.set $cb (i32.const 16))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $dik) (i32.const 256)))
+      (br_if $done (i32.ge_u (local.get $count) (local.get $max)))
+      (if (i32.and
+            (i32.eqz (call $di_kbd_scan_skip (local.get $dik)))
+            (i32.ne (call $di_dik_to_vk_strict (local.get $dik)) (i32.const 0)))
+        (then
+          (local.set $live (call $di_kbd_live (local.get $dik)))
+          (if (i32.ne (local.get $live) (call $di_kbd_prev_bit (local.get $dik)))
+            (then
+              (if (local.get $rgdod)
+                (then
+                  ;; DIDEVICEOBJECTDATA: dwOfs, dwData, dwTimeStamp, dwSequence.
+                  (local.set $rec (i32.add (local.get $rgdod)
+                    (i32.mul (local.get $count) (local.get $cb))))
+                  (call $gs32 (local.get $rec) (local.get $dik))
+                  (call $gs32 (i32.add (local.get $rec) (i32.const 4))
+                    (select (i32.const 0x80) (i32.const 0) (local.get $live)))
+                  (call $gs32 (i32.add (local.get $rec) (i32.const 8)) (call $host_get_ticks))
+                  (call $gs32 (i32.add (local.get $rec) (i32.const 12))
+                    (global.get $di_kbd_data_sequence))))
+              (if (local.get $commit)
+                (then
+                  (call $di_kbd_prev_set (local.get $dik) (local.get $live))
+                  (global.set $di_kbd_data_sequence
+                    (i32.add (global.get $di_kbd_data_sequence) (i32.const 1)))))
+              (local.set $count (i32.add (local.get $count) (i32.const 1)))))))
+      (local.set $dik (i32.add (local.get $dik) (i32.const 1)))
+      (br $scan)))
+    (local.get $count))
+
   ;; DirectInput keyboard state is indexed by DIK scan codes, while the host
   ;; renderer tracks browser/Win32 VK codes. Map the keys used by candidate
   ;; games, and fall back to the original index for VK-shaped callers.
   (func $di_dik_to_vk (param $dik i32) (result i32)
-    (if (i32.eq (local.get $dik) (i32.const 0x01)) (then (return (i32.const 0x1B)))) ;; ESC
-    (if (i32.eq (local.get $dik) (i32.const 0x02)) (then (return (i32.const 0x31)))) ;; 1
-    (if (i32.eq (local.get $dik) (i32.const 0x03)) (then (return (i32.const 0x32)))) ;; 2
-    (if (i32.eq (local.get $dik) (i32.const 0x04)) (then (return (i32.const 0x33)))) ;; 3
-    (if (i32.eq (local.get $dik) (i32.const 0x05)) (then (return (i32.const 0x34)))) ;; 4
-    (if (i32.eq (local.get $dik) (i32.const 0x06)) (then (return (i32.const 0x35)))) ;; 5
-    (if (i32.eq (local.get $dik) (i32.const 0x07)) (then (return (i32.const 0x36)))) ;; 6
-    (if (i32.eq (local.get $dik) (i32.const 0x08)) (then (return (i32.const 0x37)))) ;; 7
-    (if (i32.eq (local.get $dik) (i32.const 0x09)) (then (return (i32.const 0x38)))) ;; 8
-    (if (i32.eq (local.get $dik) (i32.const 0x0A)) (then (return (i32.const 0x39)))) ;; 9
-    (if (i32.eq (local.get $dik) (i32.const 0x0B)) (then (return (i32.const 0x30)))) ;; 0
-    (if (i32.eq (local.get $dik) (i32.const 0x1C)) (then (return (i32.const 0x0D)))) ;; Return
-    (if (i32.eq (local.get $dik) (i32.const 0x39)) (then (return (i32.const 0x20)))) ;; Space
-    (if (i32.eq (local.get $dik) (i32.const 0xC8)) (then (return (i32.const 0x26)))) ;; Up
-    (if (i32.eq (local.get $dik) (i32.const 0xCB)) (then (return (i32.const 0x25)))) ;; Left
-    (if (i32.eq (local.get $dik) (i32.const 0xCD)) (then (return (i32.const 0x27)))) ;; Right
-    (if (i32.eq (local.get $dik) (i32.const 0xD0)) (then (return (i32.const 0x28)))) ;; Down
+    (local $vk i32)
+    (local.set $vk (call $di_dik_to_vk_strict (local.get $dik)))
+    (if (local.get $vk) (then (return (local.get $vk))))
     (local.get $dik))
 
   ;; GetDeviceState(this, cbData, lpvData)
@@ -3313,16 +3445,42 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; GetDeviceData(this, cbObjectData, rgdod, pdwInOut, dwFlags)
-  ;; Minimal buffered mouse support. MCM peeks with rgdod=NULL/DIGDD_PEEK,
-  ;; then reads one DIDEVICEOBJECTDATA record. Report button transitions for
-  ;; mouse devices; keep keyboard buffered data empty. Do not synthesize
-  ;; movement records from SetCursorPos/ClipCursor side effects.
+  ;; Buffered mouse and keyboard. MCM peeks with rgdod=NULL/DIGDD_PEEK, then
+  ;; reads one DIDEVICEOBJECTDATA record. Report button transitions for mouse
+  ;; devices and key edges for keyboards. Do not synthesize movement records
+  ;; from SetCursorPos/ClipCursor side effects.
   (func $handle_IDirectInputDevice_GetDeviceData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $dev_type i32) (local $pos i32)
     (local $mx i32) (local $my i32) (local $buttons i32) (local $diff i32)
     (local $ofs i32) (local $data i32) (local $requested i32) (local $has_event i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (if (i32.eq (local.get $dev_type) (i32.const 1))
+      (then
+        ;; Keyboard. Allegro-based games read keys only through this buffer,
+        ;; never through GetDeviceState, so an empty buffer freezes them.
+        (local.set $requested
+          (if (result i32) (local.get $arg3)
+            (then (call $gl32 (local.get $arg3)))
+            (else (i32.const 0))))
+        (if (i32.eqz (local.get $arg2))
+          (then
+            ;; rgdod == NULL asks only how many records are pending. A count
+            ;; query must not consume them, whatever DIGDD_PEEK says.
+            (if (local.get $arg3)
+              (then (call $gs32 (local.get $arg3)
+                (call $di_kbd_collect (i32.const 0) (local.get $arg1)
+                  (local.get $requested) (i32.const 0)))))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (local.set $data (call $di_kbd_collect (local.get $arg2)
+          (local.get $arg1) (local.get $requested)
+          (i32.eqz (i32.and (local.get $arg4) (i32.const 1)))))
+        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $data))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (if (i32.eq (local.get $dev_type) (i32.const 2))
       (then
         (local.set $pos (call $host_get_mouse_position))

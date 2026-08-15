@@ -1740,6 +1740,13 @@ async function main() {
     instance.exports.set_vlan_local_ip(octets.reduce((a, o) => ((a << 8) | o) >>> 0, 0) | 0);
     if (TRACE_NET) console.log(`[net] room address ${VLAN_IP}`);
   }
+  // A frame that reaches this process but that no guest ever peeks is
+  // indistinguishable, in the send/peek trace alone, from one that was never
+  // sent. Log the arrival itself so the two failures read differently.
+  if (TRACE_NET && ctx.vlanWire) {
+    const { describeFrame } = require('../lib/vlan-wire');
+    ctx.vlanWire.onDeliver = bytes => console.log(`[net] .. arrived ${describeFrame(bytes)}`);
+  }
   if (renderer) {
     renderer.wasm = instance;
     renderer.wasmMemory = memory;
@@ -1754,6 +1761,7 @@ async function main() {
       trace: traceCategories,
       traceHost: traceHostNames,
       vfs: ctx.vfs,  // share filesystem with main thread
+      vlanWire: ctx.vlanWire,  // one wire per process, shared by every thread
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
       sharedAudio: ctx.sharedAudio,  // share waveOut state across threads
@@ -1780,16 +1788,28 @@ async function main() {
     wh.create_semaphore = h.create_semaphore;
     wh.release_semaphore = h.release_semaphore;
     for (const name of profileHostNames) wrapProfileHost(wh, name);
-    // Worker logging
+    // Worker logging. The return value belongs to the call that was just
+    // logged, so it is shown only when that call was.
+    let workerLogVisible = false;
     wh.log = (ptr, len) => {
       const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
       let t = '';
       for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
       if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
-      if (TRACE_API) logs.push(`[API T${tid}] ${t}`);
+      // Honour --quiet-api and --trace-api=NAMES here exactly as the main
+      // thread does. Without this a worker's idle poll (MsgWaitForMultiple-
+      // Objects, Sleep, QueryPerformanceCounter) logs unfiltered: a long
+      // two-process run emitted 2.3M such lines and died of heap exhaustion
+      // inside console.log, with the filter the caller asked for ignored.
+      if (TRACE_API && !QUIET_API && (!TRACE_API_FILTER || TRACE_API_FILTER.has(t))) {
+        workerLogVisible = true;
+        logs.push(`[API T${tid}] ${t}`);
+      } else {
+        workerLogVisible = false;
+      }
     };
     wh.log_i32 = (val) => {
-      if (TRACE_API) logs.push(`  => ${hex(val)}`);
+      if (workerLogVisible) logs.push(`  => ${hex(val)}`);
     };
     if (TRACE_MOUSE_STATE) {
       const workerGetMousePosition = wh.get_mouse_position;
@@ -4922,6 +4942,13 @@ async function main() {
         if (s < slices - 1 && !stopped && threadManager.hasActiveThreads()) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
+      }
+      // A worker parked in a blocking socket call is waiting on a frame that
+      // only the event loop can deliver. runSlice cannot await, so the turn
+      // has to be given here or the wait never ends.
+      if (threadManager.netWaitPending) {
+        threadManager.netWaitPending = false;
+        await new Promise(resolve => setImmediate(resolve));
       }
     }
     if (AUDIO_EXIT_BYTES > 0 && ctx._audioOutFd !== undefined) {

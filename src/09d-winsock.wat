@@ -706,6 +706,14 @@
         (call $vsock_set_error (i32.const 10049))          ;; WSAEADDRNOTAVAIL
         (global.set $eax (i32.const -1))
         (return)))
+    ;; Resolve INADDR_ANY now, not at send time. A process owns exactly one
+    ;; room address, so "any" is that address — and every later step compares
+    ;; against a concrete one: the port-in-use check, the destination match in
+    ;; $vsock_deliver, and the source address of every frame this socket
+    ;; emits. Leaving the 0 in place makes a listener unreachable and makes a
+    ;; connector send from 0.0.0.0, which no peer can answer.
+    (if (i32.eqz (local.get $ip))
+      (then (local.set $ip (global.get $vsock_local_ip))))
     (if (i32.eqz (local.get $port))
       (then (local.set $port (call $vsock_alloc_port)))
       (else
