@@ -652,6 +652,8 @@ Resource-aware Win98 emulator
   <script src="lib/host-imports.js?v=200"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/thread-manager.js?v=170"></script>
+  <script src="lib/vlan-wire.js?v=1"></script>
+  <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="host.js?v=207"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script>
@@ -744,7 +746,13 @@ Resource-aware Win98 emulator
       ['qblackjack',  'Blackjack',   '\u{1F0A1}'],
       ['winamp',      'Winamp',      '\u{1F3B5}'],
     ];
-    const LOCAL_CANDIDATE_APPS = [];
+    // Local-only until the LAN party is wired end to end: the client is
+    // playable solo against its own bots, but the interesting mode needs a
+    // second browser and a room to meet in.
+    const LOCAL_CANDIDATE_APPS = [
+      ['liquid_war',        'Liquid War',    '\u{1F4A7}'],
+      ['liquid_war_server', 'LW Server',     '\u{1F5A7}'],
+    ];
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
     function initDesktop() {
@@ -1237,6 +1245,20 @@ Resource-aware Win98 emulator
       'graph.pak', 'sound.pak', 'text.pak',
     ].map(name => blobbyCandidateRoot + name);
 
+    // Liquid War 5.6.2. The client and the server are separate programs from
+    // the same tree and share its assets: lw.dat holds the sprites and the
+    // built-in maps, custom/ holds the user maps and textures the menus offer.
+    const liquidWarRoot = 'test/binaries/candidates/liquid-war/LW5/';
+    const liquidWarFiles = [
+      'data/lw.dat',
+      'custom/map/meditate.bmp', 'custom/map/pacman.bmp',
+      'custom/map/paille.bmp', 'custom/map/t4.bmp',
+      'custom/texture/bluesq.bmp', 'custom/texture/clovers.bmp',
+      'custom/texture/meditate.bmp', 'custom/texture/rust.bmp',
+      'custom/texture/warning.bmp',
+      'custom/music/colossus.mid',
+    ].map(name => liquidWarRoot + name);
+
     const apps = {
       notepad:  { exe: 'binaries/notepad.exe' },
       calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'] },
@@ -1295,6 +1317,20 @@ Resource-aware Win98 emulator
       mspaint_ep: { exe: 'binaries/entertainment-pack/mspaint.exe' },
       mspaint:  { exe: 'binaries/nt/mspaint.exe', dlls: ['binaries/dlls/msvcrt.dll', 'binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
       ski32:    { exe: 'binaries/entertainment-pack/ski32.exe' },
+      liquid_war: {
+        exe: liquidWarRoot + 'lwwin.exe',
+        files: liquidWarFiles,
+        requiredFiles: true,
+      },
+      // The dedicated server is the same tree's other executable. It has no
+      // game window of its own — it prints to a console and waits — so it is
+      // only interesting with a client pointed at it.
+      liquid_war_server: {
+        exe: liquidWarRoot + 'lwwinsrv.exe',
+        files: liquidWarFiles,
+        requiredFiles: true,
+        args: '-private -2 -nobeep',
+      },
       winmine:  { exe: 'binaries/xp/winmine.exe' },
       sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
       pinball:  { exe: 'binaries/pinball/pinball.exe', files: pinballFiles },

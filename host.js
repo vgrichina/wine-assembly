@@ -221,6 +221,10 @@ class WineAssembly {
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
       threadId: opts.threadId | 0,
       vfs: opts.vfs || null,
+      // The virtual LAN segment this page is joined to, or null when it is
+      // alone in its own room. A worker thread is part of the same process,
+      // so it is handed the same wire rather than opening one of its own.
+      vlanWire: opts.vlanWire || self.vlanWire || null,
       get availableDllFiles() { return opts.availableDllFiles || self._availableDllFiles || null; },
       sharedGdi: opts.sharedGdi || null,
       sharedAudio,
@@ -717,6 +721,7 @@ class WineAssembly {
         sharedGdi: mainCtx.sharedGdi,
         sharedAudio: mainCtx.sharedAudio,
         sharedMixer: mainCtx.sharedMixer,
+        vlanWire: mainCtx.vlanWire,  // one wire per process, shared by every thread
         threadId: tid,
       });
       wi.__setInstance = (instance) => { workerInstance = instance; };
@@ -772,9 +777,42 @@ class WineAssembly {
       },
     });
 
+    // A room address is a property of this whole process, and the guest reads
+    // it the moment it opens a socket, so it has to be in place before the
+    // program runs rather than when a connection is attempted.
+    if (this.vlanLocalIp && this.instance.exports.set_vlan_local_ip) {
+      this.instance.exports.set_vlan_local_ip(this.vlanLocalIp | 0);
+    }
+
     if (canvas && !this.renderer) {
       this.renderer = new Win98Renderer(canvas);
     }
+  }
+
+  // Join a virtual LAN room before the guest starts. `wire` is any
+  // lib/vlan-wire.js endpoint — a LoopbackWire for two instances in one page,
+  // an RtcWire for two people in two browsers. `ip` is this process's address
+  // inside the room, as a dotted string.
+  //
+  // Both have to be set before init(): the wire because host imports capture
+  // ctx at instantiate time, the address because the guest may bind a socket
+  // on its first slice.
+  joinVlan(wire, ip) {
+    this.vlanWire = wire || null;
+    this.vlanLocalIp = WineAssembly.parseRoomAddress(ip);
+    if (this.hostCtx) this.hostCtx.vlanWire = this.vlanWire;
+    if (this.instance && this.instance.exports.set_vlan_local_ip) {
+      this.instance.exports.set_vlan_local_ip(this.vlanLocalIp | 0);
+    }
+    return this;
+  }
+
+  static parseRoomAddress(ip) {
+    const octets = String(ip || '').split('.').map(Number);
+    if (octets.length !== 4 || octets.some(o => !(o >= 0 && o <= 255))) {
+      throw new Error(`joinVlan: not an IPv4 address: ${ip}`);
+    }
+    return octets.reduce((a, o) => ((a << 8) | o) >>> 0, 0) | 0;
   }
 
   static getWasmModule() {
@@ -1432,6 +1470,17 @@ class WineAssembly {
         }
         if (yieldReason === 4) {
           await self.handleHelpLoad();
+          if (self.running) { setTimeout(step, 0); }
+          return;
+        }
+        if (yieldReason === 8) {
+          // net_wait: a blocking socket call parked itself. EIP is still on
+          // the thunk, so clearing the yield re-enters the same handler with
+          // the same arguments. Rescheduling rather than looping is the whole
+          // point — inbound frames arrive on the event loop, so a spin here
+          // would starve the delivery this call is waiting for.
+          self.instance.exports.clear_yield();
+          if (self.instance.exports.vlan_pump) self.instance.exports.vlan_pump();
           if (self.running) { setTimeout(step, 0); }
           return;
         }
