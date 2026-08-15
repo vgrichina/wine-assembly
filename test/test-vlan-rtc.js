@@ -219,6 +219,164 @@ async function main() {
       assert.strictEqual(await signalKeyFor(scopeFor({})), await signalKeyFor('net:default'));
     });
 
+    // ---- presence, addresses, and directed offers -----------------------
+    const {
+      joinNetwork, inboxKeyFor, pickAddress, randomAddress, claimLoses,
+      PRESENCE_TTL_MS,
+    } = rtc;
+    const { newIdentity, sharedKeyWith } = _internals;
+
+    await check('a random address is inside the segment and never .0/.255', () => {
+      for (let i = 0; i < 500; i++) {
+        const a = randomAddress().split('.').map(Number);
+        assert.strictEqual(a[0], 10);
+        assert.strictEqual(a[1], 77);
+        assert.ok(a[3] >= 2 && a[3] <= 254, `bad host octet ${a[3]}`);
+      }
+    });
+
+    await check('a claimed address is not handed out again', () => {
+      const taken = [];
+      for (let i = 0; i < 200; i++) taken.push(pickAddress(taken));
+      assert.strictEqual(new Set(taken).size, taken.length);
+    });
+
+    await check('exactly one side yields when two claim the same address', () => {
+      const a = { address: '10.77.1.5', userId: 'aaa' };
+      const b = { address: '10.77.1.5', userId: 'bbb' };
+      // Both peers evaluate the same pair and must not both move, or both stay.
+      assert.strictEqual(claimLoses(a, b) !== claimLoses(b, a), true);
+    });
+
+    await check('different addresses never collide', () => {
+      assert.strictEqual(
+        claimLoses({ address: '10.77.1.5', userId: 'zzz' },
+                   { address: '10.77.1.6', userId: 'aaa' }), false);
+    });
+
+    await check('an unaddressed claim does not collide with anything', () => {
+      assert.strictEqual(claimLoses({ userId: 'z' }, { address: '10.77.1.5', userId: 'a' }), false);
+    });
+
+    await check('a peer inbox key is specific to the recipient', async () => {
+      const scope = scopeFor({ exe: 'lwwin.exe' });
+      assert.notStrictEqual(await inboxKeyFor(scope, 'user-a'), await inboxKeyFor(scope, 'user-b'));
+      assert.strictEqual(await inboxKeyFor(scope, 'user-a'), await inboxKeyFor(scope, 'user-a'));
+    });
+
+    await check('an inbox is not the presence key', async () => {
+      const scope = scopeFor({});
+      assert.notStrictEqual(await inboxKeyFor(scope, 'user-a'), await signalKeyFor(scope));
+    });
+
+    // A network needs a signaling client bound to its own cookie jar, which
+    // is what makes each one a distinct user against the dev server.
+    const netFor = (name) => joinNetwork({
+      exe: 'lwwin.exe', name, signaling: client(),
+    });
+
+    const alpha = await netFor('alpha');
+    const beta = await netFor('beta');
+
+    await check('joining claims an address on the segment', () => {
+      assert.ok(/^10\.77\.\d+\.\d+$/.test(alpha.address), alpha.address);
+    });
+
+    await check('two peers on one segment get different addresses', () => {
+      assert.notStrictEqual(alpha.address, beta.address);
+    });
+
+    await check('each peer sees the other, with address and key', async () => {
+      const seen = await alpha.peers();
+      assert.strictEqual(seen.length, 1);
+      assert.strictEqual(seen[0].name, 'beta');
+      assert.strictEqual(seen[0].address, beta.address);
+      assert.strictEqual(seen[0].publicKey, beta.identity.publicKey);
+    });
+
+    await check('a peer does not list itself', async () => {
+      const seen = await alpha.peers();
+      assert.ok(!seen.some(p => p.userId === alpha.userId));
+    });
+
+    await check('presence carries no SDP', async () => {
+      const seen = await alpha.peers();
+      assert.ok(!('sdp' in seen[0]), 'an address exchange must not ride on presence');
+    });
+
+    await check('presence liveness comes from the store, not the record', async () => {
+      const rec = await alpha.signaling.read(beta.userId, beta.presenceKey);
+      assert.ok(rec.updatedAt, 'the store must stamp the record');
+      assert.ok(!('at' in rec.value), 'a client clock must not be in the body');
+      assert.ok(Number.isFinite(Date.parse(rec.updatedAt)));
+    });
+
+    await check('a stale peer drops off the segment', async () => {
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + PRESENCE_TTL_MS + 1000;
+        assert.strictEqual((await alpha.peers()).length, 0);
+      } finally {
+        Date.now = realNow;
+      }
+    });
+
+    await check('peers on different channels do not see each other', async () => {
+      const other = await joinNetwork({ exe: 'doom.exe', name: 'gamma', signaling: client() });
+      try {
+        assert.strictEqual((await other.peers()).length, 0);
+        assert.ok(!(await alpha.peers()).some(p => p.name === 'gamma'));
+      } finally {
+        await other.leave();
+      }
+    });
+
+    await check('an offer left for a peer is readable only by that peer', async () => {
+      // Alpha seals an offer to beta the way connect() does.
+      const [betaSeen] = await alpha.peers();
+      const key = await sharedKeyWith(alpha.identity, betaSeen.publicKey);
+      const inbox = await inboxKeyFor(alpha.scope, beta.userId);
+      await alpha.signaling.publish(inbox, Object.assign(
+        { from: alpha.userId, publicKey: alpha.identity.publicKey },
+        await sealed(key, { role: 'offer', sdp: 'v=0 CANDIDATE-SECRET' })));
+
+      // Beta, holding the matching private key, can read it.
+      const [alphaSeen] = await beta.peers();
+      const betaKey = await sharedKeyWith(beta.identity, alphaSeen.publicKey);
+      const got = await beta._readInbox(inbox, alphaSeen, betaKey, 'offer');
+      assert.ok(got, 'the intended recipient must be able to read it');
+      assert.strictEqual(got.sdp, 'v=0 CANDIDATE-SECRET');
+
+      // An onlooker who can read the record cannot read the SDP.
+      const onlooker = await newIdentity();
+      const wrongKey = await sharedKeyWith(onlooker, alphaSeen.publicKey);
+      const raw = await beta.signaling.read(alpha.userId, inbox);
+      assert.ok(raw && raw.value, 'the record itself is public');
+      assert.ok(!JSON.stringify(raw.value).includes('CANDIDATE-SECRET'));
+      assert.strictEqual(await opened(wrongKey, raw.value), null);
+    });
+
+    await check('a record whose author is forged is ignored', async () => {
+      const [alphaSeen] = await beta.peers();
+      const betaKey = await sharedKeyWith(beta.identity, alphaSeen.publicKey);
+      const inbox = await inboxKeyFor(alpha.scope, beta.userId);
+      // Gamma publishes into beta's inbox but claims to be alpha.
+      const gamma = client();
+      await gamma._json('PUT', `/api/data/${encodeURIComponent(inbox)}?visibility=public`,
+        Object.assign({ from: alpha.userId, publicKey: alphaSeen.publicKey },
+          await sealed(betaKey, { role: 'offer', sdp: 'IMPOSTOR' })));
+      const got = await beta._readInbox(inbox, alphaSeen, betaKey, 'offer');
+      assert.ok(!got || got.sdp !== 'IMPOSTOR',
+        'a record must not be trusted when its author is not who it names');
+    });
+
+    await check('leaving withdraws presence', async () => {
+      await beta.leave();
+      assert.strictEqual((await alpha.peers()).length, 0);
+    });
+
+    await alpha.leave();
+
     // ---- the wire contract ----------------------------------------------
     await check('an inbound message becomes a peekable frame', () => {
       const ch = new FakeChannel();

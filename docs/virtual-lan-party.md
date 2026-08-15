@@ -651,38 +651,87 @@ signaling code does not branch on which tier is in use — see `scopeFor` in
 `lib/vlan-rtc.js`. Widening from one network to channels is a change to what
 is hashed, not to how any of it works.
 
-#### What one shared network gives up
+#### Presence is public, addresses are not
 
-A room protected by an invite secret can encrypt what it publishes, because
-the people entitled to read it are exactly the people who have the link. A
-network open to every signed-in user has no such secret: the scope is
+A room protected by an invite secret can encrypt everything it publishes,
+because the people entitled to read it are exactly the people who have the
+link. A network open to every signed-in user has no such secret: the scope is
 well-known, so anything published under it is readable by any signed-in user.
 
-That matters because a WebRTC offer is not an opaque token. It carries ICE
-candidates, and those carry **the publisher's LAN address and public IP**.
-Publishing them to a shared network means every signed-in user can enumerate
-every other signed-in user's addresses, whether or not they ever play
-together. Peer-to-peer games leak your IP to the person you are playing
-against — that is inherent, and normal. Leaking it to everyone who happened to
-be logged in at the time is a different and larger thing.
+That would matter a great deal if the thing published were an offer. A WebRTC
+offer is not an opaque token — it carries ICE candidates, and those carry the
+publisher's LAN address and public IP. Publishing one under a well-known key
+would hand every signed-in user a list of every other user's home addresses,
+whether or not they ever play together. Peer-to-peer games expose your IP to
+your opponent; that is inherent. Exposing it to everyone who happened to be
+logged in at the time is a different and larger thing.
 
-This is a deliberate tradeoff for the first version, not an oversight, and it
-constrains what the first version should be used for: a small trusted
-audience, not a public lobby. Three things narrow it later, in increasing
-order of cost:
+So the two are separated. What is public is presence; what is private is the
+address exchange, and it happens only when two people actually try to connect:
 
-- Publish an *availability* record rather than an offer. Only when two peers
-  agree to connect does either publish an SDP, and then only addressed to the
-  other. Presence is public; addresses are not. This is the cheap fix and it
-  is what the channel tier should ship with.
-- Filter host candidates from the SDP, leaving server-reflexive ones. Hides
-  the LAN topology, still exposes the public IP.
-- Force relay-only candidates, which hides the public IP too and requires the
-  TURN server this project does not run.
+```text
+  presence  (public, one key per scope)      inbox  (one key per recipient)
+  ┌───────────────────────────────┐          ┌──────────────────────────────┐
+  │ name      "alpha"             │          │ from       <sender user id>  │
+  │ address   10.77.3.47          │          │ publicKey  <sender's key>    │
+  │ publicKey <ephemeral ECDH>    │  ─────▶  │ iv, ct     sealed to the     │
+  │ status    available           │          │            recipient alone   │
+  └───────────────────────────────┘          └──────────────────────────────┘
+     anyone signed in may read this            anyone may read the record;
+     — that is the point, it is what           only the holder of the
+     replaces matchmaking                      matching private key can
+                                               read the SDP inside it
+```
 
-The encrypted-record machinery already built stays exactly as it is: it is
-what a room uses once rooms exist. A network simply has no secret to use it
-with, and the code says so rather than pretending to protect something.
+Each peer advertises an **ephemeral ECDH public key** in its presence record.
+To connect, a peer derives a shared key from its own private key and the
+recipient's advertised one, seals the offer under it, and writes it to a key
+derived from *the recipient's* user id. The recipient polls that one key to
+find everything addressed to it. Nobody has to write to a record they do not
+own, and the store never sees anything but ciphertext.
+
+The keypair is per session and is not an identity — the signaling service
+already says who each user is. It exists so an offer has exactly one reader,
+and being ephemeral means yesterday's published records cannot be decrypted
+today.
+
+An inbox record is accepted only when its `from` matches the user who owns the
+record *and* the sender's advertised key matches that user's presence record.
+Without both checks a third party could drop a record into someone's inbox and
+have it treated as coming from a peer.
+
+What remains exposed is the fact that two particular people connected, and
+their claimed segment addresses. Hiding that needs a relay, which is the same
+missing TURN server discussed under STUN and TURN.
+
+#### Presence, timestamps, and address claims
+
+A presence record is a claim with an expiry, not a registration. Nobody
+reliably says goodbye — browsers get closed, laptops get shut — so a peer
+counts as present only while its record is fresh, and it stays fresh by
+republishing every 15 seconds against a 45-second TTL.
+
+**The freshness clock is the store's own `updatedAt`, never a timestamp in the
+record body.** Both Berrry and `tools/dev-server.js` stamp every record on
+write. A client-supplied time would be a client clock, and a client clock can
+lie in both directions: backdated to look like it arrived first, or — the one
+that actually matters — post-dated to stay listed long after the person has
+gone.
+
+Addresses are claimed rather than assigned, because there is no server to hand
+them out. A joining peer reads the presence list, picks a random free address
+in `10.77.0.0/16` (last octet 2–254, so an address never looks like a network
+or broadcast address), publishes the claim, then reads the list again — random
+choice makes collisions rare, and the re-read catches the ones that happen
+anyway.
+
+When two peers do land on the same address, the tiebreak is **not** "who was
+first". Arrival order is not recoverable: the store's timestamp is rewritten by
+every heartbeat, so after fifteen seconds both records look equally recent. The
+rule is instead a comparison of user ids — both peers see the same two ids,
+reach the same conclusion with no further exchange, and exactly one of them
+moves. That is arbitrary rather than fair, which is fine: the requirement is
+agreement, not fairness.
 
 ### Room lifecycle
 
