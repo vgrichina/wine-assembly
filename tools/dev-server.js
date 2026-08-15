@@ -302,11 +302,23 @@ async function handleApi(req, res, url, store) {
 function createServer(opts) {
   const store = (opts && opts.store) || new Store();
   const quiet = !!(opts && opts.quiet);
+  // Static requests are hundreds of lines of noise next to a handful of
+  // signaling calls, so they are off unless asked for.
+  const verbose = !!(opts && opts.verbose);
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    if (!quiet) console.log(`${req.method} ${url.pathname}`);
 
     if (url.pathname.startsWith('/api/')) {
+      // Log who is asking, not just what. Two browsers failing to see each
+      // other is nearly always one of two things — they are the same user, or
+      // one of them never got here at all — and both are invisible unless the
+      // identity is on the line.
+      if (!quiet) {
+        const who = parseCookies(req.headers.cookie)[USER_COOKIE];
+        console.log(`${new Date().toISOString().slice(11, 23)} `
+          + `${(who || 'anon').slice(0, 8)} ${req.method} ${url.pathname}`
+          + `${url.search || ''}`);
+      }
       handleApi(req, res, url, store).catch(err => {
         if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
       });
@@ -315,6 +327,7 @@ function createServer(opts) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return sendJson(res, 405, { error: 'method not allowed' });
     }
+    if (!quiet && verbose) console.log(`${req.method} ${url.pathname}`);
     serveStatic(req, res, url.pathname === '/' ? '/index.html' : url.pathname);
   });
   server.store = store;
@@ -328,7 +341,10 @@ function main() {
   };
   const port = parseInt(arg('port', '8080'), 10);
   const host = arg('host', '127.0.0.1');
-  const server = createServer({ quiet: process.argv.includes('--quiet') });
+  const server = createServer({
+    quiet: process.argv.includes('--quiet'),
+    verbose: process.argv.includes('--verbose'),
+  });
   server.listen(port, host, () => {
     console.log(`wine-assembly dev server: http://${host}:${port}`);
     console.log(`  serving ${ROOT}`);

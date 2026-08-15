@@ -1,0 +1,126 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Virtual LAN capability probe</title>
+<style>
+  body{font:14px system-ui,sans-serif;margin:2rem;max-width:52rem}
+  h1{font-size:1.2rem}
+  table{border-collapse:collapse;width:100%;margin-top:1rem}
+  td{padding:.35rem .5rem;border-bottom:1px solid #ddd;vertical-align:top}
+  td:first-child{width:16rem;font-weight:600}
+  .ok{color:#0a0}.bad{color:#c00;font-weight:700}.warn{color:#a60}
+  pre{background:#f4f4f4;padding:.75rem;overflow-x:auto;white-space:pre-wrap}
+  button{font:inherit;padding:.4rem 1rem;margin-top:1rem}
+</style>
+<h1>Virtual LAN capability probe</h1>
+<p>Open this in whichever browser is failing. Everything the lobby depends on is
+checked here, in the order it is used, so the first red row is the reason.</p>
+<table id="t"></table>
+<button id="copy">Copy results</button>
+<pre id="out"></pre>
+
+<script>
+const rows = [];
+function row(name, state, detail) {
+  rows.push({ name, state, detail: detail == null ? '' : String(detail) });
+  const t = document.getElementById('t');
+  const tr = t.insertRow();
+  tr.insertCell().textContent = name;
+  const c = tr.insertCell();
+  c.className = state;
+  c.textContent = (state === 'ok' ? 'ok' : state === 'warn' ? 'warning' : 'FAILED')
+    + (detail ? ' — ' + detail : '');
+}
+
+async function main() {
+  row('user agent', 'ok', navigator.userAgent);
+  row('origin', 'ok', location.origin);
+
+  // WebCrypto is only exposed in a secure context. http://localhost and
+  // http://127.0.0.1 are meant to qualify, but this is the single most likely
+  // thing to differ between browsers on a plain-http dev server.
+  row('secure context', window.isSecureContext ? 'ok' : 'bad',
+    window.isSecureContext ? '' : 'crypto.subtle will be missing — try http://localhost:8080 instead of the IP');
+  row('crypto.subtle', (window.crypto && crypto.subtle) ? 'ok' : 'bad',
+    (window.crypto && crypto.subtle) ? '' : 'presence keys cannot be generated');
+
+  if (window.crypto && crypto.subtle) {
+    try {
+      const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']);
+      const raw = await crypto.subtle.exportKey('raw', pair.publicKey);
+      row('ECDH P-256 keypair', 'ok', raw.byteLength + '-byte public key');
+      const other = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']);
+      const shared = await crypto.subtle.deriveKey(
+        { name: 'ECDH', public: other.publicKey }, pair.privateKey,
+        { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      const ct = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: crypto.getRandomValues(new Uint8Array(12)) },
+        shared, new TextEncoder().encode('hello'));
+      row('ECDH derive + AES-GCM', 'ok', ct.byteLength + ' bytes of ciphertext');
+    } catch (e) {
+      row('ECDH derive + AES-GCM', 'bad', e.message);
+    }
+  }
+
+  row('RTCPeerConnection', window.RTCPeerConnection ? 'ok' : 'bad');
+  if (window.RTCPeerConnection) {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      const ch = pc.createDataChannel('probe', { ordered: true });
+      row('createDataChannel', 'ok', 'readyState=' + ch.readyState);
+      // Safari lacked connectionState for a long time; the lobby only uses it
+      // to notice failure early, so its absence is a warning, not a blocker.
+      row('pc.connectionState', 'connectionState' in pc ? 'ok' : 'warn',
+        'connectionState' in pc ? '' : 'failure detection falls back to timeout');
+      await pc.setLocalDescription(await pc.createOffer());
+      const gathered = await new Promise(res => {
+        const done = () => { if (pc.iceGatheringState === 'complete') res(true); };
+        pc.addEventListener('icegatheringstatechange', done);
+        setTimeout(() => res(false), 6000);
+        done();
+      });
+      const sdp = pc.localDescription ? pc.localDescription.sdp : '';
+      const cands = (sdp.match(/^a=candidate:.*$/gm) || []);
+      const kinds = {};
+      for (const c of cands) {
+        const m = c.match(/ typ (\w+)/);
+        if (m) kinds[m[1]] = (kinds[m[1]] || 0) + 1;
+      }
+      row('ICE gathering', cands.length ? 'ok' : 'bad',
+        (gathered ? 'complete' : 'timed out') + ', ' + cands.length + ' candidates ' + JSON.stringify(kinds));
+      const mdns = cands.filter(c => /\.local/.test(c)).length;
+      row('mDNS host candidates', mdns ? 'warn' : 'ok',
+        mdns ? mdns + ' of ' + cands.length + ' are .local — needs mDNS resolution between browsers'
+             : 'plain host addresses');
+      pc.close();
+    } catch (e) {
+      row('RTCPeerConnection setup', 'bad', e.message);
+    }
+  }
+
+  // The signaling identity. Two browsers must get two different ids here, or
+  // they will filter each other out as "self".
+  try {
+    const res = await fetch('/api/auth/user', { credentials: 'include' });
+    const j = await res.json();
+    row('signaling identity', j && j.id ? 'ok' : 'bad',
+      j && j.id ? j.id.slice(0, 12) + '… as ' + j.name : JSON.stringify(j));
+    row('cookie stored', document.cookie.includes('wa_dev_user') ? 'ok' : 'bad',
+      document.cookie || '(no cookies visible)');
+  } catch (e) {
+    row('signaling identity', 'bad', e.message);
+  }
+
+  document.getElementById('out').textContent = rows
+    .map(r => `${r.state.toUpperCase().padEnd(4)} ${r.name}${r.detail ? ': ' + r.detail : ''}`)
+    .join('\n');
+}
+
+document.getElementById('copy').onclick = () => {
+  const text = document.getElementById('out').textContent;
+  navigator.clipboard.writeText(text).then(
+    () => { document.getElementById('copy').textContent = 'copied'; },
+    () => {});
+};
+
+main().catch(e => row('probe itself', 'bad', e.message));
+</script>
