@@ -36,6 +36,9 @@ const EXPECTED_SEMANTICS = {
     rawTopicHash: '29a572c4051d6dfb19a2d308dfed6879dd5211a3ce03f5cdf1c48f0528a701dc',
     formatCounts: [69,69,0,556],
     formattedKinds: { 2: 4, 3: 152, 4: 69, 5: 331 }, payloadBytes: 2150,
+    fontFaces: ['MS Sans Serif'],
+    fonts: [[0,16,3,0,400,257,257],[0,16,3,32,400,257,257],[0,14,3,32,400,257,257],[0,16,3,1,700,257,257],[0,14,3,0,400,257,257],[0,16,3,0,400,0,257]],
+    bitmaps: [],
   },
   'freecell.hlp': {
     title: 'Free Cell', cnt: '', topics: [0,115,383,421],
@@ -48,6 +51,9 @@ const EXPECTED_SEMANTICS = {
     rawTopicHash: '275ba9bdf872ccd38f6c147f7a15183ed7bbcb706b24add13af7389e0260889b',
     formatCounts: [3,3,0,9],
     formattedKinds: { 3: 3, 4: 3, 5: 3 }, payloadBytes: 56,
+    fontFaces: ['MS Sans Serif'],
+    fonts: [[0,16,3,0,400,257,257],[0,16,3,1,700,257,257]],
+    bitmaps: [],
   },
   'mspaint.hlp': {
     title: 'Paint Help', cnt: 'mspaint.cnt', topics: [0,38,187,313,376,437,514,700,884,1051,1229,1285,1341,1424,1511,1593,1661,1833,1933,1992,2056,2117,2182,2236,2377,2509,2580,2725,2763],
@@ -61,6 +67,9 @@ const EXPECTED_SEMANTICS = {
     rawTopicHash: 'e060a6a35b928d056701cea5e91da8acc209452f556a7d4cba35d687a487db67',
     formatCounts: [28,28,0,92],
     formattedKinds: { 3: 28, 4: 28, 5: 35, 9: 1 }, payloadBytes: 544,
+    fontFaces: ['MS Sans Serif','Times New Roman'],
+    fonts: [[0,16,3,0,400,257,257],[0,16,3,0,400,255,257],[1,16,2,0,400,0,257],[0,16,3,1,700,257,257]],
+    bitmaps: [[0,0,6,3,0,80,1,4,10,11,16,0,10682,69,0,0,10618,16,0,0]],
   },
   'notepad.hlp': {
     title: 'Notepad Help', cnt: '', topics: [0,495,994,1032],
@@ -73,6 +82,9 @@ const EXPECTED_SEMANTICS = {
     rawTopicHash: 'f41f6f28c5daac376b0888eadee88b4f5cc7bea26359e12fbdf733c892540478',
     formatCounts: [21,41,16,128],
     formattedKinds: { 3: 34, 4: 41, 5: 53 }, payloadBytes: 1065,
+    fontFaces: ['MS Sans Serif'],
+    fonts: [[0,16,3,0,400,257,257],[0,16,3,1,700,257,257]],
+    bitmaps: [],
   },
   'sol.hlp': {
     title: 'Solitaire Help', cnt: 'sol.cnt', topics: [0,155,331,1047,1273,1311],
@@ -85,6 +97,9 @@ const EXPECTED_SEMANTICS = {
     rawTopicHash: '56cf53aa2a1a4949b3cefd24ee2968665708858911f0c69ac667f3e6351a5350',
     formatCounts: [10,10,0,59],
     formattedKinds: { 2: 10, 3: 15, 4: 10, 5: 14, 9: 10 }, payloadBytes: 320,
+    fontFaces: ['MS Sans Serif'],
+    fonts: [[0,16,3,0,400,257,257],[0,16,3,1,700,257,257]],
+    bitmaps: [[0,0,6,2,0,0,1,1,4,8,2,0,8043,31,0,0,8035,2,0,0]],
   },
   'wordpad.hlp': {
     title: 'WordPad Help', cnt: '', topics: [0,30,63,91,242,311,409,557,643,712,781,855,923,968,1175,1245,1314,1461,1495,1528,1563,1729,2204,2289,2386,2509,2657,2692,2730,2891,3054,32768,32914,33299,33689,33727],
@@ -98,6 +113,9 @@ const EXPECTED_SEMANTICS = {
     rawTopicHash: '69bfb58fc671db239cc3bb8b36fe3c65419565c8a82d876b46d9f95ff9161c8b',
     formatCounts: [39,39,0,168],
     formattedKinds: { 2: 10, 3: 48, 4: 39, 5: 63, 9: 8 }, payloadBytes: 891,
+    fontFaces: ['MS Sans Serif'],
+    fonts: [[0,16,3,0,400,257,257],[0,16,3,1,700,257,257],[0,18,3,0,400,257,257]],
+    bitmaps: [[0,0,6,3,0,80,1,4,10,11,16,0,12229,69,0,0,12165,16,0,0],[1,0,6,2,0,0,1,1,4,8,2,0,12351,31,0,0,12343,2,0,0]],
   },
 };
 
@@ -277,6 +295,65 @@ function encodeCompressedLong(value) {
   return result;
 }
 
+function encodeCompressedUnsignedLong(value) {
+  if (value >= 0x8000) throw new Error('synthetic compressed ulong too large');
+  const result = Buffer.alloc(2);
+  result.writeUInt16LE(value * 2);
+  return result;
+}
+
+function buildSyntheticBitmap() {
+  const pictureParts = [
+    Buffer.from([6, 0]),
+    encodeCompressedUnsignedLong(96), encodeCompressedUnsignedLong(96),
+    Buffer.from([2, 16]),
+    encodeCompressedUnsignedLong(2), encodeCompressedUnsignedLong(2),
+    encodeCompressedUnsignedLong(2), encodeCompressedUnsignedLong(1),
+    encodeCompressedUnsignedLong(4), encodeCompressedUnsignedLong(0),
+  ];
+  const pictureHeader = Buffer.concat(pictureParts);
+  const palette = Buffer.from([0,0,0,0, 0xff,0xff,0xff,0]);
+  const pixels = Buffer.from([0,1,1,0]);
+  const picture = Buffer.alloc(pictureHeader.length + 8 + palette.length + pixels.length);
+  pictureHeader.copy(picture);
+  picture.writeUInt32LE(pictureHeader.length + 8 + palette.length, pictureHeader.length);
+  picture.writeUInt32LE(0, pictureHeader.length + 4);
+  palette.copy(picture, pictureHeader.length + 8);
+  pixels.copy(picture, pictureHeader.length + 8 + palette.length);
+  const result = Buffer.alloc(8 + picture.length);
+  result.writeUInt16LE(0x506c, 0);
+  result.writeUInt16LE(1, 2);
+  result.writeUInt32LE(8, 4);
+  picture.copy(result, 8);
+  return result;
+}
+
+function buildOldFont(faces, descriptors, slotSize = 32) {
+  const faceOffset = 8;
+  const descriptorOffset = faceOffset + faces.length * slotSize;
+  const result = Buffer.alloc(descriptorOffset + descriptors.length * 11);
+  result.writeUInt16LE(faces.length, 0);
+  result.writeUInt16LE(descriptors.length, 2);
+  result.writeUInt16LE(faceOffset, 4);
+  result.writeUInt16LE(descriptorOffset, 6);
+  faces.forEach((face, index) => result.write(face, faceOffset + index * slotSize,
+    Math.min(Buffer.byteLength(face, 'latin1'), slotSize), 'latin1'));
+  descriptors.forEach(([face, halfPoints, family, attributes, foreground = 0, background = 0], index) => {
+    const p = descriptorOffset + index * 11;
+    result[p] = attributes;
+    result[p + 1] = halfPoints;
+    result[p + 2] = family;
+    result.writeUInt16LE(face, p + 3);
+    result[p + 5] = foreground & 0xff;
+    result[p + 6] = (foreground >>> 8) & 0xff;
+    result[p + 7] = (foreground >>> 16) & 0xff;
+    result[p + 8] = background & 0xff;
+    result[p + 9] = (background >>> 8) & 0xff;
+    result[p + 10] = (background >>> 16) & 0xff;
+  });
+  return result;
+}
+
 function buildSyntheticFormattedTopic({ stringCount = 12, returnParts = false } = {}) {
   const commands = Buffer.concat([
     Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
@@ -356,7 +433,9 @@ function writeSyntheticTopicRaw(document, rawOffset, value, byteLength = 4) {
   }
 }
 
-function buildSyntheticSemanticHelp({ systemMinor = 33, topic = null, oldPhrases = null } = {}) {
+function buildSyntheticSemanticHelp({
+  systemMinor = 33, topic = null, oldPhrases = null, font = null, extraFiles = [],
+} = {}) {
   const title = Buffer.from('Synthetic Help\0', 'latin1');
   const system = Buffer.alloc(12 + 4 + title.length + 8);
   system.writeUInt16LE(0x036c, 0);
@@ -386,6 +465,8 @@ function buildSyntheticSemanticHelp({ systemMinor = 33, topic = null, oldPhrases
     ['|TTLBTREE', buildSemanticBtree('titles')],
   ]);
   if (oldPhrases) contentsByName.set('|Phrases', oldPhrases);
+  if (font) contentsByName.set('|FONT', font);
+  for (const [name, content] of extraFiles) contentsByName.set(name, content);
   const names = [...contentsByName.keys()].sort();
   const dirContent = Buffer.alloc(38 + 1024);
   dirContent.writeUInt16LE(0x293b, 0);
@@ -599,6 +680,34 @@ async function main() {
         e.get_help_table_count(),
         e.get_help_format_command_count(),
       ]) === JSON.stringify(semantic.formatCounts));
+    const fontFaces = Array.from({ length: e.get_help_font_face_count() }, (_, index) =>
+      readLatin1(e.get_help_font_face_ptr(index), e.get_help_font_face_len(index)));
+    const fonts = Array.from({ length: e.get_help_font_count() }, (_, index) => {
+      const record = e.get_help_font_record(index);
+      return Array.from({ length: 7 }, (_, field) => dv.getUint32(record + field * 4, true));
+    });
+    check(`${file} exact normalized FONT faces and descriptors`,
+      e.get_help_font_metric_mode() === 0 &&
+      JSON.stringify(fontFaces) === JSON.stringify(semantic.fontFaces) &&
+      JSON.stringify(fonts) === JSON.stringify(semantic.fonts),
+      `faces=${JSON.stringify(fontFaces)} fonts=${JSON.stringify(fonts)}`);
+    check(`${file} FONT lookup is bounded`,
+      e.get_help_font_face_record(semantic.fontFaces.length) === 0 &&
+      e.get_help_font_face_ptr(semantic.fontFaces.length) === 0 &&
+      e.get_help_font_face_len(semantic.fontFaces.length) === 0 &&
+      e.get_help_font_record(semantic.fonts.length) === 0);
+    const bitmaps = Array.from({ length: e.get_help_bitmap_count() }, (_, index) => {
+      const record = e.get_help_bitmap_record(index);
+      return Array.from({ length: 20 }, (_, field) => dv.getUint32(record + field * 4, true));
+    });
+    check(`${file} exact normalized bitmap resource metadata`,
+      JSON.stringify(bitmaps) === JSON.stringify(semantic.bitmaps),
+      `bitmaps=${JSON.stringify(bitmaps)}`);
+    check(`${file} bitmap lookup is exact and bounded`,
+      semantic.bitmaps.every((bitmap, index) =>
+        e.test_help_find_bitmap(bitmap[0], bitmap[1]) === index) &&
+      e.test_help_find_bitmap(0xffff, 0xffff) === -1 &&
+      e.get_help_bitmap_record(semantic.bitmaps.length) === 0);
 
     const rawParts = [];
     const rawTopics = [];
@@ -872,6 +981,84 @@ async function main() {
     e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
       topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === -1 &&
     e.get_help_last_error() === 14);
+
+  const syntheticFont = buildOldFont(
+    ['Fixture Face'], [[0,20,2,3,0x112233,0x445566]]);
+  const fontHelp = buildSyntheticSemanticHelp({ font: syntheticFont });
+  check('synthetic old FONT table parses into normalized records',
+    load(fontHelp.file) === 1 && e.get_help_font_face_count() === 1 &&
+    e.get_help_font_count() === 1 && e.get_help_font_metric_mode() === 0 &&
+    readLatin1(e.get_help_font_face_ptr(0), e.get_help_font_face_len(0)) === 'Fixture Face' &&
+    (() => {
+      const record = e.get_help_font_record(0);
+      return JSON.stringify(Array.from({ length: 7 }, (_, field) =>
+        dv.getUint32(record + field * 4, true))) ===
+        JSON.stringify([0,20,2,3,700,0x112233,0x445566]);
+    })());
+  const badFontFace = Buffer.from(syntheticFont);
+  badFontFace.writeUInt16LE(1, badFontFace.readUInt16LE(6) + 3);
+  const badFontFaceHelp = buildSyntheticSemanticHelp({ font: badFontFace });
+  check('FONT descriptors reject out-of-range face indexes transactionally',
+    load(badFontFaceHelp.file) === 0 && e.get_help_last_error() === 15 &&
+    e.get_help_font_face_count() === 0 && e.get_help_font_count() === 0 &&
+    e.get_help_bitmap_count() === 0 &&
+    e.get_help_topic_count() === 0);
+  const truncatedFontHelp = buildSyntheticSemanticHelp({
+    font: syntheticFont.subarray(0, syntheticFont.length - 1),
+  });
+  check('truncated FONT descriptors fail before publication',
+    load(truncatedFontHelp.file) === 0 && e.get_help_last_error() === 15 &&
+    e.get_help_font_count() === 0);
+  const oversizedFont = Buffer.from(syntheticFont);
+  oversizedFont.writeUInt16LE(4097, 0);
+  const oversizedFontHelp = buildSyntheticSemanticHelp({ font: oversizedFont });
+  check('FONT face capacity is enforced before allocation',
+    load(oversizedFontHelp.file) === 0 && e.get_help_last_error() === 6 &&
+    e.get_help_font_face_count() === 0);
+
+  const syntheticBitmap = buildSyntheticBitmap();
+  const bitmapHelp = buildSyntheticSemanticHelp({ extraFiles: [['|bm7', syntheticBitmap]] });
+  const bitmapDataOff = bitmapHelp.offsets['|bm7'] + 9;
+  check('synthetic bitmap resource publishes exact normalized metadata',
+    load(bitmapHelp.file) === 1 && e.get_help_bitmap_count() === 1 &&
+    e.test_help_find_bitmap(7, 0) === 0 && (() => {
+      const record = e.get_help_bitmap_record(0);
+      return JSON.stringify(Array.from({ length: 20 }, (_, field) =>
+        dv.getUint32(record + field * 4, true))) === JSON.stringify([
+        7,0,6,0,96,96,1,8,2,2,2,1,bitmapDataOff + 44,4,0,0,
+        bitmapDataOff + 36,2,0,0,
+      ]);
+    })());
+  const badBitmapOffset = Buffer.from(syntheticBitmap);
+  badBitmapOffset.writeUInt32LE(0xffffffff, 28);
+  const badBitmapOffsetHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', badBitmapOffset]],
+  });
+  check('bitmap compressed payload offsets are bounded transactionally',
+    load(badBitmapOffsetHelp.file) === 0 && e.get_help_last_error() === 16 &&
+    e.get_help_bitmap_count() === 0 && e.get_help_topic_count() === 0);
+  const badBitmapHotspot = Buffer.from(syntheticBitmap);
+  badBitmapHotspot.writeUInt16LE(2, 26);
+  const badBitmapHotspotHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', badBitmapHotspot]],
+  });
+  check('bitmap hotspot size and offset must be paired',
+    load(badBitmapHotspotHelp.file) === 0 && e.get_help_last_error() === 16 &&
+    e.get_help_bitmap_count() === 0);
+  const tooManyPictures = Buffer.from(syntheticBitmap);
+  tooManyPictures.writeUInt16LE(4097, 2);
+  const tooManyPicturesHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', tooManyPictures]],
+  });
+  check('bitmap picture capacity is enforced before allocation',
+    load(tooManyPicturesHelp.file) === 0 && e.get_help_last_error() === 6 &&
+    e.get_help_bitmap_count() === 0);
+  const duplicateBitmapHelp = buildSyntheticSemanticHelp({
+    extraFiles: [['|bm7', syntheticBitmap], ['bm7', syntheticBitmap]],
+  });
+  check('duplicate bitmap resource numbers fail before publication',
+    load(duplicateBitmapHelp.file) === 0 && e.get_help_last_error() === 16 &&
+    e.get_help_bitmap_count() === 0);
 
   for (const [variant, minor, compressedTopic] of [
     ['hc30', 15, false],
@@ -1228,6 +1415,7 @@ async function main() {
     e.get_help_file_ptr() === 0 && e.get_help_directory_count() === 0 &&
     e.get_help_topic_count() === 0 && e.get_help_context_count() === 0 &&
     e.get_help_map_count() === 0 && e.get_help_phrase_count() === 0 &&
+    e.get_help_font_face_count() === 0 && e.get_help_font_count() === 0 &&
     e.get_help_display_record_count() === 0 && e.get_help_paragraph_count() === 0 &&
     e.get_help_table_count() === 0 && e.get_help_format_command_count() === 0 &&
     e.get_help_last_error() === 0);

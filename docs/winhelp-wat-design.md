@@ -16,7 +16,10 @@ tabs, fonts, pictures, hotspots, and macros—before any document is published.
 Each character command must pair with exactly one `LinkData2` string. Stable
 copies of validated records and variable command payloads live in a separate
 caller-owned arena, never in the reusable TOPIC-block scratch buffer.
-Font/resource resolution, layout, and the runtime UI cutover remain.
+The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
+palettes, compressed payload slices, and hotspot slices are also normalized
+into bounded WAT-owned records. Image decompression, layout, and the runtime UI
+cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -537,6 +540,15 @@ macro tokens reference the exact validated command subrange, so later resource
 resolution and the safe macro interpreter never depend on transient parser
 memory.
 
+Font faces are stored as bounded offsets into the immutable HLP buffer. Font
+descriptors normalize face index, height, family, style attributes, weight,
+foreground, and background while retaining whether metrics use half-points or
+twips. Bitmap records normalize resource/picture number, picture and packing
+type, dimensions, depth, resolution, palette, transparency, compressed data,
+hotspot slices, and decoded-size metadata. Every offset/length pair is checked
+against its containing internal file before publication; the decoder itself is
+a later, independently bounded stage.
+
 ```mermaid
 flowchart LR
     TR[HLP topic records] --> DC[Bounded decoder]
@@ -849,8 +861,10 @@ string for every character command instead of guessing paragraph breaks from
 NUL bytes. Exact real-corpus token-kind and payload-byte inventories cover all
 six checked-in help files, including table paragraphs; synthetic fixtures cover
 all documented variable payload families, arena aliasing/capacity, and
-command/string-count mismatch. Font and bitmap resource tables, keyword
-indexes, and layout remain before Phase 2 is complete.
+command/string-count mismatch. Exact normalized `|FONT` and lP/lp `|bmN`
+records cover every checked-in resource, with transactional malformed-offset,
+descriptor, hotspot, duplicate-ID, and capacity tests. Picture decompression,
+keyword indexes, and layout remain before Phase 2 is complete.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.

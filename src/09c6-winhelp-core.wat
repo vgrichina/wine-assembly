@@ -14,6 +14,9 @@
   (global $HELP_MAX_TOPIC_LINKS i32 (i32.const 262144))
   (global $HELP_MAX_TOPIC_TOKENS i32 (i32.const 262144))
   (global $HELP_MAX_DECOMPRESSED_TOPIC_BYTES i32 (i32.const 0x00400000))
+  (global $HELP_MAX_FONT_FACES i32 (i32.const 4096))
+  (global $HELP_MAX_FONT_DESCRIPTORS i32 (i32.const 65536))
+  (global $HELP_MAX_BITMAP_RESOURCES i32 (i32.const 4096))
 
   ;; Stable parser errors. Keep the first failure and its file offset.
   (global $HELP_ERROR_NONE i32 (i32.const 0))
@@ -31,6 +34,8 @@
   (global $HELP_ERROR_PHRASE_TABLE i32 (i32.const 12))
   (global $HELP_ERROR_TOPIC_RECORD i32 (i32.const 13))
   (global $HELP_ERROR_TOPIC_FORMAT i32 (i32.const 14))
+  (global $HELP_ERROR_FONT_TABLE i32 (i32.const 15))
+  (global $HELP_ERROR_BITMAP_TABLE i32 (i32.const 16))
 
   ;; HelpDocument storage. Guest pointers are retained for HeapFree; the
   ;; corresponding WA pointers are used by the parser and test inspection.
@@ -63,6 +68,17 @@
   (global $help_doc_paragraph_count (mut i32) (i32.const 0))
   (global $help_doc_table_count (mut i32) (i32.const 0))
   (global $help_doc_format_command_count (mut i32) (i32.const 0))
+  (global $help_doc_font_faces_ga (mut i32) (i32.const 0))
+  (global $help_doc_font_faces_wa (mut i32) (i32.const 0))
+  (global $help_doc_font_face_count (mut i32) (i32.const 0))
+  (global $help_doc_fonts_ga (mut i32) (i32.const 0))
+  (global $help_doc_fonts_wa (mut i32) (i32.const 0))
+  (global $help_doc_font_count (mut i32) (i32.const 0))
+  ;; 0=old descriptors with half-point height, 1=new/MVB twip metrics.
+  (global $help_doc_font_metric_mode (mut i32) (i32.const 0))
+  (global $help_doc_bitmaps_ga (mut i32) (i32.const 0))
+  (global $help_doc_bitmaps_wa (mut i32) (i32.const 0))
+  (global $help_doc_bitmap_count (mut i32) (i32.const 0))
   (global $help_doc_system_minor (mut i32) (i32.const 0))
   (global $help_doc_system_major (mut i32) (i32.const 0))
   (global $help_doc_system_flags (mut i32) (i32.const 0))
@@ -105,6 +121,13 @@
   (global $HELP_TOKEN_MACRO i32 (i32.const 10))
   (global $HELP_TOKEN_END_TOPIC i32 (i32.const 13))
 
+  ;; HelpFontFace is {name_off:u32, name_len:u32}. HelpFont is 28 bytes:
+  ;; face_index, height, family, attributes, weight, foreground, background.
+  (global $HELP_FONT_FACE_SIZE i32 (i32.const 8))
+  (global $HELP_FONT_SIZE i32 (i32.const 28))
+  ;; HelpBitmap is 80 bytes; see the formatted-topic design for fields.
+  (global $HELP_BITMAP_SIZE i32 (i32.const 80))
+
   ;; HelpSlice is 16 bytes:
   ;;   base_wa:u32, file_size:u32, offset:u32, length:u32.
   ;; The document metadata owns a root slice at +0 and page scratch at +16.
@@ -115,6 +138,12 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_bitmaps_ga)
+      (then (call $heap_free (global.get $help_doc_bitmaps_ga))))
+    (if (global.get $help_doc_fonts_ga)
+      (then (call $heap_free (global.get $help_doc_fonts_ga))))
+    (if (global.get $help_doc_font_faces_ga)
+      (then (call $heap_free (global.get $help_doc_font_faces_ga))))
     (if (global.get $help_doc_phrase_image_ga)
       (then (call $heap_free (global.get $help_doc_phrase_image_ga))))
     (if (global.get $help_doc_phrase_offsets_ga)
@@ -159,6 +188,16 @@
     (global.set $help_doc_paragraph_count (i32.const 0))
     (global.set $help_doc_table_count (i32.const 0))
     (global.set $help_doc_format_command_count (i32.const 0))
+    (global.set $help_doc_font_faces_ga (i32.const 0))
+    (global.set $help_doc_font_faces_wa (i32.const 0))
+    (global.set $help_doc_font_face_count (i32.const 0))
+    (global.set $help_doc_fonts_ga (i32.const 0))
+    (global.set $help_doc_fonts_wa (i32.const 0))
+    (global.set $help_doc_font_count (i32.const 0))
+    (global.set $help_doc_font_metric_mode (i32.const 0))
+    (global.set $help_doc_bitmaps_ga (i32.const 0))
+    (global.set $help_doc_bitmaps_wa (i32.const 0))
+    (global.set $help_doc_bitmap_count (i32.const 0))
     (global.set $help_doc_system_minor (i32.const 0))
     (global.set $help_doc_system_major (i32.const 0))
     (global.set $help_doc_system_flags (i32.const 0))
@@ -354,6 +393,10 @@
       (then
         (i64.store (local.get $scratch) (i64.const 0x736573617268507C))
         (local.set $length (i32.const 8))))
+    (if (i32.eq (local.get $kind) (i32.const 9))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x000000544E4F467C))
+        (local.set $length (i32.const 5))))
     (if (i32.eqz (local.get $length)) (then (return (i32.const -1))))
     (call $help_find_internal_file (local.get $scratch) (local.get $length)))
 
@@ -451,6 +494,54 @@
     (global.get $help_doc_table_count))
   (func (export "get_help_format_command_count") (result i32)
     (global.get $help_doc_format_command_count))
+  (func (export "get_help_font_face_count") (result i32)
+    (global.get $help_doc_font_face_count))
+  (func (export "get_help_font_face_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_font_face_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_font_faces_wa)
+      (i32.mul (local.get $index) (global.get $HELP_FONT_FACE_SIZE))))
+  (func (export "get_help_font_face_ptr") (param $index i32) (result i32)
+    (local $record i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_font_face_count))
+      (then (return (i32.const 0))))
+    (local.set $record (i32.add (global.get $help_doc_font_faces_wa)
+      (i32.mul (local.get $index) (global.get $HELP_FONT_FACE_SIZE))))
+    (i32.add (global.get $help_doc_file_wa) (i32.load (local.get $record))))
+  (func (export "get_help_font_face_len") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_font_face_count))
+      (then (return (i32.const 0))))
+    (i32.load offset=4 (i32.add (global.get $help_doc_font_faces_wa)
+      (i32.mul (local.get $index) (global.get $HELP_FONT_FACE_SIZE)))))
+  (func (export "get_help_font_count") (result i32) (global.get $help_doc_font_count))
+  (func (export "get_help_font_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_font_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_fonts_wa)
+      (i32.mul (local.get $index) (global.get $HELP_FONT_SIZE))))
+  (func (export "get_help_font_metric_mode") (result i32)
+    (global.get $help_doc_font_metric_mode))
+  (func (export "get_help_bitmap_count") (result i32)
+    (global.get $help_doc_bitmap_count))
+  (func (export "get_help_bitmap_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_bitmap_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_bitmaps_wa)
+      (i32.mul (local.get $index) (global.get $HELP_BITMAP_SIZE))))
+  (func (export "test_help_find_bitmap")
+    (param $resource_number i32) (param $picture_index i32) (result i32)
+    (local $i i32) (local $record i32)
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (global.get $help_doc_bitmap_count)))
+      (local.set $record (i32.add (global.get $help_doc_bitmaps_wa)
+        (i32.mul (local.get $i) (global.get $HELP_BITMAP_SIZE))))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $record)) (local.get $resource_number))
+            (i32.eq (i32.load offset=4 (local.get $record)) (local.get $picture_index)))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
   (func (export "test_help_resolve_context_id") (param $map_id i32) (result i32)
     (local $i i32) (local $record i32)
     (block $missing (loop $scan
