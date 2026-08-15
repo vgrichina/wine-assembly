@@ -2923,28 +2923,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
-  ;; 132: WinHelpA(hwnd, lpszHelp, uCommand, dwData) — 4 args stdcall, return TRUE
+  ;; 132: WinHelpA(hwnd, lpszHelp, uCommand, dwData) — unified WAT dispatcher
   (func $handle_WinHelpA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; WinHelpA(hwndCaller, lpszHelp, uCommand, dwData)
-    ;; arg0=hwndCaller, arg1=lpszHelp (guest ptr), arg2=uCommand, arg3=dwData
-    ;; HELP_QUIT=2: close help window
-    (if (i32.eq (local.get $arg2) (i32.const 2))
-      (then
-        (if (global.get $help_hwnd) (then (call $help_destroy)))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    ;; Load HLP file if not already loaded
-    (if (i32.eqz (global.get $help_topic_count))
-      (then
-        (if (local.get $arg1)
-          (then (call $help_load_file (local.get $arg1))))))
-    ;; If yielding for async help file load, return without adjusting stack
-    (if (global.get $yield_reason) (then (return)))
-    ;; Create help window if not open
-    (if (i32.eqz (global.get $help_hwnd))
-      (then (call $help_create_window)))
-    (global.set $eax (i32.const 1))
+    (local $accepted i32)
+    (local.set $accepted (call $help_dispatch_api_a
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (call $help_present_dispatch (local.get $accepted) (local.get $arg2))
+    (global.set $eax (local.get $accepted))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -6363,9 +6348,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; stdcall 3 params + ret
   )
 
-  ;; 396: WinHelpW — return 1, 4 args stdcall
+  ;; 396: WinHelpW — normalize UTF-16 and share the WinHelpA engine
   (func $handle_WinHelpW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $accepted i32)
+    (local.set $accepted (call $help_dispatch_api_w
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (call $help_present_dispatch (local.get $accepted) (local.get $arg2))
+    (global.set $eax (local.get $accepted))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

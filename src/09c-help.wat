@@ -759,6 +759,215 @@
 
   ;; ---- Help system ----
 
+  (func $help_command_data_is_pointer (param $command i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $command) (global.get $HELP_COMMAND_CONTEXTMENU))
+        (i32.eq (local.get $command) (global.get $HELP_COMMAND_WM_HELP)))
+      (i32.or
+        (i32.or
+          (i32.eq (local.get $command) (global.get $HELP_COMMAND_KEY))
+          (i32.eq (local.get $command) (global.get $HELP_COMMAND_MACRO)))
+        (i32.or
+          (i32.or
+            (i32.eq (local.get $command) (global.get $HELP_COMMAND_PARTIALKEY))
+            (i32.eq (local.get $command) (global.get $HELP_COMMAND_MULTIKEY)))
+          (i32.eq (local.get $command) (global.get $HELP_COMMAND_SETWINPOS))))))
+
+  (func $help_command_data_is_string (param $command i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $command) (global.get $HELP_COMMAND_KEY))
+        (i32.eq (local.get $command) (global.get $HELP_COMMAND_MACRO)))
+      (i32.eq (local.get $command) (global.get $HELP_COMMAND_PARTIALKEY))))
+
+  ;; Return an owned guest ANSI copy of a bounded UTF-16 guest string. The
+  ;; caller frees it after synchronous dispatch. Zero means invalid/capacity or
+  ;; allocation failure; an empty string still owns a one-byte allocation.
+  (func $help_wide_string_to_ansi_heap
+    (param $source_ga i32) (param $limit i32) (result i32)
+    (local $length i32) (local $copy_ga i32) (local $ch i32)
+    (if (i32.eqz (local.get $source_ga)) (then (return (i32.const 0))))
+    (block $terminated (loop $scan
+      (if (i32.ge_u (local.get $length) (local.get $limit))
+        (then (return (i32.const 0))))
+      (local.set $ch (call $gl16 (i32.add (local.get $source_ga)
+        (i32.shl (local.get $length) (i32.const 1)))))
+      (br_if $terminated (i32.eqz (local.get $ch)))
+      (local.set $length (i32.add (local.get $length) (i32.const 1)))
+      (br $scan)))
+    (local.set $copy_ga (call $heap_alloc (i32.add (local.get $length) (i32.const 1))))
+    (if (i32.eqz (local.get $copy_ga)) (then (return (i32.const 0))))
+    (drop (call $wide_to_ansi
+      (local.get $source_ga) (local.get $copy_ga)
+      (i32.add (local.get $length) (i32.const 1))))
+    (local.get $copy_ga))
+
+  (func $help_dispatch_api_a
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (result i32)
+    (local $path_wa i32) (local $data_wa i32)
+    (if (i32.and (i32.ne (local.get $path_ga) (i32.const 0))
+          (i32.ne (local.get $command) (global.get $HELP_COMMAND_QUIT)))
+      (then (local.set $path_wa (call $g2w (local.get $path_ga)))))
+    (local.set $data_wa (local.get $data))
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+          (call $help_command_data_is_pointer (local.get $command)))
+      (then (local.set $data_wa (call $g2w (local.get $data)))))
+    (call $help_dispatch
+      (local.get $caller) (local.get $path_wa) (local.get $command)
+      (local.get $data_wa) (i32.const 0)))
+
+  (func $help_dispatch_api_w
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (result i32)
+    (local $path_copy_ga i32) (local $data_copy_ga i32)
+    (local $path_wa i32) (local $data_wa i32) (local $result i32)
+    (if (i32.and (i32.ne (local.get $path_ga) (i32.const 0))
+          (i32.ne (local.get $command) (global.get $HELP_COMMAND_QUIT)))
+      (then
+        (local.set $path_copy_ga (call $help_wide_string_to_ansi_heap
+          (local.get $path_ga) (i32.const 1024)))
+        (if (i32.eqz (local.get $path_copy_ga))
+          (then
+            (global.set $help_session_last_command (local.get $command))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $path_wa (call $g2w (local.get $path_copy_ga)))
+        ;; Finish the synchronous path load before allocating command-string
+        ;; storage. Document replacement releases prior heap blocks and must
+        ;; not overlap either normalization buffer's lifetime.
+        (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+          (then
+            (call $heap_free (local.get $path_copy_ga))
+            (global.set $help_session_last_command (local.get $command))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+            (return (i32.const 0))))
+        (call $heap_free (local.get $path_copy_ga))
+        (local.set $path_copy_ga (i32.const 0))
+        (local.set $path_wa (i32.const 0))))
+    (local.set $data_wa (local.get $data))
+    (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+          (call $help_command_data_is_string (local.get $command)))
+      (then
+        (local.set $data_copy_ga (call $help_wide_string_to_ansi_heap
+          (local.get $data) (i32.const 512)))
+        (if (i32.eqz (local.get $data_copy_ga))
+          (then
+            (if (local.get $path_copy_ga)
+              (then (call $heap_free (local.get $path_copy_ga))))
+            (global.set $help_session_last_command (local.get $command))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $data_wa (call $g2w (local.get $data_copy_ga))))
+      (else
+        (if (i32.and (i32.ne (local.get $data) (i32.const 0))
+              (call $help_command_data_is_pointer (local.get $command)))
+          (then (local.set $data_wa (call $g2w (local.get $data)))))))
+    (local.set $result (call $help_dispatch
+      (local.get $caller) (local.get $path_wa) (local.get $command)
+      (local.get $data_wa) (i32.const 1)))
+    (if (local.get $data_copy_ga) (then (call $heap_free (local.get $data_copy_ga))))
+    (if (local.get $path_copy_ga) (then (call $heap_free (local.get $path_copy_ga))))
+    (local.get $result))
+
+  ;; Bridge the canonical WAT document/session into the existing basic help
+  ;; window. This is intentionally a plain-text first cut: LinkData2 strings
+  ;; are decoded in WAT and NUL separators become line breaks. Typed layout
+  ;; consumes the formatted token stream in the next renderer slice.
+  (func $help_prepare_wat_view (result i32)
+    (local $length i32) (local $i i32) (local $copy_length i32)
+    (local $title_ga i32) (local $topic_ga i32) (local $stack_ga i32)
+    (if (i32.lt_s (global.get $help_session_topic_index) (i32.const 0))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.eqz (global.get $help_title_wa))
+          (i32.or (i32.eqz (global.get $help_topic_wa))
+                  (i32.eqz (global.get $help_back_stack))))
+      (then
+        (local.set $title_ga (call $heap_alloc (i32.const 256)))
+        (local.set $topic_ga (call $heap_alloc (i32.const 0x10000)))
+        (local.set $stack_ga (call $heap_alloc (i32.const 64)))
+        (if (i32.or (i32.eqz (local.get $title_ga))
+              (i32.or (i32.eqz (local.get $topic_ga)) (i32.eqz (local.get $stack_ga))))
+          (then
+            (if (local.get $title_ga) (then (call $heap_free (local.get $title_ga))))
+            (if (local.get $topic_ga) (then (call $heap_free (local.get $topic_ga))))
+            (if (local.get $stack_ga) (then (call $heap_free (local.get $stack_ga))))
+            (return (i32.const 0))))
+        (global.set $help_title_wa (call $g2w (local.get $title_ga)))
+        (global.set $help_topic_wa (call $g2w (local.get $topic_ga)))
+        (global.set $help_back_stack (call $g2w (local.get $stack_ga)))))
+    (local.set $copy_length (global.get $help_doc_title_len))
+    (if (i32.gt_u (local.get $copy_length) (i32.const 255))
+      (then (local.set $copy_length (i32.const 255))))
+    (if (local.get $copy_length)
+      (then
+        (memory.copy (global.get $help_title_wa)
+          (i32.add (global.get $help_doc_file_wa) (global.get $help_doc_title_off))
+          (local.get $copy_length))))
+    (i32.store8 (i32.add (global.get $help_title_wa) (local.get $copy_length)) (i32.const 0))
+    (global.set $help_title_len (local.get $copy_length))
+    (local.set $length (call $help_decode_topic_raw
+      (global.get $help_session_topic_index)
+      (global.get $help_topic_wa) (i32.const 0x10000)))
+    (if (i32.lt_s (local.get $length) (i32.const 0))
+      (then (return (i32.const 0))))
+    (block $done (loop $separators
+      (br_if $done (i32.ge_u (local.get $i) (local.get $length)))
+      (if (i32.eqz (i32.load8_u
+            (i32.add (global.get $help_topic_wa) (local.get $i))))
+        (then (i32.store8
+          (i32.add (global.get $help_topic_wa) (local.get $i)) (i32.const 0x0a))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $separators)))
+    (global.set $help_topic_len (local.get $length))
+    (global.set $help_topic_count (global.get $help_doc_topic_count))
+    (global.set $help_cur_topic
+      (i32.add (global.get $help_session_topic_index) (i32.const 1)))
+    (global.set $help_scroll_y (i32.const 0))
+    (i32.const 1))
+
+  (func $help_present_dispatch (param $accepted i32) (param $command i32)
+    (local $old_index i32) (local $stack_ptr i32)
+    (if (i32.eqz (local.get $accepted))
+      (then
+        (if (i32.and
+              (i32.eq (global.get $help_session_status) (global.get $HELP_DISPATCH_LOAD_FAILED))
+              (i32.ne (global.get $help_hwnd) (i32.const 0)))
+          (then (call $help_destroy)))
+        (return)))
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_QUIT))
+      (then
+        (if (global.get $help_hwnd) (then (call $help_destroy)))
+        (return)))
+    (if (i32.or
+          (i32.eq (global.get $help_session_mode) (i32.const 1))
+          (i32.eq (global.get $help_session_mode) (i32.const 2)))
+      (then
+        (local.set $old_index (i32.const -1))
+        (if (i32.and (i32.ne (global.get $help_topic_wa) (i32.const 0))
+              (i32.gt_u (global.get $help_cur_topic) (i32.const 0)))
+          (then (local.set $old_index
+            (i32.sub (global.get $help_cur_topic) (i32.const 1)))))
+        (if (i32.and
+              (i32.and
+                (i32.ge_s (local.get $old_index) (i32.const 0))
+                (i32.ne (local.get $old_index) (global.get $help_session_topic_index)))
+              (i32.and (i32.ne (global.get $help_back_stack) (i32.const 0))
+                (i32.lt_u (global.get $help_back_count) (i32.const 16))))
+          (then
+            (local.set $stack_ptr (i32.add (global.get $help_back_stack)
+              (i32.shl (global.get $help_back_count) (i32.const 2))))
+            (i32.store (local.get $stack_ptr) (local.get $old_index))
+            (global.set $help_back_count
+              (i32.add (global.get $help_back_count) (i32.const 1)))))
+        (if (call $help_prepare_wat_view)
+          (then
+            (if (i32.eqz (global.get $help_hwnd))
+              (then (call $help_create_window))
+              (else (call $invalidate_hwnd (global.get $help_hwnd)))))))))
+
   ;; Scroll help window by delta pixels (positive = down, negative = up), clamp to 0
   (func $help_scroll_by (param $hwnd i32) (param $delta i32)
     (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (local.get $delta)))
@@ -869,22 +1078,15 @@
           (then
             ;; Check x position: [Contents] at 8..90, [Back] at 100..150
             (if (i32.lt_u (i32.and (local.get $lParam) (i32.const 0xFFFF)) (i32.const 90))
-              (then (call $help_navigate (i32.const 0)))
+              (then
+                (local.set $click_line (call $help_dispatch_loaded
+                  (global.get $help_session_owner)
+                  (global.get $HELP_COMMAND_CONTENTS) (i32.const 0)))
+                (call $help_present_dispatch
+                  (local.get $click_line) (global.get $HELP_COMMAND_CONTENTS)))
               (else (call $help_go_back)))
             (return (i32.const 0))))
-        ;; On Contents page: click a topic line
-        (if (i32.eqz (global.get $help_cur_topic))
-          (then
-            ;; Calculate which line was clicked
-            (local.set $click_line (i32.div_u
-              (i32.add (local.get $click_y) (i32.sub (global.get $help_scroll_y) (i32.const 8)))
-              (i32.const 16)))
-            ;; Line 0 is header, lines 1+ are topics
-            (if (i32.and (i32.gt_u (local.get $click_line) (i32.const 0))
-                         (i32.le_u (local.get $click_line) (global.get $help_topic_count)))
-              (then
-                (call $help_navigate (local.get $click_line))
-                (return (i32.const 0))))))
+        ;; Body clicks are inert until formatted hotspot rectangles are bound.
         (return (i32.const 0))))
 
     ;; WM_KEYDOWN (0x0100)
@@ -908,62 +1110,38 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then
         (call $help_destroy)
+        (call $help_document_reset)
         (return (i32.const 0))))
     ;; Default: return 0
     (i32.const 0)
   )
 
-  ;; Load HLP file via host imports (JS parses, WAT receives text)
-  (func $help_load_file (param $path_ga i32)
-    (local $count i32) (local $len i32)
-    ;; Allocate buffers: title (256), topic text (16KB), back stack (64 = 16 entries * 4)
-    (if (i32.eqz (global.get $help_title_wa))
-      (then
-        (global.set $help_title_wa (call $g2w (call $heap_alloc (i32.const 256))))
-        (global.set $help_topic_wa (call $g2w (call $heap_alloc (i32.const 0x4000))))
-        (global.set $help_back_stack (call $g2w (call $heap_alloc (i32.const 64))))))
-    ;; Call host to open and parse HLP
-    (local.set $count (call $host_help_open (call $g2w (local.get $path_ga))))
-    ;; -1 = file not ready, yield for async fetch
-    (if (i32.eq (local.get $count) (i32.const -1))
-      (then
-        (global.set $yield_reason (i32.const 4))
-        (return)))
-    (if (i32.le_s (local.get $count) (i32.const 0))
-      (then (return)))
-    (global.set $help_topic_count (local.get $count))
-    ;; Get title
-    (local.set $len (call $host_help_get_title (global.get $help_title_wa) (i32.const 255)))
-    (global.set $help_title_len (local.get $len))
-    ;; Load Contents page (index 0)
-    (local.set $len (call $host_help_get_topic (i32.const 0) (global.get $help_topic_wa) (i32.const 0x3FFF)))
-    (global.set $help_topic_len (local.get $len))
-    (global.set $help_cur_topic (i32.const 0))
-    (global.set $help_scroll_y (i32.const 0))
-    (global.set $help_back_count (i32.const 0))
-  )
-
-  ;; Navigate to topic by index (0=Contents, 1..N=topics)
+  ;; Navigate through canonical WAT topics (0 retains the legacy Contents
+  ;; button convention; positive values are one-based canonical indexes).
   (func $help_navigate (param $index i32)
-    (local $len i32) (local $stack_ptr i32)
-    ;; Push current topic to back stack (max 16)
-    (if (i32.lt_u (global.get $help_back_count) (i32.const 16))
+    (local $accepted i32) (local $topic_index i32) (local $record i32)
+    (if (i32.eqz (local.get $index))
       (then
-        (local.set $stack_ptr (i32.add (global.get $help_back_stack)
-          (i32.shl (global.get $help_back_count) (i32.const 2))))
-        (i32.store (local.get $stack_ptr) (global.get $help_cur_topic))
-        (global.set $help_back_count (i32.add (global.get $help_back_count) (i32.const 1)))))
-    ;; Load topic
-    (local.set $len (call $host_help_get_topic (local.get $index) (global.get $help_topic_wa) (i32.const 0x3FFF)))
-    (global.set $help_topic_len (local.get $len))
-    (global.set $help_cur_topic (local.get $index))
-    (global.set $help_scroll_y (i32.const 0))
-    (call $invalidate_hwnd (global.get $help_hwnd))
+        (local.set $accepted (call $help_dispatch_loaded
+          (global.get $help_session_owner)
+          (global.get $HELP_COMMAND_CONTENTS) (i32.const 0)))
+        (call $help_present_dispatch
+          (local.get $accepted) (global.get $HELP_COMMAND_CONTENTS))
+        (return)))
+    (local.set $topic_index (i32.sub (local.get $index) (i32.const 1)))
+    (if (i32.ge_u (local.get $topic_index) (global.get $help_doc_topic_count))
+      (then (return)))
+    (local.set $record (i32.add (global.get $help_doc_topics_wa)
+      (i32.mul (local.get $topic_index) (global.get $HELP_TOPIC_SIZE))))
+    (local.set $accepted (call $help_session_commit_topic
+      (global.get $help_session_owner) (i32.const 0)
+      (i32.load (local.get $record)) (i32.const 1)))
+    (call $help_present_dispatch (local.get $accepted) (i32.const 0))
   )
 
   ;; Go back in navigation history
   (func $help_go_back
-    (local $len i32) (local $prev i32) (local $stack_ptr i32)
+    (local $prev i32) (local $stack_ptr i32) (local $record i32)
     (if (i32.eqz (global.get $help_back_count))
       (then (return)))
     ;; Pop from back stack
@@ -971,12 +1149,16 @@
     (local.set $stack_ptr (i32.add (global.get $help_back_stack)
       (i32.shl (global.get $help_back_count) (i32.const 2))))
     (local.set $prev (i32.load (local.get $stack_ptr)))
-    ;; Load that topic
-    (local.set $len (call $host_help_get_topic (local.get $prev) (global.get $help_topic_wa) (i32.const 0x3FFF)))
-    (global.set $help_topic_len (local.get $len))
-    (global.set $help_cur_topic (local.get $prev))
-    (global.set $help_scroll_y (i32.const 0))
-    (call $invalidate_hwnd (global.get $help_hwnd))
+    (if (i32.ge_u (local.get $prev) (global.get $help_doc_topic_count))
+      (then (return)))
+    (local.set $record (i32.add (global.get $help_doc_topics_wa)
+      (i32.mul (local.get $prev) (global.get $HELP_TOPIC_SIZE))))
+    (if (call $help_session_commit_topic
+          (global.get $help_session_owner) (i32.const 0)
+          (i32.load (local.get $record)) (i32.const 1))
+      (then
+        (if (call $help_prepare_wat_view)
+          (then (call $invalidate_hwnd (global.get $help_hwnd))))))
   )
 
   ;; Create help window via host
@@ -1010,14 +1192,22 @@
   (func $help_destroy
     (if (global.get $help_hwnd)
       (then
+        (call $host_destroy_window (global.get $help_hwnd))
         (call $wnd_table_remove (global.get $help_hwnd))
-        (global.set $help_hwnd (i32.const 0))
-        (global.set $help_topic_wa (i32.const 0))
-        (global.set $help_topic_len (i32.const 0))
-        (global.set $help_title_wa (i32.const 0))
-        (global.set $help_title_len (i32.const 0))
-        (global.set $help_topic_count (i32.const 0))
-        (global.set $help_cur_topic (i32.const 0))
-        (global.set $help_scroll_y (i32.const 0))
-        (global.set $help_back_count (i32.const 0))))
+        (global.set $help_hwnd (i32.const 0))))
+    (if (global.get $help_topic_wa)
+      (then (call $heap_free (call $w2g (global.get $help_topic_wa)))))
+    (if (global.get $help_title_wa)
+      (then (call $heap_free (call $w2g (global.get $help_title_wa)))))
+    (if (global.get $help_back_stack)
+      (then (call $heap_free (call $w2g (global.get $help_back_stack)))))
+    (global.set $help_topic_wa (i32.const 0))
+    (global.set $help_topic_len (i32.const 0))
+    (global.set $help_title_wa (i32.const 0))
+    (global.set $help_title_len (i32.const 0))
+    (global.set $help_topic_count (i32.const 0))
+    (global.set $help_cur_topic (i32.const 0))
+    (global.set $help_scroll_y (i32.const 0))
+    (global.set $help_back_stack (i32.const 0))
+    (global.set $help_back_count (i32.const 0))
   )

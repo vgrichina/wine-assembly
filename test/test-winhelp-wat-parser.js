@@ -645,6 +645,24 @@ async function main() {
     bytes.set(encoded, ptr);
   }
 
+  function allocGuestAnsi(value) {
+    const encoded = Buffer.from(value, 'latin1');
+    const guest = e.guest_alloc(encoded.length + 1);
+    for (let i = 0; i < encoded.length; i += 2) {
+      e.guest_write16(guest + i,
+        encoded[i] | ((i + 1 < encoded.length ? encoded[i + 1] : 0) << 8));
+    }
+    e.guest_write16(guest + encoded.length, 0);
+    return guest;
+  }
+
+  function allocGuestWide(value) {
+    const guest = e.guest_alloc((value.length + 1) * 2);
+    for (let i = 0; i < value.length; i++) e.guest_write16(guest + i * 2, value.charCodeAt(i));
+    e.guest_write16(guest + value.length * 2, 0);
+    return guest;
+  }
+
   function readDirectory() {
     const fileWA = e.get_help_file_ptr();
     const out = [];
@@ -1505,6 +1523,83 @@ async function main() {
     e.test_help_dispatch(0x3333, nameWA, 0x0003, 0, 0) === 0 &&
     e.get_help_last_error() === 7 && e.get_help_dispatch_status() === 7 &&
     e.get_help_file_ptr() === 0 && e.get_help_session_owner() === 0);
+
+  const mountedPathA = allocGuestAnsi('c:\\fixture.hlp');
+  check('WinHelpA ABI normalizes its guest path into the unified dispatcher',
+    e.test_call_WinHelpA(0x4444, mountedPathA, 0x0003, 0) === 1 &&
+    e.get_help_session_owner() === 0x4444 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_dispatch_status() === 1,
+    `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
+  check('WinHelpA null path reuses only the matching active session',
+    e.test_call_WinHelpA(0x4444, 0, 0x0003, 0) === 1 &&
+    e.test_call_WinHelpA(0x5555, 0, 0x0003, 0) === 0 &&
+    e.get_help_session_owner() === 0x4444 && e.get_help_dispatch_status() === 3);
+  check('WinHelpA propagates unsupported command failure instead of TRUE',
+    e.test_call_WinHelpA(0x4444, 0, 0x7777, 0) === 0 && e.get_help_dispatch_status() === 6);
+  check('WinHelpA matching HELP_QUIT releases the active ABI session',
+    e.test_call_WinHelpA(0x4444, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+
+  const mountedPathW = allocGuestWide('c:\\fixture.hlp');
+  check('WinHelpW converts UTF-16 paths and shares the WinHelpA engine',
+    e.test_call_WinHelpW(0x6666, mountedPathW, 0x0003, 0) === 1 &&
+    e.get_help_session_owner() === 0x6666 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_dispatch_status() === 1,
+    `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
+  ctx.vfs.files.set('c:\\keyword.hlp', { data: new Uint8Array(keywordHelp.file), attrs: 0x20 });
+  const keywordPathW = allocGuestWide('c:\\keyword.hlp');
+  const betaW = allocGuestWide('BETA');
+  check('WinHelpW converts command-specific UTF-16 keyword data',
+    e.test_call_WinHelpW(0x7777, keywordPathW, 0x0101, betaW) === 1 &&
+    e.get_help_session_owner() === 0x7777 && e.get_help_session_topic_ref() === 10 &&
+    e.get_help_session_topic_index() === 1,
+    `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
+  const oversizedWidePath = allocGuestWide('a'.repeat(1024));
+  check('WinHelpW bounds UTF-16 pathname normalization before dispatch',
+    e.test_call_WinHelpW(0x7777, oversizedWidePath, 0x0003, 0) === 0 &&
+    e.get_help_session_owner() === 0x7777 && e.get_help_session_topic_ref() === 10 &&
+    e.get_help_dispatch_status() === 5,
+    `status=${e.get_help_dispatch_status()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
+  check('WinHelpW matching HELP_QUIT releases converted session state',
+    e.test_call_WinHelpW(0x7777, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+
+  check('WinHelpA handler opens a window from WAT-owned title/topic state',
+    e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
+    e.get_help_window() !== 0 && e.get_help_view_topic_ptr() !== 0 &&
+    e.get_help_view_topic_len() === EXPECTED_SEMANTICS['freecell.hlp'].rawTopicLengths[0] &&
+    readLatin1(e.get_help_view_title_ptr(), e.get_help_view_title_len()) === 'Free Cell');
+  check('WinHelpW handler reuses the same visible dispatcher/window path',
+    e.test_invoke_WinHelpW(0x8888, 0, 0x0003, 0) === 1 &&
+    e.get_help_window() !== 0 && e.get_help_session_owner() === 0x8888 &&
+    e.get_help_view_topic_len() === EXPECTED_SEMANTICS['freecell.hlp'].rawTopicLengths[0]);
+  check('actual WinHelp handler returns FALSE for unsupported commands',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x7777, 0) === 0 &&
+    e.get_help_window() !== 0 && e.get_help_dispatch_status() === 6);
+  const keywordPathA = allocGuestAnsi('c:\\keyword.hlp');
+  const betaA = allocGuestAnsi('Beta');
+  const alphaA = allocGuestAnsi('Alpha');
+  check('visible keyword navigation starts fresh after document replacement',
+    e.test_invoke_WinHelpA(0x8888, keywordPathA, 0x0101, betaA) === 1 &&
+    e.get_help_session_topic_ref() === 10 && e.get_help_view_topic_index() === 1 &&
+    e.get_help_view_back_count() === 0);
+  check('visible WAT navigation records canonical Back history',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0101, alphaA) === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_view_back_count() === 1);
+  e.test_help_view_go_back();
+  check('Back restores a WAT-owned canonical topic without a host callback',
+    e.get_help_session_topic_ref() === 10 && e.get_help_view_topic_index() === 1 &&
+    e.get_help_view_back_count() === 0);
+  check('a different document clears stale Back history before presentation',
+    e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_view_back_count() === 0);
+  const missingPathA = allocGuestAnsi('c:\\not-mounted.hlp');
+  check('failed replacement closes the old window instead of showing stale text',
+    e.test_invoke_WinHelpA(0x8888, missingPathA, 0x0003, 0) === 0 &&
+    e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&
+    e.get_help_file_ptr() === 0 && e.get_help_dispatch_status() === 7);
+  check('actual HELP_QUIT remains idempotent after a failed replacement',
+    e.test_invoke_WinHelpW(0x8888, 0, 0x0002, 0) === 1 &&
+    e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&
+    e.get_help_view_title_ptr() === 0 && e.get_help_file_ptr() === 0);
 
   const badMagic = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
   badMagic[0] = 0;

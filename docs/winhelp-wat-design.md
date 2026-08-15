@@ -21,7 +21,9 @@ documents transactionally: Contents/Index, Context, ContextPopup, Finder,
 exact Key, PartialKey prefix selection, SetContents, and owner-scoped Quit have
 explicit success/failure semantics. Unknown and not-yet-parsed structured
 commands return false without changing the visible topic. ANSI/Unicode ABI
-normalization and the window/layout binding remain in progress.
+normalization now feeds the same engine, and the existing help window paints a
+plain-text WAT-decoded topic bridge. Typed layout and asynchronous browser VFS
+mounting remain in progress.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
@@ -913,8 +915,14 @@ are fully resolved before publication, so failed and foreign-owner requests do
 not mutate visible state. Matching-owner Quit releases both the session and
 the WAT-owned document. Focused tests cover bounded command strings, missing
 paths, unsupported-command failure, and every implemented transition. The
-`WinHelpA`/`WinHelpW` handler hookup is waiting on the shared handler-file
-boundary; rendering still uses the legacy topic window.
+`WinHelpA` and `WinHelpW` handlers now share this engine; Unicode paths and
+keyword/macro strings are copied through bounded temporary storage, while ANSI
+pointer data is normalized from guest to WAT addresses. Accepted topic requests
+populate the existing help window directly from the WAT-owned title and decoded
+`LinkData2` strings, with no semantic JS callback. The bridge deliberately
+flattens NUL-delimited strings to lines until the typed layout renderer lands.
+Browser assets not already mounted in the VFS still need the raw-byte async
+continuation described above.
 
 - Implement ANSI/Unicode normalization and transactional requests.
 - Support P0 commands and correct return/lifecycle semantics.

@@ -285,6 +285,11 @@
   (func $help_document_reset
     (call $help_document_release_storage)
     (call $help_session_reset)
+    ;; A new document cannot inherit UI history/index state from the prior
+    ;; file. View buffers may be reused by the window bridge after a new load.
+    (global.set $help_cur_topic (i32.const 0))
+    (global.set $help_scroll_y (i32.const 0))
+    (global.set $help_back_count (i32.const 0))
     (global.set $help_last_error (i32.const 0))
     (global.set $help_last_error_offset (i32.const 0)))
 
