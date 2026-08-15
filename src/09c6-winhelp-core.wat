@@ -109,6 +109,10 @@
   (global $help_doc_contexts_ga (mut i32) (i32.const 0))
   (global $help_doc_contexts_wa (mut i32) (i32.const 0))
   (global $help_doc_context_count (mut i32) (i32.const 0))
+  ;; |CONTEXT entries dropped at load because they named no topic header.
+  ;; Visible on purpose: a large count means the topic-header scan is wrong,
+  ;; not that the file carries stale entries.
+  (global $help_doc_context_dropped (mut i32) (i32.const 0))
   (global $help_doc_maps_ga (mut i32) (i32.const 0))
   (global $help_doc_maps_wa (mut i32) (i32.const 0))
   (global $help_doc_map_count (mut i32) (i32.const 0))
@@ -334,6 +338,7 @@
     (global.set $help_doc_contexts_ga (i32.const 0))
     (global.set $help_doc_contexts_wa (i32.const 0))
     (global.set $help_doc_context_count (i32.const 0))
+    (global.set $help_doc_context_dropped (i32.const 0))
     (global.set $help_doc_maps_ga (i32.const 0))
     (global.set $help_doc_maps_wa (i32.const 0))
     (global.set $help_doc_map_count (i32.const 0))
@@ -1323,6 +1328,8 @@
       (then (return (i32.const 0))))
     (i32.add (global.get $help_doc_topics_wa)
       (i32.mul (local.get $index) (global.get $HELP_TOPIC_SIZE))))
+  (func (export "get_help_context_dropped") (result i32)
+    (global.get $help_doc_context_dropped))
   (func (export "get_help_context_count") (result i32) (global.get $help_doc_context_count))
   (func (export "get_help_context_record") (param $index i32) (result i32)
     (if (i32.ge_u (local.get $index) (global.get $help_doc_context_count))

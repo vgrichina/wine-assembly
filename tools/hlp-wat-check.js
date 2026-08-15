@@ -85,13 +85,18 @@ async function main() {
     console.log(`\n${file}  (${data.length} bytes)`);
     if (loaded !== 1) {
       const code = e.get_help_last_error();
+      const btree = e.get_help_btree_fail_code ? e.get_help_btree_fail_code() : 0;
       console.log(`  LOAD FAILED  err=${code} (${ERRORS[code] || '?'}) ` +
-        `at 0x${(e.get_help_last_error_offset() >>> 0).toString(16)}`);
+        `at 0x${(e.get_help_last_error_offset() >>> 0).toString(16)}` +
+        ((code === 10 || code === 11) && btree
+          ? `  btree check ${btree} (see $help_parse_semantic_btree)` : ''));
       continue;
     }
     const topics = e.get_help_topic_count();
     console.log(`  loaded: ${topics} topics, ${e.get_help_context_count()} contexts, ` +
-      `${e.get_help_keyword_count()} keywords, ${e.get_help_font_count()} fonts`);
+      `${e.get_help_keyword_count()} keywords, ${e.get_help_font_count()} fonts` +
+      (e.get_help_context_dropped && e.get_help_context_dropped()
+        ? `, ${e.get_help_context_dropped()} context entries dropped` : ''));
     const phrases = e.get_help_phrase_count();
     const sample = [];
     for (let index = 0; index < Math.min(phrases, 6); index++) {

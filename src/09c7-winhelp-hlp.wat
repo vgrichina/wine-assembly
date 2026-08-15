@@ -587,6 +587,15 @@
 
   ;; Parse either |TTLBTREE (kind 1, Lz leaves) or |CONTEXT (kind 2,
   ;; L4 leaves). Index pages use fixed {long key, short child} entries.
+  ;; Numbered refusal reasons for the semantic B+tree walk, so a real file
+  ;; that will not load names the invariant it broke instead of only its
+  ;; error code. Codes are positional within $help_parse_semantic_btree, in
+  ;; source order; read them with get_help_btree_fail_code and look the line
+  ;; up in this function.
+  (global $help_btree_fail_code (mut i32) (i32.const 0))
+  (func (export "get_help_btree_fail_code") (result i32)
+    (global.get $help_btree_fail_code))
+
   (func $help_parse_semantic_btree
     (param $internal_index i32) (param $kind i32)
     (param $topics_wa i32) (param $topic_count i32) (result i32)
@@ -621,16 +630,16 @@
     (block $done
       (if (i32.lt_u (local.get $data_len) (i32.const 38))
         (then
-          (call $help_set_error (local.get $error_code) (local.get $data_off))
+          (global.set $help_btree_fail_code (i32.const 1)) (call $help_set_error (local.get $error_code) (local.get $data_off))
           (br $done)))
       (local.set $bt (i32.add (global.get $help_doc_file_wa) (local.get $data_off)))
       (if (i32.ne (i32.load16_u (local.get $bt)) (i32.const 0x293B))
         (then
-          (call $help_set_error (local.get $error_code) (local.get $data_off))
+          (global.set $help_btree_fail_code (i32.const 2)) (call $help_set_error (local.get $error_code) (local.get $data_off))
           (br $done)))
       (if (i32.ne (i32.and (i32.load16_u offset=2 (local.get $bt)) (i32.const 2)) (i32.const 2))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 2)))
+          (global.set $help_btree_fail_code (i32.const 3)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 2)))
           (br $done)))
       (if (i32.or
             (i32.ne (i32.load8_u offset=6 (local.get $bt)) (i32.const 0x4C))
@@ -638,13 +647,13 @@
               (if (result i32) (i32.eq (local.get $kind) (i32.const 1))
                 (then (i32.const 0x7A)) (else (i32.const 0x34)))))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 6)))
+          (global.set $help_btree_fail_code (i32.const 4)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 6)))
           (br $done)))
       (if (i32.or
             (i32.ne (i32.load16_u offset=22 (local.get $bt)) (i32.const 0))
             (i32.ne (i32.load16_u offset=28 (local.get $bt)) (i32.const 0xFFFF)))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 22)))
+          (global.set $help_btree_fail_code (i32.const 5)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 22)))
           (br $done)))
       (local.set $page_size (i32.load16_u offset=4 (local.get $bt)))
       (local.set $root_page (i32.load16_u offset=26 (local.get $bt)))
@@ -657,7 +666,7 @@
             (i32.ne (i32.and (local.get $page_size)
                       (i32.sub (local.get $page_size) (i32.const 1))) (i32.const 0)))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 4)))
+          (global.set $help_btree_fail_code (i32.const 6)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 4)))
           (br $done)))
       (if (i32.or
             (i32.or (i32.eqz (local.get $total_pages))
@@ -679,7 +688,7 @@
       (if (i32.and (i32.gt_u (local.get $levels) (i32.const 1))
                    (i32.ge_u (local.get $root_page) (local.get $total_pages)))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 26)))
+          (global.set $help_btree_fail_code (i32.const 7)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 26)))
           (br $done)))
       (if (i32.gt_u (local.get $total_pages) (i32.div_u (i32.const -1) (local.get $page_size)))
         (then
@@ -689,7 +698,7 @@
       (local.set $page_bytes (i32.mul (local.get $total_pages) (local.get $page_size)))
       (if (i32.gt_u (local.get $page_bytes) (i32.sub (local.get $data_len) (i32.const 38)))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 30)))
+          (global.set $help_btree_fail_code (i32.const 8)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 30)))
           (br $done)))
       (local.set $pages_off (i32.add (local.get $data_off) (i32.const 38)))
       (if (local.get $total_entries)
@@ -723,7 +732,7 @@
               (i32.ge_u (local.get $page_num) (local.get $total_pages))
               (i32.eqz (call $help_mark_btree_page (local.get $visited_wa) (local.get $page_num))))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 9)) (call $help_set_error (local.get $error_code)
               (i32.add (local.get $pages_off) (i32.mul (local.get $page_num) (local.get $page_size))))
             (br $done)))
         (local.set $page_ptr (i32.add (global.get $help_doc_file_wa)
@@ -735,7 +744,7 @@
               (i32.ne (i32.add (i32.const 6) (i32.mul (local.get $entries) (i32.const 6)))
                       (i32.sub (local.get $page_size) (local.get $unused))))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 10)) (call $help_set_error (local.get $error_code)
               (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)))
             (br $done)))
         (local.set $page_num (i32.load16_u offset=4 (local.get $page_ptr)))
@@ -749,7 +758,7 @@
               (i32.ge_u (local.get $page_num) (local.get $total_pages))
               (i32.eqz (call $help_mark_btree_page (local.get $visited_wa) (local.get $page_num))))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 11)) (call $help_set_error (local.get $error_code)
               (i32.add (local.get $pages_off) (i32.mul (local.get $page_num) (local.get $page_size))))
             (br $done)))
         (local.set $page_ptr (i32.add (global.get $help_doc_file_wa)
@@ -760,19 +769,19 @@
               (i32.gt_u (local.get $unused) (i32.sub (local.get $page_size) (i32.const 8)))
               (i32.gt_u (local.get $entries) (i32.sub (local.get $total_entries) (local.get $count))))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 12)) (call $help_set_error (local.get $error_code)
               (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)))
             (br $done)))
         (if (i32.ne (i32.load16_u offset=4 (local.get $page_ptr)) (local.get $previous_page))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 13)) (call $help_set_error (local.get $error_code)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (i32.const 4)))
             (br $done)))
         (local.set $next_page (i32.load16_u offset=6 (local.get $page_ptr)))
         (if (i32.and (i32.ne (local.get $next_page) (i32.const 0xFFFF))
                      (i32.ge_u (local.get $next_page) (local.get $total_pages)))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 14)) (call $help_set_error (local.get $error_code)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (i32.const 6)))
             (br $done)))
         (local.set $used_end (i32.sub (local.get $page_size) (local.get $unused)))
@@ -788,7 +797,7 @@
             (then
               (if (i32.gt_u (i32.const 5) (i32.sub (local.get $used_end) (local.get $entry_rel)))
                 (then
-                  (call $help_set_error (local.get $error_code)
+                  (global.set $help_btree_fail_code (i32.const 15)) (call $help_set_error (local.get $error_code)
                     (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (local.get $entry_rel)))
                   (br $done)))
               (local.set $value (i32.load (i32.add (local.get $page_ptr) (local.get $entry_rel))))
@@ -798,14 +807,14 @@
                 (i32.sub (local.get $used_end) (i32.add (local.get $entry_rel) (i32.const 4)))))
               (if (i32.lt_s (local.get $title_len) (i32.const 0))
                 (then
-                  (call $help_set_error (local.get $error_code)
+                  (global.set $help_btree_fail_code (i32.const 16)) (call $help_set_error (local.get $error_code)
                     (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                       (i32.add (local.get $entry_rel) (i32.const 4))))
                   (br $done)))
               (if (i32.and (local.get $has_prev_value)
                            (i32.ge_u (local.get $prev_value) (local.get $value)))
                 (then
-                  (call $help_set_error (local.get $error_code)
+                  (global.set $help_btree_fail_code (i32.const 17)) (call $help_set_error (local.get $error_code)
                     (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (local.get $entry_rel)))
                   (br $done)))
               (local.set $out_record (i32.add (local.get $records_wa)
@@ -822,7 +831,7 @@
             (else
               (if (i32.gt_u (i32.const 8) (i32.sub (local.get $used_end) (local.get $entry_rel)))
                 (then
-                  (call $help_set_error (local.get $error_code)
+                  (global.set $help_btree_fail_code (i32.const 18)) (call $help_set_error (local.get $error_code)
                     (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (local.get $entry_rel)))
                   (br $done)))
               (local.set $value (i32.load (i32.add (local.get $page_ptr) (local.get $entry_rel))))
@@ -831,17 +840,35 @@
               (if (i32.and (local.get $has_prev_value)
                            (i32.ge_s (local.get $prev_value) (local.get $value)))
                 (then
-                  (call $help_set_error (local.get $error_code)
+                  (global.set $help_btree_fail_code (i32.const 19)) (call $help_set_error (local.get $error_code)
                     (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (local.get $entry_rel)))
                   (br $done)))
               (local.set $topic_index (call $help_find_topic_index_in
                 (local.get $topics_wa) (local.get $topic_count) (local.get $topic_ref)))
+              ;; A |CONTEXT entry naming no topic header is dropped, not
+              ;; fatal. Real WinHelp fails only that one jump; refusing the
+              ;; file made a single stale entry cost the whole document -
+              ;; CHIPEDIT.HLP and qbob.hlp are 132KB and 85KB of perfectly
+              ;; good topics behind one such entry. |TTLBTREE (kind 1) stays
+              ;; strict: a title with no topic means the topic scan is wrong.
+              ;; The count is kept so a large one stays visible instead of
+              ;; turning into a silent tolerance.
               (if (i32.lt_s (local.get $topic_index) (i32.const 0))
                 (then
-                  (call $help_set_error (local.get $error_code)
-                    (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
-                      (i32.add (local.get $entry_rel) (i32.const 4))))
-                  (br $done)))
+                  (if (i32.ne (local.get $kind) (i32.const 2))
+                    (then
+                      (global.set $help_btree_fail_code (i32.const 20))
+                      (call $help_set_error (local.get $error_code)
+                        (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
+                          (i32.add (local.get $entry_rel) (i32.const 4))))
+                      (br $done)))
+                  (global.set $help_doc_context_dropped
+                    (i32.add (global.get $help_doc_context_dropped) (i32.const 1)))
+                  (local.set $entry_rel (i32.add (local.get $entry_rel) (i32.const 8)))
+                  (local.set $prev_value (local.get $value))
+                  (local.set $has_prev_value (i32.const 1))
+                  (local.set $entry_index (i32.add (local.get $entry_index) (i32.const 1)))
+                  (br $entry)))
               (local.set $out_record (i32.add (local.get $records_wa)
                 (i32.mul (local.get $count) (global.get $HELP_CONTEXT_SIZE))))
               (i32.store (local.get $out_record) (local.get $value))
@@ -863,15 +890,16 @@
           (br $entry)))
         (if (i32.ne (local.get $entry_rel) (local.get $used_end))
           (then
-            (call $help_set_error (local.get $error_code)
+            (global.set $help_btree_fail_code (i32.const 21)) (call $help_set_error (local.get $error_code)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (local.get $entry_rel)))
             (br $done)))
         (local.set $previous_page (local.get $page_num))
         (local.set $page_num (local.get $next_page))
         (br $leaf)))
-      (if (i32.ne (local.get $count) (local.get $total_entries))
+      (if (i32.ne (i32.add (local.get $count) (global.get $help_doc_context_dropped))
+            (local.get $total_entries))
         (then
-          (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 34)))
+          (global.set $help_btree_fail_code (i32.const 22)) (call $help_set_error (local.get $error_code) (i32.add (local.get $data_off) (i32.const 34)))
           (br $done)))
       (global.set $help_semantic_result_ga (local.get $records_ga))
       (global.set $help_semantic_result_wa (local.get $records_wa))
@@ -892,7 +920,7 @@
     (local $record i32) (local $data_off i32) (local $data_len i32)
     (local $data i32) (local $count i32) (local $expected i32)
     (local $records_ga i32) (local $records_wa i32) (local $i i32)
-    (local $source i32) (local $out i32) (local $topic_ref i32)
+    (local $source i32) (local $out i32) (local $topic_ref i32) (local $kept i32)
     (global.set $help_semantic_result_ga (i32.const 0))
     (global.set $help_semantic_result_wa (i32.const 0))
     (global.set $help_semantic_result_count (i32.const 0))
@@ -928,22 +956,25 @@
       (local.set $source (i32.add (local.get $data)
         (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 8)))))
       (local.set $topic_ref (i32.load offset=4 (local.get $source)))
+      ;; Same tolerance as |CONTEXT above: a map entry pointing at no topic
+      ;; header costs that one API context id, not the document. CHIPEDIT.HLP
+      ;; is 132KB of readable topics behind its first such entry.
       (if (i32.lt_s (call $help_find_topic_index_in
             (local.get $topics_wa) (local.get $topic_count) (local.get $topic_ref)) (i32.const 0))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_CONTEXT_INDEX)
-            (i32.add (local.get $data_off)
-              (i32.add (i32.const 6) (i32.mul (local.get $i) (i32.const 8)))))
-          (if (local.get $records_ga) (then (call $heap_free (local.get $records_ga))))
-          (return (i32.const 0))))
-      (local.set $out (i32.add (local.get $records_wa) (i32.mul (local.get $i) (i32.const 8))))
+          (global.set $help_doc_context_dropped
+            (i32.add (global.get $help_doc_context_dropped) (i32.const 1)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $entries)))
+      (local.set $out (i32.add (local.get $records_wa) (i32.mul (local.get $kept) (i32.const 8))))
       (i32.store (local.get $out) (i32.load (local.get $source)))
       (i32.store offset=4 (local.get $out) (local.get $topic_ref))
+      (local.set $kept (i32.add (local.get $kept) (i32.const 1)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $entries)))
     (global.set $help_semantic_result_ga (local.get $records_ga))
     (global.set $help_semantic_result_wa (local.get $records_wa))
-    (global.set $help_semantic_result_count (local.get $count))
+    (global.set $help_semantic_result_count (local.get $kept))
     (i32.const 1))
 
   (func $help_phrase_get_bit
@@ -1984,6 +2015,13 @@
 
   ;; Validate the complete WinHelp 3.1 TOPICLINK chain and bind each
   ;; canonical TTLBTREE entry to its type-2 topic-header TOPICPOS.
+  ;; Numbered refusal reasons for the topic-link walk, so a file that will not
+  ;; load names the invariant it broke rather than only its error code.
+  ;; Positional within $help_parse_topic_links, in source order.
+  (global $help_topic_fail_code (mut i32) (i32.const 0))
+  (func (export "get_help_topic_fail_code") (result i32)
+    (global.get $help_topic_fail_code))
+
   (func $help_parse_topic_links
     (param $topic_internal i32) (param $topics_wa i32) (param $topic_count i32)
     (result i32)
@@ -2018,14 +2056,14 @@
           (br $done)))
       (if (i32.lt_s (local.get $current) (i32.const 12))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (i32.const 0))
+          (global.set $help_topic_fail_code (i32.const 1)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (i32.const 0))
           (br $done)))
       (local.set $link (call $help_topic_link_at
         (local.get $internal_record) (local.get $current)
         (local.get $logical_size) (local.get $temp_wa)))
       (if (i32.eqz (local.get $link))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
+          (global.set $help_topic_fail_code (i32.const 2)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
       (local.set $block_bytes (global.get $help_topic_link_bytes))
       (local.set $block_size (i32.load (local.get $link)))
@@ -2040,22 +2078,22 @@
             (i32.or (i32.gt_u (local.get $data_len1) (local.get $block_size))
                     (i32.lt_s (local.get $data_len2) (i32.const 0))))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
+          (global.set $help_topic_fail_code (i32.const 3)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
       (if (i32.gt_u (local.get $block_size) (local.get $block_bytes))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
+          (global.set $help_topic_fail_code (i32.const 4)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
       (if (i32.ne (local.get $prev_link) (local.get $previous))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
+          (global.set $help_topic_fail_code (i32.const 5)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
             (i32.add (local.get $current) (i32.const 8)))
           (br $done)))
       (if (i32.eq (local.get $record_type) (i32.const 2))
         (then
           (if (i32.ge_u (local.get $header_count) (local.get $topic_count))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
+              (global.set $help_topic_fail_code (i32.const 6)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
               (br $done)))
           (local.set $topic_record (i32.add (local.get $topics_wa)
             (i32.mul (local.get $header_count) (global.get $HELP_TOPIC_SIZE))))
@@ -2066,7 +2104,7 @@
                 (i32.ne (local.get $record_type) (i32.const 0x20))
                 (i32.ne (local.get $record_type) (i32.const 0x23)))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
+              (global.set $help_topic_fail_code (i32.const 7)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
                 (i32.add (local.get $current) (i32.const 20)))
               (br $done)))))
       (if (i32.or
@@ -2082,13 +2120,13 @@
         (then
           (if (i32.ne (local.get $header_count) (local.get $topic_count))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
+              (global.set $help_topic_fail_code (i32.const 8)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
               (br $done)))
           (local.set $ok (i32.const 1))
           (br $done)))
       (if (i32.le_s (local.get $next_link) (local.get $current))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
+          (global.set $help_topic_fail_code (i32.const 9)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
             (i32.add (local.get $current) (i32.const 12)))
           (br $done)))
       (local.set $previous (local.get $current))

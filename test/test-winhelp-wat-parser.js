@@ -189,7 +189,7 @@ function buildSyntheticDirectory({ indexed = false, leafCycle = false, indexCycl
   return b;
 }
 
-function buildSemanticBtree(kind) {
+function buildSemanticBtree(kind, danglingTopicRef = null) {
   const pageSize = 512;
   const b = Buffer.alloc(38 + pageSize * 3);
   b.writeUInt16LE(0x293b, 0);
@@ -213,7 +213,7 @@ function buildSemanticBtree(kind) {
 
   const values = kind === 'titles'
     ? [[0, 'Alpha'], [10, 'Beta'], [20, 'Gamma'], [30, 'Delta']]
-    : [[-10, 0], [-1, 10], [5, 20], [20, 30]];
+    : [[-10, 0], [-1, 10], [5, 20], [20, danglingTopicRef === null ? 30 : danglingTopicRef]];
   for (let leafNo = 1; leafNo <= 2; leafNo++) {
     const leaf = 38 + leafNo * pageSize;
     let pos = leaf + 8;
@@ -1406,6 +1406,36 @@ async function main() {
     ['zeta', [20]],
   ];
   const keywordIndex = buildKeywordIndex(keywordEntries);
+  {
+    // A |CONTEXT entry or |CTXOMAP entry that names no topic header costs
+    // that one jump, not the document. CHIPEDIT.HLP (132KB) and qbob.hlp
+    // (85KB) were both refused entirely over exactly this, and qbob.hlp
+    // renders 9 of its 10 topics once it is allowed to load. The count is
+    // exported so a file dropping many entries stays visible - that would
+    // mean the topic-header scan is wrong, not the file.
+    const danglingMap = Buffer.alloc(26);
+    danglingMap.writeUInt16LE(3, 0);
+    danglingMap.writeUInt32LE(7, 2);
+    danglingMap.writeUInt32LE(20, 6);
+    danglingMap.writeUInt32LE(8, 10);
+    danglingMap.writeUInt32LE(0, 14);
+    danglingMap.writeUInt32LE(9, 18);
+    danglingMap.writeUInt32LE(999999, 22);
+    const danglingHelp = buildSyntheticSemanticHelp({
+      extraFiles: [['|CTXOMAP', danglingMap],
+        ['|CONTEXT', buildSemanticBtree('contexts', 999999)]],
+    });
+    check('a context entry naming no topic drops that entry, not the file',
+      load(danglingHelp.file) === 1 && e.get_help_context_dropped() === 2 &&
+      e.get_help_topic_count() === 4,
+      `error=${e.get_help_last_error()} dropped=${e.get_help_context_dropped()}`);
+    check('the surviving context entries still resolve',
+      e.test_help_resolve_context_id(7) === 20 &&
+      e.test_help_resolve_context_id(9) === -1);
+    check('a healthy file drops no context entries',
+      load(semanticTree.file) === 1 && e.get_help_context_dropped() === 0);
+  }
+
   const keywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
     ['|KWBTREE', keywordIndex.tree], ['|KWDATA', keywordIndex.data],
   ] });
@@ -3433,8 +3463,11 @@ async function main() {
   const badContextRef = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
   const freecellContexts = fixtureInternalOffset('freecell.hlp', '|CONTEXT') + 9;
   badContextRef.writeUInt32LE(999, freecellContexts + 38 + 8 + 4);
-  check('hashed context must reference a canonical topic',
-    load(badContextRef) === 0 && e.get_help_last_error() === 11);
+  // Dangling context entries are dropped rather than fatal - real WinHelp
+  // fails only that jump. The entry disappears; the document still loads.
+  check('a hashed context naming no topic is dropped, not fatal',
+    load(badContextRef) === 1 && e.get_help_context_dropped() === 1 &&
+    e.get_help_topic_count() === 4);
 
   const duplicateContextHash = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
   duplicateContextHash.writeUInt32LE(
@@ -3451,8 +3484,9 @@ async function main() {
 
   const badMapRef = Buffer.from(fs.readFileSync(path.join(HELP, 'notepad.hlp')));
   badMapRef.writeUInt32LE(999, notepadMap + 6);
-  check('numeric context must reference a canonical topic',
-    load(badMapRef) === 0 && e.get_help_last_error() === 11);
+  check('a numeric context naming no topic is dropped, not fatal',
+    load(badMapRef) === 1 && e.get_help_context_dropped() === 1 &&
+    e.test_help_resolve_context_id(999) === -1);
 
   const semanticIndexCycle = buildSyntheticSemanticHelp();
   semanticIndexCycle.file.writeUInt16LE(0,
