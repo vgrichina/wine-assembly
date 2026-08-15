@@ -33,6 +33,15 @@ Paragraph layout now consumes retained binary headers directly: metric
 conversion, margins, first-line/continuation indents, spacing, explicit line
 height, right/center alignment, typed tabs, and fixed/variable table cells are
 all WAT-owned. Asynchronous browser VFS mounting remains in progress.
+Fixed hotspot semantics now distinguish direct-topic E0/E1 commands from the
+context-hash E2/E3/E6/E7 family, with even opcodes routed to popups and odd
+opcodes to the main viewer. EA/EB/EE/EF structures accept only exact bounded
+type 0/1/4/6 payloads. The current document retains its canonical VFS path;
+relative type-4 filenames load mounted sibling HLP/CNT files through WAT, while
+failed loads or unresolved hashes restore the source document, session, view,
+and history. Normal external navigation and external popups suspend up to four
+documents for Back/dismissal. Non-default numeric and named secondary-window
+selectors fail explicitly until `|SYSTEM` window records are normalized.
 The `|FONT` face/descriptor table and standalone `|bmN` lP/lp picture headers,
 palettes, compressed payload slices, and hotspot slices are also normalized
 into bounded WAT-owned records. Picture payloads now decode through all four
@@ -852,7 +861,7 @@ Proposed starting envelope:
 | Keyword postings | 262,144 |
 | Hotspots for one topic | 16,384 |
 | History entries | 256 |
-| Live documents per process | 4 |
+| Suspended external documents per session | 4 |
 
 These are compatibility and safety bounds, not promises about native WinHelp.
 Raise them only with a real fixture and memory/overflow regression.
@@ -992,14 +1001,22 @@ exact no-write preflight, retains raw/token/payload/run state transactionally,
 wraps words and overlong spans, carries font/color and hotspot state into each
 run, and repaints visible runs without decoding again. Hotspot runs retain the
 exact begin-token identity, bounded hit testing accounts for scrolling, and
-fixed in-document hash jumps resolve through canonical topic state, shared
-transactional history, and the production window-message path. Fixed popup
+fixed direct-topic or context-hash jumps resolve through canonical topic state,
+shared transactional history, and the production window-message path. Fixed popup
 hotspots and `HELP_CONTEXTPOPUP` instead create a bounded owned WAT-native
 popup plus shadow surface. Popup layout uses a 320-pixel maximum measure and
 shrinks to retained run extents, with explicit minimum/maximum geometry and
 screen-edge clamping.
-Nested, orphaned, and unterminated hotspot regions are rejected; unsupported
-variable, external, and macro forms fail without changing topic or history.
+Nested, orphaned, and unterminated hotspot regions are rejected. External
+EA/EB/EE/EF structures are parsed by exact size/type/string grammar; current-
+file types resolve hashes locally, and mounted type-4 filenames resolve against
+the retained source directory. A four-record owning document stack makes
+cross-file Back and popup dismissal LIFO transactions, including restoration
+of the source path, session scalars, scroll, and 16-entry topic Back contents.
+Missing files, malformed targets, unresolved target hashes, allocation failure,
+and a fifth suspension leave the visible source transaction intact. Named or
+non-default numeric secondary windows and macro forms fail explicitly without
+changing topic or history.
 Referenced logical fonts materialize once per view as owned type-4 GDI objects;
 bounded face copies, half-point/twip conversion, weight/italic selection, exact
 selected-font measurement, repaint selection, and retained underline/strikeout
@@ -1026,7 +1043,8 @@ session topic, mode, and Back count. A normal jump from a popup rejoins the
 ordinary primary navigation transaction instead. `HELP_QUIT` reunites and
 frees both views exactly once.
 
-- Extend implemented fixed-hash jumps/popups with bounded external forms.
+- Normalize `|SYSTEM` secondary-window records for non-default type-1/type-6
+  hotspot presentation.
 - Extend raster materialization to inline picture unions and metafiles.
 
 Exit criterion: visual topic captures and hotspot target transitions match the

@@ -388,6 +388,24 @@ function encodeCompressedUnsignedShort(value) {
   return result;
 }
 
+function buildExternalHotspot(opcode, type, hash, {
+  windowNumber = 0, file = '', window = '',
+} = {}) {
+  const fixed = Buffer.alloc(5);
+  fixed[0] = type;
+  fixed.writeUInt32LE(hash >>> 0, 1);
+  const parts = [fixed];
+  if (type === 1) parts.push(Buffer.from([windowNumber]));
+  if (type === 4 || type === 6) parts.push(Buffer.from(file + '\0', 'latin1'));
+  if (type === 6) parts.push(Buffer.from(window + '\0', 'latin1'));
+  const structure = Buffer.concat(parts);
+  const result = Buffer.alloc(3 + structure.length);
+  result[0] = opcode;
+  result.writeUInt16LE(structure.length, 1);
+  structure.copy(result, 3);
+  return result;
+}
+
 function buildParagraphHeader({ column = null, flags = 0, metrics = [], tabs = [] } = {}) {
   const base = Buffer.alloc(column === null ? 6 : 11);
   let offset = 0;
@@ -464,11 +482,15 @@ function buildOldFont(faces, descriptors, slotSize = 32) {
 
 function buildSyntheticFormattedTopic({
   stringCount = 12, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
-  closeVariableHotspot = false, externalBitmapNumber = null,
+  hotspotCommand = null, closeVariableHotspot = false, variableHotspotCommand = null,
+  externalBitmapNumber = null,
 } = {}) {
   const fixedHotspot = Buffer.alloc(5);
   fixedHotspot[0] = hotspotOpcode;
   fixedHotspot.writeInt32LE(hotspotHash, 1);
+  const primaryHotspot = hotspotCommand || fixedHotspot;
+  const secondaryHotspot = variableHotspotCommand ||
+    Buffer.from([0xea, 6, 0, 1, 1, 2, 3, 4, 5]);
   const bitmapCommand = externalBitmapNumber === null
     ? Buffer.concat([
       Buffer.from([0x86, 3]), encodeCompressedLong(4), Buffer.from([0, 0, 7, 0]),
@@ -480,11 +502,10 @@ function buildSyntheticFormattedTopic({
   const commands = Buffer.concat([
     Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
     bitmapCommand,
-    fixedHotspot, Buffer.from([0x89]),
+    primaryHotspot, Buffer.from([0x89]),
     Buffer.from([0xc8, 2, 0, 'X'.charCodeAt(0), 0]),
-    Buffer.from(closeVariableHotspot
-      ? [0xea, 6, 0, 0, 1, 2, 3, 4, 5, 0x89]
-      : [0xea, 6, 0, 0, 1, 2, 3, 4, 5]),
+    secondaryHotspot,
+    ...(closeVariableHotspot ? [Buffer.from([0x89])] : []),
     Buffer.from([0x8b, 0x8c, 0xff]),
   ]);
   const strings = Buffer.concat(Array.from({ length: stringCount }, (_, index) =>
@@ -1612,6 +1633,28 @@ async function main() {
       topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === -1 &&
     e.get_help_last_error() === 14);
 
+  const validExternalCommands = [
+    buildExternalHotspot(0xea, 0, 20),
+    buildExternalHotspot(0xeb, 1, 20, { windowNumber: 3 }),
+    buildExternalHotspot(0xee, 4, 20, { file: 'other.hlp' }),
+    buildExternalHotspot(0xef, 6, 20, { file: 'other.hlp', window: 'secondary' }),
+  ];
+  check('external hotspot types 0/1/4/6 parse with exact bounded structures',
+    validExternalCommands.every(command => load(buildSyntheticSemanticHelp({
+      topic: buildSyntheticFormattedTopic({ hotspotCommand: command }),
+    }).file) === 1));
+  const malformedExternalCommands = [
+    Buffer.from([0xea, 5, 0, 2, 0, 0, 0, 0]),                 // unknown type
+    Buffer.from([0xea, 6, 0, 0, 0, 0, 0, 0, 0]),              // type 0 extra byte
+    Buffer.from([0xea, 7, 0, 4, 0, 0, 0, 0, 0x61, 0x62]),     // file lacks NUL
+    Buffer.from([0xea, 8, 0, 6, 0, 0, 0, 0, 0x61, 0, 0]),    // empty window
+    Buffer.from([0xea, 8, 0, 4, 0, 0, 0, 0, 0x61, 0, 0x78]), // bytes after file NUL
+  ];
+  check('malformed external hotspot sizes, types, and strings reject publication',
+    malformedExternalCommands.every(command => load(buildSyntheticSemanticHelp({
+      topic: buildSyntheticFormattedTopic({ hotspotCommand: command }),
+    }).file) === 0 && e.get_help_last_error() === 14 && e.get_help_topic_count() === 0));
+
   const syntheticFont = buildOldFont(
     ['Fixture Face'], [[0,20,2,3,0x112233,0x445566]]);
   const fontHelp = buildSyntheticSemanticHelp({ font: syntheticFont });
@@ -2403,9 +2446,105 @@ async function main() {
     e.get_help_dispatch_status() === 6 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0);
 
+  function firstVisibleHotspotRun() {
+    return Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
+      const record = e.get_help_view_run_ptr() + index * 40;
+      return {
+        x: dv.getInt32(record + 4, true), y: dv.getInt32(record + 8, true),
+        width: dv.getInt32(record + 12, true), height: dv.getInt32(record + 16, true),
+        flagged: dv.getUint32(record + 36, true) !== 0,
+      };
+    }).find(run => run.flagged && run.width > 0 && run.height > 0);
+  }
+
+  const fixedOpcodeCases = [
+    [0xe1, 20, 1, 'direct E1 topic jump'],
+    [0xe7, 30, 1, 'hash E7 topic jump without font change'],
+    [0xe0, 20, 2, 'direct E0 popup'],
+    [0xe6, 30, 2, 'hash E6 popup without font change'],
+  ];
+  for (const [opcode, expectedRef, expectedMode, label] of fixedOpcodeCases) {
+    const fixedCaseHelp = buildSyntheticSemanticHelp({
+      topic: buildSyntheticFormattedTopic({
+        stringCount: 13, hotspotOpcode: opcode, hotspotHash: 20,
+        closeVariableHotspot: true,
+      }),
+      font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+    });
+    const fixedCasePath = `c:\\fixed-${opcode.toString(16)}.hlp`;
+    ctx.vfs.files.set(fixedCasePath, {
+      data: new Uint8Array(fixedCaseHelp.file), attrs: 0x20,
+    });
+    const fixedCaseAccepted = e.test_invoke_WinHelpA(
+      0x8888, allocGuestAnsi(fixedCasePath), 0x0001, 8);
+    const run = fixedCaseAccepted === 1 ? firstVisibleHotspotRun() : null;
+    const clicked = run && e.test_help_window_message(0x0201, 0,
+      (run.y << 16) | (run.x & 0xffff)) === 0;
+    check(`${label} uses exact target semantics and opcode parity`,
+      fixedCaseAccepted === 1 && clicked &&
+      e.get_help_session_topic_ref() === expectedRef &&
+      e.get_help_session_mode() === expectedMode &&
+      (expectedMode === 2 ? e.get_help_popup_hwnd() !== 0 : e.get_help_popup_hwnd() === 0));
+    if (expectedMode === 2 && e.get_help_popup_hwnd()) {
+      e.test_help_popup_message(0x0010, 0, 0);
+    }
+  }
+
+  const currentFileExternalCases = [
+    [buildExternalHotspot(0xeb, 0, 20), 1, 'type 0 current-file jump'],
+    [buildExternalHotspot(0xea, 1, 20, { windowNumber: 0 }), 2,
+      'type 1 default-window popup'],
+  ];
+  for (const [command, expectedMode, label] of currentFileExternalCases) {
+    const currentFileHelp = buildSyntheticSemanticHelp({
+      topic: buildSyntheticFormattedTopic({
+        stringCount: 13, hotspotCommand: command, closeVariableHotspot: true,
+      }),
+      font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+    });
+    const currentFilePath = `c:\\current-${expectedMode}.hlp`;
+    ctx.vfs.files.set(currentFilePath, {
+      data: new Uint8Array(currentFileHelp.file), attrs: 0x20,
+    });
+    const accepted = e.test_invoke_WinHelpA(
+      0x8888, allocGuestAnsi(currentFilePath), 0x0001, 8);
+    const run = accepted === 1 ? firstVisibleHotspotRun() : null;
+    const clicked = run && e.test_help_window_message(0x0201, 0,
+      (run.y << 16) | (run.x & 0xffff)) === 0;
+    check(`${label} resolves through the bounded external structure`,
+      accepted === 1 && clicked && e.get_help_session_topic_ref() === 30 &&
+      e.get_help_session_mode() === expectedMode &&
+      e.get_help_document_snapshot_count() === 0);
+    if (expectedMode === 2 && e.get_help_popup_hwnd()) {
+      e.test_help_popup_message(0x0010, 0, 0);
+    }
+  }
+
+  const namedWindowHelp = buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({
+      stringCount: 13,
+      hotspotCommand: buildExternalHotspot(0xef, 6, 20,
+        { file: 'other.hlp', window: 'secondary' }),
+      closeVariableHotspot: true,
+    }),
+    font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
+  });
+  const namedWindowPath = 'c:\\named-window.hlp';
+  ctx.vfs.files.set(namedWindowPath, {
+    data: new Uint8Array(namedWindowHelp.file), attrs: 0x20,
+  });
+  const namedWindowAccepted = e.test_invoke_WinHelpA(
+    0x8888, allocGuestAnsi(namedWindowPath), 0x0001, 8);
+  const namedWindowRun = namedWindowAccepted === 1 ? firstVisibleHotspotRun() : null;
+  check('named secondary-window targets fail explicitly until SYSTEM windows are normalized',
+    namedWindowRun &&
+    e.test_help_activate_hotspot_at(0x8888, namedWindowRun.x, namedWindowRun.y) === 0 &&
+    e.get_help_dispatch_status() === 6 && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_document_snapshot_count() === 0);
+
   const popupHelp = buildSyntheticSemanticHelp({
     topic: buildSyntheticFormattedTopic({
-      stringCount: 13, hotspotOpcode: 0xe1, hotspotHash: 20, closeVariableHotspot: true,
+      stringCount: 13, hotspotOpcode: 0xe2, hotspotHash: 20, closeVariableHotspot: true,
     }),
     font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),
   });
@@ -2492,6 +2631,134 @@ async function main() {
     e.get_help_window() === 0 && e.get_help_popup_hwnd() === 0 &&
     e.get_help_popup_shadow_hwnd() === 0 && e.get_help_view_topic_ptr() === 0 &&
     (!popupMainFont || e.test_gdi_object_type(popupMainFont) === 0));
+
+  const hotspotFont = buildOldFont(
+    ['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0]));
+  const buildRuntimeHotspotHelp = command => buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({
+      stringCount: 13, hotspotCommand: command, closeVariableHotspot: true,
+    }),
+    font: hotspotFont,
+  });
+  const externalTargetPath = 'c:\\manual\\target.hlp';
+  const externalTargetHelp = buildRuntimeHotspotHelp(
+    Buffer.from([0xe3, 20, 0, 0, 0]));
+  ctx.vfs.files.set(externalTargetPath, {
+    data: new Uint8Array(externalTargetHelp.file), attrs: 0x20,
+  });
+
+  const externalSourcePath = 'c:\\manual\\source.hlp';
+  const externalSourceHelp = buildRuntimeHotspotHelp(
+    buildExternalHotspot(0xeb, 4, 20, { file: 'target.hlp' }));
+  ctx.vfs.files.set(externalSourcePath, {
+    data: new Uint8Array(externalSourceHelp.file), attrs: 0x20,
+  });
+  const externalSourceAccepted = e.test_invoke_WinHelpA(
+    0x8888, allocGuestAnsi(externalSourcePath), 0x0001, 8);
+  const externalMainHwnd = e.get_help_window();
+  const externalRun = externalSourceAccepted === 1 ? firstVisibleHotspotRun() : null;
+  check('relative external topic hotspot loads a mounted target through WAT',
+    externalRun && e.test_help_window_message(0x0201, 0,
+      (externalRun.y << 16) | (externalRun.x & 0xffff)) === 0 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+      externalTargetPath &&
+    e.get_help_document_snapshot_count() === 1 &&
+    e.get_help_session_topic_ref() === 30 && e.get_help_session_mode() === 1 &&
+    e.get_help_window() === externalMainHwnd);
+  e.test_help_view_go_back();
+  check('Back restores the suspended external source document and visible topic',
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+      externalSourcePath &&
+    e.get_help_document_snapshot_count() === 0 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_view_topic_index() === 0 &&
+    e.get_help_view_run_count() > 0 && e.get_help_window() === externalMainHwnd);
+
+  const missingSourcePath = 'c:\\manual\\missing-source.hlp';
+  const missingSourceHelp = buildRuntimeHotspotHelp(
+    buildExternalHotspot(0xeb, 4, 20, { file: 'absent.hlp' }));
+  ctx.vfs.files.set(missingSourcePath, {
+    data: new Uint8Array(missingSourceHelp.file), attrs: 0x20,
+  });
+  const missingAccepted = e.test_invoke_WinHelpA(
+    0x8888, allocGuestAnsi(missingSourcePath), 0x0001, 8);
+  const missingRun = missingAccepted === 1 ? firstVisibleHotspotRun() : null;
+  const missingDoc = e.get_help_file_ptr();
+  const missingView = e.get_help_view_topic_ptr();
+  const missingRuns = e.get_help_view_run_ptr();
+  check('missing external targets roll back document, session, view, and history exactly',
+    missingRun && e.test_help_activate_hotspot_at(0x8888, missingRun.x, missingRun.y) === 0 &&
+    e.get_help_dispatch_status() === 7 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+      missingSourcePath &&
+    e.get_help_file_ptr() === missingDoc && e.get_help_view_topic_ptr() === missingView &&
+    e.get_help_view_run_ptr() === missingRuns && e.get_help_session_topic_ref() === 0 &&
+    e.get_help_view_back_count() === 0 && e.get_help_document_snapshot_count() === 0);
+
+  const externalPopupSourcePath = 'c:\\manual\\popup-source.hlp';
+  const externalPopupSourceHelp = buildRuntimeHotspotHelp(
+    buildExternalHotspot(0xea, 4, 20, { file: 'target.hlp' }));
+  ctx.vfs.files.set(externalPopupSourcePath, {
+    data: new Uint8Array(externalPopupSourceHelp.file), attrs: 0x20,
+  });
+  const externalPopupAccepted = e.test_invoke_WinHelpA(
+    0x8888, allocGuestAnsi(externalPopupSourcePath), 0x0001, 8);
+  const externalPopupMainView = e.get_help_view_topic_ptr();
+  const externalPopupMainRuns = e.get_help_view_run_ptr();
+  const externalPopupRun = externalPopupAccepted === 1 ? firstVisibleHotspotRun() : null;
+  check('external popup suspends its source document behind an owned popup',
+    externalPopupRun && e.test_help_window_message(0x0201, 0,
+      (externalPopupRun.y << 16) | (externalPopupRun.x & 0xffff)) === 0 &&
+    e.get_help_popup_hwnd() !== 0 && e.get_help_session_mode() === 2 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+      externalTargetPath && e.get_help_document_snapshot_count() === 1);
+  check('closing an external popup restores the exact source view and document',
+    e.test_help_popup_message(0x0010, 0, 0) === 0 &&
+    e.get_help_popup_hwnd() === 0 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+      externalPopupSourcePath && e.get_help_document_snapshot_count() === 0 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_session_mode() === 1 &&
+    e.get_help_view_topic_ptr() === externalPopupMainView &&
+    e.get_help_view_run_ptr() === externalPopupMainRuns);
+
+  const chainPaths = Array.from({ length: 6 }, (_, index) =>
+    `c:\\chain\\chain${index}.hlp`);
+  chainPaths.forEach((chainPath, index) => {
+    const nextName = `chain${Math.min(index + 1, 5)}.hlp`;
+    const chainHelp = buildRuntimeHotspotHelp(
+      buildExternalHotspot(0xeb, 4, -10, { file: nextName }));
+    ctx.vfs.files.set(chainPath, { data: new Uint8Array(chainHelp.file), attrs: 0x20 });
+  });
+  let chainOk = e.test_invoke_WinHelpA(
+    0x8888, allocGuestAnsi(chainPaths[0]), 0x0001, 8) === 1;
+  for (let depth = 0; depth < 4 && chainOk; depth++) {
+    const run = firstVisibleHotspotRun();
+    chainOk = !!run && e.test_help_window_message(0x0201, 0,
+      (run.y << 16) | (run.x & 0xffff)) === 0 &&
+      readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+        chainPaths[depth + 1] &&
+      e.get_help_document_snapshot_count() === depth + 1;
+  }
+  check('external navigation retains a bounded four-document Back chain', chainOk);
+  const cappedRun = chainOk ? firstVisibleHotspotRun() : null;
+  const cappedDoc = e.get_help_file_ptr();
+  const cappedView = e.get_help_view_topic_ptr();
+  check('a fifth external suspension fails without disturbing the visible document',
+    cappedRun && e.test_help_activate_hotspot_at(0x8888, cappedRun.x, cappedRun.y) === 0 &&
+    e.get_help_dispatch_status() === 7 && e.get_help_document_snapshot_count() === 4 &&
+    e.get_help_file_ptr() === cappedDoc && e.get_help_view_topic_ptr() === cappedView &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) === chainPaths[4]);
+  let unwindOk = true;
+  for (let depth = 3; depth >= 0; depth--) {
+    e.test_help_view_go_back();
+    unwindOk = unwindOk &&
+      readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) ===
+        chainPaths[depth] && e.get_help_document_snapshot_count() === depth;
+  }
+  check('cross-document Back unwinds every suspended path in LIFO order', unwindOk);
+  check('HELP_QUIT releases the active document and all suspended external roots',
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.get_help_window() === 0 && e.get_help_file_ptr() === 0 &&
+    e.get_help_document_snapshot_count() === 0);
 
   check('WinHelpA handler opens a window from WAT-owned title/topic state',
     e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&

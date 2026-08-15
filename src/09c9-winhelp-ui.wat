@@ -75,6 +75,9 @@
   (global $help_popup_saved_font_slot_count (mut i32) (i32.const 0))
   (global $help_popup_saved_font_count (mut i32) (i32.const 0))
   (global $help_popup_saved_font_hdc (mut i32) (i32.const 0))
+  ;; -1 for same-document popups; otherwise the snapshot depth that existed
+  ;; before an external popup suspended its source document.
+  (global $help_popup_external_snapshot_base (mut i32) (i32.const -1))
 
   ;; Private result channel used while a replacement view is still local.
   (global $help_materialize_bitmap_dc (mut i32) (i32.const 0))
@@ -1601,14 +1604,69 @@
       (br $runs)))
     (i32.const -1))
 
-  ;; Fixed hash hotspots: E0/E1 popup, E2/E3 topic jump. External/string
-  ;; variants and macros remain disabled until their path/window grammars are
-  ;; independently bounded.
+  ;; Copy a bounded external filename into an owned VFS path. Relative names
+  ;; inherit the current document's final slash-delimited directory; absolute,
+  ;; rooted, and drive-qualified names are retained exactly.
+  (func $help_external_path_copy
+    (param $name i32) (param $name_len i32) (result i32)
+    (local $i i32) (local $ch i32) (local $absolute i32)
+    (local $prefix_len i32) (local $total i32) (local $ga i32) (local $wa i32)
+    (if (i32.or (i32.eqz (local.get $name_len))
+                (i32.gt_u (local.get $name_len) (i32.const 1023)))
+      (then (return (i32.const 0))))
+    (local.set $ch (i32.load8_u (local.get $name)))
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                (i32.eq (local.get $ch) (i32.const 92)))
+      (then (local.set $absolute (i32.const 1))))
+    (block $name_done (loop $name_scan
+      (br_if $name_done (i32.ge_u (local.get $i) (local.get $name_len)))
+      (if (i32.eq (i32.load8_u (i32.add (local.get $name) (local.get $i)))
+            (i32.const 58))
+        (then (local.set $absolute (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $name_scan)))
+    (if (i32.and (i32.eqz (local.get $absolute))
+          (i32.ne (global.get $help_doc_path_wa) (i32.const 0)))
+      (then
+        (local.set $i (i32.const 0))
+        (block $base_done (loop $base_scan
+          (br_if $base_done
+            (i32.ge_u (local.get $i) (global.get $help_doc_path_len)))
+          (local.set $ch (i32.load8_u
+            (i32.add (global.get $help_doc_path_wa) (local.get $i))))
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                      (i32.eq (local.get $ch) (i32.const 92)))
+            (then (local.set $prefix_len
+              (i32.add (local.get $i) (i32.const 1)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $base_scan)))))
+    (local.set $total (i32.add (local.get $prefix_len) (local.get $name_len)))
+    (if (i32.gt_u (local.get $total) (i32.const 1023))
+      (then (return (i32.const 0))))
+    (local.set $ga (call $heap_alloc (i32.add (local.get $total) (i32.const 1))))
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $ga)))
+    (if (local.get $prefix_len)
+      (then
+        (memory.copy (local.get $wa) (global.get $help_doc_path_wa)
+          (local.get $prefix_len))))
+    (memory.copy (i32.add (local.get $wa) (local.get $prefix_len))
+      (local.get $name) (local.get $name_len))
+    (i32.store8 (i32.add (local.get $wa) (local.get $total)) (i32.const 0))
+    (local.get $ga))
+
+  ;; Direct E0/E1 commands carry canonical topic references. E2/E3/E6/E7
+  ;; and the exact EA/EB/EE/EF structures carry context hashes. Even opcodes
+  ;; are popups and odd opcodes navigate the main window, matching winhlp32.
   (func $help_activate_hotspot_at
     (param $caller i32) (param $x i32) (param $y i32) (result i32)
     (local $index i32) (local $token i32) (local $off i32) (local $len i32)
     (local $payload i32) (local $command i32) (local $hash i32)
     (local $topic_ref i32) (local $mode i32) (local $api_command i32)
+    (local $external i32) (local $popup i32) (local $size i32)
+    (local $structure i32) (local $type i32) (local $name i32) (local $name_len i32)
+    (local $path_ga i32) (local $path_wa i32) (local $snapshot_base i32)
+    (local $parse_error i32) (local $parse_error_offset i32) (local $accepted i32)
     (local.set $index (call $help_view_hotspot_token_at
       (local.get $x) (local.get $y)))
     (if (i32.lt_s (local.get $index) (i32.const 0))
@@ -1631,29 +1689,29 @@
         (return (i32.const 0))))
     (local.set $payload (i32.add (global.get $help_view_payload_wa) (local.get $off)))
     (local.set $command (i32.load8_u (local.get $payload)))
-    (if (i32.and (i32.ne (local.get $command) (i32.const 0xE0))
-          (i32.and (i32.ne (local.get $command) (i32.const 0xE1))
-            (i32.and (i32.ne (local.get $command) (i32.const 0xE2))
-                     (i32.ne (local.get $command) (i32.const 0xE3)))))
+    (local.set $external
+      (i32.or
+        (i32.or (i32.eq (local.get $command) (i32.const 0xEA))
+                (i32.eq (local.get $command) (i32.const 0xEB)))
+        (i32.or (i32.eq (local.get $command) (i32.const 0xEE))
+                (i32.eq (local.get $command) (i32.const 0xEF)))))
+    (if (i32.and (i32.eqz (local.get $external))
+          (i32.and
+            (i32.and (i32.ne (local.get $command) (i32.const 0xE0))
+                     (i32.ne (local.get $command) (i32.const 0xE1)))
+            (i32.and
+              (i32.and (i32.ne (local.get $command) (i32.const 0xE2))
+                       (i32.ne (local.get $command) (i32.const 0xE3)))
+              (i32.and (i32.ne (local.get $command) (i32.const 0xE6))
+                       (i32.ne (local.get $command) (i32.const 0xE7))))))
       (then
         (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
         (return (i32.const 0))))
-    (if (i32.ne (local.get $len) (i32.const 5))
-      (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
-        (return (i32.const 0))))
-    (local.set $hash (i32.load offset=1 (local.get $payload)))
-    (local.set $topic_ref (call $help_resolve_context_hash (local.get $hash)))
-    (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
-      (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
-        (return (i32.const 0))))
+    (local.set $popup (i32.eqz (i32.and (local.get $command) (i32.const 1))))
     (local.set $mode (i32.const 1))
     (local.set $api_command (global.get $HELP_COMMAND_CONTEXT))
-    (if (i32.or (i32.eq (local.get $command) (i32.const 0xE0))
-                (i32.eq (local.get $command) (i32.const 0xE1)))
+    (if (local.get $popup)
       (then
-        (call $help_popup_capture_session)
         (global.set $help_popup_anchor_x
           (i32.add (call $wnd_client_screen_x (global.get $help_hwnd))
             (local.get $x)))
@@ -1662,8 +1720,123 @@
             (local.get $y)))
         (local.set $mode (i32.const 2))
         (local.set $api_command (global.get $HELP_COMMAND_CONTEXTPOPUP))))
-    (call $help_session_commit_topic (local.get $caller)
+
+    (if (i32.eqz (local.get $external))
+      (then
+        (if (i32.ne (local.get $len) (i32.const 5))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $hash (i32.load offset=1 (local.get $payload)))
+        (local.set $topic_ref
+          (if (result i32)
+            (i32.or (i32.eq (local.get $command) (i32.const 0xE0))
+                    (i32.eq (local.get $command) (i32.const 0xE1)))
+            (then (local.get $hash))
+            (else (call $help_resolve_context_hash (local.get $hash)))))
+        (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (if (local.get $popup) (then (call $help_popup_capture_session)))
+        (return (call $help_session_commit_topic (local.get $caller)
+          (local.get $api_command) (local.get $topic_ref) (local.get $mode)))))
+
+    ;; The tokenizer already proved the structure, but repeat its outer bounds
+    ;; at the activation boundary because token arenas are independently owned.
+    (if (i32.lt_u (local.get $len) (i32.const 8))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (local.set $size (i32.load16_u offset=1 (local.get $payload)))
+    (if (i32.ne (i32.add (local.get $size) (i32.const 3)) (local.get $len))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (local.set $structure (i32.add (local.get $payload) (i32.const 3)))
+    (local.set $type (i32.load8_u (local.get $structure)))
+    (local.set $hash (i32.load offset=1 (local.get $structure)))
+    (if (i32.or
+          (i32.and (i32.eq (local.get $type) (i32.const 1))
+            (i32.ne (i32.load8_u offset=5 (local.get $structure)) (i32.const 0)))
+          (i32.eq (local.get $type) (i32.const 6)))
+      (then
+        ;; Secondary numeric/named windows require the SYSTEM window table,
+        ;; which is not yet normalized. Refuse rather than misroute to main.
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (if (i32.or (i32.eqz (local.get $type))
+                (i32.eq (local.get $type) (i32.const 1)))
+      (then
+        (local.set $topic_ref (call $help_resolve_context_hash (local.get $hash)))
+        (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (if (local.get $popup) (then (call $help_popup_capture_session)))
+        (return (call $help_session_commit_topic (local.get $caller)
+          (local.get $api_command) (local.get $topic_ref) (local.get $mode)))))
+    (if (i32.ne (local.get $type) (i32.const 4))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (if (global.get $help_popup_hwnd)
+      (then
+        ;; A popup owns a detached primary typed view. Do not stack a second
+        ;; document transaction on top of that ownership graph.
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (local.set $name (i32.add (local.get $structure) (i32.const 5)))
+    (local.set $name_len (i32.sub (local.get $size) (i32.const 6)))
+    (local.set $path_ga
+      (call $help_external_path_copy (local.get $name) (local.get $name_len)))
+    (if (i32.eqz (local.get $path_ga))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
+    (local.set $path_wa (call $g2w (local.get $path_ga)))
+    (local.set $snapshot_base (global.get $help_document_snapshot_count))
+    (if (local.get $popup) (then (call $help_popup_capture_session)))
+    (if (i32.eqz (call $help_document_snapshot_push))
+      (then
+        (call $heap_free (local.get $path_ga))
+        (if (local.get $popup)
+          (then (global.set $help_popup_saved_session_valid (i32.const 0))))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
+    (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+      (then
+        (local.set $parse_error (global.get $help_last_error))
+        (local.set $parse_error_offset (global.get $help_last_error_offset))
+        (call $heap_free (local.get $path_ga))
+        (drop (call $help_document_snapshot_restore_top))
+        (global.set $help_last_error (local.get $parse_error))
+        (global.set $help_last_error_offset (local.get $parse_error_offset))
+        (if (local.get $popup)
+          (then (global.set $help_popup_saved_session_valid (i32.const 0))))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
+    (call $heap_free (local.get $path_ga))
+    (local.set $topic_ref (call $help_resolve_context_hash (local.get $hash)))
+    (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+      (then
+        (drop (call $help_document_snapshot_restore_top))
+        (if (local.get $popup)
+          (then (global.set $help_popup_saved_session_valid (i32.const 0))))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+        (return (i32.const 0))))
+    (local.set $accepted (call $help_session_commit_topic (local.get $caller)
       (local.get $api_command) (local.get $topic_ref) (local.get $mode)))
+    (if (i32.eqz (local.get $accepted))
+      (then
+        (drop (call $help_document_snapshot_restore_top))
+        (if (local.get $popup)
+          (then (global.set $help_popup_saved_session_valid (i32.const 0))))
+        (return (i32.const 0))))
+    (if (local.get $popup)
+      (then
+        (global.set $help_popup_external_snapshot_base (local.get $snapshot_base))))
+    (local.get $accepted))
 
   (func (export "test_help_layout_tokens")
     (param $raw i32) (param $raw_len i32)

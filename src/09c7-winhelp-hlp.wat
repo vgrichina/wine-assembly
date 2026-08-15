@@ -1124,6 +1124,73 @@
     (call $help_set_error (global.get $HELP_ERROR_TOPIC_FORMAT) (local.get $topic_pos))
     (i32.const 0))
 
+  ;; EA/EB/EE/EF carry a WORD-sized LinkData structure. Accept only the four
+  ;; documented shapes and require every string to terminate inside that
+  ;; exact structure, so activation never has to rediscover an unbounded end.
+  ;;   type 0: type + hash
+  ;;   type 1: type + hash + numeric window selector
+  ;;   type 4: type + hash + non-empty file string
+  ;;   type 6: type + hash + non-empty file and window strings
+  (func $help_validate_external_hotspot_command
+    (param $ptr i32) (param $end i32) (result i32)
+    (local $size i32) (local $type i32) (local $p i32) (local $struct_end i32)
+    (local $string_start i32)
+    (global.set $help_ld1_next (i32.const 0))
+    (if (i32.or (i32.gt_u (local.get $ptr) (local.get $end))
+          (i32.gt_u (i32.const 2) (i32.sub (local.get $end) (local.get $ptr))))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.load16_u (local.get $ptr)))
+    (local.set $p (i32.add (local.get $ptr) (i32.const 2)))
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 5))
+          (i32.gt_u (local.get $size) (i32.sub (local.get $end) (local.get $p))))
+      (then (return (i32.const 0))))
+    (local.set $struct_end (i32.add (local.get $p) (local.get $size)))
+    (local.set $type (i32.load8_u (local.get $p)))
+    (if (i32.eqz (local.get $type))
+      (then
+        (if (i32.ne (local.get $size) (i32.const 5))
+          (then (return (i32.const 0))))
+        (global.set $help_ld1_next (local.get $struct_end))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $type) (i32.const 1))
+      (then
+        (if (i32.ne (local.get $size) (i32.const 6))
+          (then (return (i32.const 0))))
+        (global.set $help_ld1_next (local.get $struct_end))
+        (return (i32.const 1))))
+    (if (i32.and (i32.ne (local.get $type) (i32.const 4))
+                  (i32.ne (local.get $type) (i32.const 6)))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.const 5)))
+    (local.set $string_start (local.get $p))
+    (block $file_done (loop $file
+      (if (i32.ge_u (local.get $p) (local.get $struct_end))
+        (then (return (i32.const 0))))
+      (br_if $file_done (i32.eqz (i32.load8_u (local.get $p))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $file)))
+    (if (i32.eq (local.get $p) (local.get $string_start))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    (if (i32.eq (local.get $type) (i32.const 4))
+      (then
+        (if (i32.ne (local.get $p) (local.get $struct_end))
+          (then (return (i32.const 0))))
+        (global.set $help_ld1_next (local.get $struct_end))
+        (return (i32.const 1))))
+    (local.set $string_start (local.get $p))
+    (block $window_done (loop $window
+      (if (i32.ge_u (local.get $p) (local.get $struct_end))
+        (then (return (i32.const 0))))
+      (br_if $window_done (i32.eqz (i32.load8_u (local.get $p))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $window)))
+    (if (i32.or (i32.eq (local.get $p) (local.get $string_start))
+                (i32.ne (i32.add (local.get $p) (i32.const 1)) (local.get $struct_end)))
+      (then (return (i32.const 0))))
+    (global.set $help_ld1_next (local.get $struct_end))
+    (i32.const 1))
+
   (func $help_fmt_add_token
     (param $kind i32) (param $payload_off i32) (param $payload_len i32)
     (param $value i32) (result i32)
@@ -1429,13 +1496,10 @@
                 (i32.or (i32.eq (local.get $command) (i32.const 0xEE))
                         (i32.eq (local.get $command) (i32.const 0xEF))))
             (then
-              (if (i32.gt_u (i32.const 2) (i32.sub (local.get $end) (local.get $ptr)))
+              (if (i32.eqz (call $help_validate_external_hotspot_command
+                    (local.get $ptr) (local.get $end)))
                 (then (return (call $help_ld1_fail (local.get $topic_pos)))))
-              (local.set $payload_size (i32.load16_u (local.get $ptr)))
-              (local.set $ptr (i32.add (local.get $ptr) (i32.const 2)))
-              (if (i32.gt_u (local.get $payload_size) (i32.sub (local.get $end) (local.get $ptr)))
-                (then (return (call $help_ld1_fail (local.get $topic_pos)))))
-              (local.set $ptr (i32.add (local.get $ptr) (local.get $payload_size)))
+              (local.set $ptr (global.get $help_ld1_next))
               (local.set $token_kind (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
               (br $handled)))
           (if (i32.or
@@ -1655,14 +1719,8 @@
                 (then (return (call $help_ld1_fail (local.get $topic_pos)))))
               (local.set $ptr (i32.add (local.get $ptr) (local.get $payload_size)))
               (br $handled)))
-          (if (i32.or
-                (i32.or
-                  (i32.or (i32.eq (local.get $command) (i32.const 0xC8))
-                          (i32.eq (local.get $command) (i32.const 0xCC)))
-                  (i32.or (i32.eq (local.get $command) (i32.const 0xEA))
-                          (i32.eq (local.get $command) (i32.const 0xEB))))
-                (i32.or (i32.eq (local.get $command) (i32.const 0xEE))
-                        (i32.eq (local.get $command) (i32.const 0xEF))))
+          (if (i32.or (i32.eq (local.get $command) (i32.const 0xC8))
+                      (i32.eq (local.get $command) (i32.const 0xCC)))
             (then
               (if (i32.gt_u (i32.const 2) (i32.sub (local.get $end) (local.get $ptr)))
                 (then (return (call $help_ld1_fail (local.get $topic_pos)))))
@@ -1671,6 +1729,17 @@
               (if (i32.gt_u (local.get $payload_size) (i32.sub (local.get $end) (local.get $ptr)))
                 (then (return (call $help_ld1_fail (local.get $topic_pos)))))
               (local.set $ptr (i32.add (local.get $ptr) (local.get $payload_size)))
+              (br $handled)))
+          (if (i32.or
+                (i32.or (i32.eq (local.get $command) (i32.const 0xEA))
+                        (i32.eq (local.get $command) (i32.const 0xEB)))
+                (i32.or (i32.eq (local.get $command) (i32.const 0xEE))
+                        (i32.eq (local.get $command) (i32.const 0xEF))))
+            (then
+              (if (i32.eqz (call $help_validate_external_hotspot_command
+                    (local.get $ptr) (local.get $end)))
+                (then (return (call $help_ld1_fail (local.get $topic_pos)))))
+              (local.set $ptr (global.get $help_ld1_next))
               (br $handled)))
           (if (i32.or
                 (i32.or
@@ -4274,7 +4343,15 @@
     (local $handle i32) (local $size i32)
     (local $temp_ga i32) (local $temp_wa i32)
     (local $read_ga i32) (local $read_wa i32) (local $ok i32)
+    (local $path_len i32) (local $path_ga i32) (local $path_copy i32)
     (if (i32.eqz (local.get $path_wa))
+      (then
+        (call $help_document_reset)
+        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $path_len (call $help_cstring_length_memory
+      (local.get $path_wa) (i32.const 1024)))
+    (if (i32.le_s (local.get $path_len) (i32.const 0))
       (then
         (call $help_document_reset)
         (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
@@ -4335,7 +4412,22 @@
         (if (i32.eqz (call $help_document_try_load_cnt_vfs (local.get $path_wa)))
           (then
             (call $help_document_release_storage)
-            (return (i32.const 0))))))
+            (return (i32.const 0))))
+        ;; Retain the exact bounded VFS path that produced this document. It
+        ;; is the canonical base for relative external-hotspot resolution.
+        (local.set $path_ga
+          (call $heap_alloc (i32.add (local.get $path_len) (i32.const 1))))
+        (if (i32.eqz (local.get $path_ga))
+          (then
+            (call $help_document_release_storage)
+            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
+            (return (i32.const 0))))
+        (local.set $path_copy (call $g2w (local.get $path_ga)))
+        (memory.copy (local.get $path_copy) (local.get $path_wa)
+          (i32.add (local.get $path_len) (i32.const 1)))
+        (global.set $help_doc_path_ga (local.get $path_ga))
+        (global.set $help_doc_path_wa (local.get $path_copy))
+        (global.set $help_doc_path_len (local.get $path_len))))
     (local.get $ok))
 
   ;; Unified API engine. The A/W boundary owns normalization; path_wa and any
@@ -4352,6 +4444,9 @@
           (local.get $caller) (local.get $command) (local.get $data)))))
     (if (local.get $path_wa)
       (then
+        ;; An explicit WinHelp API file replacement starts a fresh document
+        ;; session; only in-document external links retain Back snapshots.
+        (call $help_document_snapshot_release_all)
         (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
           (then
             (global.set $help_session_last_command (local.get $command))

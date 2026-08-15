@@ -837,6 +837,7 @@
         ;; Finish the synchronous path load before allocating command-string
         ;; storage. Document replacement releases prior heap blocks and must
         ;; not overlap either normalization buffer's lifetime.
+        (call $help_document_snapshot_release_all)
         (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
           (then
             (call $heap_free (local.get $path_copy_ga))
@@ -956,6 +957,16 @@
   ;; viewer/session/history state that preceded popup activation.
   (func $help_popup_close
     (call $help_popup_destroy_windows)
+    (block $documents_restored (loop $restore_documents
+      (br_if $documents_restored
+        (i32.or
+          (i32.lt_s (global.get $help_popup_external_snapshot_base) (i32.const 0))
+          (i32.le_u (global.get $help_document_snapshot_count)
+            (global.get $help_popup_external_snapshot_base))))
+      (br_if $documents_restored
+        (i32.eqz (call $help_document_snapshot_restore_top)))
+      (br $restore_documents)))
+    (global.set $help_popup_external_snapshot_base (i32.const -1))
     (call $help_popup_restore_main_view)
     (if (global.get $help_popup_saved_session_valid)
       (then
@@ -984,6 +995,7 @@
       (then
         (global.set $help_cur_topic (i32.const 0))
         (global.set $help_scroll_y (i32.const 0))))
+    (global.set $help_popup_external_snapshot_base (i32.const -1))
     (global.set $help_popup_saved_session_valid (i32.const 0)))
 
   ;; Used by HELP_QUIT/document teardown: reunite both owned views so the
@@ -994,6 +1006,7 @@
       (then
         (call $help_popup_destroy_windows)
         (call $help_popup_restore_main_view)))
+    (global.set $help_popup_external_snapshot_base (i32.const -1))
     (global.set $help_popup_saved_session_valid (i32.const 0)))
 
   (func $help_popup_present
@@ -1275,6 +1288,7 @@
         (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
           (then (call $help_popup_close) (return (i32.const 0))))
         (call $help_destroy)
+        (call $help_document_snapshot_release_all)
         (call $help_document_reset)
         (return (i32.const 0))))
     ;; Default: return 0
@@ -1307,8 +1321,19 @@
   ;; Go back in navigation history
   (func $help_go_back
     (local $prev i32) (local $stack_ptr i32) (local $record i32)
+    (local $restored_scroll i32)
     (if (i32.eqz (global.get $help_back_count))
-      (then (return)))
+      (then
+        (if (i32.eqz (global.get $help_document_snapshot_count))
+          (then (return)))
+        (if (i32.eqz (call $help_document_snapshot_restore_top))
+          (then (return)))
+        (local.set $restored_scroll (global.get $help_scroll_y))
+        (if (call $help_prepare_wat_view)
+          (then
+            (global.set $help_scroll_y (local.get $restored_scroll))
+            (call $invalidate_hwnd (global.get $help_hwnd))))
+        (return)))
     ;; Pop from back stack
     (global.set $help_back_count (i32.sub (global.get $help_back_count) (i32.const 1)))
     (local.set $stack_ptr (i32.add (global.get $help_back_stack)
