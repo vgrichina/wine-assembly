@@ -9488,9 +9488,19 @@
     (i32.store offset=24 (local.get $wa) (i32.const -1))
     ;; rcNormalPosition = current window rectangle. Child placement uses
     ;; parent-client coordinates; top-level placement uses screen coordinates.
+    ;;
+    ;; Both operands are coerced to 0/1 first. `i32.and` is bitwise, and
+    ;; WS_CHILD (0x40000000) shares no bit with a real hwnd like 0x10001, so
+    ;; ANDing them raw is always 0 - every child then reported screen
+    ;; coordinates. An app that reads one control's placement and lays its
+    ;; siblings out against it moves them by the parent's whole non-client
+    ;; offset: fontview.exe reads Done at y=31 instead of y=8 and drops its
+    ;; other three buttons a row lower than the row Win98 puts them in.
     (if (i32.and
-          (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
-          (call $wnd_get_parent (local.get $arg0)))
+          (i32.ne
+            (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
+            (i32.const 0))
+          (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0)))
       (then
         (local.set $x (call $ctrl_get_x_s (local.get $arg0)))
         (local.set $y (call $ctrl_get_y_s (local.get $arg0)))

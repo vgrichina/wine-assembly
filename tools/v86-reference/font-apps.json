@@ -23,6 +23,18 @@
       "waitMs": 3000,
       "files": []
     },
+    "fontview-truetype": {
+      "title": "Windows 98 Font Viewer on a TrueType face",
+      "launch": "fontview C:\\WINDOWS\\FONTS\\ARIAL.TTF",
+      "waitMs": 5000,
+      "files": []
+    },
+    "fontview-bitmap": {
+      "title": "Windows 98 Font Viewer on a bitmap face",
+      "launch": "fontview C:\\WINDOWS\\FONTS\\VGASYS.FON",
+      "waitMs": 5000,
+      "files": []
+    },
     "stock-font-ascii": {
       "title": "Windows 98 native stock-font ASCII",
       "probeSource": "tools/v86-reference/probes/font-inventory.c",
