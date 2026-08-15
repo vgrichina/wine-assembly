@@ -7136,8 +7136,15 @@
     (local.set $wh (call $gdi_window_surface_dimensions (local.get $owner)))
     (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
-    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
-      (then (return (i32.const 0))))
+    ;; A window with no area still has a device context in Win32 — drawing
+    ;; through it is simply clipped away. Refusing one breaks the ordinary
+    ;; startup shape of creating a zero-size window, measuring text through
+    ;; its DC, and sizing the window from those metrics; an app that reads the
+    ;; NULL as fatal destroys itself before it ever paints. Give it a 1x1
+    ;; surface instead. The size-change path below reallocates as soon as the
+    ;; window gains real dimensions.
+    (if (i32.eqz (local.get $w)) (then (local.set $w (i32.const 1))))
+    (if (i32.eqz (local.get $h)) (then (local.set $h (i32.const 1))))
     (local.set $p (call $gdi_window_surface_record (local.get $owner) (i32.const 1)))
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
     (local.set $id (i32.load offset=4 (local.get $p)))
