@@ -2,8 +2,18 @@
 
 ## Status
 
-Design started 2026-08-14. Assets obtained and committed; no runtime code
-written yet. The end state is **no Canvas text at all**: WAT parses TrueType
+Design started 2026-08-14. Assets are committed, `fonts/substitutions.json` is
+written, and `src/10c-truetype.wat` parses font tables and derives metrics:
+table directory, `head`/`hhea`/`maxp`/`OS/2`/`post`, `hmtx` advances and
+bearings, `cmap` formats 0/4/6 with the symbol-face `0xF000` bias, CP1252, and
+the full pixel `TEXTMETRIC` derivation. What is still missing from milestone 1
+is the *wiring*: a font arena to hold file bytes, a face-selection path from
+`CreateFontIndirectA`, and the public `GetTextExtentPoint32` /
+`GetCharWidth32` / `GetTextMetrics` handlers reading from it instead of from
+Canvas. The parser is exercised only by `test/test-wat-truetype-metrics.js`
+until that lands.
+
+The end state is **no Canvas text at all**: WAT parses TrueType
 files, owns metrics, and rasterizes glyphs onto the canonical GDI surface, the
 same way it already does for `.FON` strikes. JavaScript keeps only the
 canonical-surface-to-screen blit, which is presentation, not logic.
@@ -392,12 +402,18 @@ Ordered so that each one is independently useful and the Canvas dependency
 shrinks monotonically.
 
 0. **Assets and manifest** — fonts vendored with pinned hashes and licenses
-   (done, commit `3ebdf08`); `fonts/substitutions.json` written; `fonts/README.md`
-   and `fonts/wine/UPSTREAM.md` updated (done).
+   (done, commit `3ebdf08`); `fonts/substitutions.json` written and checked by
+   `test/test-font-substitutions.js` (done); `fonts/README.md` and
+   `fonts/wine/UPSTREAM.md` updated (done).
 
 1. **Metrics in WAT — no rasterizer.** Parse `head`/`hhea`/`hmtx`/`maxp`/`cmap`/
    `OS/2`, add the codepage tables, and serve `GetTextExtentPoint32`,
    `GetCharWidth32`, `GetTextMetrics`, and `GetTextFace` from the font file.
+   Parsing, CP1252, and `TEXTMETRIC` derivation are done in
+   `src/10c-truetype.wat`; the arena, face selection, and the public handlers
+   are not. CP437 is deliberately left out — the faces that need it are bitmap
+   strikes on the `.FON` path, and no scalable face is requested with
+   `OEM_CHARSET` yet.
    **Start here regardless of whether the rasterizer is ever built.** It is
    independent of rendering, it is exact rather than approximate, it makes
    Liberation's metric compatibility real instead of aspirational, and it fixes
@@ -459,6 +475,7 @@ Each slice adds its own test and re-runs these:
 ```sh
 bash tools/build.sh
 node test/test-wat-truetype-metrics.js
+node test/test-font-substitutions.js
 node test/test-generated-wine-fonts.js
 node test/test-wat-gdi-bitmap-text-compat.js
 node test/run.js --exe=test/binaries/notepad.exe --max-batches=40

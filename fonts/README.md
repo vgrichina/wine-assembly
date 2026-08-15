@@ -76,6 +76,14 @@ Vendored for the work described in
 [`../docs/scalable-font-design.md`](../docs/scalable-font-design.md). No runtime
 code consumes these yet.
 
+`substitutions.json` records which open face stands in for each Win98 face,
+with its tier, license, per-style files, and the **private** family name it
+registers under. That name is never the Win98 name: a family registered as
+`Arial` lets the host's own Arial win the cascade on machines that have it, and
+lose on machines that do not, which is the non-determinism the substitution
+exists to remove. `test/test-font-substitutions.js` checks every listed file is
+present and is a `glyf` TrueType rather than CFF.
+
 Liberation 2.1.5 is metric-compatible with the Win98 core scalable faces — same
 advance widths, different outlines — so guest layout math stays correct:
 

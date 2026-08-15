@@ -1,0 +1,153 @@
+{
+  "comment": [
+    "Which open font stands in for each Windows 98 scalable face.",
+    "Milestone 0 of docs/scalable-font-design.md. This file is the single",
+    "source that the browser @font-face block, the Node FontLibrary.use",
+    "registration, and the WAT EnumFontFamiliesEx inventory all read, so they",
+    "cannot drift apart. Microsoft font binaries are never committed.",
+    "cssFamily is deliberately private and never the Win98 name: registering a",
+    "family as 'Arial' invites the host's own Arial to win the cascade on some",
+    "machines and lose on others, which is the exact non-determinism this",
+    "effort removes. The names disappear entirely once the WAT rasterizer",
+    "lands and the hosts stop being told these fonts exist."
+  ],
+  "tiers": {
+    "1": "Metric-compatible: identical advance widths, different outlines. Guest layout math is exactly right.",
+    "2": "Wine's own Win9x substitute, already a project dependency.",
+    "3": "Visual approximation with different metrics, documented as such."
+  },
+  "faces": [
+    {
+      "win98": "Arial",
+      "tier": 1,
+      "substitute": "Liberation Sans",
+      "cssFamily": "WA Arial",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSans-Regular.ttf",
+        "bold": "liberation/LiberationSans-Bold.ttf",
+        "italic": "liberation/LiberationSans-Italic.ttf",
+        "boldItalic": "liberation/LiberationSans-BoldItalic.ttf"
+      }
+    },
+    {
+      "win98": "Times New Roman",
+      "tier": 1,
+      "substitute": "Liberation Serif",
+      "cssFamily": "WA Times New Roman",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSerif-Regular.ttf",
+        "bold": "liberation/LiberationSerif-Bold.ttf",
+        "italic": "liberation/LiberationSerif-Italic.ttf",
+        "boldItalic": "liberation/LiberationSerif-BoldItalic.ttf"
+      }
+    },
+    {
+      "win98": "Courier New",
+      "tier": 1,
+      "substitute": "Liberation Mono",
+      "cssFamily": "WA Courier New",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationMono-Regular.ttf",
+        "bold": "liberation/LiberationMono-Bold.ttf",
+        "italic": "liberation/LiberationMono-Italic.ttf",
+        "boldItalic": "liberation/LiberationMono-BoldItalic.ttf"
+      }
+    },
+    {
+      "win98": "Tahoma",
+      "tier": 2,
+      "substitute": "Wine Tahoma",
+      "cssFamily": "WA Tahoma",
+      "license": "LGPL-2.1-or-later",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "wine/tahoma.ttf",
+        "bold": "wine/tahomabd.ttf"
+      },
+      "embeddedStrikes": {
+        "regular": [8, 9, 10, 11, 12, 13, 15, 16]
+      },
+      "note": "The Win98 shell and tooltip font. Its embedded monochrome EBDT strikes cover exactly the ppem range dialogs use, so at UI sizes Tahoma belongs on the existing pixel-exact .FON blit rather than on any rasterizer."
+    },
+    {
+      "win98": "Small Fonts",
+      "tier": 2,
+      "substitute": "Wine Small Fonts",
+      "cssFamily": "WA Small Fonts",
+      "license": "LGPL-2.1-or-later",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "wine/small_fonts.ttf"
+      },
+      "embeddedStrikes": {
+        "regular": [11]
+      }
+    },
+    {
+      "win98": "Marlett",
+      "tier": 2,
+      "substitute": "Wine Marlett",
+      "cssFamily": "WA Marlett",
+      "license": "LGPL-2.1-or-later",
+      "charset": "SYMBOL",
+      "styles": {
+        "regular": "wine/marlett.ttf"
+      },
+      "note": "Hidden face carrying the title-bar and checkbox glyphs. 39 glyphs covers its full set."
+    },
+    {
+      "win98": "Symbol",
+      "tier": 2,
+      "substitute": "Wine Symbol",
+      "cssFamily": "WA Symbol",
+      "license": "LGPL-2.1-or-later",
+      "charset": "SYMBOL",
+      "styles": {
+        "regular": "wine/symbol.ttf"
+      }
+    },
+    {
+      "win98": "Wingdings",
+      "tier": 3,
+      "substitute": "Wine Wingdings",
+      "cssFamily": "WA Wingdings",
+      "license": "LGPL-2.1-or-later",
+      "charset": "SYMBOL",
+      "styles": {
+        "regular": "wine/wingding.ttf"
+      },
+      "note": "Wine drew only 53 of the ~220 Wingdings glyphs. A codepoint Wine never drew resolves to .notdef; this is a known hole, not a bug to hunt."
+    },
+    {
+      "win98": "Webdings",
+      "tier": 3,
+      "substitute": "Wine Webdings",
+      "cssFamily": "WA Webdings",
+      "license": "LGPL-2.1-or-later",
+      "charset": "SYMBOL",
+      "styles": {
+        "regular": "wine/webdings.ttf"
+      },
+      "note": "10 glyphs only. Severely partial; listed so a guest asking for the face gets a deterministic answer rather than a host font."
+    }
+  ],
+  "unsubstituted": {
+    "comment": [
+      "Win98 faces with no vendored substitute. Each is added only when a",
+      "corpus binary actually names it: an unused font in fonts/ is a licence",
+      "and payload liability, not a feature."
+    ],
+    "Verdana": "DejaVu Sans is the closest open option, with different metrics",
+    "Lucida Console": "DejaVu Sans Mono, different metrics",
+    "Lucida Sans Unicode": "DejaVu Sans, different metrics",
+    "Comic Sans MS": "Comic Relief is metric-compatible but GPL+FE; needs a licence review before vendoring",
+    "Impact": "Anton is a visual approximation only",
+    "Microsoft Sans Serif": "the outline form of MS Sans Serif, whose bitmap strikes are already served by MSSansSerif.fon"
+  }
+}

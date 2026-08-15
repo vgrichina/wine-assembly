@@ -56,6 +56,8 @@ UNIT=(
   test/test-wat-gdi-default-bitmap-font.js
   test/test-wat-gdi-font-enum.js
   test/test-wat-gdi-fixed-stock-font.js
+  test/test-wat-truetype-metrics.js
+  test/test-font-substitutions.js
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js

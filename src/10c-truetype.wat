@@ -430,6 +430,68 @@
     (call $tt_cmap_lookup_at (local.get $data) (local.get $size)
       (local.get $sub) (local.get $code)))
 
+  ;; ---- CP1252 -----------------------------------------------------------
+  ;;
+  ;; Guest text arrives as bytes, but `cmap` is keyed by Unicode, so an ANSI
+  ;; face needs a codepage hop in between. CP1252 is Latin-1 except for
+  ;; 0x80-0x9F, where Windows puts typographic punctuation instead of C1
+  ;; controls; the five codes Microsoft's table leaves undefined (0x81, 0x8D,
+  ;; 0x8F, 0x90, 0x9D) map to their C1 control identity, which is what
+  ;; MultiByteToWideChar does rather than failing the conversion.
+  ;;
+  ;; This is written as comparisons rather than a data segment on purpose:
+  ;; this layer owns no memory yet, and a 32-entry table that only high bytes
+  ;; ever reach is not worth an arena allocation to consult.
+  ;;
+  ;; OEM CP437 is deliberately absent. The faces that use it (Terminal) are
+  ;; bitmap strikes served by the .FON path, and no scalable face in the
+  ;; corpus is requested with OEM_CHARSET yet.
+
+  (func $tt_cp1252_to_unicode (param $byte i32) (result i32)
+    (if (i32.or (i32.lt_u (local.get $byte) (i32.const 0x80))
+          (i32.gt_u (local.get $byte) (i32.const 0x9F)))
+      (then (return (i32.and (local.get $byte) (i32.const 0xFF)))))
+    (if (i32.eq (local.get $byte) (i32.const 0x80)) (then (return (i32.const 0x20AC))))
+    (if (i32.eq (local.get $byte) (i32.const 0x82)) (then (return (i32.const 0x201A))))
+    (if (i32.eq (local.get $byte) (i32.const 0x83)) (then (return (i32.const 0x0192))))
+    (if (i32.eq (local.get $byte) (i32.const 0x84)) (then (return (i32.const 0x201E))))
+    (if (i32.eq (local.get $byte) (i32.const 0x85)) (then (return (i32.const 0x2026))))
+    (if (i32.eq (local.get $byte) (i32.const 0x86)) (then (return (i32.const 0x2020))))
+    (if (i32.eq (local.get $byte) (i32.const 0x87)) (then (return (i32.const 0x2021))))
+    (if (i32.eq (local.get $byte) (i32.const 0x88)) (then (return (i32.const 0x02C6))))
+    (if (i32.eq (local.get $byte) (i32.const 0x89)) (then (return (i32.const 0x2030))))
+    (if (i32.eq (local.get $byte) (i32.const 0x8A)) (then (return (i32.const 0x0160))))
+    (if (i32.eq (local.get $byte) (i32.const 0x8B)) (then (return (i32.const 0x2039))))
+    (if (i32.eq (local.get $byte) (i32.const 0x8C)) (then (return (i32.const 0x0152))))
+    (if (i32.eq (local.get $byte) (i32.const 0x8E)) (then (return (i32.const 0x017D))))
+    (if (i32.eq (local.get $byte) (i32.const 0x91)) (then (return (i32.const 0x2018))))
+    (if (i32.eq (local.get $byte) (i32.const 0x92)) (then (return (i32.const 0x2019))))
+    (if (i32.eq (local.get $byte) (i32.const 0x93)) (then (return (i32.const 0x201C))))
+    (if (i32.eq (local.get $byte) (i32.const 0x94)) (then (return (i32.const 0x201D))))
+    (if (i32.eq (local.get $byte) (i32.const 0x95)) (then (return (i32.const 0x2022))))
+    (if (i32.eq (local.get $byte) (i32.const 0x96)) (then (return (i32.const 0x2013))))
+    (if (i32.eq (local.get $byte) (i32.const 0x97)) (then (return (i32.const 0x2014))))
+    (if (i32.eq (local.get $byte) (i32.const 0x98)) (then (return (i32.const 0x02DC))))
+    (if (i32.eq (local.get $byte) (i32.const 0x99)) (then (return (i32.const 0x2122))))
+    (if (i32.eq (local.get $byte) (i32.const 0x9A)) (then (return (i32.const 0x0161))))
+    (if (i32.eq (local.get $byte) (i32.const 0x9B)) (then (return (i32.const 0x203A))))
+    (if (i32.eq (local.get $byte) (i32.const 0x9C)) (then (return (i32.const 0x0153))))
+    (if (i32.eq (local.get $byte) (i32.const 0x9E)) (then (return (i32.const 0x017E))))
+    (if (i32.eq (local.get $byte) (i32.const 0x9F)) (then (return (i32.const 0x0178))))
+    ;; 0x81, 0x8D, 0x8F, 0x90, 0x9D: undefined in CP1252, identity in Windows.
+    (local.get $byte))
+
+  ;; Glyph for a guest ANSI byte. Symbol faces are addressed by byte through
+  ;; the 0xF000 block and must not take the codepage hop: running 0x93 through
+  ;; CP1252 would ask Wingdings for a left double quote and get .notdef.
+  (func $tt_ansi_glyph_index (param $data i32) (param $size i32) (param $byte i32)
+        (result i32)
+    (if (call $tt_cmap_is_symbol (local.get $data) (local.get $size))
+      (then (return (call $tt_glyph_index (local.get $data) (local.get $size)
+        (i32.and (local.get $byte) (i32.const 0xFF))))))
+    (call $tt_glyph_index (local.get $data) (local.get $size)
+      (call $tt_cp1252_to_unicode (local.get $byte))))
+
   ;; ---- scaling ----------------------------------------------------------
   ;;
   ;; Font units scale to pixels through the same signed round-half-up helper
@@ -460,6 +522,14 @@
       (call $tt_glyph_index (local.get $data) (local.get $size) (local.get $code))
       (local.get $ppem)))
 
+  ;; Advance for a guest ANSI byte, the form GetCharWidth32A asks for.
+  (func $tt_ansi_advance_px (param $data i32) (param $size i32) (param $byte i32)
+        (param $ppem i32) (result i32)
+    (call $tt_advance_px (local.get $data) (local.get $size)
+      (call $tt_ansi_glyph_index (local.get $data) (local.get $size)
+        (local.get $byte))
+      (local.get $ppem)))
+
   ;; Sum advances for a byte string. Widths are accumulated in font units and
   ;; scaled once at the end: scaling per character would round every advance
   ;; independently and drift several pixels across a long run.
@@ -470,12 +540,170 @@
       (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
       (local.set $total (i32.add (local.get $total)
         (call $tt_advance_fu (local.get $data) (local.get $size)
-          (call $tt_glyph_index (local.get $data) (local.get $size)
+          (call $tt_ansi_glyph_index (local.get $data) (local.get $size)
             (i32.load8_u (i32.add (local.get $text) (local.get $index)))))))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
     (call $tt_scale (local.get $total) (local.get $ppem)
       (call $tt_units_per_em (local.get $data) (local.get $size))))
+
+  ;; ---- TEXTMETRIC -------------------------------------------------------
+  ;;
+  ;; GDI reports metrics in pixels, derived from the font tables at the ppem
+  ;; the guest asked for. The derivations below follow what GDI does rather
+  ;; than what the OpenType specification recommends for new typography:
+  ;; tmAscent/tmDescent come from OS/2 usWinAscent/usWinDescent, not from the
+  ;; sTypo pair or hhea. Choosing sTypo here would look more "correct" and
+  ;; would shift every baseline in every dialog.
+
+  (func $tt_hhea_u16 (param $data i32) (param $size i32) (param $field i32)
+        (result i32)
+    (local $hhea i32)
+    (local.set $hhea (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x68686561)))
+    (if (i32.eqz (local.get $hhea)) (then (return (i32.const 0))))
+    (call $tt_u16 (local.get $data) (local.get $size)
+      (i32.add (local.get $hhea) (local.get $field))))
+
+  ;; `post` isFixedPitch is the authority on pitch, not a width comparison:
+  ;; a monospaced face with one wide glyph is still monospaced to GDI.
+  (func $tt_is_fixed_pitch (param $data i32) (param $size i32) (result i32)
+    (local $post i32)
+    (local.set $post (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x706F7374)))
+    (if (i32.eqz (local.get $post)) (then (return (i32.const 0))))
+    (i32.ne (call $tt_u32 (local.get $data) (local.get $size)
+        (i32.add (local.get $post) (i32.const 12)))
+      (i32.const 0)))
+
+  ;; LOGFONT.lfHeight is signed with two meanings. Negative is the em size in
+  ;; pixels, which is ppem directly. Positive is the *cell* height, so ppem is
+  ;; recovered by inverting the ascent+descent scaling; treating a positive
+  ;; lfHeight as ppem is the classic way to render text ~20% too large.
+  (func $tt_ppem_from_lfheight (param $data i32) (param $size i32)
+        (param $lf_height i32) (result i32)
+    (local $cell i32) (local $ppem i32)
+    (if (i32.lt_s (local.get $lf_height) (i32.const 0))
+      (then (return (i32.sub (i32.const 0) (local.get $lf_height)))))
+    ;; lfHeight 0 means "any height"; GDI picks a device default, and 12 is
+    ;; the Win98 shell's default logical height.
+    (if (i32.eqz (local.get $lf_height)) (then (return (i32.const 12))))
+    (local.set $cell
+      (i32.add (call $tt_win_ascent (local.get $data) (local.get $size))
+        (call $tt_win_descent (local.get $data) (local.get $size))))
+    (if (i32.le_s (local.get $cell) (i32.const 0))
+      (then (return (local.get $lf_height))))
+    (local.set $ppem (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_s (local.get $lf_height))
+        (i64.extend_i32_s (call $tt_units_per_em (local.get $data) (local.get $size))))
+      (i64.extend_i32_s (local.get $cell))))
+    (if (i32.lt_s (local.get $ppem) (i32.const 1))
+      (then (return (i32.const 1))))
+    (local.get $ppem))
+
+  (func $tt_tm_ascent (param $data i32) (param $size i32) (param $ppem i32)
+        (result i32)
+    (call $tt_scale (call $tt_win_ascent (local.get $data) (local.get $size))
+      (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size))))
+
+  (func $tt_tm_descent (param $data i32) (param $size i32) (param $ppem i32)
+        (result i32)
+    (call $tt_scale (call $tt_win_descent (local.get $data) (local.get $size))
+      (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size))))
+
+  (func $tt_tm_height (param $data i32) (param $size i32) (param $ppem i32)
+        (result i32)
+    (i32.add (call $tt_tm_ascent (local.get $data) (local.get $size) (local.get $ppem))
+      (call $tt_tm_descent (local.get $data) (local.get $size) (local.get $ppem))))
+
+  ;; Internal leading is the part of the cell above the em box, so it is the
+  ;; cell height less the em size. It is what a guest subtracts to convert a
+  ;; point size into the negative lfHeight it passes back to CreateFont.
+  (func $tt_tm_internal_leading (param $data i32) (param $size i32)
+        (param $ppem i32) (result i32)
+    (local $leading i32)
+    (local.set $leading
+      (i32.sub (call $tt_tm_height (local.get $data) (local.get $size)
+          (local.get $ppem))
+        (local.get $ppem)))
+    (if (i32.lt_s (local.get $leading) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.get $leading))
+
+  ;; External leading is the line gap that hhea asks for beyond what the
+  ;; usWin cell already provides, clamped at zero: many faces have a usWin
+  ;; cell taller than the hhea one, and a negative gap would overlap lines.
+  (func $tt_tm_external_leading (param $data i32) (param $size i32)
+        (param $ppem i32) (result i32)
+    (local $gap i32)
+    (local.set $gap
+      (i32.sub (call $tt_line_gap (local.get $data) (local.get $size))
+        (i32.sub
+          (i32.add (call $tt_win_ascent (local.get $data) (local.get $size))
+            (call $tt_win_descent (local.get $data) (local.get $size)))
+          (i32.sub (call $tt_ascender (local.get $data) (local.get $size))
+            (call $tt_descender (local.get $data) (local.get $size))))))
+    (if (i32.le_s (local.get $gap) (i32.const 0))
+      (then (return (i32.const 0))))
+    (call $tt_scale (local.get $gap) (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size))))
+
+  ;; OS/2 xAvgCharWidth is the designer's own figure and is what GDI reports.
+  ;; Faces that leave it zero fall back to the advance of 'x', the historical
+  ;; definition the field replaced.
+  (func $tt_tm_ave_char_width (param $data i32) (param $size i32) (param $ppem i32)
+        (result i32)
+    (local $units i32)
+    (local.set $units
+      (call $tt_os2_s16 (local.get $data) (local.get $size) (i32.const 2)))
+    (if (i32.le_s (local.get $units) (i32.const 0))
+      (then (local.set $units (call $tt_advance_fu (local.get $data) (local.get $size)
+        (call $tt_glyph_index (local.get $data) (local.get $size)
+          (i32.const 0x78))))))
+    (call $tt_scale (local.get $units) (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size))))
+
+  (func $tt_tm_max_char_width (param $data i32) (param $size i32) (param $ppem i32)
+        (result i32)
+    (call $tt_scale (call $tt_hhea_u16 (local.get $data) (local.get $size)
+        (i32.const 10))
+      (local.get $ppem)
+      (call $tt_units_per_em (local.get $data) (local.get $size))))
+
+  (func $tt_tm_weight (param $data i32) (param $size i32) (result i32)
+    (local $weight i32)
+    (local.set $weight (call $tt_weight_class (local.get $data) (local.get $size)))
+    (if (i32.eqz (local.get $weight)) (then (return (i32.const 400))))
+    (local.get $weight))
+
+  ;; tmPitchAndFamily packs pitch in the low bits and family in the high
+  ;; nibble. Bit 0 is set for *variable* pitch, which reads backwards from its
+  ;; TMPF_FIXED_PITCH name and is a standing source of inverted conditions.
+  ;; TMPF_VECTOR|TMPF_TRUETYPE are both set: every face reaching this layer is
+  ;; a scalable outline by construction.
+  (func $tt_tm_pitch_and_family (param $data i32) (param $size i32) (result i32)
+    (local $value i32) (local $serif i32)
+    (local.set $value (i32.const 0x06))
+    (if (call $tt_is_fixed_pitch (local.get $data) (local.get $size))
+      (then (return (i32.or (local.get $value) (i32.const 0x30)))))
+    (local.set $value (i32.or (local.get $value) (i32.const 0x01)))
+    ;; PANOSE starts at OS/2 +32, so bSerifStyle is the low byte of that word.
+    ;; Serif classes are 2..10; anything else is treated as sans.
+    (local.set $serif (i32.and
+      (call $tt_os2_u16 (local.get $data) (local.get $size) (i32.const 32))
+      (i32.const 0xFF)))
+    (if (i32.and (i32.ge_u (local.get $serif) (i32.const 2))
+          (i32.le_u (local.get $serif) (i32.const 10)))
+      (then (return (i32.or (local.get $value) (i32.const 0x10)))))
+    (i32.or (local.get $value) (i32.const 0x20)))
+
+  (func $tt_tm_first_char (param $data i32) (param $size i32) (result i32)
+    (call $tt_os2_u16 (local.get $data) (local.get $size) (i32.const 64)))
+
+  (func $tt_tm_last_char (param $data i32) (param $size i32) (result i32)
+    (call $tt_os2_u16 (local.get $data) (local.get $size) (i32.const 66)))
 
   ;; ---- test surface -----------------------------------------------------
   ;;
@@ -559,3 +787,62 @@
         (param i32) (param i32) (result i32)
     (call $tt_text_width_px (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4)))
+
+  (func (export "test_tt_cp1252_to_unicode") (param i32) (result i32)
+    (call $tt_cp1252_to_unicode (local.get 0)))
+
+  (func (export "test_tt_ansi_glyph_index") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_ansi_glyph_index (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_ansi_advance_px") (param i32) (param i32) (param i32)
+        (param i32) (result i32)
+    (call $tt_ansi_advance_px (local.get 0) (local.get 1) (local.get 2)
+      (local.get 3)))
+
+  (func (export "test_tt_is_fixed_pitch") (param i32) (param i32) (result i32)
+    (call $tt_is_fixed_pitch (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_ppem_from_lfheight") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_ppem_from_lfheight (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_ascent") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_ascent (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_descent") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_descent (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_height") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_height (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_internal_leading") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_internal_leading (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_external_leading") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_external_leading (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_ave_char_width") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_ave_char_width (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_max_char_width") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_tm_max_char_width (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_tm_weight") (param i32) (param i32) (result i32)
+    (call $tt_tm_weight (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_tm_pitch_and_family") (param i32) (param i32) (result i32)
+    (call $tt_tm_pitch_and_family (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_tm_first_char") (param i32) (param i32) (result i32)
+    (call $tt_tm_first_char (local.get 0) (local.get 1)))
+
+  (func (export "test_tt_tm_last_char") (param i32) (param i32) (result i32)
+    (call $tt_tm_last_char (local.get 0) (local.get 1)))
