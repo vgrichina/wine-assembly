@@ -434,6 +434,36 @@ shrinks monotonically.
 
 8. **Tier 3 on demand** — add faces only when a corpus binary requests one.
 
+## Definition of done
+
+The milestones describe the work; these are the conditions that decide whether
+it is finished.
+
+1. `gdi_text_mask` in `lib/host-imports.js` is deleted.
+2. The `@font-face` blocks in `index.html` and the `registerFont` calls in
+   `lib/canvas-compat.js` are deleted for every GDI face. The host never learns
+   these fonts exist.
+3. `_buildCssFont` and its `faceMap` are gone. No code path names a host font.
+4. Every text-drawing binary in `test/binaries/` still renders, verified by a
+   CLI run and a PNG, with no new `crash_unimplemented`.
+5. The v86 metric comparison described above exists and passes.
+
+Milestone 1 is deliberately useful on its own. If the effort stops after
+metrics land in the public API, the layout, wrapping, and caret bugs are fixed
+and the remaining gap is appearance rather than correctness.
+
+## Verification
+
+Each slice adds its own test and re-runs these:
+
+```sh
+bash tools/build.sh
+node test/test-wat-truetype-metrics.js
+node test/test-generated-wine-fonts.js
+node test/test-wat-gdi-bitmap-text-compat.js
+node test/run.js --exe=test/binaries/notepad.exe --max-batches=40
+```
+
 ## Cost and risk
 
 Milestones 1 and 4 together are roughly 4000 lines of WAT, comparable to the
