@@ -341,7 +341,9 @@
             (i32.or (i32.eqz (local.get $height))
               (i32.or (i32.ne (i32.load16_u offset=12 (local.get $info)) (i32.const 1))
                 (i32.or (i32.and (i32.ne (local.get $compression) (i32.const 0))
-                      (i32.ne (local.get $compression) (i32.const 3)))
+                      (i32.and (i32.ne (local.get $compression) (i32.const 1))
+                        (i32.and (i32.ne (local.get $compression) (i32.const 2))
+                          (i32.ne (local.get $compression) (i32.const 3)))))
                   (i32.and
                     (i32.and (i32.ne (local.get $bpp) (i32.const 1))
                       (i32.and (i32.ne (local.get $bpp) (i32.const 4))
@@ -350,8 +352,21 @@
                       (i32.and (i32.ne (local.get $bpp) (i32.const 24))
                         (i32.ne (local.get $bpp) (i32.const 32))))))))))
       (then (return (i32.const 0))))
-    (if (i32.and (i32.eq (local.get $compression) (i32.const 3))
-          (i32.ne (local.get $bpp) (i32.const 16)))
+    ;; Same pairing rules the RT_BITMAP path enforces: BI_RLE8 is 8-bpp only,
+    ;; BI_RLE4 is 4-bpp only, BI_BITFIELDS is 16-bpp only here.
+    (if (i32.or
+          (i32.and (i32.eq (local.get $compression) (i32.const 1))
+            (i32.ne (local.get $bpp) (i32.const 8)))
+          (i32.or
+            (i32.and (i32.eq (local.get $compression) (i32.const 2))
+              (i32.ne (local.get $bpp) (i32.const 4)))
+            (i32.and (i32.eq (local.get $compression) (i32.const 3))
+              (i32.ne (local.get $bpp) (i32.const 16)))))
+      (then (return (i32.const 0))))
+    ;; Win32 does not define a top-down compressed DIB.
+    (if (i32.and (i32.lt_s (local.get $height) (i32.const 0))
+          (i32.or (i32.eq (local.get $compression) (i32.const 1))
+            (i32.eq (local.get $compression) (i32.const 2))))
       (then (return (i32.const 0))))
     (local.set $top_down (i32.lt_s (local.get $height) (i32.const 0)))
     (if (local.get $top_down)
@@ -397,6 +412,16 @@
     (i32.store offset=32 (local.get $plan) (i32.wrap_i64 (local.get $image_size)))
     (i32.store offset=36 (local.get $plan) (local.get $header_size))
     (i32.store offset=40 (local.get $plan) (local.get $compression))
+    ;; A compressed DIB arrives as a bare pointer here, with no surrounding
+    ;; buffer to bound it — biSizeImage is the only length available, and Win32
+    ;; requires it to be set for BI_RLE8/BI_RLE4. Without it the decoder has no
+    ;; end to stop at, so refuse rather than read past the caller's data.
+    (if (i32.or (i32.eq (local.get $compression) (i32.const 1))
+          (i32.eq (local.get $compression) (i32.const 2)))
+      (then
+        (if (i32.eqz (i32.load offset=20 (local.get $info)))
+          (then (return (i32.const 0))))
+        (i32.store offset=44 (local.get $plan) (i32.load offset=20 (local.get $info)))))
     (i32.const 1))
 
   ;; Store one palette index into canonical packed DIB storage. RLE streams

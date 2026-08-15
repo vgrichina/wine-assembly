@@ -29,6 +29,7 @@ UNIT=(
   test/test-atom-table.js
   test/test-menu-insert.js
   test/test-sscanf.js
+  test/test-wat-dib-rle.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
   test/test-midi-mci.js

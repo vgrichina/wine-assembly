@@ -9,12 +9,11 @@
 ### Pure GDI
 | Screensaver | /s Visuals | Notes |
 |-------------|-----------|-------|
-| PEANUTS / CATHY | **Regressed to blank** | Rendered until 78d7289 — see Task 0 |
-| DOONBURY | Renders | Sprite compositing fixed |
-| FOXTROT | **Regressed to blank** | Was white silhouettes (Task 1), now flat fill — see Task 0 |
-| GA_SAVER | **Regressed to blank** | Rendered Garfield/Odie on pogo sticks until 78d7289 — see Task 0 |
+| PEANUTS / CATHY / DOONBURY | Renders | Sprite compositing fixed |
+| FOXTROT | Renders | Was white silhouettes; recheck against Task 1 |
+| GA_SAVER | Renders | Garfield/Odie on pogo sticks |
 | CITYSCAP | Blank | Spins in GetMessageA, render fn never runs (Task 2) |
-| PHODISC | Desktop teal only | Asset-load path missing (Task 2) |
+| PHODISC | Renders | Was blank for the RLE reason below, not a missing asset path |
 
 ### MFC42-based
 | Screensaver | /s Visuals | Notes |
@@ -39,53 +38,40 @@ ARCHITEC / FALLINGL / GEOMETRY / JAZZ / OASAVER / ROCKROLL / SCIFI: Config OK; `
 
 ## Open Tasks
 
-### 0. GDI-bridge regression blanked four GDI savers (HIGH)
+### 0. RLE-compressed DIBs (FIXED 2026-08-15)
 
-2026-08-15: GA_SAVER, PEANUTS, CATHY and FOXTROT all render a flat fill and
-nothing else. They are not "never worked" — GA_SAVER still draws the
-Garfield/Odie pogo-stick frame at `72bacf9` (25,276-byte PNG against 2,061
-today).
+GA_SAVER, PEANUTS, CATHY, FOXTROT and PHODISC all rendered a flat fill and
+nothing else. Bisecting the 546 commits since this doc was written landed on
+**78d7289 "Enforce minimal JavaScript GDI bridge"** (reported by `git bisect`
+together with its build fixup **48a468f**, since 78d7289 does not build
+alone). That commit deleted ~3,000 lines from `lib/host-imports.js`,
+including the RLE4/RLE8 decoding `lib/dib.js` used to provide.
 
-Bisected across the 546 commits since this doc was written. First bad commit
-is **78d7289 "Enforce minimal JavaScript GDI bridge"**, which deleted ~3,000
-lines from `lib/host-imports.js`. `git bisect` reports it together with
-**48a468f "Fix WAT indices for interleaved imports"** because 78d7289 alone
-does not build; 48a468f is its fixup, and the commit before the pair
-(72bacf9) is good.
+Root cause: `$gdi_bitmap_plan_info` — the `CreateDIBitmap` entry point —
+accepted only `BI_RGB` and `BI_BITFIELDS`. These savers store their sprite
+sheets as `BI_RLE8` (GA_SAVER's is a 308x200 8-bpp sheet with
+`biCompression=1`), so `CreateDIBitmap` returned NULL, the following
+`SelectObject(hdc, NULL)` failed, and the guest's whole mask-blit block —
+`BitBlt` ROP `0x008800C6` (SRCAND mask) plus ROP `0x00EE0086` (SRCPAINT
+colour) — was skipped. The blank screen looked like a guest branching bug
+right up until the NULL handle turned up.
 
-Reproduce either side with:
+The WAT side already had everything else: `$gdi_bitmap_decode_rle` decodes
+both RLE forms and `$gdi_bitmap_create_owned` already dispatched on the
+plan's compression field for RT_BITMAP resources. Only the `CreateDIBitmap`
+plan refused the format and never recorded the encoded length.
 
-```
-node test/run.js --exe=test/binaries/screensavers/GA_SAVER.SCR --args=/s \
-  --png=/tmp/ga.png --max-batches=400 --batch-size=20000
-```
+PHODISC's "asset-load path missing" note in Task 2 was this same bug.
 
-**Symptom.** The guest stopped issuing its sprite mask-blit sequence. Each
-frame at 72bacf9 is `FillRect`, then `GetBkColor`/`SetBkColor`/
-`GetTextColor`/`SetTextColor`, two `CreateCompatibleDC`, two `SelectObject`,
-a `BitBlt` with ROP `0x008800C6` (SRCAND — the monochrome mask) and a
-`BitBlt` with ROP `0x00EE0086` (SRCPAINT — the colour art). Today the frame
-is `FillRect` straight to one 640x480 SRCCOPY of that flat fill: the whole
-mask-blit block is skipped by a branch *inside guest code*, so something the
-emulator reports back is steering a guest decision — this is not a blit bug.
-
-The branch is `cmp [ebp-0x8], ebx` / `jz 0x401e97` at `0x401cf7`, in the
-frame function entered at `0x401b76`. `[ebp-0x8]` is only set to 1 when the
-global at `0x40cad8` is still zero; that global reads 1 in both builds by end
-of run, so the divergence is in *when* it becomes 1, not its final value.
-
-Unclosed clue: the current build delivers an extra `WM_PAINT` (0x0F) after
-`WM_ERASEBKGND` that 72bacf9 never sent. The app passes it straight to
-`DefWindowProcA` without `BeginPaint`, so it never validates the update
-region.
+Covered by `test/test-wat-dib-rle.js`.
 
 ### 1. FOXTROT white silhouettes (LOW)
 
 Inconclusive after 2026-04-20 investigation: the 75×80 character sub-sprites in the 225×80 sheet have only white/gray/maroon palette entries in the source art. Either real Win98 used dynamic palette mapping we don't emulate, or the rendering is faithful and the original note misdiagnosed. Need a reference screenshot before further work.
 
-### 2. CITYSCAP / PHODISC blank screens (MEDIUM)
+### 2. CITYSCAP blank screen (MEDIUM)
 
-- **PHODISC:** DIB blit no longer wipes canvas (sparse-hash sync fix shipped) — now shows desktop teal but no photos. Asset-load path not traced yet.
+- **PHODISC:** resolved — its photos are RLE-compressed DIBs, see Task 0. No asset-load work was needed.
 - **CITYSCAP:** Spins in GetMessageA without ever calling SetTimer/InvalidateRect. Render fn never runs. Probably missing a startup message or a registry value that gates rendering.
 
 ### 3. d3rm MeshBuilder::Load / ProgressiveMesh path (REVALIDATE)
