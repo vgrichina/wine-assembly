@@ -330,6 +330,22 @@ function fileByteSize(file) {
     : Buffer.byteLength(file.content, 'utf-8');
 }
 
+// Shared by deploy and rollback so both stay under the same request ceiling.
+function splitIntoBatches(files) {
+  const batches = [];
+  let batch = [], batchSize = 0;
+  for (const f of files) {
+    const fSize = fileByteSize(f) + f.name.length + 500; // multipart overhead estimate
+    if (batchSize + fSize > BATCH_LIMIT && batch.length) {
+      batches.push(batch);
+      batch = []; batchSize = 0;
+    }
+    batch.push(f); batchSize += fSize;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
+
 async function fetchServerManifest() {
   const r = await fetch(API_BASE + '/apps/' + SUBDOMAIN + '/files');
   if (!r.ok) { console.error('Failed to fetch manifest:', r.status); return null; }
@@ -339,7 +355,84 @@ async function fetchServerManifest() {
   return map;
 }
 
+// Every upload batch becomes a version, so an interrupted deploy leaves the
+// live app serving a half-updated mixture with no way to tell from the outside.
+// The API has no rollback verb - what it has is the ability to read any past
+// version's files back - so a rollback is "fetch what that version served and
+// push it again", which lands as a new version rather than erasing history.
+async function listVersions(limit) {
+  const r = await fetch(API_BASE + '/apps/' + SUBDOMAIN + '/versions');
+  if (!r.ok) { console.error('Failed to list versions:', r.status); return null; }
+  const j = await r.json();
+  const versions = j.versions || [];
+  console.log('current version: ' + j.current_version);
+  for (const v of versions.slice(0, limit)) {
+    console.log('  ' + String(v.version).padStart(5) + '  ' + v.created_at +
+      (v.is_current ? '  <- current' : '  ') + '  ' + (v.message || ''));
+  }
+  return j;
+}
+
+async function rollback(version) {
+  console.log('Reading version ' + version + '...');
+  const listUrl = API_BASE + '/apps/' + SUBDOMAIN + '/files?version=' + version;
+  const r = await fetch(listUrl);
+  if (!r.ok) { console.error('Cannot read version ' + version + ':', r.status); return 1; }
+  const listing = await r.json();
+  const names = (listing.files || []).map(f => f.name);
+  if (!names.length) { console.error('Version ' + version + ' lists no files'); return 1; }
+  console.log('  ' + names.length + ' files');
+
+  const files = [];
+  for (const name of names) {
+    const url = API_BASE + '/apps/' + SUBDOMAIN + '/files/' +
+      name.split('/').map(encodeURIComponent).join('/') + '?version=' + version;
+    const fr = await fetch(url);
+    if (!fr.ok) { console.error('  FAILED to read ' + name + ': ' + fr.status); return 1; }
+    const buf = Buffer.from(await fr.arrayBuffer());
+    // Same split the upload uses, so a file goes back exactly as it came.
+    if (TEXT_EXTS.has(path.extname(name).toLowerCase())) {
+      files.push({ name, content: buf.toString('utf-8') });
+    } else {
+      files.push({ name, content: buf.toString('base64'), encoding: 'base64' });
+    }
+  }
+
+  const batches = splitIntoBatches(files);
+  console.log('Restoring as a new version in ' + batches.length + ' batches...');
+  for (let i = 0; i < batches.length; i += 1) {
+    const body = {
+      files: batches[i],
+      message: 'Roll back to version ' + version,
+      // Only the last batch flips the live pointer, so a rollback that dies
+      // partway leaves the app where it was instead of on a partial restore.
+      activate: i === batches.length - 1,
+    };
+    console.log('  batch ' + (i + 1) + '/' + batches.length + ' (' +
+      batches[i].length + ' files)...');
+    const res = await api('PUT', '/apps/' + SUBDOMAIN, body);
+    if (res.status !== 200) {
+      console.error('  batch failed: ' + res.status);
+      return 1;
+    }
+  }
+  console.log('Rolled back to version ' + version);
+  return 0;
+}
+
 async function deploy() {
+  const versionsArg = process.argv.includes('--versions');
+  const rollbackArg = process.argv.find(a => a.startsWith('--rollback='));
+  if (versionsArg) { await listVersions(30); return; }
+  if (rollbackArg) {
+    const target = Number(rollbackArg.slice('--rollback='.length));
+    if (!Number.isInteger(target) || target <= 0) {
+      console.error('--rollback=N needs a version number; see --versions');
+      process.exit(2);
+    }
+    process.exit(await rollback(target));
+  }
+
   const isUpdate = process.argv.includes('--update');
   const isFull = process.argv.includes('--full');
   const filesArg = process.argv.find(a => a.startsWith('--files='));
@@ -406,18 +499,7 @@ async function deploy() {
     description: 'x86 Windows 98 PE interpreter in WebAssembly. Runs real Win32 executables in the browser.',
   };
 
-  // Split all files into batches
-  const batches = [];
-  let batch = [], batchSize = 0;
-  for (const f of allFiles) {
-    const fSize = fileByteSize(f) + f.name.length + 500; // multipart overhead estimate
-    if (batchSize + fSize > BATCH_LIMIT && batch.length) {
-      batches.push(batch);
-      batch = []; batchSize = 0;
-    }
-    batch.push(f); batchSize += fSize;
-  }
-  if (batch.length) batches.push(batch);
+  const batches = splitIntoBatches(allFiles);
 
   console.log('Split into ' + batches.length + ' batches\n');
 
