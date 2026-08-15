@@ -149,7 +149,10 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
   { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
   { exe: 'test/binaries/win98-apps/welcome.exe', name: 'Welcome (98)' },
-  { exe: 'test/binaries/win98-apps/tour98.exe', name: 'Win98 Tour', knownBadRender: 'known broken visual' },
+  // The visual is not broken — tour98.exe is a launcher, and it correctly
+  // reports that Discover.exe (which ships on the Win98 CD, not with us) is
+  // missing. It cannot do its job, but it draws the right dialog for that.
+  { exe: 'test/binaries/win98-apps/tour98.exe', name: 'Win98 Tour' },
   // Renders correctly: a Win98 message box reporting that the PERF device
   // driver is absent, which is the truthful answer here — we emulate no VxD.
   { exe: 'test/binaries/win98-apps/sysmon.exe', name: 'System Monitor' },
@@ -204,7 +207,10 @@ const TEST_CASES = [
     maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40003'],
     forbidVisibleTitles: ['Get Started'] },
   { exe: 'test/binaries/wep32-community/Funpack/FourStones.exe', name: 'FourStones (TicTacDrop)' },
-  { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)', knownBadRender: 'requires DirectX 9' },
+  // Renders its own "This program requires DirectX 9 or later!" dialog
+  // correctly. The DX9 requirement is real and unmet; the drawing is not the
+  // problem, so gate the drawing.
+  { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)' },
   { exe: 'test/binaries/wep32-community/QBlackjack/QuickBlackjack.exe', name: 'QuickBlackjack' },
   { exe: 'test/binaries/wep32-community/Runenlegen/Runenlegen.exe', name: 'Runenlegen (Stones)',
     // Was an expected crash on the 0x67 address-size prefix. It now runs, but
