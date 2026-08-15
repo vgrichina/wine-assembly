@@ -103,6 +103,15 @@ const VLAN_WIRE = hasFlag('vlan-wire');
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
+const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
+const CLOCK_ORIGIN = Date.now();
+// --trace-sched[=N]: one compact line whenever what the threads are doing
+// changes, plus a heartbeat every N batches (default 5000) so a stall shows up
+// as a repeated line rather than as silence.
+// hasFlag is an exact match, so the =N form has to be accepted separately or
+// `--trace-sched=500` silently does nothing.
+const TRACE_SCHED = hasFlag('trace-sched') || getArg('trace-sched', null) !== null;
+const TRACE_SCHED_EVERY = parseInt(getArg('trace-sched', '5000'), 10) || 5000;
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 const PROFILE_HOST = getArg('profile-host', null); // --profile-host=fn1,fn2: print count + total time for host imports
 const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
@@ -327,6 +336,44 @@ function parseTraceEipRange(spec) {
 if (TRACE_EIP_RANGE !== null) {
   traceEipOn = true;
   parseTraceEipRange(TRACE_EIP_RANGE);
+}
+
+// One line describing what every thread is doing right now. Deliberately
+// terse: the value is in watching the pattern change — or fail to. A stalled
+// system prints the same short line, a healthy one churns.
+//
+//   [sched] b=48 M:run@0x4dd2af  T1:run@0x4465ed  T2:wait(0xe0005)@0x44b3f8
+//
+// The change signature omits addresses, so an EIP moving within the same state
+// does not print a line every batch.
+function describeSchedule(instance, threadManager) {
+  const hex = v => '0x' + ((v >>> 0).toString(16));
+  const stateOf = (e, thread) => {
+    if (thread && thread.state !== 'active') return thread.state;
+    if (thread && thread.suspendCount > 0) return 'susp';
+    const yr = e.get_yield_reason ? (e.get_yield_reason() | 0) : 0;
+    if (yr === 1) return `wait(${hex(e.get_wait_handle ? e.get_wait_handle() : 0)})`;
+    if (yr === 2) return 'exited';
+    if (yr === 7) return 'msgwait';
+    if (yr === 8) return 'netwait';
+    if (thread && thread.sleepUntil && Date.now() < thread.sleepUntil) return 'sleep';
+    return 'run';
+  };
+  const parts = [];
+  const sig = [];
+  const mainState = stateOf(instance.exports, null);
+  parts.push(`M:${mainState}@${hex(instance.exports.get_eip())}`);
+  sig.push(`M:${mainState}`);
+  if (threadManager && threadManager.threads) {
+    for (const [, t] of threadManager.threads) {
+      const e = t.instance ? t.instance.exports : null;
+      if (!e) continue;
+      const st = stateOf(e, t);
+      parts.push(`T${t.tid}:${st}@${hex(e.get_eip())}`);
+      sig.push(`T${t.tid}:${st}`);
+    }
+  }
+  return { text: parts.join('  '), sig: sig.join('|') };
 }
 
 async function main() {
@@ -971,6 +1018,9 @@ async function main() {
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
+    // The guest clock. --time-scale runs it faster than the wall clock, which
+    // separates "waiting for time to pass" from "doing work" in a slow run.
+    guestNowMs: () => CLOCK_ORIGIN + (Date.now() - CLOCK_ORIGIN) * TIME_SCALE,
     // The room segment, when this process was launched into one. Without it
     // the guest's sockets still work; the room is just this process alone.
     vlanWire: VLAN_WIRE ? new (require('../lib/vlan-wire').ProcessWire)(process) : null,
@@ -1776,6 +1826,7 @@ async function main() {
       traceHost: traceHostNames,
       vfs: ctx.vfs,  // share filesystem with main thread
       vlanWire: ctx.vlanWire,  // one wire per process, shared by every thread
+      guestNowMs: ctx.guestNowMs,  // one clock per process, not per thread
       exports: instance.exports,  // share main instance exports for g2w
       _audioOutFd: ctx._audioOutFd,  // share audio output fd
       sharedAudio: ctx.sharedAudio,  // share waveOut state across threads
@@ -2494,7 +2545,18 @@ async function main() {
     stepping = true;
   };
 
+  let lastSchedSig = null;
+  let lastSchedAt = 0;
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    if (TRACE_SCHED) {
+      const sched = describeSchedule(instance, threadManager);
+      if (sched.sig !== lastSchedSig || (batch - lastSchedAt) >= TRACE_SCHED_EVERY) {
+        const held = sched.sig === lastSchedSig ? ` (unchanged for ${batch - lastSchedAt} batches)` : '';
+        console.log(`[sched] b=${batch} ${sched.text}${held}`);
+        lastSchedSig = sched.sig;
+        lastSchedAt = batch;
+      }
+    }
     tickState.batch = batch;
     tickState.callsInBatch = 0;
     if (ctx.pumpAudioCompletions) ctx.pumpAudioCompletions();

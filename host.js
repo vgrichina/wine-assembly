@@ -1505,8 +1505,16 @@ class WineAssembly {
             // active workers enough total steps to use that budget.
             const audioHot = self._isAudioHot();
             const menuOpen = self._hasOpenMenu();
-            const threadBudget = windowCount
-              ? (recentInputWake ? 0 : activeStepsPerSlice)
+            // Recent input gives the main thread priority, so workers run on a
+            // reduced budget for a moment. A reduction rather than zero: an app
+            // whose main thread polls messages continuously keeps this flag
+            // permanently fresh, and a zero budget would then starve a worker
+            // for as long as that lasts. This is a hazard the shape of the code
+            // allows, not a diagnosed failure — Liquid War's apparent hang
+            // turned out to be its normal idle-at-menu loop, which the CLI
+            // enters identically.
+            const threadBudget = (windowCount && recentInputWake)
+              ? Math.max(2000, (activeStepsPerSlice / 8) | 0)
               : activeStepsPerSlice;
             if (threadBudget > 0) {
               if (windowCount && self.threadManager.runBudgeted) {

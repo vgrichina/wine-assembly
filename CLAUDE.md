@@ -34,6 +34,8 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace-net` | Every `vln/1` frame on the virtual LAN wire, decoded: `-> SYN 10.77.0.2:49152 -> 10.77.0.1:8035`. Pair with `--vlan-ip=A.B.C.D` (this process's room address) and `--vlan-wire` (join the segment offered by the parent process over child IPC). |
 | `--trace-host=fn1,fn2` | Generic wrap of any host import by name — logs raw args + return. Use when no category fits yet. Example: `--trace-host=gdi_draw_edge,wnd_set_state_ptr` |
 | `--trace` | Every decoded block's EIP |
+| `--trace-sched[=N]` | One compact line each time the *set of thread states* changes, plus a heartbeat every N batches (default 5000). Shows main + every worker as `M:run@0xEIP  T1:sleep  T2:wait(0xHANDLE)`. Reach for this first on any "it hangs" or "it's slow" report with threads involved: a stalled system prints the same line repeatedly, a healthy one churns. Doubles as a cheap sampling profiler — `--trace-sched=50` then histogram the `M:...@0x...` addresses. |
+| `--time-scale=N` | Run the guest clock N× the wall clock. Separates "the app is waiting for time to pass" from "the app is doing work": if a slow boot doesn't get faster at `--time-scale=10`, it is not timing-bound. |
 | `--trace-seh` | SEH chain operations |
 | `--break=0xADDR[,...]` / `--break-api=Name[,...]` | Pause emulator at address / API call |
 | `--break-once` | Don't re-arm WASM bp after first hit. Plus prints `bp_first_caller` (sticky `dbg_prev_eip` snapshot from the very first time `$eip == $bp_addr`) — recovers the true caller when the bp lands inside a tight self-loop that would otherwise overwrite `dbg_prev_eip` with the bp address itself. |
