@@ -331,6 +331,8 @@ function fileByteSize(file) {
 }
 
 // Shared by deploy and rollback so both stay under the same request ceiling.
+const BATCH_LIMIT = 950 * 1024; // stay under berrry.app body limit
+
 function splitIntoBatches(files) {
   const batches = [];
   let batch = [], batchSize = 0;
@@ -373,15 +375,34 @@ async function listVersions(limit) {
   return j;
 }
 
-async function rollback(version) {
+async function rollback(version, dryRun, full) {
   console.log('Reading version ' + version + '...');
   const listUrl = API_BASE + '/apps/' + SUBDOMAIN + '/files?version=' + version;
   const r = await fetch(listUrl);
   if (!r.ok) { console.error('Cannot read version ' + version + ':', r.status); return 1; }
   const listing = await r.json();
-  const names = (listing.files || []).map(f => f.name);
-  if (!names.length) { console.error('Version ' + version + ' lists no files'); return 1; }
-  console.log('  ' + names.length + ' files');
+  const target = listing.files || [];
+  if (!target.length) { console.error('Version ' + version + ' lists no files'); return 1; }
+  console.log('  ' + target.length + ' files in version ' + version);
+
+  // Restore only what actually differs, the same way --update only uploads
+  // what differs. A version can hold hundreds of files that no deploy has
+  // touched in months; re-pushing those is tens of MB of traffic to write
+  // back bytes that are already correct.
+  let names = target.map(f => f.name);
+  if (!full) {
+    const live = await fetchServerManifest();
+    if (live) {
+      names = target
+        .filter(f => live.get(f.name) !== f.hash)
+        .map(f => f.name);
+      console.log('  ' + names.length + ' differ from what is live now');
+    }
+  }
+  if (!names.length) {
+    console.log('Nothing to restore: the live app already matches version ' + version);
+    return 0;
+  }
 
   const files = [];
   for (const name of names) {
@@ -399,14 +420,47 @@ async function rollback(version) {
   }
 
   const batches = splitIntoBatches(files);
+  const bytes = files.reduce((n, f) => n + fileByteSize(f), 0);
+  console.log('  ' + files.length + ' files, ' + (bytes / 1024).toFixed(0) +
+    ' KB, ' + batches.length + ' batches');
+
+  // A rollback is a write to a live site, so it can be inspected first.
+  if (dryRun) {
+    const shown = files.slice(0, 12).map(f => f.name);
+    console.log('  would restore: ' + shown.join(', ') +
+      (files.length > shown.length ? ', +' + (files.length - shown.length) + ' more' : ''));
+    const current = await fetch(API_BASE + '/apps/' + SUBDOMAIN + '/files');
+    if (current.ok) {
+      const now = new Set(((await current.json()).files || []).map(f => f.name));
+      // Orphans are measured against everything the target version had, not
+      // against the subset being restored - the untouched files are already
+      // correct and are not orphans just because they need no write.
+      const everHad = new Set(target.map(f => f.name));
+      const orphans = [...now].filter(n => !everHad.has(n));
+      console.log('  live now: ' + now.size + ' files');
+      // The API merges rather than replaces and has no delete, so anything
+      // added after the target version stays on the server. Unreferenced by
+      // the restored index.html, but still fetchable.
+      console.log('  added since v' + version + ', would remain but be ' +
+        'unreferenced: ' + orphans.length +
+        (orphans.length ? ' (' + orphans.slice(0, 6).join(', ') +
+          (orphans.length > 6 ? ', ...' : '') + ')' : ''));
+    }
+    console.log('DRY RUN - nothing was written');
+    return 0;
+  }
+
   console.log('Restoring as a new version in ' + batches.length + ' batches...');
   for (let i = 0; i < batches.length; i += 1) {
+    // Every batch activates. It is tempting to activate only the last one so
+    // an interrupted rollback cannot leave a half-restore live - but each PUT
+    // branches from the *current* version, so a batch that does not activate
+    // is discarded by the next one, and only the final batch's files survive.
+    // That was tried here and restored 2 files out of 50.
     const body = {
       files: batches[i],
       message: 'Roll back to version ' + version,
-      // Only the last batch flips the live pointer, so a rollback that dies
-      // partway leaves the app where it was instead of on a partial restore.
-      activate: i === batches.length - 1,
+      activate: true,
     };
     console.log('  batch ' + (i + 1) + '/' + batches.length + ' (' +
       batches[i].length + ' files)...');
@@ -430,7 +484,8 @@ async function deploy() {
       console.error('--rollback=N needs a version number; see --versions');
       process.exit(2);
     }
-    process.exit(await rollback(target));
+    process.exit(await rollback(target, process.argv.includes('--dry-run'),
+      process.argv.includes('--full')));
   }
 
   const isUpdate = process.argv.includes('--update');
@@ -492,7 +547,6 @@ async function deploy() {
 
   console.log('Total files: ' + allFiles.length);
 
-  const BATCH_LIMIT = 950 * 1024; // stay under berrry.app body limit
   const appMeta = {
     subdomain: SUBDOMAIN,
     title: 'Wine-Assembly \u2014 Windows 98 Emulator',
