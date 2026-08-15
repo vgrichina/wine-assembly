@@ -8,13 +8,15 @@ including two-level B+trees, bounded LZ77 expansion, and referential
 validation. It also validates the complete `|TOPIC` link chain, binds canonical
 topics to their type-2 records, and decodes phrase-expanded raw `LinkData2`
 streams. Legacy `|Phrases` tables are supported in HC30, HC31, and MVB forms.
-The first bounded topic-IR layer now preserves every non-empty, NUL-delimited
-text string as a `TEXT` token followed by `END_TOPIC`, retaining offsets into
-the exact decoded bytes for later `LinkData1` command interleaving. Formatted
-`LinkData1` is now fully bounds-walked—including compressed values, tables,
-paragraph metrics, tabs, fonts, pictures, hotspots, and macros—before any
-document is published. Command-to-token interleaving and the runtime UI
-cutover remain.
+The bounded topic-IR layer now interleaves every non-empty, NUL-delimited text
+string with typed `PARAGRAPH`, `FONT`, `SPACE`, `LINE_BREAK`, `BITMAP`,
+`HOTSPOT`, and `MACRO` tokens and a terminal `END_TOPIC`. Formatted `LinkData1`
+is fully bounds-walked—including compressed values, tables, paragraph metrics,
+tabs, fonts, pictures, hotspots, and macros—before any document is published.
+Each character command must pair with exactly one `LinkData2` string. Stable
+copies of validated records and variable command payloads live in a separate
+caller-owned arena, never in the reusable TOPIC-block scratch buffer.
+Font/resource resolution, layout, and the runtime UI cutover remain.
 
 This document defines the replacement for the current split WinHelp path. The
 target implementation parses HLP and CNT data, interprets `WinHelpA/W`, owns
@@ -523,6 +525,18 @@ WAT-owned token stream:
 | `MACRO` | parsed safe macro opcode and operands |
 | `END_TOPIC` | terminal marker |
 
+Each token is a 16-byte record `{kind, payload_off, payload_len, value}`.
+`TEXT` offsets address the caller's exact decoded `LinkData2` arena. Structured
+offsets address a second caller-owned arena containing one exact copy of every
+referenced `LinkData1` record. A `PARAGRAPH` token references its complete
+record and identifies the paragraph index and record type in `value`; this
+keeps table widths and cell metadata available without duplicating common
+table bytes. `FONT` stores the parsed font index directly. `SPACE` and
+`LINE_BREAK` distinguish their source command in `value`. Bitmap, hotspot, and
+macro tokens reference the exact validated command subrange, so later resource
+resolution and the safe macro interpreter never depend on transient parser
+memory.
+
 ```mermaid
 flowchart LR
     TR[HLP topic records] --> DC[Bounded decoder]
@@ -826,16 +840,17 @@ raw-topic-length, and full-corpus hash coverage, supplemented by synthetic
 two-level trees and malformed semantic/topic inputs. The canonical phrase
 interface also covers uncompressed HC30 `|Phrases`, LZ77-compressed HC31
 tables, and the extended MVB layout, including legacy topic-reference spacing
-semantics and malformed-table cleanup. Formatted topic-token decoding is next.
-The initial token builder preflights its token arena, preserves the exact
-`LinkData2` string boundaries, rejects overlapping arenas, and emits a terminal
-`END_TOPIC`; it deliberately does not guess paragraph breaks from NUL bytes.
-Parsing and interleaving `LinkData1` paragraph/font/hotspot commands is next.
-The conditional `LinkData1` grammar is now validated in WAT for every display
-and table record, with exact real-corpus display/paragraph/table/command counts
-and synthetic coverage for all documented variable-size command payloads.
-Malformed or unknown commands fail before partial document publication.
-Emitting those validated commands into the token stream is next.
+semantics and malformed-table cleanup. The formatted token builder uses a
+two-pass transaction: it first computes exact token and payload requirements,
+rejects undersized, out-of-memory, or overlapping non-empty arenas without
+partial token/payload writes, then emits. It preserves exact `LinkData2`
+offsets, copies validated `LinkData1`, and requires one bounded NUL-terminated
+string for every character command instead of guessing paragraph breaks from
+NUL bytes. Exact real-corpus token-kind and payload-byte inventories cover all
+six checked-in help files, including table paragraphs; synthetic fixtures cover
+all documented variable payload families, arena aliasing/capacity, and
+command/string-count mismatch. Font and bitmap resource tables, keyword
+indexes, and layout remain before Phase 2 is complete.
 
 - Parse `|SYSTEM`, phrase tables, `|TOPIC`, `|TTLBTREE`, `|CONTEXT`, and
   `|CTXOMAP`.

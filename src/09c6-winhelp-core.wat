@@ -88,11 +88,21 @@
   (global $HELP_CONTEXT_SIZE i32 (i32.const 8))
   (global $HELP_TOPIC_HAS_CONTEXT i32 (i32.const 1))
 
-  ;; HelpTopicToken is 16 bytes. The initial topic-string layer emits TEXT
-  ;; and END; LinkData1 decoding will interleave the remaining format kinds.
-  ;;   kind:u32, text_off:u32, text_len:u32, value:u32.
+  ;; HelpTopicToken is 16 bytes:
+  ;;   kind:u32, payload_off:u32, payload_len:u32, value:u32.
+  ;; TEXT payload offsets address the caller's raw LinkData2 arena. Structured
+  ;; token payload offsets address the caller's copied LinkData1 arena.
   (global $HELP_TOPIC_TOKEN_SIZE i32 (i32.const 16))
   (global $HELP_TOKEN_TEXT i32 (i32.const 1))
+  (global $HELP_TOKEN_SPACE i32 (i32.const 2))
+  (global $HELP_TOKEN_LINE_BREAK i32 (i32.const 3))
+  (global $HELP_TOKEN_PARAGRAPH i32 (i32.const 4))
+  (global $HELP_TOKEN_FONT i32 (i32.const 5))
+  (global $HELP_TOKEN_COLOR i32 (i32.const 6))
+  (global $HELP_TOKEN_HOTSPOT_BEGIN i32 (i32.const 7))
+  (global $HELP_TOKEN_HOTSPOT_END i32 (i32.const 8))
+  (global $HELP_TOKEN_BITMAP i32 (i32.const 9))
+  (global $HELP_TOKEN_MACRO i32 (i32.const 10))
   (global $HELP_TOKEN_END_TOPIC i32 (i32.const 13))
 
   ;; HelpSlice is 16 bytes:

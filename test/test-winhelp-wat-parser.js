@@ -35,6 +35,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicBytes: 9453,
     rawTopicHash: '29a572c4051d6dfb19a2d308dfed6879dd5211a3ce03f5cdf1c48f0528a701dc',
     formatCounts: [69,69,0,556],
+    formattedKinds: { 2: 4, 3: 152, 4: 69, 5: 331 }, payloadBytes: 2150,
   },
   'freecell.hlp': {
     title: 'Free Cell', cnt: '', topics: [0,115,383,421],
@@ -46,6 +47,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicBytes: 421,
     rawTopicHash: '275ba9bdf872ccd38f6c147f7a15183ed7bbcb706b24add13af7389e0260889b',
     formatCounts: [3,3,0,9],
+    formattedKinds: { 3: 3, 4: 3, 5: 3 }, payloadBytes: 56,
   },
   'mspaint.hlp': {
     title: 'Paint Help', cnt: 'mspaint.cnt', topics: [0,38,187,313,376,437,514,700,884,1051,1229,1285,1341,1424,1511,1593,1661,1833,1933,1992,2056,2117,2182,2236,2377,2509,2580,2725,2763],
@@ -58,6 +60,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicBytes: 2762,
     rawTopicHash: 'e060a6a35b928d056701cea5e91da8acc209452f556a7d4cba35d687a487db67',
     formatCounts: [28,28,0,92],
+    formattedKinds: { 3: 28, 4: 28, 5: 35, 9: 1 }, payloadBytes: 544,
   },
   'notepad.hlp': {
     title: 'Notepad Help', cnt: '', topics: [0,495,994,1032],
@@ -69,6 +72,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicBytes: 1032,
     rawTopicHash: 'f41f6f28c5daac376b0888eadee88b4f5cc7bea26359e12fbdf733c892540478',
     formatCounts: [21,41,16,128],
+    formattedKinds: { 3: 34, 4: 41, 5: 53 }, payloadBytes: 1065,
   },
   'sol.hlp': {
     title: 'Solitaire Help', cnt: 'sol.cnt', topics: [0,155,331,1047,1273,1311],
@@ -80,6 +84,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicBytes: 1301,
     rawTopicHash: '56cf53aa2a1a4949b3cefd24ee2968665708858911f0c69ac667f3e6351a5350',
     formatCounts: [10,10,0,59],
+    formattedKinds: { 2: 10, 3: 15, 4: 10, 5: 14, 9: 10 }, payloadBytes: 320,
   },
   'wordpad.hlp': {
     title: 'WordPad Help', cnt: '', topics: [0,30,63,91,242,311,409,557,643,712,781,855,923,968,1175,1245,1314,1461,1495,1528,1563,1729,2204,2289,2386,2509,2657,2692,2730,2891,3054,32768,32914,33299,33689,33727],
@@ -92,6 +97,7 @@ const EXPECTED_SEMANTICS = {
     rawTopicBytes: 4046,
     rawTopicHash: '69bfb58fc671db239cc3bb8b36fe3c65419565c8a82d876b46d9f95ff9161c8b',
     formatCounts: [39,39,0,168],
+    formattedKinds: { 2: 10, 3: 48, 4: 39, 5: 63, 9: 8 }, payloadBytes: 891,
   },
 };
 
@@ -271,7 +277,7 @@ function encodeCompressedLong(value) {
   return result;
 }
 
-function buildSyntheticFormattedTopic() {
+function buildSyntheticFormattedTopic({ stringCount = 12, returnParts = false } = {}) {
   const commands = Buffer.concat([
     Buffer.from([0x80, 2, 0, 0x81, 0x82, 0x83]),
     Buffer.from([0x86, 3]), encodeCompressedLong(4), Buffer.from([0, 0, 7, 0]),
@@ -280,7 +286,7 @@ function buildSyntheticFormattedTopic() {
     Buffer.from([0xea, 6, 0, 0, 1, 2, 3, 4, 5]),
     Buffer.from([0x8b, 0x8c, 0xff]),
   ]);
-  const strings = Buffer.concat(Array.from({ length: 12 }, (_, index) =>
+  const strings = Buffer.concat(Array.from({ length: stringCount }, (_, index) =>
     Buffer.from([65 + index, 0])));
   const displayFormat = Buffer.alloc(9 + commands.length);
   encodeCompressedLong(strings.length).copy(displayFormat, 0);
@@ -308,7 +314,8 @@ function buildSyntheticFormattedTopic() {
   const header = Buffer.alloc(12);
   header.writeInt32LE(-1, 0);
   header.writeUInt32LE(12, 4);
-  return Buffer.concat([header, encodeLiteralLz77(links)]);
+  const topic = Buffer.concat([header, encodeLiteralLz77(links)]);
+  return returnParts ? { topic, displayFormat, strings } : topic;
 }
 
 function buildOldPhrases(values, variant = 'hc31') {
@@ -457,6 +464,8 @@ async function main() {
   const topicOutCapacity = 0x10000;
   const topicTokensWA = staging + 0x40000;
   const topicTokenCapacity = 4096;
+  const topicPayloadWA = staging + 0x60000;
+  const topicPayloadCapacity = 0x10000;
 
   let passed = 0;
   let failed = 0;
@@ -661,6 +670,70 @@ async function main() {
       }
     }
     check(`${file} exact NUL-delimited topic string tokens`, stringTokensOk, stringTokenDetail);
+
+    const formattedKinds = {};
+    let formattedPayloadBytes = 0;
+    let formattedOk = rawOk;
+    let formattedDetail = '';
+    for (let topicIndex = 0; topicIndex < rawTopics.length && formattedOk; topicIndex++) {
+      const rawTopic = rawTopics[topicIndex];
+      const expectedStrings = [];
+      let start = -1;
+      for (let i = 0; i <= rawTopic.length; i++) {
+        if (i === rawTopic.length || rawTopic[i] === 0) {
+          if (start >= 0) expectedStrings.push([start, i - start]);
+          start = -1;
+        } else if (start < 0) {
+          start = i;
+        }
+      }
+      const tokenCount = e.test_help_decode_topic_formatted(
+        topicIndex, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity,
+        topicPayloadWA, topicPayloadCapacity);
+      if (tokenCount < 1) {
+        formattedOk = false;
+        formattedDetail = `topic=${topicIndex} count=${tokenCount} error=${e.get_help_last_error()}`;
+        break;
+      }
+      const payloadSize = e.get_help_formatted_payload_size();
+      formattedPayloadBytes += payloadSize;
+      let textIndex = 0;
+      for (let i = 0; i < tokenCount; i++) {
+        const token = topicTokensWA + i * 16;
+        const kind = dv.getUint32(token, true);
+        const off = dv.getUint32(token + 4, true);
+        const len = dv.getUint32(token + 8, true);
+        if (kind === 1) {
+          const expected = expectedStrings[textIndex++];
+          if (!expected || off !== expected[0] || len !== expected[1]) {
+            formattedOk = false;
+            formattedDetail = `topic=${topicIndex} token=${i} TEXT=${off},${len}`;
+            break;
+          }
+        } else if (kind === 13) {
+          if (i + 1 !== tokenCount || off !== rawTopic.length || len !== 0) {
+            formattedOk = false;
+            formattedDetail = `topic=${topicIndex} token=${i} bad END_TOPIC`;
+            break;
+          }
+        } else {
+          formattedKinds[kind] = (formattedKinds[kind] || 0) + 1;
+          if ([4,7,8,9,10].includes(kind) && off + len > payloadSize) {
+            formattedOk = false;
+            formattedDetail = `topic=${topicIndex} token=${i} payload=${off}+${len}>${payloadSize}`;
+            break;
+          }
+        }
+      }
+      if (textIndex !== expectedStrings.length) {
+        formattedOk = false;
+        formattedDetail = `topic=${topicIndex} text=${textIndex}/${expectedStrings.length}`;
+      }
+    }
+    check(`${file} exact interleaved formatted topic IR`,
+      formattedOk && formattedPayloadBytes === semantic.payloadBytes &&
+      JSON.stringify(formattedKinds) === JSON.stringify(semantic.formattedKinds),
+      `${formattedDetail} payload=${formattedPayloadBytes} kinds=${JSON.stringify(formattedKinds)}`);
   }
 
   const capacityFixture = fs.readFileSync(path.join(HELP, 'freecell.hlp'));
@@ -718,8 +791,13 @@ async function main() {
   check('empty synthetic topic emits only END_TOPIC',
     e.test_help_decode_topic_strings(0, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity) === 1 &&
     dv.getUint32(topicTokensWA, true) === 13 && dv.getUint32(topicTokensWA + 4, true) === 0);
+  check('empty formatted topic permits zero-length arena aliases',
+    e.test_help_decode_topic_formatted(0, topicTokensWA, 0,
+      topicTokensWA, 1, topicTokensWA, 0) === 1 &&
+    dv.getUint32(topicTokensWA, true) === 13);
 
-  const formattedCommands = buildSyntheticSemanticHelp({ topic: buildSyntheticFormattedTopic() });
+  const formattedParts = buildSyntheticFormattedTopic({ returnParts: true });
+  const formattedCommands = buildSyntheticSemanticHelp({ topic: formattedParts.topic });
   check('documented LinkData1 command payload families parse',
     load(formattedCommands.file) === 1 &&
     e.get_help_display_record_count() === 1 && e.get_help_paragraph_count() === 1 &&
@@ -731,6 +809,69 @@ async function main() {
       dv.getUint32(topicTokensWA + index * 16, true) === 1 &&
       dv.getUint32(topicTokensWA + index * 16 + 8, true) === 1).every(Boolean) &&
     dv.getUint32(topicTokensWA + 12 * 16, true) === 13);
+  const formattedTokenKinds = [
+    4, 1, 5, 1, 3, 1, 3, 1, 2, 1, 9, 1, 7, 1, 8, 1, 10, 1, 7, 1, 2, 1, 2, 1, 13,
+  ];
+  const formattedTokenCount = e.test_help_decode_topic_formatted(
+    0, topicOutWA, topicOutCapacity, topicTokensWA, topicTokenCapacity,
+    topicPayloadWA, topicPayloadCapacity);
+  check('formatted topic interleaves every documented semantic token kind',
+    formattedTokenCount === formattedTokenKinds.length &&
+    formattedTokenKinds.every((kind, index) =>
+      dv.getUint32(topicTokensWA + index * 16, true) === kind),
+    `count=${formattedTokenCount}`);
+  check('formatted topic owns an exact stable LinkData1 payload copy',
+    e.get_help_formatted_payload_size() === formattedParts.displayFormat.length &&
+    Buffer.from(bytes.subarray(topicPayloadWA,
+      topicPayloadWA + formattedParts.displayFormat.length)).equals(formattedParts.displayFormat));
+  const formattedTextTokens = formattedTokenKinds
+    .map((kind, index) => [kind, topicTokensWA + index * 16])
+    .filter(([kind]) => kind === 1)
+    .map(([, token]) => [dv.getUint32(token + 4, true), dv.getUint32(token + 8, true)]);
+  check('formatted TEXT tokens retain exact LinkData2 offsets',
+    JSON.stringify(formattedTextTokens) ===
+      JSON.stringify(Array.from({ length: 12 }, (_, index) => [index * 2, 1])));
+  check('formatted variable tokens address their copied command payloads',
+    formattedTokenKinds.every((kind, index) => {
+      if (![7, 8, 9, 10].includes(kind)) return true;
+      const token = topicTokensWA + index * 16;
+      const off = dv.getUint32(token + 4, true);
+      const len = dv.getUint32(token + 8, true);
+      const value = dv.getUint32(token + 12, true);
+      return len >= 1 && bytes[topicPayloadWA + off] === value;
+    }));
+  bytes.fill(0xaa, topicTokensWA, topicTokensWA + 16);
+  bytes.fill(0xbb, topicPayloadWA, topicPayloadWA + formattedParts.displayFormat.length);
+  check('formatted topic preflights token capacity',
+    load(formattedCommands.file) === 1 &&
+    e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, 1, topicPayloadWA, topicPayloadCapacity) === -1 &&
+    e.get_help_last_error() === 6 &&
+    bytes.subarray(topicTokensWA, topicTokensWA + 16).every(byte => byte === 0xaa) &&
+    bytes.subarray(topicPayloadWA,
+      topicPayloadWA + formattedParts.displayFormat.length).every(byte => byte === 0xbb));
+  check('formatted topic preflights payload capacity',
+    load(formattedCommands.file) === 1 &&
+    e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, 1) === -1 &&
+    e.get_help_last_error() === 6 &&
+    bytes.subarray(topicTokensWA, topicTokensWA + 16).every(byte => byte === 0xaa) &&
+    bytes.subarray(topicPayloadWA,
+      topicPayloadWA + formattedParts.displayFormat.length).every(byte => byte === 0xbb));
+  const overlapLoaded = load(formattedCommands.file);
+  const overlapResult = e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+    topicTokensWA, topicTokenCapacity, topicTokensWA, topicPayloadCapacity);
+  check('formatted topic rejects overlapping non-empty output arenas',
+    overlapLoaded === 1 && overlapResult === -1 && e.get_help_last_error() === 1,
+    `load=${overlapLoaded} result=${overlapResult} error=${e.get_help_last_error()}`);
+  const mismatchedFormatted = buildSyntheticSemanticHelp({
+    topic: buildSyntheticFormattedTopic({ stringCount: 11 }),
+  });
+  check('formatted topic rejects command/string count mismatch',
+    load(mismatchedFormatted.file) === 1 &&
+    e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === -1 &&
+    e.get_help_last_error() === 14);
 
   for (const [variant, minor, compressedTopic] of [
     ['hc30', 15, false],
@@ -759,6 +900,12 @@ async function main() {
       dv.getUint32(topicTokensWA, true) === 1 && dv.getUint32(topicTokensWA + 4, true) === 0 &&
       dv.getUint32(topicTokensWA + 8, true) === 12 &&
       dv.getUint32(topicTokensWA + 16, true) === 13);
+    check(`${variant} old-style stream emits formatted paragraph, text, and end`,
+      e.test_help_decode_topic_formatted(0, topicOutWA, topicOutCapacity,
+        topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity) === 3 &&
+      dv.getUint32(topicTokensWA, true) === 4 &&
+      dv.getUint32(topicTokensWA + 16, true) === 1 &&
+      dv.getUint32(topicTokensWA + 32, true) === 13);
   }
 
   const emptyOldPhrases = buildSyntheticSemanticHelp({ oldPhrases: buildOldPhrases([]) });
