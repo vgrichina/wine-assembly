@@ -1468,6 +1468,33 @@ async function main() {
   check('HELP_KEY rejects a null string pointer without changing topic state',
     e.test_help_dispatch_loaded(dispatchOwner, 0x0101, 0) === 0 &&
     e.get_help_session_topic_ref() === 10 && e.get_help_dispatch_status() === 5);
+  {
+    // The allowlisted macros navigate through exactly the dispatch the API
+    // commands use - map id 7 and keyword BETA are the same targets the two
+    // checks above resolved.
+    const macroWA = nameWA + 0x400;
+    const runMacro = text => {
+      const buf = Buffer.from(text, 'latin1');
+      bytes.set(buf, macroWA);
+      return e.test_help_macro_execute(dispatchOwner, macroWA, buf.length);
+    };
+    check('JumpContext navigates exactly like HELP_CONTEXT',
+      runMacro('JumpContext(7)') === 1 && e.get_help_session_topic_ref() === 20 &&
+      e.get_help_session_mode() === 1 && e.get_help_dispatch_status() === 1);
+    check('KLink navigates exactly like HELP_KEY',
+      runMacro('KL("BETA")') === 1 && e.get_help_session_topic_ref() === 10 &&
+      e.get_help_session_mode() === 1 && e.get_help_dispatch_status() === 1);
+    check('a macro is matched case-insensitively and tolerates spacing',
+      runMacro('  jumpcontext ( 7 )') === 1 &&
+      e.get_help_session_topic_ref() === 20 && e.get_help_session_mode() === 1);
+    // Runs last of the group: it leaves the session in popup mode, and the
+    // keyword checks that follow expect the main viewer.
+    check('PopupContext presents the same topic as a popup',
+      runMacro('PC(7)') === 1 && e.get_help_session_topic_ref() === 20 &&
+      e.get_help_session_mode() === 2);
+    writeCString(nameWA, 'BETA');
+    e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA);
+  }
   bytes.fill(0x61, nameWA, nameWA + 512);
   check('HELP_KEY bounds unterminated command data',
     e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA) === 0 &&
@@ -2800,6 +2827,46 @@ async function main() {
     e.get_help_dispatch_status() === 6 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0,
     `runs=${hotspotRuns.length} status=${e.get_help_dispatch_status()}`);
+  {
+    // Macro allowlist. The names are matched by an upper-cased FNV-1a hash so
+    // the WAT side needs no data segment of literals; these first assertions
+    // prove each constant in the source still belongs to the name its comment
+    // claims, which is the part a reader cannot check by eye.
+    const hashOf = text => {
+      const wa = topicPayloadWA + 0x8000;
+      const buf = Buffer.from(text, 'latin1');
+      bytes.set(buf, wa);
+      return e.test_help_macro_name_hash(wa, buf.length) >>> 0;
+    };
+    check('macro names hash to the constants the allowlist switches on',
+      hashOf('JumpContext') === 0x4C586124 && hashOf('JC') === 0x4DF12BFA &&
+      hashOf('PopupContext') === 0xF5739554 && hashOf('PC') === 0x2E000424 &&
+      hashOf('JumpId') === 0x367A77D8 && hashOf('KLink') === 0x6C09F342 &&
+      hashOf('Contents') === 0x314DC863 && hashOf('Exit') === 0x79836105);
+    const runMacro = text => {
+      const wa = topicPayloadWA + 0x8000;
+      const buf = Buffer.from(text, 'latin1');
+      bytes.set(buf, wa);
+      const ok = e.test_help_macro_execute(0x8888, wa, buf.length);
+      return { ok, status: e.get_help_dispatch_status() };
+    };
+    // 6 = UNSUPPORTED, 5 = BAD_DATA, 4 = UNRESOLVED.
+    check('macros this emulator does not perform report UNSUPPORTED',
+      ['PlayWave("ding", 1)', 'ExecProgram("notepad.exe", 0)', 'Annotate()',
+       'AL("a-playingtopics")', 'ALink("x")', 'RegisterRoutine("a","b","c")']
+        .every(macro => {
+          const result = runMacro(macro);
+          return result.ok === 0 && result.status === 6;
+        }));
+    check('a known macro with the wrong argument shape reports BAD_DATA',
+      runMacro('JumpContext("not a number")').status === 5 &&
+      runMacro('KLink(17)').status === 5);
+    check('a known macro naming nothing in this document reports UNRESOLVED',
+      runMacro('JumpContext(999999)').status === 4 &&
+      runMacro('JumpId("nosuch.hlp", "IDH_NOT_HERE")').status === 4 &&
+      runMacro('KL("no such keyword")').status === 4);
+  }
+
   // The variable hotspot names window 5, which this fixture's document does
   // not define, so activation fails as unresolved rather than misrouting.
   check('unresolvable variable hotspots fail safely without changing topic or history',

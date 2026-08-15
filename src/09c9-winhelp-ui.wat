@@ -1705,6 +1705,297 @@
   ;; Direct E0/E1 commands carry canonical topic references. E2/E3/E6/E7
   ;; and the exact EA/EB/EE/EF structures carry context hashes. Even opcodes
   ;; are popups and odd opcodes navigate the main window, matching winhlp32.
+  ;; ---- WinHelp macros ----------------------------------------------
+  ;;
+  ;; A macro region carries a macro string like `JumpContext(23)` or
+  ;; `KL("printing")`. Only macros that map onto navigation this emulator
+  ;; already performs are executed; everything else - and that includes every
+  ;; macro that would run guest code, register a DLL routine, or touch the
+  ;; host - reports UNSUPPORTED rather than being silently swallowed.
+  ;;
+  ;; Parsing is deliberately small: a name, then at most two arguments, each
+  ;; either a quoted string or a decimal number. Nothing here evaluates
+  ;; expressions or chains macros with ';'.
+  (global $help_macro_arg_wa (mut i32) (i32.const 0))
+  (global $help_macro_arg_len (mut i32) (i32.const 0))
+  (global $help_macro_arg_number (mut i32) (i32.const 0))
+  (global $help_macro_arg_is_string (mut i32) (i32.const 0))
+
+  (func $help_macro_upper (param $ch i32) (result i32)
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                 (i32.le_u (local.get $ch) (i32.const 0x7A)))
+      (then (return (i32.sub (local.get $ch) (i32.const 0x20)))))
+    (local.get $ch))
+
+  ;; Macro names are matched by FNV-1a over the upper-cased name - the same
+  ;; hash $help_hash_bytes computes - so the allowlist needs no data segment of
+  ;; string literals in a shared header file. The constants below come from
+  ;; the names in the comments; test_help_macro_name_hash exists so a test can
+  ;; prove each constant still belongs to its name rather than trusting a
+  ;; number nobody can read.
+  (func $help_macro_name_hash (param $wa i32) (param $len i32) (result i32)
+    (local $i i32) (local $hash i32)
+    (local.set $hash (i32.const 0x811C9DC5))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $hash
+        (i32.mul
+          (i32.xor (local.get $hash)
+            (call $help_macro_upper
+              (i32.load8_u (i32.add (local.get $wa) (local.get $i)))))
+          (i32.const 0x01000193)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $hash))
+
+  (func (export "test_help_macro_name_hash")
+    (param $wa i32) (param $len i32) (result i32)
+    (call $help_macro_name_hash (local.get $wa) (local.get $len)))
+
+  ;; Read one argument starting at $wa (bounded by $end) into the arg globals.
+  ;; Returns the position just past the argument, or 0 if it does not parse.
+  (func $help_macro_read_arg (param $wa i32) (param $end i32) (result i32)
+    (local $ch i32) (local $start i32) (local $negative i32) (local $digits i32)
+    (global.set $help_macro_arg_wa (i32.const 0))
+    (global.set $help_macro_arg_len (i32.const 0))
+    (global.set $help_macro_arg_number (i32.const 0))
+    (global.set $help_macro_arg_is_string (i32.const 0))
+    (block $skipped (loop $skip
+      (br_if $skipped (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (i32.load8_u (local.get $wa)))
+      (br_if $skipped (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                               (i32.ne (local.get $ch) (i32.const 0x09))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $skip)))
+    (if (i32.ge_u (local.get $wa) (local.get $end)) (then (return (i32.const 0))))
+    (local.set $ch (i32.load8_u (local.get $wa)))
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x22))    ;; "
+                (i32.eq (local.get $ch) (i32.const 0x60)))   ;; ` (WinHelp's other quote)
+      (then
+        (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+        (local.set $start (local.get $wa))
+        (block $closed (loop $string
+          (if (i32.ge_u (local.get $wa) (local.get $end))
+            (then (return (i32.const 0))))
+          (local.set $ch (i32.load8_u (local.get $wa)))
+          (br_if $closed (i32.or (i32.eq (local.get $ch) (i32.const 0x22))
+                                 (i32.eq (local.get $ch) (i32.const 0x27))))
+          (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+          (br $string)))
+        (global.set $help_macro_arg_wa (local.get $start))
+        (global.set $help_macro_arg_len (i32.sub (local.get $wa) (local.get $start)))
+        (global.set $help_macro_arg_is_string (i32.const 1))
+        (return (i32.add (local.get $wa) (i32.const 1)))))
+    (if (i32.eq (local.get $ch) (i32.const 0x2D))            ;; -
+      (then
+        (local.set $negative (i32.const 1))
+        (local.set $wa (i32.add (local.get $wa) (i32.const 1)))))
+    (block $number_done (loop $number
+      (br_if $number_done (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (i32.load8_u (local.get $wa)))
+      (br_if $number_done (i32.or (i32.lt_u (local.get $ch) (i32.const 0x30))
+                                  (i32.gt_u (local.get $ch) (i32.const 0x39))))
+      (global.set $help_macro_arg_number
+        (i32.add (i32.mul (global.get $help_macro_arg_number) (i32.const 10))
+          (i32.sub (local.get $ch) (i32.const 0x30))))
+      (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $number)))
+    (if (i32.eqz (local.get $digits)) (then (return (i32.const 0))))
+    (if (local.get $negative)
+      (then (global.set $help_macro_arg_number
+        (i32.sub (i32.const 0) (global.get $help_macro_arg_number)))))
+    (local.get $wa))
+
+  ;; Execute one macro string. Returns 1 when it dispatched, 0 otherwise, and
+  ;; always leaves $help_session_status describing what happened.
+  (func $help_macro_execute
+    (param $caller i32) (param $wa i32) (param $len i32) (result i32)
+    (local $end i32) (local $name i32) (local $name_len i32) (local $ch i32)
+    (local $cursor i32) (local $arg_wa i32) (local $arg_len i32)
+    (local $number i32) (local $is_string i32) (local $topic_ref i32)
+    (local $name_hash i32)
+    (local.set $end (i32.add (local.get $wa) (local.get $len)))
+    ;; Leading whitespace is common in authored macro strings.
+    (block $trimmed (loop $trim
+      (br_if $trimmed (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (i32.load8_u (local.get $wa)))
+      (br_if $trimmed (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                               (i32.ne (local.get $ch) (i32.const 0x09))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $trim)))
+    (local.set $name (local.get $wa))
+    (block $name_done (loop $scan
+      (br_if $name_done (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (call $help_macro_upper (i32.load8_u (local.get $wa))))
+      (br_if $name_done (i32.or (i32.lt_u (local.get $ch) (i32.const 0x41))
+                                (i32.gt_u (local.get $ch) (i32.const 0x5A))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $scan)))
+    (local.set $name_len (i32.sub (local.get $wa) (local.get $name)))
+    (local.set $name_hash (call $help_macro_name_hash
+      (local.get $name) (local.get $name_len)))
+    (if (i32.eqz (local.get $name_len))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    ;; Step over any space and then the '(' when the macro takes arguments.
+    (block $opened (loop $open
+      (br_if $opened (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (i32.load8_u (local.get $wa)))
+      (if (i32.eq (local.get $ch) (i32.const 0x28))
+        (then
+          (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+          (br $opened)))
+      (br_if $opened (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                              (i32.ne (local.get $ch) (i32.const 0x09))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $open)))
+    ;; Contents / Index / Finder / Search open a whole-document view and take
+    ;; no argument we need.
+    (if (i32.or
+          (i32.eq (local.get $name_hash) (i32.const 0x314DC863))                                     ;; "CONTENTS"
+          (i32.eq (local.get $name_hash) (i32.const 0xB1744B0B)))                                    ;; "INDEX"
+      (then (return (call $help_dispatch_loaded (local.get $caller)
+        (global.get $HELP_COMMAND_CONTENTS) (i32.const 0)))))
+    (if (i32.or
+          (i32.eq (local.get $name_hash) (i32.const 0xBB4ED44D))                                     ;; "FINDER"
+          (i32.eq (local.get $name_hash) (i32.const 0x36D11E29)))                                    ;; "SEARCH"
+      (then (return (call $help_dispatch_loaded (local.get $caller)
+        (global.get $HELP_COMMAND_FINDER) (i32.const 0)))))
+    (if (i32.or
+          (i32.eq (local.get $name_hash) (i32.const 0x79836105))                                     ;; "EXIT"
+          (i32.eq (local.get $name_hash) (i32.const 0x8F96A703)))                                    ;; "CLOSE"
+      (then (return (call $help_dispatch_loaded (local.get $caller)
+        (global.get $HELP_COMMAND_QUIT) (i32.const 0)))))
+    ;; Everything below needs its arguments. An unknown macro must report
+    ;; UNSUPPORTED rather than BAD_DATA - it is not malformed, it is simply
+    ;; not one this emulator performs - so the name is checked against the
+    ;; argument-taking allowlist before anything is parsed.
+    (if (i32.eqz (i32.or
+          (i32.or
+            (i32.or (i32.eq (local.get $name_hash) (i32.const 0x4C586124))
+                    (i32.eq (local.get $name_hash) (i32.const 0x4DF12BFA)))
+            (i32.or (i32.eq (local.get $name_hash) (i32.const 0xF5739554))
+                    (i32.eq (local.get $name_hash) (i32.const 0x2E000424))))
+          (i32.or
+            (i32.or
+              (i32.or (i32.eq (local.get $name_hash) (i32.const 0x367A77D8))
+                      (i32.eq (local.get $name_hash) (i32.const 0x43F11C3C)))
+              (i32.or (i32.eq (local.get $name_hash) (i32.const 0x599BC348))
+                      (i32.eq (local.get $name_hash) (i32.const 0x27FFFAB2))))
+            (i32.or
+              (i32.or (i32.eq (local.get $name_hash) (i32.const 0x6C09F342))
+                      (i32.eq (local.get $name_hash) (i32.const 0x22EEA9B2)))
+              (i32.or (i32.eq (local.get $name_hash) (i32.const 0x9EC699AC))
+                      (i32.eq (local.get $name_hash) (i32.const 0x45F11F62)))))))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (local.set $cursor (call $help_macro_read_arg (local.get $wa) (local.get $end)))
+    (if (i32.eqz (local.get $cursor))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (local.set $arg_wa (global.get $help_macro_arg_wa))
+    (local.set $arg_len (global.get $help_macro_arg_len))
+    (local.set $number (global.get $help_macro_arg_number))
+    (local.set $is_string (global.get $help_macro_arg_is_string))
+    ;; JumpContext(n) / JC(n) and PopupContext(n) / PC(n) address a map id.
+    (if (i32.or
+          (i32.eq (local.get $name_hash) (i32.const 0x4C586124))                                     ;; "JUMPCONTEXT"
+          (i32.eq (local.get $name_hash) (i32.const 0x4DF12BFA)))                                    ;; "JC"
+      (then
+        (if (local.get $is_string)
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (return (call $help_dispatch_loaded (local.get $caller)
+          (global.get $HELP_COMMAND_CONTEXT) (local.get $number)))))
+    (if (i32.or
+          (i32.eq (local.get $name_hash) (i32.const 0xF5739554))                                     ;; "POPUPCONTEXT"
+          (i32.eq (local.get $name_hash) (i32.const 0x2E000424)))                                    ;; "PC"
+      (then
+        (if (local.get $is_string)
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (return (call $help_dispatch_loaded (local.get $caller)
+          (global.get $HELP_COMMAND_CONTEXTPOPUP) (local.get $number)))))
+    ;; JumpId / JI and PopupId / PI name a context string, optionally after a
+    ;; file argument. The last string argument is the context name.
+    (if (i32.or
+          (i32.or
+            (i32.eq (local.get $name_hash) (i32.const 0x367A77D8))                                   ;; "JUMPID"
+            (i32.eq (local.get $name_hash) (i32.const 0x43F11C3C)))                                  ;; "JI"
+          (i32.or
+            (i32.eq (local.get $name_hash) (i32.const 0x599BC348))                                   ;; "POPUPID"
+            (i32.eq (local.get $name_hash) (i32.const 0x27FFFAB2))))                                 ;; "PI"
+      (then
+        (if (i32.eqz (local.get $is_string))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        ;; A second string argument means the first was the help file name.
+        ;; Only this document is in reach, so a foreign file is unsupported.
+        (if (i32.lt_u (local.get $cursor) (local.get $end))
+          (then
+            (if (i32.eq (i32.load8_u (local.get $cursor)) (i32.const 0x2C))
+              (then
+                (if (i32.eqz (call $help_macro_read_arg
+                      (i32.add (local.get $cursor) (i32.const 1)) (local.get $end)))
+                  (then
+                    (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+                    (return (i32.const 0))))
+                (if (i32.eqz (global.get $help_macro_arg_is_string))
+                  (then
+                    (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+                    (return (i32.const 0))))
+                (local.set $arg_wa (global.get $help_macro_arg_wa))
+                (local.set $arg_len (global.get $help_macro_arg_len))))))
+        (local.set $topic_ref (call $help_resolve_context_hash
+          (call $help_hash_bytes (local.get $arg_wa) (local.get $arg_len))))
+        (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (return (call $help_session_commit_topic (local.get $caller)
+          (global.get $HELP_COMMAND_CONTEXT) (local.get $topic_ref)
+          (select (i32.const 2) (i32.const 1)
+            (i32.eq (call $help_macro_upper (i32.load8_u (local.get $name)))
+              (i32.const 0x50)))))))                                 ;; 'P' = popup
+    ;; KLink / KL and JumpKeyword / JK look a keyword up in this document.
+    ;; ALink / AL is deliberately absent: its keyword space is |AWBTREE, whose
+    ;; postings are multi-match, and presenting those needs a Topics Found
+    ;; list that does not exist yet. Reporting UNSUPPORTED is honest; jumping
+    ;; to an arbitrary one of six postings would not be.
+    (if (i32.or
+          (i32.or
+            (i32.eq (local.get $name_hash) (i32.const 0x6C09F342))                                   ;; "KLINK"
+            (i32.eq (local.get $name_hash) (i32.const 0x22EEA9B2)))                                  ;; "KL"
+          (i32.or
+            (i32.eq (local.get $name_hash) (i32.const 0x9EC699AC))                                   ;; "JUMPKEYWORD"
+            (i32.eq (local.get $name_hash) (i32.const 0x45F11F62))))                                 ;; "JK"
+      (then
+        (if (i32.eqz (local.get $is_string))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $topic_ref (call $help_resolve_keyword
+          (local.get $arg_wa) (local.get $arg_len) (i32.const 0)))
+        (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_UNRESOLVED))
+            (return (i32.const 0))))
+        (return (call $help_session_commit_topic (local.get $caller)
+          (global.get $HELP_COMMAND_KEY) (local.get $topic_ref) (i32.const 1)))))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+    (i32.const 0))
+
+  (func (export "test_help_macro_execute")
+    (param $caller i32) (param $wa i32) (param $len i32) (result i32)
+    (call $help_macro_execute (local.get $caller) (local.get $wa) (local.get $len)))
+
   (func $help_activate_hotspot_at
     (param $caller i32) (param $x i32) (param $y i32) (result i32)
     (local $index i32) (local $token i32) (local $off i32) (local $len i32)
@@ -1725,12 +2016,27 @@
     (local.set $token (i32.add (global.get $help_view_tokens_wa)
       (i32.mul (local.get $index) (global.get $HELP_TOPIC_TOKEN_SIZE))))
     ;; Macro regions share the hotspot run representation but carry a macro
-    ;; string rather than a topic selector. They report UNSUPPORTED explicitly
-    ;; instead of silently swallowing the click.
+    ;; string rather than a topic selector. The payload is the command byte,
+    ;; a u16 length, then the macro text.
     (if (i32.eq (i32.load (local.get $token)) (global.get $HELP_TOKEN_MACRO))
       (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
-        (return (i32.const 0))))
+        (local.set $off (i32.load offset=4 (local.get $token)))
+        (if (i32.or
+              (i32.gt_u (i32.add (local.get $off) (i32.const 3))
+                (global.get $help_view_payload_len))
+              (i32.eqz (global.get $help_view_payload_wa)))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (local.set $payload (i32.add (global.get $help_view_payload_wa) (local.get $off)))
+        (local.set $len (i32.load16_u offset=1 (local.get $payload)))
+        (if (i32.gt_u (i32.add (i32.add (local.get $off) (i32.const 3)) (local.get $len))
+              (global.get $help_view_payload_len))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (return (call $help_macro_execute (local.get $caller)
+          (i32.add (local.get $payload) (i32.const 3)) (local.get $len)))))
     (if (i32.ne (i32.load (local.get $token))
           (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
       (then (return (i32.const 0))))
