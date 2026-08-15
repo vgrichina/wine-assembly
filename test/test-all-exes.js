@@ -139,9 +139,17 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/mplay32.exe', name: 'Media Player 32' },
   { exe: 'test/binaries/win98-apps/fontview.exe', name: 'Font Viewer',
     maxBatches: 100, extraArgs: ['--args=vgasys.fon', '--no-close', '--quiet-blocks'] },
-  { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging', expectedCrash: 'not a current-stage target' },
-  { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview' },
-  { exe: 'test/binaries/win98-apps/hypertrm.exe', name: 'HyperTerminal', expectedCrash: 'not a current-stage target' },
+  // These three are blocked on companion DLLs that are not in the tree at
+  // all — only the .exe files were collected. Nothing in the emulator can
+  // make them run, and each dies on the first import it needs from one.
+  // Recording the specific DLL means a *different* crash here would stand out
+  // instead of blending into a generic "not a target" note.
+  { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging',
+    expectedCrash: 'needs IMGCMN.dll (?UpdateVersion@@YGJH@Z and ~29 more)' },
+  { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview',
+    expectedCrash: 'needs OIDIS400.dll and OIADM400.dll, imported by ordinal' },
+  { exe: 'test/binaries/win98-apps/hypertrm.exe', name: 'HyperTerminal',
+    expectedCrash: 'needs HYPERTRM.dll (InitInstance)' },
   { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control',
     ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
