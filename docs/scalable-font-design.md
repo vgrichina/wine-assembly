@@ -446,14 +446,21 @@ What it measured:
 - **Tahoma is substituted by Wine's independently drawn `tahoma.ttf`**, which
   is not a metric-compatible design and measures like it (40% of advances).
   Reported, not gated: a gate there would pin a mismatch in place.
-- **A defect the reference uncovered, still open.** On one DC with one font
-  selected, `sum(GetCharWidthA)` over a string does not equal
-  `GetTextExtentPoint32A` of that string — they disagree on 20 to 24 of every
-  24 sentences, by up to 18px. `GetCharWidthA` is the one that matches Win98
-  exactly for Courier New, so the extent path is wrong and every dialog that
-  lays out with `GetTextExtentPoint32` inherits it. The test prints this as its
-  `SELF` line and gates only advance widths until it is fixed; gating extents
-  now would pin the disagreement in place. **This is the next font task.**
+- **A defect the reference uncovered, since fixed.** On one DC with one font
+  selected, `sum(GetCharWidthA)` over a string did not equal
+  `GetTextExtentPoint32A` of that string — they disagreed on 20 to 24 of every
+  24 sentences, by up to 18px, and every dialog that lays out with
+  `GetTextExtentPoint32` inherited it. Two engines answered one question: the
+  per-character path summed whole-pixel advances in WAT, while the extent path
+  asked Canvas to lay the whole string out and rounded once at the end. Windows
+  98 has no second engine — GDI kerns nothing, so an extent *is* the sum of its
+  advances — so `$host_measure_text` now measures one glyph at a time and adds
+  in WAT, and `gdi_text_mask` places each glyph at that same whole-pixel
+  advance instead of calling `fillText` on the whole string. Courier New's
+  sentence extents went from 8.2% out to exact. Both are gated: the `SELF` line
+  is now an assertion, and `test/test-wat-text-draw-extent.js` holds the drawn
+  run against the extent the same DC reports, which is what fails if only the
+  measuring half is ever fixed again.
 
 ## Determinism across hosts
 

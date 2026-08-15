@@ -50,17 +50,19 @@ const reference = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
 const SENTENCES = [2, 5];      // what a dialog actually lays out
 const REPEATED = [3, 4];       // 'iiiiiiiiii' / 'WWWWWWWWWW' — hinting probes
 
-// Only advance widths are gated. String extents are reported because they are
-// currently WRONG for a reason this reference itself uncovered: on the same DC
-// with the same font selected, the sum of GetCharWidthA over a string does not
-// equal GetTextExtentPoint32A of that string. The per-character path agrees
-// with Windows 98 exactly for Courier New; the extent path does not agree with
-// either. Gating the extents would pin that disagreement in place, so the test
-// measures and prints it instead — see the SELF line in the output.
+// Advance widths and string extents are both gated, and they are gated
+// together on purpose. This reference originally uncovered a defect by making
+// them disagree: on one DC with one font selected, the sum of GetCharWidthA
+// over a string did not equal GetTextExtentPoint32A of that string, because
+// the per-character path summed whole-pixel advances in WAT while the extent
+// path asked Canvas to lay the whole string out and rounded once at the end.
+// Windows 98 has no second engine — GDI kerns nothing and its extent IS the
+// sum of its advances — so the SELF check below is an invariant of our own,
+// asserted independently of what Windows 98 says either path should return.
 const BUDGETS = {
-  Arial: { exactWidths: 0.80 },
-  'Times New Roman': { exactWidths: 0.75 },
-  'Courier New': { exactWidths: 0.99 },
+  Arial: { exactWidths: 0.80, sentences: 0.05 },
+  'Times New Roman': { exactWidths: 0.75, sentences: 0.07 },
+  'Courier New': { exactWidths: 0.99, sentences: 0.0 },
 };
 
 (async () => {
@@ -199,6 +201,18 @@ const BUDGETS = {
     if (budget && fraction < budget.exactWidths) {
       failures.push(`${face.name}: ${(fraction * 100).toFixed(1)}% of advances exact, `
         + `budget ${(budget.exactWidths * 100).toFixed(0)}%`);
+    }
+    if (budget && worstSentence > budget.sentences) {
+      failures.push(`${face.name}: sentence extent off by `
+        + `${(worstSentence * 100).toFixed(1)}%, budget `
+        + `${(budget.sentences * 100).toFixed(1)}%`);
+    }
+    // Not a comparison with Windows 98: whatever the right number is, our own
+    // two ways of asking for it have to produce it.
+    if (selfDisagreements) {
+      failures.push(`${face.name}: sum(GetCharWidthA) and GetTextExtentPoint32A `
+        + `disagree on ${selfDisagreements}/${selfSamples} sentences `
+        + `(up to ${worstSelf}px) — they measure the same string on the same DC`);
     }
   }
 

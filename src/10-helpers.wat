@@ -7696,6 +7696,42 @@
       (i32.const 0) (i32.const 0) (local.get $text)
       (local.get $count) (local.get $wide)))
 
+  ;; Windows 98 lays a string out as a run of whole-pixel advances: GDI applies
+  ;; no kerning and accumulates nothing fractional, so the extent of a string is
+  ;; exactly the sum of the advances GetCharWidth reports for its characters.
+  ;; Canvas measures the other way — it lays the whole string out and rounds
+  ;; once at the end — which is why the two disagreed here by up to 18px on a
+  ;; sentence. Canvas is a font provider, not a layout engine: ask it for one
+  ;; glyph at a time and do the adding in WAT, the same way the bitmap strike
+  ;; path above already does.
+  (func $gdi_scalable_sum_width (param $token i32) (param $text i32)
+        (param $count i32) (param $wide i32) (result i32)
+    (local $i i32) (local $character i32) (local $total i32)
+    (block $done (loop $characters
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $character
+        (if (result i32) (local.get $wide)
+          (then (i32.load16_u (i32.add (local.get $text)
+            (i32.shl (local.get $i) (i32.const 1)))))
+          (else (i32.load8_u (i32.add (local.get $text) (local.get $i))))))
+      ;; Measurement stops at a NUL exactly as the host reader does.
+      (br_if $done (i32.eqz (local.get $character)))
+      ;; The character is read before the scratch is written, so a caller that
+      ;; already measures out of TEXT_SCRATCH stays correct.
+      (if (local.get $wide)
+        (then
+          (i32.store16 (global.get $TEXT_SCRATCH) (local.get $character))
+          (i32.store16 offset=2 (global.get $TEXT_SCRATCH) (i32.const 0)))
+        (else
+          (i32.store8 (global.get $TEXT_SCRATCH) (local.get $character))
+          (i32.store8 offset=1 (global.get $TEXT_SCRATCH) (i32.const 0))))
+      (local.set $total (i32.add (local.get $total)
+        (call $host_measure_text_raw (local.get $token)
+          (global.get $TEXT_SCRATCH) (i32.const 1) (local.get $wide))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $characters)))
+    (local.get $total))
+
   (func $host_measure_text (param $hdc i32) (param $text i32)
         (param $count i32) (param $wide i32) (result i32)
     (local $token i32) (local $bitmap_result i32)
@@ -7707,7 +7743,7 @@
       (then (return (local.get $bitmap_result))))
     (local.set $token (call $gdi_text_prepare (local.get $hdc)))
     (if (i32.eqz (local.get $token)) (then (return (i32.const 0))))
-    (call $host_measure_text_raw (local.get $token) (local.get $text)
+    (call $gdi_scalable_sum_width (local.get $token) (local.get $text)
       (local.get $count) (local.get $wide)))
 
   (func $host_get_text_metrics (param $hdc i32) (result i32)
@@ -7735,11 +7771,20 @@
     (local.set $metrics (call $host_get_text_metrics (local.get $hdc)))
     (if (i32.eqz (local.get $metrics)) (then (return (i32.const 0))))
     (local.set $height (i32.and (local.get $metrics) (i32.const 0xFFFF)))
+    ;; One advance per character, accumulated — the same arithmetic Windows 98
+    ;; does, and the same arithmetic GetCharWidth reports one entry at a time.
+    ;; Measuring each prefix from scratch instead would ask the font provider
+    ;; n(n+1)/2 questions to answer n of them.
     (block $done (loop $prefix
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $width (i32.add (local.get $width)
+        (call $gdi_font_character_width (local.get $hdc)
+          (if (result i32) (local.get $wide)
+            (then (i32.load16_u (i32.add (local.get $text)
+              (i32.shl (local.get $i) (i32.const 1)))))
+            (else (i32.load8_u (i32.add (local.get $text) (local.get $i)))))
+          (local.get $wide))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (local.set $width (call $host_measure_text (local.get $hdc)
-        (local.get $text) (local.get $i) (local.get $wide)))
       (if (local.get $dx)
         (then (i32.store (i32.add (local.get $dx)
           (i32.shl (i32.sub (local.get $i) (i32.const 1)) (i32.const 2)))
