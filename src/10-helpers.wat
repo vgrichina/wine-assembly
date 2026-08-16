@@ -15753,6 +15753,14 @@
     (if (i32.eq (local.get $idx) (i32.const 18)) (then (return (i32.const 0x00000000)))) ;; BTNTEXT
     (if (i32.eq (local.get $idx) (i32.const 19)) (then (return (i32.const 0x00000000)))) ;; INACTIVECAPTIONTEXT
     (if (i32.eq (local.get $idx) (i32.const 20)) (then (return (i32.const 0x00FFFFFF)))) ;; BTNHIGHLIGHT
+    ;; 21..24 are the Win95-era additions. Values come from the Plus! 98 theme
+    ;; files (all 19 ship ButtonDkShadow=0 0 0, InfoText=0 0 0,
+    ;; InfoWindow=255 255 225), which is also what $gdi_draw_edge_desc already
+    ;; paints for a raised outer edge. 22 (3DLIGHT) keeps the C0C0C0 fallback
+    ;; the edge painter uses for its inner light layer.
+    (if (i32.eq (local.get $idx) (i32.const 21)) (then (return (i32.const 0x00000000)))) ;; 3DDKSHADOW
+    (if (i32.eq (local.get $idx) (i32.const 23)) (then (return (i32.const 0x00000000)))) ;; INFOTEXT
+    (if (i32.eq (local.get $idx) (i32.const 24)) (then (return (i32.const 0x00E1FFFF)))) ;; INFOBK
     (i32.const 0x00C0C0C0))
 
   (func $dc_apply_client_clip (param $hdc i32) (param $hwnd i32)

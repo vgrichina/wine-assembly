@@ -67,11 +67,19 @@ if (pngSize > 0) {
     const i = (y * img.width + x) * 4;
     return [img.data[i], img.data[i + 1], img.data[i + 2]].join(',');
   };
+  // The "No" button is at screen 195,140 sized 72x24, so its outer frame is
+  // x 195..266, y 140..163. A Win98 pushbutton has a two-layer raised edge:
+  // outer highlight/dk-shadow, inner light/shadow. COLOR_3DDKSHADOW is black
+  // in the Win98 classic scheme — every Plus! 98 .the file ships
+  // "ButtonDkShadow=0 0 0". (The old 64,64,64 here pinned the retired JS
+  // renderer's DKGRAY approximation, not anything Windows draws.)
   noButtonChrome =
-    pixel(230, 140) === '255,255,255' &&  // raised top edge
-    pixel(195, 152) === '255,255,255' &&  // raised left edge
-    pixel(266, 152) === '64,64,64' &&     // shadow right edge
-    pixel(230, 163) === '64,64,64';       // shadow bottom edge
+    pixel(230, 140) === '255,255,255' &&  // outer highlight, top edge
+    pixel(195, 152) === '255,255,255' &&  // outer highlight, left edge
+    pixel(266, 152) === '0,0,0' &&        // outer dk-shadow, right edge
+    pixel(230, 163) === '0,0,0' &&        // outer dk-shadow, bottom edge
+    pixel(265, 152) === '128,128,128' &&  // inner shadow, right edge
+    pixel(230, 162) === '128,128,128';    // inner shadow, bottom edge
 }
 const checks = [
   { name: 'process exited cleanly', pass: exitCode === 0 },
