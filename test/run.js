@@ -1793,6 +1793,7 @@ async function main() {
     // Check host filesystem
     const searchPaths = [
       path.join(path.dirname(EXE_PATH), fileName),
+      path.join(path.dirname(EXE_PATH), 'dlls', fileName),
       path.join(path.dirname(EXE_PATH), 'plugins', fileName),
       path.join(__dirname, 'binaries/dlls', fileName),
     ];
@@ -4966,6 +4967,7 @@ async function main() {
         const searchPaths = [
           path.join(__dirname, 'binaries/dlls', fileName),
           path.join(path.dirname(EXE_PATH), fileName),
+          path.join(path.dirname(EXE_PATH), 'dlls', fileName),
         ];
         let loaded = false;
         for (const sp of searchPaths) {
@@ -5050,6 +5052,7 @@ async function main() {
         const searchPaths = [
           path.join(__dirname, 'binaries/dlls', fileName),
           path.join(path.dirname(EXE_PATH), fileName),
+          path.join(path.dirname(EXE_PATH), 'dlls', fileName),
           path.join(path.dirname(EXE_PATH), 'plugins', fileName),
         ];
         for (const sp of searchPaths) {

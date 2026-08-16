@@ -659,6 +659,21 @@
             (call $cache_store (local.get $start_eip) (local.get $tstart))
             (return (local.get $tstart))))))
 
+    ;; A block entry pointing at eight zero bytes is not code. Real entries are
+    ;; call-return landings, branch targets or function prologues, none of which
+    ;; begin `add [eax],al` eight times over. This happens when a call lands in
+    ;; an uninitialised region — Explorer's SHELL32 does it by entering the
+    ;; INSTDATA 16-bit thunk block that ThunkConnect32 never filled here.
+    ;; Without this the emulator grinds through the whole page and any pages
+    ;; after it, which reads as a hang rather than a missing feature.
+    (if (i32.and
+          (i32.eqz (i32.load (call $g2w (global.get $d_pc))))
+          (i32.eqz (i32.load (call $g2w (i32.add (global.get $d_pc) (i32.const 4))))))
+      (then
+        (call $host_log_i32 (i32.const 0xCA002E20))  ;; execution entered zeros
+        (call $host_log_i32 (local.get $start_eip))
+        (unreachable)))
+
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 
