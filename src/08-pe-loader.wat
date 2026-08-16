@@ -13,6 +13,10 @@
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D)) (then (return (i32.const -1))))
     (local.set $pe_off (i32.add (global.get $PE_STAGING)
       (i32.load (i32.add (global.get $PE_STAGING) (i32.const 0x3C)))))
+    ;; A 16-bit image has an 'NE' header where a PE has 'PE\0\0'. It shares
+    ;; nothing else with this loader, so hand it over whole.
+    (if (i32.eq (i32.load16_u (local.get $pe_off)) (i32.const 0x454E))
+      (then (return (call $load_ne (local.get $size)))))
     (if (i32.ne (i32.load (local.get $pe_off)) (i32.const 0x00004550)) (then (return (i32.const -2))))
 
     (local.set $num_sections (i32.load16_u (i32.add (local.get $pe_off) (i32.const 6))))

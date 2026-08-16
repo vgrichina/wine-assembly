@@ -829,6 +829,9 @@
   (data (i32.const 0x11E48) " \00")
   ;; OLEAUT32 ordinal 420 (see $system_ordinal_api_id).
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
+  ;; Win16 module names, matched against an NE imported-name table entry by
+  ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -982,10 +985,16 @@
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
   ;; 0x00011D80  36B     WSOCK32 ordinal names (cont.) + WsControl if_descr
   ;; 0x00011DA4  128B    CONSOLE_TITLE (window caption for the console)
-  ;; 0x00011E24  220B    Free (up to HIT_COUNT_BASE)
+  ;; 0x00011E30   32B    Native-override export names (InitCommonControlsEx)
+  ;; 0x00011E48    8B    SysLink space literal
+  ;; 0x00011E50   32B    OLEAUT32 ordinal-import names
+  ;; 0x00011E70   60B    Win16 module names (KERNEL/USER/GDI/... , ends 0x11EAC)
+  ;; 0x00011EAC   84B    Free (up to HIT_COUNT_BASE)
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
+  ;; 0x07E08400  2KB     WIN16_SEG_TABLE (128 selectors x 16 bytes + 1 scratch)
+  ;; 0x07E08C00  1KB     WIN16_THUNK_TABLE (256 entries x 4 bytes)
   ;; 0x07E09000 12KB     CONSOLE_TEXT (6144 cells × 2 bytes)
   ;; 0x07E0C000 12KB     CONSOLE_ATTR (6144 cells × 2 bytes)
   ;; 0x07E10000 16KB     DIB_PAGE_USED
@@ -1035,6 +1044,8 @@
   ;; 0x07FFA000 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FFE000)
   ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
+  ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
+  ;;   selector arena (WIN16_ARENA): one 64KB slot per selector index.
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
   ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
@@ -2047,6 +2058,37 @@
   (global $hit_count_n (mut i32) (i32.const 0))
 
   (global $clipboard_fmt_counter (mut i32) (i32.const 0))
+
+  ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
+  ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
+  ;; $win16_apply_relocs for the entry-table segment out-parameter.
+  (global $WIN16_SEG_TABLE i32 (i32.const 0x07E08400))  ;; 128 entries x 16 bytes + 1 scratch
+  (global $WIN16_SEG_MAX   i32 (i32.const 127))
+  (global $WIN16_THUNK_TABLE i32 (i32.const 0x07E08C00)) ;; 256 entries x 4 bytes
+  (global $WIN16_THUNK_MAX i32 (i32.const 256))
+  ;; Each selector index owns one 64KB slot. The arena sits above the PE guest
+  ;; image start: an NE task sets image_base to 0, so nothing else is mapped
+  ;; low, and 128 slots need 8MB.
+  (global $WIN16_ARENA     i32 (i32.const 0x00100000))
+  (global $WIN16_THUNK_SEL (mut i32) (i32.const 0))
+  (global $win16_thunk_index (mut i32) (i32.const 0))
+  (global $win16_thunk_count (mut i32) (i32.const 0))
+  (global $win16_seg_count (mut i32) (i32.const 0))
+  (global $win16_auto_data (mut i32) (i32.const 0))
+  (global $win16_entry_cs  (mut i32) (i32.const 0))
+  (global $win16_entry_ip  (mut i32) (i32.const 0))
+  (global $win16_stack_size (mut i32) (i32.const 0))
+  (global $win16_heap_size (mut i32) (i32.const 0))
+  (global $is_win16        (mut i32) (i32.const 0))
+  (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
+  (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
+  (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))
+  (global $WIN16_NAME_KEYBOARD i32 (i32.const 0x11E80))
+  (global $WIN16_NAME_SOUND    i32 (i32.const 0x11E89))
+  (global $WIN16_NAME_SHELL    i32 (i32.const 0x11E8F))
+  (global $WIN16_NAME_MMSYSTEM i32 (i32.const 0x11E95))
+  (global $WIN16_NAME_COMMDLG  i32 (i32.const 0x11E9E))
+  (global $WIN16_NAME_CARDS    i32 (i32.const 0x11EA6))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)

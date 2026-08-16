@@ -1,0 +1,412 @@
+  ;; ============================================================
+  ;; NE (New Executable) LOADER — 16-bit Windows images
+  ;; ============================================================
+  ;;
+  ;; An NE image is a list of segments rather than a flat mapping. Each one is
+  ;; loaded somewhere and referred to by a selector, and every cross-segment or
+  ;; imported reference is patched afterwards from the segment's own relocation
+  ;; table. There is no image base to slide: the fixups ARE the linking step.
+  ;;
+  ;; Address space. Selector N is laid out at WIN16_ARENA + (N-1) * 64KB, so a
+  ;; selector is just an index and its base is arithmetic rather than a lookup
+  ;; when that helps. The selector value written into guest memory follows the
+  ;; protected-mode convention — (index << 3) | 7 — because guest code compares
+  ;; and increments selectors and expects the low three bits to be the RPL and
+  ;; table bit. WIN16_SEG_TABLE keeps base/limit/flags per index.
+  ;;
+  ;; Imports. A far reference to USER.#113 cannot be resolved to real code, so
+  ;; it is patched to point into one synthetic segment of thunks:
+  ;; WIN16_THUNK_SEL:(slot * 4). WIN16_THUNK_TABLE records the module and
+  ;; ordinal behind each slot. This is the same shape as the 32-bit loader's
+  ;; THUNK_BASE, which lets the existing "EIP landed in the thunk zone" check
+  ;; stay the single place that recognises an API call.
+
+  ;; Selector <-> index. Index 0 is the null selector and is never allocated.
+  (func $win16_sel_to_index (param $sel i32) (result i32)
+    (i32.shr_u (local.get $sel) (i32.const 3)))
+
+  (func $win16_index_to_sel (param $index i32) (result i32)
+    (i32.or (i32.shl (local.get $index) (i32.const 3)) (i32.const 7)))
+
+  ;; Guest base address of a selector index, from the table so a future
+  ;; loader can place a segment somewhere other than its arena slot.
+  (func $win16_seg_base (export "win16_seg_base") (param $index i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $index))
+                (i32.ge_u (local.get $index) (global.get $WIN16_SEG_MAX)))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $WIN16_SEG_TABLE)
+                       (i32.mul (local.get $index) (i32.const 16)))))
+
+  (func $win16_seg_limit (export "win16_seg_limit") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $WIN16_SEG_MAX))
+      (then (return (i32.const 0))))
+    (i32.load offset=4 (i32.add (global.get $WIN16_SEG_TABLE)
+                                (i32.mul (local.get $index) (i32.const 16)))))
+
+  (func $win16_seg_set (param $index i32) (param $base i32) (param $limit i32)
+        (param $flags i32) (param $ne_seg i32)
+    (local $e i32)
+    (local.set $e (i32.add (global.get $WIN16_SEG_TABLE)
+                           (i32.mul (local.get $index) (i32.const 16))))
+    (i32.store          (local.get $e) (local.get $base))
+    (i32.store offset=4 (local.get $e) (local.get $limit))
+    (i32.store offset=8 (local.get $e) (local.get $flags))
+    (i32.store offset=12 (local.get $e) (local.get $ne_seg)))
+
+  ;; Translate a far pointer (selector:offset) to a guest linear address.
+  (func $win16_far_to_guest (export "win16_far_to_guest") (param $sel i32) (param $off i32) (result i32)
+    (i32.add (call $win16_seg_base (call $win16_sel_to_index (local.get $sel)))
+             (i32.and (local.get $off) (i32.const 0xFFFF))))
+
+  ;; ---- Module names ----
+  ;;
+  ;; The imported-name table stores Pascal strings. Compare one against a
+  ;; NUL-terminated ASCII constant, case-sensitively: NE name tables are
+  ;; always upper case.
+  ;; A mismatch has to `return 0`, not branch out of the compare loop: falling
+  ;; out of the block lands on the same "the literal ends here" expression the
+  ;; success path uses, which makes every equal-length pair compare equal.
+  ;; DDEML matched SOUND that way.
+  (func $win16_pstr_eq (param $p i32) (param $lit i32) (result i32)
+    (local $n i32) (local $i i32)
+    (local.set $n (i32.load8_u (local.get $p)))
+    ;; No module name is this long; refuse rather than read past the table.
+    (if (i32.gt_u (local.get $n) (i32.const 16)) (then (return (i32.const 0))))
+    (if (i32.ne (i32.load8_u (i32.add (local.get $lit) (local.get $n))) (i32.const 0))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $p) (i32.const 1)) (local.get $i)))
+                  (i32.load8_u (i32.add (local.get $lit) (local.get $i))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; Address of module reference `index`'s name, as a Pascal string. $ne_off is
+  ;; the absolute address of the NE header in the staged file.
+  (func $win16_module_name (param $ne_off i32) (param $index i32) (result i32)
+    (i32.add
+      (i32.add (local.get $ne_off) (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x2A))))
+      (i32.load16_u
+        (i32.add
+          (i32.add (local.get $ne_off) (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x28))))
+          (i32.shl (i32.sub (local.get $index) (i32.const 1)) (i32.const 1))))))
+
+  ;; Map a module name to the small id the API dispatcher uses. Unknown
+  ;; modules get 0, which makes every call through them fail loudly rather
+  ;; than silently returning into nothing.
+  (func $win16_module_id (param $pstr i32) (result i32)
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_KERNEL))   (then (return (i32.const 1))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_USER))     (then (return (i32.const 2))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_GDI))      (then (return (i32.const 3))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_KEYBOARD)) (then (return (i32.const 4))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_SOUND))    (then (return (i32.const 5))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_SHELL))    (then (return (i32.const 6))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_MMSYSTEM)) (then (return (i32.const 7))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_COMMDLG))  (then (return (i32.const 8))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_CARDS))    (then (return (i32.const 9))))
+    (i32.const 0))
+
+  ;; ---- Import thunks ----
+  ;;
+  ;; One slot per distinct (module, ordinal). Reusing a slot keeps the thunk
+  ;; segment small enough to stay inside one selector and makes a trace of
+  ;; thunk hits readable.
+  (func $win16_thunk_for (param $module_id i32) (param $ordinal i32) (result i32)
+    (local $i i32) (local $key i32) (local $e i32)
+    (local.set $key (i32.or (i32.shl (local.get $module_id) (i32.const 16))
+                            (i32.and (local.get $ordinal) (i32.const 0xFFFF))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $win16_thunk_count)))
+      (if (i32.eq (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
+                                     (i32.shl (local.get $i) (i32.const 2))))
+                  (local.get $key))
+        (then (return (i32.mul (local.get $i) (i32.const 4)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.ge_u (global.get $win16_thunk_count) (global.get $WIN16_THUNK_MAX))
+      (then
+        (call $host_log_i32 (i32.const 0xCA16F017))  ;; thunk table full
+        (unreachable)))
+    (local.set $i (global.get $win16_thunk_count))
+    (i32.store (i32.add (global.get $WIN16_THUNK_TABLE) (i32.shl (local.get $i) (i32.const 2)))
+               (local.get $key))
+    (global.set $win16_thunk_count (i32.add (local.get $i) (i32.const 1)))
+    (i32.mul (local.get $i) (i32.const 4)))
+
+  ;; Module id and ordinal behind a thunk offset, for the dispatcher.
+  (func $win16_thunk_module (export "win16_thunk_module") (param $off i32) (result i32)
+    (i32.shr_u (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
+                                  (i32.and (local.get $off) (i32.const 0xFFFC))))
+               (i32.const 16)))
+
+  (func $win16_thunk_ordinal (export "win16_thunk_ordinal") (param $off i32) (result i32)
+    (i32.and (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
+                                (i32.and (local.get $off) (i32.const 0xFFFC))))
+             (i32.const 0xFFFF)))
+
+  ;; ---- Entry table ----
+  ;;
+  ;; Ordinal -> (segment, offset). Bundles are runs of entries that share a
+  ;; segment; a bundle with segment indicator 0 is a gap that consumes
+  ;; ordinals without defining any. 0xFF marks a moveable bundle, whose
+  ;; entries carry an INT 3Fh thunk ahead of the real segment/offset.
+  (func $win16_entry_lookup (param $ne_off i32) (param $ordinal i32)
+        (param $out_seg i32) (result i32)
+    (local $p i32) (local $end i32) (local $count i32) (local $ind i32)
+    (local $cur i32) (local $i i32)
+    (local.set $p (i32.add (local.get $ne_off)
+                    (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x04)))))
+    (local.set $end (i32.add (local.get $p)
+                      (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x06)))))
+    (local.set $cur (i32.const 1))
+    (block $done (loop $bundles
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (local.set $count (i32.load8_u (local.get $p)))
+      (local.set $ind (i32.load8_u (i32.add (local.get $p) (i32.const 1))))
+      (br_if $done (i32.eqz (local.get $count)))
+      (local.set $p (i32.add (local.get $p) (i32.const 2)))
+      (if (i32.eqz (local.get $ind))
+        (then
+          (local.set $cur (i32.add (local.get $cur) (local.get $count)))
+          (br $bundles)))
+      (local.set $i (i32.const 0))
+      (block $bd (loop $bl
+        (br_if $bd (i32.ge_u (local.get $i) (local.get $count)))
+        (if (i32.eq (local.get $ind) (i32.const 0xFF))
+          (then
+            (if (i32.eq (local.get $cur) (local.get $ordinal))
+              (then
+                (i32.store (local.get $out_seg) (i32.load8_u (i32.add (local.get $p) (i32.const 3))))
+                (return (i32.load16_u (i32.add (local.get $p) (i32.const 4))))))
+            (local.set $p (i32.add (local.get $p) (i32.const 6))))
+          (else
+            (if (i32.eq (local.get $cur) (local.get $ordinal))
+              (then
+                (i32.store (local.get $out_seg) (local.get $ind))
+                (return (i32.load16_u (i32.add (local.get $p) (i32.const 1))))))
+            (local.set $p (i32.add (local.get $p) (i32.const 3)))))
+        (local.set $cur (i32.add (local.get $cur) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $bl)))
+      (br $bundles)))
+    (i32.store (local.get $out_seg) (i32.const 0))
+    (i32.const 0))
+
+  ;; ---- Relocations ----
+  ;;
+  ;; Every record names one target and the head of a chain of places to write
+  ;; it. For a non-additive record the word already sitting at each site is
+  ;; the offset of the next site, 0xFFFF ending the chain; for an additive one
+  ;; there is no chain and the target is added to what is there.
+  ;; $seg_wa is where the segment was placed and is written; $rec_wa is where
+  ;; its relocation records live in the staged file. They are not the same
+  ;; place: the records sit past the segment's own length, and only `seg_len`
+  ;; bytes were copied out.
+  (func $win16_apply_relocs (param $seg_wa i32) (param $seg_len i32) (param $rec_wa i32)
+        (param $ne_off i32)
+    (local $p i32) (local $count i32) (local $i i32)
+    (local $addr_type i32) (local $rel_type i32) (local $additive i32)
+    (local $site i32) (local $a i32) (local $c i32)
+    (local $tgt_sel i32) (local $tgt_off i32) (local $next i32) (local $seg_out i32)
+    (local.set $p (local.get $rec_wa))
+    (local.set $count (i32.load16_u (local.get $p)))
+    (local.set $p (i32.add (local.get $p) (i32.const 2)))
+    (local.set $seg_out (i32.add (global.get $WIN16_SEG_TABLE)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 16))))
+    (block $done (loop $records
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $addr_type (i32.and (i32.load8_u (local.get $p)) (i32.const 0x0F)))
+      (local.set $rel_type  (i32.and (i32.load8_u (i32.add (local.get $p) (i32.const 1))) (i32.const 0x03)))
+      (local.set $additive  (i32.ne (i32.and (i32.load8_u (i32.add (local.get $p) (i32.const 1)))
+                                             (i32.const 0x04)) (i32.const 0)))
+      (local.set $site (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
+      (local.set $a    (i32.load16_u (i32.add (local.get $p) (i32.const 4))))
+      (local.set $c    (i32.load16_u (i32.add (local.get $p) (i32.const 6))))
+
+      ;; Resolve the target to selector:offset.
+      (if (i32.eqz (local.get $rel_type))
+        (then
+          ;; INTERNALREF. Segment 0xFF means "look the ordinal up in the entry
+          ;; table" — the linker did not know the segment at link time.
+          (if (i32.eq (local.get $a) (i32.const 0xFF))
+            (then
+              (local.set $tgt_off (call $win16_entry_lookup (local.get $ne_off) (local.get $c) (local.get $seg_out)))
+              (local.set $tgt_sel (call $win16_index_to_sel (i32.load (local.get $seg_out)))))
+            (else
+              (local.set $tgt_sel (call $win16_index_to_sel (local.get $a)))
+              (local.set $tgt_off (local.get $c)))))
+        (else
+          (if (i32.eq (local.get $rel_type) (i32.const 1))
+            (then
+              ;; IMPORTORDINAL. `a` indexes the module-reference table, whose
+              ;; entries are offsets into the imported-name table, where the
+              ;; module's Pascal-string name lives.
+              (local.set $tgt_sel (global.get $WIN16_THUNK_SEL))
+              (local.set $tgt_off (call $win16_thunk_for
+                (call $win16_module_id (call $win16_module_name (local.get $ne_off) (local.get $a)))
+                (local.get $c))))
+            (else
+              ;; IMPORTNAME and OSFIXUP both name something this loader cannot
+              ;; resolve yet. Point them at thunk slot 0 of module 0, which the
+              ;; dispatcher reports by name instead of jumping into nothing.
+              (local.set $tgt_sel (global.get $WIN16_THUNK_SEL))
+              (local.set $tgt_off (call $win16_thunk_for (i32.const 0) (local.get $c)))))))
+
+      ;; Walk the chain and write every site.
+      (block $chain_done (loop $chain
+        (br_if $chain_done (i32.ge_u (local.get $site) (i32.const 0xFFFF)))
+        (br_if $chain_done (i32.ge_u (local.get $site) (local.get $seg_len)))
+        (local.set $next (i32.load16_u (i32.add (local.get $seg_wa) (local.get $site))))
+        (if (i32.eq (local.get $addr_type) (i32.const 2))
+          (then
+            ;; SEGMENT: selector only
+            (i32.store16 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_sel)))
+          (else
+            (if (i32.eq (local.get $addr_type) (i32.const 5))
+              (then
+                ;; OFFSET: 16-bit offset only
+                (i32.store16 (i32.add (local.get $seg_wa) (local.get $site))
+                  (i32.add (local.get $tgt_off)
+                           (select (local.get $next) (i32.const 0) (local.get $additive)))))
+              (else
+                (if (i32.eqz (local.get $addr_type))
+                  (then
+                    ;; LOBYTE
+                    (i32.store8 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_off)))
+                  (else
+                    ;; FAR_ADDR (3) and anything else pointer-shaped: off:sel
+                    (i32.store16 (i32.add (local.get $seg_wa) (local.get $site)) (local.get $tgt_off))
+                    (i32.store16 (i32.add (i32.add (local.get $seg_wa) (local.get $site)) (i32.const 2))
+                                 (local.get $tgt_sel))))))))
+        ;; Additive records patch one site and stop; chained ones follow the
+        ;; link that was sitting in the low word before the write.
+        (br_if $chain_done (local.get $additive))
+        (local.set $site (local.get $next))
+        (br $chain)))
+
+      (local.set $p (i32.add (local.get $p) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $records))))
+
+  ;; ---- Loader ----
+  ;;
+  ;; Returns the entry point as a far address (selector << 16) | offset, or a
+  ;; negative error: -1 not MZ, -2 not NE, -3 too many segments.
+  (func $load_ne (export "load_ne") (param $size i32) (result i32)
+    (local $ne_off i32) (local $seg_tab i32) (local $seg_count i32)
+    (local $shift i32) (local $i i32) (local $e i32)
+    (local $file_pos i32) (local $len i32) (local $flags i32) (local $alloc i32)
+    (local $base i32) (local $dst i32) (local $auto_data i32)
+
+    (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D))
+      (then (return (i32.const -1))))
+    (local.set $ne_off (i32.load (i32.add (global.get $PE_STAGING) (i32.const 0x3C))))
+    (if (i32.ne (i32.load16_u (i32.add (global.get $PE_STAGING) (local.get $ne_off)))
+                (i32.const 0x454E))
+      (then (return (i32.const -2))))
+    (local.set $ne_off (i32.add (global.get $PE_STAGING) (local.get $ne_off)))
+
+    (local.set $seg_count (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1C))))
+    (if (i32.ge_u (i32.add (local.get $seg_count) (i32.const 2)) (global.get $WIN16_SEG_MAX))
+      (then (return (i32.const -3))))
+    (local.set $shift (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x32))))
+    (if (i32.eqz (local.get $shift)) (then (local.set $shift (i32.const 9))))
+    (local.set $seg_tab (i32.add (local.get $ne_off)
+                          (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x22)))))
+
+    ;; A 16-bit image has no base to relocate to, so guest linear addresses
+    ;; start at zero and every segment lives in its own 64KB arena slot.
+    (global.set $image_base (i32.const 0))
+    (global.set $win16_thunk_count (i32.const 0))
+    (call $zero_memory (global.get $WIN16_SEG_TABLE)
+      (i32.mul (i32.add (global.get $WIN16_SEG_MAX) (i32.const 1)) (i32.const 16)))
+    (call $zero_memory (global.get $WIN16_THUNK_TABLE)
+      (i32.mul (global.get $WIN16_THUNK_MAX) (i32.const 4)))
+
+    ;; Pass 1: place and copy every segment. Relocations come after, because a
+    ;; fixup in segment 1 can name segment 3.
+    (local.set $i (i32.const 0))
+    (block $place_done (loop $place
+      (br_if $place_done (i32.ge_u (local.get $i) (local.get $seg_count)))
+      (local.set $e (i32.add (local.get $seg_tab) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $file_pos (i32.shl (i32.load16_u (local.get $e)) (local.get $shift)))
+      (local.set $len   (i32.load16_u (i32.add (local.get $e) (i32.const 2))))
+      (local.set $flags (i32.load16_u (i32.add (local.get $e) (i32.const 4))))
+      (local.set $alloc (i32.load16_u (i32.add (local.get $e) (i32.const 6))))
+      ;; A zero length or allocation means the full 64KB, not an empty segment.
+      (if (i32.and (i32.eqz (local.get $len)) (i32.ne (local.get $file_pos) (i32.const 0)))
+        (then (local.set $len (i32.const 0x10000))))
+      (if (i32.eqz (local.get $alloc)) (then (local.set $alloc (i32.const 0x10000))))
+      (if (i32.lt_u (local.get $alloc) (local.get $len)) (then (local.set $alloc (local.get $len))))
+      (local.set $base (i32.add (global.get $WIN16_ARENA)
+                                (i32.mul (local.get $i) (i32.const 0x10000))))
+      (call $win16_seg_set (i32.add (local.get $i) (i32.const 1))
+        (local.get $base) (local.get $alloc) (local.get $flags) (i32.add (local.get $i) (i32.const 1)))
+      (local.set $dst (call $g2w (local.get $base)))
+      (call $zero_memory (local.get $dst) (i32.const 0x10000))
+      (if (i32.and (i32.ne (local.get $file_pos) (i32.const 0))
+                   (i32.le_u (i32.add (local.get $file_pos) (local.get $len)) (local.get $size)))
+        (then
+          (call $memcpy (local.get $dst)
+            (i32.add (global.get $PE_STAGING) (local.get $file_pos))
+            (local.get $len))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $place)))
+
+    ;; The thunk segment sits one slot past the last real segment. Nothing is
+    ;; ever executed from it: EIP landing inside is the signal to dispatch.
+    (global.set $win16_thunk_index (i32.add (local.get $seg_count) (i32.const 1)))
+    (global.set $WIN16_THUNK_SEL (call $win16_index_to_sel (global.get $win16_thunk_index)))
+    (call $win16_seg_set (global.get $win16_thunk_index)
+      (i32.add (global.get $WIN16_ARENA) (i32.mul (local.get $seg_count) (i32.const 0x10000)))
+      (i32.const 0x10000) (i32.const 0) (i32.const 0))
+
+    ;; Pass 2: relocations.
+    (local.set $i (i32.const 0))
+    (block $fix_done (loop $fix
+      (br_if $fix_done (i32.ge_u (local.get $i) (local.get $seg_count)))
+      (local.set $e (i32.add (local.get $seg_tab) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $flags (i32.load16_u (i32.add (local.get $e) (i32.const 4))))
+      (local.set $file_pos (i32.shl (i32.load16_u (local.get $e)) (local.get $shift)))
+      (local.set $len (i32.load16_u (i32.add (local.get $e) (i32.const 2))))
+      (if (i32.and (i32.eqz (local.get $len)) (i32.ne (local.get $file_pos) (i32.const 0)))
+        (then (local.set $len (i32.const 0x10000))))
+      ;; RELOCINFO is bit 8, so it must be reduced to 0/1 before being combined
+      ;; with another predicate: 0x100 AND 1 is 0.
+      (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x0100)) (i32.const 0))
+                   (i32.ne (local.get $file_pos) (i32.const 0)))
+        (then
+          (call $win16_apply_relocs
+            (call $g2w (call $win16_seg_base (i32.add (local.get $i) (i32.const 1))))
+            (local.get $len)
+            (i32.add (i32.add (global.get $PE_STAGING) (local.get $file_pos)) (local.get $len))
+            (local.get $ne_off))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fix)))
+
+    ;; Auto-data segment: DS for the whole task, and where the local heap and
+    ;; stack live. SS = DS is the small/medium model every one of these images
+    ;; is built with.
+    (local.set $auto_data (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x0E))))
+    (global.set $win16_auto_data (local.get $auto_data))
+    (global.set $win16_seg_count (local.get $seg_count))
+    (global.set $win16_entry_cs
+      (call $win16_index_to_sel (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x16)))))
+    (global.set $win16_entry_ip (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x14))))
+    (global.set $win16_stack_size (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x12))))
+    (global.set $win16_heap_size (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x10))))
+    (global.set $is_win16 (i32.const 1))
+
+    (i32.or (i32.shl (global.get $win16_entry_cs) (i32.const 16))
+            (global.get $win16_entry_ip)))
+
+  ;; ---- Inspection exports (used by test/test-ne-loader.js) ----
+  (func (export "win16_seg_count") (result i32) (global.get $win16_seg_count))
+  (func (export "win16_entry_cs") (result i32) (global.get $win16_entry_cs))
+  (func (export "win16_entry_ip") (result i32) (global.get $win16_entry_ip))
+  (func (export "win16_auto_data") (result i32) (global.get $win16_auto_data))
+  (func (export "win16_thunk_count") (result i32) (global.get $win16_thunk_count))
+  (func (export "win16_thunk_sel") (result i32) (global.get $WIN16_THUNK_SEL))
+  (func (export "is_win16") (result i32) (global.get $is_win16))
