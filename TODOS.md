@@ -176,17 +176,23 @@ so the telnet-first detour is dropped.
 
 ## Cross-cutting, carried over from earlier sessions
 
-- **`CW_USEDEFAULT` ignores only x, not y** — found 2026-08-16 while fixing
-  `test-solitaire-resize`, nobody owns it. Win32 rule: when `x` is
-  `CW_USEDEFAULT` on an overlapped window, the system picks *both* x and y and
-  the caller's `y` is ignored (same pairing `cx`/`cy` already gets in
-  `src/09a5-handlers-window.wat:32`). We honour the caller's y, so Solitaire and
-  Notepad — both of which pass `x=CW_USEDEFAULT, y=0` — open at y=0 instead of
-  the y=20 cascade slot. The one-line-ish fix is in `$handle_CreateWindowExA`
-  around lines 28-51 (both the `$win_*` and `$host_win_*` copies). **It moves
-  every default-placed window down 20px**, so it needs a full e2e pass and
-  recalibration of the pixel-pinned tests in the same commit — do not drive-by
-  it.
+- ~~**`CW_USEDEFAULT` ignores only x, not y**~~ — FIXED `7d4d1af`. x and y are a
+  pair, so `x=CW_USEDEFAULT` makes the system pick both and ignore the caller's
+  y. Solitaire and Notepad now open in the y=20 cascade slot. The 20px shift
+  fixed three e2e tests (`solitaire-maximize`, `notepad-find-next-positive`,
+  `notepad-find-not-found-msgbox`) and broke exactly one, `notepad-menu`, which
+  sampled a fixed desktop point for the File dropdown; its anchor is now derived
+  from the live window origin. Verified with a full before/after e2e diff in a
+  clean worktree, plus unit 92/2 and corpus 106 PASS / 0 FAIL.
+- ~~**mspaint scrollbar travel**~~ — FIXED `2bc5c16`, and it was never an
+  emulator bug. `test-mspaint-scrollbar-thumb` (3/5 → 6/6) and
+  `test-mspaint-large-scroll` (2/5 → 5/5) were pinned to the geometry of a
+  212x283 view; the frame's client inset is now correctly 6px, the view is
+  202x274, and Paint's page/4 arrow scroll moved with it. New rot-proof input
+  actions in `test/run.js`: `scroll-click`, `scroll-drag`, `dump-scrollbar`,
+  `caption-click`, and `assert-standard-scroll` now takes `N%` of the bar's own
+  page size. Three mspaint `execFileSync` timeouts also raised to 45s — they are
+  hang ceilings, not performance budgets, and were going red on box load alone.
 - **Screensaver GDI-bridge regression** — `apps/screensavers.md` Task 0, fixed
   2026-08-15 via the RLE DIB path; re-read before trusting it, since
   `test-cwordzap-render`'s RLE4 asserts are failing again in the current e2e run.
