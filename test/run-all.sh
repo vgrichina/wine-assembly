@@ -139,6 +139,7 @@ E2E=(
   test/test-calc-helper-window.js
   test/test-open-cancel.js
   test/test-help.js
+  test/test-winhelp-dll-macro.js
   test/test-freecell-select-game.js
   test/test-freecell-move.js
   test/test-freecell-dblclick.js

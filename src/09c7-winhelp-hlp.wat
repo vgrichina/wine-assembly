@@ -481,6 +481,35 @@
                   (local.set $cnt_off
                     (i32.add (local.get $data_off) (i32.add (local.get $pos) (i32.const 4))))
                   (local.set $cnt_len (local.get $string_len))))))
+          ;; Type 4 is a macro the file runs when it opens. Record where it
+          ;; is; running it needs the whole document parsed, and a file with
+          ;; more than the cap keeps its first records rather than failing.
+          (if (i32.and (i32.eq (local.get $type) (i32.const 4))
+                (i32.and (i32.ne (local.get $size) (i32.const 0))
+                  (i32.lt_u (global.get $help_doc_system_macro_count)
+                    (global.get $HELP_MAX_SYSTEM_MACROS))))
+            (then
+              (if (i32.eqz (global.get $help_doc_system_macros_ga))
+                (then
+                  (global.set $help_doc_system_macros_ga (call $heap_alloc
+                    (i32.mul (global.get $HELP_MAX_SYSTEM_MACROS) (i32.const 8))))
+                  (if (i32.eqz (global.get $help_doc_system_macros_ga))
+                    (then
+                      (call $help_set_error (global.get $HELP_ERROR_ALLOCATION)
+                        (local.get $data_off))
+                      (return (i32.const 0))))
+                  (global.set $help_doc_system_macros_wa
+                    (call $g2w (global.get $help_doc_system_macros_ga)))))
+              (i32.store
+                (i32.add (global.get $help_doc_system_macros_wa)
+                  (i32.mul (global.get $help_doc_system_macro_count) (i32.const 8)))
+                (i32.add (local.get $data_off) (i32.add (local.get $pos) (i32.const 4))))
+              (i32.store offset=4
+                (i32.add (global.get $help_doc_system_macros_wa)
+                  (i32.mul (global.get $help_doc_system_macro_count) (i32.const 8)))
+                (local.get $size))
+              (global.set $help_doc_system_macro_count
+                (i32.add (global.get $help_doc_system_macro_count) (i32.const 1)))))
           (if (i32.eq (local.get $type) (i32.const 3))
             (then
               (if (i32.ne (local.get $size) (i32.const 4))
@@ -4754,6 +4783,9 @@
       (then
         (call $help_document_release_storage)
         (return (i32.const 0))))
+    ;; A file's registration macros run as soon as it opens, which is what
+    ;; makes the routines it registers callable from its own topics.
+    (call $help_run_registration_macros)
     (i32.const 1))
 
   ;; Load an optional same-directory .cnt companion. A missing companion is

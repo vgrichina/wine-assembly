@@ -505,7 +505,10 @@
       (br $dl))))
 
   ;; Get next available DLL load address (page-aligned after last DLL AND after heap)
-  (func (export "get_next_dll_addr") (result i32)
+  ;; Named as well as exported: WAT-side callers load DLLs too. The WinHelp
+  ;; engine loads a help file's own DLL when a registered macro is called,
+  ;; without a round trip through the host.
+  (func $next_dll_addr (export "get_next_dll_addr") (result i32)
     (local $addr i32) (local $after_dll i32)
     (if (global.get $dll_count)
       (then

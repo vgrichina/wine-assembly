@@ -471,6 +471,7 @@ async function main() {
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wave-in-feed:FRAMES[:RATE:AMPLITUDE] — feed synthetic sine PCM to waveIn
   //   B:mixer-peak:BUS:VALUE[:HOLD_MS] — inject a 0..32767 mixer peak for visual tests
+  //   B:help-macro:HLP_FILE:MACRO — WinHelpA(HELP_COMMAND) a macro on a help file
   //   B:vfs-export:FILENAME:PATH — write one virtual file to the host filesystem
   //   B:vfs-import:FILENAME:PATH — load one host file into the virtual filesystem
   //   B:assert-standard-scroll:AXIS:MIN_POS[:LABEL] — fail unless a visible standard bar reaches MIN_POS
@@ -768,6 +769,13 @@ async function main() {
           bus: Math.max(0, Math.min(2, parseInt(parts[2]) || 0)),
           value: Math.max(0, Math.min(32767, parseInt(parts[3]) || 0)),
           holdMs: Math.max(50, parseInt(parts[4]) || 500),
+        });
+      } else if (kind === 'help-macro') {
+        scheduledInput.push({
+          batch,
+          action: 'help-macro',
+          filename: parts[2],
+          macro: parts.slice(3).join(':'),
         });
       } else if (kind === 'vfs-export') {
         scheduledInput.push({
@@ -4431,6 +4439,29 @@ async function main() {
           logs.push(`[input] vfs-export ${key} -> ${ev.path} (${entry.data.length} bytes) at batch ${batch}`);
         } catch (e) {
           logs.push(`[input] vfs-export FAILED ${ev.filename}: ${e.message} at batch ${batch}`);
+        }
+      } else if (ev.action === 'help-macro') {
+        // WinHelpA(hwnd, file, HELP_COMMAND, "Macro(...)") - how an
+        // application runs a help macro, including one bound to a routine the
+        // help file registered from its own DLL.
+        const we = instance.exports;
+        if (!we.test_invoke_WinHelpA || !we.guest_alloc) {
+          logs.push(`[input] help-macro: build has no WinHelp entry at batch ${batch}`);
+        } else {
+          const writeAnsi = text => {
+            const buf = Buffer.from(text, 'latin1');
+            const ga = we.guest_alloc(buf.length + 1);
+            new Uint8Array(memory.buffer, g2w(ga), buf.length).set(buf);
+            new Uint8Array(memory.buffer, g2w(ga) + buf.length, 1)[0] = 0;
+            return ga;
+          };
+          const status = we.test_invoke_WinHelpA(0x8888,
+            writeAnsi(ev.filename), 0x0102, writeAnsi(ev.macro));
+          logs.push(`[input] help-macro ${ev.filename} ${JSON.stringify(ev.macro)}` +
+            ` -> accepted=${status}` +
+            ` dispatch=${we.get_help_dispatch_status ? we.get_help_dispatch_status() : '?'}` +
+            ` routines=${we.get_help_routine_count ? we.get_help_routine_count() : '?'}` +
+            ` at batch ${batch}`);
         }
       } else if (ev.action === 'vfs-import') {
         try {

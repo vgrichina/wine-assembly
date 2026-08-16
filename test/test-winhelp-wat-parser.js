@@ -3057,11 +3057,30 @@ async function main() {
     // 6 = UNSUPPORTED, 5 = BAD_DATA, 4 = UNRESOLVED.
     check('macros this emulator does not perform report UNSUPPORTED',
       ['PlayWave("ding", 1)', 'ExecProgram("notepad.exe", 0)', 'Annotate()',
-       'AL("a-playingtopics")', 'ALink("x")', 'RegisterRoutine("a","b","c")']
+       'AL("a-playingtopics")', 'ALink("x")']
         .every(macro => {
           const result = runMacro(macro);
           return result.ok === 0 && result.status === 6;
         }));
+    // RegisterRoutine used to be on that list. It binds a macro name to an
+    // exported function in a DLL the help file ships - Age of Empires
+    // registers PlayWAV, PlayBMP, PlayAVI and CallWinHelp against AoEHlp.dll.
+    const routinesBefore = e.get_help_routine_count();
+    check('RegisterRoutine binds a name instead of refusing it',
+      runMacro('RR(`aoehlp.dll\', `PlayWAV\', `S\')').status === 1 &&
+      e.get_help_routine_count() === routinesBefore + 1,
+      `status=${runMacro('RR(`a.dll\', `B\', `S\')').status}`);
+    check('registering the same name again rebinds rather than growing',
+      runMacro('RegisterRoutine("aoehlp.dll", "PlayWAV", "S")').status === 1 &&
+      e.get_help_routine_count() === routinesBefore + 2);
+    check('a registration missing an argument is BAD_DATA',
+      runMacro('RR(`only.dll\')').status === 5 &&
+      runMacro('RR(`a.dll\', 7, `S\')').status === 5);
+    // The bound name is now callable. This fixture has no VFS, so the DLL
+    // cannot be produced and the call reports a missing capability - the
+    // registration itself is still what made the name reach this path.
+    check('calling a bound routine without its DLL reports UNSUPPORTED',
+      runMacro('PlayWAV(`bird.wav\')').status === 6);
     check('a known macro with the wrong argument shape reports BAD_DATA',
       runMacro('JumpContext("not a number")').status === 5 &&
       runMacro('KLink(17)').status === 5);

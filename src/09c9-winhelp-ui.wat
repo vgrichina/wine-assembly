@@ -1813,6 +1813,411 @@
         (i32.sub (i32.const 0) (global.get $help_macro_arg_number)))))
     (local.get $wa))
 
+  ;; Read one comma-separated string argument. RegisterRoutine's three
+  ;; arguments are all strings, and a number anywhere among them is a
+  ;; malformed macro rather than a coercion.
+  (func $help_macro_read_string_arg
+    (param $wa i32) (param $end i32) (param $expect_comma i32) (result i32)
+    (local $ch i32)
+    (if (local.get $expect_comma)
+      (then
+        (block $found (loop $skip
+          (if (i32.ge_u (local.get $wa) (local.get $end))
+            (then (return (i32.const 0))))
+          (local.set $ch (i32.load8_u (local.get $wa)))
+          (if (i32.eq (local.get $ch) (i32.const 0x2C))
+            (then
+              (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+              (br $found)))
+          (if (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                       (i32.ne (local.get $ch) (i32.const 0x09)))
+            (then (return (i32.const 0))))
+          (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+          (br $skip)))))
+    (local.set $wa (call $help_macro_read_arg (local.get $wa) (local.get $end)))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $help_macro_arg_is_string))
+      (then (return (i32.const 0))))
+    (local.get $wa))
+
+  ;; RegisterRoutine(dll, function, format). The strings are recorded as
+  ;; offsets into the document image; the DLL is not touched until the macro
+  ;; is actually called, because a help file registers routines it may never
+  ;; use (Empires.hlp registers five and a topic may call none of them).
+  (func $help_macro_register_routine
+    (param $wa i32) (param $end i32) (result i32)
+    (local $dll_ga i32) (local $fn_ga i32) (local $fmt_ga i32)
+    (local $name_hash i32) (local $fn_len i32)
+    (local.set $wa (call $help_macro_read_string_arg
+      (local.get $wa) (local.get $end) (i32.const 0)))
+    (if (local.get $wa)
+      (then
+        ;; A DLL or function name has to be there; an empty format is normal
+        ;; and means the routine takes no arguments.
+        (if (global.get $help_macro_arg_len)
+          (then (local.set $dll_ga (call $help_dup_cstring
+            (global.get $help_macro_arg_wa) (global.get $help_macro_arg_len)))))
+        (local.set $wa (call $help_macro_read_string_arg
+          (local.get $wa) (local.get $end) (i32.const 1)))))
+    (if (local.get $wa)
+      (then
+        (local.set $fn_len (global.get $help_macro_arg_len))
+        (if (local.get $fn_len)
+          (then
+            (local.set $name_hash (call $help_macro_name_hash
+              (global.get $help_macro_arg_wa) (local.get $fn_len)))
+            (local.set $fn_ga (call $help_dup_cstring
+              (global.get $help_macro_arg_wa) (local.get $fn_len)))))
+        (local.set $wa (call $help_macro_read_string_arg
+          (local.get $wa) (local.get $end) (i32.const 1)))))
+    (if (local.get $wa)
+      (then (local.set $fmt_ga (call $help_dup_cstring
+        (global.get $help_macro_arg_wa) (global.get $help_macro_arg_len)))))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $wa) (i32.const 0))
+                   (i32.ne (local.get $dll_ga) (i32.const 0)))
+          (i32.and (i32.ne (local.get $fn_ga) (i32.const 0))
+                   (i32.ne (local.get $fmt_ga) (i32.const 0))))
+      (then
+        (if (call $help_register_routine (local.get $name_hash)
+              (local.get $dll_ga) (local.get $fn_ga) (local.get $fmt_ga))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+            (return (i32.const 1))))))
+    ;; Nothing was handed over, so every copy made above is still ours.
+    (if (local.get $dll_ga) (then (call $heap_free (local.get $dll_ga))))
+    (if (local.get $fn_ga) (then (call $heap_free (local.get $fn_ga))))
+    (if (local.get $fmt_ga) (then (call $heap_free (local.get $fmt_ga))))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+    (i32.const 0))
+
+  ;; Run the |SYSTEM macros a file declares, but only the ones that register a
+  ;; routine. WinHelp runs every config macro at open; we do not, deliberately
+  ;; - a config macro can navigate, and a document must not move before its
+  ;; owner has seen it. Registration has no such effect: it binds a name.
+  (func $help_run_registration_macros
+    (local $i i32) (local $entry i32) (local $wa i32) (local $len i32)
+    (local $name i32) (local $status i32)
+    (local.set $status (global.get $help_session_status))
+    (block $done (loop $macros
+      (br_if $done (i32.ge_u (local.get $i) (global.get $help_doc_system_macro_count)))
+      (local.set $entry (i32.add (global.get $help_doc_system_macros_wa)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $wa (i32.add (global.get $help_doc_file_wa)
+        (i32.load (local.get $entry))))
+      (local.set $len (i32.load offset=4 (local.get $entry)))
+      ;; The record's declared size includes the terminator the compiler
+      ;; wrote; the macro text itself stops at the first NUL.
+      (local.set $len (call $help_cstring_length_memory
+        (local.get $wa) (local.get $len)))
+      (if (i32.gt_s (local.get $len) (i32.const 0))
+        (then
+          (local.set $name (call $help_macro_leading_name_hash
+            (local.get $wa) (local.get $len)))
+          (if (i32.or
+                (i32.eq (local.get $name) (i32.const 0x3097D780))                                   ;; "REGISTERROUTINE"
+                (i32.eq (local.get $name) (i32.const 0x6F04E7A5)))                                  ;; "RR"
+            (then (drop (call $help_macro_execute
+              (i32.const 0) (local.get $wa) (local.get $len)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $macros)))
+    ;; Opening a document is not a dispatch: whatever these macros reported
+    ;; must not masquerade as the result of the caller's command.
+    (global.set $help_session_status (local.get $status)))
+
+  ;; Hash of the macro name a string starts with, skipping leading blanks and
+  ;; stopping at the first non-letter, exactly as $help_macro_execute does.
+  (func $help_macro_leading_name_hash
+    (param $wa i32) (param $len i32) (result i32)
+    (local $end i32) (local $name i32) (local $ch i32)
+    (local.set $end (i32.add (local.get $wa) (local.get $len)))
+    (block $trimmed (loop $trim
+      (br_if $trimmed (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (i32.load8_u (local.get $wa)))
+      (br_if $trimmed (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                               (i32.ne (local.get $ch) (i32.const 0x09))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $trim)))
+    (local.set $name (local.get $wa))
+    (block $name_done (loop $scan
+      (br_if $name_done (i32.ge_u (local.get $wa) (local.get $end)))
+      (local.set $ch (call $help_macro_upper (i32.load8_u (local.get $wa))))
+      (br_if $name_done (i32.or (i32.lt_u (local.get $ch) (i32.const 0x41))
+                                (i32.gt_u (local.get $ch) (i32.const 0x5A))))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $scan)))
+    (call $help_macro_name_hash (local.get $name)
+      (i32.sub (local.get $wa) (local.get $name))))
+
+  ;; Copy a counted slice of the document image into a NUL-terminated guest
+  ;; buffer. Registered routines take C strings, and both the DLL name the
+  ;; loader needs and the arguments the routine reads live inside the image
+  ;; as bare runs of bytes with no terminator of their own.
+  (func $help_dup_cstring (param $wa i32) (param $len i32) (result i32)
+    (local $ga i32)
+    (local.set $ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (if (local.get $len)
+      (then (memory.copy (call $g2w (local.get $ga))
+        (local.get $wa) (local.get $len))))
+    (i32.store8 (i32.add (call $g2w (local.get $ga)) (local.get $len)) (i32.const 0))
+    (local.get $ga))
+
+  ;; Load the DLL a registered routine names and resolve its entry point.
+  ;; Deliberately lazy: a help file registers every routine it might ever use
+  ;; the moment it opens, and loading five DLLs to read one topic would be
+  ;; wrong. Returns the guest entry address, or 0.
+  (func $help_routine_resolve (param $record i32) (result i32)
+    (local $dll_ga i32) (local $fn_ga i32) (local $dll_index i32)
+    (local $handle i32) (local $size i32) (local $bytes_ga i32) (local $read_ga i32)
+    (local $entry i32) (local $load_addr i32)
+    ;; A help DLL is x86 code: it needs a loaded process to run inside, with a
+    ;; guest stack and an image base. Without one there is nothing to call
+    ;; into, and pretending otherwise would jump the interpreter at an address
+    ;; that means nothing.
+    (if (i32.eqz (global.get $exe_size_of_image)) (then (return (i32.const 0))))
+    (if (i32.load offset=16 (local.get $record))
+      (then (return (i32.load offset=16 (local.get $record)))))
+    (local.set $dll_ga (i32.load offset=4 (local.get $record)))
+    (if (i32.eqz (local.get $dll_ga)) (then (return (i32.const 0))))
+    (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
+    (if (i32.lt_s (local.get $dll_index) (i32.const 0))
+      (then
+        ;; The VFS boundary takes the path as a WASM address and the read
+        ;; buffer as a guest one, exactly as the .cnt loader does.
+        (local.set $handle (call $host_fs_create_file
+          (call $g2w (local.get $dll_ga)) (i32.const 0x80000000)
+          (i32.const 3) (i32.const 0x80) (i32.const 0)))
+        (if (i32.eq (local.get $handle) (i32.const -1))
+          (then
+            (call $heap_free (local.get $dll_ga))
+            (return (i32.const 0))))
+        (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+        (if (i32.or
+              (i32.or (i32.eq (local.get $size) (i32.const -1))
+                      (i32.eqz (local.get $size)))
+              (i32.gt_u (local.get $size) (global.get $PE_STAGING_SIZE)))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (call $heap_free (local.get $dll_ga))
+            (return (i32.const 0))))
+        (local.set $bytes_ga (call $heap_alloc (local.get $size)))
+        (local.set $read_ga (call $heap_alloc (i32.const 4)))
+        (if (i32.or (i32.eqz (local.get $bytes_ga)) (i32.eqz (local.get $read_ga)))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (if (local.get $bytes_ga) (then (call $heap_free (local.get $bytes_ga))))
+            (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
+            (call $heap_free (local.get $dll_ga))
+            (return (i32.const 0))))
+        (i32.store (call $g2w (local.get $read_ga)) (i32.const 0))
+        (local.set $entry (call $host_fs_read_file
+          (local.get $handle) (local.get $bytes_ga) (local.get $size)
+          (local.get $read_ga)))
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (if (i32.or (i32.eqz (local.get $entry))
+              (i32.ne (i32.load (call $g2w (local.get $read_ga))) (local.get $size)))
+          (then
+            (call $heap_free (local.get $read_ga))
+            (call $heap_free (local.get $bytes_ga))
+            (call $heap_free (local.get $dll_ga))
+            (return (i32.const 0))))
+        ;; The loader reads the image from the staging buffer, exactly as it
+        ;; does for a LoadLibraryA the host drives.
+        (memory.copy (global.get $PE_STAGING) (call $g2w (local.get $bytes_ga))
+          (local.get $size))
+        (call $heap_free (local.get $read_ga))
+        (call $heap_free (local.get $bytes_ga))
+        (local.set $load_addr (call $next_dll_addr))
+        (drop (call $load_dll (local.get $size) (local.get $load_addr)))
+        (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
+        (if (i32.lt_s (local.get $dll_index) (i32.const 0))
+          (then (return (i32.const 0))))))
+    (local.set $fn_ga (i32.load offset=8 (local.get $record)))
+    (if (i32.eqz (local.get $fn_ga)) (then (return (i32.const 0))))
+    (local.set $entry (call $resolve_name_export
+      (local.get $dll_index) (call $g2w (local.get $fn_ga))))
+    (i32.store offset=16 (local.get $record) (local.get $entry))
+    (local.get $entry))
+
+  ;; Call a registered routine. The format string decides how each macro
+  ;; argument is passed: 'S'/'s' a C string, 'U'/'u'/'I'/'i' a machine word.
+  ;; WinHelp DLL routines are stdcall (AoEHlp's PlayWAV ends in `ret 4` for
+  ;; its single 'S'), so the callee pops what we push.
+  ;;
+  ;; The guest call itself follows the same shape as a synchronous wndproc
+  ;; dispatch: save the register context, push arguments and the shared
+  ;; continuation thunk, run bounded slices until the thunk zeroes EIP, then
+  ;; restore. The macro fires from inside a message dispatch, so the caller's
+  ;; own EIP has to come back untouched.
+  (func $help_macro_call_routine
+    (param $caller i32) (param $name_hash i32) (param $wa i32) (param $end i32)
+    (result i32)
+    (local $record i32) (local $entry i32) (local $fmt i32) (local $fmt_len i32)
+    (local $i i32) (local $ch i32) (local $count i32) (local $slot i32)
+    (local $args i32) (local $owned i32) (local $ok i32)
+    (local $old_eip i32) (local $old_esp i32) (local $old_eax i32)
+    (local $old_ecx i32) (local $old_edx i32) (local $old_ebx i32)
+    (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_yield_reason i32) (local $old_yield_flag i32) (local $rounds i32)
+    (local.set $record (call $help_routine_at
+      (call $help_find_routine (local.get $name_hash))))
+    (if (i32.eqz (local.get $record))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (local.set $entry (call $help_routine_resolve (local.get $record)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        ;; The file names a DLL or an export we cannot produce. That is a
+        ;; missing capability, not malformed macro text.
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (local.set $fmt (call $g2w (i32.load offset=12 (local.get $record))))
+    (local.set $fmt_len (call $help_cstring_length_memory
+      (local.get $fmt) (i32.add (global.get $HELP_MAX_ROUTINE_ARGS) (i32.const 1))))
+    (if (i32.lt_s (local.get $fmt_len) (i32.const 0))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (if (i32.gt_u (local.get $fmt_len) (global.get $HELP_MAX_ROUTINE_ARGS))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    ;; Argument values, then the guest buffers to free afterwards. Both are
+    ;; fixed-size and small; a routine taking more than four arguments is
+    ;; refused above rather than silently truncated.
+    (local.set $args (call $heap_alloc
+      (i32.mul (global.get $HELP_MAX_ROUTINE_ARGS) (i32.const 8))))
+    (if (i32.eqz (local.get $args))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $args)) (i32.const 0)
+      (i32.mul (global.get $HELP_MAX_ROUTINE_ARGS) (i32.const 8)))
+    (local.set $ok (i32.const 1))
+    (block $args_done (loop $arg
+      (br_if $args_done (i32.ge_u (local.get $i) (local.get $fmt_len)))
+      (local.set $ch (call $help_macro_upper
+        (i32.load8_u (i32.add (local.get $fmt) (local.get $i)))))
+      (local.set $wa (call $help_macro_read_arg (local.get $wa) (local.get $end)))
+      (if (i32.eqz (local.get $wa))
+        (then
+          (local.set $ok (i32.const 0))
+          (br $args_done)))
+      (local.set $slot (i32.add (call $g2w (local.get $args))
+        (i32.mul (local.get $count) (i32.const 8))))
+      (if (i32.eq (local.get $ch) (i32.const 0x53))                                                 ;; 'S'
+        (then
+          (if (i32.eqz (global.get $help_macro_arg_is_string))
+            (then
+              (local.set $ok (i32.const 0))
+              (br $args_done)))
+          (local.set $owned (call $help_dup_cstring
+            (global.get $help_macro_arg_wa) (global.get $help_macro_arg_len)))
+          (if (i32.eqz (local.get $owned))
+            (then
+              (local.set $ok (i32.const 0))
+              (br $args_done)))
+          (i32.store (local.get $slot) (local.get $owned))
+          (i32.store offset=4 (local.get $slot) (local.get $owned)))
+        (else
+          (if (i32.and (i32.ne (local.get $ch) (i32.const 0x55))                                    ;; 'U'
+                       (i32.ne (local.get $ch) (i32.const 0x49)))                                   ;; 'I'
+            (then
+              (local.set $ok (i32.const 0))
+              (br $args_done)))
+          (if (global.get $help_macro_arg_is_string)
+            (then
+              (local.set $ok (i32.const 0))
+              (br $args_done)))
+          (i32.store (local.get $slot) (global.get $help_macro_arg_number))))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      ;; Arguments are comma separated; anything else ends the list.
+      (block $comma (loop $skip
+        (br_if $comma (i32.ge_u (local.get $wa) (local.get $end)))
+        (local.set $ch (i32.load8_u (local.get $wa)))
+        (if (i32.eq (local.get $ch) (i32.const 0x2C))
+          (then
+            (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+            (br $comma)))
+        (br_if $comma (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                               (i32.ne (local.get $ch) (i32.const 0x09))))
+        (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+        (br $skip)))
+      (br $arg)))
+    (if (local.get $ok)
+      (then
+        (local.set $old_eip (global.get $eip))
+        (local.set $old_esp (global.get $esp))
+        (local.set $old_eax (global.get $eax))
+        (local.set $old_ecx (global.get $ecx))
+        (local.set $old_edx (global.get $edx))
+        (local.set $old_ebx (global.get $ebx))
+        (local.set $old_esi (global.get $esi))
+        (local.set $old_edi (global.get $edi))
+        (local.set $old_ebp (global.get $ebp))
+        (local.set $old_handler_set_eip (global.get $handler_set_eip))
+        (local.set $old_steps (global.get $steps))
+        (local.set $old_yield_reason (global.get $yield_reason))
+        (local.set $old_yield_flag (global.get $yield_flag))
+        ;; Arguments go on in reverse: the first one has to end up nearest
+        ;; the return address.
+        (local.set $i (local.get $count))
+        (block $pushed (loop $push
+          (br_if $pushed (i32.eqz (local.get $i)))
+          (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+          (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+          (call $gs32 (global.get $esp)
+            (i32.load (i32.add (call $g2w (local.get $args))
+              (i32.mul (local.get $i) (i32.const 8)))))
+          (br $push)))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
+        (global.set $eip (local.get $entry))
+        (global.set $steps (i32.const 0))
+        (global.set $yield_reason (i32.const 0))
+        (global.set $yield_flag (i32.const 0))
+        (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
+        (local.set $rounds (i32.const 0))
+        (block $call_done (loop $call_run
+          (call $run (i32.const 1000000))
+          (br_if $call_done (i32.eqz (global.get $eip)))
+          (local.set $rounds (i32.add (local.get $rounds) (i32.const 1)))
+          (br_if $call_done (i32.ge_u (local.get $rounds) (i32.const 64)))
+          (br $call_run)))
+        (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+        (global.set $eip (local.get $old_eip))
+        (global.set $esp (local.get $old_esp))
+        (global.set $eax (local.get $old_eax))
+        (global.set $ecx (local.get $old_ecx))
+        (global.set $edx (local.get $old_edx))
+        (global.set $ebx (local.get $old_ebx))
+        (global.set $esi (local.get $old_esi))
+        (global.set $edi (local.get $old_edi))
+        (global.set $ebp (local.get $old_ebp))
+        (global.set $handler_set_eip (local.get $old_handler_set_eip))
+        (global.set $steps (local.get $old_steps))
+        (global.set $yield_reason (local.get $old_yield_reason))
+        (global.set $yield_flag (local.get $old_yield_flag))))
+    (local.set $i (i32.const 0))
+    (block $freed (loop $free
+      (br_if $freed (i32.ge_u (local.get $i) (global.get $HELP_MAX_ROUTINE_ARGS)))
+      (local.set $owned (i32.load offset=4 (i32.add (call $g2w (local.get $args))
+        (i32.mul (local.get $i) (i32.const 8)))))
+      (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $free)))
+    (call $heap_free (local.get $args))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+    (i32.const 1))
+
   ;; Execute one macro string. Returns 1 when it dispatched, 0 otherwise, and
   ;; always leaves $help_session_status describing what happened.
   (func $help_macro_execute
@@ -1874,6 +2279,19 @@
           (i32.eq (local.get $name_hash) (i32.const 0x8F96A703)))                                    ;; "CLOSE"
       (then (return (call $help_dispatch_loaded (local.get $caller)
         (global.get $HELP_COMMAND_QUIT) (i32.const 0)))))
+    ;; RegisterRoutine(dll, function, format) / RR binds a macro name to an
+    ;; exported function in a DLL the help file ships. It takes three string
+    ;; arguments and performs no navigation, so it is handled before the
+    ;; single-argument allowlist below.
+    (if (i32.or
+          (i32.eq (local.get $name_hash) (i32.const 0x3097D780))                                    ;; "REGISTERROUTINE"
+          (i32.eq (local.get $name_hash) (i32.const 0x6F04E7A5)))                                   ;; "RR"
+      (then (return (call $help_macro_register_routine
+        (local.get $wa) (local.get $end)))))
+    ;; A name the file registered is callable as a macro from that point on.
+    (if (i32.ge_s (call $help_find_routine (local.get $name_hash)) (i32.const 0))
+      (then (return (call $help_macro_call_routine
+        (local.get $caller) (local.get $name_hash) (local.get $wa) (local.get $end)))))
     ;; Everything below needs its arguments. An unknown macro must report
     ;; UNSUPPORTED rather than BAD_DATA - it is not malformed, it is simply
     ;; not one this emulator performs - so the name is checked against the

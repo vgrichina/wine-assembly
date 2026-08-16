@@ -46,6 +46,9 @@ const LAYOUT_FAILS = {
 // is never bounded by a fixed capacity. A long topic is not a broken one, and
 // reporting it as a layout refusal is how qbob.hlp came to look damaged.
 const RUN_CAPACITY = 16384;
+// $HELP_TOPIC_TOKEN_SIZE and $HELP_TOKEN_MACRO, from 09c6-winhelp-core.wat.
+const TOKEN_SIZE = 16;
+const TOKEN_MACRO = 10;
 
 // $help_block_lz77_fail_code, listed above $help_lz77_expand_topic_block.
 const BLOCK_LZ77_FAILS = {
@@ -98,6 +101,7 @@ const HALL_FAILS = {
 async function main() {
   const args = process.argv.slice(2);
   const listAll = args.includes('--topics');
+  const listMacros = args.includes('--macros');
   const files = args.filter(arg => !arg.startsWith('--'));
   if (!files.length) {
     console.error('usage: node tools/hlp-wat-check.js <file.hlp> [...] [--topics]');
@@ -166,6 +170,12 @@ async function main() {
       `${e.get_help_keyword_count()} keywords, ${e.get_help_font_count()} fonts` +
       (e.get_help_context_dropped && e.get_help_context_dropped()
         ? `, ${e.get_help_context_dropped()} context entries dropped` : ''));
+    // Routines the file registered when it opened, via RR()/RegisterRoutine
+    // in its |SYSTEM macros. These are calls into a DLL the file ships.
+    if (e.get_help_routine_count && e.get_help_routine_count()) {
+      console.log(`  registered routines: ${e.get_help_routine_count()}` +
+        ` of ${e.get_help_system_macro_count()} |SYSTEM macros`);
+    }
     const phrases = e.get_help_phrase_count();
     const sample = [];
     for (let index = 0; index < Math.min(phrases, 6); index++) {
@@ -247,6 +257,21 @@ async function main() {
               : `at token ${e.get_help_layout_fail_token()}`);
         } else {
           ok++;
+        }
+      }
+      // Macro hotspots carry their macro string in the payload: a command
+      // byte, a u16 length, then the text. Listing them answers "does this
+      // file actually call the routines it registers", which no topic or
+      // bitmap count can.
+      if (listMacros && tokens > 0) {
+        for (let t = 0; t < tokens; t++) {
+          const token = tokensWA + t * TOKEN_SIZE;
+          if (dv.getUint32(token, true) !== TOKEN_MACRO) continue;
+          const at = payloadWA + dv.getUint32(token + 4, true);
+          const length = dv.getUint16(at + 1, true);
+          lines.push(`    topic ${index} macro: ` +
+            JSON.stringify(Buffer.from(
+              bytes.subarray(at + 3, at + 3 + length)).toString('latin1')));
         }
       }
       const pad = e.get_help_hall_pad_bytes ? e.get_help_hall_pad_bytes() : 0;

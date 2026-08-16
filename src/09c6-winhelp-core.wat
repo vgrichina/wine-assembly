@@ -279,6 +279,126 @@
   ;; HelpSlice is 16 bytes:
   ;;   base_wa:u32, file_size:u32, offset:u32, length:u32.
   ;; The document metadata owns a root slice at +0 and page scratch at +16.
+  ;; Routines a help file registers with RR()/RegisterRoutine(): a macro name
+  ;; bound to an exported function in a DLL the file ships. Age of Empires
+  ;; registers five against AoEHlp.dll, including PlayWAV and PlayAVI.
+  ;;
+  ;; HelpRoutine is 32 bytes:
+  ;;   +0  name_hash of the macro name, per $help_macro_name_hash
+  ;;   +4  owned NUL-terminated DLL name    (guest address)
+  ;;   +8  owned NUL-terminated export name (guest address)
+  ;;   +12 owned NUL-terminated format string
+  ;;   +16 resolved entry point (guest VA), 0 until the DLL is loaded
+  ;; The three strings are copied rather than referenced. A registration can
+  ;; arrive in a macro string the application owns (HELP_COMMAND), not only
+  ;; from the file's own |SYSTEM records, and that memory is the caller's.
+  (global $HELP_MAX_ROUTINES i32 (i32.const 16))
+  ;; Empires.hlp's longest format is three characters ("USS"). Four is room to
+  ;; spare; a longer one is refused rather than passed half its arguments.
+  (global $HELP_MAX_ROUTINE_ARGS i32 (i32.const 4))
+  (global $HELP_ROUTINE_SIZE i32 (i32.const 32))
+  (global $help_doc_routines_ga (mut i32) (i32.const 0))
+  (global $help_doc_routines_wa (mut i32) (i32.const 0))
+  (global $help_doc_routine_count (mut i32) (i32.const 0))
+
+  ;; |SYSTEM type-4 records: the macros a file runs when it opens. Kept as
+  ;; {offset, length} pairs into the image. Only the registration macros are
+  ;; executed at open for now - a config macro that navigates would move the
+  ;; document before its owner has even seen it.
+  (global $HELP_MAX_SYSTEM_MACROS i32 (i32.const 32))
+  (global $help_doc_system_macros_ga (mut i32) (i32.const 0))
+  (global $help_doc_system_macros_wa (mut i32) (i32.const 0))
+  (global $help_doc_system_macro_count (mut i32) (i32.const 0))
+
+  (func (export "get_help_system_macro_count") (result i32)
+    (global.get $help_doc_system_macro_count))
+
+  (func (export "get_help_routine_count") (result i32)
+    (global.get $help_doc_routine_count))
+  (func (export "get_help_routine_record") (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_routine_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_routines_wa)
+      (i32.mul (local.get $index) (global.get $HELP_ROUTINE_SIZE))))
+
+  (func $help_routine_at (param $index i32) (result i32)
+    (if (i32.ge_u (local.get $index) (global.get $help_doc_routine_count))
+      (then (return (i32.const 0))))
+    (i32.add (global.get $help_doc_routines_wa)
+      (i32.mul (local.get $index) (global.get $HELP_ROUTINE_SIZE))))
+
+  ;; Index of the routine a macro name selects, or -1. Registering the same
+  ;; name twice replaces the first binding, which is what WinHelp does.
+  (func $help_find_routine (param $name_hash i32) (result i32)
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $help_doc_routine_count)))
+      (if (i32.eq (i32.load (i32.add (global.get $help_doc_routines_wa)
+            (i32.mul (local.get $i) (global.get $HELP_ROUTINE_SIZE))))
+            (local.get $name_hash))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Takes ownership of three already-copied guest strings. On failure the
+  ;; caller still owns them, because a half-registered routine that frees its
+  ;; caller's strings is worse than one that never registers.
+  (func $help_register_routine
+    (param $name_hash i32)
+    (param $dll_ga i32) (param $fn_ga i32) (param $fmt_ga i32) (result i32)
+    (local $index i32) (local $record i32)
+    (if (i32.eqz (global.get $help_doc_routines_ga))
+      (then
+        (global.set $help_doc_routines_ga (call $heap_alloc
+          (i32.mul (global.get $HELP_MAX_ROUTINES) (global.get $HELP_ROUTINE_SIZE))))
+        (if (i32.eqz (global.get $help_doc_routines_ga))
+          (then (return (i32.const 0))))
+        (global.set $help_doc_routines_wa
+          (call $g2w (global.get $help_doc_routines_ga)))
+        (memory.fill (global.get $help_doc_routines_wa) (i32.const 0)
+          (i32.mul (global.get $HELP_MAX_ROUTINES) (global.get $HELP_ROUTINE_SIZE)))))
+    (local.set $index (call $help_find_routine (local.get $name_hash)))
+    (if (i32.lt_s (local.get $index) (i32.const 0))
+      (then
+        (if (i32.ge_u (global.get $help_doc_routine_count)
+              (global.get $HELP_MAX_ROUTINES))
+          (then (return (i32.const 0))))
+        (local.set $index (global.get $help_doc_routine_count))
+        (global.set $help_doc_routine_count
+          (i32.add (local.get $index) (i32.const 1)))))
+    (local.set $record (i32.add (global.get $help_doc_routines_wa)
+      (i32.mul (local.get $index) (global.get $HELP_ROUTINE_SIZE))))
+    (call $help_release_routine_strings (local.get $record))
+    (i32.store (local.get $record) (local.get $name_hash))
+    (i32.store offset=4 (local.get $record) (local.get $dll_ga))
+    (i32.store offset=8 (local.get $record) (local.get $fn_ga))
+    (i32.store offset=12 (local.get $record) (local.get $fmt_ga))
+    (i32.store offset=16 (local.get $record) (i32.const 0))
+    (i32.const 1))
+
+  (func $help_release_all_routine_strings
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $help_doc_routine_count)))
+      (call $help_release_routine_strings
+        (i32.add (global.get $help_doc_routines_wa)
+          (i32.mul (local.get $i) (global.get $HELP_ROUTINE_SIZE))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  (func $help_release_routine_strings (param $record i32)
+    (local $owned i32)
+    (local.set $owned (i32.load offset=4 (local.get $record)))
+    (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+    (local.set $owned (i32.load offset=8 (local.get $record)))
+    (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+    (local.set $owned (i32.load offset=12 (local.get $record)))
+    (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+    (i32.store offset=4 (local.get $record) (i32.const 0))
+    (i32.store offset=8 (local.get $record) (i32.const 0))
+    (i32.store offset=12 (local.get $record) (i32.const 0)))
+
   (func $help_set_error (param $code i32) (param $file_off i32)
     (if (i32.eqz (global.get $help_last_error))
       (then
@@ -286,6 +406,19 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    (if (global.get $help_doc_system_macros_ga)
+      (then
+        (call $heap_free (global.get $help_doc_system_macros_ga))
+        (global.set $help_doc_system_macros_ga (i32.const 0))
+        (global.set $help_doc_system_macros_wa (i32.const 0))))
+    (global.set $help_doc_system_macro_count (i32.const 0))
+    (if (global.get $help_doc_routines_ga)
+      (then
+        (call $help_release_all_routine_strings)
+        (call $heap_free (global.get $help_doc_routines_ga))
+        (global.set $help_doc_routines_ga (i32.const 0))
+        (global.set $help_doc_routines_wa (i32.const 0))))
+    (global.set $help_doc_routine_count (i32.const 0))
     (if (global.get $help_topic_gather_ga)
       (then
         (call $heap_free (global.get $help_topic_gather_ga))
@@ -1307,8 +1440,22 @@
         (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
         (return (i32.const 1))))
 
-    ;; Context tables, MULTIKEY, placement, and macro execution are separate
-    ;; bounded data formats. Until those parsers land they fail explicitly.
+    ;; HELP_COMMAND carries a macro string, which is how an application runs
+    ;; one of its own registered routines - Age of Empires plays a sound this
+    ;; way rather than through a hotspot.
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_MACRO))
+      (then
+        (local.set $length (call $help_cstring_length_memory
+          (local.get $data) (i32.const 1024)))
+        (if (i32.le_s (local.get $length) (i32.const 0))
+          (then
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (return (call $help_macro_execute
+          (local.get $caller) (local.get $data) (local.get $length)))))
+
+    ;; Context tables, MULTIKEY and placement are separate bounded data
+    ;; formats. Until those parsers land they fail explicitly.
     (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
     (i32.const 0))
 
