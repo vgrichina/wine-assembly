@@ -1815,6 +1815,9 @@
   (global $clip_cursor_r (mut i32) (i32.const 0))
   (global $clip_cursor_b (mut i32) (i32.const 0))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait
+  ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
+  (global $shutdown_level (mut i32) (i32.const 0x280))
+  (global $shutdown_flags (mut i32) (i32.const 0))
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
   (global $message_wait_msg_ptr (mut i32) (i32.const 0))
   (global $wait_handle  (mut i32) (i32.const 0))

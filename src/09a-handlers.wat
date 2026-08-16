@@ -281,15 +281,23 @@
     (block $gpa
     ;; Default return value: NULL (function not found)
     (global.set $eax (i32.const 0))
-    ;; If lpProcName is an ordinal (< 0x10000), return 0 (unsupported)
-    (br_if $gpa (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
-    ;; Check if hModule matches a loaded DLL — if so, resolve from its export table
+    ;; Check if hModule matches a loaded DLL — if so, resolve from its export table.
+    ;; lpProcName may be a MAKEINTRESOURCE ordinal (< 0x10000) rather than a
+    ;; string pointer; a real DLL's export table can answer either form, so the
+    ;; ordinal case is resolved here and only falls through to the "not loaded"
+    ;; Win32-thunk path (which has no ordinals) when no DLL matches.
     (local.set $i (i32.const 0))
     (block $not_dll (loop $scan_dll
       (br_if $not_dll (i32.ge_u (local.get $i) (global.get $dll_count)))
       (local.set $dll_base (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32)))))
       (if (i32.eq (local.get $dll_base) (local.get $arg0))
         (then
+          ;; Ordinal form: resolve straight from the export address table.
+          (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
+            (then
+              (global.set $eax (call $resolve_ordinal (local.get $i) (local.get $arg1)))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+              (return)))
           ;; Flat scrollbar APIs are optional. Let VCL/common-control callers
           ;; use their USER32 fallback wrappers instead of entering the loaded
           ;; comctl32 FlatSB code path, which depends on native subclass state.
@@ -306,7 +314,9 @@
               (return)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan_dll)))
-    ;; Not a loaded DLL — create thunk as before (Win32 API)
+    ;; Not a loaded DLL — create thunk as before (Win32 API). Win32 stubs are
+    ;; keyed by name only, so an ordinal here stays unresolved.
+    (br_if $gpa (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
     ;; Allocate hint(2) + name in guest heap
     (local.set $tmp (call $guest_strlen (local.get $arg1)))
     (local.set $v (call $heap_alloc (i32.add (local.get $tmp) (i32.const 3)))) ;; 2 hint + name + NUL
@@ -5770,6 +5780,26 @@
 
   ;; 937: SetPriorityClass(hProcess, dwPriorityClass) — no-op, return TRUE
   (func $handle_SetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; SetProcessShutdownParameters(dwLevel, dwFlags) — record the process's
+  ;; shutdown ordering so the matching Get* returns what was set. Explorer sets
+  ;; a low level so it shuts down after the apps it hosts.
+  (func $handle_SetProcessShutdownParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $shutdown_level (local.get $arg0))
+    (global.set $shutdown_flags (local.get $arg1))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; GetProcessShutdownParameters(lpdwLevel, lpdwFlags) — report stored values.
+  (func $handle_GetProcessShutdownParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (i32.store (call $g2w (local.get $arg0)) (global.get $shutdown_level))))
+    (if (local.get $arg1)
+      (then (i32.store (call $g2w (local.get $arg1)) (global.get $shutdown_flags))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

@@ -18681,5 +18681,43 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1951625147
+  },
+  {
+    "id": 2408,
+    "name": "SetProcessShutdownParameters",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1662926306,
+    "args": [
+      {
+        "name": "dwLevel",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 2409,
+    "name": "GetProcessShutdownParameters",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3635161582,
+    "args": [
+      {
+        "name": "lpdwLevel",
+        "type": "LPDWORD",
+        "out": true
+      },
+      {
+        "name": "lpdwFlags",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
