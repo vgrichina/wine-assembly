@@ -93,6 +93,41 @@ player-1 blobby 192,0,0 · player-2 blobby 0,192,0 · menu logo outline 54,44,24
 The menu backdrop is a night beach (mean luminance ~26), the court is daylight
 (~115) — that difference alone distinguishes the two screens.
 
+## Controls
+
+There is no fixed control scheme — every player's device is chosen in the
+settings screen, and the manuals never name a default key. Settings live in
+`settings.dat`, which **this candidate folder does not ship**, so the game boots
+on its built-ins. Read off the settings screen:
+
+| | Player 1 (left, red) | Player 2 (right, green) |
+|---|---|---|
+| Name | ADAM | SPIELER 2 |
+| Control | **COMP. (EASY)** | **MOUSE** |
+
+That is why a freshly started match plays itself: player 1 is the computer, and
+player 2 follows whatever the mouse does. Both halves of the mouse scheme are
+verified against the running game:
+
+- **Move** — the blobby tracks the pointer horizontally, clamped to its own half
+  of the court. Pointer at x=601 puts its bounding box at x=588..637; pointer at
+  x=381 (across the net) clamps it to x=482..532.
+- **Left button** — jump. Bounding box goes from y=329..399 on the sand to
+  y=258..313 in the air on mousedown, and back on landing.
+- There is no separate hit control; the ball is played by touching it.
+
+Other devices, from the settings screen: `CONTROL:` cycles mouse / keyboard /
+computer (three difficulties), and `DEFINE KEYS...` holds the keyboard layout.
+`SOUND: ON` is the third toggle. The `.pak` files also probe for a user-supplied
+`bvbg.bmp` (800x600 custom backdrop, manual §4); it is absent here, as expected.
+
+**`DEFINE KEYS...` hangs the emulator.** Clicking it (settings screen, y≈325)
+sends T1 to 0x4159fc and the batch never returns — no further `--trace-sched`
+line after that point, at low machine load, for minutes. This is the one known
+emulator bug in the app, and it is why the default key bindings are not recorded
+above. Reach for `--host-census` on it: everything else we log is drained
+between batches, so a batch that never returns prints nothing at all.
+
 ## Regression coverage
 
 `test/test-blobby-volley.js` (in `test/run-all.sh`, e2e tier), 9 checks: clean
@@ -115,3 +150,5 @@ blobbies on court.
   left for whoever owns that.
 - **Sound is unverified.** `sound.pak` is opened at startup but nothing checks
   that a sample ever reaches `waveOut*`.
+- **The `DEFINE KEYS...` hang** described under Controls — a batch that never
+  returns, entered from 0x4159fc. Unclaimed.
