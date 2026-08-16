@@ -113,9 +113,11 @@ const SERVER_SIGNS = {
   listen: /listen\(s=0x[0-9a-f]+, backlog=/,
   accept: /accept\(/,
   recv: /recv\(/,
+  send: /send\(/,
 };
 const CLIENT_SIGNS = {
   connect: /connect\(s=/,
+  recv: /recv\(/,
 };
 
 const COMMON = [
@@ -164,6 +166,17 @@ async function main() {
 
     await waitFor(server, SERVER_SIGNS.recv, 'the server to read the client');
     check('the server reads the client protocol stream');
+
+    // Bytes crossing the wire once only proves the transport. The session is
+    // real when the server acts on what it read and the client hears the
+    // answer: TetriNET's server replies to a login with the player number it
+    // assigned, then the team and player-join lines that put that player in
+    // the room.
+    await waitFor(server, SERVER_SIGNS.send, 'the server to answer the login');
+    check('the server answers the login it just read');
+
+    await waitFor(client, CLIENT_SIGNS.recv, 'the client to read the answer');
+    check('the client reads the answer, closing the round trip');
   } finally {
     for (const s of [server, client]) if (s && !s.exited) s.child.kill('SIGKILL');
   }
