@@ -493,6 +493,10 @@ async function main() {
   //   B:listbox-setsel:INDEX:SELECTED — set a row through LB_SETSEL
   //   B:dump-listview[:LABEL] — log WAT ListView columns and cell text
   //   B:dump-toolbar[:LABEL] — log ToolbarWindow32 TBBUTTON records/rects
+  //   B:toolbar-click:CMD[:LABEL] — click the toolbar button with command id
+  //     CMD at its current TB_GETITEMRECT centre. Prefer this over a literal
+  //     click:X:Y on a toolbar; a stale coordinate still lands on some other
+  //     control, so the button is never pressed and the run looks fine.
   //   B:menu-dump[:LABEL] — log the currently-open WAT menu children
   //   B:wave-in-feed:FRAMES[:RATE:AMPLITUDE] — feed synthetic sine PCM to waveIn
   //   B:mixer-peak:BUS:VALUE[:HOLD_MS] — inject a 0..32767 mixer peak for visual tests
@@ -642,6 +646,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-listview', label: parts[2] || '' });
       } else if (kind === 'dump-toolbar') {
         scheduledInput.push({ batch, action: 'dump-toolbar', label: parts[2] || '' });
+      } else if (kind === 'toolbar-click') {
+        scheduledInput.push({ batch, action: 'toolbar-click', cmd: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'menu-dump') {
         scheduledInput.push({ batch, action: 'menu-dump', label: parts[2] || '' });
       } else if (kind === 'dlg-paint') {
@@ -4274,6 +4280,57 @@ async function main() {
         }
         if (!found) {
           logs.push(`[input] toolbar${label}: (none) at batch ${batch}`);
+        }
+      } else if (ev.action === 'toolbar-click' && renderer && renderer.handleMouseDown) {
+        // Click a toolbar button by its command id, wherever it currently sits.
+        // Hardcoded pixel coordinates for toolbar buttons go stale silently the
+        // moment a control's layout moves: the click still lands on *something*,
+        // so the run stays green-looking while the button was never pressed.
+        // TB_GETITEMRECT is the same source dump-toolbar reads, and clientRect
+        // is already screen-space, so this stays correct across relayouts.
+        const label = ev.label ? ':' + ev.label : '';
+        const we = instance.exports;
+        const dv = new DataView(memory.buffer);
+        const u8 = new Uint8Array(memory.buffer);
+        let hit = null;
+        for (const [hwndStr, win] of Object.entries(renderer.windows || {})) {
+          if (!win || !win.visible || hit) continue;
+          const hwnd = parseInt(hwndStr, 10) || 0;
+          let ctrlClass = -1;
+          try { if (we && we.ctrl_get_class) ctrlClass = we.ctrl_get_class(hwnd) | 0; } catch (_) {}
+          // ctrlClass 21 is a WAT-owned toolbar; when a real comctl32.dll is
+          // loaded the same window is class ToolbarWindow32 with ctrlClass 0
+          // and a guest wndproc. TB_GETITEMRECT answers in both cases, so match
+          // on either and let send_message route it.
+          const isToolbar = ctrlClass === 21 || win.className === 'ToolbarWindow32';
+          if (!isToolbar || !we || !we.send_message || !we.guest_alloc) continue;
+          if (typeof renderer._computeClientRect === 'function') renderer._computeClientRect(win);
+          const client = win.clientRect;
+          if (!client) continue;
+          const count = we.send_message(hwnd, 0x0418, 0, 0) | 0; // TB_BUTTONCOUNT
+          const recG = we.guest_alloc(20);
+          const rectG = we.guest_alloc(16);
+          const recP = g2w(recG);
+          const rectP = g2w(rectG);
+          for (let i = 0; i < Math.min(count, 64) && !hit; i++) {
+            u8.fill(0, recP, recP + 20);
+            u8.fill(0, rectP, rectP + 16);
+            we.send_message(hwnd, 0x0417, i, recG); // TB_GETBUTTON
+            if (dv.getInt32(recP + 4, true) !== (ev.cmd | 0)) continue;
+            we.send_message(hwnd, 0x041D, i, rectG); // TB_GETITEMRECT
+            hit = {
+              hwnd,
+              x: client.x + ((dv.getInt32(rectP + 0, true) + dv.getInt32(rectP + 8, true)) >> 1),
+              y: client.y + ((dv.getInt32(rectP + 4, true) + dv.getInt32(rectP + 12, true)) >> 1),
+            };
+          }
+        }
+        if (hit) {
+          renderer.handleMouseDown(hit.x, hit.y, 1);
+          if (renderer.handleMouseUp) renderer.handleMouseUp(hit.x, hit.y, 1);
+          logs.push(`[input] toolbar-click${label} cmd=${ev.cmd} hwnd=0x${hit.hwnd.toString(16)} at ${hit.x},${hit.y} batch ${batch}`);
+        } else {
+          logs.push(`[input] toolbar-click${label} cmd=${ev.cmd} NOT FOUND at batch ${batch}`);
         }
       } else if (ev.action === 'hwnd-png-pixels' && renderer && PNG) {
         try {
