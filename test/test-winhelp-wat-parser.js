@@ -1505,6 +1505,33 @@ async function main() {
     e.get_help_keyword_record(4) === 0 && e.get_help_keyword_ptr(4) === 0 &&
     e.get_help_keyword_len(4) === 0 && e.get_help_keyword_posting(6) === 0);
 
+  {
+    // HC sorts a K index with its own collation, which is not byte order:
+    // Empires.hlp (2.7MB, 241 keywords) writes "civilizations" before
+    // "civilization's rise". Demanding ascending bytes refused the whole
+    // file - all 221 topics - over a pair WinHelp itself reads.
+    const collated = buildKeywordIndex([
+      ['civilizations', [0]],
+      ["civilization's rise", [20]],
+      ['zeta', [10]],
+      ['zeta zero', [30]],
+    ]);
+    const collatedHelp = buildSyntheticSemanticHelp({ extraFiles: [
+      ['|KWBTREE', collated.tree], ['|KWDATA', collated.data],
+    ] });
+    check('keywords in HC collation order, not byte order, still load',
+      load(collatedHelp.file) === 1 && e.get_help_keyword_count() === 4,
+      `error=${e.get_help_last_error()} ` +
+      `kw check=${e.get_help_kw_fail_code()} off=${e.get_help_last_error_offset()}`);
+    bytes.set(Buffer.from("civilization's rise", 'latin1'), nameWA);
+    const collatedExact = e.test_help_find_keyword(nameWA, 19);
+    bytes.set(Buffer.from('civilizations', 'latin1'), nameWA);
+    check('both spellings remain findable after the out-of-order pair',
+      collatedExact === 1 && e.test_help_find_keyword(nameWA, 13) === 0);
+    // Everything below navigates the Alpha/Beta/Gamma/zeta fixture.
+    load(keywordHelp.file);
+  }
+
   const dispatchOwner = 0x1111;
   check('HELP_CONTEXT resolves and atomically owns the loaded session',
     e.test_help_dispatch_loaded(dispatchOwner, 0x0001, 7) === 1 &&
@@ -1645,15 +1672,21 @@ async function main() {
   check('keyword postings must resolve canonical topics or macro sentinels',
     load(badKeywordTopicHelp.file) === 0 && e.get_help_last_error() === 17 &&
     e.get_help_keyword_count() === 0 && e.get_help_topic_count() === 0);
+  // This used to assert the opposite - that an unsorted leaf is a corrupt
+  // index. It is not: HC's collation is not case-folded byte order, and the
+  // assertion refused Empires.hlp over "civilizations" preceding
+  // "civilization's rise". Keyword lookup scans linearly, so order is the
+  // file's business, and every keyword still has to be present and findable.
   const unsortedKeywordIndex = buildKeywordIndex([
     ['Beta',[0]],['alpha',[10]],['Gamma',[20]],['zeta',[30]],
   ]);
   const unsortedKeywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
     ['|KWBTREE', unsortedKeywordIndex.tree], ['|KWDATA', unsortedKeywordIndex.data],
   ] });
-  check('keyword leaves must be strictly case-folded sorted',
-    load(unsortedKeywordHelp.file) === 0 && e.get_help_last_error() === 17 &&
-    e.get_help_keyword_count() === 0);
+  check('a keyword leaf in an order we do not model still loads intact',
+    load(unsortedKeywordHelp.file) === 1 && e.get_help_keyword_count() === 4 &&
+    e.get_help_keyword_posting_count() === 4,
+    `error=${e.get_help_last_error()} kw check=${e.get_help_kw_fail_code()}`);
   const cyclicKeywordIndex = buildKeywordIndex(keywordEntries, { leafCycle: true });
   const cyclicKeywordHelp = buildSyntheticSemanticHelp({ extraFiles: [
     ['|KWBTREE', cyclicKeywordIndex.tree], ['|KWDATA', cyclicKeywordIndex.data],

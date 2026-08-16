@@ -62,6 +62,32 @@ const LINK_FAILS = {
   7: 'straddling-record gather failed',
 };
 
+// $help_kw_fail_code, listed above $help_kw_fail. err=17 alone only says
+// "somewhere in |KWBTREE"; the code names which of the two dozen checks the
+// file failed, which is the difference between a corrupt index and a
+// convention we do not model.
+const KW_FAILS = {
+  1: '|KWBTREE too short, or |KWDATA not whole postings',
+  2: 'bad B+tree magic or flags', 3: 'unknown structure string',
+  4: 'header sentinel fields wrong', 5: 'page size not a sane power of two',
+  6: 'root page past the end of the tree',
+  7: 'declared pages do not fit in the internal file',
+  8: 'index page revisited or past the end', 9: 'index page free space',
+  10: 'index page leftmost child out of range',
+  11: 'index entry keyword runs past the page',
+  12: 'index entry child page out of range',
+  13: 'index page entries do not end at its used bytes',
+  14: 'leaf page revisited or past the end', 15: 'leaf page free space/entries',
+  16: 'leaf previous-page link disagrees with the walk',
+  17: 'leaf next-page link out of range',
+  18: 'leaf entry keyword runs past the page',
+  19: 'posting slice outside |KWDATA',
+  20: 'leaf page entries do not end at its used bytes',
+  21: 'keyword count disagrees with the header',
+  22: 'a posting resolves to no topic',
+  23: 'index page keywords out of order', 24: 'leaf page keywords out of order',
+};
+
 // $help_hall_fail_code, listed above $help_decode_hall_topic_data.
 const HALL_FAILS = {
   1: 'source exhausted before output complete', 2: 'two-byte phrase code truncated',
@@ -119,7 +145,11 @@ async function main() {
                 `(${LINK_FAILS[e.get_help_link_fail_code()] || '?'}) ` +
                 `a=${e.get_help_link_fail_a()} b=${e.get_help_link_fail_b()}`
               : '') : '') +
-        (code === 17 && e.get_help_link_fail_a
+        (code === 17 && e.get_help_kw_fail_code
+          ? `  keyword check ${e.get_help_kw_fail_code()} ` +
+            `(${KW_FAILS[e.get_help_kw_fail_code()] || '?'})` : '') +
+        (code === 17 && e.get_help_kw_fail_code &&
+          e.get_help_kw_fail_code() === 22 && e.get_help_link_fail_a
           ? `  posting ref=0x${e.get_help_link_fail_a().toString(16)} ` +
             `topic offsets stop at 0x${e.get_help_link_fail_b().toString(16)}` : '') +
         (code === 13 && lz77

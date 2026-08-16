@@ -1323,6 +1323,45 @@
     (global.set $help_link_fail_b (local.get $b))
     (i32.const 0))
 
+  ;; Which of the keyword index's many consistency checks refused the file.
+  ;; HELP_ERROR_KEYWORD_INDEX alone only says "somewhere in |KWBTREE", and a
+  ;; K index has two dozen ways to disagree with us. Codes:
+  ;;    1 |KWBTREE too short, or |KWDATA not a whole number of postings
+  ;;    2 bad B+tree magic or flags        3 unknown structure string
+  ;;    4 header sentinel fields wrong     5 page size not a sane power of two
+  ;;    6 root page past the end of the tree
+  ;;    7 declared pages do not fit in the internal file
+  ;;    8 index page revisited, or past the end (cycle guard)
+  ;;    9 index page claims more free space than it has
+  ;;   10 index page's leftmost child out of range
+  ;;   11 index entry's keyword runs past the page
+  ;;   12 index entry's child page out of range
+  ;;   13 index page entries do not end exactly at its used bytes
+  ;;   14 leaf page revisited, or past the end (cycle guard)
+  ;;   15 leaf page free space, or more entries than the header promised
+  ;;   16 leaf's previous-page link disagrees with the walk
+  ;;   17 leaf's next-page link out of range
+  ;;   18 leaf entry's keyword runs past the page
+  ;;   19 leaf entry's posting slice falls outside |KWDATA
+  ;;   20 leaf page entries do not end exactly at its used bytes
+  ;;   21 leaf walk found a different number of keywords than the header
+  ;;   22 a posting resolves to no topic
+  ;;      (reference and offset limit land in help_link_fail_a/_b)
+  ;; 23 and 24 were "keywords out of order" on index and leaf pages. They are
+  ;; retired, not renumbered: HC's collation is not byte order, and the check
+  ;; refused Empires.hlp over a keyword real WinHelp reads fine.
+  (global $help_kw_fail_code (mut i32) (i32.const 0))
+  (global $help_kw_fail_a (mut i32) (i32.const 0))
+  (global $help_kw_fail_b (mut i32) (i32.const 0))
+
+  (func (export "get_help_kw_fail_code") (result i32) (global.get $help_kw_fail_code))
+  (func (export "get_help_kw_fail_a") (result i32) (global.get $help_kw_fail_a))
+  (func (export "get_help_kw_fail_b") (result i32) (global.get $help_kw_fail_b))
+
+  (func $help_kw_fail (param $code i32) (param $offset i32)
+    (global.set $help_kw_fail_code (local.get $code))
+    (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX) (local.get $offset)))
+
   ;; Resolve one TopicLink at a decompressed-stream position to a contiguous
   ;; record. A record that fits inside its own block is used in place; one
   ;; that straddles a block boundary is gathered into the owned buffer.
@@ -3466,8 +3505,7 @@
     (local $used_end i32) (local $entry_rel i32) (local $entry_index i32)
     (local $child i32) (local $previous_page i32) (local $next_page i32)
     (local $keyword_len i32) (local $keyword_ptr i32) (local $keyword_off i32)
-    (local $prev_keyword_ptr i32) (local $prev_keyword_len i32)
-    (local $has_prev_keyword i32) (local $occurrences i32) (local $posting_off i32)
+    (local $occurrences i32) (local $posting_off i32)
     (local $keyword_count i32) (local $posting_count i32) (local $posting_index i32)
     (local $keywords_ga i32) (local $keywords_wa i32)
     (local $postings_ga i32) (local $postings_wa i32)
@@ -3493,7 +3531,7 @@
       (if (i32.or (i32.lt_u (local.get $tree_len) (i32.const 38))
                   (i32.ne (i32.rem_u (local.get $data_len) (i32.const 4)) (i32.const 0)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX) (local.get $tree_off))
+          (call $help_kw_fail (i32.const 1) (local.get $tree_off))
           (br $done)))
       (local.set $tree (i32.add (global.get $help_doc_file_wa) (local.get $tree_off)))
       (local.set $data (i32.add (global.get $help_doc_file_wa) (local.get $data_off)))
@@ -3502,7 +3540,7 @@
             (i32.ne (i32.and (i32.load16_u offset=2 (local.get $tree)) (i32.const 2))
               (i32.const 2)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX) (local.get $tree_off))
+          (call $help_kw_fail (i32.const 2) (local.get $tree_off))
           (br $done)))
       (if (i32.or
             (i32.or
@@ -3514,14 +3552,14 @@
               (i32.ne (i32.load8_u offset=7 (local.get $tree)) (i32.const 0x32)))
             (i32.ne (i32.load8_u offset=8 (local.get $tree)) (i32.const 0x34)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+          (call $help_kw_fail (i32.const 3)
             (i32.add (local.get $tree_off) (i32.const 6)))
           (br $done)))
       (if (i32.or
             (i32.ne (i32.load16_u offset=22 (local.get $tree)) (i32.const 0))
             (i32.ne (i32.load16_u offset=28 (local.get $tree)) (i32.const 0xffff)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+          (call $help_kw_fail (i32.const 4)
             (i32.add (local.get $tree_off) (i32.const 22)))
           (br $done)))
       (local.set $page_size (i32.load16_u offset=4 (local.get $tree)))
@@ -3535,7 +3573,7 @@
             (i32.ne (i32.and (local.get $page_size)
               (i32.sub (local.get $page_size) (i32.const 1))) (i32.const 0)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+          (call $help_kw_fail (i32.const 5)
             (i32.add (local.get $tree_off) (i32.const 4)))
           (br $done)))
       (if (i32.or
@@ -3555,7 +3593,7 @@
       (if (i32.and (i32.gt_u (local.get $levels) (i32.const 1))
                    (i32.ge_u (local.get $root_page) (local.get $total_pages)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+          (call $help_kw_fail (i32.const 6)
             (i32.add (local.get $tree_off) (i32.const 26)))
           (br $done)))
       (if (i32.gt_u (local.get $total_pages)
@@ -3568,7 +3606,7 @@
       (if (i32.gt_u (local.get $page_bytes)
             (i32.sub (local.get $tree_len) (i32.const 38)))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+          (call $help_kw_fail (i32.const 7)
             (i32.add (local.get $tree_off) (i32.const 30)))
           (br $done)))
       (local.set $pages_off (i32.add (local.get $tree_off) (i32.const 38)))
@@ -3604,7 +3642,7 @@
               (i32.eqz (call $help_mark_btree_page
                 (local.get $visited_wa) (local.get $page_num))))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 8)
               (i32.add (local.get $pages_off)
                 (i32.mul (local.get $page_num) (local.get $page_size))))
             (br $done)))
@@ -3616,14 +3654,14 @@
         (if (i32.gt_u (local.get $unused)
               (i32.sub (local.get $page_size) (i32.const 6)))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 9)
               (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)))
             (br $done)))
         (local.set $used_end (i32.sub (local.get $page_size) (local.get $unused)))
         (local.set $child (i32.load16_u offset=4 (local.get $page_ptr)))
         (if (i32.ge_u (local.get $child) (local.get $total_pages))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 10)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                 (i32.const 4)))
             (br $done)))
@@ -3631,7 +3669,6 @@
           (local.get $page_ptr) (local.get $page_size) (i32.const 0) (local.get $used_end))
         (local.set $entry_rel (i32.const 6))
         (local.set $entry_index (i32.const 0))
-        (local.set $has_prev_keyword (i32.const 0))
         (block $index_entries_done (loop $index_entry
           (br_if $index_entries_done
             (i32.ge_u (local.get $entry_index) (local.get $entries)))
@@ -3641,36 +3678,25 @@
                       (i32.gt_u (i32.add (local.get $keyword_len) (i32.const 3))
                         (i32.sub (local.get $used_end) (local.get $entry_rel))))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+              (call $help_kw_fail (i32.const 11)
                 (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                   (local.get $entry_rel)))
               (br $done)))
           (local.set $keyword_ptr (i32.add (local.get $page_ptr) (local.get $entry_rel)))
-          (if (i32.and (local.get $has_prev_keyword)
-                (i32.ge_s (call $help_keyword_bytes_compare
-                  (local.get $prev_keyword_ptr) (local.get $prev_keyword_len)
-                  (local.get $keyword_ptr) (local.get $keyword_len)) (i32.const 0)))
-            (then
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
-                (i32.sub (local.get $keyword_ptr) (global.get $help_doc_file_wa)))
-              (br $done)))
           (local.set $child (i32.load16_u (i32.add (local.get $keyword_ptr)
             (i32.add (local.get $keyword_len) (i32.const 1)))))
           (if (i32.ge_u (local.get $child) (local.get $total_pages))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+              (call $help_kw_fail (i32.const 12)
                 (i32.sub (local.get $keyword_ptr) (global.get $help_doc_file_wa)))
               (br $done)))
-          (local.set $prev_keyword_ptr (local.get $keyword_ptr))
-          (local.set $prev_keyword_len (local.get $keyword_len))
-          (local.set $has_prev_keyword (i32.const 1))
           (local.set $entry_rel (i32.add (local.get $entry_rel)
             (i32.add (local.get $keyword_len) (i32.const 3))))
           (local.set $entry_index (i32.add (local.get $entry_index) (i32.const 1)))
           (br $index_entry)))
         (if (i32.ne (local.get $entry_rel) (local.get $used_end))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 13)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                 (local.get $entry_rel)))
             (br $done)))
@@ -3678,8 +3704,13 @@
         (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
         (br $descend)))
 
+      ;; The leaf walk does NOT require keywords to be in ascending byte order.
+      ;; HC sorts a K index with its own collation, not ours: Empires.hlp puts
+      ;; "civilizations" before "civilization's rise", which is out of order by
+      ;; any byte comparison but is what the compiler wrote. Lookup is a linear
+      ;; scan over the collected keywords, so nothing downstream depends on the
+      ;; order, and asserting it only refuses files WinHelp itself reads.
       (local.set $previous_page (i32.const 0xffff))
-      (local.set $has_prev_keyword (i32.const 0))
       (block $leaves_done (loop $leaf
         (br_if $leaves_done (i32.eq (local.get $page_num) (i32.const 0xffff)))
         (if (i32.or
@@ -3687,7 +3718,7 @@
               (i32.eqz (call $help_mark_btree_page
                 (local.get $visited_wa) (local.get $page_num))))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 14)
               (i32.add (local.get $pages_off)
                 (i32.mul (local.get $page_num) (local.get $page_size))))
             (br $done)))
@@ -3702,13 +3733,13 @@
               (i32.gt_u (local.get $entries)
                 (i32.sub (local.get $total_entries) (local.get $keyword_count))))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 15)
               (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)))
             (br $done)))
         (if (i32.ne (i32.load16_u offset=4 (local.get $page_ptr))
               (local.get $previous_page))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 16)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                 (i32.const 4)))
             (br $done)))
@@ -3716,7 +3747,7 @@
         (if (i32.and (i32.ne (local.get $next_page) (i32.const 0xffff))
                      (i32.ge_u (local.get $next_page) (local.get $total_pages)))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 17)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                 (i32.const 6)))
             (br $done)))
@@ -3734,19 +3765,11 @@
                       (i32.gt_u (i32.add (local.get $keyword_len) (i32.const 7))
                         (i32.sub (local.get $used_end) (local.get $entry_rel))))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+              (call $help_kw_fail (i32.const 18)
                 (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                   (local.get $entry_rel)))
               (br $done)))
           (local.set $keyword_ptr (i32.add (local.get $page_ptr) (local.get $entry_rel)))
-          (if (i32.and (local.get $has_prev_keyword)
-                (i32.ge_s (call $help_keyword_bytes_compare
-                  (local.get $prev_keyword_ptr) (local.get $prev_keyword_len)
-                  (local.get $keyword_ptr) (local.get $keyword_len)) (i32.const 0)))
-            (then
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
-                (i32.sub (local.get $keyword_ptr) (global.get $help_doc_file_wa)))
-              (br $done)))
           (local.set $occurrences (i32.load16_u (i32.add (local.get $keyword_ptr)
             (i32.add (local.get $keyword_len) (i32.const 1)))))
           (local.set $posting_off (i32.load (i32.add (local.get $keyword_ptr)
@@ -3761,7 +3784,7 @@
                       (i32.div_u (i32.sub (local.get $data_len) (local.get $posting_off))
                         (i32.const 4))))))
             (then
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+              (call $help_kw_fail (i32.const 19)
                 (i32.sub (local.get $keyword_ptr) (global.get $help_doc_file_wa)))
               (br $done)))
           (if (i32.gt_u (local.get $occurrences)
@@ -3782,16 +3805,13 @@
           (local.set $posting_count
             (i32.add (local.get $posting_count) (local.get $occurrences)))
           (local.set $keyword_count (i32.add (local.get $keyword_count) (i32.const 1)))
-          (local.set $prev_keyword_ptr (local.get $keyword_ptr))
-          (local.set $prev_keyword_len (local.get $keyword_len))
-          (local.set $has_prev_keyword (i32.const 1))
           (local.set $entry_rel (i32.add (local.get $entry_rel)
             (i32.add (local.get $keyword_len) (i32.const 7))))
           (local.set $entry_index (i32.add (local.get $entry_index) (i32.const 1)))
           (br $leaf_entry)))
         (if (i32.ne (local.get $entry_rel) (local.get $used_end))
           (then
-            (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+            (call $help_kw_fail (i32.const 20)
               (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa))
                 (local.get $entry_rel)))
             (br $done)))
@@ -3800,7 +3820,7 @@
         (br $leaf)))
       (if (i32.ne (local.get $keyword_count) (local.get $total_entries))
         (then
-          (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+          (call $help_kw_fail (i32.const 21)
             (i32.add (local.get $tree_off) (i32.const 34)))
           (br $done)))
       (if (local.get $posting_count)
@@ -3838,7 +3858,7 @@
             (then
               (global.set $help_link_fail_a (local.get $topic_ref))
               (global.set $help_link_fail_b (global.get $help_doc_topic_offset_limit))
-              (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
+              (call $help_kw_fail (i32.const 22)
                 (i32.add (local.get $data_off)
                   (i32.add (local.get $posting_off) (i32.mul (local.get $j) (i32.const 4)))))
               (br $done)))
