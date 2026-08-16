@@ -984,6 +984,8 @@
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
+  ;; 0x07E09000 12KB     CONSOLE_TEXT (6144 cells × 2 bytes)
+  ;; 0x07E0C000 12KB     CONSOLE_ATTR (6144 cells × 2 bytes)
   ;; 0x07E10000 16KB     DIB_PAGE_USED
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
@@ -2019,6 +2021,13 @@
   ;; TextOutW, etc.). WAT-private so guest writes cannot corrupt it.
   (global $TEXT_SCRATCH i32 (i32.const 0x07E08000))
   (global $TEXT_SCRATCH_SIZE i32 (i32.const 0x00000400))
+  ;; Console screen buffer. This used to sit at 0x7000/0x7FA0, which is
+  ;; WND_RECORDS — every WriteConsole overwrote the window table, so a console
+  ;; app corrupted windows it never touched. Cells are capped by
+  ;; $CONSOLE_MAX_CELLS so a SetConsoleScreenBufferSize cannot walk off the end.
+  (global $CONSOLE_TEXT i32 (i32.const 0x07E09000))
+  (global $CONSOLE_ATTR i32 (i32.const 0x07E0C000))
+  (global $CONSOLE_MAX_CELLS i32 (i32.const 6144))
 
   ;; EIP hit counters: passive per-block counter at 16 slots (HIT_COUNT_BASE=0x11F00,
   ;; 8 bytes each: +0 addr i32, +4 count i32). Run loop checks up to $hit_count_n
