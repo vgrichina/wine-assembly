@@ -616,7 +616,7 @@
   (func $decode_block (param $start_eip i32) (result i32)
     (local $tstart i32)
     (local $op i32)
-    (local $done i32)
+    (local $done i32) (local $icount i32)
     (local $prefix_rep i32)    ;; 0=none, 1=REP/REPE, 2=REPNE
     (local $prefix_66 i32)     ;; operand-size override
     (local $prefix_67 i32)     ;; address-size override
@@ -661,6 +661,20 @@
 
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
+
+      ;; A basic block ends at the first branch, call, return or interrupt, so
+      ;; real code cannot run thousands of instructions without one. Passing
+      ;; this cap means the decoder has lost the instruction stream and is
+      ;; emitting forever, which fills the 4MB arena and then keeps going.
+      ;; Say so here, where the entry EIP and the current decode position are
+      ;; both still known, instead of surfacing as a wild EIP much later.
+      (local.set $icount (i32.add (local.get $icount) (i32.const 1)))
+      (if (i32.gt_u (local.get $icount) (i32.const 4096))
+        (then
+          (call $host_log_i32 (i32.const 0xCA00B10C))  ;; runaway block
+          (call $host_log_i32 (local.get $start_eip))
+          (call $host_log_i32 (global.get $d_pc))
+          (unreachable)))
 
       ;; Reset prefixes
       (local.set $prefix_rep (i32.const 0))

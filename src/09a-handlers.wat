@@ -6900,7 +6900,14 @@
   ;; 4 args stdcall. Pop first so SEH walker sees the caller's frame, then dispatch.
   (func $handle_RaiseException (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    (if (i32.eq (local.get $arg0) (i32.const 0x0eedfade))
+    ;; Borland shipped two "this is a Delphi exception" codes over the years:
+    ;; the older RTLs raise 0x0EEDFACE and the later ones 0x0EEDFADE. Both mean
+    ;; the same thing and both need the Delphi handler protocol, so recognising
+    ;; only one sends the other into $raise_exception, which walks the chain
+    ;; expecting MSVC-shaped frames and lands on a garbage EIP.
+    (if (i32.or
+          (i32.eq (local.get $arg0) (i32.const 0x0eedfade))
+          (i32.eq (local.get $arg0) (i32.const 0x0eedface)))
       (then
         (call $raise_delphi_exception (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
         (return)))

@@ -82,9 +82,15 @@
     ;; block needs, so reaching this mid-emit means something unusual. Never
     ;; recycle from here — $tstart is already captured and a reset would leave
     ;; the half-emitted block pointing into reused storage.
+    ;; Report the overflow once per episode, not once per opcode. $te runs for
+    ;; every emitted operand, so an unconditional log here is a per-instruction
+    ;; log on the hottest path in the emulator: it produced nine million host
+    ;; calls in a single batch and exhausted the harness's heap long before
+    ;; anything else went wrong.
     (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
       (then
-        (call $host_log_i32 (i32.const 0xCA00F10F))  ;; 0xCA00F10F = cache overflow marker
+        (if (i32.eqz (global.get $thread_flush_pending))
+          (then (call $host_log_i32 (i32.const 0xCA00F10F))))  ;; cache overflow
         (global.set $thread_flush_pending (i32.const 1))))
     (i32.store (global.get $thread_alloc) (local.get $fn))
     (i32.store offset=4 (global.get $thread_alloc) (local.get $op))

@@ -113,6 +113,11 @@ const CLOCK_ORIGIN = Date.now();
 const TRACE_SCHED = hasFlag('trace-sched') || getArg('trace-sched', null) !== null;
 const TRACE_SCHED_EVERY = parseInt(getArg('trace-sched', '5000'), 10) || 5000;
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
+// --host-census[=N]: count every host import, print a histogram every N calls
+// straight to stdout. For batches that never return, where buffered logs never
+// get drained. Default 1M keeps a healthy run nearly silent.
+const HOST_CENSUS = (hasFlag('host-census') || getArg('host-census', null) !== null)
+  ? Number(getArg('host-census', 0)) || 1000000 : 0;
 const PROFILE_HOST = getArg('profile-host', null); // --profile-host=fn1,fn2: print count + total time for host imports
 const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
 const TRACE_THREAD = hasFlag('trace-thread'); // --trace-thread: log per-thread state transitions
@@ -1019,6 +1024,7 @@ async function main() {
     onExit: (code) => { stopped = true; },
     trace: traceCategories,
     traceHost: traceHostNames,
+    hostCensus: HOST_CENSUS,
     // The guest clock. --time-scale runs it faster than the wall clock, which
     // separates "waiting for time to pass" from "doing work" in a slow run.
     guestNowMs: () => CLOCK_ORIGIN + (Date.now() - CLOCK_ORIGIN) * TIME_SCALE,
@@ -1790,6 +1796,39 @@ async function main() {
     return 0;
   };
 
+  // --host-census wraps the FINAL import table, after run.js has overridden
+  // host-imports' versions with its own logging ones. Wrapping earlier misses
+  // exactly the noisy functions the flag exists to find.
+  if (HOST_CENSUS) {
+    const counts = new Map();
+    const argCounts = new Map();
+    let total = 0;
+    for (const name of Object.keys(h)) {
+      if (typeof h[name] !== 'function') continue;
+      const orig = h[name];
+      h[name] = (...a) => {
+        counts.set(name, (counts.get(name) || 0) + 1);
+        // For single-int imports (log_i32 and friends) the argument IS the
+        // diagnostic: it says WHICH marker is spinning, not just that one is.
+        if (a.length === 1 && typeof a[0] === 'number') {
+          const key = `${name}(${(a[0] >>> 0).toString(16)})`;
+          argCounts.set(key, (argCounts.get(key) || 0) + 1);
+        }
+        if (++total % HOST_CENSUS === 0) {
+          const top = [...counts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 12);
+          console.log(`[host-census] ${total} calls: `
+            + top.map(([n, c]) => `${n}=${c}`).join(' '));
+          const topArgs = [...argCounts.entries()].sort((x, y) => y[1] - x[1]).slice(0, 6);
+          if (topArgs.length) {
+            console.log('[host-census]   args: '
+              + topArgs.map(([n, c]) => `${n}=${c}`).join(' '));
+          }
+        }
+        return orig(...a);
+      };
+    }
+  }
+
   const imports = { host: h };
 
   const wasmModule = await WebAssembly.compile(wasmBytes);
@@ -1825,6 +1864,7 @@ async function main() {
       onExit: () => {},
       trace: traceCategories,
       traceHost: traceHostNames,
+      hostCensus: HOST_CENSUS,
       vfs: ctx.vfs,  // share filesystem with main thread
       vlanWire: ctx.vlanWire,  // one wire per process, shared by every thread
       guestNowMs: ctx.guestNowMs,  // one clock per process, not per thread
