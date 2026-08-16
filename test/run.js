@@ -5377,6 +5377,10 @@ async function main() {
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
       const slices = installingFiles ? 1000 : THREAD_SLICES;
+      // The run=/paint= line above covers only the main instance. In a threaded
+      // app the game itself lives on a worker, so without this the profile
+      // reads as "nothing is running" while the box is pinned.
+      const workerStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
       for (let s = 0; s < slices; s++) {
         threadManager.runSlice(BATCH_SIZE);
         // Re-run main between live worker slices so producer/consumer pairs
@@ -5386,6 +5390,9 @@ async function main() {
         if (s < slices - 1 && !stopped && threadManager.hasActiveThreads()) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
+      }
+      if (TRACE_BATCH_TIMING) {
+        console.log(`[batch-timing] batch=${batch} worker=${Date.now() - workerStartMs}ms slices=${slices}`);
       }
       // A worker parked in a blocking socket call is waiting on a frame that
       // only the event loop can deliver. runSlice cannot await, so the turn
