@@ -107,18 +107,36 @@ the pre-existing 16-bit push/pop handlers needed no changes at all.
   `src/08c-ne-loader.wat` (`$win16_start_task`), `src/01-header.wat` (segment
   register globals)
 - Tooling: `tools/ne-dump.js`, binaries in `test/binaries/win98-16bit/`
-- **Next: implement Win16 ordinals in `src/09e-win16-api.wat`.** Every
-  unimplemented one traps naming itself, so the loop is: run, read the ordinal,
-  implement, repeat. Start with KERNEL.91 InitTask, which needs a PSP segment
-  (command line at PSP:0x81) and returns AX=1, CX=stack limit, DX=nCmdShow,
-  SI=hPrevInstance, DI=hInstance, ES=PSP. Getting to a window means a task
-  database, the DGROUP local heap (LocalAlloc/LocalInit), GlobalAlloc handing
-  out real selectors registered in WIN16_SEG_TABLE — `$win16_set_sreg` traps
-  on a selector that names no segment, which is where an unregistered
-  GlobalAlloc block will announce itself — and then the USER window calls.
-  **Verify each ordinal number against a real source before implementing it**;
-  a wrong ordinal is a silently wrong API, which is exactly the failure the
-  trap-by-default design exists to avoid.
+- **Ordinals are solved as a naming problem** (`a889407`, `325a1aa`,
+  `4e9f4da`, `67350e1`). `tools/ne-exports.js` reads an NE's own export tables;
+  `tools/gen_win16_ordinals.js` turns the real Win98 modules into
+  `src/win16-ordinals.generated.json`, 1,468 names across 10 modules, and
+  `run.js` prints `KERNEL.91 INITTASK` rather than a number. All 269 ordinals
+  the four apps import resolve. The source modules are gitignored local
+  fixtures; `test/binaries/dlls/SOURCES.md` has the ISO and the recipe.
+  Two facts that cost time and are worth not rediscovering: **a Win16 module
+  name is not its filename** (SOUND ships as `mmsound.drv`), and **not every
+  import is by ordinal** — FREECELL asks for CARDS and SHELL entry points by
+  name, which the thunk table now flags.
+- **Next: keep implementing ordinals in `src/09e-win16-api.wat`.** Every
+  unimplemented one traps naming itself, so the loop is: run, read the name,
+  implement, repeat. Done so far: KERNEL.3 GetVersion, KERNEL.30 WaitEvent,
+  KERNEL.91 InitTask, USER.5 InitApp. The four apps now stop at USER.15
+  GetCurrentTime (WINMINE), USER.174 LoadIcon (FREECELL), USER.66 GetDC
+  (MSHEARTS) and USER.176 LoadString (SOL).
+  Getting to a window means the DGROUP local heap (LocalInit/LocalAlloc),
+  GlobalAlloc handing out real selectors registered in WIN16_SEG_TABLE via
+  `$win16_alloc_segment` — `$win16_set_sreg` traps on a selector that names no
+  segment, which is where an unregistered block will announce itself —
+  resources (FindResource/LoadResource, which the 32-bit side already walks),
+  and then the USER window calls.
+  **Check each argument count.** The ordinal map gives names, not signatures,
+  and `$win16_api_return` takes the byte count the Pascal callee must remove.
+  Get it wrong and the stack drifts silently until a far return goes wild.
+- FREECELL's name imports need **NE DLL loading**: CARDS.DLL is in
+  `test/binaries/win98-16bit/` and `test-ne-loader.js` already parses it, but
+  nothing loads a second NE image into the arena and resolves names against
+  its export table.
 - Known gaps in the execution core, none of them hit yet, all of them traps
   rather than silent wrong answers: string ops (MOVS/STOS/SCAS/CMPS) still use
   ESI/EDI as linear addresses and need DS:SI / ES:DI; INT (including the
