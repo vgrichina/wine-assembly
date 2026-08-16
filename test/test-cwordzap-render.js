@@ -76,7 +76,14 @@ if (png) {
 
 const checks = [
   { name: 'run.js exited cleanly', pass: exitCode === 0 },
-  { name: 'same-size MoveWindow does not loop', pass: apiCount('MoveWindow') === 2 && totalApiCalls < 1000 },
+  // CWordZap creates its window at 640x480 and its WM_SIZE handler calls
+  // MoveWindow(0,0,640,480) — the same size. USER32 sends no WM_SIZE for a
+  // no-op move, so the handler must run once and stop; if a same-size
+  // MoveWindow requeued WM_SIZE the two would ping-pong forever. Startup
+  // delivers one WM_SIZE today (it used to deliver a duplicate, hence the
+  // old exact count of 2), so allow either without allowing a storm.
+  { name: 'same-size MoveWindow does not loop',
+    pass: apiCount('MoveWindow') >= 1 && apiCount('MoveWindow') <= 2 && totalApiCalls < 1000 },
   { name: 'RLE4 splash reaches StretchDIBits', pass: apiCount('StretchDIBits') >= 1 },
   { name: 'CWordZap title is initialized', pass: out.includes('C L A S S I C  W O R D Z A P -- An Addictionary Game') },
   { name: 'splash screenshot is written', pass: !!png && png.width === 640 && png.height === 480 },

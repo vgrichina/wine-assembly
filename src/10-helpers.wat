@@ -12171,14 +12171,36 @@
         (param $bits i32) (param $bmi i32) (param $usage i32) (param $rop i32) (result i32)
     (local $dst i32) (local $src i32) (local $mdx i32) (local $mdy i32)
     (local $msy i32) (local $pattern i32) (local $ok i32)
+    (local $compression i32) (local $decoded i32)
     (if (i32.gt_u (local.get $usage) (i32.const 1)) (then (return (i32.const 0))))
     (local.set $dst (global.get $GDI_BLIT_DST_DESC))
     (local.set $src (global.get $GDI_BLIT_SRC_DESC))
-    (if (i32.or (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $dst)))
-          (i32.eqz (call $gdi_raster_desc_from_bmi_usage
-            (local.get $src) (local.get $bits) (local.get $bmi)
-            (local.get $usage) (local.get $hdc))))
+    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $dst)))
       (then (return (i32.const 0))))
+    ;; A BI_RLE4/BI_RLE8 source cannot be sampled in place — the rasterizer
+    ;; needs packed scanlines. Materialize the same owned bitmap CreateDIBitmap
+    ;; would build (which decodes the RLE stream and resolves the color table,
+    ;; DIB_PAL_COLORS included), sample that, and release it afterwards.
+    (if (i32.ge_u (i32.load (local.get $bmi)) (i32.const 40))
+      (then (local.set $compression (i32.load offset=16 (local.get $bmi)))))
+    (if (i32.or (i32.eq (local.get $compression) (i32.const 1))
+          (i32.eq (local.get $compression) (i32.const 2)))
+      (then
+        (local.set $decoded (call $gdi_bitmap_create_dibitmap
+          (local.get $hdc) (local.get $bmi) (local.get $bits)
+          (i32.const 1) (local.get $usage)))
+        (if (i32.eqz (local.get $decoded)) (then (return (i32.const 0))))
+        (local.set $ok (call $gdi_raster_desc_from_bitmap
+          (local.get $decoded) (local.get $src))))
+      (else
+        (local.set $ok (call $gdi_raster_desc_from_bmi_usage
+          (local.get $src) (local.get $bits) (local.get $bmi)
+          (local.get $usage) (local.get $hdc)))))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (local.get $decoded)
+          (then (drop (call $gdi_object_delete_full (local.get $decoded)))))
+        (return (i32.const 0))))
     (local.set $mdx (call $gdi_line_map_x (local.get $dst) (local.get $dx)))
     (local.set $mdy (call $gdi_line_map_y (local.get $dst) (local.get $dy)))
     (local.set $msy (local.get $sy))
@@ -12202,6 +12224,8 @@
       (local.get $dw) (local.get $dh) (local.get $src)
       (local.get $sx) (local.get $msy) (local.get $sw) (local.get $sh)
       (local.get $pattern) (local.get $rop)))
+    (if (local.get $decoded)
+      (then (drop (call $gdi_object_delete_full (local.get $decoded)))))
     (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
     (call $gdi_geometry_present (local.get $hdc) (local.get $dst)
       (local.get $mdx) (local.get $mdy)
