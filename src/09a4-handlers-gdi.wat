@@ -1164,7 +1164,7 @@
   ;; fails. A bitmap font still gets GDI_ERROR, which is what Win98 does — the
   ;; tables genuinely do not exist.
   (func $handle_GetFontData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dc i32) (local $handle i32) (local $face i32)
+    (local $dc i32) (local $handle i32) (local $face i32) (local $object i32)
     (local $data i32) (local $size i32) (local $tag i32)
     (local $off i32) (local $len i32) (local $avail i32) (local $n i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
@@ -1173,6 +1173,15 @@
     (if (i32.eqz (local.get $dc)) (then (return)))
     (local.set $handle (i32.load offset=88 (local.get $dc)))
     (if (i32.eqz (local.get $handle)) (then (return)))
+    ;; A raster face has no sfnt tables and Win98 answered GDI_ERROR for one.
+    ;; Check this before the substitution lookup: that lookup answers for every
+    ;; face name, including one only an installed FNT carries, and would
+    ;; otherwise hand the caller the default substitute's file for a font it
+    ;; never selected.
+    (local.set $object (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $object) (i32.const 0))
+          (i32.ne (i32.load offset=24 (local.get $object)) (i32.const 0)))
+      (then (return)))
     (local.set $face (call $tt_face_for_logfont
       (call $gdi_font_face (local.get $handle))
       (call $gdi_font_weight (local.get $handle))

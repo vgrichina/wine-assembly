@@ -3,42 +3,13 @@
 'use strict';
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const calls = {
-    bind: 0, mask: 0, measure: 0, metrics: 0,
-  };
-  let memoryRef = null;
-  const harness = await bootRenderHarness({
-    extraHostOverrides: {
-      gdi_text_bind: () => { calls.bind++; return 1; },
-      gdi_text_mask: (_token, _x, _y, _text, _count, _wide,
-        _left, _top, width, height, maskWa, stride) => {
-        calls.mask++;
-        if (!memoryRef || width <= 0 || height <= 0 || stride < width) return 0;
-        new Uint8Array(memoryRef.buffer)[maskWa] = 1;
-        return 1;
-      },
-      measure_text: () => { calls.measure++; return 99; },
-      get_text_metrics: () => { calls.metrics++; return 12 | (6 << 16); },
-    },
-  });
+  // Only the bundled strikes: this file's subject is what happens when a
+  // scalable face has no file to rasterize from, so no TTF may be mounted.
+  const harness = await bootRenderHarness({ fonts: 'bitmap' });
   const { exports: wat, memory, hostCtx } = harness;
-  memoryRef = memory;
-  const root = path.join(__dirname, '..');
-  hostCtx.vfs.dirs.add('c:\\windows');
-  hostCtx.vfs.dirs.add('c:\\windows\\fonts');
-  for (const name of [
-    'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
-  ]) {
-    hostCtx.vfs.files.set(`c:\\windows\\fonts\\${name.toLowerCase()}`, {
-      data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', name))),
-      attrs: 0x20,
-    });
-  }
 
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
@@ -48,10 +19,6 @@ const { bootRenderHarness } = require('./render-helper');
     bytes.fill(0, wa(pointer), wa(pointer) + size);
     return pointer;
   };
-  const resetCalls = () => Object.keys(calls).forEach(key => { calls[key] = 0; });
-  const assertNoCanvasText = label => assert.deepStrictEqual(calls, {
-    bind: 0, mask: 0, measure: 0, metrics: 0,
-  }, label);
   const writeWide = value => {
     const pointer = allocZero((value.length + 1) * 2);
     [...value].forEach((character, index) =>
@@ -88,7 +55,6 @@ const { bootRenderHarness } = require('./render-helper');
   assert(wat.guest_read32(size) > 0 && wat.guest_read32(size + 4) === 16);
   assert.strictEqual(wat.test_call_ExtTextOutA(hdc, 2, 16, 0, 0, text, 10), 1);
   assert.strictEqual(wat.test_call_DrawTextA(hdc, text, 10, rect, 0x20), 16);
-  assertNoCanvasText('SYSTEM_FONT text and measurements must remain in WAT');
 
   assert.strictEqual(wat.test_call_SelectObject(hdc, 0x30021) >>> 0, 0x3001d);
   assert(wat.test_gdi_bitmap_font_selected(hdc), 'DEFAULT_GUI_FONT should select Wine MS Sans Serif');
@@ -96,7 +62,6 @@ const { bootRenderHarness } = require('./render-helper');
     hdc, text, 10, 0x7fffffff, 0, 0, size), 1);
   assert.strictEqual(wat.guest_read32(size + 4), 13, 'Win98 dialog font cell height');
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 30, text, 10), 1);
-  assertNoCanvasText('DEFAULT_GUI_FONT must remain in WAT');
 
   const uiFont = wat.test_call_CreateFontW(-12, 400, 0, writeWide('MS Sans Serif')) >>> 0;
   assert(uiFont && wat.test_gdi_bitmap_font_bound(uiFont),
@@ -110,7 +75,6 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(wat.test_gdi_bitmap_font_selected(hdc),
     wat.test_gdi_bitmap_font_bound(uiFont));
   assert.strictEqual(wat.test_call_TextOutA(hdc, 50, 30, text, 10), 1);
-  assertNoCanvasText('Win9x UI face aliases must remain in WAT');
 
   // No font files are mounted in this harness, so Arial cannot be rasterized
   // from its substitute here. It still must not reach Canvas: the bundled
@@ -122,11 +86,9 @@ const { bootRenderHarness } = require('./render-helper');
   assert(scalableFont && !wat.test_gdi_bitmap_font_bound(scalableFont),
     'explicit scalable document faces should not be silently replaced');
   wat.test_call_SelectObject(hdc, scalableFont);
-  resetCalls();
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 10), 1);
   assert(wat.test_gdi_bitmap_font_selected(hdc) >>> 0,
     'with no font file to rasterize, a scalable face falls back to a strike');
-  assertNoCanvasText('a scalable face with no mounted file must still avoid Canvas');
 
   assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
     'four Wine resources plus Terminal should install eight bitmap strikes');

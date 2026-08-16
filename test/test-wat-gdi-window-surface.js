@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
+const { mountBundledFonts } = require('./render-helper');
 const { compileWat } = require('../lib/compile-wat');
 
 const HWND = 0x10001;
@@ -54,6 +55,7 @@ async function main() {
   };
   const ctx = { getMemory: () => memory.buffer, renderer, resourceJson: {}, exports: null };
   const base = createHostImports(ctx);
+  mountBundledFonts(ctx);
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread = () => 0;
@@ -65,6 +67,10 @@ async function main() {
   base.host.com_create_instance = () => 0x80004002;
   const { instance } = await WebAssembly.instantiate(wasm, base);
   const wat = instance.exports;
+  // The VFS reads guest memory through ctx.exports, so a font file cannot be
+  // loaded until this is set — and with no host text path left, no font means
+  // no text at all.
+  ctx.exports = wat;
   ctx.exports = wat;
   renderer.wasm.exports = wat;
 
@@ -243,6 +249,10 @@ async function main() {
   const textPresentation = base.gdi.surfacePresentations.get(surfaceId);
   const rgbaRect = textPresentation.surface.rgbaRect.bind(textPresentation.surface);
   const destinationReads = [];
+  // Warm the strike first. The FNT payload is a DIB-arena allocation installed
+  // on first use, so a cold TextOut legitimately changes the allocator map; it
+  // is a second draw touching that map that would mean corruption.
+  assert.strictEqual(wat.test_call_TextOutA(hdc, 10, 10, text, 1), 1);
   const dibPageMapBeforeText = Buffer.from(
     new Uint8Array(memory.buffer, 0x07E10000, 0x4000));
   textPresentation.surface.rgbaRect = (...args) => {

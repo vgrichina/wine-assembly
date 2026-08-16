@@ -134,11 +134,6 @@
   ;; set_wallpaper(path_wa, tiled) → BOOL; loads a VFS BMP into the desktop layer.
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
-  (import "host" "measure_text" (func $host_measure_text_raw (param i32 i32 i32 i32) (result i32)))
-  ;; measure_text(token, textPtr, nCount, isWide) → pixel width. WAT binds
-  ;; canonical DC/font state to token before crossing the text-only boundary.
-  (import "host" "get_text_metrics" (func $host_get_text_metrics_raw (param i32) (result i32)))
-  ;; get_text_metrics(hdc) → (height | (aveCharWidth << 16))
   ;; GDI host imports
   (func $host_gdi_create_pen (param i32 i32 i32) (result i32)
     (call $gdi_object_alloc (i32.const 1) (local.get 0) (local.get 1) (local.get 2)
@@ -472,10 +467,6 @@
     (call $gdi_dc_get_field (local.get 0) (i32.const 48) (i32.const 1)))
   (func $host_gdi_get_window_ext_y (param i32) (result i32)
     (call $gdi_dc_get_field (local.get 0) (i32.const 52) (i32.const 1)))
-  (import "host" "gdi_text_bind" (func $host_gdi_text_bind_raw
-    (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
-  (import "host" "gdi_text_mask" (func $host_gdi_text_mask_raw
-    (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)
     (call $gdi_hdc_set_pixel (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color

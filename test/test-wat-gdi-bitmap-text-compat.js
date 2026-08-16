@@ -214,8 +214,13 @@ const { bootRenderHarness } = require('./render-helper');
   const scalable = wat.test_call_CreateFontW(-13, 400, 0, arialFace) >>> 0;
   assert(scalable);
   assert.notStrictEqual(wat.test_call_SelectObject(hdc, scalable) | 0, -1);
-  assert.strictEqual(wat.test_gdi_bitmap_font_selected(hdc), 0,
-    'Arial must exercise the scalable Canvas font-provider boundary');
+  // Arial used to resolve to nothing here and fall through to Canvas. It now
+  // rasterizes from its vendored substitute into a strike of its own, which is
+  // what keeps the path geometry below identical between Node and the browser.
+  const arialStrike = wat.test_gdi_bitmap_font_selected(hdc) >>> 0;
+  assert(arialStrike, 'Arial must rasterize into a strike of its own');
+  assert.notStrictEqual(arialStrike, wat.test_gdi_bitmap_font_bound(0x30021) >>> 0,
+    'a scalable face must not be answered with the bundled UI bitmap strike');
   wat.test_gdi_dc_set_field(hdc, 32, 0, 0); // TA_LEFT | TA_TOP
   clear();
   const beforeScalablePath = bytes.slice(wa(dibBits), wa(dibBits) + width * height * 4);

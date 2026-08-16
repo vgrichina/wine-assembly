@@ -7,12 +7,17 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
+const { mountBundledFonts } = require('./render-helper');
 
 async function main() {
   const root = path.join(__dirname, '..');
   const wasm = await compileWat(file => fs.promises.readFile(path.join(root, 'src', file), 'utf8'));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
-  const base = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
+  // Text is rasterized from mounted strikes now, so a host with an empty font
+  // directory measures every string as zero pixels wide.
+  const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
+  const base = createHostImports(ctx);
+  mountBundledFonts(ctx);
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread = () => 0;
@@ -24,6 +29,10 @@ async function main() {
   base.host.com_create_instance = () => 0x80004002;
   const { instance } = await WebAssembly.instantiate(wasm, base);
   const wat = instance.exports;
+  // The VFS reads guest memory through ctx.exports, so a font file cannot be
+  // loaded until this is set — and with no host text path left, no font means
+  // no text at all.
+  ctx.exports = wat;
 
   const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   const bitmap = wat.test_call_CreateCompatibleBitmap(hdc, 160, 32) >>> 0;
@@ -36,16 +45,20 @@ async function main() {
   wat.guest_write32(stops, 20);
   wat.guest_write32(stops + 4, 40);
 
+  // These widths come from the bundled Wine System strike (SYSTEM_FONT, a 16px
+  // cell with A=8 and B=10), which is what the DC selects by default. They used
+  // to be Canvas's approximation of a 12px cell, measured from whatever font
+  // the host machine resolved.
   const explicit = wat.test_call_GetTabbedTextExtentA(hdc, ansi, 3, 2, stops) >>> 0;
-  assert.strictEqual(explicit & 0xffff, 27,
-    'A (7px), tab to explicit x=20, B (7px) with the stock 12px GUI font');
-  assert.strictEqual(explicit >>> 16, 12);
+  assert.strictEqual(explicit & 0xffff, 30,
+    'A, tab to explicit x=20, then B (10px) in the stock System strike');
+  assert.strictEqual(explicit >>> 16, 16, 'native Win98 SYSTEM_FONT cell height');
   const defaultTabs = wat.test_call_GetTabbedTextExtentA(hdc, ansi, 3, 0, 0) >>> 0;
-  assert.strictEqual(defaultTabs & 0xffff, 63,
+  assert.strictEqual(defaultTabs & 0xffff, 66,
     'default tabs repeat every eight average character cells');
   wat.guest_write32(stops, 16);
   const repeating = wat.test_call_GetTabbedTextExtentA(hdc, ansi, 3, 1, stops) >>> 0;
-  assert.strictEqual(repeating & 0xffff, 23,
+  assert.strictEqual(repeating & 0xffff, 26,
     'one explicit tab value is a repeating interval, not a one-shot stop');
   wat.guest_write32(stops, 20);
 
@@ -59,7 +72,7 @@ async function main() {
 
   const before = new Uint8Array(memory.buffer).slice();
   const drawn = wat.test_call_TabbedTextOutA(hdc, 5, 4, ansi, 3, 2, stops, 5) >>> 0;
-  assert.strictEqual(drawn & 0xffff, 27);
+  assert.strictEqual(drawn & 0xffff, 30);
   const descriptor = 0x07EF1000;
   assert.strictEqual(wat.test_gdi_surface_descriptor(hdc, descriptor), 1);
   const dv = new DataView(memory.buffer);

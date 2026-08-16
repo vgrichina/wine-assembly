@@ -8,17 +8,8 @@ const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const binds = [];
-  let memoryRef = null;
-  const harness = await bootRenderHarness({
-    extraHostOverrides: {
-      gdi_text_bind: (...args) => { binds.push(args); return 1; },
-      measure_text: (_token, _text, count) => count * 7,
-      get_text_metrics: () => 17 | (7 << 16),
-    },
-  });
+  const harness = await bootRenderHarness();
   const { exports: wat, memory } = harness;
-  memoryRef = memory;
   const bytes = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
@@ -39,15 +30,6 @@ const { bootRenderHarness } = require('./render-helper');
     let result = '';
     for (let i = 0; i < limit; i++) {
       const ch = bytes[wa(guest) + i];
-      if (!ch) break;
-      result += String.fromCharCode(ch);
-    }
-    return result;
-  };
-  const readAnsiWa = (pointer, limit = 64) => {
-    let result = '';
-    for (let i = 0; i < limit; i++) {
-      const ch = bytes[(pointer >>> 0) + i];
       if (!ch) break;
       result += String.fromCharCode(ch);
     }
@@ -121,16 +103,22 @@ const { bootRenderHarness } = require('./render-helper');
   const text = allocZero(4);
   bytes.set(Buffer.from('abc\0', 'latin1'), wa(text));
   const size = allocZero(8);
-  binds.length = 0;
   assert.strictEqual(wat.test_call_GetTextExtentExPointA(
     hdc, text, 3, 0x7fffffff, 0, 0, size), 1);
-  assert.strictEqual(wat.guest_read32(size), 21);
-  assert(binds.length > 0, 'unsupported face must bind Canvas before fallback measurement');
-  const bind = binds[binds.length - 1];
-  assert.strictEqual(bind.length, 11);
-  assert.deepStrictEqual(bind.slice(7, 10), [-17, 600, 1]);
-  assert.strictEqual(readAnsiWa(bind[10]), 'Arial',
-    'Canvas fallback must receive derived WAT face state through gdi_text_bind');
+  // The derived LOGFONT state (-17px, weight 600, italic) used to be checked by
+  // watching it cross into Canvas through gdi_text_bind. There is no such
+  // crossing now: the same state selects a strike rasterized from Arial's
+  // substitute, so check the strike and the extent it produces instead.
+  const strike = wat.test_gdi_bitmap_font_selected(hdc) >>> 0;
+  assert(strike, 'a bold italic Arial request must resolve to a rasterized strike');
+  const width = wat.guest_read32(size);
+  const height = wat.guest_read32(size + 4);
+  assert(width > 0 && height > 0, `extent should be positive, got ${width}x${height}`);
+  const perChar = allocZero(12);
+  assert.strictEqual(wat.test_call_GetTextExtentExPointA(
+    hdc, text, 3, 0x7fffffff, 0, perChar, size), 1);
+  assert.strictEqual(wat.guest_read32(perChar + 8), width,
+    'the last progressive width must equal the whole-string extent');
 
   assert.notStrictEqual(wat.test_call_SelectObject(hdc, 0x3001d) | 0, -1);
   assert.strictEqual(wat.test_call_DeleteObject(font), 1);
@@ -146,10 +134,17 @@ const { bootRenderHarness } = require('./render-helper');
     'WAT must not import semantic font-object creation');
   assert(!/^\s+create_font:/m.test(hostImports),
     'JavaScript must not expose semantic font-object creation');
+  // Nor any part of the old text path: measurement, metrics, DC/font binding
+  // and glyph rasterization are all WAT-side now, and a host that reintroduces
+  // one of these makes text render differently in the browser and in Node.
+  for (const name of ['gdi_text_bind', 'gdi_text_mask', 'measure_text', 'get_text_metrics']) {
+    assert(!new RegExp(`\\(import\\s+"host"\\s+"${name}"`).test(header),
+      `WAT must not import ${name}`);
+    assert(!new RegExp(`^\\s+${name}:`, 'm').test(hostImports),
+      `JavaScript must not expose ${name}`);
+  }
 
-  // Keep the captured memory alive through every pointer assertion above.
-  assert(memoryRef === memory);
-  console.log('PASS  WAT owns font handles, LOGFONT state, face queries, fallback binding, and deletion');
+  console.log('PASS  WAT owns font handles, LOGFONT state, face queries, strike selection, and deletion');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

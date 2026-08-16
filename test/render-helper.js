@@ -20,9 +20,38 @@ const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
 const { Win98Renderer } = require('../lib/renderer');
+const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
+
+// Mount the fonts a real host mounts. Every guest glyph now comes from a strike
+// the VFS supplies, so a harness with an empty font directory draws no text at
+// all — which used to be masked by the Canvas text fallback. Tests that want to
+// prove behaviour with a face missing should delete that one mount, not rely on
+// the harness starting out bare.
+function mountBundledFonts(ctx, { scalable = true } = {}) {
+  if (!ctx || !ctx.vfs) return;
+  const root = path.join(__dirname, '..');
+  ctx.vfs.dirs.add('c:\\windows');
+  ctx.vfs.dirs.add('c:\\windows\\fonts');
+  const mount = (vfsPath, file) => {
+    if (!fs.existsSync(file)) throw new Error(`missing bundled font: ${file}`);
+    ctx.vfs.files.set(vfsPath, {
+      data: new Uint8Array(fs.readFileSync(file)), attrs: 0x20,
+    });
+  };
+  for (const name of BUNDLED_BITMAP_FONTS) {
+    mount(`c:\\windows\\fonts\\${name.toLowerCase()}`, path.join(root, 'fonts', name));
+  }
+  if (!scalable) return;
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(root, 'fonts', 'substitutions.json'), 'utf8'));
+  for (const item of fontMounts(manifest, { subset: true })) {
+    mount(item.vfsPath, path.join(root, 'fonts', item.file));
+  }
+}
 
 async function bootRenderHarness({
   extraHostOverrides = {}, extraWat = '', width = 640, height = 480,
+  fonts = 'all',
 } = {}) {
   const SRC = path.join(__dirname, '..', 'src');
   const wasmBytes = await compileWat(async f => {
@@ -40,6 +69,9 @@ async function bootRenderHarness({
     onExit: () => {},
   };
   const base = createHostImports(ctx);
+  // 'all' mirrors a real host; 'bitmap' gives only the stock strikes, for tests
+  // that need a scalable face to be genuinely missing; 'none' mounts nothing.
+  if (fonts !== 'none') mountBundledFonts(ctx, { scalable: fonts === 'all' });
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread   = () => 0;
@@ -155,4 +187,5 @@ async function runRenderTest(name, body, { minColors = 8 } = {}) {
   process.exit(failed > 0 ? 1 : 0);
 }
 
-module.exports = { bootRenderHarness, countUniqueColors, pixelMatches, writePng, runRenderTest };
+module.exports = { bootRenderHarness, mountBundledFonts, countUniqueColors,
+  pixelMatches, writePng, runRenderTest };

@@ -6,17 +6,10 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 (async () => {
-  const canvasCalls = {
-    bind: 0, mask: 0, measure: 0, metrics: 0,
-  };
-  const { exports: wat, memory, hostCtx } = await bootRenderHarness({
-    extraHostOverrides: {
-      gdi_text_bind: () => { canvasCalls.bind++; return 1; },
-      gdi_text_mask: () => { canvasCalls.mask++; return 0; },
-      measure_text: (_hdc, _text, count) => { canvasCalls.measure++; return count * 8; },
-      get_text_metrics: () => { canvasCalls.metrics++; return 8 | (8 << 16); },
-    },
-  });
+  // There is no host text import left to stub: measurement, metrics and
+  // rasterization all happen in WAT against a strike the VFS supplied.
+  // test/test-gdi-migration-status.js is what holds that surface closed.
+  const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
@@ -92,14 +85,18 @@ const { bootRenderHarness } = require('./render-helper');
     }
   });
 
-  check('GetGlyphOutlineA provides GGO_METRICS and rejects unavailable bitmaps', () => {
+  check('GetGlyphOutlineA provides GGO_METRICS and a sized GGO_BITMAP', () => {
     const { hdc } = createTextDc();
     const metrics = allocZero(20);
     assert.strictEqual(wat.test_call_GetGlyphOutlineA(hdc, 65, 0, metrics, 0, 0, 0), 0);
     assert(wat.guest_read32(metrics) > 0);
     assert(wat.guest_read32(metrics + 4) > 0);
-    assert.strictEqual(wat.test_call_GetGlyphOutlineA(hdc, 65, 1, metrics, 0, 0, 0) >>> 0,
-      0xffffffff);
+    // This asked for GDI_ERROR while the DC could reach no font at all. Now
+    // that every DC resolves to a strike, a null buffer means "how big?" and
+    // the answer is the dword-aligned row count Win98 would have reported.
+    const needed = wat.test_call_GetGlyphOutlineA(hdc, 65, 1, metrics, 0, 0, 0) >>> 0;
+    assert(needed > 0 && needed !== 0xffffffff && needed % 4 === 0,
+      `GGO_BITMAP should report a dword-aligned size, got ${needed}`);
   });
 
   check('font-resource and unavailable font-table contracts are deterministic', () => {
@@ -128,8 +125,12 @@ const { bootRenderHarness } = require('./render-helper');
     const { hdc, bits: dibBits } = createTextDc();
     const path = allocZero(16);
     bytes.set(Buffer.from('TEST.FON\0', 'latin1'), wa(path));
+    // Earlier checks in this file have already pulled in stock strikes, so the
+    // contract is that this resource adds exactly one, not that it is the only
+    // one installed.
+    const before = wat.test_gdi_bitmap_font_count();
     assert.strictEqual(wat.test_call_AddFontResourceA(path), 1);
-    assert.strictEqual(wat.test_gdi_bitmap_font_count(), 1);
+    assert.strictEqual(wat.test_gdi_bitmap_font_count(), before + 1);
 
     const face = allocZero(32);
     [...'UnitFnt'].forEach((character, index) =>
@@ -140,7 +141,6 @@ const { bootRenderHarness } = require('./render-helper');
     wat.test_call_SelectObject(hdc, font);
     assert.strictEqual(wat.test_gdi_bitmap_font_selected(hdc),
       wat.test_gdi_bitmap_font_bound(font));
-    Object.keys(canvasCalls).forEach(key => { canvasCalls[key] = 0; });
     const text = allocZero(2);
     bytes[wa(text)] = 65;
     const size = allocZero(8);
@@ -191,13 +191,17 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 3, text, 1), 1);
     assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 2) * 4), 0x00ffffff);
     assert.strictEqual(wat.guest_read32(dibBits + (3 * 64 + 4) * 4), 0);
-    assert.deepStrictEqual(canvasCalls, {
-      bind: 0, mask: 0, measure: 0, metrics: 0,
-    }, 'selected user FNT metrics, glyph extraction, and rasterization must stay in WAT');
-    assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
-    assert.strictEqual(wat.test_gdi_bitmap_font_count(), 0);
-    assert.strictEqual(wat.test_call_AddFontResourceA(0), 0);
+    // A bitmap face has no sfnt tables, which is what Win98 reported too. This
+    // has to be asked while the FNT is still the selected font: once the
+    // resource is removed the DC falls back to a scalable substitute, and that
+    // one does have a file to hand back.
     assert.strictEqual(wat.test_call_GetFontData(hdc, 0, 0, 0, 0) >>> 0, 0xffffffff);
+    // Drawing above pulled in further stock strikes on demand, so measure the
+    // removal against the count immediately before it.
+    const installed = wat.test_gdi_bitmap_font_count();
+    assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
+    assert.strictEqual(wat.test_gdi_bitmap_font_count(), installed - 1);
+    assert.strictEqual(wat.test_call_AddFontResourceA(0), 0);
   });
 
   console.log(`\n${passed}/${passed} checks passed`);

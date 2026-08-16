@@ -6,7 +6,7 @@ const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
-const { fontMounts } = require('../lib/font-substitutions');
+const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -1056,9 +1056,7 @@ async function main() {
   if (ctx.vfs) {
     ctx.vfs.dirs.add('c:\\windows');
     ctx.vfs.dirs.add('c:\\windows\\fonts');
-    for (const name of [
-      'System.fon', 'MSSansSerif.fon', 'Fixedsys.fon', 'Courier.fon', 'Terminal.fon',
-    ]) {
+    for (const name of BUNDLED_BITMAP_FONTS) {
       const bundledFon = path.join(ROOT, 'fonts', name);
       if (!fs.existsSync(bundledFon)) {
         throw new Error(`missing bundled bitmap font: ${bundledFon}`);

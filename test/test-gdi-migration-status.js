@@ -29,9 +29,10 @@ const PERMANENT_NON_TEXT_BRIDGE = [
   'gdi_surface_delete',
   'gdi_surface_upload',
 ];
-const CANVAS_TEXT_POLICY = [
-  'gdi_text_bind', 'gdi_text_mask',
-].sort();
+// Empty, and it must stay empty. Every glyph is rasterized in WAT from a strike
+// the VFS supplied, so no text crosses into JS at all; a host that draws or
+// measures text renders differently in the browser than in Node.
+const CANVAS_TEXT_POLICY = [];
 const MAX_TEMPORARY_NON_TEXT_EXCEPTIONS = 0;
 const sorted = values => [...values].sort();
 
@@ -76,6 +77,7 @@ assert(!hostImports.includes('_gdiObjects'),
 for (const removed of [
   '_gdiTextOut', '_drawBinaryCanvasText', '_drawWithClip',
   '_getDrawTarget', '_markDrawTargetDirty', '_seedDrawTargetRect',
+  '_resolveFont', '_buildCssFont', '_binaryTextMask', '_gdiTextStates',
 ]) {
   assert(!hostImports.includes(removed),
     `${removed} must not restore Canvas destination text drawing or readback`);
