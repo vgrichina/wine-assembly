@@ -70,6 +70,54 @@ These are stock Windows installation files, not redistributable runtime
 packages. They are gitignored local fixtures and must not be added to public
 deployment manifests unless redistribution permission is established.
 
+## Win16 system modules from Windows 98 SE OEM (ordinal resolution)
+
+Same ISO as the section above, verified again on 2026-08-16: 655,591,424 bytes,
+SHA-1 `fa040cd3f7fd472e9612b1721bc72d7b82538450`.
+
+Every Win16 import is by ordinal — all 269 distinct imports across the four NE
+apps in `test/binaries/win98-16bit/` are IMPORTORDINAL, not one is IMPORTNAME —
+so `USER.#113` names nothing until the module that exports it says what ordinal
+113 is called. These are the modules that say so. They are read by
+`tools/ne-exports.js` to produce an ordinal-to-name map; only the *names* end up
+in the repository, never these files.
+
+Extraction path: `WIN98/BASE4.CAB` (a continued cabinet set spanning
+`WIN98_21.CAB` … `WIN98_74.CAB`; all of them must be present).
+
+| File | Local path | Size | SHA-256 |
+|------|------------|-----:|---------|
+| `krnl386.exe` | `scratch/win16-system/krnl386.exe` | 127,040 | `fd48ebe1cc8c6558ab26c1c0e7b5492aa8f3a0dc54a2da801ec82ef093a662e7` |
+| `user.exe` | `scratch/win16-system/user.exe` | 549,664 | `fe4bedde380982f81e12d73de6a87d65fb21e9dba76f714c74bbd4d4e8bfad53` |
+| `gdi.exe` | `scratch/win16-system/gdi.exe` | 345,584 | `cc6c5c227108e7ace5ce72b42f810f718ce8c2413acda9edfe5a6c946678a16f` |
+| `ddeml.dll` | `scratch/win16-system/ddeml.dll` | 32,240 | `1452b614c5cdc1ff95436f5ac6d8ec0405b0e0d2abdf2ce0276c5d59280738b4` |
+| `mmsystem.dll` | `scratch/win16-system/mmsystem.dll` | 108,528 | `be30ae3d04785a31c71acb4113ebf7d3875d20cb8409adb4c74f166720f89557` |
+| `commdlg.dll` | `scratch/win16-system/commdlg.dll` | 97,936 | `b962e6787daaa2afb14dc56c854c00159410ac50e2d5ba902b9052ee3080000d` |
+| `keyboard.drv` | `scratch/win16-system/keyboard.drv` | 12,688 | `d50964b1e31373f161081227a435deeeca22143b1d0bfde0310a85468e892628` |
+| `shell.dll` | `scratch/win16-system/shell.dll` | 41,600 | `667422428e0934d947c9b56d622cffe6acd576f8014ca3692d7639d5457044d6` |
+
+Reproduce after mounting the ISO, from its `win98` directory:
+
+```bash
+for f in krnl386.exe user.exe gdi.exe ddeml.dll mmsystem.dll \
+         keyboard.drv commdlg.dll shell.dll; do
+  cabextract -q -d "$DEST" -F "$f" BASE4.CAB
+done
+shasum -a 256 "$DEST"/*
+```
+
+**One `-F` per invocation.** `cabextract` honours only the last `-F` it is
+given, so the multi-`-F` recipe in the section above silently extracts just
+`vgasys.fon` — it needs the same loop.
+
+`SOUND.DRV` is deliberately absent: Windows 98 SE does not ship it, MMSYSTEM
+having taken over. That leaves six ordinals (`SOUND.#1 #2 #4 #5 #9 #10`, all
+from WINMINE) with no module to resolve them against; they need a Windows 3.1
+`SOUND.DRV` or per-call-site reverse engineering.
+
+`scratch/` is gitignored, so these are local-only fixtures under the same policy
+as the rest of this file: stock Windows installation files, not redistributable.
+
 ## From IE6 SP1 (archive.org)
 
 Source: `https://archive.org/details/windows-98systemfiles`
