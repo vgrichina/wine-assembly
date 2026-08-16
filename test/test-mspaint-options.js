@@ -90,12 +90,67 @@ function inkBounds(image, box) {
   };
 }
 
+// The tool-options well is a sunken 40x65 frame that Paint itself positions,
+// with four 1px PatBlt rules at toolbox-child coords (10,203)-(50,268). Its
+// screen position therefore follows the toolbox child origin, which follows
+// the frame window's client origin — so a change in window chrome moves it.
+// It has moved once already: this band used to be hardcoded at x=23..76,
+// y=260..328, which sits 3px up and left of where the well is now and clipped
+// the bottom edge of the tool-button grid into the margin, counting 47
+// legitimately black button-shadow pixels as stray ink.
+//
+// So find the well rather than assume it. Its top edge is a ~41px horizontal
+// run of COLOR_3DSHADOW. The tool buttons end in a shadow row of their own, so
+// that alone is ambiguous; what separates them is that the well is preceded by
+// clear button-face gray, while a button's shadow row has the button's own
+// highlight and edge pixels immediately above it.
+const WELL_W = 40;
+const WELL_H = 65;
+
+function isShadow(image, x, y) {
+  const i = (y * image.width + x) * 4;
+  return Math.abs(image.data[i] - 128) <= 6 &&
+         Math.abs(image.data[i + 1] - 128) <= 6 &&
+         Math.abs(image.data[i + 2] - 128) <= 6;
+}
+function isFace(image, x, y) {
+  const i = (y * image.width + x) * 4;
+  return Math.abs(image.data[i] - 192) <= 2 &&
+         Math.abs(image.data[i + 1] - 192) <= 2 &&
+         Math.abs(image.data[i + 2] - 192) <= 2;
+}
+
+function findOptionWell(image) {
+  for (let y = 200; y < 400 && y < image.height; y++) {
+    let run = 0;
+    for (let x = 20; x < 100 && x < image.width; x++) {
+      run = isShadow(image, x, y) ? run + 1 : 0;
+      if (run < WELL_W - 2 || run > WELL_W + 4) continue;
+      const x0 = x - run + 1;
+      let clearAbove = y > 0;
+      for (let px = x0; px <= x && clearAbove; px++) {
+        if (!isFace(image, px, y - 1)) clearAbove = false;
+      }
+      // Take the extents from the app-fixed size, not the matched run: the
+      // corner pixels of the frame are not all shadow, so the run can stop a
+      // few pixels short of the real right edge.
+      if (clearAbove) return { x0, y0: y, x1: x0 + WELL_W, y1: y + WELL_H };
+    }
+  }
+  return null;
+}
+
 function optionWellMargin(image) {
+  const well = findOptionWell(image);
+  if (!well) return { black: Infinity, buttonFace: 0, found: false };
   let black = 0;
   let buttonFace = 0;
-  for (let y = 260; y < 328; y++) {
-    for (let x = 23; x < 76; x++) {
-      if (!(x < 31 || x > 71 || y < 262 || y > 326)) continue;
+  // A 3px band around the well: it should be plain button-face gray, with the
+  // button grid's own shadow edge safely above it.
+  for (let y = well.y0 - 3; y <= well.y1 + 3; y++) {
+    for (let x = well.x0 - 3; x <= well.x1 + 3; x++) {
+      if (x >= well.x0 && x <= well.x1 && y >= well.y0 && y <= well.y1) continue;
+      if (x < 0 || y < 0 || x >= image.width || y >= image.height) continue;
       const i = (y * image.width + x) * 4;
       const r = image.data[i];
       const g = image.data[i + 1];
@@ -106,7 +161,7 @@ function optionWellMargin(image) {
       }
     }
   }
-  return { black, buttonFace };
+  return { black, buttonFace, found: true, well };
 }
 
 (async () => {
@@ -138,7 +193,7 @@ function optionWellMargin(image) {
     [`large airbrush option expanded the spray (${sprayLarge.width}x${sprayLarge.height})`,
       sprayLarge.count > 0 && Math.max(sprayLarge.width, sprayLarge.height) >= 15 &&
         sprayLarge.width * sprayLarge.height >= 150],
-    [`tool-options margin stayed button-face gray (${optionWell.black} black, ${optionWell.buttonFace} gray)`,
+    [`tool-options margin stayed button-face gray (${optionWell.black} black, ${optionWell.buttonFace} gray, well ${optionWell.well ? `${optionWell.well.x0},${optionWell.well.y0}-${optionWell.well.x1},${optionWell.well.y1}` : 'NOT FOUND'})`,
       optionWell.black < 20 && optionWell.buttonFace > 600],
     ['no crash or unimplemented API',
       !/UNIMPLEMENTED API:|RuntimeError|LinkError|CRASH/.test(output)],
