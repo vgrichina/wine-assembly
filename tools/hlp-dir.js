@@ -21,6 +21,16 @@ if (!file) {
 const wantSystem = args.includes('--system');
 const dumpArg = args.find(a => a.startsWith('--dump='));
 const dumpName = dumpArg ? dumpArg.slice('--dump='.length) : null;
+const numeric = (name, fallback) => {
+  const arg = args.find(a => a.startsWith(`--${name}=`));
+  return arg ? Number(arg.slice(name.length + 3)) : fallback;
+};
+const dumpAt = numeric('at', 0);
+const dumpLen = numeric('len', null);
+const wantLinks = args.includes('--links');
+const blockSize = numeric('block', 4096);
+const linkLimit = numeric('limit', 40);
+const shiftMode = args.includes('--topicoffset');
 
 const data = new Uint8Array(fs.readFileSync(file));
 const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -135,6 +145,59 @@ if (sys && (wantSystem || true)) {
   }
 }
 
+// Walk the |TOPIC record chain the way the parser does, so a file that fails
+// to load says which record broke the chain and what the bytes there actually
+// are. TopicPos is a position in the stream of block payloads: each physical
+// block contributes (block size - 12) bytes and the first record sits at 12.
+if (wantLinks) {
+  const topic = byName.get('|TOPIC');
+  if (!topic) {
+    console.error('\nno |TOPIC internal file');
+    process.exit(1);
+  }
+  const body = topic.offset + 9;
+  const logical = blockSize - 12;
+  // Two candidate readings of a TopicPos. "linear" treats the stream as the
+  // block payloads laid end to end; "topicoffset" reads it as
+  // (block << 14) + offset-from-the-start-of-the-block, header included.
+  // They are identical when a block's payload is 16K, which is why only a
+  // multi-block uncompressed file can tell them apart.
+  const physical = pos => shiftMode
+    ? { block: pos >>> 14, phys: body + (pos >>> 14) * blockSize + (pos & 0x3fff) }
+    : {
+      block: Math.floor((pos - 12) / logical),
+      phys: body + Math.floor((pos - 12) / logical) * blockSize + 12 + ((pos - 12) % logical),
+    };
+  console.log(`\n=== |TOPIC chain (block=${blockSize}, ` +
+    `${shiftMode ? 'topicoffset' : `linear logical=${logical}`}) ===`);
+  let pos = 12;
+  let previous = -1;
+  for (let n = 0; n < linkLimit; n++) {
+    const { block, phys } = physical(pos);
+    if (phys + 21 > body + topic.used) {
+      console.log(`  ${n}: pos=0x${pos.toString(16)} is past the end of |TOPIC`);
+      break;
+    }
+    const size = u32(phys);
+    const len2 = u32(phys + 4);
+    const prev = dv.getInt32(phys + 8, true);
+    const next = dv.getInt32(phys + 12, true);
+    const len1 = u32(phys + 16);
+    const type = data[phys + 20];
+    const sane = size >= 21 && len1 >= 21 && len1 <= size &&
+      (type === 2 || type === 0x20 || type === 0x23);
+    console.log(`  ${n}: pos=0x${pos.toString(16)} block=${block} ` +
+      `file=0x${phys.toString(16)} size=${size} len1=${len1} len2=${len2} ` +
+      `prev=0x${(prev >>> 0).toString(16)} next=0x${(next >>> 0).toString(16)} ` +
+      `type=0x${type.toString(16)}${sane ? '' : '   <-- NOT A RECORD'}` +
+      (prev === previous ? '' : `   <-- prev should be 0x${(previous >>> 0).toString(16)}`));
+    if (!sane) break;
+    if (next === -1 || next === 0) { console.log('  end of chain'); break; }
+    previous = pos;
+    pos = next;
+  }
+}
+
 if (dumpName) {
   const e = byName.get(dumpName);
   if (!e) {
@@ -142,11 +205,18 @@ if (dumpName) {
     process.exit(1);
   }
   console.log(`\n=== ${dumpName} (${e.used} bytes) ===`);
-  const body = data.subarray(e.offset + 9, e.offset + 9 + e.used);
+  const whole = data.subarray(e.offset + 9, e.offset + 9 + e.used);
+  // Offsets are relative to the internal file's body, which is the coordinate
+  // system the WAT parser's block and record offsets are already in, so a
+  // reported failure position can be pasted straight into --at.
+  const body = dumpLen === null
+    ? whole.subarray(dumpAt)
+    : whole.subarray(dumpAt, dumpAt + dumpLen);
   for (let i = 0; i < body.length; i += 16) {
     const row = body.subarray(i, i + 16);
     const hex = Array.from(row).map(b => b.toString(16).padStart(2, '0')).join(' ');
     const ascii = Array.from(row).map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '.').join('');
-    console.log(`  ${i.toString(16).padStart(6, '0')}  ${hex.padEnd(47)}  ${ascii}`);
+    console.log(`  ${(i + dumpAt).toString(16).padStart(6, '0')}  ` +
+      `${hex.padEnd(47)}  ${ascii}`);
   }
 }

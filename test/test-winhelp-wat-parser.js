@@ -508,6 +508,7 @@ function buildSyntheticFormattedTopic({
   stringCount = null, returnParts = false, hotspotOpcode = 0xe2, hotspotHash = 0x12345678,
   hotspotCommand = null, closeVariableHotspot = false, variableHotspotCommand = null,
   externalBitmapNumber = null, stringPadding = 0, trailingNuls = 0,
+  logicalBlock = 16384 - 12,
 } = {}) {
   const fixedHotspot = Buffer.alloc(5);
   fixedHotspot[0] = hotspotOpcode;
@@ -560,8 +561,18 @@ function buildSyntheticFormattedTopic({
   commands.copy(displayFormat, 9);
   const displaySize = 21 + displayFormat.length + strings.length;
   const sizes = [49, displaySize, 49, 49, 49];
-  const positions = [12];
-  for (let i = 1; i < sizes.length; i++) positions.push(positions[i - 1] + sizes[i - 1]);
+  // A TopicPos is (block << 14) + the offset from the start of that block,
+  // header included - not a linear offset into the payloads. The two agree
+  // until the stream crosses a block, so only the fixtures packed into 4096
+  // byte uncompressed blocks need to say how big a block's payload is.
+  const topicPos = payloadOffset =>
+    Math.floor(payloadOffset / logicalBlock) * 16384 + 12 +
+    (payloadOffset % logicalBlock);
+  const positions = [];
+  for (let i = 0, payload = 0; i < sizes.length; i++) {
+    positions.push(topicPos(payload));
+    payload += sizes[i];
+  }
   const links = Buffer.alloc(sizes.reduce((sum, size) => sum + size, 0));
   let raw = 0;
   for (let i = 0; i < sizes.length; i++) {
@@ -1623,8 +1634,11 @@ async function main() {
   check('keyword posting slices are bounded by KWDATA',
     load(badKeywordSliceHelp.file) === 0 && e.get_help_last_error() === 17 &&
     e.get_help_keyword_count() === 0 && e.get_help_topic_count() === 0);
+  // Past the end of the topic stream. A posting that merely is not a topic
+  // header is legal - it aims at a paragraph inside one - so an unresolvable
+  // posting has to be one no block could hold.
   const badKeywordTopicData = Buffer.from(keywordIndex.data);
-  badKeywordTopicData.writeUInt32LE(999, 0);
+  badKeywordTopicData.writeUInt32LE(0x7f0000, 0);
   const badKeywordTopicHelp = buildSyntheticSemanticHelp({ extraFiles: [
     ['|KWBTREE', keywordIndex.tree], ['|KWDATA', badKeywordTopicData],
   ] });
@@ -1904,7 +1918,7 @@ async function main() {
   // any topic longer than a block (hover.hlp does it 20+ times).
   const crossBlockParts = buildSyntheticFormattedTopic({
     closeVariableHotspot: true, stringPadding: 4200,
-    returnParts: true,
+    returnParts: true, logicalBlock: 4096 - 12,
   });
   const crossBlockHelp = buildSyntheticSemanticHelp({
     systemFlags: 0, topic: packUncompressedTopicBlocks(crossBlockParts.links),
@@ -1935,7 +1949,7 @@ async function main() {
   const singleBlockHelp = buildSyntheticSemanticHelp({
     systemFlags: 0,
     topic: packUncompressedTopicBlocks(buildSyntheticFormattedTopic({
-      closeVariableHotspot: true, returnParts: true,
+      closeVariableHotspot: true, returnParts: true, logicalBlock: 4096 - 12,
     }).links),
   });
   check('gathering is used only when a record actually crosses a boundary',
@@ -2025,6 +2039,33 @@ async function main() {
   check('EMPIPEE.HLP is the file that exercises the omitted-tail rule',
     empipeePadded === 7 && empipeePadBytes === 50,
     `padded=${empipeePadded} bytes=${empipeePadBytes}`);
+
+  // CHIPEDIT.HLP is the only multi-block UNCOMPRESSED file in reach, which
+  // makes it the only one that can tell a TopicPos from a linear offset into
+  // the block payloads. Under the linear reading it walked off its own chain
+  // at the first record past block 0 and the whole file was refused.
+  const chipeditHelp = fs.readFileSync(path.join(ROOT, 'test', 'binaries',
+    'wep32-community', 'TWorld', 'CHIPEDIT.HLP'));
+  const chipeditLoaded = load(chipeditHelp);
+  let chipeditLaidOut = 0;
+  for (let index = 0; index < e.get_help_topic_count(); index++) {
+    const tokens = e.test_help_decode_topic_formatted(index, topicOutWA, topicOutCapacity,
+      topicTokensWA, topicTokenCapacity, topicPayloadWA, topicPayloadCapacity);
+    if (tokens < 1) continue;
+    if (e.test_help_layout_tokens_with_payload(topicOutWA, topicOutCapacity,
+      topicPayloadWA, e.get_help_formatted_payload_size(), topicTokensWA, tokens,
+      // One CHIPEDIT topic needs more than 2048 runs; the viewer counts first
+      // and allocates exactly, so only fixed-capacity callers like this care.
+      layoutRunsWA, 8192, 560) >= 0) chipeditLaidOut++;
+  }
+  check('CHIPEDIT.HLP walks its uncompressed multi-block topic chain',
+    chipeditLoaded === 1 && e.get_help_topic_count() === 98 &&
+    chipeditLaidOut === 98,
+    `loaded=${chipeditLoaded} topics=${e.get_help_topic_count()} ` +
+    `laidOut=${chipeditLaidOut} error=${e.get_help_last_error()}`);
+  check('CHIPEDIT.HLP keeps every one of its context entries',
+    e.get_help_context_count() === 97 && e.get_help_context_dropped() === 0,
+    `contexts=${e.get_help_context_count()} dropped=${e.get_help_context_dropped()}`);
 
   const validExternalCommands = [
     buildExternalHotspot(0xea, 0, 20),
@@ -3538,9 +3579,11 @@ async function main() {
 
   const badContextRef = Buffer.from(fs.readFileSync(path.join(HELP, 'freecell.hlp')));
   const freecellContexts = fixtureInternalOffset('freecell.hlp', '|CONTEXT') + 9;
-  badContextRef.writeUInt32LE(999, freecellContexts + 38 + 8 + 4);
+  badContextRef.writeUInt32LE(0x7f0000, freecellContexts + 38 + 8 + 4);
   // Dangling context entries are dropped rather than fatal - real WinHelp
   // fails only that jump. The entry disappears; the document still loads.
+  // "Dangling" means past the end of the topic stream: an offset that merely
+  // is not a topic header points INSIDE a topic and must resolve to it.
   check('a hashed context naming no topic is dropped, not fatal',
     load(badContextRef) === 1 && e.get_help_context_dropped() === 1 &&
     e.get_help_topic_count() === 4);
@@ -3559,10 +3602,23 @@ async function main() {
     load(badMapCount) === 0 && e.get_help_last_error() === 11);
 
   const badMapRef = Buffer.from(fs.readFileSync(path.join(HELP, 'notepad.hlp')));
-  badMapRef.writeUInt32LE(999, notepadMap + 6);
+  badMapRef.writeUInt32LE(0x7f0000, notepadMap + 6);
   check('a numeric context naming no topic is dropped, not fatal',
     load(badMapRef) === 1 && e.get_help_context_dropped() === 1 &&
     e.test_help_resolve_context_id(999) === -1);
+
+  // The other side of the same rule: an offset a few bytes into a topic is a
+  // jump to a paragraph within it, and it must survive as itself. Treating
+  // these as dangling is what made CHIPEDIT.HLP drop 138 of its 166 contexts
+  // and qbob.hlp 7 of its 8, once they were allowed to load at all.
+  const insideTopicRef = Buffer.from(fs.readFileSync(path.join(HELP, 'notepad.hlp')));
+  const insideTopicValue = insideTopicRef.readUInt32LE(notepadMap + 6) + 4;
+  insideTopicRef.writeUInt32LE(insideTopicValue, notepadMap + 6);
+  check('a context pointing inside a topic resolves to that topic',
+    load(insideTopicRef) === 1 && e.get_help_context_dropped() === 0 &&
+    e.test_help_resolve_context_id(
+      insideTopicRef.readUInt32LE(notepadMap + 2)) === insideTopicValue,
+    `dropped=${e.get_help_context_dropped()} ref=${insideTopicValue}`);
 
   const semanticIndexCycle = buildSyntheticSemanticHelp();
   semanticIndexCycle.file.writeUInt16LE(0,

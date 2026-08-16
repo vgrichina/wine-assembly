@@ -47,6 +47,21 @@ const LAYOUT_FAILS = {
 // reporting it as a layout refusal is how qbob.hlp came to look damaged.
 const RUN_CAPACITY = 16384;
 
+// $help_block_lz77_fail_code, listed above $help_lz77_expand_topic_block.
+const BLOCK_LZ77_FAILS = {
+  1: 'literal past end of destination', 2: 'back-reference truncated',
+  3: 'back-reference before block start, or run overruns the end',
+};
+
+// $help_link_fail_code, listed above $help_topic_link_at. The two aux values
+// mean different things per code; see the WAT call sites.
+const LINK_FAILS = {
+  1: 'position before the first record', 2: 'block would not load',
+  3: 'position past the end of its block', 4: 'header gather failed',
+  5: 'record smaller than its own header', 6: 'block would not reload',
+  7: 'straddling-record gather failed',
+};
+
 // $help_hall_fail_code, listed above $help_decode_hall_topic_data.
 const HALL_FAILS = {
   1: 'source exhausted before output complete', 2: 'two-byte phrase code truncated',
@@ -91,10 +106,28 @@ async function main() {
     if (loaded !== 1) {
       const code = e.get_help_last_error();
       const btree = e.get_help_btree_fail_code ? e.get_help_btree_fail_code() : 0;
+      const lz77 = e.get_help_block_lz77_fail_code ? e.get_help_block_lz77_fail_code() : 0;
       console.log(`  LOAD FAILED  err=${code} (${ERRORS[code] || '?'}) ` +
         `at 0x${(e.get_help_last_error_offset() >>> 0).toString(16)}` +
         ((code === 10 || code === 11) && btree
-          ? `  btree check ${btree} (see $help_parse_semantic_btree)` : ''));
+          ? `  btree check ${btree} (see $help_parse_semantic_btree)` : '') +
+        (code === 13 && e.get_help_topic_fail_code && e.get_help_topic_fail_code()
+          ? `  topic-link check ${e.get_help_topic_fail_code()}` +
+            ` (see $help_parse_topic_links)` +
+            (e.get_help_topic_fail_code() === 2 && e.get_help_link_fail_code
+              ? `  link ${e.get_help_link_fail_code()} ` +
+                `(${LINK_FAILS[e.get_help_link_fail_code()] || '?'}) ` +
+                `a=${e.get_help_link_fail_a()} b=${e.get_help_link_fail_b()}`
+              : '') : '') +
+        (code === 17 && e.get_help_link_fail_a
+          ? `  posting ref=0x${e.get_help_link_fail_a().toString(16)} ` +
+            `topic offsets stop at 0x${e.get_help_link_fail_b().toString(16)}` : '') +
+        (code === 13 && lz77
+          ? `  block lz77 ${lz77} (${BLOCK_LZ77_FAILS[lz77] || '?'})` +
+            ` src=${e.get_help_block_lz77_fail_src()}` +
+            ` dest=${e.get_help_block_lz77_fail_dest()}` +
+            ` word=0x${e.get_help_block_lz77_fail_word().toString(16)}`
+          : ''));
       continue;
     }
     const topics = e.get_help_topic_count();

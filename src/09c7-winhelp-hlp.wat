@@ -843,8 +843,15 @@
                   (global.set $help_btree_fail_code (i32.const 19)) (call $help_set_error (local.get $error_code)
                     (i32.add (i32.sub (local.get $page_ptr) (global.get $help_doc_file_wa)) (local.get $entry_rel)))
                   (br $done)))
-              (local.set $topic_index (call $help_find_topic_index_in
-                (local.get $topics_wa) (local.get $topic_count) (local.get $topic_ref)))
+              ;; Contexts (kind 2) may aim inside a topic; titles (kind 1) name
+              ;; a header exactly, and a title that does not is a scan bug.
+              (local.set $topic_index
+                (if (result i32) (i32.eq (local.get $kind) (i32.const 2))
+                  (then (call $help_find_topic_index_containing
+                    (local.get $topics_wa) (local.get $topic_count)
+                    (local.get $topic_ref) (global.get $help_doc_topic_offset_limit)))
+                  (else (call $help_find_topic_index_in
+                    (local.get $topics_wa) (local.get $topic_count) (local.get $topic_ref)))))
               ;; A |CONTEXT entry naming no topic header is dropped, not
               ;; fatal. Real WinHelp fails only that one jump; refusing the
               ;; file made a single stale entry cost the whole document -
@@ -959,8 +966,9 @@
       ;; Same tolerance as |CONTEXT above: a map entry pointing at no topic
       ;; header costs that one API context id, not the document. CHIPEDIT.HLP
       ;; is 132KB of readable topics behind its first such entry.
-      (if (i32.lt_s (call $help_find_topic_index_in
-            (local.get $topics_wa) (local.get $topic_count) (local.get $topic_ref)) (i32.const 0))
+      (if (i32.lt_s (call $help_find_topic_index_containing
+            (local.get $topics_wa) (local.get $topic_count)
+            (local.get $topic_ref) (global.get $help_doc_topic_offset_limit)) (i32.const 0))
         (then
           (global.set $help_doc_context_dropped
             (i32.add (global.get $help_doc_context_dropped) (i32.const 1)))
@@ -1049,6 +1057,34 @@
       (i32.eq (local.get $source_pos) (local.get $source_len))
       (i32.eq (local.get $dest_pos) (local.get $dest_len))))
 
+  ;; Why a topic block would not expand, so a file that fails to load says
+  ;; which invariant broke rather than only that one did. Codes:
+  ;;   1 literal byte past the end of the destination
+  ;;   2 two-byte back-reference truncated by the end of the block
+  ;;   3 back-reference points before the block, or its run overruns the end
+  (global $help_block_lz77_fail_code (mut i32) (i32.const 0))
+  (global $help_block_lz77_fail_src (mut i32) (i32.const 0))
+  (global $help_block_lz77_fail_dest (mut i32) (i32.const 0))
+  (global $help_block_lz77_fail_word (mut i32) (i32.const 0))
+
+  (func (export "get_help_block_lz77_fail_code") (result i32)
+    (global.get $help_block_lz77_fail_code))
+  (func (export "get_help_block_lz77_fail_src") (result i32)
+    (global.get $help_block_lz77_fail_src))
+  (func (export "get_help_block_lz77_fail_dest") (result i32)
+    (global.get $help_block_lz77_fail_dest))
+  (func (export "get_help_block_lz77_fail_word") (result i32)
+    (global.get $help_block_lz77_fail_word))
+
+  (func $help_block_lz77_fail
+    (param $code i32) (param $src i32) (param $dest i32) (param $word i32)
+    (result i32)
+    (global.set $help_block_lz77_fail_code (local.get $code))
+    (global.set $help_block_lz77_fail_src (local.get $src))
+    (global.set $help_block_lz77_fail_dest (local.get $dest))
+    (global.set $help_block_lz77_fail_word (local.get $word))
+    (i32.const 0))
+
   ;; Topic blocks do not carry their expanded length. Decode until the fixed
   ;; physical block ends, allowing unused high control bits after the final
   ;; complete token, but never exceeding the 16 KiB logical block envelope.
@@ -1072,7 +1108,8 @@
                     (i32.shl (i32.const 1) (local.get $bit))))
           (then
             (if (i32.ge_u (local.get $dest_pos) (local.get $dest_capacity))
-              (then (return (i32.const 0))))
+              (then (return (call $help_block_lz77_fail (i32.const 1)
+                (local.get $source_pos) (local.get $dest_pos) (i32.const 0)))))
             (i32.store8 (i32.add (local.get $dest) (local.get $dest_pos))
               (i32.load8_u (i32.add (local.get $source) (local.get $source_pos))))
             (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
@@ -1080,7 +1117,8 @@
           (else
             (if (i32.gt_u (i32.const 2)
                   (i32.sub (local.get $source_len) (local.get $source_pos)))
-              (then (return (i32.const 0))))
+              (then (return (call $help_block_lz77_fail (i32.const 2)
+                (local.get $source_pos) (local.get $dest_pos) (i32.const 0)))))
             (local.set $word (i32.load16_u (i32.add (local.get $source) (local.get $source_pos))))
             (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 2)))
             (local.set $distance (i32.and (local.get $word) (i32.const 0x0FFF)))
@@ -1089,7 +1127,8 @@
                   (i32.ge_u (local.get $distance) (local.get $dest_pos))
                   (i32.gt_u (local.get $length)
                     (i32.sub (local.get $dest_capacity) (local.get $dest_pos))))
-              (then (return (i32.const 0))))
+              (then (return (call $help_block_lz77_fail (i32.const 3)
+                (local.get $source_pos) (local.get $dest_pos) (local.get $word)))))
             (local.set $i (i32.const 0))
             (block $copy_done (loop $copy
               (br_if $copy_done (i32.ge_u (local.get $i) (local.get $length)))
@@ -1238,6 +1277,52 @@
       (br $blocks)))
     (i32.const 1))
 
+  ;; Every reference into the topic stream - |CONTEXT, |CTXOMAP, |TTLBTREE, a
+  ;; keyword posting - is a TOPICOFFSET: (block number << 15) + a position
+  ;; inside that block. That is a different space from the TopicPos the record
+  ;; chain is threaded with, which is why this bound is computed from the
+  ;; block count rather than from where the chain ended. HOVER.HLP settles the
+  ;; shift: its |TOPIC is 4 blocks and it references block 3 at offset
+  ;; 0x18627, which is out of range under a 14-bit shift and in range under a
+  ;; 15-bit one. Only an upper bound is needed here - a bound that is too
+  ;; generous weakens the check, while one too tight drops real references.
+  (func $help_set_topic_offset_limit (param $internal_index i32)
+    (local $record i32) (local $data_len i32) (local $physical i32)
+    (local.set $record (i32.add (global.get $help_doc_directory_wa)
+      (i32.mul (local.get $internal_index) (global.get $HELP_INTERNAL_FILE_SIZE))))
+    (local.set $data_len (i32.load offset=16 (local.get $record)))
+    (local.set $physical (call $help_topic_physical_block_size))
+    (global.set $help_doc_topic_offset_limit
+      (i32.shl
+        (i32.div_u
+          (i32.add (local.get $data_len) (i32.sub (local.get $physical) (i32.const 1)))
+          (local.get $physical))
+        (i32.const 15))))
+
+  ;; Why a TopicLink could not be resolved at a stream position. The two aux
+  ;; values differ per code and are named in each call. Codes:
+  ;;   1 position before the first record   2 block would not load
+  ;;   3 position past the end of its own block
+  ;;   4 gathering the fixed header across a boundary failed
+  ;;   5 record claims a size smaller than its own header
+  ;;   6 block evicted by the header gather would not reload
+  ;;   7 gathering a boundary-straddling record failed
+  ;;   8 offset past the end of its block's payload
+  (global $help_link_fail_code (mut i32) (i32.const 0))
+  (global $help_link_fail_a (mut i32) (i32.const 0))
+  (global $help_link_fail_b (mut i32) (i32.const 0))
+
+  (func (export "get_help_topic_offset_limit") (result i32) (global.get $help_doc_topic_offset_limit))
+  (func (export "get_help_link_fail_code") (result i32) (global.get $help_link_fail_code))
+  (func (export "get_help_link_fail_a") (result i32) (global.get $help_link_fail_a))
+  (func (export "get_help_link_fail_b") (result i32) (global.get $help_link_fail_b))
+
+  (func $help_link_fail (param $code i32) (param $a i32) (param $b i32) (result i32)
+    (global.set $help_link_fail_code (local.get $code))
+    (global.set $help_link_fail_a (local.get $a))
+    (global.set $help_link_fail_b (local.get $b))
+    (i32.const 0))
+
   ;; Resolve one TopicLink at a decompressed-stream position to a contiguous
   ;; record. A record that fits inside its own block is used in place; one
   ;; that straddles a block boundary is gathered into the owned buffer.
@@ -1249,16 +1334,29 @@
     (local $block_number i32) (local $relative i32) (local $bytes i32)
     (local $available i32) (local $block_size i32)
     (global.set $help_topic_link_bytes (i32.const 0))
-    (if (i32.lt_s (local.get $current) (i32.const 12)) (then (return (i32.const 0))))
+    (if (i32.lt_s (local.get $current) (i32.const 12))
+      (then (return (call $help_link_fail (i32.const 1) (local.get $current) (i32.const 0)))))
+    ;; Blocks are numbered in TopicPos space at a fixed 16K stride, whatever a
+    ;; block's payload actually holds: 16K for a compressed block, 4084 for an
+    ;; uncompressed 4096-byte one. Treating the stride as the payload size is
+    ;; the same arithmetic for compressed files and wrong for uncompressed
+    ;; ones, so no file could show the difference until CHIPEDIT.HLP, which
+    ;; walked off its own chain at the first record past block 0.
     (local.set $block_number
-      (i32.div_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
+      (i32.shr_u (i32.sub (local.get $current) (i32.const 12)) (i32.const 14)))
     (local.set $relative
-      (i32.rem_u (i32.sub (local.get $current) (i32.const 12)) (local.get $logical_size)))
+      (i32.and (i32.sub (local.get $current) (i32.const 12)) (i32.const 0x3FFF)))
+    (if (i32.ge_u (local.get $relative) (local.get $logical_size))
+      (then (return (call $help_link_fail (i32.const 8)
+        (local.get $relative) (local.get $logical_size)))))
     (local.set $bytes (call $help_topic_block_fetch
       (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
-    (if (i32.lt_s (local.get $bytes) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.lt_s (local.get $bytes) (i32.const 0))
+      (then (return (call $help_link_fail (i32.const 2)
+        (local.get $block_number) (local.get $relative)))))
     (if (i32.gt_u (local.get $relative) (local.get $bytes))
-      (then (return (i32.const 0))))
+      (then (return (call $help_link_fail (i32.const 3)
+        (local.get $relative) (local.get $bytes)))))
     (local.set $available (i32.sub (local.get $bytes) (local.get $relative)))
     (if (i32.ge_u (local.get $available) (i32.const 21))
       (then
@@ -1270,23 +1368,28 @@
               (local.get $internal_record) (local.get $block_number)
               (local.get $relative) (local.get $logical_size)
               (local.get $temp_wa) (i32.const 21)))
-          (then (return (i32.const 0))))
+          (then (return (call $help_link_fail (i32.const 4)
+            (local.get $block_number) (local.get $relative)))))
         (local.set $block_size (i32.load (global.get $help_topic_gather_wa)))))
     (if (i32.lt_s (local.get $block_size) (i32.const 21))
-      (then (return (i32.const 0))))
+      (then (return (call $help_link_fail (i32.const 5)
+        (local.get $block_size) (local.get $relative)))))
     (if (i32.le_u (local.get $block_size) (local.get $available))
       (then
         ;; A header gather above may have evicted the block; reload in place.
         (local.set $bytes (call $help_topic_block_fetch
           (local.get $internal_record) (local.get $block_number) (local.get $temp_wa)))
-        (if (i32.lt_s (local.get $bytes) (i32.const 0)) (then (return (i32.const 0))))
+        (if (i32.lt_s (local.get $bytes) (i32.const 0))
+          (then (return (call $help_link_fail (i32.const 6)
+            (local.get $block_number) (local.get $relative)))))
         (global.set $help_topic_link_bytes (local.get $available))
         (return (i32.add (local.get $temp_wa) (local.get $relative)))))
     (if (i32.eqz (call $help_topic_gather
           (local.get $internal_record) (local.get $block_number)
           (local.get $relative) (local.get $logical_size)
           (local.get $temp_wa) (local.get $block_size)))
-      (then (return (i32.const 0))))
+      (then (return (call $help_link_fail (i32.const 7)
+        (local.get $block_size) (local.get $relative)))))
     (global.set $help_topic_gather_count
       (i32.add (global.get $help_topic_gather_count) (i32.const 1)))
     (global.set $help_topic_link_bytes (local.get $block_size))
@@ -2169,6 +2272,8 @@
             (then
               (global.set $help_topic_fail_code (i32.const 8)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
               (br $done)))
+          ;; The chain ends here, so this record's end is the end of the topic
+          ;; stream - the bound every mid-topic reference is checked against.
           (local.set $ok (i32.const 1))
           (br $done)))
       (if (i32.le_s (local.get $next_link) (local.get $current))
@@ -3722,11 +3827,17 @@
           (br_if $occurrences_done (i32.ge_u (local.get $j) (local.get $occurrences)))
           (local.set $topic_ref (i32.load (i32.add (local.get $data)
             (i32.add (local.get $posting_off) (i32.mul (local.get $j) (i32.const 4))))))
+          ;; A posting is a position inside the topic it belongs to, not
+          ;; necessarily that topic's header, so it resolves to the containing
+          ;; topic. Only a position before the first topic is unresolvable.
           (if (i32.and (i32.ne (local.get $topic_ref) (i32.const -1))
-                (i32.lt_s (call $help_find_topic_index_in
-                  (local.get $topics_wa) (local.get $topic_count) (local.get $topic_ref))
+                (i32.lt_s (call $help_find_topic_index_containing
+                  (local.get $topics_wa) (local.get $topic_count)
+                  (local.get $topic_ref) (global.get $help_doc_topic_offset_limit))
                   (i32.const 0)))
             (then
+              (global.set $help_link_fail_a (local.get $topic_ref))
+              (global.set $help_link_fail_b (global.get $help_doc_topic_offset_limit))
               (call $help_set_error (global.get $HELP_ERROR_KEYWORD_INDEX)
                 (i32.add (local.get $data_off)
                   (i32.add (local.get $posting_off) (i32.mul (local.get $j) (i32.const 4)))))
@@ -4347,6 +4458,7 @@
         (then
           (call $help_set_error (global.get $HELP_ERROR_MISSING_INTERNAL) (i32.const 0))
           (br $done)))
+      (call $help_set_topic_offset_limit (local.get $topic_internal))
       (if (i32.eqz (call $help_parse_semantic_btree
             (local.get $title_internal) (i32.const 1) (i32.const 0) (i32.const 0)))
         (then (br $done)))

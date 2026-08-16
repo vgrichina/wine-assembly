@@ -106,6 +106,12 @@
   (global $help_doc_topics_ga (mut i32) (i32.const 0))
   (global $help_doc_topics_wa (mut i32) (i32.const 0))
   (global $help_doc_topic_count (mut i32) (i32.const 0))
+  ;; The first TOPICOFFSET past the end of the topic stream, set from the
+  ;; number of topic blocks. A context or keyword posting may aim inside a
+  ;; topic rather than at its header, so resolving one means finding the topic
+  ;; it falls in - and that is only meaningful with an upper bound, or every
+  ;; wild value would "resolve" to the last topic.
+  (global $help_doc_topic_offset_limit (mut i32) (i32.const 0))
   (global $help_doc_contexts_ga (mut i32) (i32.const 0))
   (global $help_doc_contexts_wa (mut i32) (i32.const 0))
   (global $help_doc_context_count (mut i32) (i32.const 0))
@@ -335,6 +341,7 @@
     (global.set $help_doc_topics_ga (i32.const 0))
     (global.set $help_doc_topics_wa (i32.const 0))
     (global.set $help_doc_topic_count (i32.const 0))
+    (global.set $help_doc_topic_offset_limit (i32.const 0))
     (global.set $help_doc_contexts_ga (i32.const 0))
     (global.set $help_doc_contexts_wa (i32.const 0))
     (global.set $help_doc_context_count (i32.const 0))
@@ -1065,6 +1072,37 @@
         (else (local.set $hi (local.get $mid))))
       (br $search)))
     (i32.const -1))
+
+  ;; The topic CONTAINING a position, rather than the topic that starts at it.
+  ;; A |CONTEXT entry or keyword posting may aim at any offset inside a topic -
+  ;; that is how a jump lands on a particular paragraph - so demanding an exact
+  ;; topic-header match drops every such entry. CHIPEDIT.HLP lost 138 of its
+  ;; 166 contexts that way. Titles keep using the exact search above: a title
+  ;; that does not name a header means the topic scan itself is wrong.
+  (func $help_find_topic_index_containing
+    (param $topics_wa i32) (param $count i32) (param $topic_ref i32)
+    (param $end i32) (result i32)
+    (local $lo i32) (local $hi i32) (local $mid i32) (local $value i32)
+    (local $found i32)
+    (if (i32.ge_u (local.get $topic_ref) (local.get $end))
+      (then (return (i32.const -1))))
+    (local.set $found (i32.const -1))
+    (local.set $hi (local.get $count))
+    (block $done (loop $search
+      (br_if $done (i32.ge_u (local.get $lo) (local.get $hi)))
+      (local.set $mid
+        (i32.add (local.get $lo)
+          (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 1))))
+      (local.set $value
+        (i32.load (i32.add (local.get $topics_wa)
+          (i32.mul (local.get $mid) (global.get $HELP_TOPIC_SIZE)))))
+      (if (i32.gt_u (local.get $value) (local.get $topic_ref))
+        (then (local.set $hi (local.get $mid)))
+        (else
+          (local.set $found (local.get $mid))
+          (local.set $lo (i32.add (local.get $mid) (i32.const 1)))))
+      (br $search)))
+    (local.get $found))
 
   (func $help_resolve_context_id (param $map_id i32) (result i32)
     (local $i i32) (local $record i32)
