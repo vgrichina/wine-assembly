@@ -181,7 +181,7 @@
   ;; session/view-navigation scalars needed by cross-file Back or popup close.
   ;; Bytes 336..399 preserve the shared 16-entry Back stack contents; the
   ;; trailing triple owns the normalized secondary-window table.
-  (global $HELP_DOCUMENT_SNAPSHOT_SIZE i32 (i32.const 412))
+  (global $HELP_DOCUMENT_SNAPSHOT_SIZE i32 (i32.const 436))
   (global $HELP_MAX_DOCUMENT_SNAPSHOTS i32 (i32.const 4))
   (global $help_document_snapshots_ga (mut i32) (i32.const 0))
   (global $help_document_snapshot_count (mut i32) (i32.const 0))
@@ -377,15 +377,22 @@
     (i32.store offset=16 (local.get $record) (i32.const 0))
     (i32.const 1))
 
-  (func $help_release_all_routine_strings
+  ;; Takes the table explicitly so a snapshot can free a detached table whose
+  ;; base is no longer in the globals.
+  (func $help_release_routine_strings_in (param $table_wa i32) (param $count i32)
     (local $i i32)
+    (if (i32.eqz (local.get $table_wa)) (then (return)))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $help_doc_routine_count)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
       (call $help_release_routine_strings
-        (i32.add (global.get $help_doc_routines_wa)
+        (i32.add (local.get $table_wa)
           (i32.mul (local.get $i) (global.get $HELP_ROUTINE_SIZE))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
+
+  (func $help_release_all_routine_strings
+    (call $help_release_routine_strings_in
+      (global.get $help_doc_routines_wa) (global.get $help_doc_routine_count)))
 
   (func $help_release_routine_strings (param $record i32)
     (local $owned i32)
@@ -584,6 +591,14 @@
     (if (local.get $owned) (then (call $heap_free (local.get $owned))))
     (local.set $owned (i32.load offset=400 (local.get $p)))
     (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+    ;; The routine table owns three strings per record, so its rows have to be
+    ;; released before the table itself.
+    (call $help_release_routine_strings_in
+      (i32.load offset=416 (local.get $p)) (i32.load offset=420 (local.get $p)))
+    (local.set $owned (i32.load offset=412 (local.get $p)))
+    (if (local.get $owned) (then (call $heap_free (local.get $owned))))
+    (local.set $owned (i32.load offset=424 (local.get $p)))
+    (if (local.get $owned) (then (call $heap_free (local.get $owned))))
     (call $heap_free (local.get $snapshot_ga)))
 
   ;; Detach the current document roots without freeing them. The ordinary
@@ -689,6 +704,15 @@
     (i32.store offset=400 (local.get $p) (global.get $help_doc_windows_ga))
     (i32.store offset=404 (local.get $p) (global.get $help_doc_windows_wa))
     (i32.store offset=408 (local.get $p) (global.get $help_doc_window_count))
+    ;; A file's registered routines belong to the file, not to the session: a
+    ;; popup into another document must not be able to call them, and coming
+    ;; back must not have lost them.
+    (i32.store offset=412 (local.get $p) (global.get $help_doc_routines_ga))
+    (i32.store offset=416 (local.get $p) (global.get $help_doc_routines_wa))
+    (i32.store offset=420 (local.get $p) (global.get $help_doc_routine_count))
+    (i32.store offset=424 (local.get $p) (global.get $help_doc_system_macros_ga))
+    (i32.store offset=428 (local.get $p) (global.get $help_doc_system_macros_wa))
+    (i32.store offset=432 (local.get $p) (global.get $help_doc_system_macro_count))
     ;; Prevent release_storage from freeing the detached owned roots.
     (global.set $help_doc_path_ga (i32.const 0))
     (global.set $help_doc_file_ga (i32.const 0))
@@ -707,6 +731,12 @@
     (global.set $help_doc_cnt_file_ga (i32.const 0))
     (global.set $help_doc_cnt_nodes_ga (i32.const 0))
     (global.set $help_doc_windows_ga (i32.const 0))
+    ;; Detached too: the count must go with the base, or release_storage would
+    ;; walk a table it no longer owns and free the snapshot's strings.
+    (global.set $help_doc_routines_ga (i32.const 0))
+    (global.set $help_doc_routines_wa (i32.const 0))
+    (global.set $help_doc_routine_count (i32.const 0))
+    (global.set $help_doc_system_macros_ga (i32.const 0))
     (call $help_document_release_storage)
     (global.set $help_document_snapshots_ga (local.get $ga))
     (global.set $help_document_snapshot_count
@@ -809,6 +839,12 @@
     (global.set $help_doc_windows_ga (i32.load offset=400 (local.get $p)))
     (global.set $help_doc_windows_wa (i32.load offset=404 (local.get $p)))
     (global.set $help_doc_window_count (i32.load offset=408 (local.get $p)))
+    (global.set $help_doc_routines_ga (i32.load offset=412 (local.get $p)))
+    (global.set $help_doc_routines_wa (i32.load offset=416 (local.get $p)))
+    (global.set $help_doc_routine_count (i32.load offset=420 (local.get $p)))
+    (global.set $help_doc_system_macros_ga (i32.load offset=424 (local.get $p)))
+    (global.set $help_doc_system_macros_wa (i32.load offset=428 (local.get $p)))
+    (global.set $help_doc_system_macro_count (i32.load offset=432 (local.get $p)))
     (global.set $help_document_snapshots_ga (i32.load (local.get $p)))
     (global.set $help_document_snapshot_count
       (i32.sub (global.get $help_document_snapshot_count) (i32.const 1)))

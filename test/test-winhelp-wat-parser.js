@@ -3491,6 +3491,39 @@ async function main() {
     e.get_help_view_topic_ptr() === externalPopupMainView &&
     e.get_help_view_run_ptr() === externalPopupMainRuns);
 
+  {
+    // Registered routines belong to the file that registered them. A popup
+    // into another document must not inherit the binding - that document
+    // ships its own DLL, if any - and the source must get it back intact when
+    // the popup closes. The snapshot record carries the routine table for
+    // exactly this reason.
+    const runSourceMacro = text => {
+      const buf = Buffer.from(text, 'latin1');
+      bytes.set(buf, topicPayloadWA + 0x8000);
+      e.test_help_macro_execute(0x8888, topicPayloadWA + 0x8000, buf.length);
+      return e.get_help_dispatch_status();
+    };
+    const registered = runSourceMacro('RR(`aoehlp.dll\', `PlayWAV\', `S\')') === 1 &&
+      e.get_help_routine_count() === 1;
+    const popupRun = firstVisibleHotspotRun();
+    const suspended = !!popupRun && e.test_help_window_message(0x0201, 0,
+      (popupRun.y << 16) | (popupRun.x & 0xffff)) === 0 &&
+      e.get_help_document_snapshot_count() === 1;
+    check('a suspended document keeps its registered routines to itself',
+      registered && suspended && e.get_help_routine_count() === 0,
+      `registered=${registered} suspended=${suspended} n=${e.get_help_routine_count()}`);
+    check('and gets them back when the popup closes',
+      e.test_help_popup_message(0x0010, 0, 0) === 0 &&
+      e.get_help_document_snapshot_count() === 0 &&
+      e.get_help_routine_count() === 1 &&
+      runSourceMacro('PlayWAV(`bird.wav\')') === 6,
+      `n=${e.get_help_routine_count()}`);
+    // Closing the file drops them; the next document starts unbound.
+    check('closing the document unbinds its routines',
+      e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+      e.get_help_routine_count() === 0);
+  }
+
   const chainPaths = Array.from({ length: 6 }, (_, index) =>
     `c:\\chain\\chain${index}.hlp`);
   chainPaths.forEach((chainPath, index) => {
