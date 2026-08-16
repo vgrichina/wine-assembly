@@ -118,12 +118,21 @@ yet.**
 
 ## 3. Async I/O demo path (session `410075d6`)
 
-Ended on a question to the user, never answered:
+The blocking question is **answered**: the user picked Blobby Volley directly,
+so the telnet-first detour is dropped.
 
-- **Telnet first** as a cheap async-I/O proof — `apps/telnet.md`. It creates a 0x0
-  `WS_POPUP` window, never calls `ShowWindow`, and pumps messages forever; the XP
-  console client also needs console rendering.
-- **Blobby Volley** as the demo afterward.
+- **Blobby Volley single-player is done** (`bd9a56a`) — it plays, with no
+  emulator change needed. See `apps/blobby-volley.md`, covered by
+  `test/test-blobby-volley.js` (9 checks, e2e tier).
+- **Still open: the actual async I/O.** The game's `NETZWERKSPIEL` mode
+  `LoadLibraryA`s `DPlayX.dll` (from 0x440598) for DirectPlay over TCP/IP, and
+  nothing on that path has been exercised. This is the real item-3 work, and it
+  pairs with the virtual LAN in item 4 — `src/09d-winsock.wat` +
+  `lib/vlan-wire.js` already join two emulator processes into one room.
+- **Telnet** (`apps/telnet.md`) remains available as a cheaper async-I/O proof if
+  DirectPlay turns out to be a long haul: 0x0 `WS_POPUP` window, never calls
+  `ShowWindow`, pumps forever; the XP console client also needs console
+  rendering.
 
 ## 4. Virtual LAN / TetriNET (session `b303255f`) — mostly landed
 
