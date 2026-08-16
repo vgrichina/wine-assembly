@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 363 funcref)
+  (table $handlers 383 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -418,4 +418,25 @@
     $th_pop_seg              ;; 360: discard popped segment selector (op=16-bit flag)
     $th_bad_opcode           ;; 361: undecodable opcode — trap with eip + bytes
     $th_bound                ;; 362: BOUND r32, m32&32 (Borland range check)
+    ;; -- 16-bit segmented execution (src/05c-seg16-ops.wat) --
+    $th_compute_ea16         ;; 363: segmented EA → ea_temp (info, disp in next words)
+    $th_lea16                ;; 364: LEA r16, m — offset only, no segment base
+    $th_ret16                ;; 365: near RET, pops IP
+    $th_ret16_imm            ;; 366: near RET imm16
+    $th_call_far_imm         ;; 367: CALL FAR ptr16:16
+    $th_jmp_far_imm          ;; 368: JMP FAR ptr16:16
+    $th_call_far_mem         ;; 369: CALL FAR m16:16
+    $th_jmp_far_mem          ;; 370: JMP FAR m16:16
+    $th_retf16               ;; 371: RETF / RETF imm16 (op = bytes to pop)
+    $th_mov_sreg_r16         ;; 372: MOV Sreg, r16
+    $th_mov_sreg_m16         ;; 373: MOV Sreg, m16
+    $th_push_sreg16          ;; 374: PUSH Sreg
+    $th_pop_sreg16           ;; 375: POP Sreg
+    $th_load_far_ptr         ;; 376: LES/LDS r16, m16:16
+    $th_mov_r16_sreg         ;; 377: MOV r16, Sreg
+    $th_mov_m16_sreg         ;; 378: MOV m16, Sreg
+    $th_call_near16_r        ;; 379: CALL r16
+    $th_call_near16_m        ;; 380: CALL m16
+    $th_jmp_near16_r         ;; 381: JMP r16
+    $th_jmp_near16_m         ;; 382: JMP m16
   )

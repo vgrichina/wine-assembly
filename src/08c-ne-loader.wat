@@ -399,8 +399,72 @@
     (global.set $win16_heap_size (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x10))))
     (global.set $is_win16 (i32.const 1))
 
+    (call $win16_start_task (local.get $ne_off))
+
     (i32.or (i32.shl (global.get $win16_entry_cs) (i32.const 16))
             (global.get $win16_entry_ip)))
+
+  ;; ---- Task startup ----
+  ;;
+  ;; The auto-data segment is DGROUP: static data at the bottom, then the local
+  ;; heap, then the stack growing down from the top. Only the static part is in
+  ;; the file, so the segment has to be grown by the heap and stack sizes the
+  ;; header asks for before SP can point above them.
+  ;;
+  ;; SS:SP in the header names the initial stack. An SP of zero means "the top
+  ;; of the segment", which after the growth above is the whole DGROUP.
+  (func $win16_start_task (param $ne_off i32)
+    (local $ss_index i32) (local $sp i32) (local $ds_index i32) (local $limit i32)
+
+    (local.set $ds_index (global.get $win16_auto_data))
+    (local.set $ss_index (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1A))))
+    (local.set $sp       (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x18))))
+    (if (i32.eqz (local.get $ss_index)) (then (local.set $ss_index (local.get $ds_index))))
+
+    ;; Grow DGROUP for heap + stack. A 64KB segment is the ceiling; asking for
+    ;; more than that is what the real loader clamps too.
+    (if (local.get $ds_index)
+      (then
+        (local.set $limit (i32.add
+          (i32.add (call $win16_seg_limit (local.get $ds_index)) (global.get $win16_heap_size))
+          (global.get $win16_stack_size)))
+        (if (i32.gt_u (local.get $limit) (i32.const 0x10000))
+          (then (local.set $limit (i32.const 0x10000))))
+        (i32.store offset=4
+          (i32.add (global.get $WIN16_SEG_TABLE) (i32.mul (local.get $ds_index) (i32.const 16)))
+          (local.get $limit))))
+
+    (if (i32.eqz (local.get $sp))
+      (then (local.set $sp (call $win16_seg_limit (local.get $ss_index)))))
+    ;; SP addresses the last usable word, and the arena slot is exactly 64KB,
+    ;; so a limit of 0x10000 has to come back inside it.
+    (if (i32.gt_u (local.get $sp) (i32.const 0xFFFE)) (then (local.set $sp (i32.const 0xFFFE))))
+
+    ;; $esp is a linear address; because every segment base is 64KB aligned its
+    ;; low word stays SP for as long as the task runs.
+    (global.set $esp (i32.add (call $win16_seg_base (local.get $ss_index)) (local.get $sp)))
+
+    ;; ES starts equal to DS. Real Windows hands the task its PSP selector in
+    ;; ES, which nothing here reads yet, and a DS-equal ES is the safer of the
+    ;; two wrong answers: it addresses real memory.
+    (call $win16_set_sreg (i32.const 3) (call $win16_index_to_sel (local.get $ds_index)))
+    (call $win16_set_sreg (i32.const 0) (call $win16_index_to_sel (local.get $ds_index)))
+    (call $win16_set_sreg (i32.const 2) (call $win16_index_to_sel (local.get $ss_index)))
+    (call $win16_set_sreg (i32.const 1) (global.get $win16_entry_cs))
+
+    (global.set $eip (i32.add (global.get $seg_base_cs) (global.get $win16_entry_ip)))
+    ;; Win16 hands the entry point CX = heap size, DI = hInstance, SI = previous
+    ;; hInstance (0 for the first copy), ES = PSP, DS = DGROUP. The startup code
+    ;; in every one of these images reads DI to store its own instance handle.
+    (global.set $eax (i32.const 0))
+    (global.set $ecx (global.get $win16_heap_size))
+    (global.set $edx (i32.const 0))
+    (global.set $ebx (i32.const 0))
+    (global.set $ebp (i32.const 0))
+    (global.set $esi (i32.const 0))
+    (global.set $edi (global.get $sreg_ds))
+    (global.set $df (i32.const 0))
+    (global.set $code16 (i32.const 1)))
 
   ;; ---- Inspection exports (used by test/test-ne-loader.js) ----
   (func (export "win16_seg_count") (result i32) (global.get $win16_seg_count))

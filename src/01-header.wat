@@ -2094,6 +2094,26 @@
   (global $win16_stack_size (mut i32) (i32.const 0))
   (global $win16_heap_size (mut i32) (i32.const 0))
   (global $is_win16        (mut i32) (i32.const 0))
+  ;; Execution state for a 16-bit task (src/05c-seg16-ops.wat). $code16 is what
+  ;; the decoder reads: it inverts the meaning of the 0x66/0x67 prefixes and
+  ;; routes every effective address through the segmented path. It is set from
+  ;; $is_win16 when the task starts, and is a separate global because "this
+  ;; image is an NE" and "the instruction stream being decoded is 16-bit" are
+  ;; not the same claim once a task can call 32-bit code.
+  ;; Segment ids follow the ModRM sreg encoding: 0=ES, 1=CS, 2=SS, 3=DS.
+  (global $code16 (mut i32) (i32.const 0))
+  (global $sreg_es (mut i32) (i32.const 0))
+  (global $sreg_cs (mut i32) (i32.const 0))
+  (global $sreg_ss (mut i32) (i32.const 0))
+  (global $sreg_ds (mut i32) (i32.const 0))
+  (global $seg_base_es (mut i32) (i32.const 0))
+  (global $seg_base_cs (mut i32) (i32.const 0))
+  (global $seg_base_ss (mut i32) (i32.const 0))
+  (global $seg_base_ds (mut i32) (i32.const 0))
+  ;; The last (module, ordinal) $win16_dispatch saw, so a trap or a test can
+  ;; name the API that stopped the task without decoding the log stream.
+  (global $win16_last_module (mut i32) (i32.const 0))
+  (global $win16_last_ordinal (mut i32) (i32.const 0))
   (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
   (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
   (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))
