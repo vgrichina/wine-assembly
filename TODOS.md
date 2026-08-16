@@ -50,7 +50,7 @@ glyph, frame, and dialog-lifecycle asserts:
 | `test-mspaint-options` | `tool-options margin stayed button-face gray` |
 | ~~`test-spider-messagebox`~~ | FIXED `dcbc468` — the assert pinned the retired JS renderer's 64,64,64 outer shadow; Win98's COLOR_3DDKSHADOW is black (every Plus! 98 `.the` ships `ButtonDkShadow=0 0 0`). Emulator was correct. Also filled in the missing `GetSysColor` indices 21/23/24. 7/7. |
 | ~~`test-find-cancel`~~ | FIXED `35bb495` — the test clicked (390,72), which is inside the dialog's *client* area; the close box is x 379..395, y 45..59. Emulator was correct. New `close-click:TARGET` input action derives the point from the live window rect. 11/11. |
-| `test-solitaire-resize` | width/height did not grow after corner drag |
+| ~~`test-solitaire-resize`~~ | FIXED `c7efdb6` — the test pressed 19px below the window (it assumed y=20, Solitaire opens at y=0), so it grabbed nothing. Resize itself always worked. Now drags the live corner via a new `corner-drag` input action. 3/3. |
 | `test-cwordzap-render` | RLE4 splash white field / colored logo |
 
 Most plausible sources, both of which landed **without an e2e run**:
@@ -127,6 +127,17 @@ Ended on a question to the user, never answered:
 
 ## Cross-cutting, carried over from earlier sessions
 
+- **`CW_USEDEFAULT` ignores only x, not y** — found 2026-08-16 while fixing
+  `test-solitaire-resize`, nobody owns it. Win32 rule: when `x` is
+  `CW_USEDEFAULT` on an overlapped window, the system picks *both* x and y and
+  the caller's `y` is ignored (same pairing `cx`/`cy` already gets in
+  `src/09a5-handlers-window.wat:32`). We honour the caller's y, so Solitaire and
+  Notepad — both of which pass `x=CW_USEDEFAULT, y=0` — open at y=0 instead of
+  the y=20 cascade slot. The one-line-ish fix is in `$handle_CreateWindowExA`
+  around lines 28-51 (both the `$win_*` and `$host_win_*` copies). **It moves
+  every default-placed window down 20px**, so it needs a full e2e pass and
+  recalibration of the pixel-pinned tests in the same commit — do not drive-by
+  it.
 - **Screensaver GDI-bridge regression** — `apps/screensavers.md` Task 0, fixed
   2026-08-15 via the RLE DIB path; re-read before trusting it, since
   `test-cwordzap-render`'s RLE4 asserts are failing again in the current e2e run.
