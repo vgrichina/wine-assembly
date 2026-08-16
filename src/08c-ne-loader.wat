@@ -537,6 +537,10 @@
   (func $win16_start_task (param $ne_off i32)
     (local $ss_index i32) (local $sp i32) (local $ds_index i32) (local $limit i32)
 
+    ;; The 16-bit handle map belongs to the task, not to the image: a second
+    ;; load in the same instance must not inherit the first task's indices.
+    (call $win16_handle_reset)
+
     (local.set $ds_index (global.get $win16_auto_data))
     (local.set $ss_index (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1A))))
     (local.set $sp       (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x18))))

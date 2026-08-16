@@ -1911,66 +1911,59 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 90: GetSystemMetrics (actual slot used by imports)
-  (func $handle_GetSystemMetrics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (local.get $arg0) (i32.const 0))  ;; SM_CXSCREEN
-    (then (global.set $eax (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 1))  ;; SM_CYSCREEN
-    (then (global.set $eax (i32.shr_u (call $host_get_screen_size) (i32.const 16)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 4))  ;; SM_CYCAPTION
-    (then (global.set $eax (i32.const 19))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 5))  ;; SM_CXBORDER
-    (then (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 6))  ;; SM_CYBORDER
-    (then (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 7))  ;; SM_CXFIXEDFRAME
-    (then (global.set $eax (i32.const 3))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 8))  ;; SM_CYFIXEDFRAME
-    (then (global.set $eax (i32.const 3))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 11)) ;; SM_CXICON
-    (then (global.set $eax (i32.const 32))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 12)) ;; SM_CYICON
-    (then (global.set $eax (i32.const 32))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 15)) ;; SM_CYMENU
-    (then (global.set $eax (i32.const 19))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 16)) ;; SM_CXFULLSCREEN
-    (then (global.set $eax (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 17)) ;; SM_CYFULLSCREEN
-    (then (global.set $eax (i32.sub (i32.shr_u (call $host_get_screen_size) (i32.const 16)) (i32.const 46)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 32)) ;; SM_CXFRAME
-    (then (global.set $eax (i32.const 4))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 33)) ;; SM_CYFRAME
-    (then (global.set $eax (i32.const 4))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+  ;; The SM_* table, with no calling convention attached. GetSystemMetrics is
+  ;; the same question in Win32 and in Win16 — USER.179 takes the same indices
+  ;; and means the same things — so the answers live here and both dispatchers
+  ;; call in. An index with no entry is 0, which is what Windows returns for a
+  ;; metric it does not define.
+  (func $system_metric (param $index i32) (result i32)
+    (if (i32.eq (local.get $index) (i32.const 0))  ;; SM_CXSCREEN
+      (then (return (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))))
+    (if (i32.eq (local.get $index) (i32.const 1))  ;; SM_CYSCREEN
+      (then (return (i32.shr_u (call $host_get_screen_size) (i32.const 16)))))
+    (if (i32.eq (local.get $index) (i32.const 4))  ;; SM_CYCAPTION
+      (then (return (i32.const 19))))
+    (if (i32.eq (local.get $index) (i32.const 5))  ;; SM_CXBORDER
+      (then (return (i32.const 1))))
+    (if (i32.eq (local.get $index) (i32.const 6))  ;; SM_CYBORDER
+      (then (return (i32.const 1))))
+    (if (i32.eq (local.get $index) (i32.const 7))  ;; SM_CXFIXEDFRAME
+      (then (return (i32.const 3))))
+    (if (i32.eq (local.get $index) (i32.const 8))  ;; SM_CYFIXEDFRAME
+      (then (return (i32.const 3))))
+    (if (i32.eq (local.get $index) (i32.const 11)) ;; SM_CXICON
+      (then (return (i32.const 32))))
+    (if (i32.eq (local.get $index) (i32.const 12)) ;; SM_CYICON
+      (then (return (i32.const 32))))
+    (if (i32.eq (local.get $index) (i32.const 15)) ;; SM_CYMENU
+      (then (return (i32.const 19))))
+    (if (i32.eq (local.get $index) (i32.const 16)) ;; SM_CXFULLSCREEN
+      (then (return (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))))
+    (if (i32.eq (local.get $index) (i32.const 17)) ;; SM_CYFULLSCREEN
+      (then (return (i32.sub (i32.shr_u (call $host_get_screen_size) (i32.const 16))
+                             (i32.const 46)))))
+    (if (i32.eq (local.get $index) (i32.const 32)) ;; SM_CXFRAME
+      (then (return (i32.const 4))))
+    (if (i32.eq (local.get $index) (i32.const 33)) ;; SM_CYFRAME
+      (then (return (i32.const 4))))
     ;; Native Win98 COMCTL32 uses the small-icon metrics to size image lists.
     ;; Returning zero makes ImageList_Create fail before controls can populate.
-    (if (i32.eq (local.get $arg0) (i32.const 49)) ;; SM_CXSMICON
-    (then (global.set $eax (i32.const 16))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 50)) ;; SM_CYSMICON
-    (then (global.set $eax (i32.const 16))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
-    (then (global.set $eax (i32.add (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)) (i32.const 8)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $arg0) (i32.const 0x3E)) ;; SM_CYMAXIMIZED
-    (then (global.set $eax (i32.add (i32.shr_u (call $host_get_screen_size) (i32.const 16)) (i32.const 8)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
+    (if (i32.eq (local.get $index) (i32.const 49)) ;; SM_CXSMICON
+      (then (return (i32.const 16))))
+    (if (i32.eq (local.get $index) (i32.const 50)) ;; SM_CYSMICON
+      (then (return (i32.const 16))))
+    (if (i32.eq (local.get $index) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
+      (then (return (i32.add (i32.and (call $host_get_screen_size) (i32.const 0xFFFF))
+                             (i32.const 8)))))
+    (if (i32.eq (local.get $index) (i32.const 0x3E)) ;; SM_CYMAXIMIZED
+      (then (return (i32.add (i32.shr_u (call $host_get_screen_size) (i32.const 16))
+                             (i32.const 8)))))
+    (i32.const 0))
+
+  ;; 90: GetSystemMetrics (actual slot used by imports)
+  (func $handle_GetSystemMetrics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $system_metric (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 1099: EnumDisplayMonitors(hdc, lprcClip, lpfnEnum, dwData) — 4 args stdcall

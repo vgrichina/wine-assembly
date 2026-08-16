@@ -200,8 +200,12 @@
     (if (i32.eq (local.get $mod) (i32.const 2))
       (then (global.set $mr_disp (i32.add (global.get $mr_disp) (call $d_fetch16)))))
 
-    ;; A segment override replaces the default outright. $d_seg uses the
-    ;; prefix numbering (1=ES 2=CS 3=SS 4=DS), one more than the sreg one.
+    (call $modrm16_apply_seg))
+
+  ;; A segment override replaces the default outright. $d_seg uses the prefix
+  ;; numbering (1=ES 2=CS 3=SS 4=DS), one more than the sreg one. Shared with
+  ;; the moffs forms, which carry a segment for the same reason a ModRM does.
+  (func $modrm16_apply_seg
     (if (global.get $d_seg)
       (then
         (if (i32.gt_u (global.get $d_seg) (i32.const 4))
@@ -1236,9 +1240,26 @@
       ;; moffs, not a ModRM, so the 0x67 prefix shrinks the offset itself to
       ;; 16 bits — Borland emits `mov eax, fs:[0]` as 64 67 a1 00 00.
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xA0)) (i32.le_u (local.get $op) (i32.const 0xA3)))
-        (then (local.set $imm (call $seg_adj
-          (if (result i32) (local.get $prefix_67) (then (call $d_fetch16)) (else (call $d_fetch32)))
-          (local.get $prefix_seg)))))
+        (then
+          ;; In a 16-bit task the moffs is an offset within a segment, not a
+          ;; linear address: `mov [0x1b4], ax` means DS:0x1b4 and DS moves, so
+          ;; it has to resolve at runtime exactly as a ModRM disp16 does. Left
+          ;; as a bare address it wrote below the guest image, and Solitaire —
+          ;; which stores its three card bitmaps this way and then tests them
+          ;; for zero — read back nothing and put up its load-failure box.
+          (if (global.get $code16)
+            (then
+              (global.set $mr_base (i32.const -1))
+              (global.set $mr_index (i32.const -1))
+              (global.set $mr_seg (i32.const 3))          ;; DS
+              (call $modrm16_apply_seg)
+              (global.set $mr_disp
+                (if (result i32) (local.get $prefix_67)
+                  (then (call $d_fetch16)) (else (call $d_fetch32))))
+              (local.set $imm (call $emit_sib_or_abs)))
+            (else (local.set $imm (call $seg_adj
+              (if (result i32) (local.get $prefix_67) (then (call $d_fetch16)) (else (call $d_fetch32)))
+              (local.get $prefix_seg)))))))
       (if (i32.eq (local.get $op) (i32.const 0xA0)) (then (call $te (i32.const 24) (i32.const 0)) (call $te_raw (local.get $imm)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA1)) (then
         (if (local.get $prefix_66)
@@ -1573,17 +1594,20 @@
           (br $decode)))
 
       ;; ---- PUSH imm32 (0x68) / PUSH imm8 (0x6A) ----
+      ;; The immediate is fetched at the operand size, and so is the push: a
+      ;; 16-bit PUSH moves ESP by two, not four. Handler 34 does the 32-bit
+      ;; half, 385 the 16-bit one.
       (if (i32.eq (local.get $op) (i32.const 0x68))
-        (then (call $te (i32.const 34) (i32.const 0))
+        (then
           (if (local.get $prefix_66)
-            (then (call $te_raw (call $d_fetch16)))
-            (else (call $te_raw (call $d_fetch32))))
+            (then (call $te (i32.const 385) (call $d_fetch16)))
+            (else (call $te (i32.const 34) (i32.const 0)) (call $te_raw (call $d_fetch32))))
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0x6A))
         (then
           (local.set $imm (call $sign_ext8 (call $d_fetch8)))
           (if (local.get $prefix_66)
-            (then (call $te (i32.const 34) (i32.const 0)) (call $te_raw (i32.and (local.get $imm) (i32.const 0xFFFF))))
+            (then (call $te (i32.const 385) (i32.and (local.get $imm) (i32.const 0xFFFF))))
             (else (call $te (i32.const 34) (i32.const 0)) (call $te_raw (local.get $imm))))
           (br $decode)))
 

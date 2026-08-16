@@ -94,6 +94,7 @@ const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFi
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
+const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (NE) API call and its result
 const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
 // --vlan-ip=10.77.0.2: this process's room address (host of the room keeps
 // 10.77.0.1). --vlan-wire joins the segment offered by the parent process
@@ -1535,18 +1536,32 @@ async function main() {
     // real modules' export tables provide — say KERNEL.91 INITTASK instead.
     // 0xCA16A9F1 is an ordinal import and carries two words; 0xCA16A9F2 is a
     // name import and carries a third, the address of the Pascal-string name.
+    // 0xCA16A9F0 / 0xCA16A9EF are the two halves of --trace-win16: the call
+    // with the four stack words nearest the top, then AX and DX once it has
+    // run. Only the F1/F2 markers mean the task stopped.
     if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
+    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 8, words: [], call: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 2, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
-      const [key, ret, nameAddr] = pendingWin16.words;
+      const { call: isCall, ret: isRet, words } = pendingWin16;
       pendingWin16 = null;
+      if (isRet) {
+        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])}`);
+        return;
+      }
+      const [key, ret, nameAddr] = words;
       const mod = WIN16_MODULES[key >>> 16] || `<module ${key >>> 16}>`;
-      const what = nameAddr === undefined
+      const what = (isCall || nameAddr === undefined)
         ? win16ApiName(key >>> 16, key & 0xFFFF)
         : `${mod}.${readPascalStr(nameAddr)} (by name)`;
-      logs.push(`[win16] ${what}  ret=${hex(ret)}`);
+      if (isCall) {
+        logs.push(`[win16] ${what}(${words.slice(2).map(hex).join(', ')})  ret=${hex(ret)}`);
+      } else {
+        logs.push(`[win16] ${what}  ret=${hex(ret)}`);
+      }
       return;
     }
     if (ESP_DELTA && lastApiName) {
@@ -2643,6 +2658,9 @@ async function main() {
   // zero cost in the hot path.
   if (TRACE_CALLSTACK && instance.exports.set_callstack_enabled) {
     instance.exports.set_callstack_enabled(1);
+  }
+  if (TRACE_WIN16 && instance.exports.set_win16_trace) {
+    instance.exports.set_win16_trace(1);
   }
   const dumpCallstack = (label, e) => {
     if (!TRACE_CALLSTACK || !e || !e.get_callstack_depth) return;

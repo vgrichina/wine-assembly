@@ -1047,6 +1047,8 @@
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
   ;;   selector arena (WIN16_ARENA): one 64KB slot per selector index.
+  ;;   Slot WIN16_SEG_MAX (guest 0x008F0000) is past the last usable selector,
+  ;;   so no far pointer can name it; it holds the Win16 handle table.
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
   ;; 0x03E12000  256KB   Former IAT thunk zone, now free for guest heap
@@ -2118,6 +2120,14 @@
   ;; Next free selector index for $win16_alloc_segment, and the task's PSP.
   (global $win16_next_seg (mut i32) (i32.const 0))
   (global $win16_psp_sel (mut i32) (i32.const 0))
+  ;; Highest 16-bit handle handed out so far (see $win16_h16 in
+  ;; src/09e-win16-api.wat). Indices are 1-based so that 0 stays NULL in both
+  ;; handle spaces. The table itself is the one arena slot no selector can
+  ;; name — index WIN16_SEG_MAX — which is why it needs no address here.
+  (global $win16_handle_next (mut i32) (i32.const 0))
+  (global $WIN16_HANDLE_MAX i32 (i32.const 4096))
+  ;; --trace-win16: log every dispatch, not only the one that stops the task.
+  (global $win16_trace (mut i32) (i32.const 0))
   ;; Linear address of the NE header in the staged file, so a name import can
   ;; find the imported-name table again long after loading, and how much of the
   ;; file was staged, which bounds the resource-table walk.

@@ -299,3 +299,17 @@
     (call $set_reg16 (i32.const 5) (call $gl16 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
     (return_call $next))
+
+  ;; 385: PUSH imm16 — the operand is the immediate, already fetched.
+  ;;
+  ;; 0x68/0x6A always emitted the 32-bit push, which fetched the right number
+  ;; of immediate bytes but stored four of them. In flat code that is invisible
+  ;; because every push and pop agrees; it shows up in a 16-bit task at the
+  ;; first Pascal API call, where the extra two bytes shift the whole argument
+  ;; frame by one word and, say, LoadString reads its buffer selector where its
+  ;; id should be. Native 16-bit code reaches here through $code16; 32-bit code
+  ;; reaches it through a real 0x66 prefix, where the same narrowing is right.
+  (func $th_push_imm16 (param $op i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
+    (call $gs16 (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF)))
+    (return_call $next))
