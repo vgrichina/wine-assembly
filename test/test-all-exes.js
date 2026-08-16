@@ -134,7 +134,7 @@ const TEST_CASES = [
     // Win98 write.exe is a compatibility launcher for WordPad. It should
     // ShellExecute wordpad.exe and exit without drawing its own UI.
     expectOutput: '[API] ShellExecuteA', noPng: true },
-  { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player', knownBadRender: 'not meaningful/fixable on web at current stage' },
+  { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player' },
   { exe: 'test/binaries/win98-apps/mplayer.exe', name: 'Media Player' },
   { exe: 'test/binaries/win98-apps/mplay32.exe', name: 'Media Player 32' },
   { exe: 'test/binaries/win98-apps/fontview.exe', name: 'Font Viewer',

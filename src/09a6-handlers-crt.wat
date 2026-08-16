@@ -200,6 +200,68 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; Is $ch one of the NUL-terminated characters at $set_wa? The span family
+  ;; below all reduce to this question.
+  (func $crt_char_in_set (param $set_wa i32) (param $ch i32) (result i32)
+    (local $c i32)
+    (block $d (loop $l
+      (local.set $c (i32.load8_u (local.get $set_wa)))
+      (br_if $d (i32.eqz (local.get $c)))
+      (if (i32.eq (local.get $c) (local.get $ch)) (then (return (i32.const 1))))
+      (local.set $set_wa (i32.add (local.get $set_wa) (i32.const 1)))
+      (br $l)))
+    (i32.const 0))
+
+  ;; strspn(s, accept) — length of the initial run of s made only of accept
+  ;; characters. cdecl, so only the return address comes off here.
+  (func $handle_strspn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32) (local $set i32) (local $n i32) (local $c i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $set (call $g2w (local.get $arg1)))
+    (block $d (loop $l
+      (local.set $c (i32.load8_u (i32.add (local.get $wa) (local.get $n))))
+      (br_if $d (i32.eqz (local.get $c)))
+      (br_if $d (i32.eqz (call $crt_char_in_set (local.get $set) (local.get $c))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $l)))
+    (global.set $eax (local.get $n))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; strcspn(s, reject) — the complement: length of the initial run containing
+  ;; none of the reject characters.
+  (func $handle_strcspn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32) (local $set i32) (local $n i32) (local $c i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $set (call $g2w (local.get $arg1)))
+    (block $d (loop $l
+      (local.set $c (i32.load8_u (i32.add (local.get $wa) (local.get $n))))
+      (br_if $d (i32.eqz (local.get $c)))
+      (br_if $d (call $crt_char_in_set (local.get $set) (local.get $c)))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $l)))
+    (global.set $eax (local.get $n))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; strpbrk(s, accept) — pointer to the first accept character in s, or NULL.
+  (func $handle_strpbrk (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32) (local $set i32) (local $c i32)
+    (local.set $wa (call $g2w (local.get $arg0)))
+    (local.set $set (call $g2w (local.get $arg1)))
+    (global.set $eax (i32.const 0))
+    (block $d (loop $l
+      (local.set $c (i32.load8_u (local.get $wa)))
+      (br_if $d (i32.eqz (local.get $c)))
+      (if (call $crt_char_in_set (local.get $set) (local.get $c))
+        (then
+          (global.set $eax (call $w2g (local.get $wa)))
+          (br $d)))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $l)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 726: strcmp(s1, s2) — cdecl
   (func $handle_strcmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa1 i32) (local $wa2 i32) (local $c1 i32) (local $c2 i32)

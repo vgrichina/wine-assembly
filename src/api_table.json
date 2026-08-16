@@ -18790,5 +18790,44 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 2414,
+    "name": "CharUpperBuffA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 5514473,
+    "args": [
+      {
+        "name": "lpsz",
+        "type": "LPSTR"
+      },
+      {
+        "name": "cchLength",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2415,
+    "name": "strspn",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3044266111
+  },
+  {
+    "id": 2416,
+    "name": "strcspn",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3563205724
+  },
+  {
+    "id": 2417,
+    "name": "strpbrk",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1795623733
   }
 ]
