@@ -53,14 +53,39 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $s))))
 
+  ;; Recycling the decoded-code arena means resetting $thread_alloc to the base
+  ;; and invalidating every cached block. That is only safe between blocks.
+  ;; While a synchronous wndproc runs nested inside a handler — SendMessage,
+  ;; a control's default processing, WM_WINDOWPOSCHANGED — the caller's decoded
+  ;; block is still live in the arena, and reusing that memory rewrites the
+  ;; code the outer frame is about to return into. The symptom is a jump to a
+  ;; garbage EIP some distance after the flush, which resembles its cause not
+  ;; at all: what you see is a runaway decoding nonsense, several more
+  ;; overflows in a row, and then a wild EIP.
+  ;;
+  ;; So defer while nested, and flush at the next block boundary instead.
+  (global $thread_flush_pending (mut i32) (i32.const 0))
+
+  (func $thread_arena_flush_if_safe (result i32)
+    (if (global.get $sync_msg_depth)
+      (then
+        (global.set $thread_flush_pending (i32.const 1))
+        (return (i32.const 0))))
+    (global.set $thread_flush_pending (i32.const 0))
+    (global.set $thread_alloc (global.get $THREAD_BASE))
+    (call $clear_cache)
+    (i32.const 1))
+
   ;; Thread emit helpers
   (func $te (param $fn i32) (param $op i32)
-    ;; Inline overflow check — reset this thread's decoded arena before THREAD_END.
+    ;; Backstop only: $decode_block reserves far more headroom than a single
+    ;; block needs, so reaching this mid-emit means something unusual. Never
+    ;; recycle from here — $tstart is already captured and a reset would leave
+    ;; the half-emitted block pointing into reused storage.
     (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
       (then
         (call $host_log_i32 (i32.const 0xCA00F10F))  ;; 0xCA00F10F = cache overflow marker
-        (global.set $thread_alloc (global.get $THREAD_BASE))
-        (call $clear_cache)))
+        (global.set $thread_flush_pending (i32.const 1))))
     (i32.store (global.get $thread_alloc) (local.get $fn))
     (i32.store offset=4 (global.get $thread_alloc) (local.get $op))
     (global.set $thread_alloc (i32.add (global.get $thread_alloc) (i32.const 8))))

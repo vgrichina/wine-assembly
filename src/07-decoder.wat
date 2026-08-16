@@ -630,11 +630,16 @@
     ;; address, and $cache_store at the end would record a stale offset pointing
     ;; into reused thread storage. Headroom of 16KB is far larger than any
     ;; single block needs.
-    (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 16384)))
+    ;; Also the point where a flush deferred by a nested wndproc is taken:
+    ;; here we are between blocks, which is the only place recycling the arena
+    ;; cannot pull the ground out from under a live frame.
+    (if (i32.or
+          (global.get $thread_flush_pending)
+          (i32.ge_u (global.get $thread_alloc)
+            (i32.sub (global.get $THREAD_END) (i32.const 16384))))
       (then
-        (call $host_log_i32 (i32.const 0xCA00F10F))
-        (global.set $thread_alloc (global.get $THREAD_BASE))
-        (call $clear_cache)))
+        (if (call $thread_arena_flush_if_safe)
+          (then (call $host_log_i32 (i32.const 0xCA00F10F))))))
     (local.set $tstart (global.get $thread_alloc))
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
