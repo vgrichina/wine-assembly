@@ -829,6 +829,8 @@
   (data (i32.const 0x11D80) "ntohl\00WsControl\00")
   ;; if_descr for the one adapter WsControl reports (src/09d-winsock.wat).
   (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
+  ;; Console window caption; SetConsoleTitle overwrites it in place.
+  (data (i32.const 0x11DA4) "Console\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -980,7 +982,8 @@
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
   ;; 0x00011D80  36B     WSOCK32 ordinal names (cont.) + WsControl if_descr
-  ;; 0x00011DA4  348B    Free (up to HIT_COUNT_BASE)
+  ;; 0x00011DA4  128B    CONSOLE_TITLE (window caption for the console)
+  ;; 0x00011E24  220B    Free (up to HIT_COUNT_BASE)
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
@@ -1477,6 +1480,7 @@
   (global $DIB_PAGE_COUNT i32 (i32.const 16384))
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
+  (global $WNDPROC_CONSOLE_NATIVE i32 (i32.const 0xFFFF0003))  ;; WAT-native console window
   (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
   (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
   (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
@@ -2049,6 +2053,13 @@
   (global $console_cursor_y (mut i32) (i32.const 0))
   (global $console_attr (mut i32) (i32.const 7))  ;; default: white on black
   (global $console_mode (mut i32) (i32.const 3))  ;; ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT
+  ;; The console's own top-level window, created the first time anything is
+  ;; written to the screen buffer. 0 until then — a process that never prints
+  ;; gets no window, which is what Windows does too.
+  (global $console_hwnd (mut i32) (i32.const 0))
+  (global $CONSOLE_TITLE i32 (i32.const 0x11DA4))
+  (global $CONSOLE_TITLE_MAX i32 (i32.const 128))
+  (global $console_cells_ready (mut i32) (i32.const 0))
   (global $console_cursor_visible (mut i32) (i32.const 1))
   (global $console_cursor_size (mut i32) (i32.const 25))  ;; percentage
   (global $console_handle (mut i32) (i32.const 0x00030001))  ;; active screen buffer handle

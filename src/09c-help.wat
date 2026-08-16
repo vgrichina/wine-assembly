@@ -730,6 +730,15 @@
     ;; 0xFFFF0002 = built-in control wndproc
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_CTRL_NATIVE))
       (then (return (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; 0xFFFF0003 = console window. Its own wndproc handles the client; the
+    ;; default chrome below still draws its frame and caption.
+    (if (i32.eq (local.get $wp) (global.get $WNDPROC_CONSOLE_NATIVE))
+      (then
+        (if (i32.eq (local.get $msg) (i32.const 0x0085))
+          (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+        (if (i32.eq (local.get $msg) (i32.const 0x0083))
+          (then (call $defwndproc_do_nccalcsize (local.get $hwnd)) (return (i32.const 0))))
+        (return (call $console_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; WM_NCPAINT / WM_NCCALCSIZE default chrome for WAT-native top-levels.
     ;; Help wndproc never overrides these so we take the default directly.
     (if (i32.eq (local.get $msg) (i32.const 0x0085))
