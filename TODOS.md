@@ -49,7 +49,7 @@ glyph, frame, and dialog-lifecycle asserts:
 | `test-regedit-deep` | `tree displays classic folder glyphs (0 yellow px)` |
 | `test-mspaint-options` | `tool-options margin stayed button-face gray` |
 | `test-spider-messagebox` | `No button has full raised frame` |
-| `test-find-cancel` | `titlebar X cleared dlg global`, `open #2 got a fresh dlg hwnd` |
+| ~~`test-find-cancel`~~ | FIXED `35bb495` — the test clicked (390,72), which is inside the dialog's *client* area; the close box is x 379..395, y 45..59. Emulator was correct. New `close-click:TARGET` input action derives the point from the live window rect. 11/11. |
 | `test-solitaire-resize` | width/height did not grow after corner drag |
 | `test-cwordzap-render` | RLE4 splash white field / colored logo |
 
