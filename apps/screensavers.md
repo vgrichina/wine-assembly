@@ -74,9 +74,34 @@ Inconclusive after 2026-04-20 investigation: the 75×80 character sub-sprites in
 - **PHODISC:** resolved — its photos are RLE-compressed DIBs, see Task 0. No asset-load work was needed.
 - **CITYSCAP:** Spins in GetMessageA without ever calling SetTimer/InvalidateRect. Render fn never runs. Probably missing a startup message or a registry value that gates rendering.
 
-### 3. d3rm MeshBuilder::Load / ProgressiveMesh path (REVALIDATE)
+### 3. d3rm MeshBuilder::Load / ProgressiveMesh path — RESOLVED 2026-08-16, the emulator was right
 
-2026-06-14 update: the old Organic Art blank-screen smoke result was primarily a harness budget problem. At 7000 batches all seven Organic Art savers produce nonblank frames. Keep the ProgressiveMesh notes below for the DX SDK `viewer.exe camera.x` repro and deeper D3DRM fidelity work, but do not use the default 80-batch Organic Art blank as evidence for this blocker.
+**The `D3DRMERR_NOTFOUND` was correct behaviour on a fabricated input file.**
+Our extract of the DX SDK contains no `camera.x`, `mslogo.x` or `sphere2.x` —
+the three names `viewer.exe` opens. Every `.x` it ships is a `pm_*.x`
+ProgressiveMesh. On 2026-04-30 those three names were created locally by copying
+`pm_cam.x`, `pm_mslog.x` and `pm_sph2.x`; `camera.x` is byte-identical to
+`pm_cam.x`, and its mtime is the same session that wrote the cont.62 notes
+below. So `MeshBuilder::Load` was being handed a ProgressiveMesh, which it
+refuses by design — a PM loads through `IDirect3DRMProgressiveMesh::Load`, not
+through a MeshBuilder. Every conclusion in the cont.61/62 static analysis was
+accurate; the filter really is `[TID_D3DRMMesh]` with count 1, and the PM arm
+really does gate on it. What was wrong was the assumption that real DX would
+have loaded that file.
+
+Hand a plain `Mesh` `.x` to the same code path and it loads and renders:
+`test/fixtures/d3drm/{tetra,cube}.x` are two such files, VFS-imported over the
+three fabricated names by `test/test-all-exes.js`. The DX5 D3DIM Viewer entry
+went from `KNOWN_BAD_RENDER` to **PASS, 201 colors** (corpus 106 PASS / 4 WARN
+→ 107 PASS / 3 WARN), with real shaded geometry on screen. The sweep also needed
+400 batches instead of the 80-batch default — it parses three meshes and builds
+the scene before the first frame reaches the primary surface.
+
+Retained-mode geometry therefore works end to end. Anything still missing in the
+Organic Art savers is a separate question and needs its own evidence, not this
+one.
+
+2026-06-14 update: the old Organic Art blank-screen smoke result was primarily a harness budget problem. At 7000 batches all seven Organic Art savers produce nonblank frames. The ProgressiveMesh notes below are kept as the investigation record.
 
 **Test bed:** DX SDK `viewer.exe` loading `camera.x` is the minimal repro for the same d3rm path the Organic Art screensavers use. `IDirect3DRMMeshBuilder::Load` returns `D3DRMERR_NOTFOUND (0x88760311)`; viewer pops "Failed to load camera.x.\n(null)". Same root path is what leaves the screensavers' main mesh-render dead.
 

@@ -214,10 +214,12 @@ so the telnet-first detour is dropped.
 - **Screensaver GDI-bridge regression** — `apps/screensavers.md` Task 0, fixed
   2026-08-15 via the RLE DIB path; re-read before trusting it, since
   `test-cwordzap-render`'s RLE4 asserts are failing again in the current e2e run.
-- **d3rm `MeshBuilder::Load` / ProgressiveMesh** — `apps/screensavers.md` Task 3,
-  `apps/d3drm.md`. Minimal repro is DX SDK `viewer.exe` loading `camera.x`;
-  `Load` returns `D3DRMERR_NOTFOUND (0x88760311)`. Blocks the DX5 D3DIM Viewer
-  WARN and the Organic Art screensavers' mesh render.
+- ~~**d3rm `MeshBuilder::Load` / ProgressiveMesh**~~ — RESOLVED 2026-08-16. The
+  `D3DRMERR_NOTFOUND` was correct: our DX SDK extract ships no `camera.x`, and
+  the one we had was a ProgressiveMesh copied under that name in April, which a
+  MeshBuilder refuses by design. Given a real plain `Mesh` file the viewer loads
+  and renders — DX5 D3DIM Viewer `KNOWN_BAD_RENDER` → **PASS**, corpus 106 → 107
+  PASS. Retained-mode geometry works; see `apps/screensavers.md` Task 3.
 - **CITYSCAP blank screen** (Task 2, MEDIUM), **FOXTROT white silhouettes**
   (Task 1, LOW).
 - **CD Player** renders frame and menu but not its transport controls — the only

@@ -323,7 +323,21 @@ const TEST_CASES = [
     timeoutMs: 30000 },
   { exe: 'test/binaries/dx-sdk/bin/bellhop.exe', name: 'DX5 D3DIM Bellhop' },
   { exe: 'test/binaries/dx-sdk/bin/viewer.exe', name: 'DX5 D3DIM Viewer',
-    knownBadRender: 'camera.x ProgressiveMesh load returns D3DRMERR_NOTFOUND' },
+    // viewer opens camera.x, mslogo.x and sphere2.x by name, and our extract of
+    // the SDK ships none of them — every .x in it is a pm_*.x ProgressiveMesh.
+    // Feed it real plain-Mesh files through the VFS instead of leaving it the
+    // three PM copies that were fabricated under those names, which is what
+    // made MeshBuilder::Load return D3DRMERR_NOTFOUND. See
+    // test/fixtures/d3drm/README.md.
+    // It parses three meshes and builds the scene before the first frame
+    // reaches the primary surface, so the 80-batch default captures black.
+    maxBatches: 400, batchSize: 2000, captureBatch: 380, captureStopBatch: 381,
+    timeoutMs: 60000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--input=' + [
+      '0:vfs-import:camera.x:test/fixtures/d3drm/tetra.x',
+      '0:vfs-import:mslogo.x:test/fixtures/d3drm/cube.x',
+      '0:vfs-import:sphere2.x:test/fixtures/d3drm/cube.x',
+    ].join(',')] },
   { exe: 'test/binaries/dx-sdk/bin/donut.exe', name: 'DX5 Donut' },
   { exe: 'test/binaries/dx-sdk/bin/donuts.exe', name: 'DX5 Donuts',
     // The attract screen renders early, then the sample enters a heavy
