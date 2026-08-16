@@ -34,7 +34,7 @@ const inputSpec = [
   '40:slot-count:baseline',
   '50:0x111:3',                // open Find #1
   '80:slot-count:after-open1',
-  '82:click:390:72',           // titlebar X
+  '82:close-click:find',       // titlebar X, at the dialog's live rect
   '84:slot-count:after-cancel1',
   '90:0x111:3',                // open Find #2
   '120:slot-count:after-open2',
@@ -61,7 +61,7 @@ const lines = out.split('\n');
 const interesting = lines.filter(l =>
   l.includes('slot-count') ||
   l.includes('find-click') ||
-  l.includes('click 390,72') ||
+  l.includes('close-click') ||
   l.includes('FindTextA') ||
   l.includes('UNIMPLEMENTED') ||
   l.includes('CRASH'));

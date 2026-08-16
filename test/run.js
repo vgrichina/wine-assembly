@@ -822,6 +822,12 @@ async function main() {
         scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
       } else if (kind === 'main-resize') {
         scheduledInput.push({ batch, action: 'main-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
+      } else if (kind === 'close-click') {
+        // B:close-click:TARGET — real mouse click on a window's titlebar X,
+        // with the coordinates derived from the window's live rect instead of
+        // hardcoded in the test (which rots the moment placement changes).
+        // TARGET is 'find' (the Find/Replace dialog) or a hex hwnd.
+        scheduledInput.push({ batch, action: 'close-click', target: parts[2] || 'find' });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousedown') {
@@ -4659,6 +4665,27 @@ async function main() {
         const dv = new DataView(memory.buffer);
         const value = dv.getUint32(wa, true) >>> 0;
         logs.push(`[input] read-dword${ev.label ? ':' + ev.label : ''} [0x${(ev.addr >>> 0).toString(16)}] = 0x${value.toString(16)} (${value}) at batch ${batch}`);
+      } else if (ev.action === 'close-click' && renderer && renderer.handleMouseDown) {
+        const we = instance.exports;
+        let hwnd = 0;
+        if (ev.target === 'find') {
+          hwnd = (we.get_findreplace_dlg && we.get_findreplace_dlg()) | 0;
+        } else {
+          hwnd = parseInt(ev.target, 16) | 0;
+        }
+        const win = hwnd && renderer.windows ? renderer.windows[hwnd] : null;
+        if (!win) {
+          logs.push(`[input] close-click: no window for target ${ev.target} at batch ${batch}`);
+        } else {
+          // Same close box renderer-input.js hit-tests: 21px wide, inset 3px
+          // from the right edge, spanning the caption below the 3px border.
+          const r = renderer._windowRectScreen(win);
+          const x = r.x + r.w - 14;
+          const y = r.y + 13;
+          renderer.handleMouseDown(x, y, 1);
+          if (renderer.handleMouseUp) renderer.handleMouseUp(x, y, 1);
+          logs.push(`[input] close-click ${ev.target} hwnd=0x${hwnd.toString(16)} at ${x},${y} at batch ${batch}`);
+        }
       } else if (ev.action === 'click' && renderer && renderer.handleMouseDown) {
         renderer.handleMouseDown(ev.x, ev.y, 1);
         if (renderer.handleMouseUp) renderer.handleMouseUp(ev.x, ev.y, 1);
