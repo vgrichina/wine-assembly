@@ -95,13 +95,40 @@ function aboutInkPixels(pngPath) {
   return ink;
 }
 
+// Dark pixels in the band holding the About body's text lines — what "the
+// dialog says something" actually means.
+//
+// The check here used to be `pngSize > 8000`, which measures how well the
+// image compresses rather than what it contains, and it rewarded exactly the
+// wrong thing. Deleting the JavaScript text path (eff03cb) replaced
+// antialiased glyphs with crisp 1-bit ones: the halo pixels vanished, so the
+// file halved (13425 -> 6600) and the old non-button-face `ink` count fell
+// (1830 -> 1482), while the text itself became *more* solid — dark pixels in
+// this band went 205 -> 948. The body copy also legitimately changed, from
+// "Version 4.10" to the "Microsoft Windows / Windows 98 / Copyright (C)
+// 1981-1998" that Win98's own ShellAbout shows for a NULL lpszOtherStuff,
+// which is what calc.exe passes.
+function aboutTextInk(pngPath) {
+  if (!fs.existsSync(pngPath)) return 0;
+  const img = PNG.sync.read(fs.readFileSync(pngPath));
+  let dark = 0;
+  for (let y = 70; y < 130 && y < img.height; y++) {
+    for (let x = 90; x < 310 && x < img.width; x++) {
+      const i = (y * img.width + x) * 4;
+      if (img.data[i] < 90 && img.data[i + 1] < 90 && img.data[i + 2] < 90) dark++;
+    }
+  }
+  return dark;
+}
+
 const pngSize = fs.existsSync(png) ? fs.statSync(png).size : 0;
 const ink = aboutInkPixels(png);
+const textInk = aboutTextInk(png);
 const checks = [
   { name: 'process exited cleanly', pass: exitCode === 0 },
   { name: 'ShellAboutA called for Calculator', pass: /\[ShellAbout\].*"Calculator"/.test(out) },
   { name: 'About dialog children exist', pass: /dlg-dump:calc-about:[\s\S]*text="OK"/.test(out) },
-  { name: 'About PNG written', pass: pngSize > 8000 },
+  { name: `About body text rendered (${textInk} dark px)`, pass: pngSize > 1000 && textInk >= 150 },
   { name: 'About child controls painted', pass: ink > 1200 },
   { name: 'About titlebar close permits main close', pass: closeRun.exitCode === 0 && /\[Exit\] code=0/.test(closeRun.out) },
   { name: 'no crash marker', pass: !/CRASH|LinkError|UNIMPLEMENTED API:/.test(out) },
