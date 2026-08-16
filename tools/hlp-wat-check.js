@@ -118,6 +118,7 @@ async function main() {
   const e = instance.exports;
   ctx.exports = e;
   const bytes = new Uint8Array(memory.buffer);
+  const dv = new DataView(memory.buffer);
   const staging = e.get_staging();
   const outWA = staging + 0x20000;
   const tokensWA = staging + 0x40000;
@@ -175,6 +176,36 @@ async function main() {
     }
     console.log(`  phrases: ${phrases}, image ${e.get_help_phrase_image_size()} bytes` +
       (sample.length ? `  first: ${sample.join(' ')}` : ''));
+    // Embedded bitmaps are a second way a topic can render wrong while every
+    // topic "renders": the text lays out and the picture is missing. A help
+    // file with 200 |bmN internal files is mostly pictures.
+    const bitmaps = e.get_help_bitmap_count ? e.get_help_bitmap_count() : 0;
+    if (bitmaps) {
+      let bitmapOk = 0;
+      const bitmapFails = [];
+      for (let index = 0; index < bitmaps; index++) {
+        if (e.test_help_clear_error) e.test_help_clear_error();
+        if (e.test_help_decode_bitmap(index, outWA, 0x20000) > 0) { bitmapOk++; continue; }
+        // Fields of the 80-byte HelpBitmap the parser normalized, so a failure
+        // says WHAT kind of picture we cannot decode, not just that one broke.
+        const r = e.get_help_bitmap_record(index);
+        const at = off => dv.getUint32(r + off, true);
+        bitmapFails.push(`${index}:err${e.get_help_last_error()} ` +
+          `type=${at(8)} pack=${at(12)} ${at(32)}x${at(36)}@${at(28)}bpp ` +
+          `hotspots=${at(60)} ${at(52)}->${at(72)}b` +
+          (e.get_help_bitmap_fail_produced
+            ? `  produced=${e.get_help_bitmap_fail_produced()}/` +
+              `${e.get_help_bitmap_fail_expect()} rle=${e.get_help_bitmap_fail_rle()}` +
+              (e.get_help_bitmap_fail_full
+                ? ` stream=${e.get_help_bitmap_fail_full()}` : '')
+            : ''));
+      }
+      console.log(`  bitmaps: ${bitmapOk}/${bitmaps} decode`);
+      for (const line of bitmapFails.slice(0, 8)) console.log(`    bitmap ${line}`);
+      if (bitmapFails.length > 8) {
+        console.log(`    ... ${bitmapFails.length - 8} more failing bitmaps`);
+      }
+    }
     let ok = 0;
     const lines = [];
     for (let index = 0; index < topics; index++) {

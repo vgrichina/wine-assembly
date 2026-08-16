@@ -2581,6 +2581,30 @@ async function main() {
       length === 8 &&
       Buffer.from(bytes.subarray(topicOutWA, topicOutWA + 8)).equals(syntheticPixels));
   }
+  // A segmented hypergraphic's compressed stream does not stop at the last
+  // pixel: the head of the hotspot block shares it. 26 of Empires.hlp's 179
+  // pictures decode exactly two bytes past the DIB, and demanding that the
+  // stream end there cost every one of them. Reaching the expected size is
+  // success; what follows belongs to the hotspots, not to the pixels.
+  // Only the compressed packings can carry a surplus: an uncompressed picture
+  // declares one size for both halves, so the parser already requires them to
+  // agree and no extra byte can exist.
+  for (const [packing, payload] of [
+    [2, encodeLiteralLz77(Buffer.concat([syntheticPixels, Buffer.from([0x99, 0x99])]))],
+    [3, encodeLiteralLz77(Buffer.concat([syntheticRle, Buffer.from([0x82, 0x99, 0x99])]))],
+  ]) {
+    const surplusHelp = buildSyntheticSemanticHelp({
+      extraFiles: [['|bm7', buildSyntheticBitmap({ packing, payload })]],
+    });
+    bytes.fill(0xa5, topicOutWA, topicOutWA + 8);
+    const length = load(surplusHelp.file) === 1
+      ? e.test_help_decode_bitmap(0, topicOutWA, 8)
+      : -1;
+    check(`bitmap packing ${packing} ignores a stream that outlives its pixels`,
+      length === 8 &&
+      Buffer.from(bytes.subarray(topicOutWA, topicOutWA + 8)).equals(syntheticPixels),
+      `length=${length} error=${e.get_help_last_error()}`);
+  }
   const malformedRleHelp = buildSyntheticSemanticHelp({
     topic: bitmapViewParts.topic,
     font: buildOldFont(['Fixture Face'], Array.from({ length: 3 }, () => [0,20,2,0])),

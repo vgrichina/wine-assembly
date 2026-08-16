@@ -23,6 +23,21 @@
   (global $help_bitmap_result_count (mut i32) (i32.const 0))
   (global $help_bitmap_decode_out_pos (mut i32) (i32.const 0))
   (global $help_bitmap_decode_rle_count (mut i32) (i32.const 0))
+  ;; Where the last refused bitmap decode stopped. "The picture would not
+  ;; decode" is not a diagnosis: producing too few bytes, too many, or ending
+  ;; mid-run are three different bugs, and only these numbers tell them apart.
+  (global $help_bitmap_fail_produced (mut i32) (i32.const 0))
+  (global $help_bitmap_fail_expect (mut i32) (i32.const 0))
+  (global $help_bitmap_fail_rle (mut i32) (i32.const 0))
+  (global $help_bitmap_fail_full (mut i32) (i32.const 0))
+  (func (export "get_help_bitmap_fail_full") (result i32)
+    (global.get $help_bitmap_fail_full))
+  (func (export "get_help_bitmap_fail_produced") (result i32)
+    (global.get $help_bitmap_fail_produced))
+  (func (export "get_help_bitmap_fail_expect") (result i32)
+    (global.get $help_bitmap_fail_expect))
+  (func (export "get_help_bitmap_fail_rle") (result i32)
+    (global.get $help_bitmap_fail_rle))
   (global $help_bitmap_decode_rle (mut i32) (i32.const 0))
   (global $help_bitmap_decode_lz_pos (mut i32) (i32.const 0))
   (global $help_keyword_result_keywords_ga (mut i32) (i32.const 0))
@@ -4295,6 +4310,14 @@
       (i32.add (local.get $position) (i32.const 1)))
     (i32.const 1))
 
+  ;; Every pixel produced, and not stopped in the middle of a run-length run.
+  ;; Both halves matter: a truncated RLE run that happens to land on the last
+  ;; pixel is a broken stream, not a finished picture.
+  (func $help_bitmap_decode_complete (param $expected i32) (result i32)
+    (i32.and
+      (i32.ge_u (global.get $help_bitmap_decode_out_pos) (local.get $expected))
+      (i32.eqz (i32.and (global.get $help_bitmap_decode_rle_count) (i32.const 0x7f)))))
+
   ;; Decode one picture payload. Packing 3 means LZ77 first, then RLE, which
   ;; is the order used by the compiler and native reader. This pass is also
   ;; usable without writes, allowing the public entry point to validate the
@@ -4314,12 +4337,19 @@
       (then
         (block $lz_done (loop $controls
           (br_if $lz_done (i32.ge_u (local.get $source_pos) (local.get $source_len)))
+          ;; The picture is finished the moment its pixels are all there. A
+          ;; segmented hypergraphic keeps going: 26 of Empires.hlp's 179
+          ;; pictures decode two bytes past the DIB, the head of the hotspot
+          ;; block that shares the compressed stream. Those bytes are not ours
+          ;; to consume, and refusing them lost the whole picture.
+          (br_if $lz_done (call $help_bitmap_decode_complete (local.get $expected)))
           (local.set $control (i32.load8_u
             (i32.add (local.get $source) (local.get $source_pos))))
           (local.set $source_pos (i32.add (local.get $source_pos) (i32.const 1)))
           (local.set $bit (i32.const 0))
           (block $control_done (loop $tokens
             (br_if $control_done (i32.ge_u (local.get $bit) (i32.const 8)))
+            (br_if $control_done (call $help_bitmap_decode_complete (local.get $expected)))
             ;; High control bits are unused when the physical stream ends.
             (br_if $control_done (i32.ge_u (local.get $source_pos) (local.get $source_len)))
             (if (i32.and (local.get $control)
@@ -4365,6 +4395,7 @@
       (else
         (block $raw_done (loop $raw
           (br_if $raw_done (i32.ge_u (local.get $source_pos) (local.get $source_len)))
+          (br_if $raw_done (call $help_bitmap_decode_complete (local.get $expected)))
           (if (i32.eqz (call $help_bitmap_decode_emit
                 (i32.load8_u (i32.add (local.get $source) (local.get $source_pos)))
                 (local.get $dest) (local.get $expected) (local.get $write)))
@@ -4374,6 +4405,22 @@
     (i32.and
       (i32.eq (global.get $help_bitmap_decode_out_pos) (local.get $expected))
       (i32.eqz (i32.and (global.get $help_bitmap_decode_rle_count) (i32.const 0x7f)))))
+
+  ;; Record where a refused decode stopped, and how long the stream really is.
+  ;; The decode passes stop the moment output reaches the expected size, so
+  ;; "produced == expected" on a failure means the stream had MORE to give -
+  ;; a re-run against a generous ceiling is the only way to say how much more.
+  (func $help_bitmap_note_decode_failure
+    (param $source i32) (param $source_len i32) (param $packing i32)
+    (param $window i32) (param $expected i32)
+    (global.set $help_bitmap_fail_produced (global.get $help_bitmap_decode_out_pos))
+    (global.set $help_bitmap_fail_expect (local.get $expected))
+    (global.set $help_bitmap_fail_rle (global.get $help_bitmap_decode_rle_count))
+    (drop (call $help_bitmap_decode_pass
+      (local.get $source) (local.get $source_len) (local.get $packing)
+      (i32.const 0) (global.get $HELP_MAX_BITMAP_INTERMEDIATE_BYTES)
+      (local.get $window) (i32.const 0)))
+    (global.set $help_bitmap_fail_full (global.get $help_bitmap_decode_out_pos)))
 
   (func $help_decode_bitmap
     (param $bitmap_index i32) (param $out_wa i32) (param $capacity i32) (result i32)
@@ -4434,6 +4481,9 @@
           (local.get $source) (local.get $source_len) (local.get $packing)
           (local.get $out_wa) (local.get $expected) (local.get $window_wa) (i32.const 0)))
       (then
+        (call $help_bitmap_note_decode_failure
+          (local.get $source) (local.get $source_len) (local.get $packing)
+          (local.get $window_wa) (local.get $expected))
         (call $heap_free (local.get $window_ga))
         (call $help_set_error (global.get $HELP_ERROR_BITMAP_TABLE) (local.get $source_off))
         (return (i32.const -1))))
@@ -4441,6 +4491,9 @@
           (local.get $source) (local.get $source_len) (local.get $packing)
           (local.get $out_wa) (local.get $expected) (local.get $window_wa) (i32.const 1)))
       (then
+        (call $help_bitmap_note_decode_failure
+          (local.get $source) (local.get $source_len) (local.get $packing)
+          (local.get $window_wa) (local.get $expected))
         (call $heap_free (local.get $window_ga))
         (call $help_set_error (global.get $HELP_ERROR_BITMAP_TABLE) (local.get $source_off))
         (return (i32.const -1))))
