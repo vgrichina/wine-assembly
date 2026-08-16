@@ -47,7 +47,10 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 9000, maxBuffer: 12 * 1024 * 1024 });
+    // Ceiling for a hang, not a performance budget — see the note in
+    // test-mspaint-scrollbar-thumb.js. At 9s this test reported 1/8 with every
+    // pixel assert reading 0x0 whenever the box was busy.
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 45000, maxBuffer: 12 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;

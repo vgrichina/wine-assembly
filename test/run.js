@@ -474,7 +474,10 @@ async function main() {
   //   B:help-macro:HLP_FILE:MACRO — WinHelpA(HELP_COMMAND) a macro on a help file
   //   B:vfs-export:FILENAME:PATH — write one virtual file to the host filesystem
   //   B:vfs-import:FILENAME:PATH — load one host file into the virtual filesystem
-  //   B:assert-standard-scroll:AXIS:MIN_POS[:LABEL] — fail unless a visible standard bar reaches MIN_POS
+  //   B:assert-standard-scroll:AXIS:MIN_POS[:LABEL] — fail unless a visible standard bar reaches MIN_POS ("N%" = percent of page)
+  //   B:scroll-click:AXIS:PART[:HWND] — click a live scrollbar part (lo|hi|page-lo|page-hi|thumb)
+  //   B:scroll-drag:AXIS:DELTA[:HWND] — drag the live thumb DELTA px along the axis
+  //   B:dump-scrollbar:AXIS[:LABEL] — log a live scrollbar's screen strip rect and pos/page/range
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:wait-focus-length:MIN_LENGTH[:LIMIT] — delay until focused text reaches MIN_LENGTH
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
@@ -792,13 +795,40 @@ async function main() {
           path: parts.slice(3).join(':'),
         });
       } else if (kind === 'assert-standard-scroll') {
+        // MIN_POS is scroll units, or "N%" of the bar's own page size (the
+        // visible client extent along that axis). Prefer the percentage: how
+        // far one arrow or page click moves is proportional to the view, so a
+        // pixel constant silently rots the moment window chrome changes size.
         scheduledInput.push({
           batch,
           action: 'assert-standard-scroll',
           axis: parts[2] === 'v' ? 'v' : 'h',
-          minPos: parseInt(parts[3]) || 0,
+          minPos: parseFloat(parts[3]) || 0,
+          minPct: /%\s*$/.test(parts[3] || ''),
           label: parts[4] || '',
         });
+      } else if (kind === 'scroll-click') {
+        // B:scroll-click:AXIS:PART[:HWND] — real mouse click on a live standard
+        // scrollbar. PART is lo|hi (the arrow buttons) or page-lo|page-hi (the
+        // track either side of the thumb). The point comes from the window's
+        // current client rect, so the click keeps landing on the arrow when
+        // frame metrics or default placement move.
+        scheduledInput.push({ batch, action: 'scroll-click',
+          axis: parts[2] === 'v' ? 'v' : 'h', part: parts[3] || 'hi',
+          target: parts[4] || '' });
+      } else if (kind === 'scroll-drag') {
+        // B:scroll-drag:AXIS:DELTA[:HWND] — press the live thumb, move DELTA px
+        // along the axis in three steps, release.
+        scheduledInput.push({ batch, action: 'scroll-drag',
+          axis: parts[2] === 'v' ? 'v' : 'h', delta: parseInt(parts[3]) || 0,
+          target: parts[4] || '' });
+      } else if (kind === 'dump-scrollbar') {
+        // B:dump-scrollbar:AXIS[:LABEL] — log a live standard scrollbar's strip
+        // rect in screen coords plus its page/range/pos, so pixel tests can
+        // sample the strip where it actually is.
+        scheduledInput.push({ batch, action: 'dump-scrollbar',
+          axis: parts[2] === 'v' ? 'v' : 'h', label: parts[3] || '',
+          target: parts[4] || '' });
       } else if (kind === 'png') {
         // B:png:PATH — write a PNG snapshot of renderer.canvas at this batch.
         scheduledInput.push({ batch, action: 'png', path: parts.slice(2).join(':') });
@@ -835,6 +865,11 @@ async function main() {
         // hardcoded in the test (which rots the moment placement changes).
         // TARGET is 'find' (the Find/Replace dialog) or a hex hwnd.
         scheduledInput.push({ batch, action: 'close-click', target: parts[2] || 'find' });
+      } else if (kind === 'caption-click') {
+        // B:caption-click:HWND:PART — click a caption button (min|max|close)
+        // derived from the window's live rect, the same way close-click does.
+        scheduledInput.push({ batch, action: 'caption-click',
+          target: parts[2] || '', part: parts[3] || 'close' });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousedown') {
@@ -2648,6 +2683,73 @@ async function main() {
       return debugPrompt(reason);
     }
     stepping = true;
+  };
+
+  // Live standard-scrollbar geometry. Non-client scrollbars are 16px strips
+  // laid just outside the client rect (see $defwndproc_do_ncpaint), so the
+  // strip follows the window's client rect and nothing about it is a constant
+  // a test can safely hardcode: frame metrics, default placement and the app's
+  // own control-bar layout all move it.
+  const SCROLL_STRIP = 16;
+  const findStandardScrollBar = (axis, target) => {
+    const e = instance.exports;
+    if (!renderer || !e.standard_scroll_pos) return null;
+    const bit = axis === 'v' ? 0x00200000 : 0x00100000;
+    const bar = axis === 'v' ? 1 : 0;
+    const wanted = target ? (parseInt(target, 16) | 0) : 0;
+    let match = null;
+    for (const win of Object.values(renderer.windows || {})) {
+      if (!win || !win.visible || !win.hwnd) continue;
+      if (wanted && (win.hwnd | 0) !== wanted) continue;
+      const style = e.wnd_get_style_export ? e.wnd_get_style_export(win.hwnd) >>> 0 : win.style >>> 0;
+      if (!(style & bit)) continue;
+      const pos = e.standard_scroll_pos(win.hwnd, bar) | 0;
+      if (!match || pos > match.pos) {
+        const cr = win.clientRect || { x: win.x, y: win.y, w: win.w, h: win.h };
+        match = {
+          hwnd: win.hwnd | 0, win, pos,
+          min: e.standard_scroll_min ? e.standard_scroll_min(win.hwnd, bar) | 0 : 0,
+          max: e.standard_scroll_max ? e.standard_scroll_max(win.hwnd, bar) | 0 : 0,
+          page: e.standard_scroll_page
+            ? (e.standard_scroll_page(win.hwnd, bar) | 0) || (axis === 'v' ? cr.h : cr.w)
+            : (axis === 'v' ? cr.h : cr.w),
+          strip: axis === 'v'
+            ? { x0: cr.x + cr.w, y0: cr.y, x1: cr.x + cr.w + SCROLL_STRIP, y1: cr.y + cr.h }
+            : { x0: cr.x, y0: cr.y + cr.h, x1: cr.x + cr.w, y1: cr.y + cr.h + SCROLL_STRIP },
+          axis,
+        };
+      }
+    }
+    return match;
+  };
+  // A point inside one part of a live scrollbar. 'lo'/'hi' are the arrow
+  // buttons at each end, 'page-lo'/'page-hi' the track just inside them, and
+  // 'thumb' the thumb at its current position.
+  const scrollBarPoint = (bar, part) => {
+    const s = bar.strip;
+    const vert = bar.axis === 'v';
+    const across = vert ? Math.floor((s.x0 + s.x1) / 2) : Math.floor((s.y0 + s.y1) / 2);
+    const lo = vert ? s.y0 : s.x0;
+    const hi = vert ? s.y1 : s.x1;
+    const long = hi - lo;
+    const track = Math.max(0, long - 2 * SCROLL_STRIP);
+    let along;
+    if (part === 'lo') along = lo + Math.floor(SCROLL_STRIP / 2);
+    else if (part === 'hi') along = hi - 1 - Math.floor(SCROLL_STRIP / 2);
+    else if (part === 'page-lo') along = lo + SCROLL_STRIP + 2;
+    else if (part === 'page-hi') along = hi - SCROLL_STRIP - 3;
+    else {
+      // Thumb: same arithmetic $defwndproc_paint_standard_scrollbar uses —
+      // size proportional to page/range, offset proportional to pos.
+      const range = Math.max(1, bar.max - bar.min + 1);
+      const thumb = Math.min(track, Math.max(SCROLL_STRIP,
+        Math.floor((track * Math.max(1, bar.page)) / range)));
+      const travel = Math.max(0, track - thumb);
+      const span = Math.max(1, (bar.max - bar.page + 1) - bar.min);
+      const off = Math.min(travel, Math.floor((travel * (bar.pos - bar.min)) / span));
+      along = lo + SCROLL_STRIP + off + Math.floor(thumb / 2);
+    }
+    return vert ? { x: across, y: along } : { x: along, y: across };
   };
 
   let lastSchedSig = null;
@@ -4490,22 +4592,50 @@ async function main() {
           logs.push(`[input] vfs-import FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
       } else if (ev.action === 'assert-standard-scroll') {
-        const e = instance.exports;
-        const bit = ev.axis === 'v' ? 0x00200000 : 0x00100000;
-        const bar = ev.axis === 'v' ? 1 : 0;
-        let match = null;
-        if (renderer && e.standard_scroll_pos) {
-          for (const win of Object.values(renderer.windows || {})) {
-            if (!win || !win.visible || !win.hwnd) continue;
-            const style = e.wnd_get_style_export ? e.wnd_get_style_export(win.hwnd) >>> 0 : win.style >>> 0;
-            if (!(style & bit)) continue;
-            const pos = e.standard_scroll_pos(win.hwnd, bar) | 0;
-            if (!match || pos > match.pos) match = { hwnd: win.hwnd | 0, pos };
-          }
-        }
-        const pass = !!match && match.pos >= ev.minPos;
-        logs.push(`[assert] ${pass ? 'PASS' : 'FAIL'} standard-scroll${ev.label ? ':' + ev.label : ''} axis=${ev.axis} min=${ev.minPos} actual=${match ? match.pos : 'none'} hwnd=${match ? '0x' + match.hwnd.toString(16) : 'none'} at batch ${batch}`);
+        const match = findStandardScrollBar(ev.axis, '');
+        const floor = match && ev.minPct
+          ? Math.round((ev.minPos / 100) * match.page)
+          : ev.minPos;
+        const pass = !!match && match.pos >= floor;
+        const want = ev.minPct ? `${ev.minPos}% of page ${match ? match.page : '?'} = ${floor}` : `${floor}`;
+        logs.push(`[assert] ${pass ? 'PASS' : 'FAIL'} standard-scroll${ev.label ? ':' + ev.label : ''} axis=${ev.axis} min=${want} actual=${match ? match.pos : 'none'} hwnd=${match ? '0x' + match.hwnd.toString(16) : 'none'} at batch ${batch}`);
         if (!pass) process.exitCode = 1;
+      } else if (ev.action === 'dump-scrollbar') {
+        const bar = findStandardScrollBar(ev.axis, ev.target);
+        if (!bar) {
+          logs.push(`[scrollbar]${ev.label ? ':' + ev.label : ''} axis=${ev.axis} none at batch ${batch}`);
+        } else {
+          const s = bar.strip;
+          logs.push(`[scrollbar]${ev.label ? ':' + ev.label : ''} axis=${ev.axis} hwnd=0x${bar.hwnd.toString(16)} strip=${s.x0},${s.y0},${s.x1},${s.y1} pos=${bar.pos} page=${bar.page} min=${bar.min} max=${bar.max} at batch ${batch}`);
+        }
+      } else if (ev.action === 'scroll-click' && renderer && renderer.handleMouseDown) {
+        const bar = findStandardScrollBar(ev.axis, ev.target);
+        if (!bar) {
+          logs.push(`[input] scroll-click: no ${ev.axis} scrollbar at batch ${batch}`);
+        } else {
+          const p = scrollBarPoint(bar, ev.part);
+          renderer.handleMouseDown(p.x, p.y, 1);
+          if (renderer.handleMouseUp) renderer.handleMouseUp(p.x, p.y, 1);
+          logs.push(`[input] scroll-click ${ev.axis}:${ev.part} hwnd=0x${bar.hwnd.toString(16)} at ${p.x},${p.y} at batch ${batch}`);
+        }
+      } else if (ev.action === 'scroll-drag' && renderer && renderer.handleMouseDown) {
+        const bar = findStandardScrollBar(ev.axis, ev.target);
+        if (!bar) {
+          logs.push(`[input] scroll-drag: no ${ev.axis} scrollbar at batch ${batch}`);
+        } else {
+          const p = scrollBarPoint(bar, 'thumb');
+          const x1 = ev.axis === 'v' ? p.x : p.x + ev.delta;
+          const y1 = ev.axis === 'v' ? p.y + ev.delta : p.y;
+          renderer.handleMouseDown(p.x, p.y, 1);
+          if (renderer.handleMouseMove) {
+            for (const t of [0.34, 0.67, 1]) {
+              renderer.handleMouseMove(
+                Math.round(p.x + (x1 - p.x) * t), Math.round(p.y + (y1 - p.y) * t));
+            }
+          }
+          if (renderer.handleMouseUp) renderer.handleMouseUp(x1, y1, 1);
+          logs.push(`[input] scroll-drag ${ev.axis} hwnd=0x${bar.hwnd.toString(16)} ${p.x},${p.y} -> ${x1},${y1} at batch ${batch}`);
+        }
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();
@@ -4711,6 +4841,22 @@ async function main() {
           renderer.handleMouseDown(x, y, 1);
           if (renderer.handleMouseUp) renderer.handleMouseUp(x, y, 1);
           logs.push(`[input] close-click ${ev.target} hwnd=0x${hwnd.toString(16)} at ${x},${y} at batch ${batch}`);
+        }
+      } else if (ev.action === 'caption-click' && renderer && renderer.handleMouseDown) {
+        const hwnd = parseInt(ev.target, 16) | 0;
+        const win = hwnd && renderer.windows ? renderer.windows[hwnd] : null;
+        if (!win) {
+          logs.push(`[input] caption-click: no window for hwnd ${ev.target} at batch ${batch}`);
+        } else {
+          // Win98 caption buttons are 16px wide in a row at the right end:
+          // close outermost, then max, then min (same boxes close-click uses).
+          const r = renderer._windowRectScreen(win);
+          const slot = ev.part === 'min' ? 2 : ev.part === 'max' ? 1 : 0;
+          const x = r.x + r.w - 14 - slot * 16;
+          const y = r.y + 13;
+          renderer.handleMouseDown(x, y, 1);
+          if (renderer.handleMouseUp) renderer.handleMouseUp(x, y, 1);
+          logs.push(`[input] caption-click ${ev.part} hwnd=0x${hwnd.toString(16)} at ${x},${y} at batch ${batch}`);
         }
       } else if (ev.action === 'click' && renderer && renderer.handleMouseDown) {
         renderer.handleMouseDown(ev.x, ev.y, 1);

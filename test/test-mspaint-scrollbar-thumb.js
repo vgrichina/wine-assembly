@@ -45,9 +45,21 @@ const input = [
   `10:vfs-import:oversized.bmp:${bmpPath}`,
   '24:0x111:57601',
   '32:open-dlg-pick:oversized.bmp',
+  // Ask the emulator where the strips are rather than hardcoding them. They
+  // sit just outside the view's client rect, so they move whenever frame
+  // metrics, default placement, or Paint's own control-bar layout move.
+  '47:dump-scrollbar:v:vert',
+  '47:dump-scrollbar:h:horz',
   `48:png:${screenshot}`,
   '49:stop',
 ].join(',');
+
+function parseStrip(text, label) {
+  const line = text.split('\n').find(l => l.includes(`[scrollbar]:${label} `));
+  const m = line && line.match(/strip=(-?\d+),(-?\d+),(-?\d+),(-?\d+)/);
+  if (!m) return null;
+  return { x0: +m[1], y0: +m[2], x1: +m[3], y1: +m[4] };
+}
 
 let output = '';
 let runFailed = false;
@@ -61,7 +73,11 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+    // A ceiling for a hang, not a performance budget: a 50-batch Paint run
+    // takes a few seconds alone but several times that when the suite (or
+    // another agent) is loading the box, and a tight limit turns that into a
+    // phantom regression that reports every pixel assert as 0x0.
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 45000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
@@ -73,35 +89,43 @@ function isButtonFace(data, index) {
 
 (async () => {
   const screenshotExists = fs.existsSync(screenshot) && fs.statSync(screenshot).size > 0;
+  const vertStrip = parseStrip(output, 'vert');
+  const horzStrip = parseStrip(output, 'horz');
   let verticalOuterEdge = -1;
   let horizontalOuterEdge = -1;
-  if (screenshotExists) {
+  if (screenshotExists && vertStrip && horzStrip) {
     const image = await loadImage(screenshot);
     const canvas = createCanvas(image.width, image.height);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(image, 0, 0);
     const data = ctx.getImageData(0, 0, image.width, image.height).data;
 
-    // Paint's 212x283 child view starts at screen (80,61). Its standard
-    // scrollbar strips occupy x=276..291 and y=328..343. At position zero,
-    // the thumb begins immediately after each 16px low arrow.
+    // At position zero each thumb starts immediately after the 16px low arrow.
+    // Sample 20 rows/columns of it at both outer edges of the strip: a thumb
+    // that spans the strip puts its raised edge there (white highlight on the
+    // low side, shadow on the high side), while an inset one leaves exposed
+    // button-face track rails.
+    const sample = (x, y) => !isButtonFace(data, (y * image.width + x) * 4);
     verticalOuterEdge = 0;
-    for (let y = 80; y < 100; y++) {
-      for (const x of [276, 291]) {
-        if (!isButtonFace(data, (y * image.width + x) * 4)) verticalOuterEdge++;
+    for (let y = vertStrip.y0 + 20; y < vertStrip.y0 + 40; y++) {
+      for (const x of [vertStrip.x0, vertStrip.x1 - 1]) {
+        if (sample(x, y)) verticalOuterEdge++;
       }
     }
     horizontalOuterEdge = 0;
-    for (let x = 100; x < 120; x++) {
-      for (const y of [328, 343]) {
-        if (!isButtonFace(data, (y * image.width + x) * 4)) horizontalOuterEdge++;
+    for (let x = horzStrip.x0 + 20; x < horzStrip.x0 + 40; x++) {
+      for (const y of [horzStrip.y0, horzStrip.y1 - 1]) {
+        if (sample(x, y)) horizontalOuterEdge++;
       }
     }
   }
 
+  const describe = (s) => (s ? `${s.x0},${s.y0}-${s.x1},${s.y1}` : 'NOT REPORTED');
   const checks = [
     ['emulator run completed', !runFailed],
     ['oversized Paint screenshot written', screenshotExists],
+    [`both scrollbar strips located (v ${describe(vertStrip)}, h ${describe(horzStrip)})`,
+      !!vertStrip && !!horzStrip],
     [`vertical thumb reaches both strip edges (${verticalOuterEdge}/40 chrome samples)`,
       verticalOuterEdge >= 35],
     [`horizontal thumb reaches both strip edges (${horizontalOuterEdge}/40 chrome samples)`,

@@ -50,22 +50,28 @@ function makeBmp(width, height) {
 
 fs.mkdirSync(OUT, { recursive: true });
 fs.writeFileSync(bmpPath, makeBmp(900, 700));
+// Every coordinate here is derived from the live window, and every threshold
+// from the bar's own page size. Paint scrolls a quarter page per arrow click,
+// so the old pixel constants (70 and 53) were exactly page/4 for a 212x283
+// view — and stopped being reachable the moment the frame chrome grew to its
+// correct Win98 size and the view became 202x274. The behaviour never changed;
+// only the arithmetic's input did. Percentages track it.
 const input = [
   `10:vfs-import:paint-large.bmp:${bmpPath}`,
   '24:0x111:57601',
   '32:open-dlg-pick:paint-large.bmp',
-  '50:click:284:319',
-  '52:assert-standard-scroll:v:70:vertical-arrow',
-  '54:click:268:336',
-  '56:assert-standard-scroll:h:53:horizontal-arrow',
-  '58:mousedown:122:336',
-  '59:mousemove:155:336',
-  '60:mousemove:180:336',
-  '61:mouseup:180:336',
-  '65:assert-standard-scroll:h:300:horizontal-thumb',
-  '68:click:264:32',
-  '78:assert-standard-scroll:v:70:maximized-vertical',
-  '79:assert-standard-scroll:h:300:maximized-horizontal',
+  '50:scroll-click:v:hi',
+  '52:assert-standard-scroll:v:24%:vertical-arrow',
+  '54:scroll-click:h:hi',
+  '56:assert-standard-scroll:h:24%:horizontal-arrow',
+  '58:scroll-drag:h:58',
+  '65:assert-standard-scroll:h:140%:horizontal-thumb',
+  '68:caption-click:0x10001:max',
+  // Maximizing grows the page, so the surviving position is a smaller share of
+  // it than the quarter-page the arrow click produced. These two only assert
+  // that the scroll offsets survived the resize rather than being reset.
+  '78:assert-standard-scroll:v:15%:maximized-vertical',
+  '79:assert-standard-scroll:h:50%:maximized-horizontal',
   '80:dump-windows:maximized',
   '81:stop',
 ].join(',');

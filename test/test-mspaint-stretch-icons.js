@@ -42,7 +42,10 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
+    // Ceiling for a hang, not a performance budget — see the note in
+    // test-mspaint-scrollbar-thumb.js. At 10s this test went red on a loaded
+    // box (18.5s wall) while passing fine when run by hand.
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 45000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   output = `${error.stdout || ''}${error.stderr || ''}`;
   assert.fail(`Paint Stretch and Skew run failed:\n${output.slice(-4000)}`);
