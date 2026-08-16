@@ -215,6 +215,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/hexdump.js` — Memory hexdump utility
 - `tools/parse-rsrc.js` — PE resource section parser
 - `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)
+- `tools/ne-dump.js` — 16-bit NE (New Executable) structure dumper: `node tools/ne-dump.js <file.exe> [--segments] [--imports] [--entries] [--relocs=N] [--all]`. Every other tool here assumes a 32-bit image, so this is the only way to read `test/binaries/win98-16bit/`. Prints the segment table with file positions and flags, the module-reference/imported-name tables, the entry table, and per-segment fixups already resolved to `USER.#113` / `seg 1:0x0` form. Start here for anything about the Win16 games or Explorer's QT_Thunk path.
 - `tools/pe-sections.js` — PE section header dumper
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.js` — WAT parenthesis balance checker (auto-diffs vs git HEAD)
