@@ -65,6 +65,7 @@ const VK_MENU   = 18; // Alt
 const VK_F      = 70;
 
 const inputSpec = [
+  '19:dump-windows:np',
   `20:png:${beforePng}`,
   `22:keydown:${VK_MENU}`,    // Alt down
   `23:keydown:${VK_F}`,       // F → opens File menu via WAT
@@ -156,11 +157,24 @@ async function rgbAt(pngPath, x, y) {
         name: 'Alt+F dropdown drew >= 1500 px diff vs idle',
         pass: dOpen.diff >= 1500,
       });
-      const popupTopLeft = await rgbAt(openPng, 27, 40);
+      // Sample the dropdown body relative to Notepad's live window origin
+      // rather than at a fixed desktop point: the File popup hangs off the
+      // menu bar, so it moves with the frame, and a constant here silently
+      // starts measuring the desktop the moment default placement changes.
+      const npWindow = (() => {
+        const line = lines.find(l => l.includes('window:np ') && l.includes('class="Notepad"'));
+        const m = line && line.match(/pos=(-?\d+),(-?\d+)/);
+        return m ? { x: +m[1], y: +m[2] } : null;
+      })();
+      const anchor = npWindow
+        ? { x: npWindow.x + 10, y: npWindow.y + 46 }
+        : { x: 30, y: 66 };
+      const popupTopLeft = await rgbAt(openPng, anchor.x, anchor.y);
       const preservedDesktop = await rgbAt(openPng, 500, 300);
       checks.push({
-        name: 'dropdown is anchored below File at desktop (27,40)',
-        pass: popupTopLeft[0] >= 190 && popupTopLeft[1] >= 190 && popupTopLeft[2] >= 190,
+        name: `dropdown is anchored below File at (${anchor.x},${anchor.y})${npWindow ? '' : ' [window pos not reported]'}`,
+        pass: !!npWindow &&
+          popupTopLeft[0] >= 190 && popupTopLeft[1] >= 190 && popupTopLeft[2] >= 190,
       });
       checks.push({
         name: 'overlay does not cover unrelated desktop pixels',

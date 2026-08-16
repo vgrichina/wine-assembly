@@ -25,8 +25,15 @@
     (local.set $host_win_cy (local.get $win_cy))
     ;; CW_USEDEFAULT (0x80000000) is common for top-level app windows. The
     ;; renderer needs concrete geometry immediately, before WM_SIZE is delivered.
+    ;; x and y are a pair, exactly like cx and cy below: when x is
+    ;; CW_USEDEFAULT on an overlapped window the system picks BOTH the position
+    ;; coordinates and ignores the caller's y outright. Honouring y here left
+    ;; sol.exe and notepad — which both pass x=CW_USEDEFAULT, y=0 — glued to
+    ;; the top of the screen instead of the cascade slot.
     (if (i32.eq (local.get $win_x) (i32.const 0x80000000))
-      (then (local.set $win_x (i32.const 20))))
+      (then
+        (local.set $win_x (i32.const 20))
+        (local.set $win_y (i32.const 20))))
     (if (i32.eq (local.get $win_y) (i32.const 0x80000000))
       (then (local.set $win_y (i32.const 20))))
     (if (i32.eq (local.get $win_cx) (i32.const 0x80000000))
@@ -42,9 +49,14 @@
     ;; its WS_VISIBLE EDIT "CalcMsgPumpWnd" helper, which must not become a
     ;; visible 400x300 surface behind the real Calculator dialog.
     (if (i32.eq (local.get $host_win_x) (i32.const 0x80000000))
-      (then (local.set $host_win_x
-        (select (i32.const 20) (i32.const 0)
-          (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
+      (then
+        (local.set $host_win_x
+          (select (i32.const 20) (i32.const 0)
+            (i32.and (local.get $arg3) (i32.const 0x00C40000))))
+        ;; Same x/y pairing as above, resolved for this window kind.
+        (local.set $host_win_y
+          (select (i32.const 20) (i32.const 0)
+            (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
     (if (i32.eq (local.get $host_win_y) (i32.const 0x80000000))
       (then (local.set $host_win_y
         (select (i32.const 20) (i32.const 0)
