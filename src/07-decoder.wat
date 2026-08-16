@@ -1803,7 +1803,25 @@
       (if (i32.eq (local.get $op) (i32.const 0xF8)) (then (call $te (i32.const 110) (i32.const 0)) (br $decode))) ;; CLC
       (if (i32.eq (local.get $op) (i32.const 0xF9)) (then (call $te (i32.const 111) (i32.const 0)) (br $decode))) ;; STC
       (if (i32.eq (local.get $op) (i32.const 0xF5)) (then (call $te (i32.const 112) (i32.const 0)) (br $decode))) ;; CMC
-      (if (i32.eq (local.get $op) (i32.const 0xC9)) (then (call $te (i32.const 113) (i32.const 0)) (br $decode))) ;; LEAVE
+      ;; ---- 0xC8: ENTER imm16, imm8 ----
+      ;; The standard 16-bit compiled prologue. A non-zero nesting level would
+      ;; additionally copy the display, which no compiler of this era emits and
+      ;; which is better refused than approximated.
+      (if (i32.eq (local.get $op) (i32.const 0xC8))
+        (then
+          (call $win16_only (local.get $op))
+          (local.set $imm (call $d_fetch16))
+          (if (call $d_fetch8)
+            (then
+              (call $host_log_i32 (i32.const 0xCA165E0C)) ;; ENTER with nesting level
+              (call $host_log_i32 (global.get $d_pc))
+              (unreachable)))
+          (call $te (i32.const 383) (local.get $imm))
+          (br $decode)))
+      (if (i32.eq (local.get $op) (i32.const 0xC9))
+        (then (call $te (if (result i32) (global.get $code16) (then (i32.const 384)) (else (i32.const 113)))
+                (i32.const 0))
+              (br $decode))) ;; LEAVE
       (if (i32.eq (local.get $op) (i32.const 0xCC)) (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; INT3
       (if (i32.eq (local.get $op) (i32.const 0xCD)) (then (drop (call $d_fetch8)) (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; INT imm8
       (if (i32.eq (local.get $op) (i32.const 0xF4)) (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; HLT

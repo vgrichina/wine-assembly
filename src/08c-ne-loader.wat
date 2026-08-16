@@ -113,10 +113,18 @@
   ;; One slot per distinct (module, ordinal). Reusing a slot keeps the thunk
   ;; segment small enough to stay inside one selector and makes a trace of
   ;; thunk hits readable.
-  (func $win16_thunk_for (param $module_id i32) (param $ordinal i32) (result i32)
+  ;; `is_name` distinguishes the two ways an import can be written down. Most
+  ;; are IMPORTORDINAL and `value` is the ordinal; an IMPORTNAME says the name
+  ;; instead, and `value` is its offset in the imported-name table. FREECELL
+  ;; imports CARDS.CDTINIT and SHELL.SHELLABOUT that way and MSHEARTS one more,
+  ;; so this is not a corner worth deferring: without the flag they all land on
+  ;; module 0 and the trap cannot say what was wanted.
+  (func $win16_thunk_for (param $module_id i32) (param $value i32) (param $is_name i32) (result i32)
     (local $i i32) (local $key i32) (local $e i32)
-    (local.set $key (i32.or (i32.shl (local.get $module_id) (i32.const 16))
-                            (i32.and (local.get $ordinal) (i32.const 0xFFFF))))
+    (local.set $key (i32.or
+      (i32.or (i32.shl (local.get $module_id) (i32.const 16))
+              (i32.and (local.get $value) (i32.const 0xFFFF)))
+      (i32.shl (i32.ne (local.get $is_name) (i32.const 0)) (i32.const 31))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $win16_thunk_count)))
       (if (i32.eq (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
@@ -135,11 +143,27 @@
     (global.set $win16_thunk_count (i32.add (local.get $i) (i32.const 1)))
     (i32.mul (local.get $i) (i32.const 4)))
 
-  ;; Module id and ordinal behind a thunk offset, for the dispatcher.
+  ;; Module id, ordinal and import kind behind a thunk offset, for the
+  ;; dispatcher. The module id masks off the name flag in bit 31.
   (func $win16_thunk_module (export "win16_thunk_module") (param $off i32) (result i32)
+    (i32.and
+      (i32.shr_u (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
+                                    (i32.and (local.get $off) (i32.const 0xFFFC))))
+                 (i32.const 16))
+      (i32.const 0x7FFF)))
+
+  (func $win16_thunk_is_name (export "win16_thunk_is_name") (param $off i32) (result i32)
     (i32.shr_u (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
                                   (i32.and (local.get $off) (i32.const 0xFFFC))))
-               (i32.const 16)))
+               (i32.const 31)))
+
+  ;; Where the imported name behind a name-import thunk lives, as a linear
+  ;; memory address in the staged file: a Pascal string the host can read.
+  (func $win16_thunk_name_addr (export "win16_thunk_name_addr") (param $off i32) (result i32)
+    (i32.add
+      (i32.add (global.get $win16_ne_off)
+               (i32.load16_u (i32.add (global.get $win16_ne_off) (i32.const 0x2A))))
+      (call $win16_thunk_ordinal (local.get $off))))
 
   (func $win16_thunk_ordinal (export "win16_thunk_ordinal") (param $off i32) (result i32)
     (i32.and (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
@@ -246,13 +270,21 @@
               (local.set $tgt_sel (global.get $WIN16_THUNK_SEL))
               (local.set $tgt_off (call $win16_thunk_for
                 (call $win16_module_id (call $win16_module_name (local.get $ne_off) (local.get $a)))
-                (local.get $c))))
+                (local.get $c) (i32.const 0))))
             (else
-              ;; IMPORTNAME and OSFIXUP both name something this loader cannot
-              ;; resolve yet. Point them at thunk slot 0 of module 0, which the
-              ;; dispatcher reports by name instead of jumping into nothing.
+              ;; IMPORTNAME (2) names the entry point instead of numbering it,
+              ;; with `c` an offset into the imported-name table. The module is
+              ;; still named the same way, so record both and let the
+              ;; dispatcher report `CARDS.CDTINIT` rather than a bare number.
+              ;; OSFIXUP (3) is a floating-point emulator patch, which is not
+              ;; an import at all; it lands here with module 0 and says so.
               (local.set $tgt_sel (global.get $WIN16_THUNK_SEL))
-              (local.set $tgt_off (call $win16_thunk_for (i32.const 0) (local.get $c)))))))
+              (local.set $tgt_off (call $win16_thunk_for
+                (if (result i32) (i32.eq (local.get $rel_type) (i32.const 2))
+                  (then (call $win16_module_id (call $win16_module_name (local.get $ne_off) (local.get $a))))
+                  (else (i32.const 0)))
+                (local.get $c)
+                (i32.eq (local.get $rel_type) (i32.const 2))))))))
 
       ;; Walk the chain and write every site.
       (block $chain_done (loop $chain
@@ -307,6 +339,8 @@
                 (i32.const 0x454E))
       (then (return (i32.const -2))))
     (local.set $ne_off (i32.add (global.get $PE_STAGING) (local.get $ne_off)))
+    ;; Kept so a thunk can find the imported-name table again at dispatch time.
+    (global.set $win16_ne_off (local.get $ne_off))
 
     (local.set $seg_count (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1C))))
     (if (i32.ge_u (i32.add (local.get $seg_count) (i32.const 2)) (global.get $WIN16_SEG_MAX))
@@ -362,6 +396,9 @@
     (call $win16_seg_set (global.get $win16_thunk_index)
       (i32.add (global.get $WIN16_ARENA) (i32.mul (local.get $seg_count) (i32.const 0x10000)))
       (i32.const 0x10000) (i32.const 0) (i32.const 0))
+    ;; Anything allocated from here on takes the slot after the thunks.
+    (global.set $win16_next_seg (i32.add (global.get $win16_thunk_index) (i32.const 1)))
+    (global.set $win16_psp_sel (i32.const 0))
 
     ;; Pass 2: relocations.
     (local.set $i (i32.const 0))
@@ -403,6 +440,28 @@
 
     (i32.or (i32.shl (global.get $win16_entry_cs) (i32.const 16))
             (global.get $win16_entry_ip)))
+
+  ;; ---- Segment allocation ----
+  ;;
+  ;; Everything a running task creates that needs a selector — the PSP, and
+  ;; later every GlobalAlloc block — takes the next free arena slot. One slot
+  ;; is one selector and one 64KB span, which keeps the "every base is 64KB
+  ;; aligned" invariant the whole 16-bit execution core rests on.
+  (func $win16_alloc_segment (result i32)
+    (local $index i32) (local $base i32)
+    (local.set $index (global.get $win16_next_seg))
+    (if (i32.ge_u (local.get $index) (global.get $WIN16_SEG_MAX))
+      (then
+        (call $host_log_i32 (i32.const 0xCA165E5A))  ;; selector arena exhausted
+        (call $host_log_i32 (local.get $index))
+        (unreachable)))
+    (global.set $win16_next_seg (i32.add (local.get $index) (i32.const 1)))
+    (local.set $base (i32.add (global.get $WIN16_ARENA)
+                              (i32.mul (i32.sub (local.get $index) (i32.const 1)) (i32.const 0x10000))))
+    (call $win16_seg_set (local.get $index) (local.get $base) (i32.const 0x10000)
+      (i32.const 0) (i32.const 0))
+    (call $zero_memory (call $g2w (local.get $base)) (i32.const 0x10000))
+    (local.get $index))
 
   ;; ---- Task startup ----
   ;;

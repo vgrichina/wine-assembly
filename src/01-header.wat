@@ -2114,6 +2114,13 @@
   ;; name the API that stopped the task without decoding the log stream.
   (global $win16_last_module (mut i32) (i32.const 0))
   (global $win16_last_ordinal (mut i32) (i32.const 0))
+  (global $win16_last_is_name (mut i32) (i32.const 0))
+  ;; Next free selector index for $win16_alloc_segment, and the task's PSP.
+  (global $win16_next_seg (mut i32) (i32.const 0))
+  (global $win16_psp_sel (mut i32) (i32.const 0))
+  ;; Linear address of the NE header in the staged file, so a name import can
+  ;; find the imported-name table again long after loading.
+  (global $win16_ne_off (mut i32) (i32.const 0))
   (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
   (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
   (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))

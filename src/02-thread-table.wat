@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 383 funcref)
+  (table $handlers 385 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -439,4 +439,6 @@
     $th_call_near16_m        ;; 380: CALL m16
     $th_jmp_near16_r         ;; 381: JMP r16
     $th_jmp_near16_m         ;; 382: JMP m16
+    $th_enter16              ;; 383: ENTER imm16, 0
+    $th_leave16              ;; 384: LEAVE (16-bit frame)
   )

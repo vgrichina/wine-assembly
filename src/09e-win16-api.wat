@@ -51,6 +51,87 @@
     (i32.or (call $win16_arg16 (local.get $n))
             (i32.shl (call $win16_arg16 (i32.add (local.get $n) (i32.const 1))) (i32.const 16))))
 
+  ;; ---- KERNEL ----
+
+  ;; KERNEL.91 InitTask. The first call every one of these images makes, from
+  ;; `xor bp,bp / push bp / call far KERNEL.INITTASK`. The pushed BP is the
+  ;; null frame that terminates a stack walk, not an argument, so nothing is
+  ;; removed from the stack on the way out.
+  ;;
+  ;; It answers entirely in registers:
+  ;;   AX = 1 for success
+  ;;   CX = stack limit in bytes
+  ;;   DX = nCmdShow
+  ;;   ES:BX = the command line, inside the PSP
+  ;;   SI = previous instance, DI = this instance
+  ;;
+  ;; hInstance is the task's DGROUP selector — in Win16 an instance handle is
+  ;; a real selector, not a cookie, and startup code stores this one and later
+  ;; hands it back to RegisterClass and CreateWindow.
+  (func $win16_InitTask
+    (local $psp i32) (local $base i32)
+    (if (i32.eqz (global.get $win16_psp_sel))
+      (then
+        (local.set $psp (call $win16_alloc_segment))
+        (global.set $win16_psp_sel (call $win16_index_to_sel (local.get $psp)))
+        (local.set $base (call $win16_seg_base (local.get $psp)))
+        ;; DOS command-line block: a length byte at 0x80, the text at 0x81, and
+        ;; a carriage return closing it. An empty command line is still a
+        ;; well-formed one, and the startup code does parse this.
+        (call $gs8 (i32.add (local.get $base) (i32.const 0x80)) (i32.const 0))
+        (call $gs8 (i32.add (local.get $base) (i32.const 0x81)) (i32.const 0x0D))))
+
+    (global.set $eax (i32.const 1))
+    (global.set $ecx (global.get $win16_stack_size))
+    (global.set $edx (i32.const 1))   ;; SW_SHOWNORMAL
+    (global.set $ebx (i32.const 0x81))
+    (global.set $esi (i32.const 0))   ;; no previous instance
+    (global.set $edi (global.get $sreg_ds))
+    (call $win16_set_sreg (i32.const 0) (global.get $win16_psp_sel))
+    (call $win16_api_return (i32.const 0)))
+
+  ;; KERNEL.3 GetVersion. AL:AH is the Windows version and DX the DOS one.
+  ;; Reporting 3.10 rather than what Windows 98 reports is deliberate: these
+  ;; are Windows 3.x images, and 3.10 is the version they were built against
+  ;; and test for. Raising it is a change to make when an app asks for it.
+  (func $win16_GetVersion
+    (global.set $eax (i32.const 0x0A03))  ;; AL=3 major, AH=10 minor
+    (global.set $edx (i32.const 0x070A))  ;; DH=7 major, DL=10 minor
+    (call $win16_api_return (i32.const 0)))
+
+  ;; KERNEL.30 WaitEvent(HTASK). Yields until the task has a message. With one
+  ;; task and a message queue that is always ready to be asked, there is
+  ;; nothing to wait for and returning immediately is the honest answer.
+  (func $win16_WaitEvent
+    (global.set $eax (i32.const 0))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; Returns 1 if the ordinal was handled. Splitting per module keeps each
+  ;; dispatcher a flat run of ordinals in numeric order.
+  (func $win16_kernel (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 3))
+      (then (call $win16_GetVersion) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 30))
+      (then (call $win16_WaitEvent) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 91))
+      (then (call $win16_InitTask) (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; ---- USER ----
+
+  ;; USER.5 InitApp(hInstance). Creates the task's message queue. Ours is
+  ;; implicit — GetMessage answers from emulator state rather than from a
+  ;; queue the app allocated — so there is nothing to build, and success is
+  ;; the truthful answer rather than a placeholder.
+  (func $win16_InitApp
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 2)))
+
+  (func $win16_user (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 5))
+      (then (call $win16_InitApp) (return (i32.const 1))))
+    (i32.const 0))
+
   ;; The dispatcher. $thunk_off is the offset within WIN16_THUNK_SEL that the
   ;; loader wrote into the fixup; $ret_lin is the linear return address, which
   ;; is already on the stack and is passed only so a trap can name it.
@@ -60,10 +141,30 @@
     (local.set $ordinal (call $win16_thunk_ordinal (local.get $thunk_off)))
     (global.set $win16_last_module (local.get $module))
     (global.set $win16_last_ordinal (local.get $ordinal))
+    (global.set $win16_last_is_name (call $win16_thunk_is_name (local.get $thunk_off)))
 
-    ;; No implementations yet: every ordinal reports itself and stops. The
-    ;; three logs are the marker, the packed module/ordinal, and where the
-    ;; call came from, which is everything needed to pick the next API.
+    ;; A name import has no ordinal to dispatch on. Resolving one means loading
+    ;; the exporting module and reading its export table — CARDS.DLL is right
+    ;; there in the test binaries and FREECELL wants three entry points from
+    ;; it — but that is NE DLL loading, which does not exist yet. Report the
+    ;; name so the trap says CARDS.CDTINIT rather than a number.
+    (if (call $win16_thunk_is_name (local.get $thunk_off))
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9F2))
+        (call $host_log_i32 (call $win16_api_key (local.get $module) (local.get $ordinal)))
+        (call $host_log_i32 (local.get $ret_lin))
+        (call $host_log_i32 (call $win16_thunk_name_addr (local.get $thunk_off)))
+        (unreachable)))
+
+    (if (i32.eq (local.get $module) (i32.const 1))
+      (then (if (call $win16_kernel (local.get $ordinal)) (then (return)))))
+    (if (i32.eq (local.get $module) (i32.const 2))
+      (then (if (call $win16_user (local.get $ordinal)) (then (return)))))
+
+    ;; Anything not implemented reports itself and stops, on the same reasoning
+    ;; as the 32-bit fail-fast stubs. The three logs are the marker, the packed
+    ;; module/ordinal, and where the call came from — test/run.js turns them
+    ;; into a name, so the next API to write is the one the crash prints.
     (call $host_log_i32 (i32.const 0xCA16A9F1))
     (call $host_log_i32 (call $win16_api_key (local.get $module) (local.get $ordinal)))
     (call $host_log_i32 (local.get $ret_lin))
@@ -71,3 +172,4 @@
 
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))
   (func (export "win16_last_ordinal") (result i32) (global.get $win16_last_ordinal))
+  (func (export "win16_last_is_name") (result i32) (global.get $win16_last_is_name))

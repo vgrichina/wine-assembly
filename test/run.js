@@ -1161,6 +1161,14 @@ async function main() {
     }
   }
   const { readStr } = base;
+  // NE name tables store Pascal strings, and the address the Win16 dispatcher
+  // reports is a linear one into the staged file rather than a guest address.
+  const readPascalStr = addr => {
+    const b = new Uint8Array(memory.buffer);
+    const len = b[addr];
+    if (!len || len > 64) return `<bad name at ${hex(addr)}>`;
+    return Buffer.from(b.subarray(addr + 1, addr + 1 + len)).toString('latin1');
+  };
   const h = base.host;
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
@@ -1525,13 +1533,20 @@ async function main() {
     // module<<16|ordinal and the linear return address. Every Win16 import is
     // by ordinal, so "module 1 ordinal 91" is unreadable without the map the
     // real modules' export tables provide — say KERNEL.91 INITTASK instead.
-    if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = []; return; }
+    // 0xCA16A9F1 is an ordinal import and carries two words; 0xCA16A9F2 is a
+    // name import and carries a third, the address of the Pascal-string name.
+    if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
+    if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
     if (pendingWin16) {
-      pendingWin16.push(val >>> 0);
-      if (pendingWin16.length < 2) return;
-      const [key, ret] = pendingWin16;
+      pendingWin16.words.push(val >>> 0);
+      if (pendingWin16.words.length < pendingWin16.want) return;
+      const [key, ret, nameAddr] = pendingWin16.words;
       pendingWin16 = null;
-      logs.push(`[win16] ${win16ApiName(key >>> 16, key & 0xFFFF)}  ret=${hex(ret)}`);
+      const mod = WIN16_MODULES[key >>> 16] || `<module ${key >>> 16}>`;
+      const what = nameAddr === undefined
+        ? win16ApiName(key >>> 16, key & 0xFFFF)
+        : `${mod}.${readPascalStr(nameAddr)} (by name)`;
+      logs.push(`[win16] ${what}  ret=${hex(ret)}`);
       return;
     }
     if (ESP_DELTA && lastApiName) {

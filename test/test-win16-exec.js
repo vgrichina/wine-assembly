@@ -4,16 +4,17 @@
 //   node test/test-win16-exec.js
 //
 // test-ne-loader.js proves the image is loaded and linked. This proves the
-// next thing: that the decoder runs the segmented instruction stream, that
-// the startup register state is the one a Win16 task is entitled to, and that
-// the first far call into the import thunk segment is recognised as an API
-// call and named correctly.
+// next thing: that the decoder runs the segmented instruction stream, that the
+// startup register state is the one a Win16 task is entitled to, and that far
+// calls into the import thunk segment are recognised as API calls.
 //
-// Every one of these four images opens the same way — `xor bp,bp / push bp /
-// call far KERNEL.INITTASK` — so reaching KERNEL ordinal 91 with the right
-// return address on the stack is a precise statement about several separate
-// pieces working: 16-bit operand defaults, the segmented stack, far-call
-// encoding, and the thunk table the loader built.
+// The task is expected to stop, because the API layer is incomplete. What is
+// asserted about where it stops is deliberately not a fixed ordinal — that
+// moves every time an API lands — but that it stopped at an entry point the
+// real module exports *under a name*, checked against the map generated from
+// those modules. That invariant holds however far the task gets, and it fails
+// loudly if a bad stack adjustment ever flings the task into a thunk slot at
+// random, which is the failure mode worth catching here.
 
 const fs = require('fs');
 const path = require('path');
@@ -23,9 +24,13 @@ const ROOT = path.join(__dirname, '..');
 const WASM = path.join(ROOT, 'build', 'wine-assembly.wasm');
 const BIN = path.join(ROOT, 'test', 'binaries', 'win98-16bit');
 
-const KERNEL = 1;
-const INITTASK = 91;
 const SREG_ES = 0, SREG_CS = 1, SREG_SS = 2, SREG_DS = 3;
+// Module ids as assigned by $win16_module_id in src/08c-ne-loader.wat.
+const MODULE_NAMES = [
+  null, 'KERNEL', 'USER', 'GDI', 'KEYBOARD',
+  'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS',
+];
+const ORDINALS = require(path.join(ROOT, 'src', 'win16-ordinals.generated.json'));
 
 let pass = 0, fail = 0;
 function check(name, got, want) {
@@ -94,9 +99,12 @@ function runOne(inst, memory, logged, name) {
   checkThat('SP starts inside the stack segment',
     esp0 > ssBase && esp0 <= ssBase + 0xfffe, `esp=${fmt(esp0)} ss base=${fmt(ssBase)}`);
 
+  const dsSel = inst.exports.win16_sreg(SREG_DS);
+
   // ---- execute ----
-  // The task runs until it calls an API, which currently traps. The trap is
-  // the assertion: it says the decoder got that far, and names the callee.
+  // The task runs until it reaches an API that is not implemented yet, which
+  // traps. That trap is the assertion: it says the decoder carried the task
+  // through everything before it, and it names the callee.
   let trapped = false;
   try {
     inst.exports.run(64);
@@ -105,38 +113,62 @@ function runOne(inst, memory, logged, name) {
     if (!trapped) throw e;
   }
   checkThat('stopped at an unimplemented API rather than running on', trapped);
-  check('first API call is KERNEL', inst.exports.win16_last_module(), KERNEL);
-  check('first API call is ordinal 91 (InitTask)', inst.exports.win16_last_ordinal(), INITTASK);
+
+  // InitTask ran: it is the only thing that builds a PSP and points ES at it.
+  const esSel = inst.exports.win16_sreg(SREG_ES);
+  checkThat('InitTask gave the task a PSP', esSel !== 0 && esSel !== dsSel,
+    `es=${fmt(esSel)} ds=${fmt(dsSel)}`);
+  checkThat('execution left the entry point', (inst.exports.get_eip() >>> 0) !== (csBase + entryIP),
+    `eip=${fmt(inst.exports.get_eip())}`);
+
+  // Whatever it stopped at, it must be a real exported entry point of a real
+  // module. This is the invariant worth pinning: it stays true as ordinals get
+  // implemented and the stopping point moves, and it fails loudly if a wrong
+  // stack adjustment ever sends the task into a thunk slot at random.
+  const mod = inst.exports.win16_last_module();
+  const ord = inst.exports.win16_last_ordinal();
+  const byName = inst.exports.win16_last_is_name();
+  const modName = MODULE_NAMES[mod];
+  checkThat('stopped in a module the loader identified', !!modName, `module id ${mod}`);
+  if (byName) {
+    // A name import carries an offset into the imported-name table instead of
+    // an ordinal, so there is nothing to look up in the ordinal map. What must
+    // hold is that the module was still identified — before the name flag
+    // existed these all collapsed to module 0.
+    console.log(`  stopped at ${modName}.<name+${ord}> (imported by name)`);
+  } else {
+    const apiName = modName && ORDINALS.modules[modName]
+      && ORDINALS.modules[modName].ordinals[String(ord)];
+    checkThat('stopped at an ordinal the real module exports by name', !!apiName,
+      `${modName || mod}.${ord} is not a named export`);
+    console.log(`  stopped at ${modName}.${ord} ${apiName || ''}`);
+  }
 
   // The dispatcher logs marker, packed module/ordinal, return address.
-  const marker = logged.indexOf(0xca16a9f1);
+  const marker = logged.indexOf(byName ? 0xca16a9f2 : 0xca16a9f1);
   checkThat('dispatch logged its marker', marker >= 0, `logged=${logged.map(fmt).join(' ')}`);
   if (marker >= 0) {
-    check('logged key is KERNEL:91', logged[marker + 1], (KERNEL << 16) | INITTASK);
+    check('logged key matches the reported module/ordinal', logged[marker + 1], (mod << 16) | ord);
     const ret = logged[marker + 2] >>> 0;
-    checkThat('return address is in the entry code segment',
-      (ret & 0xffff0000) === csBase, `ret=${fmt(ret)} cs base=${fmt(csBase)}`);
-    // `xor bp,bp / push bp / call far` is 2 + 1 + 5 bytes, so the return
-    // address is 8 past the entry point. Anything else means the decoder
-    // consumed the wrong number of bytes somewhere in those three
-    // instructions — the exact failure a 32-bit default would produce.
-    check('return address is 8 bytes past the entry point', ret, (csBase + entryIP + 8) >>> 0);
-
-    // The far call must have pushed CS:IP under the caller's own `push bp`.
+    // The far call must have pushed CS:IP, so the saved IP is on top of stack.
     const esp = inst.exports.get_esp() >>> 0;
     const view = new DataView(memory.buffer);
-    const guestBase = inst.exports.get_guest_base ? inst.exports.get_guest_base() : null;
-    if (guestBase !== null) {
-      check('saved IP on the stack', view.getUint16(guestBase + esp, true), ret & 0xffff);
-      check('saved CS on the stack', view.getUint16(guestBase + esp + 2, true),
-        inst.exports.win16_entry_cs());
-    }
+    const guestBase = inst.exports.get_guest_base();
+    check('saved IP on the stack', view.getUint16(guestBase + esp, true), ret & 0xffff);
+    checkThat('saved CS on the stack names a loaded segment',
+      inst.exports.win16_seg_base(view.getUint16(guestBase + esp + 2, true) >> 3) !== 0,
+      `cs=${fmt(view.getUint16(guestBase + esp + 2, true))}`);
   }
 }
 
 (async () => {
-  const { inst, memory, logged } = await instantiate();
+  // One instance per image, deliberately. The block cache is keyed by linear
+  // address and loading a second NE does not invalidate it, so a shared
+  // instance runs the *previous* app's decoded blocks at the same addresses —
+  // which is exactly what happened here, and it made FREECELL stop somewhere
+  // WINMINE's code had gone.
   for (const name of ['WINMINE.EXE', 'FREECELL.EXE', 'MSHEARTS.EXE', 'SOL.EXE']) {
+    const { inst, memory, logged } = await instantiate();
     runOne(inst, memory, logged, name);
   }
   console.log(`\n${pass} passed, ${fail} failed`);

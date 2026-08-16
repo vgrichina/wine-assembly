@@ -274,3 +274,28 @@
   (func (export "win16_sreg") (param $id i32) (result i32) (call $seg16_value (local.get $id)))
   (func (export "win16_seg_base_of") (param $id i32) (result i32) (call $seg16_base (local.get $id)))
   (func (export "is_code16") (result i32) (global.get $code16))
+
+  ;; ---- Frame setup ----
+  ;;
+  ;; ENTER and LEAVE are 286 instructions and the standard prologue and
+  ;; epilogue of 16-bit compiled code, so a Win16 task reaches them almost
+  ;; immediately. The 32-bit forms are still undecoded and still trap; adding
+  ;; them is a separate change with its own blast radius.
+
+  ;; 383: ENTER imm16, 0 — push BP, BP = SP, SP -= imm16. The nesting level is
+  ;; checked at decode time, so this only ever sees level 0.
+  (func $th_enter16 (param $op i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
+    (call $gs16 (global.get $esp) (i32.and (global.get $ebp) (i32.const 0xFFFF)))
+    (call $set_reg16 (i32.const 5) (i32.and (global.get $esp) (i32.const 0xFFFF)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF))))
+    (return_call $next))
+
+  ;; 384: LEAVE — SP = BP, then pop BP. SP comes back through the SS base
+  ;; because BP holds an offset, not a linear address.
+  (func $th_leave16 (param $op i32)
+    (global.set $esp (i32.add (global.get $seg_base_ss)
+                              (i32.and (global.get $ebp) (i32.const 0xFFFF))))
+    (call $set_reg16 (i32.const 5) (call $gl16 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
+    (return_call $next))
