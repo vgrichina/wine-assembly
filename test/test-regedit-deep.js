@@ -130,7 +130,9 @@ async function countStatusInk(file) {
     [`status bar shown later renders the updated path (${statusShownLateInk} dark px)`,
       statusShownLateInk >= statusHiddenInk + 80],
     ['TreeView double-click expands and selects HKEY_LOCAL_MACHINE',
-      /dump-tree:double-click:[^\n]*visible=9[^\n]*state=0x40000022[^\n]*text="HKEY_LOCAL_MACHINE"[^\n]*text="SOFTWARE"/.test(output)],
+      // 10 visible rows: My Computer, its six hives, and HKLM's three seeded
+      // subkeys. It was 9 until 88c6a72 seeded HKLM\System for Welcome98.
+      /dump-tree:double-click:[^\n]*visible=10[^\n]*state=0x40000022[^\n]*text="HKEY_LOCAL_MACHINE"[^\n]*text="SOFTWARE"/.test(output)],
     ['nested TreeView contains HKCU, Control Panel, Desktop, and Mouse',
       /dump-tree:deep:[^\n]*HKEY_CURRENT_USER[^\n]*Control Panel[^\n]*Desktop[^\n]*Mouse/.test(output)],
     ['Desktop TreeView row is selected', /dump-tree:deep:[^\n]*state=0x22[^\n]*text="Desktop"/.test(output)],
