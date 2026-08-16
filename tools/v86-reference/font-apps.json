@@ -67,7 +67,7 @@
       "probeSource": "tools/v86-reference/probes/font-metrics.c",
       "probeName": "FONTMET.EXE",
       "launch": "D:\\\\FONTMET.EXE",
-      "waitMs": 9000,
+      "waitMs": 30000,
       "files": []
     }
   }

@@ -33,11 +33,27 @@ static const char *const faces[] = {
   "MS Sans Serif", "System", "Fixedsys", "Small Fonts",
 };
 
-/* Requested lfHeight values, negative for character height as GDI defines it.
- * 8 through 20 is where hinting decides pixel widths; the larger sizes are
- * there to catch a scaling error that small sizes round away. */
+/* Requested lfHeight values. Negative asks for character height as GDI defines
+ * it; 8 through 20 is where hinting decides pixel widths, and the larger
+ * negatives catch a scaling error that small sizes round away.
+ *
+ * Positive values ask for total cell height instead, and they are here because
+ * that is the case we cannot answer from the negative ladder. A raster face
+ * owns a fixed set of strikes, so the interesting question is what GDI does
+ * with a request that falls between two of them: return the neighbouring
+ * strike at its native size, or resample it to the number that was asked for.
+ * The negative sweep only ever reported native strike heights, which is
+ * suggestive but not decisive, since a positive request names a cell height
+ * directly and could plausibly be honoured literally.
+ *
+ * The sizes past -32 exist for the other end of the ladder. Once a request
+ * exceeds the largest strike a face ships there is nothing left to select, so
+ * whatever GDI does there is synthesis rather than selection, and single-strike
+ * faces like Fixedsys and System reach it early. */
 static const int heights[] = {
   -8, -9, -10, -11, -12, -13, -14, -16, -18, -20, -24, -32,
+  -40, -48, -64, -80,
+  8, 10, 12, 13, 15, 16, 19, 20, 24, 30, 32, 40,
 };
 
 /* Strings a real Win98 dialog lays out, plus two that exercise the widest and

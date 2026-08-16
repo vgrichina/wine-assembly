@@ -97,7 +97,9 @@ const reference = {
     serialOutputSha256: crypto.createHash('sha256').update(text, 'latin1').digest('hex'),
     note: 'GetTextMetricsA, GetCharWidthA(0x20..0x7E) and GetTextExtentPoint32A '
       + 'read from real Windows 98 GDI through CreateFontA on a screen DC. '
-      + 'Requested heights are negative, i.e. character height.',
+      + 'Negative requested heights are character height, positive ones are '
+      + 'total cell height; both are captured because GDI resolves them to '
+      + 'different ppem even when they land on the same cell.',
   },
   strings,
   faces: faces.map(entry => ({

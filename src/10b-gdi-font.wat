@@ -24,6 +24,19 @@
   (global $GDI_BITMAP_FONT_TERMINAL_STATE i32 (i32.const 0x07F0A5D0))
   (global $GDI_BITMAP_FONT_WESTERN i32 (i32.const 0x07F0A5D4))
 
+  ;; Last-use stamp per strike slot, parallel to the table so the 64-byte
+  ;; record layout stays as the .FON parser writes it. The table holds every
+  ;; installed .FON strike plus every size of every scalable face the guest has
+  ;; asked for, and the second group is unbounded: a font dialog walking its
+  ;; size list, or a document at ten sizes in four faces, will exhaust 48 slots.
+  ;; Without eviction the allocation simply fails, and the caller falls back to
+  ;; MS Sans Serif, so a guest silently starts drawing every subsequent font in
+  ;; the wrong face. Evicting the coldest rasterized strike instead costs only
+  ;; the work to rebuild it if it is wanted again.
+  (global $GDI_BITMAP_FONT_LRU i32 (i32.const 0x07F0A600))
+  (global $GDI_BITMAP_FONT_LRU_SIZE i32 (i32.const 0x000000C0))
+  (global $gdi_bitmap_font_clock (mut i32) (i32.const 0))
+
   ;; Browser and CLI hosts preload this tracked file into the process VFS.
   ;; The state word is shared across worker instances: 0=untried, 1=loading,
   ;; 2=installed, 3=unavailable. The resources preserve Wine's embedded and
@@ -49,6 +62,52 @@
   (func $gdi_bitmap_font_record (param $index i32) (result i32)
     (i32.add (global.get $GDI_BITMAP_FONT_TABLE)
       (i32.mul (local.get $index) (global.get $GDI_BITMAP_FONT_STRIDE))))
+
+  (func $gdi_bitmap_font_stamp (param $record i32) (result i32)
+    (i32.add (global.get $GDI_BITMAP_FONT_LRU)
+      (i32.mul (i32.div_u
+          (i32.sub (local.get $record) (global.get $GDI_BITMAP_FONT_TABLE))
+          (global.get $GDI_BITMAP_FONT_STRIDE))
+        (i32.const 4))))
+
+  ;; Record that this strike was wanted just now. Called on every lookup that
+  ;; hits, not only on creation, so a strike a guest keeps using stays warm.
+  (func $gdi_bitmap_font_touch (param $record i32)
+    (if (i32.eqz (local.get $record)) (then (return)))
+    (global.set $gdi_bitmap_font_clock
+      (i32.add (global.get $gdi_bitmap_font_clock) (i32.const 1)))
+    (i32.store (call $gdi_bitmap_font_stamp (local.get $record))
+      (global.get $gdi_bitmap_font_clock)))
+
+  ;; Free the coldest rasterized strike and return its slot, or 0 if none can
+  ;; go. Only state 2 is evictable: an installed .FON strike was put there by
+  ;; AddFontResource or by the stock-font bootstrap, it is what the guest asked
+  ;; to have installed, and nothing would rebuild it on demand the way
+  ;; $tt_strike_ensure rebuilds a substitute.
+  (func $gdi_bitmap_font_evict (result i32)
+    (local $i i32) (local $record i32) (local $stamp i32)
+    (local $best i32) (local $best_stamp i32)
+    (local.set $best_stamp (i32.const -1))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_BITMAP_FONT_COUNT)))
+      (local.set $record (call $gdi_bitmap_font_record (local.get $i)))
+      (if (i32.eq (i32.load (local.get $record)) (i32.const 2))
+        (then
+          (local.set $stamp (i32.load (call $gdi_bitmap_font_stamp (local.get $record))))
+          (if (i32.le_u (local.get $stamp) (local.get $best_stamp))
+            (then
+              (local.set $best (local.get $record))
+              (local.set $best_stamp (local.get $stamp))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $best)) (then (return (i32.const 0))))
+    ;; Any font object still pointing at this strike has to be told, or it will
+    ;; keep rendering from a slot that now belongs to a different face.
+    (call $gdi_bitmap_font_unbind_record (local.get $best))
+    (call $dib_free_wasm (i32.load offset=8 (local.get $best)))
+    (memory.fill (local.get $best) (i32.const 0) (global.get $GDI_BITMAP_FONT_STRIDE))
+    (i32.store (call $gdi_bitmap_font_stamp (local.get $best)) (i32.const 0))
+    (local.get $best))
 
   (func $gdi_bitmap_font_path_hash (param $path i32) (result i32)
     (local $hash i32) (local $ch i32)
@@ -592,6 +651,8 @@
       (local.set $record (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $slots)))
+    (if (i32.eqz (local.get $record))
+      (then (local.set $record (call $gdi_bitmap_font_evict))))
     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     (local.set $copy_guest (call $dib_alloc (local.get $size)))
     (if (i32.eqz (local.get $copy_guest)) (then (return (i32.const 0))))
@@ -616,6 +677,7 @@
     (i32.store offset=60 (local.get $record) (i32.or
       (i32.load16_u offset=76 (local.get $source))
       (i32.shl (i32.load16_u offset=78 (local.get $source)) (i32.const 16))))
+    (call $gdi_bitmap_font_touch (local.get $record))
     (i32.const 1))
 
   (func $gdi_bitmap_font_parse_file (param $data i32) (param $size i32)

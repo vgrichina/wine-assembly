@@ -126,6 +126,24 @@ new outline rasterization at every height: requests 16 and 18 produce `8x15`,
 80 produces `40x90`. The probe also records `tmInternalLeading`, so requested
 character height can be distinguished from total cell height.
 
+`font-metrics` sweeps both signs of `lfHeight`, and the two answer different
+questions. What the capture establishes about raster faces:
+
+- A raster face is never resampled to the requested size. Every height GDI
+  returns is a strike the `.FON` actually carries — MS Sans Serif answers only
+  13, 16, 20, 24, 29 and 37, with nothing in between — so an off-ladder request
+  gets the neighbouring strike drawn at its native size.
+- Integer multiplication appears only where the ladder runs out. Fixedsys and
+  System each ship a single strike and are doubled past it (15→30, 16→32), and
+  Fixedsys reaches 45 at a request of 40. The 5x-horizontal/6x-vertical 40x90
+  cell above is the same mechanism, not a scaling rule that applies generally.
+
+For scalable faces the sign of the request matters even when the results agree
+on cell height. Courier New at request 20 reports cell 20 with average advance
+10, while the character-height request that lands on that same cell 20 reports
+11: cell height is a step function of ppem, and a positive request resolves to
+the bottom of the run of ppem values sharing that cell rather than the top.
+
 ## Profile exclusions
 
 `apps.json` marks profile-specific exclusions with `skip`. The official Win98

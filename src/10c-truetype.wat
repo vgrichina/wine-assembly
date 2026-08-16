@@ -1798,6 +1798,37 @@
       (i64.extend_i32_s (local.get $cell))))
     (if (i32.lt_s (local.get $ppem) (i32.const 1))
       (then (return (i32.const 1))))
+    ;; A positive lfHeight names a cell height, and cell height is a step
+    ;; function of ppem: several requests share one ppem and some requests are
+    ;; not reachable at all. Rounding the ratio to nearest therefore overshoots
+    ;; about as often as it lands, and one ppem too many is a whole extra pixel
+    ;; on most advances. Windows 98 resolves this by never exceeding what was
+    ;; asked for -- measured against real GDI, requests 12, 15, 16, 20, 24, 30,
+    ;; 32 and 40 all come back exactly, while 13 comes back 12 and 19 comes
+    ;; back 18 -- so walk to the largest ppem whose cell still fits.
+    (block $fitted
+      (loop $shrink
+        (br_if $fitted (i32.le_s (local.get $ppem) (i32.const 1)))
+        (br_if $fitted (i32.le_s
+          (call $tt_tm_height (local.get $data) (local.get $size) (local.get $ppem))
+          (local.get $lf_height)))
+        (local.set $ppem (i32.sub (local.get $ppem) (i32.const 1)))
+        (br $shrink)))
+    ;; Cell height is a step function, so a run of consecutive ppem values all
+    ;; produce the cell that was asked for while their advances keep growing.
+    ;; Windows 98 answers a positive request with the bottom of that run: real
+    ;; GDI returns cell 20 with average advance 10 for request 20, where the
+    ;; character-height request that lands on the same cell 20 reports 11.
+    ;; Taking the top of the run instead is a whole pixel per character.
+    (block $lowest
+      (loop $descend
+        (br_if $lowest (i32.le_s (local.get $ppem) (i32.const 1)))
+        (br_if $lowest (i32.ne
+          (call $tt_tm_height (local.get $data) (local.get $size)
+            (i32.sub (local.get $ppem) (i32.const 1)))
+          (call $tt_tm_height (local.get $data) (local.get $size) (local.get $ppem))))
+        (local.set $ppem (i32.sub (local.get $ppem) (i32.const 1)))
+        (br $descend)))
     (local.get $ppem))
 
   (func $tt_tm_ascent (param $data i32) (param $size i32) (param $ppem i32)
@@ -3236,7 +3267,9 @@
       (local.set $record (call $gdi_bitmap_font_record (local.get $i)))
       (if (i32.and (i32.ne (i32.load (local.get $record)) (i32.const 0))
             (i32.eq (i32.load offset=4 (local.get $record)) (local.get $hash)))
-        (then (return (local.get $record))))
+        (then
+          (call $gdi_bitmap_font_touch (local.get $record))
+          (return (local.get $record))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
