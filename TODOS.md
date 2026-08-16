@@ -120,19 +120,38 @@ the pre-existing 16-bit push/pop handlers needed no changes at all.
   name, which the thunk table now flags.
 - **Next: keep implementing ordinals in `src/09e-win16-api.wat`.** Every
   unimplemented one traps naming itself, so the loop is: run, read the name,
-  implement, repeat. Done so far: KERNEL.3 GetVersion, KERNEL.30 WaitEvent,
-  KERNEL.91 InitTask, USER.5 InitApp. The four apps now stop at USER.15
-  GetCurrentTime (WINMINE), USER.174 LoadIcon (FREECELL), USER.66 GetDC
-  (MSHEARTS) and USER.176 LoadString (SOL).
-  Getting to a window means the DGROUP local heap (LocalInit/LocalAlloc),
-  GlobalAlloc handing out real selectors registered in WIN16_SEG_TABLE via
-  `$win16_alloc_segment` — `$win16_set_sreg` traps on a selector that names no
-  segment, which is where an unregistered block will announce itself —
-  resources (FindResource/LoadResource, which the 32-bit side already walks),
-  and then the USER window calls.
-  **Check each argument count.** The ordinal map gives names, not signatures,
+  implement, repeat. Done: KERNEL.3 GetVersion, KERNEL.30 WaitEvent,
+  KERNEL.91 InitTask, USER.5 InitApp, USER.15 GetCurrentTime,
+  USER.176 LoadString. Where each app stops now:
+
+  | App | Stops at | What it needs |
+  |---|---|---|
+  | WINMINE | `USER.420 _WSPRINTF` | the leading underscore means **cdecl**, so the *caller* cleans — `argbytes` is 0. `src/12-wsprintf.wat` exists; it needs far pointers for the format and varargs |
+  | FREECELL | `USER.174 LoadIcon` | icon resource → a 16-bit HICON |
+  | MSHEARTS | `USER.66 GetDC` | the 16-bit handle space, below |
+  | SOL | `USER.175 LoadBitmap` | bitmap resource → a 16-bit HBITMAP |
+
+  `$win16_find_resource(type, id)` is in place and verified, so resource-backed
+  APIs have their foundation; RT_STRING is 6, RT_BITMAP 2, RT_ICON 3,
+  RT_MENU 4, RT_DIALOG 5, RT_GROUP_ICON 14.
+- **The design decision that gates the window path: Win16 handles are 16 bits.**
+  Our HWNDs, HDCs and GDI objects are 32-bit values like `0x10002`, which do
+  not fit. Two ways out: keep a `u16 <-> u32` mapping table for a Win16 task
+  and translate at the dispatch boundary, or make the existing tables hand out
+  values that fit in 16 bits. The first is far less invasive — the 32-bit side
+  never learns Win16 exists — and it is where `$win16_alloc_segment`'s sibling
+  handle allocator should live. Decide this before writing GetDC.
+- **Check each argument count.** The ordinal map gives names, not signatures,
   and `$win16_api_return` takes the byte count the Pascal callee must remove.
   Get it wrong and the stack drifts silently until a far return goes wild.
+  A scan of the real module for its `RETF imm16` looked like it would settle
+  this mechanically; it does not. Tried and discarded — the first `RETF`-looking
+  byte from an entry point is a byte inside some other instruction often enough
+  to be wrong on 3 of 5 known cases (it claims `GetDC` removes 18 bytes, not 2).
+  Doing it properly needs a 16-bit instruction-length decoder to walk the
+  stream, which does not exist yet and would also be useful for reading app
+  code. Until then: documented signature, then let the run loop validate — a
+  wrong count fails fast and loudly.
 - FREECELL's name imports need **NE DLL loading**: CARDS.DLL is in
   `test/binaries/win98-16bit/` and `test-ne-loader.js` already parses it, but
   nothing loads a second NE image into the arena and resolves names against
