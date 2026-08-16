@@ -822,7 +822,7 @@ const extra = [
   // KERNEL32 — returns a constant "PC" string
   { name: 'GetComputerNameA', nargs: 2 },
   // DPLAYX — all return DPERR_UNAVAILABLE (0x80004005 E_FAIL); apps fall back to single-player.
-  { name: 'DirectPlayCreate', nargs: 4 },
+  { name: 'DirectPlayCreate', nargs: 3 },
   { name: 'DirectPlayEnumerate', nargs: 2 },
   { name: 'DirectPlayEnumerateA', nargs: 2 },
   { name: 'DirectPlayLobbyCreateA', nargs: 5 },

@@ -12022,11 +12022,23 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; DirectPlay stubs — return DPERR_UNAVAILABLE-ish (E_FAIL 0x80004004),
-  ;; callers fall back to single-player. Out of scope per directx.md.
+  ;; DirectPlayCreate(lpGUIDSP, lplpDP, pUnk) — the pre-COM entry point into
+  ;; DirectPlay, which apps reach via LoadLibrary("DPlayX.dll") rather than
+  ;; the import table. Hands back the same object CoCreateInstance(
+  ;; CLSID_DirectPlay) builds: callers immediately QueryInterface it up to
+  ;; IDirectPlay3/4, and our vtable answers to all of them.
   (func $handle_DirectPlayCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (local $obj_guest i32)
+    (local.set $obj_guest (call $dx_create_com_obj (i32.const 26) (global.get $DX_VTBL_DPLAY3)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+        (global.set $eax (i32.const 0x80004005))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $obj_guest))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
   (func $handle_DirectPlayEnumerate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x80004005))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))

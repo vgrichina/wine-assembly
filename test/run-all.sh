@@ -156,6 +156,7 @@ E2E=(
   test/test-local-candidates-playability.js
   test/test-dxball-candidate.js
   test/test-blobby-volley.js
+  test/test-blobby-network.js
   test/test-pyramid-menu.js
   test/test-bricks-drag.js
   test/test-empipe-start.js

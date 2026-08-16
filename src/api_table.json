@@ -10102,7 +10102,7 @@
   {
     "id": 1232,
     "name": "DirectPlayCreate",
-    "nargs": 4,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 3338882626
   },

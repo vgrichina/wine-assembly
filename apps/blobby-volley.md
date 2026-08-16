@@ -135,14 +135,64 @@ exit, no unimplemented API, the VCL two-window startup, the decoded menu art and
 logo, and — after the scripted click — daylight sky + sand shares and both
 blobbies on court.
 
+## Network match (NETZWERKSPIEL)
+
+The whole DirectPlay lobby flow runs. `DPlayX.dll` is `LoadLibraryA`'d at
+startup and `DirectPlayCreate` resolved from it by name, so nothing about this
+path is visible in the import table.
+
+Both branches of the menu reach their end state:
+
+| Click path | Result |
+|---|---|
+| NETZWERKSPIEL → EIN SPIEL HOSTEN… → SPIEL BEGINNEN! | **WARTE AUF EINEN GAST…** — session open, host waiting |
+| NETZWERKSPIEL → ALS GAST SPIELEN… → SPIELE SUCHEN | **GEFUNDENE SPIELE: LOCAL SESSION** — discovery lists a session |
+
+Menu geometry, same 640x480 frame as the main menu:
+
+| Screen | Entries (y) |
+|---|---|
+| MULTIPLAYER-OPTIONEN | host 290 · guest 322 · back 350 |
+| HOST-EINSTELLUNGEN | name 268 · control 305 · **SPIEL BEGINNEN! 348** · back 390 |
+| GAST-EINSTELLUNGEN | Host-IP 268 · control 305 · **SPIELE SUCHEN 350** · back 390 |
+
+The COM sequence, read off `--trace-api` (worker-thread lines decode via the
+`0xC0DE0000|api_id` marker):
+
+- **Host:** `DirectPlayCreate` → `QueryInterface` → `InitializeConnection` →
+  `Open` → `CreatePlayer`
+- **Guest:** `DirectPlayCreate` → `QueryInterface` → `InitializeConnection` →
+  `EnumSessions`
+
+Two emulator fixes were needed, both in `src/09a7-handlers-dispatch.wat`:
+
+1. **`DirectPlayCreate` popped 20 bytes for a 3-argument function.**
+   `api_table.json` carried `nargs: 4`, and the real signature is
+   `(lpGUIDSP, lplpDP, pUnk)`. Every call left the caller's stack 4 bytes
+   short, which is why the app appeared to call it *seven times in a row* and
+   then killed its own game thread (`T1 state=exited`) instead of showing an
+   error. The seven calls were a retry loop plus stack drift, not a service-
+   provider sweep. `nargs` lives in `tools/gen_api_table.js`, which **rewrites
+   `src/api_table.json`** — editing the JSON alone is silently undone by the
+   next generator run, and `tools/check-handler-esp.js` fails the build on the
+   mismatch.
+2. **`DirectPlayCreate` was a stub returning `E_FAIL`.** It now returns the
+   same `DX_VTBL_DPLAY3` object that `CoCreateInstance(CLSID_DirectPlay)`
+   already built, which is what unlocked everything above — `IDirectPlay3` was
+   already implemented, the app just never got handed one.
+
+`EnumSessions` fabricates a single session named "Local Session" and the guest
+screen renders it, so discovery is cosmetic rather than real.
+
 ## Open
 
-- **Network match (`NETZWERKSPIEL`) is untried.** It is the reason this app was
-  picked as the async-I/O demo in `TODOS.md` item 3: it loads `DPlayX.dll` for
-  DirectPlay over TCP/IP. Nothing in the DirectPlay path has been exercised
-  yet, and it is the natural next step — it would pair with the virtual-LAN work
-  in `src/09d-winsock.wat` and `lib/vlan-wire.js` (TODOS item 4), which already
-  joins two emulator processes into one room.
+- **No traffic crosses between two processes yet.** `Open`/`CreatePlayer`
+  succeed locally, `Send` returns `DP_OK` without sending, and `Receive`
+  returns `DPERR_NOMESSAGES` — so a host and a guest cannot actually meet.
+  Making them meet means carrying DirectPlay messages over the virtual LAN in
+  `src/09d-winsock.wat` / `lib/vlan-wire.js` (TODOS item 4), which already
+  joins two emulator processes into one room. The guest screen even offers a
+  **Host-IP** field, which maps straight onto `--vlan-ip`.
 - **Promotion out of `candidates/`.** `index.html` already launches it (option
   `blobby_volley`, with the three `.pak` files mounted) but the comment there
   keeps it "local and debug-only… until Blobby is ready for promotion". On the
