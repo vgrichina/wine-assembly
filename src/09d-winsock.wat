@@ -1667,6 +1667,38 @@
       (call $bswap32 (local.get $arg0))))
     (global.set $eax (global.get $vsock_ntoa_buf)))
 
+  ;; Is this the name of the machine we are running on? Compared without
+  ;; regard to case, as the resolver on a real box does. The name itself is
+  ;; "PC" because that is what GetComputerNameA already answers: winsock and
+  ;; the Win32 computer name are one string on a Win98 box, and an app that
+  ;; asks both must not be told two different things.
+  (func $vsock_is_own_name (param $ga i32) (result i32)
+    (i32.and
+      (i32.eq
+        (i32.or (i32.load16_u (call $g2w (local.get $ga))) (i32.const 0x2020))
+        (i32.const 0x6370))                                ;; "pc"
+      (i32.eqz (i32.load8_u offset=2 (call $g2w (local.get $ga))))))
+
+  ;; gethostname(name, namelen) — the local machine's name.
+  ;;
+  ;; The idiom this exists for is gethostname followed immediately by
+  ;; gethostbyname on the result: that is how an app discovers its own
+  ;; address, and TetriNET's server does it to show the address players
+  ;; should connect to. Answering here is only half the job -- the name has
+  ;; to resolve too, or the app falls back to printing 0.0.0.0.
+  (func $handle_gethostname (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                            (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.lt_s (local.get $arg1) (i32.const 3)))
+      (then
+        (call $vsock_set_error (i32.const 10014))          ;; WSAEFAULT
+        (global.set $eax (i32.const -1))
+        (return)))
+    (i32.store8 offset=0 (call $g2w (local.get $arg0)) (i32.const 0x50))  ;; 'P'
+    (i32.store8 offset=1 (call $g2w (local.get $arg0)) (i32.const 0x43))  ;; 'C'
+    (i32.store8 offset=2 (call $g2w (local.get $arg0)) (i32.const 0))
+    (global.set $eax (i32.const 0)))
+
   ;; gethostbyname(name) — version 1 resolves numeric room addresses only.
   ;; Layout: hostent at +0 (16 bytes), addr-list pointer array at +16,
   ;; the in_addr at +32, and the name copy at +40.
@@ -1675,6 +1707,13 @@
     (local $ip i32) (local $base i32) (local $i i32) (local $ch i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
     (local.set $ip (call $vsock_parse_ipv4 (local.get $arg0)))
+    ;; Our own name resolves to our room address. Without this the
+    ;; gethostname/gethostbyname pair an app uses to find its own address
+    ;; fails, and the app reports 0.0.0.0 rather than the address anyone
+    ;; could actually reach it on.
+    (if (i32.and (i32.lt_s (local.get $ip) (i32.const 0))
+                 (call $vsock_is_own_name (local.get $arg0)))
+      (then (local.set $ip (global.get $vsock_local_ip))))
     (if (i32.lt_s (local.get $ip) (i32.const 0))
       (then
         (call $vsock_set_error (i32.const 11001))          ;; WSAHOST_NOT_FOUND
