@@ -170,21 +170,34 @@ const REPO = path.join(__dirname, '..');
   assert.ok(Math.abs(drawn - expected) <= 4,
     `drawn run is ${drawn}px but the face measures ${expected}px`);
 
-  // ---- an unsubstituted face still falls back ---------------------------
+  // ---- no face falls through to Canvas ----------------------------------
   //
-  // Canvas is not gone; it is the fallback for faces with no substitute.
-  // Losing that would turn a missing font into missing text.
+  // Canvas used to be the fallback for faces with no substitute. It is not a
+  // fallback any more: a face nothing has a look-alike for still names a file
+  // of its own, and a face nobody has ever heard of resolves to the default,
+  // so every face a guest can select reaches a strike. That is the property
+  // that makes the renderer host-independent — text drawn by the host's own
+  // font is text that differs between the browser and this process.
 
   const other = createTextDc();
   const verdana = createFont(-16, 400, 0, 'Verdana');
   wat.test_call_SelectObject(other.hdc, verdana);
-  assert.strictEqual(wat.test_gdi_bitmap_font_selected(other.hdc) >>> 0, 0,
-    'an unsubstituted face must not resolve to a strike');
+  assert.notStrictEqual(wat.test_gdi_bitmap_font_selected(other.hdc) >>> 0, 0,
+    'a face with no look-alike still resolves to a strike');
+
+  const invented = createTextDc();
+  wat.test_call_SelectObject(invented.hdc,
+    createFont(-16, 400, 0, 'Nonesuch Gothic'));
+  assert.notStrictEqual(wat.test_gdi_bitmap_font_selected(invented.hdc) >>> 0, 0,
+    'a face nobody has heard of resolves to the default strike');
 
   const beforeFallback = canvas.mask;
   wat.test_call_TextOutA(other.hdc, 4, 4, allocStr('Verdana'), 7);
-  assert.ok(canvas.mask > beforeFallback,
-    'a face with no substitute must still reach the Canvas fallback');
+  wat.test_call_TextOutA(invented.hdc, 4, 4, allocStr('Nonesuch'), 8);
+  assert.strictEqual(canvas.mask, beforeFallback,
+    'nothing may reach the Canvas text fallback any more');
+  assert.ok(inkCount(other.hdc) > 40, 'the substituted face must still draw');
+  assert.ok(inkCount(invented.hdc) > 40, 'the default face must still draw');
 
   // ---- bold and size are honoured ---------------------------------------
 
@@ -246,8 +259,8 @@ const REPO = path.join(__dirname, '..');
 
   console.log(
     `PASS  scalable text: Arial draws ${ink} pixels of "${text}" in WAT across ` +
-    `${drawn}px (face measures ${expected}px) with ${canvas.mask - beforeFallback - 1} ` +
-    `extra Canvas mask calls, and an unsubstituted face still falls back`);
+    `${drawn}px (face measures ${expected}px), and every face reaches a ` +
+    `strike with ${canvas.mask} Canvas mask calls in the whole run`);
   process.exit(0);
 })().catch(err => {
   console.error(err);

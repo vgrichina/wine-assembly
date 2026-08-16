@@ -29,12 +29,12 @@ glyphs came from an outline. That the glyph cache already stored bitmaps in
 the FNT column-major bit layout is what made this a copy rather than a
 conversion.
 
-`$gdi_bitmap_font_selected` resolves a substituted face to that strike;
-Canvas remains the fallback only for faces with no substitute. Strike records
-carry a third state: 1 is an installed bitmap font, 2 is a rasterized
-substitute, and face-and-nearest-height matching and font enumeration skip
-state 2 so a substitute is reachable only through its exact
-`(face, size, weight, italic)` key.
+`$gdi_bitmap_font_selected` resolves *any* face to a strike, so Canvas is not
+a fallback for text at all any more. Strike records carry a second state: 1 is
+an installed bitmap font, 2 is a rasterized substitute, and
+face-and-nearest-height matching and font enumeration skip state 2 so a
+substitute is reachable only through its exact `(face, size, weight, italic)`
+key.
 
 Face names resolve to the filenames a real `C:\WINDOWS\FONTS` held —
 `ARIAL.TTF`, `TAHOMABD.TTF` — from a table in `src/10c-truetype.wat`. Which
@@ -105,9 +105,12 @@ canonical GDI surface for `System`, `MS Sans Serif`, `Fixedsys`, `Courier`, and
 This document covers the faces that path does **not** cover: the scalable
 TrueType faces a Win98 application names explicitly through
 `CreateFontIndirectA`/`W`, `EnumFontFamiliesEx`, or a resource-script dialog
-font. Those with a vendored substitute are now rasterized in WAT; those without
-one still fall through to `_buildCssFont` in `lib/host-imports.js`, which emits
-a CSS family list naming the *host's* fonts:
+font. Every one of them is now rasterized in WAT, including the faces with no
+vendored look-alike and the faces no table has ever heard of.
+
+What they used to do instead was fall through to `_buildCssFont` in
+`lib/host-imports.js`, which emitted a CSS family list naming the *host's*
+fonts:
 
 ```js
 'arial': 'Arial, sans-serif', 'times new roman': '"Times New Roman", serif',
@@ -115,13 +118,13 @@ a CSS family list naming the *host's* fonts:
 ```
 
 That is non-deterministic by construction, and it is why the substituted faces
-were moved off it first. On a machine with Microsoft's fonts installed the
-metrics are right by accident; on a bare Linux CI box or a
-locked-down browser the fallback is whatever the platform picks, and
-`GetTextExtentPoint32A` returns widths the guest never saw on Win98. Dialog
-layout, `DrawText` wrapping, caret placement, and RichEdit line breaking all
-consume those widths, so the failure surfaces as mis-laid-out UI long before
-anyone notices the glyph shapes differ.
+were moved off it first and why the rest followed. On a machine with
+Microsoft's fonts installed the metrics were right by accident; on a bare Linux
+CI box or a locked-down browser the fallback was whatever the platform picked,
+and `GetTextExtentPoint32A` returned widths the guest never saw on Win98.
+Dialog layout, `DrawText` wrapping, caret placement, and RichEdit line breaking
+all consume those widths, so the failure surfaced as mis-laid-out UI long
+before anyone noticed the glyph shapes differed.
 
 ## Native Windows 98 inventory
 
@@ -570,19 +573,37 @@ shrinks monotonically.
    and uses private family names, so whatever text still reaches Canvas stops
    depending on host fonts. **Dropped**, which is what it was always for: it
    was insurance against milestone 4 taking a long time, and milestone 4 has
-   landed. The text still reaching Canvas is exactly the set of faces with no
-   substitute, and giving those private family names would not make them
-   deterministic — nothing is mounted to be private about.
+   landed. There is no text left reaching Canvas to make deterministic.
 
 4. **WAT rasterizer** — `glyf` parse, transform, flatten, scan-convert, cache
    (done). A substituted face is rasterized into an FNT 3.00 image and
    installed as an ordinary strike, so it renders through the existing bitmap
    text path; `test/test-wat-gdi-scalable-text.js` gates that `gdi_text_mask`
-   is not called for a face WAT can rasterize. Still to do: delete
-   `gdi_text_mask` and both hosts' font registration once the corpus renders
-   without it — the fallback is still load-bearing for unsubstituted faces
-   such as Verdana, so deleting it now would lose text rather than lose
-   Canvas.
+   is not called at all.
+
+   **Every face now resolves to a file we ship**, which is what made the
+   fallback stop being load-bearing. A Win98 face with no vendored look-alike
+   — Verdana, Lucida Console, Comic Sans MS, Impact, Lucida Sans Unicode,
+   Microsoft Sans Serif — has an entry of its own mapping it to its real
+   `C:\WINDOWS\FONTS` filename, mounted from the closest vendored family, so
+   a user who owns the Microsoft font can drop it in at that path and have it
+   answer instead. Those entries live in a second table that resolution reads
+   and enumeration does not: we do not have those fonts, a Win98 machine
+   without them installed did not list them, and advertising them changes
+   which face an application picks. TetriNET makes that concrete — its Delphi
+   runtime enumerates fonts at startup and crashes mid-paint, thousands of
+   batches later, when the list grows by even one entry. A face no table has heard of falls through to the default
+   face rather than to nothing, the way GDI's font mapper always answered with
+   its closest match rather than refusing. A LOGFONT that names no face at all
+   is a different question — the guest is asking GDI to choose — and the
+   selection layer answers it with the bundled MS Sans Serif strike, which
+   needs no font file to load and no host font to exist.
+
+   Still to do: delete `gdi_text_mask`, `measure_text`, `get_text_metrics`,
+   `gdi_text_bind`, their WAT call sites, and both hosts' font registration.
+   The corpus already renders without them — notepad, mspaint, calc, wordpad,
+   fontview, TetriNET and CWordZap each call them zero times — so this is now
+   a deletion rather than a migration.
 
 5. **Metric reference** — v86 probe, pinned capture, comparison test. Gates any
    claim of metric correctness; can run against milestone 1 immediately.

@@ -30,6 +30,34 @@ blank cells. `--bitmap-only` still refuses anything else that lacks a strike
 bitmap, because silently rasterizing one outline into a strike is the failure
 this whole path exists to avoid.
 
+## Faces with no vendored look-alike
+
+Win98 shipped six scalable faces we have no open look-alike for: Verdana,
+Comic Sans MS, Impact, Lucida Console, Lucida Sans Unicode and Microsoft Sans
+Serif. Each still has an entry in `substitutions.json` mapping it to the
+filename a real `C:\WINDOWS\FONTS` held, mounted from the closest family we
+already vendor — Liberation Sans for the proportional ones, Liberation Mono
+for Lucida Console. They are Tier 3: the metrics are not Win98's and, for
+Comic Sans MS and Impact, neither are the shapes.
+
+They are not enumerated. `EnumFontFamilies` lists what is installed, and a
+Win98 machine without these fonts did not list them; claiming them would also
+change which face an application picks from a font list. Substituting when a
+guest asks for one by name is honest, advertising them is not — and it is not
+academic either: TetriNET's Delphi runtime enumerates fonts at startup and
+crashed mid-paint when this list grew by a single entry.
+
+They exist as entries rather than as cases of the catch-all so each one names
+a file of its own. A user who owns the Microsoft font can put `VERDANA.TTF`
+into the guest's `C:\WINDOWS\FONTS` and it will answer instead — a real font
+installed at the path GDI would have opened, which is exactly how Windows
+worked. The note on each entry records which open font would be the closer
+substitute to vendor if it ever matters: Comic Relief for Comic Sans MS
+(pending a GPL+FE licence review) and Anton for Impact.
+
+A face name that appears in no table at all resolves to the default face
+rather than to nothing, so a guest can never name a font that draws no text.
+
 The editable `.sfd` sources and Wine-generated TTFs are pinned in `wine/`.
 See `wine/UPSTREAM.md` for their exact Wine commit and checksums. Wine licenses
 these fonts under LGPL-2.1-or-later; the complete text is in
@@ -177,10 +205,11 @@ reproducible source, and are not deployed.
 
 ## Legacy web/CSS substitutes
 
-`W95FA.otf`, `w95fa.woff2`, and `FSEX302.ttf` predate the WAT bitmap path. They
-remain for emulator-shell CSS and the explicit Canvas fallback used by
-unsupported scalable document faces; stock GDI rendering no longer consumes
-their generated FONs.
+`W95FA.otf`, `w95fa.woff2`, and `FSEX302.ttf` predate the WAT bitmap path.
+They remain for emulator-shell CSS — the page around the emulator, not
+anything a guest draws. No guest text reaches Canvas any more: every face a
+guest can name resolves to a font mounted in the VFS, so stock GDI rendering
+consumes neither these nor their generated FONs.
 
 | File | Font | License | Source | SHA-256 |
 |---|---|---|---|---|

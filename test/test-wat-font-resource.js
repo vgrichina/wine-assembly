@@ -152,8 +152,16 @@ const familyNameOf = buffer => {
   assert.strictEqual(wat.test_tt_family_name(wa(allocStr('')), 0, wa(out), 64), 0,
     'a font with no bytes must yield no family name rather than an empty one');
 
+  // One install per vendored font, not per mount. Faces with no look-alike of
+  // their own are mounted from a font another face already uses, so installing
+  // every mount would register those bytes under several filenames — and the
+  // removal test below would then be measuring a duplicate rather than the
+  // style fallback it means to measure.
+  const installed = new Set();
   for (const mount of mounts) {
     const buffer = fileFor.get(mount.vfsPath);
+    if (installed.has(mount.file)) continue;
+    installed.add(mount.file);
     assert.strictEqual(add(mount.vfsPath), 1,
       `AddFontResourceA must install ${mount.file}`);
     assert.ok(registered(familyNameOf(buffer)),
@@ -275,7 +283,8 @@ const familyNameOf = buffer => {
   assert.ok(ink > 40, `registered text must actually land: ${ink} pixels drawn`);
 
   console.log(
-    `PASS  font resources: ${mounts.length} scalable files install by path and ` +
+    `PASS  font resources: ${installed.size} scalable fonts across ` +
+    `${mounts.length} mounts install by path and ` +
     `answer to their own family names ("${family}" draws ${ink} pixels in WAT), ` +
     `bitmap resources still take the bitmap path`);
   process.exit(0);

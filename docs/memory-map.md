@@ -171,10 +171,15 @@ shared install states, and Win9x UI/fixed face names occupy
 validated FNT byte payloads themselves are owned allocations in the DIB arena;
 the static table stores their WAT backing addresses and parsed metrics.
 
-The scalable-face substitution table occupies `0x07F0AC00..0x07F0B3FF`: a flat
+The scalable-face substitution table occupies `0x07F0B400..0x07F0BBFF`: a flat
 blob of NUL-terminated strings, five per record, mapping each Win98 face name
 to the regular/bold/italic/bold-italic file real GDI would have opened. It is
-constant data, so it needs no size counter or state word. Everything else the
+constant data, so it needs no size counter or state word. A second table with
+the same record format sits at `0x07F0BC00..0x07F0BEFF` for the faces Win98
+shipped that we substitute for but deliberately do not advertise, and
+`0x07F0BF00` holds the one face name that a name nobody knows falls back to.
+Between them they let the text path promise that every face resolves to a file
+we ship — and therefore have no host-font path underneath it at all. Everything else the
 TrueType layer owns — resident font files, the face table, the glyph cache, and
 the raster scratch — is heap-allocated and reached through mutable globals,
 because the working set depends entirely on which faces a guest names.

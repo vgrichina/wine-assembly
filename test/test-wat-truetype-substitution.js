@@ -26,6 +26,16 @@ const STYLES = ['regular', 'bold', 'italic', 'boldItalic'];
 // region move fails here instead of silently parsing whatever moved in.
 const TT_SUBST_TABLE = 0x07F0B400;
 const TT_SUBST_TABLE_SIZE = 0x800;
+// Faces we substitute for but deliberately do not advertise live in a second
+// table with the same record format. They resolve like any other face and are
+// invisible to enumeration, which is what a Win98 machine without those fonts
+// installed looked like.
+const TT_SUBST_ALIAS_TABLE = 0x07F0BC00;
+const TT_SUBST_ALIAS_TABLE_SIZE = 0x300;
+const UNADVERTISED = new Set([
+  'Verdana', 'Lucida Console', 'Lucida Sans Unicode',
+  'Comic Sans MS', 'Impact', 'Microsoft Sans Serif',
+]);
 
 const manifest = JSON.parse(fs.readFileSync(
   path.join(REPO, 'fonts', 'substitutions.json'), 'utf8'));
@@ -48,22 +58,35 @@ const manifest = JSON.parse(fs.readFileSync(
   // italic, bold-italic. An empty face name ends the table.
 
   const watTable = new Map();
-  let at = TT_SUBST_TABLE;
-  const end = TT_SUBST_TABLE + TT_SUBST_TABLE_SIZE;
-  while (at < end) {
-    const face = readStr(at);
-    if (!face) break;
-    at += face.length + 1;
-    const files = {};
-    for (const style of STYLES) {
-      const value = readStr(at);
-      at += value.length + 1;
-      if (value) files[style] = value;
+  const readTable = (table, size) => {
+    let at = table;
+    const end = table + size;
+    while (at < end) {
+      const face = readStr(at);
+      if (!face) break;
+      at += face.length + 1;
+      const files = {};
+      for (const style of STYLES) {
+        const value = readStr(at);
+        at += value.length + 1;
+        if (value) files[style] = value;
+      }
+      assert.ok(!watTable.has(face), `WAT lists "${face}" twice`);
+      watTable.set(face, files);
     }
-    assert.ok(!watTable.has(face), `WAT lists "${face}" twice`);
-    watTable.set(face, files);
+    assert.ok(at < end, 'the WAT substitution blob must be NUL-terminated in range');
+    return at;
+  };
+  const at = readTable(TT_SUBST_TABLE, TT_SUBST_TABLE_SIZE);
+  const advertised = new Set(watTable.keys());
+  readTable(TT_SUBST_ALIAS_TABLE, TT_SUBST_ALIAS_TABLE_SIZE);
+  const end = TT_SUBST_TABLE + TT_SUBST_TABLE_SIZE;
+  for (const face of UNADVERTISED) {
+    assert.ok(watTable.has(face), `${face} must resolve`);
+    assert.ok(!advertised.has(face),
+      `${face} must not be in the advertised table: we do not have that font, `
+      + 'and claiming it in EnumFontFamilies changes what applications pick');
   }
-  assert.ok(at < end, 'the WAT substitution blob must be NUL-terminated in range');
   assert.ok(watTable.size > 0, 'the WAT substitution table must not be empty');
 
   // ---- both halves name the same files ----------------------------------
@@ -136,12 +159,31 @@ const manifest = JSON.parse(fs.readFileSync(
   assert.strictEqual(lookup('Tahoma', 700, 1), tahoma.bold,
     'bold italic Tahoma keeps the weight it does have');
 
-  // A face with no substitute must report nothing so the caller keeps doing
-  // whatever it did before, rather than opening some other font.
-  assert.strictEqual(lookup('Verdana'), null, 'an unsubstituted face resolves to nothing');
-  assert.strictEqual(lookup(''), null, 'an empty face name resolves to nothing');
-  assert.strictEqual(lookup('Aria'), null, 'a prefix is not a match');
-  assert.strictEqual(lookup('Arial Black'), null, 'a longer name is not a match');
+  // Every face that was NAMED resolves to a file we ship. Faces Win98 had and
+  // we have no look-alike for get an entry of their own, so a user who owns
+  // the Microsoft font can drop it in at that path and have it answer; faces
+  // nobody has ever heard of fall through to the default. Neither may resolve
+  // to nothing, because "nothing" used to mean Canvas drew the text with
+  // whatever font the host happened to have.
+  assert.strictEqual(lookup('Verdana'), 'C:\\WINDOWS\\FONTS\\VERDANA.TTF',
+    'a face with no look-alike still names a file of its own');
+  assert.strictEqual(lookup('Lucida Console'), 'C:\\WINDOWS\\FONTS\\LUCON.TTF');
+  assert.strictEqual(lookup('Comic Sans MS', 700, 0), 'C:\\WINDOWS\\FONTS\\COMICBD.TTF');
+
+  const arial = expected.get('Arial');
+  assert.strictEqual(lookup('Aria'), arial.regular, 'a prefix is not a match');
+  assert.strictEqual(lookup('Arial Black'), arial.regular,
+    'a longer name is not a match');
+  assert.strictEqual(lookup('Nonesuch Gothic'), arial.regular,
+    'an unheard-of face resolves to the default rather than to nothing');
+  assert.strictEqual(lookup('Nonesuch Gothic', 700, 1), arial.boldItalic,
+    'the default is picked in the requested style');
+
+  // An empty face is a different question: the guest is asking GDI to choose
+  // by pitch and family, and that choice belongs to the selection layer, which
+  // answers with the bundled MS Sans Serif strike. Answering it here would
+  // hand every such font a text face Win98 would never have picked.
+  assert.strictEqual(lookup(''), null, 'an empty face name is not a face');
   assert.strictEqual(wat.test_tt_subst_path(0, 400, 0) >>> 0, 0);
 
   // ---- every named file actually opens ----------------------------------
@@ -203,8 +245,14 @@ const manifest = JSON.parse(fs.readFileSync(
     'italic Arial reports tmItalic');
   assert.strictEqual(wat.test_tt_face_metric(arialRegular, 16, 8), 0);
 
-  // A face with no substitute must not open one anyway.
-  assert.strictEqual(wat.test_tt_face_for_logfont(guestPath('Verdana'), 400, 0), -1);
+  // A face with no look-alike opens the font mounted at its own filename, and
+  // an unheard-of face opens the default. What must never happen is -1, which
+  // is the caller's signal that it has to find some other way to draw the text.
+  assert.notStrictEqual(wat.test_tt_face_for_logfont(guestPath('Verdana'), 400, 0), -1,
+    'Verdana opens the font mounted at VERDANA.TTF');
+  assert.notStrictEqual(
+    wat.test_tt_face_for_logfont(guestPath('Nonesuch Gothic'), 400, 0), -1,
+    'an unheard-of face opens the default');
 
   // ---- synthetic strikes ------------------------------------------------
   //
@@ -337,9 +385,14 @@ const manifest = JSON.parse(fs.readFileSync(
   assert.ok(byCell.height <= strike.height,
     'a 16px cell is no taller than a 16ppem em');
 
-  // Faces with no substitute report nothing, so the caller falls back exactly
-  // as it did before rather than rendering some other font.
-  assert.strictEqual(wat.test_tt_strike_ensure(guestPath('Verdana'), -16, 400, 0), 0);
+  // Any face that was named reaches a strike, including one nothing has ever
+  // heard of. A strike is the only way text gets drawn now, so a face that
+  // reached none would be a face that draws nothing.
+  assert.notStrictEqual(
+    wat.test_tt_strike_ensure(guestPath('Verdana'), -16, 400, 0) >>> 0, 0);
+  assert.notStrictEqual(
+    wat.test_tt_strike_ensure(guestPath('Nonesuch Gothic'), -16, 400, 0) >>> 0, 0);
+  // No name is still no answer here; the selection layer picks the UI face.
   assert.strictEqual(wat.test_tt_strike_ensure(0, -16, 400, 0), 0);
 
   // Symbol faces keep their own encoding: byte 0xF0 is a real Wingdings

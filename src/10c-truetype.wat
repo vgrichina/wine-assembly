@@ -2485,6 +2485,53 @@
       "\00" "\00" "\00"
     "\00")
 
+  ;; Faces Windows 98 shipped that we have no vendored look-alike for. They
+  ;; resolve, so a guest that names one gets drawn text instead of nothing, and
+  ;; each names a file of its own so a user who owns the Microsoft font can
+  ;; drop VERDANA.TTF into the VFS and have it answer instead.
+  ;;
+  ;; They live in their own table because they must NOT be enumerated. We do
+  ;; not have these fonts; substituting when a guest asks for one by name is
+  ;; honest, but listing them in EnumFontFamilies would claim we do — and a
+  ;; Win98 machine without them installed did not list them either. It is also
+  ;; not academic: TetriNET's Delphi runtime enumerates fonts at startup and
+  ;; crashes later, mid-paint, when this list grows by even one entry.
+  (global $TT_SUBST_ALIAS_TABLE i32 (i32.const 0x07F0BC00))
+  (global $TT_SUBST_ALIAS_TABLE_SIZE i32 (i32.const 0x00000300))
+
+  (data (i32.const 0x07F0BC00)
+    "Verdana\00"
+      "C:\\WINDOWS\\FONTS\\VERDANA.TTF\00"
+      "C:\\WINDOWS\\FONTS\\VERDANAB.TTF\00"
+      "C:\\WINDOWS\\FONTS\\VERDANAI.TTF\00"
+      "C:\\WINDOWS\\FONTS\\VERDANAZ.TTF\00"
+    "Lucida Console\00"
+      "C:\\WINDOWS\\FONTS\\LUCON.TTF\00"
+      "\00" "\00" "\00"
+    "Lucida Sans Unicode\00"
+      "C:\\WINDOWS\\FONTS\\L_10646.TTF\00"
+      "\00" "\00" "\00"
+    "Comic Sans MS\00"
+      "C:\\WINDOWS\\FONTS\\COMIC.TTF\00"
+      "C:\\WINDOWS\\FONTS\\COMICBD.TTF\00"
+      "\00" "\00"
+    "Impact\00"
+      "C:\\WINDOWS\\FONTS\\IMPACT.TTF\00"
+      "\00" "\00" "\00"
+    "Microsoft Sans Serif\00"
+      "C:\\WINDOWS\\FONTS\\MICROSS.TTF\00"
+      "\00" "\00" "\00"
+    "\00")
+
+  ;; The face a name nobody knows falls back to. Real GDI answered an unknown
+  ;; face by matching charset, pitch and family against what was installed and
+  ;; picking the closest; it never told the application "no such font" and it
+  ;; never left the text undrawn. One default is a cruder rule than that, but
+  ;; it is the same shape of answer, and it is what lets this layer promise
+  ;; that every face resolves to a file we ship.
+  (global $TT_SUBST_DEFAULT i32 (i32.const 0x07F0BF00))
+  (data (i32.const 0x07F0BF00) "Arial\00")
+
   (func $tt_subst_fold (param $byte i32) (result i32)
     (if (i32.and (i32.ge_u (local.get $byte) (i32.const 65))
           (i32.le_u (local.get $byte) (i32.const 90)))
@@ -2541,19 +2588,14 @@
   ;; caller should keep doing whatever it did before. `$name` is a WASM
   ;; address; face names live in a guest heap allocation, so GDI callers pass
   ;; `(call $g2w ...)`.
-  (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
-        (result i32)
+  (func $tt_subst_table_lookup (param $table i32) (param $size i32)
+        (param $name i32) (param $weight i32)
+        (param $italic i32) (result i32)
     (local $p i32) (local $end i32)
     (local $regular i32) (local $bold i32)
-    (local $slanted i32) (local $bold_slanted i32) (local $registered i32)
-    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
-    ;; A font the guest installed itself outranks the substitute for it.
-    (local.set $registered (call $tt_reg_path (local.get $name)
-      (local.get $weight) (local.get $italic)))
-    (if (local.get $registered) (then (return (local.get $registered))))
-    (local.set $p (global.get $TT_SUBST_TABLE))
-    (local.set $end (i32.add (global.get $TT_SUBST_TABLE)
-      (global.get $TT_SUBST_TABLE_SIZE)))
+    (local $slanted i32) (local $bold_slanted i32)
+    (local.set $p (local.get $table))
+    (local.set $end (i32.add (local.get $table) (local.get $size)))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
       (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
@@ -2572,6 +2614,39 @@
         (call $tt_subst_skip (local.get $bold_slanted) (local.get $end)))
       (br $scan)))
     (i32.const 0))
+
+  (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
+        (result i32)
+    (local $found i32)
+    ;; No name at all is a different question from a name nobody knows. A
+    ;; LOGFONT with an empty face is asking GDI to choose by pitch and family,
+    ;; and the answer Win98 gave was its UI face, not a text face — so that
+    ;; choice belongs to the font-selection layer, which has the stock strikes
+    ;; to choose from. Only a face that was actually named falls through to the
+    ;; default below.
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load8_u (local.get $name))) (then (return (i32.const 0))))
+    ;; A font the guest installed itself outranks the substitute for it.
+    (local.set $found (call $tt_reg_path (local.get $name)
+      (local.get $weight) (local.get $italic)))
+    (if (local.get $found) (then (return (local.get $found))))
+    (local.set $found (call $tt_subst_table_lookup
+      (global.get $TT_SUBST_TABLE) (global.get $TT_SUBST_TABLE_SIZE)
+      (local.get $name) (local.get $weight) (local.get $italic)))
+    (if (local.get $found) (then (return (local.get $found))))
+    ;; Then the faces we substitute for but do not advertise.
+    (local.set $found (call $tt_subst_table_lookup
+      (global.get $TT_SUBST_ALIAS_TABLE) (global.get $TT_SUBST_ALIAS_TABLE_SIZE)
+      (local.get $name) (local.get $weight) (local.get $italic)))
+    (if (local.get $found) (then (return (local.get $found))))
+    ;; Nothing names this face. Answering with the default is what keeps the
+    ;; promise that every face resolves to a file we ship, and that promise is
+    ;; what lets the renderer have no host-font path at all: a face that
+    ;; resolved to nothing used to mean text drawn by Canvas, which is text
+    ;; that looks different on every machine.
+    (call $tt_subst_table_lookup
+      (global.get $TT_SUBST_TABLE) (global.get $TT_SUBST_TABLE_SIZE)
+      (global.get $TT_SUBST_DEFAULT) (local.get $weight) (local.get $italic)))
 
   ;; Name of the nth substitution-table entry that actually has a file, as a
   ;; WASM address, or 0 once the table runs out. Entries with an empty regular

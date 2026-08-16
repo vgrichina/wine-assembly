@@ -54,7 +54,14 @@ const METRICS = [
   let fullBytes = 0;
   let subsetBytes = 0;
 
+  // Several Win98 faces are mounted from the same vendored file — a face with
+  // no look-alike of its own still gets its own filename so a user can install
+  // the real font there. The pair being checked here is the font, not the
+  // mount, so each vendored file is checked once however many faces it serves.
+  const seenSource = new Set();
   for (const mount of fontMounts(manifest)) {
+    if (seenSource.has(mount.file)) continue;
+    seenSource.add(mount.file);
     const subset = subsetPath(mount.file);
     const subsetFile = path.join(REPO, 'fonts', subset);
     assert.ok(fs.existsSync(subsetFile),
@@ -160,7 +167,7 @@ const METRICS = [
   assert.ok(!/fonts\/(liberation|wine)/.test(deployCode),
     'the vendored sources are 6.5 MB nothing fetches at runtime; ship subsets');
 
-  assert.strictEqual(pairs, 18, 'every mounted font must have a subset');
+  assert.strictEqual(pairs, 18, 'every vendored font must have a subset');
   assert.ok(subsetBytes * 4 < fullBytes,
     `subsetting must actually pay: ${subsetBytes} vs ${fullBytes} bytes`);
 

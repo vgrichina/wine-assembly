@@ -883,13 +883,24 @@
         (drop (call $gdi_bitmap_font_ensure_ms_sans))
         (return (call $gdi_bitmap_font_best
           (i32.const 0x07F0A53C) (call $gdi_font_height (local.get $handle))))))
-    ;; No installed strike carries this face. If it is a scalable face with a
-    ;; substitute, rasterize it into a strike and render it through this same
-    ;; path; Canvas stays the fallback only for faces with neither.
-    (call $tt_strike_ensure (call $gdi_font_face (local.get $handle))
+    ;; No installed strike carries this face, so rasterize the substitute for
+    ;; it into a strike and render it through this same path. $tt_subst_path
+    ;; answers for any face that was named, so the only way through here
+    ;; without a strike is a LOGFONT that named no face at all, or a font file
+    ;; that failed to load.
+    (local.set $substitute (call $tt_strike_ensure
+      (call $gdi_font_face (local.get $handle))
       (call $gdi_font_height (local.get $handle))
       (call $gdi_font_weight (local.get $handle))
       (call $gdi_font_italic (local.get $handle))))
+    (if (local.get $substitute) (then (return (local.get $substitute))))
+    ;; An unnamed face is GDI being asked to choose, and Win98 chose its UI
+    ;; face. MS Sans Serif is bundled as a .FON, so this answer needs no font
+    ;; file to load and no host font to exist — which is what makes it safe to
+    ;; have no Canvas path left underneath.
+    (drop (call $gdi_bitmap_font_ensure_ms_sans))
+    (call $gdi_bitmap_font_best
+      (i32.const 0x07F0A53C) (call $gdi_font_height (local.get $handle))))
 
   (func $gdi_bitmap_font_height (param $hdc i32) (param $strike i32) (result i32)
     (local $dc i32) (local $handle i32) (local $object i32)

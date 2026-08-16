@@ -99,8 +99,25 @@
         "bold": "tahomabd.ttf"
       },
       "embeddedStrikes": {
-        "regular": [8, 9, 10, 11, 12, 13, 15, 16],
-        "bold": [9, 10, 11, 12, 13, 15, 16]
+        "regular": [
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          15,
+          16
+        ],
+        "bold": [
+          9,
+          10,
+          11,
+          12,
+          13,
+          15,
+          16
+        ]
       },
       "generatedFon": {
         "regular": "Tahoma.fon",
@@ -119,7 +136,9 @@
         "regular": "wine/small_fonts.ttf"
       },
       "embeddedStrikes": {
-        "regular": [11]
+        "regular": [
+          11
+        ]
       },
       "generatedFon": {
         "regular": "SmallFonts.fon"
@@ -183,19 +202,115 @@
         "regular": "webdings.ttf"
       },
       "note": "10 glyphs only. Severely partial; listed so a guest asking for the face gets a deterministic answer rather than a host font."
+    },
+    {
+      "win98": "Verdana",
+      "tier": 3,
+      "substitute": "Liberation Sans",
+      "cssFamily": "WA Verdana",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSans-Regular.ttf",
+        "bold": "liberation/LiberationSans-Bold.ttf",
+        "italic": "liberation/LiberationSans-Italic.ttf",
+        "boldItalic": "liberation/LiberationSans-BoldItalic.ttf"
+      },
+      "win98Files": {
+        "regular": "verdana.ttf",
+        "bold": "verdanab.ttf",
+        "italic": "verdanai.ttf",
+        "boldItalic": "verdanaz.ttf"
+      },
+      "note": "Named by Rodent2000. Verdana is wider than Arial at the same size, so this is a shape and metric approximation, not a substitution in the Tier 1 sense. Mounted at Verdana's own filenames so a user who owns the font can drop it in and have it win."
+    },
+    {
+      "win98": "Lucida Console",
+      "tier": 3,
+      "substitute": "Liberation Mono",
+      "cssFamily": "WA Lucida Console",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationMono-Regular.ttf"
+      },
+      "win98Files": {
+        "regular": "lucon.ttf"
+      },
+      "note": "Named by VirtualDub. Monospaced stands in for monospaced, which preserves the property the face was chosen for."
+    },
+    {
+      "win98": "Lucida Sans Unicode",
+      "tier": 3,
+      "substitute": "Liberation Sans",
+      "cssFamily": "WA Lucida Sans Unicode",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSans-Regular.ttf"
+      },
+      "win98Files": {
+        "regular": "l_10646.ttf"
+      },
+      "note": "No corpus binary names it yet. Listed because the catch-all would answer for it anyway, and an entry says which font answers instead of leaving it to a rule."
+    },
+    {
+      "win98": "Comic Sans MS",
+      "tier": 3,
+      "substitute": "Liberation Sans",
+      "cssFamily": "WA Comic Sans MS",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSans-Regular.ttf",
+        "bold": "liberation/LiberationSans-Bold.ttf"
+      },
+      "win98Files": {
+        "regular": "comic.ttf",
+        "bold": "comicbd.ttf"
+      },
+      "note": "Named by MARBLES, CWordZap, Rodent2000 and two DX SDK samples. The visual mismatch is the worst of any entry here - a casual script replaced by a grotesque - and Comic Relief is the metric-compatible answer once its GPL+FE licence has been reviewed. Deterministic beats close: a host Comic Sans that exists on one machine and not another is the failure this whole path removes."
+    },
+    {
+      "win98": "Impact",
+      "tier": 3,
+      "substitute": "Liberation Sans Bold",
+      "cssFamily": "WA Impact",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSans-Bold.ttf"
+      },
+      "win98Files": {
+        "regular": "impact.ttf"
+      },
+      "note": "Named by VirtualDub, Empires II, MCM and a Winamp visualiser. Impact is a condensed heavy display face; the bold weight is the closest of what is already vendored, and Anton is the visual match to vendor if it ever matters."
+    },
+    {
+      "win98": "Microsoft Sans Serif",
+      "tier": 3,
+      "substitute": "Liberation Sans",
+      "cssFamily": "WA Microsoft Sans Serif",
+      "license": "SIL OFL 1.1",
+      "charset": "ANSI",
+      "styles": {
+        "regular": "liberation/LiberationSans-Regular.ttf"
+      },
+      "win98Files": {
+        "regular": "micross.ttf"
+      },
+      "note": "The outline form of MS Sans Serif, named by usp10.dll. At UI sizes the bitmap strikes in MSSansSerif.fon answer first and this never runs; it covers the sizes above them."
     }
   ],
   "unsubstituted": {
     "comment": [
-      "Win98 faces with no vendored substitute. Each is added only when a",
-      "corpus binary actually names it: an unused font in fonts/ is a licence",
-      "and payload liability, not a feature."
-    ],
-    "Verdana": "DejaVu Sans is the closest open option, with different metrics",
-    "Lucida Console": "DejaVu Sans Mono, different metrics",
-    "Lucida Sans Unicode": "DejaVu Sans, different metrics",
-    "Comic Sans MS": "Comic Relief is metric-compatible but GPL+FE; needs a licence review before vendoring",
-    "Impact": "Anton is a visual approximation only",
-    "Microsoft Sans Serif": "the outline form of MS Sans Serif, whose bitmap strikes are already served by MSSansSerif.fon"
+      "Win98 faces with no vendored substitute of their own. Every one of these",
+      "is still drawn - the catch-all in $tt_subst_path answers with the",
+      "default face rather than letting anything reach a host font - so this",
+      "list is now about fidelity, not availability.",
+      "Vendoring a closer match is a licence and payload decision, and the",
+      "note on each substituted Tier 3 entry above records which font that",
+      "would be."
+    ]
   }
 }

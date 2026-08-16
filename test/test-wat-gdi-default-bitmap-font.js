@@ -112,14 +112,21 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(wat.test_call_TextOutA(hdc, 50, 30, text, 10), 1);
   assertNoCanvasText('Win9x UI face aliases must remain in WAT');
 
+  // No font files are mounted in this harness, so Arial cannot be rasterized
+  // from its substitute here. It still must not reach Canvas: the bundled
+  // MS Sans Serif strike is the last resort, which is what makes it safe for
+  // there to be no host-font path at all. A browser whose font fetch failed
+  // gets Win98 bitmap text rather than whatever font the machine happens to
+  // have, and text never simply vanishes.
   const scalableFont = wat.test_call_CreateFontW(-12, 400, 0, writeWide('Arial')) >>> 0;
   assert(scalableFont && !wat.test_gdi_bitmap_font_bound(scalableFont),
     'explicit scalable document faces should not be silently replaced');
   wat.test_call_SelectObject(hdc, scalableFont);
   resetCalls();
   assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 10), 1);
-  assert(calls.bind > 0 && calls.mask > 0,
-    'unsupported scalable faces should use the documented Canvas mask provider');
+  assert(wat.test_gdi_bitmap_font_selected(hdc) >>> 0,
+    'with no font file to rasterize, a scalable face falls back to a strike');
+  assertNoCanvasText('a scalable face with no mounted file must still avoid Canvas');
 
   assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
     'four Wine resources plus Terminal should install eight bitmap strikes');
