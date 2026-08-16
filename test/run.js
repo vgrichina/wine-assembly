@@ -2040,6 +2040,9 @@ async function main() {
       // first import from one — InitInstance, ?UpdateVersion@@YGJH@Z, and a
       // pile of ordinals respectively.
       'hypertrm.dll', 'imgcmn.dll', 'sti.dll', 'shell32.dll', 'shlwapi.dll',
+      // Explorer is the Win98 shell: its window, desktop and taskbar all live
+      // in SHELL32 (entered through ordinal 244) and SHDOCVW.
+      'shdocvw.dll',
       // The Kodak Imaging suite splits itself across ten OI*400 libraries and
       // they import each other, so the whole set has to be loadable or the
       // first cross-DLL ordinal fails.

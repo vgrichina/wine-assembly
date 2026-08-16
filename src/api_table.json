@@ -18878,195 +18878,209 @@
   },
   {
     "id": 2420,
+    "name": "SHQueryValueExA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2984334197
+  },
+  {
+    "id": 2421,
+    "name": "SHQueryValueExW",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2615226579
+  },
+  {
+    "id": 2422,
     "name": "IFont_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3055511037
   },
   {
-    "id": 2421,
+    "id": 2423,
     "name": "IFont_AddRef",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 876750262
   },
   {
-    "id": 2422,
+    "id": 2424,
     "name": "IFont_Release",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 714956395
   },
   {
-    "id": 2423,
+    "id": 2425,
     "name": "IFont_get_Name",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3939967872
   },
   {
-    "id": 2424,
+    "id": 2426,
     "name": "IFont_put_Name",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1890504915
   },
   {
-    "id": 2425,
+    "id": 2427,
     "name": "IFont_get_Size",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 514519354
   },
   {
-    "id": 2426,
+    "id": 2428,
     "name": "IFont_put_Size",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3224949409
   },
   {
-    "id": 2427,
+    "id": 2429,
     "name": "IFont_get_Bold",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4044502588
   },
   {
-    "id": 2428,
+    "id": 2430,
     "name": "IFont_put_Bold",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2016769955
   },
   {
-    "id": 2429,
+    "id": 2431,
     "name": "IFont_get_Italic",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2658777407
   },
   {
-    "id": 2430,
+    "id": 2432,
     "name": "IFont_put_Italic",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2538671536
   },
   {
-    "id": 2431,
+    "id": 2433,
     "name": "IFont_get_Underline",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3390218669
   },
   {
-    "id": 2432,
+    "id": 2434,
     "name": "IFont_put_Underline",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2923520828
   },
   {
-    "id": 2433,
+    "id": 2435,
     "name": "IFont_get_Strikethrough",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1194699038
   },
   {
-    "id": 2434,
+    "id": 2436,
     "name": "IFont_put_Strikethrough",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2499892451
   },
   {
-    "id": 2435,
+    "id": 2437,
     "name": "IFont_get_Weight",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2697494071
   },
   {
-    "id": 2436,
+    "id": 2438,
     "name": "IFont_put_Weight",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 841814928
   },
   {
-    "id": 2437,
+    "id": 2439,
     "name": "IFont_get_Charset",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3738042673
   },
   {
-    "id": 2438,
+    "id": 2440,
     "name": "IFont_put_Charset",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1792321956
   },
   {
-    "id": 2439,
+    "id": 2441,
     "name": "IFont_get_hFont",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 127327892
   },
   {
-    "id": 2440,
+    "id": 2442,
     "name": "IFont_Clone",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1320004079
   },
   {
-    "id": 2441,
+    "id": 2443,
     "name": "IFont_IsEqual",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1883256706
   },
   {
-    "id": 2442,
+    "id": 2444,
     "name": "IFont_SetRatio",
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2216503609
   },
   {
-    "id": 2443,
+    "id": 2445,
     "name": "IFont_QueryTextMetrics",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2468762358
   },
   {
-    "id": 2444,
+    "id": 2446,
     "name": "IFont_AddRefHfont",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2169197931
   },
   {
-    "id": 2445,
+    "id": 2447,
     "name": "IFont_ReleaseHfont",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2639763140
   },
   {
-    "id": 2446,
+    "id": 2448,
     "name": "IFont_SetHdc",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1026454271
   },
   {
-    "id": 2447,
+    "id": 2449,
     "name": "gethostname",
     "nargs": 2,
     "convention": "stdcall",

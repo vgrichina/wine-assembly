@@ -160,7 +160,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control',
     ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
-  { exe: 'test/binaries/win98-apps/explorer.exe', name: 'Explorer (98)' },
+  { exe: 'test/binaries/explorer98/explorer.exe', name: 'Explorer (98)' },
   { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
   { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
   // On a first run Welcome registers itself as Run\Welcome = "welcome.exe /R"
