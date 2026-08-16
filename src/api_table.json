@@ -18719,5 +18719,54 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 2410,
+    "name": "ntohl",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2605441164,
+    "args": [
+      {
+        "name": "netlong",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2411,
+    "name": "WsControl",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3182786000,
+    "args": [
+      {
+        "name": "proto",
+        "type": "DWORD"
+      },
+      {
+        "name": "action",
+        "type": "DWORD"
+      },
+      {
+        "name": "req",
+        "type": "LPTDIOBJ"
+      },
+      {
+        "name": "reqLen",
+        "type": "LPDWORD"
+      },
+      {
+        "name": "resp",
+        "type": "LPVOID"
+      },
+      {
+        "name": "respLen",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

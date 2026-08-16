@@ -1331,6 +1331,192 @@
     (global.set $eax (call $bswap16 (i32.and (local.get $arg0) (i32.const 0xFFFF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  (func $handle_ntohl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                      (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $bswap32 (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ---- WsControl: the Win95/98 TDI query interface -------------------------
+  ;; winipcfg reads the whole adapter configuration through WSOCK32 ordinal
+  ;; 1001, not through the registry: it asks for the entity list, then the type
+  ;; of each entity, then the IP address table, interface entry and route
+  ;; table. We answer for the one adapter the virtual LAN actually has, so what
+  ;; the tool displays is the address $vsock_local_ip binds to.
+  ;;
+  ;; The request buffer is a TDIObjectID: tei_entity, tei_instance, toi_class,
+  ;; toi_type, toi_id. Addresses in the responses are network byte order,
+  ;; matching what the caller passes to inet_ntoa.
+  ;; Store one response and set *pcbResponseInfoLen. Returns the WsControl
+  ;; status: 0 when it fit, ERROR_INSUFFICIENT_BUFFER (122) when it did not.
+  ;; The needed size is reported either way, which is how callers size a second
+  ;; call.
+  (func $wsctl_need (param $resp_len_ga i32) (param $cap i32) (param $need i32) (result i32)
+    (if (local.get $resp_len_ga)
+      (then (i32.store (call $g2w (local.get $resp_len_ga)) (local.get $need))))
+    (if (i32.lt_u (local.get $cap) (local.get $need))
+      (then (return (i32.const 122))))
+    (i32.const 0))
+
+  ;; Zero-fill a guest range.
+  (func $wsctl_zero (param $ga i32) (param $len i32)
+    (local $i i32)
+    (block $done (loop $z
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (call $g2w (i32.add (local.get $ga) (local.get $i))) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $z))))
+
+  ;; Copy a NUL-terminated linear-memory string into a guest buffer.
+  (func $wsctl_copy_str (param $dest_ga i32) (param $src_wa i32)
+    (local $i i32) (local $ch i32)
+    (block $done (loop $c
+      (local.set $ch (i32.load8_u (i32.add (local.get $src_wa) (local.get $i))))
+      (i32.store8 (call $g2w (i32.add (local.get $dest_ga) (local.get $i))) (local.get $ch))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $c))))
+
+  (func $handle_WsControl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                          (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $resp_len_ga i32) (local $cap i32) (local $need i32)
+    (local $entity i32) (local $class i32) (local $id i32) (local $descr i32)
+    ;; arg0=protocol arg1=action arg2=pRequestInfo arg3=pcbRequestInfoLen
+    ;; arg4=pResponseInfo, and the sixth argument is still on the guest stack.
+    (local.set $resp_len_ga (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax (i32.const 50))  ;; ERROR_NOT_SUPPORTED
+    (block $done
+      ;; Only WSCNTL_TCPIP_QUERY_INFORMATION is answered.
+      (br_if $done (i32.ne (local.get $arg1) (i32.const 0)))
+      (br_if $done (i32.eqz (local.get $arg2)))
+      (local.set $entity (call $gl32 (local.get $arg2)))
+      (local.set $class  (call $gl32 (i32.add (local.get $arg2) (i32.const 8))))
+      (local.set $id     (call $gl32 (i32.add (local.get $arg2) (i32.const 16))))
+      (if (local.get $resp_len_ga)
+        (then (local.set $cap (call $gl32 (local.get $resp_len_ga)))))
+
+      ;; INFO_CLASS_GENERIC / ENTITY_LIST_ID — which entities exist.
+      (if (i32.and (i32.eq (local.get $class) (i32.const 0x100))
+                   (i32.eqz (local.get $id)))
+        (then
+          (local.set $need (i32.const 16))
+          (global.set $eax (call $wsctl_need
+            (local.get $resp_len_ga) (local.get $cap) (local.get $need)))
+          (if (i32.eqz (global.get $eax))
+            (then
+              ;; IF_ENTITY instance 0, then CL_NL_ENTITY instance 0.
+              (i32.store (call $g2w (local.get $arg4)) (i32.const 0x200))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 4))) (i32.const 0))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 8))) (i32.const 0x301))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 12))) (i32.const 0))))
+          (br $done)))
+
+      ;; INFO_CLASS_GENERIC / ENTITY_TYPE_ID — what kind of entity this is.
+      (if (i32.and (i32.eq (local.get $class) (i32.const 0x100))
+                   (i32.eq (local.get $id) (i32.const 1)))
+        (then
+          (global.set $eax (call $wsctl_need
+            (local.get $resp_len_ga) (local.get $cap) (i32.const 4)))
+          (if (i32.eqz (global.get $eax))
+            (then
+              (local.set $need (i32.const 0))
+              (if (i32.eq (local.get $entity) (i32.const 0x200))
+                (then (local.set $need (i32.const 0x202))))   ;; IF_MIB
+              (if (i32.eq (local.get $entity) (i32.const 0x301))
+                (then (local.set $need (i32.const 0x303))))   ;; CL_NL_IP
+              (i32.store (call $g2w (local.get $arg4)) (local.get $need))))
+          (br $done)))
+
+      ;; Everything below is INFO_CLASS_PROTOCOL.
+      (br_if $done (i32.ne (local.get $class) (i32.const 0x200)))
+
+      ;; IP entity: statistics — the counts that size the tables that follow.
+      (if (i32.and (i32.eq (local.get $entity) (i32.const 0x301))
+                   (i32.eq (local.get $id) (i32.const 1)))
+        (then
+          (global.set $eax (call $wsctl_need
+            (local.get $resp_len_ga) (local.get $cap) (i32.const 92)))
+          (if (i32.eqz (global.get $eax))
+            (then
+              (call $wsctl_zero (local.get $arg4) (i32.const 92))
+              (i32.store (call $g2w (local.get $arg4)) (i32.const 2))          ;; not forwarding
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 4))) (i32.const 128)) ;; default TTL
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 80))) (i32.const 1))  ;; numif
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 84))) (i32.const 1))  ;; numaddr
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 88))) (i32.const 1))));; numroutes
+          (br $done)))
+
+      ;; IP entity: the address table — one IPAddrEntry for our adapter.
+      (if (i32.and (i32.eq (local.get $entity) (i32.const 0x301))
+                   (i32.eq (local.get $id) (i32.const 0x102)))
+        (then
+          (global.set $eax (call $wsctl_need
+            (local.get $resp_len_ga) (local.get $cap) (i32.const 24)))
+          (if (i32.eqz (global.get $eax))
+            (then
+              (call $wsctl_zero (local.get $arg4) (i32.const 24))
+              (i32.store (call $g2w (local.get $arg4))
+                (call $bswap32 (global.get $vsock_local_ip)))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 4))) (i32.const 1))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 8)))
+                (call $bswap32 (global.get $wsctl_mask)))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 12))) (i32.const 1))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 16))) (i32.const 65535))))
+          (br $done)))
+
+      ;; IP entity: the route table — one default route through the room host.
+      ;; The Win98 IPRouteEntry is 48 bytes, one ULONG shorter than the NT one:
+      ;; winipcfg strides its route buffer by 0x30 (0x404ea8) and sizes it as
+      ;; numroutes * 0x30 (0x404dde), so 52 here makes every query fail with
+      ;; ERROR_INSUFFICIENT_BUFFER no matter how the caller reallocates.
+      (if (i32.and (i32.eq (local.get $entity) (i32.const 0x301))
+                   (i32.eq (local.get $id) (i32.const 0x101)))
+        (then
+          (global.set $eax (call $wsctl_need
+            (local.get $resp_len_ga) (local.get $cap) (i32.const 48)))
+          (if (i32.eqz (global.get $eax))
+            (then
+              (call $wsctl_zero (local.get $arg4) (i32.const 48))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 4))) (i32.const 1))  ;; index
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 8))) (i32.const 1))  ;; metric1
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 24)))
+                (call $bswap32 (global.get $wsctl_gateway)))                                   ;; nexthop
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 28))) (i32.const 4)) ;; indirect
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 32))) (i32.const 3))));; proto
+          (br $done)))
+
+      ;; Interface entity: the adapter itself, ending in its description.
+      (if (i32.and (i32.eq (local.get $entity) (i32.const 0x200))
+                   (i32.eq (local.get $id) (i32.const 1)))
+        (then
+          (local.set $descr (call $strlen (i32.const 0x11D90)))
+          (local.set $need (i32.add (i32.const 92) (i32.add (local.get $descr) (i32.const 1))))
+          (global.set $eax (call $wsctl_need
+            (local.get $resp_len_ga) (local.get $cap) (local.get $need)))
+          (if (i32.eqz (global.get $eax))
+            (then
+              (call $wsctl_zero (local.get $arg4) (local.get $need))
+              (i32.store (call $g2w (local.get $arg4)) (i32.const 1))            ;; if_index
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 4))) (i32.const 6))        ;; ethernet
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 8))) (i32.const 1500))     ;; mtu
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 12))) (i32.const 10000000));; speed
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 16))) (i32.const 6))       ;; physaddrlen
+              ;; Locally-administered MAC, fixed so the tool shows the same
+              ;; adapter address on every run.
+              (i32.store8 (call $g2w (i32.add (local.get $arg4) (i32.const 20))) (i32.const 0x02))
+              (i32.store8 (call $g2w (i32.add (local.get $arg4) (i32.const 21))) (i32.const 0x57))
+              (i32.store8 (call $g2w (i32.add (local.get $arg4) (i32.const 22))) (i32.const 0x41))
+              (i32.store8 (call $g2w (i32.add (local.get $arg4) (i32.const 23))) (i32.const 0x53))
+              (i32.store8 (call $g2w (i32.add (local.get $arg4) (i32.const 24))) (i32.const 0x4D))
+              (i32.store8 (call $g2w (i32.add (local.get $arg4) (i32.const 25))) (i32.const 0x01))
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 28))) (i32.const 1))  ;; admin up
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 32))) (i32.const 1))  ;; oper up
+              (i32.store (call $g2w (i32.add (local.get $arg4) (i32.const 88))) (local.get $descr))
+              (call $wsctl_copy_str
+                (i32.add (local.get $arg4) (i32.const 92)) (i32.const 0x11D90))))
+          (br $done)))
+    )
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
   ;; Parse a dotted quad at a guest pointer. Returns host byte order, or -1
   ;; when the text is not four decimal octets.
   (func $vsock_parse_ipv4 (param $ga i32) (result i32)

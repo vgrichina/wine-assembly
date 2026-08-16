@@ -493,6 +493,101 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
+  ;; Look up dwMessageId in the active module's RT_MESSAGETABLE (type 11) and
+  ;; write it to $out_wa as ANSI. Returns the length written, or -1 when the
+  ;; module has no message table or the id is not in it.
+  ;;
+  ;; MESSAGE_RESOURCE_DATA is a count followed by that many blocks of
+  ;; {LowId, HighId, OffsetToEntries}; the entries a block points at are
+  ;; variable-length {Length, Flags, text...} records walked in id order.
+  ;; Flags bit 0 means the text is UTF-16, which is the common case.
+  (func $message_table_lookup (param $id i32) (param $out_wa i32) (result i32)
+    (local $data_entry i32) (local $table i32) (local $blocks i32) (local $i i32)
+    (local $blk i32) (local $lo i32) (local $hi i32) (local $entry i32)
+    (local $skip i32) (local $len i32) (local $flags i32) (local $n i32)
+    (local $ch i32)
+    (local.set $data_entry (call $find_resource (i32.const 11) (i32.const 1)))
+    (if (i32.eqz (local.get $data_entry)) (then (return (i32.const -1))))
+    (local.set $table (call $g2w (i32.add (call $r_base)
+      (call $gl32 (i32.add (call $r_base) (local.get $data_entry))))))
+    (local.set $blocks (i32.load (local.get $table)))
+    (block $found (block $missing
+      (loop $scan
+        (br_if $missing (i32.ge_u (local.get $i) (local.get $blocks)))
+        (local.set $blk (i32.add (local.get $table)
+          (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 12)))))
+        (local.set $lo (i32.load (local.get $blk)))
+        (local.set $hi (i32.load offset=4 (local.get $blk)))
+        (if (i32.and (i32.ge_u (local.get $id) (local.get $lo))
+                     (i32.le_u (local.get $id) (local.get $hi)))
+          (then
+            (local.set $entry (i32.add (local.get $table) (i32.load offset=8 (local.get $blk))))
+            (local.set $skip (i32.sub (local.get $id) (local.get $lo)))
+            (br $found)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan))
+      )
+      (return (i32.const -1)))
+    ;; Walk to the requested entry — records are variable length.
+    (block $at (loop $next
+      (br_if $at (i32.eqz (local.get $skip)))
+      (local.set $entry (i32.add (local.get $entry) (i32.load16_u (local.get $entry))))
+      (local.set $skip (i32.sub (local.get $skip) (i32.const 1)))
+      (br $next)))
+    (local.set $len (i32.load16_u (local.get $entry)))
+    (local.set $flags (i32.load16_u offset=2 (local.get $entry)))
+    (local.set $entry (i32.add (local.get $entry) (i32.const 4)))
+    (local.set $len (i32.sub (local.get $len) (i32.const 4)))
+    (local.set $n (i32.const 0))
+    (if (i32.and (local.get $flags) (i32.const 1))
+      (then
+        ;; UTF-16 text: keep the low byte of each unit, which is all a Win98
+        ;; message table for an ANSI caller ever holds.
+        (block $done (loop $w
+          (br_if $done (i32.ge_u (i32.mul (local.get $n) (i32.const 2)) (local.get $len)))
+          (local.set $ch (i32.load16_u
+            (i32.add (local.get $entry) (i32.mul (local.get $n) (i32.const 2)))))
+          (br_if $done (i32.eqz (local.get $ch)))
+          (i32.store8 (i32.add (local.get $out_wa) (local.get $n))
+            (i32.and (local.get $ch) (i32.const 0xFF)))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (br $w))))
+      (else
+        (block $done (loop $a
+          (br_if $done (i32.ge_u (local.get $n) (local.get $len)))
+          (local.set $ch (i32.load8_u (i32.add (local.get $entry) (local.get $n))))
+          (br_if $done (i32.eqz (local.get $ch)))
+          (i32.store8 (i32.add (local.get $out_wa) (local.get $n)) (local.get $ch))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (br $a)))))
+    ;; "%0" ends the message text without a newline. winipcfg depends on it:
+    ;; its adapter-type entries read "Ethernet %0\r\n" and the visible label is
+    ;; the part before the %0, concatenated with text from the dialog template.
+    (local.set $i (i32.const 0))
+    (block $scanned (loop $pct
+      (br_if $scanned (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $n)))
+      (if (i32.and
+            (i32.eq (i32.load8_u (i32.add (local.get $out_wa) (local.get $i)))
+                    (i32.const 37))
+            (i32.eq (i32.load8_u
+                      (i32.add (local.get $out_wa) (i32.add (local.get $i) (i32.const 1))))
+                    (i32.const 48)))
+        (then (local.set $n (local.get $i)) (br $scanned)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $pct)))
+    ;; Message-table text is stored with its trailing CRLF; callers that place
+    ;; it in a dialog label want the line, not the terminator.
+    (block $trimmed (loop $trim
+      (br_if $trimmed (i32.eqz (local.get $n)))
+      (local.set $ch (i32.load8_u
+        (i32.add (local.get $out_wa) (i32.sub (local.get $n) (i32.const 1)))))
+      (br_if $trimmed (i32.and (i32.ne (local.get $ch) (i32.const 13))
+                               (i32.ne (local.get $ch) (i32.const 10))))
+      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+      (br $trim)))
+    (i32.store8 (i32.add (local.get $out_wa) (local.get $n)) (i32.const 0))
+    (local.get $n))
+
   ;; 754: FormatMessageA(dwFlags, lpSource, dwMessageId, dwLanguageId, lpBuffer, nSize, Arguments)
   (func $handle_FormatMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $buf_ga i32) (local $len i32) (local $nSize i32)
@@ -520,6 +615,32 @@
         (global.set $eax (local.get $len))
         (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
         (return)))
+    ;; FORMAT_MESSAGE_FROM_HMODULE: the text lives in the module's
+    ;; RT_MESSAGETABLE. winipcfg keeps every label and caption there and asks
+    ;; for them one id at a time, so without this its whole UI reads "Error".
+    (if (i32.and (local.get $arg0) (i32.const 0x800))
+      (then
+        (call $push_rsrc_ctx (local.get $arg1))
+        (local.set $len (call $message_table_lookup
+          (local.get $arg2) (global.get $TEXT_SCRATCH)))
+        (call $pop_rsrc_ctx)
+        (if (i32.ne (local.get $len) (i32.const -1))
+          (then
+            (if (i32.and (local.get $arg0) (i32.const 0x100))
+              (then
+                (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+                (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
+                (local.set $wa (call $g2w (local.get $buf_ga))))
+              (else
+                (local.set $wa (call $g2w (local.get $arg4)))
+                (if (i32.and (i32.ne (local.get $nSize) (i32.const 0))
+                             (i32.ge_u (local.get $len) (local.get $nSize)))
+                  (then (local.set $len (i32.sub (local.get $nSize) (i32.const 1)))))))
+            (call $memcpy (local.get $wa) (global.get $TEXT_SCRATCH) (local.get $len))
+            (i32.store8 (i32.add (local.get $wa) (local.get $len)) (i32.const 0))
+            (global.set $eax (local.get $len))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+            (return)))))
     ;; If FORMAT_MESSAGE_ALLOCATE_BUFFER (0x100), allocate and store ptr
     ;; Otherwise write to lpBuffer directly
     (if (i32.and (local.get $arg0) (i32.const 0x100))

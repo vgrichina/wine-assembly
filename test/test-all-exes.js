@@ -179,7 +179,7 @@ const TEST_CASES = [
   { exe: 'test/binaries/win98-apps/sysmon.exe', name: 'System Monitor' },
   // Renders its real startup notice, checkbox and all.
   { exe: 'test/binaries/win98-apps/rsrcmtr.exe', name: 'Resource Meter' },
-  { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config', knownBadRender: 'not meaningful/fixable on web at current stage' },
+  { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config' },
   // Renders its Select Drive dialog with a populated drive combo.
   { exe: 'test/binaries/win98-apps/cleanmgr.exe', name: 'Disk Cleanup' },
   { exe: 'test/binaries/win98-apps/notepad98.exe', name: 'Notepad (98)' },

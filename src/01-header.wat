@@ -823,6 +823,12 @@
   ;; NB 0x11400..0x11500 is DI_DIK_VK_TABLE in 09a8-handlers-directx.wat, which
   ;; concatenates later and would silently overwrite anything placed there.
   (data (i32.const 0x11500) "oleaut32.dll\00SysAllocString\00SysAllocStringLen\00SysFreeString\00SysStringLen\00VariantInit\00VariantClear\00VariantCopy\00")
+  ;; More WSOCK32 ordinal names. The 0x11300 block ends flush against the
+  ;; winmm block at 0x113DC, so later additions live in the free run above the
+  ;; richedit tables; the DLL name itself is still matched from 0x11300.
+  (data (i32.const 0x11D80) "ntohl\00WsControl\00")
+  ;; if_descr for the one adapter WsControl reports (src/09d-winsock.wat).
+  (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -973,7 +979,8 @@
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
-  ;; 0x00011D80  384B    Free (up to HIT_COUNT_BASE)
+  ;; 0x00011D80  36B     WSOCK32 ordinal names (cont.) + WsControl if_descr
+  ;; 0x00011DA4  348B    Free (up to HIT_COUNT_BASE)
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
@@ -1816,6 +1823,10 @@
   (global $clip_cursor_b (mut i32) (i32.const 0))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait
   ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
+  ;; WsControl's view of the virtual adapter (src/09d-winsock.wat): subnet mask
+  ;; and default gateway, both host byte order.
+  (global $wsctl_mask (mut i32) (i32.const 0xFFFFFF00))
+  (global $wsctl_gateway (mut i32) (i32.const 0x0A4D0001))
   (global $shutdown_level (mut i32) (i32.const 0x280))
   (global $shutdown_flags (mut i32) (i32.const 0))
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5

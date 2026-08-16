@@ -277,6 +277,9 @@
         (if (i32.eq (local.get $ordinal) (i32.const 11))  (then (return (call $lookup_api_id (i32.const 0x113B5))))) ;; inet_ntoa
         (if (i32.eq (local.get $ordinal) (i32.const 151)) (then (return (call $lookup_api_id (i32.const 0x113BF))))) ;; __WSAFDIsSet
         (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id (i32.const 0x113CC))))) ;; WSASetLastError
+        ;; Names beyond this point live in the 0x11D80 block — see 01-header.wat.
+        (if (i32.eq (local.get $ordinal) (i32.const 14))   (then (return (call $lookup_api_id (i32.const 0x11D80))))) ;; ntohl
+        (if (i32.eq (local.get $ordinal) (i32.const 1001)) (then (return (call $lookup_api_id (i32.const 0x11D86))))) ;; WsControl
       ))
     ;; WINMM. Welcome98 imports PlaySound purely by ordinal; the name is
     ;; resolved from the real Win98 winmm.dll export table rather than guessed
