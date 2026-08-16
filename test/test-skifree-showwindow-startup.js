@@ -63,8 +63,19 @@ function runCase(name, screen, expectWide) {
   const focusOk = out.includes(`[input] dump-focus ${name}: hwnd=0x10001`);
   const mainProcHits = hit('0x00405800');
   const loopHits = hit('0x0040485e');
+  // SkiFree sizes this panel entirely from font metrics: it calls
+  // GetStockObject(10) = OEM_FIXED_FONT, reads tmHeight via GetTextMetricsA,
+  // and lays out four lines -- height = tmHeight * 4 + 4 (0x406c26), width =
+  // aveCharWidth-derived + 4 (0x406890). So the constants below are a font
+  // assertion wearing a layout assertion's clothes.
+  //
+  // This expected 68 until c77cd0d, which gave OEM_FIXED_FONT its real
+  // Terminal 8x12 strike instead of a 16px stand-in. Win98's OEM_FIXED_FONT is
+  // Terminal 8x12 (docs/bitmap-font-review.md records direct inspection of the
+  // Windows resource), so tmHeight is 12 and 12*4+4 = 52 is the correct
+  // height. Width is unchanged at 140 because the 8px advance did not move.
   const childRightAligned = !!main && !!status && !!main.client &&
-    status.w === 140 && status.h === 68 &&
+    status.w === 140 && status.h === 52 &&
     status.x >= Math.max(1, main.client.w - 180);
 
   const checks = [
