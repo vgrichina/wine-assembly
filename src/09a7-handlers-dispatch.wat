@@ -11898,8 +11898,8 @@
 
   ;; ---- PROP_TABLE helpers ----
   ;; Linear scan is fine — most apps have a handful of live props. Name
-  ;; normalisation matches $class_name_hash: atom (wa<0x10000) passes
-  ;; through; string is FNV-1a hashed.
+  ;; normalisation happens in $prop_key: an ATOM passes through as itself, a
+  ;; string is FNV-1a hashed.
   (func $prop_find (param $hwnd i32) (param $key i32) (result i32)
     (local $i i32) (local $p i32)
     (local.set $i (i32.const 0))
@@ -11913,6 +11913,22 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const -1))
+
+  ;; Turn a prop name into a table key. The name is either a pointer to a
+  ;; string or an ATOM -- a small integer smuggled through the same argument,
+  ;; which is what MAKEINTATOM and every RegisterWindowMessage-style atom is.
+  ;;
+  ;; The test has to happen on the guest value, before g2w. An ATOM like
+  ;; 0xC000 is far below the image base, so translating it first wraps it to
+  ;; an address nowhere near the guest, $class_name_hash no longer recognises
+  ;; it as an atom, and it hashes whatever bytes happen to live there. Those
+  ;; bytes were zero, so every atom hashed to the FNV basis and collided:
+  ;; comctl32 asking hwnd for its own 0xC000 prop was handed back the object
+  ;; VCL had stored under 0xC001, and passed that straight to LocalReAlloc.
+  (func $prop_key (param $ga i32) (result i32)
+    (if (i32.lt_u (local.get $ga) (i32.const 0x10000))
+      (then (return (local.get $ga))))
+    (call $class_name_hash (call $g2w (local.get $ga))))
 
   (func $prop_empty_slot (result i32)
     (local $i i32) (local $p i32)
@@ -11930,7 +11946,7 @@
   (func $handle_GetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $idx i32)
     (local.set $idx (call $prop_find (local.get $arg0)
-                     (call $class_name_hash (call $g2w (local.get $arg1)))))
+                     (call $prop_key (local.get $arg1))))
     (if (i32.lt_s (local.get $idx) (i32.const 0))
       (then (global.set $eax (i32.const 0)))
       (else (global.set $eax
@@ -11941,7 +11957,7 @@
   ;; 817: SetPropA(hwnd, lpString, hData) → BOOL
   (func $handle_SetPropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $key i32) (local $idx i32) (local $p i32)
-    (local.set $key (call $class_name_hash (call $g2w (local.get $arg1))))
+    (local.set $key (call $prop_key (local.get $arg1)))
     (local.set $idx (call $prop_find (local.get $arg0) (local.get $key)))
     (if (i32.lt_s (local.get $idx) (i32.const 0))
       (then (local.set $idx (call $prop_empty_slot))))
@@ -12089,7 +12105,7 @@
   (func $handle_RemovePropA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $idx i32) (local $p i32)
     (local.set $idx (call $prop_find (local.get $arg0)
-                     (call $class_name_hash (call $g2w (local.get $arg1)))))
+                     (call $prop_key (local.get $arg1))))
     (if (i32.lt_s (local.get $idx) (i32.const 0))
       (then (global.set $eax (i32.const 0)))
       (else
