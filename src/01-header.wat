@@ -1684,6 +1684,7 @@
   (global $caret_w (mut i32) (i32.const 1))           ;; USER caret width
   (global $caret_h (mut i32) (i32.const 13))          ;; USER caret height
   (global $caret_visible (mut i32) (i32.const 0))     ;; ShowCaret-visible latch
+  (global $caret_blink_time (mut i32) (i32.const 530)) ;; ms; Windows' default
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator

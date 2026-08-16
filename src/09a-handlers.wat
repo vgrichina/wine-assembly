@@ -7620,6 +7620,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
+  ;; GetCaretBlinkTime() — the interval a caret spends in each phase. Callers
+  ;; use it as a timer period, so returning a real value matters: HyperTerminal
+  ;; feeds it straight to SetTimer for its cursor.
+  (func $handle_GetCaretBlinkTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $caret_blink_time))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; 0 args stdcall
+  )
+
+  ;; SetCaretBlinkTime(uMSeconds) — store it so the Get above reports it back.
+  (func $handle_SetCaretBlinkTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (global.set $caret_blink_time (local.get $arg0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
+  )
+
   ;; Caret APIs — enough USER caret state for native controls such as RichEdit
   ;; to leave a visible caret stroke in the renderer. The renderer composites
   ;; this state after normal back-canvas paint and owns blink/inverted erasure.

@@ -18768,5 +18768,27 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 2412,
+    "name": "GetCaretBlinkTime",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 804376773,
+    "ret": "UINT"
+  },
+  {
+    "id": 2413,
+    "name": "SetCaretBlinkTime",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3549768009,
+    "args": [
+      {
+        "name": "uMSeconds",
+        "type": "UINT"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
