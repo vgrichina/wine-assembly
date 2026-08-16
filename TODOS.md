@@ -48,7 +48,7 @@ glyph, frame, and dialog-lifecycle asserts:
 |---|---|
 | `test-regedit-deep` | `tree displays classic folder glyphs (0 yellow px)` |
 | `test-mspaint-options` | `tool-options margin stayed button-face gray` |
-| `test-spider-messagebox` | `No button has full raised frame` |
+| ~~`test-spider-messagebox`~~ | FIXED `dcbc468` — the assert pinned the retired JS renderer's 64,64,64 outer shadow; Win98's COLOR_3DDKSHADOW is black (every Plus! 98 `.the` ships `ButtonDkShadow=0 0 0`). Emulator was correct. Also filled in the missing `GetSysColor` indices 21/23/24. 7/7. |
 | ~~`test-find-cancel`~~ | FIXED `35bb495` — the test clicked (390,72), which is inside the dialog's *client* area; the close box is x 379..395, y 45..59. Emulator was correct. New `close-click:TARGET` input action derives the point from the live window rect. 11/11. |
 | `test-solitaire-resize` | width/height did not grow after corner drag |
 | `test-cwordzap-render` | RLE4 splash white field / colored logo |
