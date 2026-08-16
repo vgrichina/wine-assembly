@@ -41,8 +41,26 @@ The original writeup follows.
 unit 92/2, e2e 58/24, smoke 1/1. The two unit failures are known and owned
 (`test-winhelp-wat-parser`, `test-gdi-public-api-status` 245-vs-244).
 
-The 24 e2e failures are **not** from the prop-atom fix — sampled reasons are
-glyph, frame, and dialog-lifecycle asserts:
+**All six sampled failures are now closed** (2026-08-16). Five of the six were
+tests pinned to stale geometry or to the retired JS renderer's palette — the
+emulator was right and the assert was wrong. Only `test-cwordzap-render` was a
+genuine emulator bug. Two reusable lessons for the rest of the 24:
+
+1. Before believing a pixel/click assert, check the *live* geometry
+   (`dump-windows`) and the Win98 classic palette (the real Plus! 98 theme
+   files in `test/output/wordpad-mixed-format-roundtrip/vfs/screensavers/*.the`
+   settle any color question). A coordinate hardcoded months ago is the prime
+   suspect.
+2. `run.js` now has `close-click:TARGET` and `corner-drag:HWND:DX:DY`, which
+   derive their points from the live window rect. Prefer them over magic
+   screen coordinates so the next placement change doesn't silently rot the
+   test into a no-op.
+
+Also: timing-sensitive tests (`test-mspaint-options` 9s, `test-mspaint-stretch-icons`
+10s `execFileSync` timeouts) go red purely from machine load. Check `uptime`
+before believing them.
+
+The original sampled table:
 
 | Test | Assert that fails |
 |---|---|
