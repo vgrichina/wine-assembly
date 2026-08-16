@@ -2568,9 +2568,80 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 109: LoadIconA(hInstance, lpIconName) — return fake icon handle
+  ;; ---- ICON_TABLE: HICON → the resource it was loaded from ----
+  ;; An icon handle used to be the constant 0x60001, which meant DrawIconEx
+  ;; had nothing to draw and every icon in the system was the same nothing.
+  ;; Remembering {hInstance, resource id} is the whole difference: the pixels
+  ;; are already decodable from the PE by $gdi_icon_draw_resource_at.
+  (func $icon_intern (param $hinst i32) (param $resid i32) (result i32)
+    (local $i i32) (local $p i32) (local $free i32)
+    (local.set $free (i32.const -1))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_ICONS)))
+      (local.set $p (i32.add (global.get $ICON_TABLE)
+                     (i32.mul (local.get $i) (i32.const 8))))
+      ;; A repeat load of the same resource must hand back the same handle:
+      ;; apps compare HICONs, and DestroyIcon on a duplicate is common.
+      (if (i32.and (i32.eq (i32.load (local.get $p)) (local.get $hinst))
+                   (i32.eq (i32.load offset=4 (local.get $p)) (local.get $resid)))
+        (then (return (i32.or (global.get $ICON_HANDLE_TAG) (local.get $i)))))
+      (if (i32.and (i32.lt_s (local.get $free) (i32.const 0))
+                   (i32.eqz (i32.load offset=4 (local.get $p))))
+        (then (local.set $free (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $free) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (global.get $ICON_TABLE)
+                   (i32.mul (local.get $free) (i32.const 8))))
+    (i32.store (local.get $p) (local.get $hinst))
+    (i32.store offset=4 (local.get $p) (local.get $resid))
+    (i32.or (global.get $ICON_HANDLE_TAG) (local.get $free)))
+
+  ;; Paint an interned icon. Returns 0 for any handle we did not intern, which
+  ;; keeps the old opaque handles (and system icons we ship no pixels for)
+  ;; behaving exactly as before instead of drawing garbage.
+  (func $icon_draw_handle (param $hicon i32) (param $hdc i32)
+        (param $x i32) (param $y i32) (param $cx i32) (param $cy i32)
+        (param $di_flags i32) (result i32)
+    (local $slot i32) (local $p i32) (local $ok i32)
+    (if (i32.ne (i32.and (local.get $hicon) (i32.const 0xFFFF0000))
+                (global.get $ICON_HANDLE_TAG))
+      (then (return (i32.const 0))))
+    (local.set $slot (i32.and (local.get $hicon) (i32.const 0xFFFF)))
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_ICONS))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (global.get $ICON_TABLE)
+                   (i32.mul (local.get $slot) (i32.const 8))))
+    (if (i32.eqz (i32.load offset=4 (local.get $p)))
+      (then (return (i32.const 0))))
+    ;; cx/cy of 0 mean "the icon's own size" — the DrawIconEx default.
+    (if (i32.le_s (local.get $cx) (i32.const 0))
+      (then (local.set $cx (i32.const 32))))
+    (if (i32.le_s (local.get $cy) (i32.const 0))
+      (then (local.set $cy (i32.const 32))))
+    ;; The icon belongs to the module it was loaded from, which need not be
+    ;; the one running now.
+    (call $push_rsrc_ctx (i32.load (local.get $p)))
+    (local.set $ok (call $gdi_icon_draw_resource_at
+      (local.get $hdc) (i32.load offset=4 (local.get $p))
+      (local.get $cx) (local.get $cy) (i32.const 1)
+      (local.get $x) (local.get $y) (local.get $di_flags)))
+    (call $pop_rsrc_ctx)
+    (local.get $ok))
+
+  ;; 109: LoadIconA(hInstance, lpIconName)
   (func $handle_LoadIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x60001)) ;; fake HICON
+    ;; Named (string-pointer) icon resources are not interned: the resource
+    ;; walker addresses RT_GROUP_ICON by ordinal. Those keep the old opaque
+    ;; handle rather than a slot that would decode to the wrong picture.
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.le_u (local.get $arg1) (i32.const 0xFFFF)))
+      (then
+        (global.set $eax (call $icon_intern (local.get $arg0) (local.get $arg1)))
+        (if (global.get $eax)
+          (then (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+                (return)))))
+    (global.set $eax (i32.const 0x60001)) ;; opaque HICON, no pixels
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -13079,15 +13150,29 @@
   )
 
   ;; 944: DrawIconEx(hdc, x, y, hIcon, cx, cy, istep, hbrFlicker, diFlags) — 9 args stdcall
-  ;; Return TRUE, no-op for now (icon drawing delegated to renderer)
+  ;; Only the first five arguments arrive as parameters; the rest are still on
+  ;; the guest stack above the return address.
   (func $handle_DrawIconEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $flags i32)
+    (local.set $flags (i32.load (call $g2w
+      (i32.add (global.get $esp) (i32.const 36)))))  ;; ret + 8 args
+    (drop (call $icon_draw_handle
+      (local.get $arg3) (local.get $arg0)
+      (local.get $arg1) (local.get $arg2)
+      (local.get $arg4)
+      (i32.load (call $g2w (i32.add (global.get $esp) (i32.const 24))))
+      (local.get $flags)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40)))  ;; 9 args + ret
   )
 
   ;; DrawIcon(hdc, x, y, hIcon) — 4 args stdcall. The fixed-size sibling of
-  ;; DrawIconEx, and a no-op for the same reason: icon handles carry no pixels.
+  ;; DrawIconEx: always the icon's natural size, always the full composite.
   (func $handle_DrawIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $icon_draw_handle
+      (local.get $arg3) (local.get $arg0)
+      (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (global.get $DI_NORMAL)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; ret + 4 args
   )

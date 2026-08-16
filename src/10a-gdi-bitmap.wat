@@ -1021,6 +1021,25 @@
   (func $gdi_icon_draw_resource (param $hdc i32) (param $resource_id i32)
         (param $control_w i32) (param $control_h i32) (param $origin_clip i32)
         (result i32)
+    (call $gdi_icon_draw_resource_at (local.get $hdc) (local.get $resource_id)
+      (local.get $control_w) (local.get $control_h) (local.get $origin_clip)
+      (i32.const 0) (i32.const 0) (global.get $DI_NORMAL)))
+
+  ;; The same painter with the two things DrawIconEx needs and a centered
+  ;; static does not: an explicit destination origin, and the DI_* flags that
+  ;; say which plane to write. ImageList building depends on both halves —
+  ;; comctl32 renders each icon twice, DI_NORMAL into the colour sheet and
+  ;; DI_MASK into the mask sheet, and blits the pair back with SRCAND/SRCPAINT.
+  ;;
+  ;;   DI_MASK  — write the AND plane as monochrome: white where the mask is
+  ;;              set (transparent), black where it is clear (opaque).
+  ;;   DI_IMAGE — write the XOR plane verbatim, mask ignored.
+  ;;   DI_NORMAL— composite: mask clear writes the colour, mask set preserves
+  ;;              the destination and XORs any inverse pixel over it.
+  (func $gdi_icon_draw_resource_at (param $hdc i32) (param $resource_id i32)
+        (param $control_w i32) (param $control_h i32) (param $origin_clip i32)
+        (param $at_x i32) (param $at_y i32) (param $di_flags i32)
+        (result i32)
     (local $group i32) (local $group_size i32) (local $entry i32)
     (local $image i32) (local $image_size i32) (local $image_id i32)
     (local $header_size i32) (local $width i32) (local $stored_h i32)
@@ -1142,8 +1161,10 @@
         (if (i32.eqz (local.get $origin_clip))
           (then (local.set $dst_y (i32.div_s
             (i32.sub (local.get $control_h) (local.get $height)) (i32.const 2)))))))
-    (local.set $dst_x (call $gdi_line_map_x (local.get $dst) (local.get $dst_x)))
-    (local.set $dst_y (call $gdi_line_map_y (local.get $dst) (local.get $dst_y)))
+    (local.set $dst_x (call $gdi_line_map_x (local.get $dst)
+      (i32.add (local.get $dst_x) (local.get $at_x))))
+    (local.set $dst_y (call $gdi_line_map_y (local.get $dst)
+      (i32.add (local.get $dst_y) (local.get $at_y))))
 
     (block $rows_done (loop $rows
       (br_if $rows_done (i32.ge_u (local.get $y) (local.get $draw_h)))
@@ -1169,6 +1190,21 @@
             (local.set $source_color (call $gdi_raster_read (local.get $src)
               (i32.add (local.get $src_x) (local.get $x))
               (i32.add (local.get $src_y) (local.get $y))))
+            ;; DI_MASK on its own asks for the transparency plane, not the
+            ;; picture: the mask bit becomes the pixel and the colour plane is
+            ;; never consulted.
+            (if (i32.eqz (i32.and (local.get $di_flags) (global.get $DI_IMAGE)))
+              (then
+                (drop (call $gdi_raster_write (local.get $dst)
+                  (i32.add (local.get $dst_x) (local.get $x))
+                  (i32.add (local.get $dst_y) (local.get $y))
+                  (select (i32.const 0x00FFFFFF) (i32.const 0)
+                    (local.get $mask_bit))))
+                (local.set $x (i32.add (local.get $x) (i32.const 1)))
+                (br $cols)))
+            ;; DI_IMAGE without DI_MASK is an opaque copy of the colour plane.
+            (if (i32.eqz (i32.and (local.get $di_flags) (global.get $DI_MASK)))
+              (then (local.set $mask_bit (i32.const 0))))
             (if (i32.eqz (local.get $mask_bit))
               (then (drop (call $gdi_raster_write (local.get $dst)
                 (i32.add (local.get $dst_x) (local.get $x))

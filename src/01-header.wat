@@ -1018,6 +1018,7 @@
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
   ;; 0x07F01100  256B    TV_IMAGE_TABLE (32 entries × {image, selected image})
   ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
+  ;; 0x07F01300  256B    ICON_TABLE (32 entries × {hInstance, resource id})
   ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
@@ -1462,6 +1463,19 @@
   (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00000100))
   (global $TAB_NATIVE_STATE_TABLE i32 (i32.const 0x07F01200))
   (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; ICON_TABLE: what an HICON actually stands for. An icon handle has to
+  ;; survive the round trip from LoadIcon/LoadImage to DrawIconEx, which may
+  ;; happen long afterwards and from a different module, so each entry keeps
+  ;; the pair needed to find the pixels again: {hInstance, resource id}.
+  ;; 32 entries x 8 bytes. Handles are $ICON_HANDLE_TAG | slot.
+  (global $ICON_TABLE i32 (i32.const 0x07F01300))
+  (global $ICON_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $MAX_ICONS i32 (i32.const 32))
+  (global $ICON_HANDLE_TAG i32 (i32.const 0x00650000))
+  ;; DrawIconEx diFlags: which plane of the icon to write.
+  (global $DI_MASK   i32 (i32.const 1))
+  (global $DI_IMAGE  i32 (i32.const 2))
+  (global $DI_NORMAL i32 (i32.const 3))
   (global $SYNC_TABLE i32 (i32.const 0x07F01400))
   (global $SYNC_TABLE_SIZE i32 (i32.const 0x00000400))
   (global $MAX_SYNC_OBJECTS i32 (i32.const 64))

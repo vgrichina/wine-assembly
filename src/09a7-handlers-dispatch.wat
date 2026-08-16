@@ -178,10 +178,17 @@
             (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
         (global.set $eax (local.get $tmp))
         (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
-    ;; IMAGE_ICON (1): return fake icon handle (same as LoadIconA)
+    ;; IMAGE_ICON (1): intern the resource so DrawIconEx can find its pixels
+    ;; later — same handle space as LoadIconA. Named resources keep the old
+    ;; opaque handle, since the RT_GROUP_ICON walker addresses by ordinal.
     (if (i32.eq (local.get $arg2) (i32.const 1))
       (then
-        (global.set $eax (i32.const 0x60001))
+        (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                     (i32.le_u (local.get $arg1) (i32.const 0xFFFF)))
+          (then (local.set $tmp (call $icon_intern (local.get $arg0) (local.get $arg1))))
+          (else (local.set $tmp (i32.const 0))))
+        (if (i32.eqz (local.get $tmp)) (then (local.set $tmp (i32.const 0x60001))))
+        (global.set $eax (local.get $tmp))
         (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
     ;; IMAGE_CURSOR (2): return cursor handle (same encoding as LoadCursorA)
     (if (i32.eq (local.get $arg2) (i32.const 2))
