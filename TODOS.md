@@ -14,7 +14,26 @@ corpus sweep 106 PASS / 0 FAIL.
 
 ---
 
-## 0. Blocking question: are the 24 e2e failures real?
+## 0. Blocking question: are the 24 e2e failures real? — ANSWERED 2026-08-16
+
+**Answer: they are real, but they are not new, and the font commits are
+exonerated.** A baseline worktree at `eff03cb^` (680db80) produced a
+byte-identical fail set to HEAD across all six sampled tests, so neither
+`eff03cb`/`45e58ae` nor the `WNDPROC_DIALOG` move caused any of them. Against
+the session-start commit `9c49b65`: `spider-messagebox`, `find-cancel`,
+`solitaire-resize` and `cwordzap-render` fail identically there too — they
+predate the whole night. `mspaint-options` was *worse* at `9c49b65` (the run
+did not complete at all); only its margin-gray assert is left. Only
+`regedit-deep` truly regressed, bisected to `88c6a72` — seeding `HKLM\System`
+gives HKLM a third child, so the tree has 10 visible rows where the test pinned
+9. Expectation fixed in `48379a7`; the emulator was correct.
+
+What is left of this item is the individual failures, each of which is now a
+plain bug with no shared cause. Note also that `lib/storage.js` seeds both
+`HKLM\SOFTWARE` and `HKLM\Software` and key paths compare case-sensitively, so
+regedit shows two keys where Windows shows one.
+
+The original writeup follows.
 
 **Priority: highest. Nobody owns this yet.**
 
