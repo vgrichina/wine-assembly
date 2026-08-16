@@ -101,8 +101,16 @@ function countInRect(img, rect, pred) {
       (r, g, b) => r > 90 && r < 170 && g < 30 && b < 30);
     grayButton = countInRect(img, { x0: 430, y0: 345, x1: 528, y1: 365 },
       (r, g, b) => r >= 0xb0 && r <= 0xd0 && g >= 0xb0 && g <= 0xd0 && b >= 0xb0 && b <= 0xd0);
+    // Anything markedly darker than COLOR_3DFACE: the button's border plus its
+    // caption. This used to require r/g/b < 80, i.e. near-black text, but at
+    // the point this frame is captured EmPipe has called
+    // EnableWindow(button, FALSE) and SetWindowTextA(button, "&Accelerate"), so
+    // the caption is correctly drawn in COLOR_GRAYTEXT (0x808080) with a white
+    // shadow, the way Win98 draws a disabled button. Near-black found only 25
+    // pixels of border and the check read as "button gone" while the button was
+    // right there and correct.
     buttonInk = countInRect(img, { x0: 430, y0: 345, x1: 528, y1: 365 },
-      (r, g, b) => r < 80 && g < 80 && b < 80);
+      (r, g, b) => r < 0xa8 && g < 0xa8 && b < 0xa8);
   }
 
   const checks = [
@@ -114,8 +122,14 @@ function countInRect(img, rect, pred) {
     { name: 'gameplay PNG written', pass: gameplaySize > 6000 },
     { name: 'main window remains visible after gameplay input', pass: /png .*empipe_after_gameplay\.png[\s\S]*window hwnd=65537 .*visible=true/.test(out) },
     { name: 'playfield grid still rendered after gameplay input', pass: redPlayfield > 50000 },
-    { name: 'bottom action button surface was painted', pass: /window hwnd=65543 .*visible=true .*hasBack=true/.test(out) },
-    { name: 'bottom action button remains visible after gameplay input', pass: grayButton > 1000 && buttonInk > 50 },
+    // hasBack=true used to appear here, but a back-canvas is allocated per
+    // top-level hwnd and children composite into their parent's surface (see
+    // the rendering-surfaces note in CLAUDE.md). Every child window reports
+    // hasBack=false now, so that told us nothing about painting. Whether the
+    // button has pixels is the question, and grayButton/buttonInk below answer
+    // it directly.
+    { name: 'bottom action button surface was painted', pass: /window hwnd=65543 .*visible=true/.test(out) && grayButton > 1000 },
+    { name: `bottom action button remains visible after gameplay input (face=${grayButton} ink=${buttonInk})`, pass: grayButton > 1000 && buttonInk > 50 },
     { name: 'no destroy-window path after start', pass: !/DestroyWindow/.test(out) },
     { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
   ];
