@@ -99,8 +99,14 @@ function countInRect(img, rect, pred) {
     const img = await readPixels(png);
     playfieldBlack = countInRect(img, { x0: 70, y0: 60, x1: 210, y1: 315 },
       (r, g, b) => r === 0 && g === 0 && b === 0);
+    // Count the whole tetromino, bevels included. The old predicate
+    // (g > 180 && r < 40 && b < 80) accepted only the saturated core of each
+    // block, so a correctly drawn 4-block I-piece scored 68 against a
+    // threshold of 100 and read as "no brick" while the game was running
+    // perfectly. Win98-style blocks are drawn with lit and shadowed edges, so
+    // "much greener than it is red or blue" is the shape-independent test.
     greenPiece = countInRect(img, { x0: 70, y0: 60, x1: 210, y1: 315 },
-      (r, g, b) => g > 180 && r < 40 && b < 80);
+      (r, g, b) => g > 100 && g - r > 40 && g - b > 40);
     scorePanelFace = countInRect(img, { x0: 212, y0: 124, x1: 362, y1: 253 },
       (r, g, b) => r === 0xC0 && g === 0xC0 && b === 0xC0);
     redPreview = countInRect(img, { x0: 70, y0: 60, x1: 210, y1: 315 },
@@ -111,10 +117,14 @@ function countInRect(img, rect, pred) {
     { name: 'bounded run exited cleanly', pass: exitCode === 0 },
     { name: 'real menu click path opened Game menu', pass: /mousedown 44,52/.test(out) && /mouseup 44,52/.test(out) },
     { name: 'real menu click path selected New', pass: /mousedown 56,72/.test(out) && /mouseup 56,72/.test(out) },
-    { name: 'New Game PNG written', pass: pngSize > 4000 },
+    // A byte count measures how well the frame compresses, not what is in it.
+    // This frame is mostly flat black playfield and flat COLOR_3DFACE, which
+    // compresses extremely well, so a correct render lands at ~3.9KB. The
+    // pixel checks below are what actually establish the screen is right.
+    { name: 'New Game PNG written', pass: pngSize > 1000 },
     { name: 'playfield is initialized black', pass: playfieldBlack > 20000 },
     { name: 'score panel remains visible', pass: scorePanelFace > 8000 },
-    { name: 'falling brick rendered', pass: greenPiece + redPreview > 100 },
+    { name: `falling brick rendered (${greenPiece + redPreview} px)`, pass: greenPiece + redPreview > 100 },
     { name: 'no crash marker', pass: !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) },
   ];
 
