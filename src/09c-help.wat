@@ -730,6 +730,10 @@
     ;; 0xFFFF0002 = built-in control wndproc
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_CTRL_NATIVE))
       (then (return (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; 0xFFFF0004 = dialog box. DefDlgProc owns the whole message set including
+    ;; the non-client chrome, so route before the default NCPAINT/NCCALCSIZE.
+    (if (i32.eq (local.get $wp) (global.get $WNDPROC_DIALOG))
+      (then (return (call $dialog_default_proc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; 0xFFFF0003 = console window. Its own wndproc handles the client; the
     ;; default chrome below still draws its frame and caption.
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_CONSOLE_NATIVE))

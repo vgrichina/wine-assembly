@@ -1477,7 +1477,10 @@
   (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
   (global $WNDPROC_WAT_NATIVE i32 (i32.const 0xFFFF0001))  ;; WAT-native window wndproc
   (global $WNDPROC_BUILTIN    i32 (i32.const 0xFFFE0001))  ;; built-in control default wndproc
-  (global $WNDPROC_DIALOG     i32 (i32.const 0xFFFE0002))  ;; USER DefDlgProc wrapper
+  ;; USER DefDlgProc wrapper. Must live inside the 0xFFFF____ WAT-native band:
+  ;; every "is this an x86 wndproc?" site tests `< 0xFFFF0000`, so a marker
+  ;; below that line gets called as guest code and jumps into the void.
+  (global $WNDPROC_DIALOG     i32 (i32.const 0xFFFF0004))  ;; USER DefDlgProc wrapper
   ;; API_HASH_COUNT is now in 01b-api-hashes.generated.wat
 
   ;; Guest code section bounds (set by PE loader)
