@@ -394,13 +394,16 @@ function runExe(testCase, pngPath) {
     return { name: testCase.name, status: 'SKIP', reason: 'file not found' };
   }
   if (testCase.expect16bit) {
-    // NE format; emulator only supports 32-bit PE. Verify MZ+NE then SKIP.
+    // NE format. The loader links these and the decoder runs them, but there
+    // is no Win16 API layer yet, so each one stops at KERNEL.91 InitTask by
+    // design. test/test-win16-exec.js is what asserts they get that far;
+    // this stays a SKIP until an API layer can carry one to a window.
     try {
       const buf = fs.readFileSync(exePath);
       if (buf.length >= 0x40 && buf[0] === 0x4D && buf[1] === 0x5A) {
         const peOff = buf.readUInt32LE(0x3C);
         if (peOff + 2 <= buf.length && buf[peOff] === 0x4E && buf[peOff + 1] === 0x45) {
-          return { name: testCase.name, status: 'SKIP', reason: '16-bit NE (unsupported)' };
+          return { name: testCase.name, status: 'SKIP', reason: '16-bit NE (runs to InitTask; no Win16 API layer yet)' };
         }
       }
     } catch (_) {}

@@ -1720,6 +1720,22 @@
           (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- String ops ----
+      ;; These handlers treat ESI and EDI as linear addresses. In a 16-bit task
+      ;; they are DS:SI and ES:DI, so every one of them would read and write
+      ;; somewhere plausible and wrong. Refuse until they have segmented forms,
+      ;; rather than let a REP MOVSW quietly scribble over the arena.
+      ;; XLAT is here for the same reason: it reads DS:BX+AL.
+      (if (i32.and (global.get $code16)
+                   (i32.or
+                     (i32.eq (local.get $op) (i32.const 0xD7))
+                     (i32.or
+                       (i32.and (i32.ge_u (local.get $op) (i32.const 0xA4)) (i32.le_u (local.get $op) (i32.const 0xA7)))
+                       (i32.and (i32.ge_u (local.get $op) (i32.const 0xAA)) (i32.le_u (local.get $op) (i32.const 0xAF))))))
+        (then
+          (call $host_log_i32 (i32.const 0xCA165E51)) ;; 16-bit string op, not implemented
+          (call $host_log_i32 (local.get $op))
+          (call $host_log_i32 (global.get $d_pc))
+          (unreachable)))
       (if (i32.eq (local.get $op) (i32.const 0xA4)) ;; MOVSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 82) (i32.const 0))) (else (call $te (i32.const 86) (i32.const 0)))) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA5)) ;; MOVSD / MOVSW

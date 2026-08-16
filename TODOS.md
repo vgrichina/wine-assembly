@@ -88,20 +88,42 @@ meaningless. Delete it. A baseline worktree needs the font assets too.
 
 ---
 
-## 1. Win16 / NE loader — Phase 2 (session `ebc2c6b0`)
+## 1. Win16 / NE — Phase 3: the API layer
 
-Phase 1 is committed (`0c23c78`): NE segments load and fixups link, 2452 checks
-green across WINMINE / FREECELL / MSHEARTS / SOL / CARDS.DLL. **Nothing executes
-yet.**
+Phase 1 (`0c23c78`) loads and links NE images. **Phase 2 (`84c98a1`) runs
+them**: all four images execute their entry code and stop at the first import,
+correctly identified as KERNEL.91 InitTask. `test/test-win16-exec.js` is 68/68
+and `test/test-ne-loader.js` 2452/0; both are now in the `quick` tier.
 
-- Files: `src/08c-ne-loader.wat`, `test/test-ne-loader.js`, `src/01-header.wat`
-  (globals + data at `0x11E70` Win16 module names, `0x07E08400` WIN16_SEG_TABLE),
-  `src/08-pe-loader.wat` (NE branch in `load_pe`), `lib/compile-wat.js` WAT_FILES
+The address scheme, because everything else depends on it: every segment base
+is 64KB aligned, so the low word of a linear address *is* the offset inside its
+segment. `$esp` therefore stays a linear address with SP as its low half, and
+the pre-existing 16-bit push/pop handlers needed no changes at all.
+
+- Files: `src/05c-seg16-ops.wat` (handlers 363-382 — segmented EA, far
+  transfers, segment-register moves), `src/09e-win16-api.wat` (dispatch
+  skeleton + Pascal argument helpers), `src/07-decoder.wat` (`$code16` inverts
+  the 66/67 prefixes; `$decode_modrm16`; `$branch_target`),
+  `src/08c-ne-loader.wat` (`$win16_start_task`), `src/01-header.wat` (segment
+  register globals)
 - Tooling: `tools/ne-dump.js`, binaries in `test/binaries/win98-16bit/`
-- Next: 16-bit instruction decode, then the Win16 API layer. The session had just
-  started reading the prefix/ModRM machinery and posted a board notice that it was
-  entering `src/07-decoder.wat` — **coordinate before editing the decoder.**
-- Closes the 4 SKIPs in the corpus sweep, which are all 16-bit NE executables.
+- **Next: implement Win16 ordinals in `src/09e-win16-api.wat`.** Every
+  unimplemented one traps naming itself, so the loop is: run, read the ordinal,
+  implement, repeat. Start with KERNEL.91 InitTask, which needs a PSP segment
+  (command line at PSP:0x81) and returns AX=1, CX=stack limit, DX=nCmdShow,
+  SI=hPrevInstance, DI=hInstance, ES=PSP. Getting to a window means a task
+  database, the DGROUP local heap (LocalAlloc/LocalInit), GlobalAlloc handing
+  out real selectors registered in WIN16_SEG_TABLE — `$win16_set_sreg` traps
+  on a selector that names no segment, which is where an unregistered
+  GlobalAlloc block will announce itself — and then the USER window calls.
+  **Verify each ordinal number against a real source before implementing it**;
+  a wrong ordinal is a silently wrong API, which is exactly the failure the
+  trap-by-default design exists to avoid.
+- Known gaps in the execution core, none of them hit yet, all of them traps
+  rather than silent wrong answers: string ops (MOVS/STOS/SCAS/CMPS) still use
+  ESI/EDI as linear addresses and need DS:SI / ES:DI; INT (including the
+  INT 3Fh moveable-segment thunk) is untouched; there is no 16↔32 thunking.
+- Closes the 4 SKIPs in the corpus sweep once a window appears.
 
 ## 2. Fonts — e2e verification and the original measurement (session `ea1ba02f`)
 
