@@ -87,6 +87,41 @@ function readEntryTable(buf, off, len) {
   return out;
 }
 
+// Everything an NE says about its own exports, as data. Split out from the CLI
+// so tools/gen_win16_ordinals.js can read the same tables rather than reparse
+// them, and so the module-name check has one implementation.
+function readExports(file) {
+  const buf = fs.readFileSync(file);
+  if (buf.length < 0x40 || buf[0] !== 0x4d || buf[1] !== 0x5a) {
+    throw new Error(`${file}: not an MZ image`);
+  }
+  const ne = buf.readUInt32LE(0x3c);
+  if (ne + 0x40 > buf.length || buf[ne] !== 0x4e || buf[ne + 1] !== 0x45) {
+    throw new Error(`${file}: not an NE image (no NE signature at 0x${ne.toString(16)})`);
+  }
+
+  const resident = readNameTable(buf, ne + buf.readUInt16LE(ne + 0x26));
+  const nonResident = readNameTable(buf, buf.readUInt32LE(ne + 0x2c), buf.readUInt16LE(ne + 0x20));
+  const entries = readEntryTable(buf, ne + buf.readUInt16LE(ne + 0x04), buf.readUInt16LE(ne + 0x06));
+
+  // Ordinal 0 in either table is the module's own name or description, not an
+  // export. Resident names win: a name can appear in both, and the resident
+  // table is the one the loader itself consults.
+  const named = new Map();
+  for (const r of nonResident) if (r.ordinal !== 0) named.set(r.ordinal, { name: r.name, resident: false });
+  for (const r of resident) if (r.ordinal !== 0) named.set(r.ordinal, { name: r.name, resident: true });
+
+  return {
+    // The module name is what an import resolves against, and it is not the
+    // filename: the module SOUND ships as mmsound.drv.
+    module: resident.length ? resident[0].name : '',
+    description: nonResident.length ? nonResident[0].name : '',
+    residentNames: Math.max(0, resident.length - 1),
+    nonResidentNames: Math.max(0, nonResident.length - 1),
+    named, entries,
+  };
+}
+
 function main() {
   const args = process.argv.slice(2);
   const file = args.find(a => !a.startsWith('--'));
@@ -103,29 +138,14 @@ function main() {
     : null;
   const wantName = nameArg ? nameArg.slice('--name='.length).toLowerCase() : null;
 
-  const buf = fs.readFileSync(file);
-  if (buf.length < 0x40 || buf[0] !== 0x4d || buf[1] !== 0x5a) {
-    console.error(`${file}: not an MZ image`);
+  let info;
+  try {
+    info = readExports(file);
+  } catch (e) {
+    console.error(e.message);
     process.exit(1);
   }
-  const ne = buf.readUInt32LE(0x3c);
-  if (ne + 0x40 > buf.length || buf[ne] !== 0x4e || buf[ne + 1] !== 0x45) {
-    console.error(`${file}: not an NE image (no NE signature at 0x${ne.toString(16)})`);
-    process.exit(1);
-  }
-
-  const resident = readNameTable(buf, ne + buf.readUInt16LE(ne + 0x26));
-  const nonResident = readNameTable(buf, buf.readUInt32LE(ne + 0x2c), buf.readUInt16LE(ne + 0x20));
-  const entries = readEntryTable(buf, ne + buf.readUInt16LE(ne + 0x04), buf.readUInt16LE(ne + 0x06));
-
-  // Ordinal 0 in either table is the module's own name or description, not an
-  // export. Resident names win: a name can appear in both, and the resident
-  // table is the one the loader itself consults.
-  const moduleName = resident.length ? resident[0].name : '';
-  const description = nonResident.length ? nonResident[0].name : '';
-  const named = new Map();
-  for (const r of nonResident) if (r.ordinal !== 0) named.set(r.ordinal, { name: r.name, resident: false });
-  for (const r of resident) if (r.ordinal !== 0) named.set(r.ordinal, { name: r.name, resident: true });
+  const { module: moduleName, description, named, entries } = info;
 
   const ordinals = [...new Set([...named.keys(), ...entries.keys()])].sort((a, b) => a - b);
   const rows = [];
@@ -153,8 +173,8 @@ function main() {
   if (asJson) {
     console.log(JSON.stringify({
       file, module: moduleName, description,
-      residentNames: resident.length - 1,
-      nonResidentNames: Math.max(0, nonResident.length - 1),
+      residentNames: info.residentNames,
+      nonResidentNames: info.nonResidentNames,
       entryPoints: entries.size,
       exports: rows,
     }, null, 2));
@@ -162,7 +182,7 @@ function main() {
   }
 
   console.log(`${file}  ${moduleName}  ${entries.size} entry point(s), ` +
-    `${resident.length - 1} resident + ${Math.max(0, nonResident.length - 1)} non-resident name(s)`);
+    `${info.residentNames} resident + ${info.nonResidentNames} non-resident name(s)`);
   if (description) console.log(`  "${description}"`);
   for (const r of rows) {
     const target = r.segment === null
@@ -175,4 +195,6 @@ function main() {
   if (!rows.length) console.log('  (no export matched)');
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { readExports, readNameTable, readEntryTable };

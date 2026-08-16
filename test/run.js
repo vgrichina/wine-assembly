@@ -174,6 +174,29 @@ const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 
+// Win16 module ids, as assigned by $win16_module_id in src/08c-ne-loader.wat.
+// Index 0 is "the loader could not identify the module", which is a real state
+// worth naming rather than a gap.
+const WIN16_MODULES = [
+  '<unresolved>', 'KERNEL', 'USER', 'GDI', 'KEYBOARD',
+  'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS',
+];
+let win16Ordinals;
+// "KERNEL.91 INITTASK" from (1, 91). The map is generated from the real
+// modules' export tables by tools/gen_win16_ordinals.js; a missing entry means
+// the ordinal is genuinely not exported under a name, so say so rather than
+// leave the caller guessing whether the lookup or the export was absent.
+function win16ApiName(moduleId, ordinal) {
+  const mod = WIN16_MODULES[moduleId] || `<module ${moduleId}>`;
+  if (win16Ordinals === undefined) {
+    try {
+      win16Ordinals = require(path.join(__dirname, '..', 'src', 'win16-ordinals.generated.json'));
+    } catch (_) { win16Ordinals = null; }
+  }
+  const name = win16Ordinals?.modules?.[mod]?.ordinals?.[String(ordinal)];
+  return `${mod}.${ordinal}${name ? ' ' + name : ' (no exported name)'}`;
+}
+
 function applyExeCompatibilityPatches(exeName, exports, memoryBuffer) {
   if (process.env.WA_SKIP_EXE_COMPAT_PATCHES === '1') return;
   const enabledKeys = process.env.WA_EXE_COMPAT_PATCHES
@@ -402,6 +425,7 @@ async function main() {
   let lastTreeItemTrace = null;
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
+  let pendingWin16 = null;  // words following the 0xCA16A9F1 Win16 dispatch marker
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
     if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
@@ -1495,6 +1519,19 @@ async function main() {
     // name on the immediately-following entry log.
     if (((val >>> 0) >>> 16) === 0xC0DE) {
       pendingComApiId = (val >>> 0) & 0xFFFF;
+      return;
+    }
+    // Win16 API dispatch marker (09e-win16-api.wat), followed by the packed
+    // module<<16|ordinal and the linear return address. Every Win16 import is
+    // by ordinal, so "module 1 ordinal 91" is unreadable without the map the
+    // real modules' export tables provide — say KERNEL.91 INITTASK instead.
+    if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = []; return; }
+    if (pendingWin16) {
+      pendingWin16.push(val >>> 0);
+      if (pendingWin16.length < 2) return;
+      const [key, ret] = pendingWin16;
+      pendingWin16 = null;
+      logs.push(`[win16] ${win16ApiName(key >>> 16, key & 0xFFFF)}  ret=${hex(ret)}`);
       return;
     }
     if (ESP_DELTA && lastApiName) {
