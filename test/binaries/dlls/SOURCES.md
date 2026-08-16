@@ -95,12 +95,13 @@ Extraction path: `WIN98/BASE4.CAB` (a continued cabinet set spanning
 | `commdlg.dll` | `scratch/win16-system/commdlg.dll` | 97,936 | `b962e6787daaa2afb14dc56c854c00159410ac50e2d5ba902b9052ee3080000d` |
 | `keyboard.drv` | `scratch/win16-system/keyboard.drv` | 12,688 | `d50964b1e31373f161081227a435deeeca22143b1d0bfde0310a85468e892628` |
 | `shell.dll` | `scratch/win16-system/shell.dll` | 41,600 | `667422428e0934d947c9b56d622cffe6acd576f8014ca3692d7639d5457044d6` |
+| `mmsound.drv` | `scratch/win16-system/mmsound.drv` | 3,120 | `97170cd7c09d458490750bfc319b15e945e9de202c57f547c9625b2a5f72f308` |
 
 Reproduce after mounting the ISO, from its `win98` directory:
 
 ```bash
 for f in krnl386.exe user.exe gdi.exe ddeml.dll mmsystem.dll \
-         keyboard.drv commdlg.dll shell.dll; do
+         keyboard.drv commdlg.dll shell.dll mmsound.drv; do
   cabextract -q -d "$DEST" -F "$f" BASE4.CAB
 done
 shasum -a 256 "$DEST"/*
@@ -110,10 +111,20 @@ shasum -a 256 "$DEST"/*
 given, so the multi-`-F` recipe in the section above silently extracts just
 `vgasys.fon` — it needs the same loop.
 
-`SOUND.DRV` is deliberately absent: Windows 98 SE does not ship it, MMSYSTEM
-having taken over. That leaves six ordinals (`SOUND.#1 #2 #4 #5 #9 #10`, all
-from WINMINE) with no module to resolve them against; they need a Windows 3.1
-`SOUND.DRV` or per-call-site reverse engineering.
+There is no `SOUND.DRV` in the 6,939 files of the cabinet set, which for a
+while looked like six unresolvable ordinals (`SOUND.#1 #2 #4 #5 #9 #10`, all
+from WINMINE). It is not: **a Win16 module name is not its filename.** The
+module named `SOUND` ships as `mmsound.drv`, whose resident name table says
+`SOUND` and whose description says "Windows Sound Driver"; `SYSTEM.INI` names
+the file with `[boot] sound.drv=mmsound.drv`, and the import resolves against
+the module name inside it. Its ordinals 1/2/4/5/9/10 are
+`OpenSound`/`CloseSound`/`SetVoiceNote`/`SetVoiceAccent`/`StartSound`/`StopSound`
+— WINMINE playing a tune.
+
+So look up an unresolved module by the name in its own resident name table
+rather than by the file you expected, and check the `[boot]` and `[drivers]`
+sections of `SYSTEM.INI` for the alias. With `mmsound.drv` added, all 269
+ordinals the corpus imports resolve.
 
 `scratch/` is gitignored, so these are local-only fixtures under the same policy
 as the rest of this file: stock Windows installation files, not redistributable.
