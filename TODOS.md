@@ -183,11 +183,20 @@ so the telnet-first detour is dropped.
 - **Blobby Volley single-player is done** (`bd9a56a`) — it plays, with no
   emulator change needed. See `apps/blobby-volley.md`, covered by
   `test/test-blobby-volley.js` (9 checks, e2e tier).
-- **Still open: the actual async I/O.** The game's `NETZWERKSPIEL` mode
-  `LoadLibraryA`s `DPlayX.dll` (from 0x440598) for DirectPlay over TCP/IP, and
-  nothing on that path has been exercised. This is the real item-3 work, and it
-  pairs with the virtual LAN in item 4 — `src/09d-winsock.wat` +
-  `lib/vlan-wire.js` already join two emulator processes into one room.
+- **The DirectPlay lobby now runs** (`f9e2d25`). `NETZWERKSPIEL` reaches both
+  end states: host → `Open` + `CreatePlayer` → "WARTE AUF EINEN GAST…", guest →
+  `EnumSessions` → "GEFUNDENE SPIELE: LOCAL SESSION". Covered by
+  `test/test-blobby-network.js` (10 checks, e2e tier). Two fixes: the
+  `DirectPlayCreate` handler popped 20 bytes for a 3-arg function (which
+  quietly killed the game thread), and it was an `E_FAIL` stub even though
+  `IDirectPlay3` was already implemented behind `CoCreateInstance`.
+- **Still open: traffic between two processes.** `Send` returns `DP_OK` without
+  sending, `Receive` returns `DPERR_NOMESSAGES`, and `EnumSessions` fabricates
+  its one session — so a host and a guest cannot meet. This is the remaining
+  real async I/O, and it pairs with the virtual LAN in item 4:
+  `src/09d-winsock.wat` + `lib/vlan-wire.js` already join two emulator
+  processes into one room, and the guest screen offers a **Host-IP** field that
+  maps straight onto `--vlan-ip`.
 - **Telnet** (`apps/telnet.md`) remains available as a cheaper async-I/O proof if
   DirectPlay turns out to be a long haul: 0x0 `WS_POPUP` window, never calls
   `ShowWindow`, pumps forever; the XP console client also needs console
