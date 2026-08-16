@@ -1362,6 +1362,14 @@
   ;; 73: GetMessageA
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
+    ;; Move the virtual wire before looking for a message. WSAAsyncSelect is a
+    ;; promise that the app will be TOLD about socket activity, so a server
+    ;; written to that model calls no socket function at all while it waits --
+    ;; and every other call site that pumps the wire is a socket function.
+    ;; Without this an inbound SYN sits in the queue forever: the listener is
+    ;; up, the peer's connect is answered by nobody, and both ends look idle
+    ;; and healthy. $vsock_pump returns immediately when winsock is unused.
+    (call $vsock_pump)
     (local.set $msg_ptr (local.get $arg0))
     ;; If quit flag set, return 0 (WM_QUIT)
     (if (global.get $quit_flag)
@@ -1589,6 +1597,9 @@
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
     (local $qidx i32) (local $qaddr i32) (local $qmsg i32)
+    ;; Same reason as GetMessageA: an idle message pump is where a
+    ;; WSAAsyncSelect server spends its time, so it has to move the wire.
+    (call $vsock_pump)
     ;; Deliver pending child WM_CREATE
     (if (global.get $pending_child_create)
     (then

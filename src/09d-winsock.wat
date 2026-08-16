@@ -533,6 +533,11 @@
       (i32.add (i32.load (i32.add (local.get $lrec) (i32.const 64))) (i32.const 1)))
     (drop (call $vsock_emit (i32.const 2) (local.get $dip) (local.get $dport)
             (local.get $sip) (local.get $sport) (i32.const 0) (i32.const 0)))
+    ;; FD_ACCEPT on the LISTENER, not the new connection. A server written to
+    ;; the message model never polls: it calls accept only when told a
+    ;; connection is waiting, so without this edge the backlog fills silently
+    ;; and the peer sits in a connection that was answered but never taken up.
+    (call $vsock_async_post (local.get $lis) (i32.const 0x08) (i32.const 0))
     (i32.const 1))
 
   ;; Apply one inbound frame. Returns 1 when the frame has been consumed and
@@ -939,6 +944,7 @@
   (func $handle_accept (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                        (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $idx i32) (local $rec i32) (local $child i32) (local $crec i32)
+    (local $arec i32) (local $carec i32)
     (local $i i32) (local $n i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     (local.set $idx (call $vsock_index (local.get $arg0)))
@@ -975,11 +981,59 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sh)))
     (i32.store (i32.add (local.get $rec) (i32.const 64)) (i32.sub (local.get $n) (i32.const 1)))
+    ;; A socket from accept inherits the listener's WSAAsyncSelect registration
+    ;; -- window, message and event mask alike. Without that the server is told
+    ;; about the connection and then never hears another thing from it: the
+    ;; peer's first packet lands in the ring, no FD_READ is posted for it, and
+    ;; an accepted session goes silent instead of failing.
+    (local.set $arec (call $vsock_async_rec (local.get $idx)))
+    (local.set $carec (call $vsock_async_rec (local.get $child)))
+    (if (i32.and (local.get $arec) (local.get $carec))
+      (then
+        (local.set $arec (call $g2w (local.get $arec)))
+        (local.set $carec (call $g2w (local.get $carec)))
+        (i32.store (local.get $carec) (i32.load (local.get $arec)))
+        (i32.store offset=4 (local.get $carec) (i32.load offset=4 (local.get $arec)))
+        (i32.store offset=8 (local.get $carec) (i32.load offset=8 (local.get $arec)))))
     (local.set $crec (call $vsock_rec (local.get $child)))
     (call $vsock_write_sockaddr (local.get $arg1) (local.get $arg2)
       (i32.load (i32.add (local.get $crec) (i32.const 24)))
       (i32.load (i32.add (local.get $crec) (i32.const 28))))
+    ;; Anything the peer sent between the SYN and this accept is already in the
+    ;; ring, and its FD_READ went to a socket that did not exist yet. Report the
+    ;; edge now, or that first packet waits for a second one to announce it.
+    (if (call $vsock_read_ready (local.get $child))
+      (then (call $vsock_async_post (local.get $child) (i32.const 0x01) (i32.const 0))))
     (global.set $eax (call $vsock_handle (local.get $child))))
+
+  ;; getpeername(s, name, namelen) — the address of the far end.
+  ;;
+  ;; A server learns who connected from the socket accept handed it, not from
+  ;; accept's own out-parameter, which plenty of code passes as NULL. TetriNET
+  ;; asks here for the address it shows in its player list, so an unimplemented
+  ;; stub took down the whole session one call after a successful accept.
+  (func $handle_getpeername (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+                            (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $idx i32) (local $rec i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (local.set $idx (call $vsock_index (local.get $arg0)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0))
+      (then
+        (call $vsock_set_error (i32.const 10038))          ;; WSAENOTSOCK
+        (global.set $eax (i32.const -1))
+        (return)))
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    ;; Only an established connection has a peer. A listener or a half-open
+    ;; connect reports WSAENOTCONN rather than inventing an address.
+    (if (i32.ne (i32.load (local.get $rec)) (i32.const 4))
+      (then
+        (call $vsock_set_error (i32.const 10057))          ;; WSAENOTCONN
+        (global.set $eax (i32.const -1))
+        (return)))
+    (call $vsock_write_sockaddr (local.get $arg1) (local.get $arg2)
+      (i32.load (i32.add (local.get $rec) (i32.const 24)))
+      (i32.load (i32.add (local.get $rec) (i32.const 28))))
+    (global.set $eax (i32.const 0)))
 
   ;; send(s, buf, len, flags) — a partial count is a legal TCP result.
   (func $handle_send (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)

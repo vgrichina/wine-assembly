@@ -18829,5 +18829,28 @@
     "nargs": 2,
     "convention": "cdecl",
     "hash": 1795623733
+  },
+  {
+    "id": 2418,
+    "name": "getpeername",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4006149556,
+    "args": [
+      {
+        "name": "s",
+        "type": "DWORD"
+      },
+      {
+        "name": "name",
+        "type": "LPSOCKADDR",
+        "out": true
+      },
+      {
+        "name": "namelen",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

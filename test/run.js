@@ -5138,6 +5138,15 @@ async function main() {
         await new Promise(resolve => setImmediate(resolve));
       }
     }
+    // A parked socket call is not the only way to be waiting on the wire. An
+    // app using WSAAsyncSelect never blocks in winsock at all: it sits in its
+    // message pump expecting to be told, so nothing above would ever yield and
+    // the IPC frames carrying that news would not be read until the run ended.
+    // The wire belongs to the process, not to a worker, so this turn is owed
+    // whenever one is attached -- not only while threads happen to be alive.
+    if (ctx.vlanWire && (batch & 63) === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
     if (AUDIO_EXIT_BYTES > 0 && ctx._audioOutFd !== undefined) {
       let audioBytes = 0;
       try { audioBytes = fs.fstatSync(ctx._audioOutFd).size; } catch (_) {}
