@@ -822,6 +822,13 @@ async function main() {
         scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
       } else if (kind === 'main-resize') {
         scheduledInput.push({ batch, action: 'main-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
+      } else if (kind === 'corner-drag') {
+        // B:corner-drag:HWND:DX:DY — grab a window's live bottom-right corner
+        // and drag it by (DX,DY) in four steps. Like close-click, the grab
+        // point comes from the current rect, so the test does not silently
+        // stop grabbing anything when default placement or size moves.
+        scheduledInput.push({ batch, action: 'corner-drag',
+          target: parts[2], dx: parseInt(parts[3]), dy: parseInt(parts[4]) });
       } else if (kind === 'close-click') {
         // B:close-click:TARGET — real mouse click on a window's titlebar X,
         // with the coordinates derived from the window's live rect instead of
@@ -4665,6 +4672,25 @@ async function main() {
         const dv = new DataView(memory.buffer);
         const value = dv.getUint32(wa, true) >>> 0;
         logs.push(`[input] read-dword${ev.label ? ':' + ev.label : ''} [0x${(ev.addr >>> 0).toString(16)}] = 0x${value.toString(16)} (${value}) at batch ${batch}`);
+      } else if (ev.action === 'corner-drag' && renderer && renderer.handleMouseDown) {
+        const hwnd = parseInt(ev.target, 16) | 0;
+        const win = hwnd && renderer.windows ? renderer.windows[hwnd] : null;
+        if (!win) {
+          logs.push(`[input] corner-drag: no window for hwnd ${ev.target} at batch ${batch}`);
+        } else {
+          const r = renderer._windowRectScreen(win);
+          const x0 = r.x + r.w - 1, y0 = r.y + r.h - 1;
+          const x1 = x0 + ev.dx, y1 = y0 + ev.dy;
+          renderer.handleMouseDown(x0, y0, 1);
+          if (renderer.handleMouseMove) {
+            for (const t of [0.25, 0.5, 1]) {
+              renderer.handleMouseMove(
+                Math.round(x0 + (x1 - x0) * t), Math.round(y0 + (y1 - y0) * t));
+            }
+          }
+          if (renderer.handleMouseUp) renderer.handleMouseUp(x1, y1, 1);
+          logs.push(`[input] corner-drag hwnd=0x${hwnd.toString(16)} ${x0},${y0} -> ${x1},${y1} at batch ${batch}`);
+        }
       } else if (ev.action === 'close-click' && renderer && renderer.handleMouseDown) {
         const we = instance.exports;
         let hwnd = 0;

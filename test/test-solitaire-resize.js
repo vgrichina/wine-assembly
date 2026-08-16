@@ -3,12 +3,17 @@
 // Solitaire window outward and verifies the window actually grew.
 //
 // Solitaire has WS_THICKFRAME (style 0x2cf0000) so it's supposed to be
-// user-resizable. Currently (2026-04-24) this test fails end-to-end:
-//   - $defwndproc_do_nchittest never returns HTBOTTOMRIGHT/HTLEFT/etc;
-//     any click in the 3px border collapses to HTBORDER (non-interactive).
-//   - renderer-input.js has no edge hit-detection or drag-to-resize path.
-// So the test will fail until both halves are implemented. Kept as a
-// live regression target.
+// user-resizable. Both halves of that (HTBOTTOMRIGHT from
+// $defwndproc_do_nchittest, and renderer-input.js's drag-to-resize) are
+// implemented now.
+//
+// The grab point comes from the window's live rect via corner-drag, not from
+// a hardcoded screen coordinate: this test spent months failing because it
+// assumed Solitaire opened at y=20 when it actually opens at y=0, so the
+// mousedown landed 19px below the window and grabbed nothing. (That y=0 is
+// itself an emulator bug — CreateWindowExA is passed x=CW_USEDEFAULT, y=0,
+// and Windows ignores y entirely in that case. Tracked separately; it moves
+// every window and needs its own e2e recalibration.)
 
 const fs = require('fs');
 const path = require('path');
@@ -20,18 +25,11 @@ const EXE  = path.join(__dirname, 'binaries', 'entertainment-pack', 'sol.exe');
 
 if (!fs.existsSync(EXE)) { console.log('SKIP  sol.exe not found'); process.exit(0); }
 
-// Solitaire default: pos=(20,20) size=593x431.
-// Bottom-right corner at screen (20+593-1, 20+431-1) = (612, 450).
-// Drag it to (630, 470) => +18w, +20h.
-const BR_X = 20 + 593 - 1, BR_Y = 20 + 431 - 1;
-const NEW_X = 630, NEW_Y = 470;
+// Solitaire opens 593x431. Drag its bottom-right corner by +18,+20.
+const GROW_W = 18, GROW_H = 20;
 
 const inputSpec = [
-  `60:mousedown:${BR_X}:${BR_Y}`,
-  `62:mousemove:${BR_X + 5}:${BR_Y + 5}`,
-  `64:mousemove:${BR_X + 10}:${BR_Y + 10}`,
-  `66:mousemove:${NEW_X}:${NEW_Y}`,
-  `68:mouseup:${NEW_X}:${NEW_Y}`,
+  `60:corner-drag:10001:${GROW_W}:${GROW_H}`,
   `120:png:/tmp/sol_resize_after.png`,
 ].join(',');
 
@@ -56,8 +54,8 @@ function parseRect(line) {
 const winLines = out.split('\n').filter(l => l.includes('[input] window hwnd=65537'));
 const lastRect = winLines[winLines.length - 1] && parseRect(winLines[winLines.length - 1]);
 
-const GREW_W = lastRect && lastRect.w > 593 + 10;
-const GREW_H = lastRect && lastRect.h > 431 + 10;
+const GREW_W = lastRect && lastRect.w === 593 + GROW_W;
+const GREW_H = lastRect && lastRect.h === 431 + GROW_H;
 
 const checks = [
   { name: 'Solitaire window observed',        pass: !!lastRect },
@@ -71,7 +69,7 @@ for (const c of checks) {
   console.log((c.pass ? 'PASS  ' : 'FAIL  ') + c.name);
   if (!c.pass) failed++;
 }
-console.log(`final rect: ${JSON.stringify(lastRect)}  (expected w>603, h>441)`);
+console.log(`final rect: ${JSON.stringify(lastRect)}  (expected ${593 + GROW_W}x${431 + GROW_H})`);
 console.log('');
 console.log(`${checks.length - failed}/${checks.length} checks passed`);
 process.exit(failed > 0 ? 1 : 0);
