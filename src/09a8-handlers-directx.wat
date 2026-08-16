@@ -44,7 +44,7 @@
   ;; first Win32/COM dispatch. 0x07FFE000..0x08000000 is the reserved high-memory
   ;; gap immediately after COM_WRAPPERS_AUX.
   (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFE000))
-  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 53))
+  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 54))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
@@ -103,6 +103,8 @@
   (global $DX_VTBL_D3DVB7    (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DTEX    (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DTEX2   (mut i32) (i32.const 0))
+  ;; OLE Automation font object (OleCreateFontIndirect).
+  (global $DX_VTBL_OLE_FONT  (mut i32) (i32.const 0))
 
   (func $dx_vtable_registry_reset
     (i32.store (global.get $DX_VTBL_REGISTRY) (i32.const 0)))
@@ -178,7 +180,8 @@
     (global.set $DX_VTBL_D3DVB (i32.load offset=200 (global.get $DX_VTBL_REGISTRY)))
     (global.set $DX_VTBL_D3DVB7 (i32.load offset=204 (global.get $DX_VTBL_REGISTRY)))
     (global.set $DX_VTBL_D3DTEX (i32.load offset=208 (global.get $DX_VTBL_REGISTRY)))
-    (global.set $DX_VTBL_D3DTEX2 (i32.load offset=212 (global.get $DX_VTBL_REGISTRY))))
+    (global.set $DX_VTBL_D3DTEX2 (i32.load offset=212 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_OLE_FONT (i32.load offset=216 (global.get $DX_VTBL_REGISTRY))))
 
   (func $dx_sync_thread_vtables_if_needed
     (if (i32.eqz (global.get $DX_VTBL_DDRAW))

@@ -2549,6 +2549,415 @@
     (call $gs32 (i32.add (local.get $obj) (i32.const 24)) (i32.const 2)) ;; STGM_READWRITE
     (local.get $obj))
 
+  ;; ============================================================
+  ;; IFont — OLE Automation font object (OleCreateFontIndirect)
+  ;; ============================================================
+  ;;
+  ;; Object (48 bytes, kind=20): vtable/ref/kind, face-name BSTR, CY point
+  ;; size, weight, charset, and the three VARIANT_BOOL attributes, plus the
+  ;; HFONT realized lazily by get_hFont. The object owns both the BSTR and
+  ;; the HFONT; $ole_obj_release frees them.
+  ;;
+  ;; IID_IFont / IID_IFontDisp are BEF6E002/BEF6E003-A874-101A-8BBA-
+  ;; 00AA00300CAB — not the canonical COM suffix $ole_iid_is_com assumes, so
+  ;; they need their own comparison.
+  (func $ole_iid_is_font (param $iid i32) (param $data1 i32) (result i32)
+    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
+    (i32.and
+      (i32.and
+        (i32.eq (call $gl32 (local.get $iid)) (local.get $data1))
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0x101AA874)))
+      (i32.and
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0xAA00BA8B))
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0xAB0C3000)))))
+
+  ;; BSTR copy of a NUL-terminated guest UTF-16 string. Layout matches
+  ;; $handle_SysAllocString: 4-byte byte-count prefix, BSTR points past it.
+  (func $ole_font_bstr_dup (param $src i32) (result i32)
+    (local $nbytes i32) (local $alloc i32) (local $bstr i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $nbytes (i32.shl (call $guest_wcslen (local.get $src)) (i32.const 1)))
+    (local.set $alloc (call $heap_alloc (i32.add (local.get $nbytes) (i32.const 6))))
+    (if (i32.eqz (local.get $alloc)) (then (return (i32.const 0))))
+    (local.set $bstr (i32.add (local.get $alloc) (i32.const 4)))
+    (call $gs32 (local.get $alloc) (local.get $nbytes))
+    (memory.copy (call $g2w (local.get $bstr)) (call $g2w (local.get $src))
+      (i32.add (local.get $nbytes) (i32.const 2)))
+    (local.get $bstr))
+
+  ;; FONTDESC: cbSizeofstruct, lpstrName, cySize (CY), sWeight, sCharset,
+  ;; fItalic, fUnderline, fStrikethrough.
+  (func $ole_create_font (param $desc i32) (result i32)
+    (local $obj i32)
+    (local.set $obj (call $heap_alloc (i32.const 48)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 48))
+    (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_FONT))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 20))
+    ;; Defaults for a NULL descriptor: 8pt regular MS Sans Serif.
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (i32.const 80000))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 24)) (i32.const 400))
+    (if (local.get $desc)
+      (then
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12))
+          (call $ole_font_bstr_dup (call $gl32 (i32.add (local.get $desc) (i32.const 4)))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 16))
+          (call $gl32 (i32.add (local.get $desc) (i32.const 8))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 20))
+          (call $gl32 (i32.add (local.get $desc) (i32.const 12))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 24))
+          (call $gl16 (i32.add (local.get $desc) (i32.const 16))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 28))
+          (call $gl16 (i32.add (local.get $desc) (i32.const 18))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 32))
+          (select (i32.const -1) (i32.const 0)
+            (call $gl32 (i32.add (local.get $desc) (i32.const 20)))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 36))
+          (select (i32.const -1) (i32.const 0)
+            (call $gl32 (i32.add (local.get $desc) (i32.const 24)))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 40))
+          (select (i32.const -1) (i32.const 0)
+            (call $gl32 (i32.add (local.get $desc) (i32.const 28)))))))
+    (local.get $obj))
+
+  ;; Drop any realized HFONT so the next get_hFont rebuilds from current state.
+  (func $ole_font_invalidate (param $obj i32)
+    (if (call $gl32 (i32.add (local.get $obj) (i32.const 44)))
+      (then
+        (drop (call $host_gdi_delete_object (call $gl32 (i32.add (local.get $obj) (i32.const 44)))))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 44)) (i32.const 0)))))
+
+  ;; CY point size is the size in points scaled by 10000; LOGFONT height is
+  ;; negative character height in pixels at 96 dpi.
+  (func $ole_font_realize (param $obj i32) (result i32)
+    (local $face i32) (local $face_w i32) (local $bstr i32) (local $i i32) (local $ch i32)
+    (local $height i32) (local $hfont i32)
+    (if (call $gl32 (i32.add (local.get $obj) (i32.const 44)))
+      (then (return (call $gl32 (i32.add (local.get $obj) (i32.const 44))))))
+    (local.set $height
+      (i32.div_u
+        (i32.mul (i32.div_u (call $gl32 (i32.add (local.get $obj) (i32.const 16))) (i32.const 10000))
+                 (i32.const 96))
+        (i32.const 72)))
+    (if (i32.eqz (local.get $height)) (then (local.set $height (i32.const 13))))
+    ;; Face name: narrow the BSTR into the 32-byte LOGFONT field.
+    (local.set $face (call $heap_alloc (i32.const 32)))
+    (if (i32.eqz (local.get $face)) (then (return (i32.const 0))))
+    (local.set $face_w (call $g2w (local.get $face)))
+    (memory.fill (local.get $face_w) (i32.const 0) (i32.const 32))
+    (local.set $bstr (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (if (local.get $bstr)
+      (then
+        (block $done (loop $copy
+          (br_if $done (i32.ge_u (local.get $i) (i32.const 31)))
+          (local.set $ch (call $gl16 (i32.add (local.get $bstr) (i32.shl (local.get $i) (i32.const 1)))))
+          (br_if $done (i32.eqz (local.get $ch)))
+          (i32.store8 (i32.add (local.get $face_w) (local.get $i)) (local.get $ch))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy)))))
+    (local.set $hfont (call $gdi_font_create
+      (i32.sub (i32.const 0) (local.get $height))
+      (call $gl32 (i32.add (local.get $obj) (i32.const 24)))
+      (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0))
+      (local.get $face_w)))
+    (call $heap_free (local.get $face))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 44)) (local.get $hfont))
+    (local.get $hfont))
+
+  ;; ---- IFont vtable ----
+
+  (func $handle_IFont_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    ;; IFont, IFontDisp, IDispatch and IUnknown all resolve to this object.
+    (if (i32.or
+          (i32.or
+            (call $ole_iid_is_font (local.get $arg1) (i32.const 0xBEF6E002))
+            (call $ole_iid_is_font (local.get $arg1) (i32.const 0xBEF6E003)))
+          (i32.or
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0))
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0x00020400))))
+      (then
+        (call $gs32 (local.get $arg2) (local.get $arg0))
+        (drop (call $ole_obj_addref (local.get $arg0)))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004002))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IFont_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_addref (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IFont_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_release (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IFont_get_Name (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1)
+          (call $ole_font_bstr_dup (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Name (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $old i32)
+    (local.set $old (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
+    (if (local.get $old) (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+      (call $ole_font_bstr_dup (local.get $arg1)))
+    (call $ole_font_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_Size (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 20))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; put_Size takes the CY by value, so it occupies two stack slots.
+  (func $handle_IFont_put_Size (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 16)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 20)) (local.get $arg2))
+    (call $ole_font_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; The five VARIANT_BOOL / short attributes share one getter and setter body
+  ;; each, parameterized by field offset.
+  (func $ole_font_get_field (param $obj i32) (param $offset i32) (param $out i32) (result i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
+    (call $gs16 (local.get $out) (call $gl32 (i32.add (local.get $obj) (local.get $offset))))
+    (i32.const 0))
+
+  (func $ole_font_put_field (param $obj i32) (param $offset i32) (param $value i32) (result i32)
+    (call $gs32 (i32.add (local.get $obj) (local.get $offset))
+      (select (i32.const -1) (i32.const 0) (local.get $value)))
+    (call $ole_font_invalidate (local.get $obj))
+    (i32.const 0))
+
+  ;; Bold is not stored separately: it is weight >= FW_BOLD, exactly as in
+  ;; OLE Automation, so setting it moves the weight between 400 and 700.
+  (func $handle_IFont_get_Bold (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs16 (local.get $arg1)
+          (select (i32.const -1) (i32.const 0)
+            (i32.ge_s (call $gl32 (i32.add (local.get $arg0) (i32.const 24))) (i32.const 700))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Bold (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 24))
+      (select (i32.const 700) (i32.const 400) (local.get $arg1)))
+    (call $ole_font_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_Italic (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_font_get_field (local.get $arg0) (i32.const 32) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Italic (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_font_put_field (local.get $arg0) (i32.const 32) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_Underline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_font_get_field (local.get $arg0) (i32.const 36) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Underline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_font_put_field (local.get $arg0) (i32.const 36) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_Strikethrough (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_font_get_field (local.get $arg0) (i32.const 40) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Strikethrough (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_font_put_field (local.get $arg0) (i32.const 40) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_Weight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs16 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 24))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Weight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 24))
+      (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+    (call $ole_font_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_Charset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs16 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 28))))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_put_Charset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 28))
+      (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+    (call $ole_font_invalidate (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_get_hFont (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (call $ole_font_realize (local.get $arg0)))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_Clone (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $copy i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $copy (call $ole_create_font (i32.const 0)))
+    (if (i32.eqz (local.get $copy))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Copy every value field; the clone allocates its own BSTR and realizes
+    ;; its own HFONT on demand.
+    (call $gs32 (i32.add (local.get $copy) (i32.const 12))
+      (call $ole_font_bstr_dup (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 16)) (call $gl32 (i32.add (local.get $arg0) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 20)) (call $gl32 (i32.add (local.get $arg0) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 24)) (call $gl32 (i32.add (local.get $arg0) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 28)) (call $gl32 (i32.add (local.get $arg0) (i32.const 28))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 32)) (call $gl32 (i32.add (local.get $arg0) (i32.const 32))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 36)) (call $gl32 (i32.add (local.get $arg0) (i32.const 36))))
+    (call $gs32 (i32.add (local.get $copy) (i32.const 40)) (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))
+    (call $gs32 (local.get $arg1) (local.get $copy))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_IsEqual (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (global.set $eax (select (i32.const 0) (i32.const 1)
+          (i32.and
+            (i32.and
+              (call $ole_wide_equal
+                (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))
+                (call $gl32 (i32.add (local.get $arg1) (i32.const 12))))
+              (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 16)))
+                      (call $gl32 (i32.add (local.get $arg1) (i32.const 16)))))
+            (i32.and
+              (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 24)))
+                      (call $gl32 (i32.add (local.get $arg1) (i32.const 24))))
+              (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 32)))
+                      (call $gl32 (i32.add (local.get $arg1) (i32.const 32))))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; SetRatio scales logical to himetric units. The emulator renders at a
+  ;; fixed 96 dpi with no logical mapping, so the ratio changes nothing;
+  ;; accepting it keeps callers that always set it from failing.
+  (func $handle_IFont_SetRatio (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IFont_QueryTextMetrics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $h i32) (local $ave i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Derive the cell from the point size the same way $ole_font_realize
+    ;; does, rather than round-tripping through a DC that would have to be
+    ;; created and destroyed just to read back the size we started from.
+    (local.set $h
+      (i32.div_u
+        (i32.mul (i32.div_u (call $gl32 (i32.add (local.get $arg0) (i32.const 16))) (i32.const 10000))
+                 (i32.const 96))
+        (i32.const 72)))
+    (if (i32.eqz (local.get $h)) (then (local.set $h (i32.const 13))))
+    (local.set $ave (i32.div_u (i32.mul (local.get $h) (i32.const 5)) (i32.const 12)))
+    (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 56))
+    (call $gs32 (local.get $arg1) (local.get $h))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.sub (local.get $h) (i32.const 3)))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 3))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (local.get $ave))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 24)) (i32.mul (local.get $ave) (i32.const 2)))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 28))
+      (call $gl32 (i32.add (local.get $arg0) (i32.const 24))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; AddRefHfont/ReleaseHfont let a caller pin a realized HFONT. The object
+  ;; owns exactly one HFONT for its whole lifetime here, so the pin is
+  ;; already implied and there is nothing to count.
+  (func $handle_IFont_AddRefHfont (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IFont_ReleaseHfont (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; SetHdc names the DC future realizations should target. All DCs share one
+  ;; 96 dpi strike set, so the choice does not affect the resulting HFONT.
+  (func $handle_IFont_SetHdc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; OleCreateFontIndirect(lpFontDesc, riid, ppvObj)
+  (func $handle_OleCreateFontIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (local.set $obj (call $ole_create_font (local.get $arg0)))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.or
+          (i32.or
+            (call $ole_iid_is_font (local.get $arg1) (i32.const 0xBEF6E002))
+            (call $ole_iid_is_font (local.get $arg1) (i32.const 0xBEF6E003)))
+          (i32.or
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0))
+            (call $ole_iid_is_com (local.get $arg1) (i32.const 0x00020400))))
+      (then
+        (call $gs32 (local.get $arg2) (local.get $obj))
+        (global.set $eax (i32.const 0)))
+      (else
+        (drop (call $ole_obj_release (local.get $obj)))
+        (global.set $eax (i32.const 0x80004002))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   (func $ole_wide_equal (param $left i32) (param $right i32) (result i32)
     (local $index i32) (local $a i32) (local $b i32)
     (if (i32.or (i32.eqz (local.get $left)) (i32.eqz (local.get $right)))
@@ -4683,6 +5092,13 @@
       (then
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 40))))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
+    ;; IFont (kind 20): owns its face-name BSTR and the HFONT it realized.
+    (if (i32.eq (local.get $kind) (i32.const 20))
+      (then
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+        (if (local.get $data) (then (call $heap_free (i32.sub (local.get $data) (i32.const 4)))))
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 44))))
+        (if (local.get $data) (then (drop (call $host_gdi_delete_object (local.get $data)))))))
     (call $heap_free (local.get $obj))
     (i32.const 0))
 

@@ -144,14 +144,13 @@ const TEST_CASES = [
   // make them run, and each dies on the first import it needs from one.
   // Recording the specific DLL means a *different* crash here would stand out
   // instead of blending into a generic "not a target" note.
-  // Kodak Imaging gets its DLLs and its shared section now, then stops on
-  // sti.dll — the Still Image scanner API, which has nothing to talk to here.
-  // Its DLLs now load (IMGCMN pulls in OIFIL400 which pulls in OIGFS400) and it
-  // gets ~3x further, but the Kodak libraries import each other through a long
-  // tail of undocumented ordinals and it stops on one of those.
+  // Kodak Imaging draws its full frame — menu bar, toolbar, annotation strip.
+  // It then reports "The Image Admin control cannot be found": the document
+  // pane is the Imaging.AdminCtrl.1 OCX, which is not on the Win98 media we
+  // have, so CLSIDFromProgID has nothing to resolve. Everything up to that
+  // point is the real application.
   { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging',
-    maxBatches: 800, batchSize: 50000, timeoutMs: 60000,
-    expectedCrash: 'unmapped ordinal in the OI*400 imaging libraries' },
+    maxBatches: 800, batchSize: 50000, timeoutMs: 60000 },
   { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview',
     // Draws its Imaging Preview frame, menus and split panes once OIDIS400 and
     // OIADM400 are present beside the exe.

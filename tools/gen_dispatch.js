@@ -121,6 +121,10 @@ const comInterfaces = [
 const { vtableGlobals: d3dimVtables } = require('./d3dim-methods');
 for (const v of d3dimVtables) comInterfaces.push(v);
 
+// OLE Automation font object (OleCreateFontIndirect). Kept last so its
+// registry slot is appended rather than shifting every existing one.
+comInterfaces.push({ prefix: 'IFont', global: 'DX_VTBL_OLE_FONT' });
+
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));
 const ifaceInfo = new Map();

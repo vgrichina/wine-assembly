@@ -307,6 +307,7 @@
         (if (i32.eq (local.get $ordinal) (i32.const 8))  (then (return (call $lookup_api_id (i32.const 0x11549))))) ;; VariantInit
         (if (i32.eq (local.get $ordinal) (i32.const 9))  (then (return (call $lookup_api_id (i32.const 0x11555))))) ;; VariantClear
         (if (i32.eq (local.get $ordinal) (i32.const 10)) (then (return (call $lookup_api_id (i32.const 0x11562))))) ;; VariantCopy
+        (if (i32.eq (local.get $ordinal) (i32.const 420)) (then (return (call $lookup_api_id (i32.const 0x11E50))))) ;; OleCreateFontIndirect
       ))
     (i32.const -1))
 

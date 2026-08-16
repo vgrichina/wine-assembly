@@ -42,7 +42,7 @@
       (then
         (call $dispatch_api_table_page_8 (i32.sub (local.get $api_id) (i32.const 2048)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 2419))
+    (if (i32.lt_u (local.get $api_id) (i32.const 2448))
       (then
         (call $dispatch_api_table_page_9 (i32.sub (local.get $api_id) (i32.const 2304)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -9338,8 +9338,37 @@
   )
 
   (func $dispatch_api_table_page_9 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 2304..2418
+    ;; api ids 2304..2447
     (block $fallback
+    (block $api_143
+    (block $api_142
+    (block $api_141
+    (block $api_140
+    (block $api_139
+    (block $api_138
+    (block $api_137
+    (block $api_136
+    (block $api_135
+    (block $api_134
+    (block $api_133
+    (block $api_132
+    (block $api_131
+    (block $api_130
+    (block $api_129
+    (block $api_128
+    (block $api_127
+    (block $api_126
+    (block $api_125
+    (block $api_124
+    (block $api_123
+    (block $api_122
+    (block $api_121
+    (block $api_120
+    (block $api_119
+    (block $api_118
+    (block $api_117
+    (block $api_116
+    (block $api_115
     (block $api_114
     (block $api_113
     (block $api_112
@@ -9455,7 +9484,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $fallback (local.get $api_id))
     ) ;; 2304: IBindCtx_RevokeObjectBound
       (call $handle_IBindCtx_RevokeObjectBound (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -9801,6 +9830,93 @@
     ) ;; 2418: getpeername
       (call $handle_getpeername (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
+    ) ;; 2419: OleCreateFontIndirect
+      (call $handle_OleCreateFontIndirect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2420: IFont_QueryInterface
+      (call $handle_IFont_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2421: IFont_AddRef
+      (call $handle_IFont_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2422: IFont_Release
+      (call $handle_IFont_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2423: IFont_get_Name
+      (call $handle_IFont_get_Name (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2424: IFont_put_Name
+      (call $handle_IFont_put_Name (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2425: IFont_get_Size
+      (call $handle_IFont_get_Size (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2426: IFont_put_Size
+      (call $handle_IFont_put_Size (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2427: IFont_get_Bold
+      (call $handle_IFont_get_Bold (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2428: IFont_put_Bold
+      (call $handle_IFont_put_Bold (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2429: IFont_get_Italic
+      (call $handle_IFont_get_Italic (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2430: IFont_put_Italic
+      (call $handle_IFont_put_Italic (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2431: IFont_get_Underline
+      (call $handle_IFont_get_Underline (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2432: IFont_put_Underline
+      (call $handle_IFont_put_Underline (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2433: IFont_get_Strikethrough
+      (call $handle_IFont_get_Strikethrough (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2434: IFont_put_Strikethrough
+      (call $handle_IFont_put_Strikethrough (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2435: IFont_get_Weight
+      (call $handle_IFont_get_Weight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2436: IFont_put_Weight
+      (call $handle_IFont_put_Weight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2437: IFont_get_Charset
+      (call $handle_IFont_get_Charset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2438: IFont_put_Charset
+      (call $handle_IFont_put_Charset (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2439: IFont_get_hFont
+      (call $handle_IFont_get_hFont (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2440: IFont_Clone
+      (call $handle_IFont_Clone (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2441: IFont_IsEqual
+      (call $handle_IFont_IsEqual (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2442: IFont_SetRatio
+      (call $handle_IFont_SetRatio (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2443: IFont_QueryTextMetrics
+      (call $handle_IFont_QueryTextMetrics (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2444: IFont_AddRefHfont
+      (call $handle_IFont_AddRefHfont (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2445: IFont_ReleaseHfont
+      (call $handle_IFont_ReleaseHfont (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2446: IFont_SetHdc
+      (call $handle_IFont_SetHdc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 2447: gethostname
+      (call $handle_gethostname (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 2304)))
   )
@@ -9919,4 +10035,6 @@
     (global.set $DX_VTBL_D3DTEX (call $init_com_vtable (i32.const 1472) (i32.const 8)))
     ;; IDirect3DTexture2: 6 methods starting at api_id 1480
     (global.set $DX_VTBL_D3DTEX2 (call $init_com_vtable (i32.const 1480) (i32.const 6)))
+    ;; IFont: 27 methods starting at api_id 2420
+    (global.set $DX_VTBL_OLE_FONT (call $init_com_vtable (i32.const 2420) (i32.const 27)))
   )

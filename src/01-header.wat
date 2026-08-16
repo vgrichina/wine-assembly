@@ -827,6 +827,8 @@
   (data (i32.const 0x11E30) "InitCommonControlsEx\00")
   ;; One space, measured by the SysLink layout loop for inter-word advance.
   (data (i32.const 0x11E48) " \00")
+  ;; OLEAUT32 ordinal 420 (see $system_ordinal_api_id).
+  (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
