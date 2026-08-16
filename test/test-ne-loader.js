@@ -79,6 +79,37 @@ function relocs(info, segIndex) {
   return out;
 }
 
+// Every integer-id resource the file declares, read independently of the WAT
+// walker: a type table of {id, count, reserved} followed by `count` 12-byte
+// records, all offsets and lengths in units of 1 << alignShift, and both ids
+// carrying bit 15 when they are numbers rather than names.
+function resources(info) {
+  const { b, ne } = info;
+  const out = [];
+  const tabOff = b.readUInt16LE(ne + 0x24);
+  if (!tabOff) return out;
+  let p = ne + tabOff;
+  const shift = b.readUInt16LE(p);
+  p += 2;
+  while (p + 8 <= b.length) {
+    const type = b.readUInt16LE(p);
+    if (type === 0) break;
+    const count = b.readUInt16LE(p + 2);
+    let q = p + 8;
+    for (let i = 0; i < count; i++, q += 12) {
+      const id = b.readUInt16LE(q + 6);
+      if (!(type & 0x8000) || !(id & 0x8000)) continue;   // named type or name id
+      out.push({
+        type: type & 0x7fff, id: id & 0x7fff,
+        offset: b.readUInt16LE(q) << shift,
+        length: b.readUInt16LE(q + 2) << shift,
+      });
+    }
+    p += 8 + count * 12;
+  }
+  return out;
+}
+
 // Every byte offset in a segment that some fixup writes, chains included.
 function chainSites(info, segIndex) {
   const { b } = info;
@@ -195,6 +226,21 @@ async function testFile(inst, memory, name) {
     }
   }
   console.log(`  ${checkedFixups} fixups verified, ${inst.exports.win16_thunk_count()} distinct imports`);
+
+  // Resources: every integer-id resource the file declares must be findable at
+  // the offset and length an independent read of the table gives. The WAT
+  // walker and this one share no code, so a wrong shift or a mis-sized
+  // NAMEINFO shows up as a disagreement rather than as two matching mistakes.
+  let checkedRes = 0;
+  for (const r of resources(info)) {
+    const got = inst.exports.win16_find_resource(r.type, r.id);
+    if (!check(`res ${r.type}/${r.id} offset`, got, inst.exports.get_staging() + r.offset)) continue;
+    check(`res ${r.type}/${r.id} length`, inst.exports.win16_res_len(), r.length);
+    checkedRes++;
+  }
+  // A resource id that is not there must report absence, not the last match.
+  check('absent resource returns 0', inst.exports.win16_find_resource(6, 0x7ffe), 0);
+  console.log(`  ${checkedRes} resources verified`);
 }
 
 (async () => {

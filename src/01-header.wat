@@ -2119,8 +2119,11 @@
   (global $win16_next_seg (mut i32) (i32.const 0))
   (global $win16_psp_sel (mut i32) (i32.const 0))
   ;; Linear address of the NE header in the staged file, so a name import can
-  ;; find the imported-name table again long after loading.
+  ;; find the imported-name table again long after loading, and how much of the
+  ;; file was staged, which bounds the resource-table walk.
   (global $win16_ne_off (mut i32) (i32.const 0))
+  (global $win16_file_size (mut i32) (i32.const 0))
+  (global $win16_res_len (mut i32) (i32.const 0))
   (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
   (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
   (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))

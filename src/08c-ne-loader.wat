@@ -339,8 +339,10 @@
                 (i32.const 0x454E))
       (then (return (i32.const -2))))
     (local.set $ne_off (i32.add (global.get $PE_STAGING) (local.get $ne_off)))
-    ;; Kept so a thunk can find the imported-name table again at dispatch time.
+    ;; Kept so a thunk can find the imported-name table again at dispatch time,
+    ;; and the resource walk knows where the staged file ends.
     (global.set $win16_ne_off (local.get $ne_off))
+    (global.set $win16_file_size (local.get $size))
 
     (local.set $seg_count (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1C))))
     (if (i32.ge_u (i32.add (local.get $seg_count) (i32.const 2)) (global.get $WIN16_SEG_MAX))
@@ -440,6 +442,66 @@
 
     (i32.or (i32.shl (global.get $win16_entry_cs) (i32.const 16))
             (global.get $win16_entry_ip)))
+
+  ;; ---- Resources ----
+  ;;
+  ;; An NE resource table is a flat list of types, each with a run of records
+  ;; naming one resource. Nothing about it resembles the PE resource tree, so
+  ;; none of the 32-bit resource walker applies.
+  ;;
+  ;;   u16 align shift           — offsets and lengths below are in these units
+  ;;   TYPEINFO, repeating until a type id of 0:
+  ;;     u16 type id             — bit 15 set means an integer id, else a name
+  ;;     u16 count
+  ;;     u32 reserved
+  ;;     NAMEINFO x count, 12 bytes each:
+  ;;       u16 offset  u16 length  u16 flags  u16 id  u16 handle  u16 usage
+  ;;
+  ;; Offsets are from the start of the file, not from the NE header. Returns a
+  ;; linear address into the staged image, or 0, and leaves the byte length in
+  ;; $win16_res_len.
+  (func $win16_find_resource (export "win16_find_resource")
+        (param $type_id i32) (param $res_id i32) (result i32)
+    (local $p i32) (local $shift i32) (local $type i32) (local $count i32)
+    (local $q i32) (local $i i32) (local $end i32)
+    (global.set $win16_res_len (i32.const 0))
+    (local.set $p (i32.load16_u (i32.add (global.get $win16_ne_off) (i32.const 0x24))))
+    ;; A resource table offset of zero means the module has no resources at all.
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (global.get $win16_ne_off) (local.get $p)))
+    (local.set $shift (i32.load16_u (local.get $p)))
+    (local.set $p (i32.add (local.get $p) (i32.const 2)))
+    ;; The table lives inside the staged file; refuse to walk past it rather
+    ;; than read whatever follows as if it were another TYPEINFO.
+    (local.set $end (i32.add (global.get $PE_STAGING) (global.get $win16_file_size)))
+
+    (block $done (loop $types
+      (br_if $done (i32.ge_u (i32.add (local.get $p) (i32.const 8)) (local.get $end)))
+      (local.set $type (i32.load16_u (local.get $p)))
+      (br_if $done (i32.eqz (local.get $type)))
+      (local.set $count (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
+      (local.set $q (i32.add (local.get $p) (i32.const 8)))
+      ;; Only integer type ids are matched. A named type is a custom resource
+      ;; and nothing asks for one by number.
+      (if (i32.eq (local.get $type) (i32.or (local.get $type_id) (i32.const 0x8000)))
+        (then
+          (local.set $i (i32.const 0))
+          (block $scanned (loop $names
+            (br_if $scanned (i32.ge_u (local.get $i) (local.get $count)))
+            (if (i32.eq (i32.load16_u (i32.add (local.get $q) (i32.const 6)))
+                        (i32.or (local.get $res_id) (i32.const 0x8000)))
+              (then
+                (global.set $win16_res_len
+                  (i32.shl (i32.load16_u (i32.add (local.get $q) (i32.const 2))) (local.get $shift)))
+                (return (i32.add (global.get $PE_STAGING)
+                  (i32.shl (i32.load16_u (local.get $q)) (local.get $shift))))))
+            (local.set $q (i32.add (local.get $q) (i32.const 12)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $names)))))
+      (local.set $p (i32.add (i32.add (local.get $p) (i32.const 8))
+                             (i32.mul (local.get $count) (i32.const 12))))
+      (br $types)))
+    (i32.const 0))
 
   ;; ---- Segment allocation ----
   ;;

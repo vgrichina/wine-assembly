@@ -127,9 +127,68 @@
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
+  ;; USER.15 GetCurrentTime(). Milliseconds since Windows started — the same
+  ;; clock GetTickCount reads, which is what it became in Win32. A DWORD comes
+  ;; back in DX:AX, the Win16 convention for a 32-bit result.
+  (func $win16_GetCurrentTime
+    (global.set $tick_count (call $host_get_ticks))
+    (global.set $eax (i32.and (global.get $tick_count) (i32.const 0xFFFF)))
+    (global.set $edx (i32.shr_u (global.get $tick_count) (i32.const 16)))
+    (call $win16_api_return (i32.const 0)))
+
+  ;; USER.176 LoadString(hInstance, id, lpBuffer, nBufferMax) -> length.
+  ;;
+  ;; String resources come in blocks of sixteen. The resource holding string
+  ;; `id` is RT_STRING number `(id >> 4) + 1`, and inside it the strings are
+  ;; sixteen Pascal strings back to back, present or not — a zero length is a
+  ;; string that was never defined, and the block still has to be walked past
+  ;; it. That packing is why a Win16 app's string ids cluster.
+  ;;
+  ;;   arg 4 hInstance   3 id   2:1 lpBuffer (seg:off)   0 nBufferMax
+  (func $win16_LoadString
+    (local $id i32) (local $max i32) (local $dst i32)
+    (local $p i32) (local $end i32) (local $i i32) (local $len i32) (local $n i32)
+    (local.set $id  (call $win16_arg16 (i32.const 3)))
+    (local.set $max (call $win16_arg16 (i32.const 0)))
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+
+    (global.set $eax (i32.const 0))
+    (local.set $p (call $win16_find_resource (i32.const 6)
+      (i32.add (i32.shr_u (local.get $id) (i32.const 4)) (i32.const 1))))
+    (if (local.get $p)
+      (then
+        (local.set $end (i32.add (local.get $p) (global.get $win16_res_len)))
+        (local.set $i (i32.const 0))
+        (block $found (loop $walk
+          (br_if $found (i32.ge_u (local.get $i) (i32.const 16)))
+          (br_if $found (i32.ge_u (local.get $p) (local.get $end)))
+          (local.set $len (i32.load8_u (local.get $p)))
+          (if (i32.eq (local.get $i) (i32.and (local.get $id) (i32.const 15)))
+            (then
+              ;; Copy at most nBufferMax-1 bytes and always NUL-terminate, which
+              ;; is what the caller's buffer is sized for.
+              (local.set $n (local.get $len))
+              (if (i32.ge_u (local.get $n) (local.get $max))
+                (then (local.set $n (i32.sub (local.get $max) (i32.const 1)))))
+              (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))
+              (call $memcpy (call $g2w (local.get $dst))
+                (i32.add (local.get $p) (i32.const 1)) (local.get $n))
+              (call $gs8 (i32.add (local.get $dst) (local.get $n)) (i32.const 0))
+              (global.set $eax (local.get $n))
+              (br $found)))
+          (local.set $p (i32.add (i32.add (local.get $p) (i32.const 1)) (local.get $len)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $walk)))))
+    (call $win16_api_return (i32.const 10)))
+
   (func $win16_user (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_InitApp) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 15))
+      (then (call $win16_GetCurrentTime) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 176))
+      (then (call $win16_LoadString) (return (i32.const 1))))
     (i32.const 0))
 
   ;; The dispatcher. $thunk_off is the offset within WIN16_THUNK_SEL that the
@@ -173,3 +232,4 @@
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))
   (func (export "win16_last_ordinal") (result i32) (global.get $win16_last_ordinal))
   (func (export "win16_last_is_name") (result i32) (global.get $win16_last_is_name))
+  (func (export "win16_res_len") (result i32) (global.get $win16_res_len))
