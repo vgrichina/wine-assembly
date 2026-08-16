@@ -390,6 +390,15 @@
                   (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
                           (i32.const 0x76747369)))
               (then (local.set $detected_class (i32.const 18))))
+            ;; "SysLink\0" → class 28 (SysLink)
+            ;; LE dwords: "sysl"=0x6c737973, "ink\0"=0x006b6e69. The trailing
+            ;; NUL keeps this from colliding with the SysListView32 test above.
+            (if (i32.and
+                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
+                          (i32.const 0x6c737973))
+                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x00202020))
+                          (i32.const 0x006b6e69)))
+              (then (local.set $detected_class (i32.const 28))))
             ;; "msctls_trackbar32" / "Slider1" -> class 19 (TrackBar).
             ;; Prefix matching also accepts the Win9x A/W common-control aliases.
             (if (i32.or

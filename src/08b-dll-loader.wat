@@ -236,7 +236,10 @@
       (br $l)))
     (i32.const 0))
 
-  (func $crt_host_export_api_id (param $name_wa i32) (result i32)
+  ;; Exports that keep their native handler even when the real DLL that owns
+  ;; them is loaded. The math entries route CRT float helpers to the host FPU;
+  ;; the comctl32 entry papers over a genuine Win98-vs-XP version gap.
+  (func $native_override_export_api_id (param $name_wa i32) (result i32)
     (if (call $str_eq (local.get $name_wa) (i32.const 0x300))
       (then (return (call $lookup_api_id (i32.const 0x300)))))
     (if (call $str_eq (local.get $name_wa) (i32.const 0x305))
@@ -247,6 +250,12 @@
       (then (return (call $lookup_api_id (i32.const 0x30E)))))
     (if (call $str_eq (local.get $name_wa) (i32.const 0x312))
       (then (return (call $lookup_api_id (i32.const 0x312)))))
+    ;; Win98's comctl32 rejects every ICC_* bit in 0x7fff8000, so an XP-era
+    ;; caller asking for ICC_LINK_CLASS (0x8000) gets FALSE and quits. The
+    ;; classes themselves are registered from the DLL's DllMain, so answering
+    ;; natively costs nothing and matches how a newer comctl32 would behave.
+    (if (call $str_eq (local.get $name_wa) (i32.const 0x11E30))
+      (then (return (call $lookup_api_id (i32.const 0x11E30)))))
     (i32.const -1))
 
   ;; WinSock 1.1 commonly imports WSOCK32 by ordinal. Resolve ordinals for
@@ -478,7 +487,7 @@
                 ;; Name import
                 (local.set $name_wa
                   (call $g2w (i32.add (local.get $caller_base) (i32.add (local.get $entry) (i32.const 2)))))
-                (local.set $api_id (call $crt_host_export_api_id (local.get $name_wa)))
+                (local.set $api_id (call $native_override_export_api_id (local.get $name_wa)))
                 (if (i32.ne (local.get $api_id) (i32.const -1))
                   (then
                     (local.set $thunk_addr (i32.add

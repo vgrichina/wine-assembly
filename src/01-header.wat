@@ -822,6 +822,11 @@
   (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
   ;; Console window caption; SetConsoleTitle overwrites it in place.
   (data (i32.const 0x11DA4) "Console\00")
+  ;; Exports we answer natively even when the real DLL is loaded — see
+  ;; $native_override_export_api_id in src/08b-dll-loader.wat.
+  (data (i32.const 0x11E30) "InitCommonControlsEx\00")
+  ;; One space, measured by the SysLink layout loop for inter-word advance.
+  (data (i32.const 0x11E48) " \00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -902,6 +907,7 @@
   (data (i32.const 0x3150) "Slider1\00")
   (data (i32.const 0x3158) "msctls_trackbar32\00")
   (data (i32.const 0x316B) "SysTreeView32\00")
+  (data (i32.const 0x3178) "SysLink\00")
   (data (i32.const 0x3180) "DirectAnimation.DAView\00")
   (data (i32.const 0x31A0) "DirectAnimation.DAStatics\00")
   (data (i32.const 0x31C0) "ImportImage\00")

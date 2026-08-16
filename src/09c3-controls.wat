@@ -730,6 +730,9 @@
     ;; Class 27 = Help Topics tab strip (WAT-owned SysTabControl32 page)
     (if (i32.eq (local.get $class) (i32.const 27))
       (then (return (call $help_topics_tab_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 28 = SysLink
+    (if (i32.eq (local.get $class) (i32.const 28))
+      (then (return (call $syslink_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -4813,6 +4816,199 @@
         (return (i32.const 0))))
 
     ;; Default
+    (i32.const 0)
+  )
+
+  ;; ---- SysLink WndProc ----
+  ;;
+  ;; SysLink understands a small markup subset: text outside <a ...>...</a>
+  ;; paints as an ordinary label, the anchor run paints in the Win32 hyperlink
+  ;; blue with an underline. DrawText cannot express two colors within one
+  ;; wrapped paragraph, so the word-wrap loop lives here: measure each word,
+  ;; break when it would overflow the client width, emit it with the colour the
+  ;; current markup state calls for.
+  ;;
+  ;; A click falls through to the default: NM_CLICK exists so the owner can
+  ;; hand a URL to ShellExecute, and there is no browser here to hand it to.
+  (func $syslink_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $state i32) (local $state_w i32) (local $cs_w i32)
+    (local $name_ptr i32) (local $text_len i32) (local $style i32)
+    (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $tw i32) (local $n i32) (local $i i32) (local $j i32)
+    (local $c i32) (local $x i32) (local $y i32) (local $lh i32)
+    (local $sp i32) (local $ww i32) (local $in_link i32) (local $brush i32)
+    (local $closing i32)
+
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+
+    ;; ---------- WM_CREATE ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $cs_w (call $g2w (local.get $lParam)))
+        (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
+        (local.set $style    (i32.load offset=32 (local.get $cs_w)))
+        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (i32.store           (local.get $state_w) (i32.const 0))
+        (i32.store offset=4  (local.get $state_w) (i32.const 0))
+        (i32.store offset=8  (local.get $state_w) (local.get $style))
+        (i32.store offset=12 (local.get $state_w) (i32.const 0))
+        ;; A SysLink caption is always a real string; ordinal captions are a
+        ;; static-only convention and would be a template authoring error here.
+        (if (i32.gt_u (local.get $name_ptr) (i32.const 0xFFFF))
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
+            (i32.store          (local.get $state_w) (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
+            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+        (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_DESTROY ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (if (local.get $state)
+          (then
+            (local.set $state_w (call $g2w (local.get $state)))
+            (call $heap_free (i32.load (local.get $state_w)))
+            (call $heap_free (local.get $state))
+            (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_SETTEXT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000C))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (call $heap_free (i32.load (local.get $state_w)))
+        (i32.store          (local.get $state_w) (i32.const 0))
+        (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (if (local.get $lParam)
+          (then
+            (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
+            (i32.store          (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
+            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 1))))
+
+    ;; ---------- WM_GETTEXTLENGTH ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000E))
+      (then
+        (if (local.get $state)
+          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_GETTEXT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000D))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (if (i32.ge_u (local.get $text_len) (local.get $wParam))
+          (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
+        (if (i32.and (i32.load (local.get $state_w)) (i32.ne (local.get $text_len) (i32.const 0)))
+          (then (call $memcpy (call $g2w (local.get $lParam))
+                              (call $g2w (i32.load (local.get $state_w)))
+                              (local.get $text_len))))
+        (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
+        (return (local.get $text_len))))
+
+    ;; ---------- WM_PAINT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x000F))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.eqz (i32.load (local.get $state_w))) (then (return (i32.const 0))))
+        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                (i32.const 0x30011)))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (local.set $lh (i32.and (call $host_get_text_metrics (local.get $hdc)) (i32.const 0xFFFF)))
+        (if (i32.eqz (local.get $lh)) (then (local.set $lh (i32.const 13))))
+        (local.set $sp (call $host_measure_text (local.get $hdc) (i32.const 0x11E48) (i32.const 1) (i32.const 0)))
+        (local.set $tw (call $g2w (i32.load (local.get $state_w))))
+        (local.set $n (i32.load offset=4 (local.get $state_w)))
+        (local.set $i (i32.const 0))
+        (local.set $x (i32.const 0))
+        (local.set $y (i32.const 0))
+        (local.set $in_link (i32.const 0))
+        (block $done (loop $word
+          (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+          (local.set $c (i32.load8_u (i32.add (local.get $tw) (local.get $i))))
+          ;; Whitespace: one space of advance, collapsed like HTML.
+          (if (i32.or (i32.eq (local.get $c) (i32.const 32))
+                      (i32.or (i32.eq (local.get $c) (i32.const 9))
+                              (i32.or (i32.eq (local.get $c) (i32.const 13))
+                                      (i32.eq (local.get $c) (i32.const 10)))))
+            (then
+              (if (local.get $x) (then (local.set $x (i32.add (local.get $x) (local.get $sp)))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $word)))
+          ;; Markup tag: <a ...> opens a link run, </a> closes it. Anything
+          ;; else in angle brackets is skipped the same way.
+          (if (i32.eq (local.get $c) (i32.const 60))
+            (then
+              (local.set $j (i32.add (local.get $i) (i32.const 1)))
+              (local.set $closing
+                (i32.eq (i32.load8_u (i32.add (local.get $tw) (local.get $j))) (i32.const 47)))
+              (block $tagend (loop $tagscan
+                (br_if $tagend (i32.ge_u (local.get $j) (local.get $n)))
+                (br_if $tagend (i32.eq (i32.load8_u (i32.add (local.get $tw) (local.get $j)))
+                                       (i32.const 62)))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $tagscan)))
+              (local.set $in_link (i32.eqz (local.get $closing)))
+              (local.set $i (i32.add (local.get $j) (i32.const 1)))
+              (br $word)))
+          ;; Word: runs to the next space or tag.
+          (local.set $j (local.get $i))
+          (block $wend (loop $wscan
+            (br_if $wend (i32.ge_u (local.get $j) (local.get $n)))
+            (local.set $c (i32.load8_u (i32.add (local.get $tw) (local.get $j))))
+            (br_if $wend (i32.eq (local.get $c) (i32.const 32)))
+            (br_if $wend (i32.eq (local.get $c) (i32.const 9)))
+            (br_if $wend (i32.eq (local.get $c) (i32.const 13)))
+            (br_if $wend (i32.eq (local.get $c) (i32.const 10)))
+            (br_if $wend (i32.eq (local.get $c) (i32.const 60)))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $wscan)))
+          (local.set $ww (call $host_measure_text (local.get $hdc)
+                           (i32.add (local.get $tw) (local.get $i))
+                           (i32.sub (local.get $j) (local.get $i))
+                           (i32.const 0)))
+          (if (i32.and (i32.gt_u (i32.add (local.get $x) (local.get $ww)) (local.get $w))
+                       (i32.ne (local.get $x) (i32.const 0)))
+            (then
+              (local.set $x (i32.const 0))
+              (local.set $y (i32.add (local.get $y) (local.get $lh)))))
+          (br_if $done (i32.gt_u (i32.add (local.get $y) (local.get $lh)) (local.get $h)))
+          (drop (call $host_gdi_set_text_color (local.get $hdc)
+                  (select (i32.const 0x00CC6600) (i32.const 0x00000000) (local.get $in_link))))
+          (drop (call $host_gdi_text_out (local.get $hdc)
+                  (local.get $x) (local.get $y)
+                  (i32.add (local.get $tw) (local.get $i))
+                  (i32.sub (local.get $j) (local.get $i))
+                  (i32.const 0)))
+          (if (local.get $in_link)
+            (then
+              (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00CC6600)))
+              (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (local.get $x) (i32.sub (i32.add (local.get $y) (local.get $lh)) (i32.const 2))
+                      (i32.add (local.get $x) (local.get $ww))
+                      (i32.sub (i32.add (local.get $y) (local.get $lh)) (i32.const 1))
+                      (local.get $brush)))
+              (drop (call $host_gdi_delete_object (local.get $brush)))))
+          (local.set $x (i32.add (local.get $x) (local.get $ww)))
+          (local.set $i (local.get $j))
+          (br $word)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+        (return (i32.const 0))))
+
     (i32.const 0)
   )
 
