@@ -655,6 +655,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-children', hwnd: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-windows') {
         scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
+      } else if (kind === 'dump-msgq') {
+        scheduledInput.push({ batch, action: 'dump-msgq', label: parts[2] || '' });
       } else if (kind === 'dump-tree') {
         scheduledInput.push({ batch, action: 'dump-tree', label: parts[2] || '' });
       } else if (kind === 'dump-listbox') {
@@ -1608,13 +1610,31 @@ async function main() {
     // A by-name call into a loaded DLL that resolved: same three words as the
     // unresolved marker, but it is a call rather than a stop.
     if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
+    // The Win16 modal dialog pump handing one message on: hwnd, message,
+    // wParam, lParam, and the dialog the pump belongs to.
+    if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
-      const { call: isCall, ret: isRet, resolved, words } = pendingWin16;
+      const { call: isCall, ret: isRet, route: isRoute, posted: isPosted, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isPosted) {
+        const [hwnd, msg, wp, lp, depth] = words;
+        logs.push(`[win16] post -> hwnd=${hex(hwnd)} msg=${hex(msg)}` +
+          `${WIN16_MSG_NAMES[msg] ? ` (${WIN16_MSG_NAMES[msg]})` : ''}` +
+          ` wp=${hex(wp)} lp=${hex(lp)} depth=${depth}`);
+        return;
+      }
+      if (isRoute) {
+        const [hwnd, msg, wp, lp, dlg, queued] = words;
+        logs.push(`[win16] ${dlg ? `dlg-pump ${hex(dlg)}` : 'task-loop'} -> hwnd=${hex(hwnd)} msg=${hex(msg)}` +
+          `${WIN16_MSG_NAMES[msg] ? ` (${WIN16_MSG_NAMES[msg]})` : ''}` +
+          ` wp=${hex(wp)} lp=${hex(lp)} queued=${queued}`);
+        return;
+      }
       if (isRet) {
         logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])} esp=${hex(words[3])}`);
         return;
@@ -4202,6 +4222,19 @@ async function main() {
         } catch (e) {
           logs.push(`[input] dlg-png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-msgq') {
+        // What is actually waiting in the posted-message queue. The queue is
+        // WAT-private memory below GUEST_BASE, so --dump cannot show it.
+        const we = instance.exports;
+        const label = ev.label ? ':' + ev.label : '';
+        const depth = we.post_queue_depth ? (we.post_queue_depth() | 0) : -1;
+        const rows = [];
+        for (let i = 0; i < depth; i++) {
+          const f = n => (we.post_queue_peek(i, n) >>> 0);
+          rows.push(`[${i}] hwnd=0x${f(0).toString(16)} msg=0x${f(1).toString(16)}` +
+            ` wp=0x${f(2).toString(16)} lp=0x${f(3).toString(16)}`);
+        }
+        logs.push(`[input] dump-msgq${label}: depth=${depth} ${rows.join(' | ')} at batch ${batch}`);
       } else if (ev.action === 'dump-windows' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
         const we = instance.exports;
@@ -5007,7 +5040,21 @@ async function main() {
         logs.push(`[input] winamp-start at batch ${batch}`);
       } else if (ev.action === 'post-cmd') {
         const we = instance.exports;
-        const mainHwnd = we.get_main_hwnd();
+        // A menu command belongs to the window showing the menu, which is not
+        // always get_main_hwnd(). Pinball's menu bar is on its second
+        // top-level window (0x10002); posting to the first sent every command
+        // to a window whose wndproc had never heard of it, and the sweep read
+        // that as two broken dialogs. Prefer a visible window with a menu bar,
+        // and fall back to the main hwnd when nothing has one.
+        let mainHwnd = we.get_main_hwnd();
+        if (renderer && renderer.windows && renderer._hasMenuBar) {
+          for (const [hs, win] of Object.entries(renderer.windows)) {
+            if (!win || !win.visible || win.isChild) continue;
+            let hasMenu = false;
+            try { hasMenu = !!renderer._hasMenuBar(win); } catch (_) {}
+            if (hasMenu) { mainHwnd = parseInt(hs, 10) || mainHwnd; break; }
+          }
+        }
         const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
         if (postCount < 8) {
           const dv = new DataView(memory.buffer);

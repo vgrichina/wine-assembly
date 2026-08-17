@@ -61,7 +61,7 @@ if (!fs.existsSync(exe)) {
   process.exit(2);
 }
 
-const SETTLE = parseInt(opt('settle', '1200'), 10);
+let SETTLE = parseInt(opt('settle', '1200'), 10);
 const GAP = parseInt(opt('gap', '800'), 10);
 const VERBOSE = flag('verbose');
 const CONFIRM = !flag('no-confirm');
@@ -235,7 +235,7 @@ function drive(list) {
   // Either way the commands go to a window whose wndproc has never heard of
   // them, and "nothing opened" is the honest outcome, not a defect. Say so
   // instead of blaming the menu.
-  const noMenuBar = !menuBarAt.has('baseline');
+  const noMenuBar = menuBarAt.size === 0;
   const results = [];
   let prevLine = 0;
   // Compare each item against the snapshot before it, not against the
@@ -269,6 +269,12 @@ function drive(list) {
       // A dialog left over from an earlier item is modal and swallows this
       // command, so "nothing happened" says nothing about this item.
       results.push({ ...it, verdict: 'blocked', detail: `${leftover.join(', ')} still open` });
+    } else if (!menuBarAt.has(label)) {
+      // The app was not showing a menu bar when this command was posted, so
+      // its wndproc had no reason to know the command and "nothing opened"
+      // says nothing about it. Pinball spends its first few thousand batches
+      // on a splash and only then creates the window that carries the menu.
+      results.push({ ...it, verdict: 'nomenu', detail: 'no menu bar on screen yet' });
     } else if (wantsDialog && !opened.length) {
       results.push({ ...it, verdict: 'NODLG', detail: 'label promises a dialog, no window appeared' });
     } else if (opened.length) {
@@ -285,7 +291,18 @@ function drive(list) {
   return { results, status, leaked, noMenuBar };
 }
 
-const pass1 = drive(live);
+let pass1 = drive(live);
+
+// Some apps are simply slow to get their menu up. Pinball spends the first
+// couple of thousand batches on a splash and its sound engine, and only then
+// creates the window that carries the menu bar -- so a short settle sees no
+// menu, and every command posted before that goes to a window whose wndproc
+// has never heard of it. Give it one longer run before concluding the app has
+// no menu at all.
+if (pass1.noMenuBar) {
+  SETTLE = SETTLE * 3;
+  pass1 = drive(live);
+}
 
 // Established before any verdict is trusted, because it invalidates all of
 // them at once rather than item by item.
@@ -308,7 +325,7 @@ let confirmed = 0;
 if (CONFIRM) {
   const unresolved = () => live.filter(it => {
     const v = byId.get(it.id).verdict;
-    return v === 'CRASH' || v === 'NODLG' || v === 'blocked';
+    return v === 'CRASH' || v === 'NODLG' || v === 'blocked' || v === 'nomenu';
   });
   const first = new Map(pass1.results.map(r => [r.id, r.verdict]));
   const note = (r) => {
