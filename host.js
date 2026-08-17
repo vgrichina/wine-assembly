@@ -1237,7 +1237,18 @@ class WineAssembly {
         this._registerDllBitmapResources(dllConfigs[i].name, dllConfigs[i].bytes, dllResults[i].loadAddr);
       }
     };
-    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
+    let results;
+    if (this.guestWorker) {
+      // Guest execution (DllMain runs) must happen on the thread that owns the
+      // instance. registerDllResources stays here: it is host bookkeeping over
+      // bytes this thread already has.
+      const register = opts.registerDllResources;
+      delete opts.registerDllResources;
+      results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
+      if (register) register(readyConfigs, results);
+    } else {
+      results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
+    }
     this._inDllInit = false;
     this.running = true;
   }
