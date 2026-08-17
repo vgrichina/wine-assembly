@@ -579,6 +579,9 @@
         <button onclick="printInputProfiles()">Log</button>
         <span id="input-profile-status"></span>
       </span>
+      <span class="debug-profile">
+        <label><input id="perf-hud-toggle" type="checkbox" onchange="setPerfHud(this.checked)">FPS graph</label>
+      </span>
       <span class="debug-record">
         <button id="record-btn" onclick="toggleRecording()" title="Record screen + audio to .webm">● Record</button>
       </span>
@@ -668,6 +671,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="host.js?v=207"></script>
   <script src="lib/recorder.js?v=168"></script>
+  <script src="lib/perf-hud.js?v=1"></script>
   <script>
     let wine = null;
     const runningApps = [];  // array of { wine, name, appIndex }
@@ -767,6 +771,21 @@ Resource-aware Win98 emulator
     ];
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+
+    // Frame/step graph overlay (lib/perf-hud.js). Off by default even in
+    // debug mode — it draws every rAF, and a profiler you cannot turn off is
+    // one more thing competing for the frame it is measuring. `?perf` turns
+    // it on at load so a headless run can capture it without a click.
+    function setPerfHud(on) {
+      if (!window.WinePerf) return;
+      window.WinePerf.toggle(on);
+      const box = document.getElementById('perf-hud-toggle');
+      if (box) box.checked = window.WinePerf.enabled;
+    }
+    if (new URLSearchParams(location.search).has('perf')) {
+      window.addEventListener('load', () => setPerfHud(true));
+    }
+
     function initDesktop() {
       const desktopApps = LOCAL_DESKTOP
         ? DEFAULT_APPS.concat(LOCAL_CANDIDATE_APPS)

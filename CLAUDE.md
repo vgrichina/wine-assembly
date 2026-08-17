@@ -50,6 +50,21 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 
 **Extending:** the tracing infrastructure lives in `lib/host-imports.js` under `if (trace.has('gdi'))` — it uses a `wrap(name, fn, formatter)` helper. To add a category, duplicate that block for your category and add a matching `if (TRACE_X) traceCategories.add('x')` in `test/run.js`. The generic `--trace-host=` should cover most one-off investigations without needing a new category.
 
+## Measuring jank in the browser (`lib/perf-hud.js`)
+
+The browser run loop is a `setTimeout(step, 0)` chain in `host.js`: each step runs a guest slice, then the worker threads, then a repaint — all on the main thread. So a dropped frame is never "rendering was slow", it is "one step held the thread too long", and the question is always *which phase*.
+
+Turn on **FPS graph** in the `?debug` toolbar (or load `?debug&perf` to start it enabled). The overlay draws, per step, a stacked bar of `guest` / `threads` / `paint` / `other` against 16.7ms and 33ms guides, plus the rAF frame-interval line underneath. A tall bar is literally a step the browser could not interrupt; its color says who to blame.
+
+`host.js` feeds it through `window.WinePerf.{stepBegin,mark,stepEnd}` — four `performance.now()` calls per step, and the seam is null unless the HUD is on. `window.WinePerf.snapshot()` returns the same numbers as JSON, so headless runs get real phase attribution instead of inferring it:
+
+```bash
+node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debug&perf' \
+  --report-eval='JSON.stringify(window.WinePerf.snapshot())'
+```
+
+**Check `uptime` before trusting any of it.** This box regularly sits at load 20-40 with several agent sessions running sweeps, and at that load the browser numbers measure the machine, not the emulator. `profile-web-frames.js` prints `loadavg` either side of every sample and flags anything above 4 for exactly this reason.
+
 **Rule:** before adding a `console.log` to source, check that none of the above already covers it. If tracing a new primitive that isn't wrapped yet, add a `wrap(...)` entry to the `gdi` block (or the appropriate one) — that investment pays off on every future session. Source stays clean between sessions; tracing is a runtime flag, not an edit.
 
 ## Source Parts (concatenation order)
