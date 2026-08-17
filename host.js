@@ -1588,8 +1588,16 @@ class WineAssembly {
             // active workers enough total steps to use that budget.
             const audioHot = self._isAudioHot();
             const menuOpen = self._hasOpenMenu();
+            // Recent input used to zero the worker budget outright, so the
+            // main thread could deliver the message without competition.
+            // That is fine for a click, and catastrophic for a game played
+            // with the mouse: pointer moves arrive faster than the 120ms
+            // window expires, so the budget never comes back and the thread
+            // running the game stops entirely. Blobby measured 0fps while
+            // the mouse moved and 36-41fps with this line neutralized.
+            // Reserve most of the slice for input instead of all of it.
             const threadBudget = windowCount
-              ? (recentInputWake ? 0 : activeStepsPerSlice)
+              ? (recentInputWake ? Math.max(10000, activeStepsPerSlice >> 2) : activeStepsPerSlice)
               : activeStepsPerSlice;
             const perfThreadStart = perf ? performance.now() : 0;
             if (threadBudget > 0) {
@@ -1597,7 +1605,10 @@ class WineAssembly {
                 const quantumSteps = audioHot ? (menuOpen ? 20000 : 10000) : 50000;
                 const maxWallMs = audioHot
                   ? (menuOpen ? (mainThreadWaiting ? 8 : 6) : 4)
-                  : (mainThreadWaiting ? 16 : 12);
+                  // While input is arriving, workers get a short quantum so
+                  // the pointer still feels attached to the cursor — but a
+                  // short one, not none.
+                  : (recentInputWake ? 6 : (mainThreadWaiting ? 16 : 12));
                 const threadStats = self.threadManager.runBudgeted({
                   // Non-audio UI workers should be limited by the wall-clock
                   // budget, not by one nominal interpreter slice. Credits
