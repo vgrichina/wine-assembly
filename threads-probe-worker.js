@@ -58,6 +58,45 @@ self.onmessage = async (event) => {
       });
     }
 
+    if (msg.kind === 'paint') {
+      // The end-to-end case: a module our own compiler produced, instantiated
+      // here against memory from the other thread, rendering into that memory,
+      // blitted onto an OffscreenCanvas the page transferred to us. If this
+      // works, phase 1's rendering path works.
+      const { module, memory, canvas, base, width, height, tid, frames } = msg;
+      const instance = await WebAssembly.instantiate(module, { host: { memory } });
+      const paint = instance.exports.paint;
+      if (typeof paint !== 'function') throw new Error('module has no paint export');
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('OffscreenCanvas has no 2d context in this worker');
+      const image = ctx.createImageData(width, height);
+      const pixels = new Uint8Array(memory.buffer, base, width * height * 4);
+
+      let painted = 0, blitMs = 0, paintMs = 0;
+      for (let f = 0; f < frames; f++) {
+        const t0 = performance.now();
+        painted += paint(base, width, height, tid, f * 3) | 0;
+        const t1 = performance.now();
+        // Copy out of shared memory: putImageData will not accept a view backed
+        // by a SharedArrayBuffer, which is exactly the constraint the real GDI
+        // path lives with too (it decodes into a reused ImageData).
+        image.data.set(pixels);
+        ctx.putImageData(image, 0, 0);
+        blitMs += performance.now() - t1;
+        paintMs += t1 - t0;
+        // Yield so the page can observe intermediate frames rather than one
+        // batch at the end — this is a visible demo, not just an assertion.
+        await new Promise(r => setTimeout(r, 16));
+      }
+      return reply({
+        ok: true,
+        detail: `${frames} frames: wasm paint ${paintMs.toFixed(0)}ms total, `
+          + `blit ${blitMs.toFixed(0)}ms total (${(blitMs / frames).toFixed(2)}ms/frame), `
+          + `${painted} px written`,
+      });
+    }
+
     reply({ ok: false, detail: `unknown kind ${msg.kind}` });
   } catch (err) {
     reply({ ok: false, detail: String(err && err.message || err) });

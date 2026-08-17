@@ -23,6 +23,10 @@
     button:hover { background: #2d475d; } button:disabled { opacity: .45; cursor: default; }
     .verdict { margin-top: 18px; padding: 12px; border: 1px solid #385466; background: #15212a;
                white-space: pre-wrap; line-height: 1.5; }
+    .stage { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px;
+             padding: 12px; border: 1px solid #385466; background: #0c1216; font-size: 12px; }
+    .stage canvas { border: 1px solid #3f6b88; background: #000; flex: none; width: 320px; height: 240px; }
+    .stage div { color: #9fb2c0; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -50,6 +54,19 @@
     <tbody id="rows"></tbody>
   </table>
 
+  <div class="stage">
+    <canvas id="screen" width="320" height="240"></canvas>
+    <div>
+      <b>End-to-end stage.</b> Each canvas is an <code>OffscreenCanvas</code>
+      transferred to a different worker, and every pixel on it was written by a
+      module compiled from <code>probe/paint.wat</code> in this page, running in
+      that worker, into memory this page allocated. Two canvases mean two
+      workers painting at the same time.
+      <div id="stage-note" class="detail"></div>
+    </div>
+    <canvas id="screen2" width="320" height="240"></canvas>
+  </div>
+
   <div class="verdict" id="verdict">Press “Run probe”.</div>
 </main>
 
@@ -58,6 +75,7 @@
 const rowsEl = document.getElementById('rows');
 const verdictEl = document.getElementById('verdict');
 const results = [];
+const activePainters = [];
 
 function row(name) {
   const tr = document.createElement('tr');
@@ -225,6 +243,80 @@ async function run() {
         `WAT→WASM in ${compileMs.toFixed(0)}ms, ${(bytes.length / 1048576).toFixed(1)}MB — ${reply.detail}`);
     } catch (err) {
       r6.set('fail', String(err && err.message || err));
+    }
+  }
+
+  // 7 — WAT -> WASM -> two workers -> two canvases, end to end
+  const r7 = row('end to end: probe/paint.wat → our compiler → 2 workers → 2 canvases');
+  if (!memory) {
+    r7.set('skip', 'needs shared memory');
+  } else if (typeof compileWatSnapshot !== 'function') {
+    r7.set('fail', 'compileWatSnapshot unavailable');
+  } else {
+    // Painters outlive the probe run on purpose. A placeholder canvas shows
+    // whatever its worker last committed, and terminating the worker the
+    // instant it finishes leaves the canvas black — the pixels were real, the
+    // demo just had nothing left to display them. Old painters are terminated
+    // at the start of the next run instead.
+    for (const w of activePainters) w.terminate();
+    activePainters.length = 0;
+    const painters = activePainters;
+    try {
+      // Compile the small module with the SAME compiler that builds the
+      // emulator, now that it accepts a custom file list.
+      const t0 = performance.now();
+      const bytes = await compileWatSnapshot(
+        async file => {
+          const res = await fetch(file);
+          if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`);
+          return res.text();
+        },
+        { files: ['probe/paint.wat'], cacheKey: 'probe-paint', tailCalls }
+      );
+      const compileMs = performance.now() - t0;
+      const module = await WebAssembly.compile(bytes);
+
+      const W = 320, H = 240, FRAMES = 40;
+      const details = [];
+      const jobs = ['screen', 'screen2'].map((id, i) => {
+        // 4MB apart, high enough to miss anything the emulator itself uses.
+        const base = 0x02000000 + i * 0x00400000;
+        // A canvas can only surrender control once, so a re-run needs a fresh
+        // element. Replacing it keeps the button idempotent.
+        const old = document.getElementById(id);
+        const el = old.cloneNode(false);
+        old.replaceWith(el);
+        if (typeof el.transferControlToOffscreen !== 'function') {
+          throw new Error('canvas.transferControlToOffscreen unavailable — cannot hand a canvas to a worker');
+        }
+        const canvas = el.transferControlToOffscreen();
+        const w = new Worker('threads-probe-worker.js');
+        painters.push(w);
+        return ask(w, {
+          kind: 'paint', module, memory, canvas,
+          base, width: W, height: H, tid: i + 1, frames: FRAMES,
+        }, [canvas]).then(res => {
+          details.push(`worker ${i + 1}: ${res.detail}`);
+          return { res, base };
+        });
+      });
+      const done = await Promise.all(jobs);
+
+      // The page reads the workers' pixels through its OWN instance over the
+      // same memory. Two different checksums prove each worker wrote its own
+      // buffer, and non-zero proves the page can see work done elsewhere.
+      const pageInstance = await WebAssembly.instantiate(module, { host: { memory } });
+      const sums = done.map(d => pageInstance.exports.checksum(d.base, 4096) >>> 0);
+      const allOk = done.every(d => d.res.ok) && sums.every(s => s > 0) && sums[0] !== sums[1];
+      r7.set(allOk ? 'pass' : 'fail',
+        `compiled ${bytes.length}B in ${compileMs.toFixed(0)}ms; `
+        + `page-side checksums [${sums.join(', ')}]; ` + details.join(' | '));
+      document.getElementById('stage-note').textContent = allOk
+        ? `Both canvases were painted from workers. Page-side checksums differ (${sums.join(' vs ')}), `
+          + `so each worker wrote its own region of the shared memory and this page can read both.`
+        : 'Something failed — see the table row.';
+    } catch (err) {
+      r7.set('fail', String(err && err.message || err));
     }
   }
 
