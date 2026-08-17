@@ -1541,7 +1541,14 @@ class WineAssembly {
       try {
         self._beginGuestTickBatch();
         if (self.guestWorker.broker) {
-          self.guestWorker.broker.publish({ tickMs: self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio) });
+          // The guest's message-wait resume runs inside the worker and needs to
+          // know whether the renderer has input queued — that queue is here, so
+          // its depth is published rather than asked for.
+          const q = self.renderer && self.renderer.inputQueue ? self.renderer.inputQueue.length : 0;
+          self.guestWorker.broker.publish({
+            tickMs: self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
+            inputPending: q,
+          });
         }
         const r = await self.guestWorker.slice(Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice));
         if (!self.running) return;
