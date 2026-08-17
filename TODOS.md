@@ -88,19 +88,38 @@ meaningless. Delete it. A baseline worktree needs the font assets too.
 
 ---
 
-## 1. Win16 / NE — Phase 5: all four run, three of the four play
+## 1. Win16 / NE — Phase 6: three of the four are playable
 
 Phase 1 (`0c23c78`) loads and links NE images, Phase 2 (`84c98a1`) runs them,
 Phase 3 (`ff6f45a`, `9a0f12f`, `3b18812`, `90e548a`) gives them an API layer,
 Phase 4 (`919f011`, `5e8a9f3`, `e78ba7f`, `0af03d5`) adds NE DLL loading, and
 Phase 5 (`d5a09f7`) gets Hearts running.
 
-**Minesweeper draws completely** — window, LED counters, smiley, minefield.
-**Solitaire draws its window, green baize and status bar. FreeCell draws its
-board with real card graphics out of CARDS.DLL. Hearts creates its frame, its
-status bar and its buttons, runs its message loop, initialises DDEML and puts
-up a real message box.** All four reach their message loops and run their own
-window procedures with no trap.
+Phase 6 (`fd04a70`, `df6b6b5`) makes them look right rather than merely run.
+
+**Minesweeper draws completely** — window, red LED counters, yellow smiley,
+raised minefield. **Solitaire deals a hand: seven tableau columns of real
+cards on green baize, with its status bar.** **FreeCell draws its empty board
+— eight green cells, the logo card, "Cards Left:" — which is what it shows
+until you start a game.** **Hearts creates its frame, its status bar and its
+buttons, runs its message loop, initialises DDEML and puts up a real message
+box.** All four reach their message loops and run their own window procedures
+with no trap. All four are in the browser shell under "16-bit (Win16 / NE)"
+(`8dc244e`), covered by `test/test-win16-web.js`.
+
+Three of the bugs behind the previously-empty tables were **not** Win16 bugs
+and are worth knowing about for 32-bit apps too:
+
+- `$handle_AdjustWindowRectEx` ignored `dwExStyle` while
+  `$defwndproc_do_nccalcsize` honours it, so any `WS_EX_CLIENTEDGE` window
+  sized through it came back four pixels narrower than the app asked for.
+- `$handle_PatBlt` reads its width and height back off the stack frame rather
+  than from its arguments — the Win16 bridge wrote only the rop there, so
+  every 16-bit `PatBlt` filled a garbage rectangle. It is the only handler in
+  the bridge that reads past argument 2; the other 97 were audited.
+- `GetDeviceCaps(NUMCOLORS)` answered Win32's `-1`, which a 16-bit caller
+  compares as a signed word. Minesweeper's `cmp ax,2 / jle` therefore chose
+  its monochrome bitmap set and drew the whole board in 1-bit art.
 
 The address scheme, because everything else depends on it: every segment base
 is 64KB aligned, so the low word of a linear address *is* the offset inside its
@@ -115,8 +134,12 @@ the pre-existing 16-bit push/pop handlers needed no changes at all.
 - Tooling: `tools/ne-dump.js`, `tools/ne-exports.js`,
   `tools/gen_win16_ordinals.js` → `src/win16-ordinals.generated.json` (1,468
   names, 10 modules; all 269 ordinals the four apps import resolve).
-  **`--trace-win16`** logs every call with the six stack words nearest the top
-  and the AX/DX/EIP/ESP that came back — reach for it first on anything here.
+  **`--trace-win16`** logs every call with the ten stack words nearest the top
+  (BitBlt's Pascal frame is exactly ten and its destination DC is the deepest)
+  and the AX/DX/EIP/ESP that came back, and decodes the 16-bit MSG behind
+  `lpMsg` for the four message-pump entry points — reach for it first on
+  anything here. `tools/png-probe.js --at=x,y` reads a dumped surface's alpha,
+  which is how you tell "filled black" from "never drawn".
   Two facts worth not rediscovering: a Win16 module name is not its filename
   (SOUND ships as `mmsound.drv`), and not every import is by ordinal.
 
@@ -144,6 +167,16 @@ sets the global instead.
 
 ### Open
 
+- **Solitaire deals one row, not the full staircase.** All 28 cards move —
+  the deal loop at `seg 4:0xdd3` runs its 7 outer and 21 inner iterations, and
+  the deck's count drops — but the table shows one card per pile and no stock
+  or foundation row above the tableau. Two threads to pull: the piles are laid
+  out at y=9 with the top row absent, which looks like the vertical half of the
+  layout hitting a minimum-height check the way the horizontal half hit a
+  minimum-width one; and the engine's animation tick (`seg 4:0x13ac`, reached
+  from the TIMERPROC) returns immediately every time because the table object's
+  `+0x14` is zero, so whatever the tick would finish never happens. `--count`
+  on those two addresses answers both.
 - **Hearts goes straight to the client path and finds no dealer.** It gets all
   the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
   and puts up "Unable to connect with dealer. Hearts will end." What it should
