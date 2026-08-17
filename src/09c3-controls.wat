@@ -324,8 +324,14 @@
     (local $len i32) (local $x i32) (local $left i32) (local $right i32)
     (if (i32.eqz (call $tab_native_is (local.get $hwnd))) (then (return)))
     ;; Do not allocate while forwarding WM_CREATE or unrelated private traffic.
+    ;; TCM_INSERTITEMW (0x133E) matters as much as the A form: a Unicode app
+    ;; adds its tabs through it and only through it, so mirroring just the A
+    ;; message left the state at zero tabs and $tab_native_paint drew an empty
+    ;; strip -- XP Sound Recorder's File > Properties showed no "Details" tab.
     (if (i32.and
-          (i32.ne (local.get $msg) (i32.const 0x1307))
+          (i32.and
+            (i32.ne (local.get $msg) (i32.const 0x1307))
+            (i32.ne (local.get $msg) (i32.const 0x133E)))
           (i32.and
             (i32.ne (local.get $msg) (i32.const 0x1309))
             (i32.and
@@ -336,8 +342,10 @@
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
     (local.set $count (i32.load (local.get $sw)))
-    ;; TCM_INSERTITEMA
-    (if (i32.eq (local.get $msg) (i32.const 0x1307))
+    ;; TCM_INSERTITEMA / TCM_INSERTITEMW — TCITEMA and TCITEMW share their
+    ;; layout (pszText at +12); only the string's width differs.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x1307))
+                (i32.eq (local.get $msg) (i32.const 0x133E)))
       (then
         (if (i32.ge_u (local.get $count) (i32.const 8)) (then (return)))
         (local.set $index (local.get $wParam))
@@ -372,13 +380,30 @@
                 (if (local.get $text_g)
                   (then
                     (local.set $text_w (call $g2w (local.get $text_g)))
-                    (local.set $len (call $strlen (local.get $text_w)))
-                    (if (i32.gt_u (local.get $len) (i32.const 14))
-                      (then (local.set $len (i32.const 14))))
-                    (i32.store8 (local.get $dst) (local.get $len))
-                    (if (local.get $len)
-                      (then (call $memcpy (i32.add (local.get $dst) (i32.const 1))
-                        (local.get $text_w) (local.get $len))))))))))
+                    (if (i32.eq (local.get $msg) (i32.const 0x133E))
+                      (then
+                        ;; Narrow the label straight into the fixed record.
+                        (local.set $len (call $guest_wcslen (local.get $text_g)))
+                        (if (i32.gt_u (local.get $len) (i32.const 14))
+                          (then (local.set $len (i32.const 14))))
+                        (i32.store8 (local.get $dst) (local.get $len))
+                        (local.set $j (i32.const 0))
+                        (block $wdone (loop $wcopy
+                          (br_if $wdone (i32.ge_u (local.get $j) (local.get $len)))
+                          (i32.store8
+                            (i32.add (i32.add (local.get $dst) (i32.const 1)) (local.get $j))
+                            (call $gl16 (i32.add (local.get $text_g)
+                              (i32.mul (local.get $j) (i32.const 2)))))
+                          (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                          (br $wcopy))))
+                      (else
+                        (local.set $len (call $strlen (local.get $text_w)))
+                        (if (i32.gt_u (local.get $len) (i32.const 14))
+                          (then (local.set $len (i32.const 14))))
+                        (i32.store8 (local.get $dst) (local.get $len))
+                        (if (local.get $len)
+                          (then (call $memcpy (i32.add (local.get $dst) (i32.const 1))
+                            (local.get $text_w) (local.get $len))))))))))))
         (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return)))
@@ -648,8 +673,23 @@
 
   ;; Dispatch to the correct control wndproc based on control class
   (func $control_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $class i32)
+    (local $class i32) (local $wh i32)
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+    ;; Every WAT-native control paint, with the screen rect it lands on.
+    ;; Two controls painting the same pixels, or one painting twice at
+    ;; different origins, is invisible in --trace-gdi now that the GDI
+    ;; primitives rasterize inside WAT. JS drops this unless --trace-ctrl.
+    (if (i32.and (i32.eq (local.get $msg) (i32.const 0x000F))
+          (i32.ne (local.get $class) (i32.const 0)))
+      (then
+        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (call $host_ctrl_paint_trace
+          (local.get $hwnd) (local.get $class)
+          (call $wnd_window_screen_x (local.get $hwnd))
+          (call $wnd_window_screen_y (local.get $hwnd))
+          (i32.and (local.get $wh) (i32.const 0xFFFF))
+          (i32.or (i32.shl (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1))
+                  (call $wnd_is_effectively_visible (local.get $hwnd))))))
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))

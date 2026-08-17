@@ -5780,7 +5780,33 @@
     "name": "ShellExecuteA",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 185595327
+    "hash": 185595327,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "op",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "file",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "params",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "dir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "show",
+        "type": "int"
+      }
+    ]
   },
   {
     "id": 673,
@@ -7313,7 +7339,33 @@
     "name": "ShellExecuteW",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 420481993
+    "hash": 420481993,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "op",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "file",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "params",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "dir",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "show",
+        "type": "int"
+      }
+    ]
   },
   {
     "id": 865,

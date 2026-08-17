@@ -104,6 +104,7 @@ const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
+const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
@@ -1106,6 +1107,7 @@ async function main() {
 
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
+  if (TRACE_CTRL) traceCategories.add('ctrl');
   if (TRACE_RGN) traceCategories.add('rgn');
   if (TRACE_DC) traceCategories.add('dc');
   if (TRACE_CLIP) traceCategories.add('clip');

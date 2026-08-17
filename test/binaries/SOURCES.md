@@ -319,3 +319,19 @@ reference fixture at `test/binaries/help/winhlp32.exe`. It is used by
 
 The binary is not committed. Recover it by extracting the ISO and cabinet,
 then copy it to the path above. The reference test skips cleanly when absent.
+
+## Control panel applets
+
+Extracted locally from `scratch/win98se.iso` (Windows 98 SE), which ships them
+inside the multi-part `win98/*.CAB` set. Any part lists the whole set's
+directory, and cabextract follows the chain as long as every part is in one
+directory:
+
+```
+7z e scratch/win98se.iso -oscratch/win98cabs 'win98/*.CAB'
+cabextract -F 'mmsys.cpl' -d test/binaries/dlls scratch/win98cabs/BASE4.CAB
+```
+
+| File | Why |
+|------|-----|
+| mmsys.cpl | Sound Recorder's Edit > Audio Properties does `LoadLibrary("MMSYS.CPL")` then `GetProcAddress("ShowMMCPLPropertySheet")` (ordinal 5). Without it the app probes, fails and silently gives up. |

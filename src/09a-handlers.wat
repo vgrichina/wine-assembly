@@ -5125,10 +5125,59 @@
   ;; message-specific buffers. Reuse the synchronous subclass/default-proc
   ;; path so Unicode applications can drive common controls (Media Player 32
   ;; uses TB_ADDBUTTONSW through an app-installed toolbar subclass).
+  ;; True for the messages whose lParam is a caller-supplied string. The W
+  ;; forms carry UTF-16 there; WAT-native controls store bytes, so the text has
+  ;; to be narrowed before it reaches one.
+  (func $msg_lparam_is_text (param $msg i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $msg) (i32.const 0x000C))   ;; WM_SETTEXT
+        (i32.eq (local.get $msg) (i32.const 0x00C2)))  ;; EM_REPLACESEL
+      (i32.or
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0143))    ;; CB_ADDSTRING
+                  (i32.eq (local.get $msg) (i32.const 0x014A)))   ;; CB_INSERTSTRING
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x014C))    ;; CB_FINDSTRING
+                  (i32.eq (local.get $msg) (i32.const 0x014D))))  ;; CB_SELECTSTRING
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0158))    ;; CB_FINDSTRINGEXACT
+                  (i32.eq (local.get $msg) (i32.const 0x0180)))   ;; LB_ADDSTRING
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0181))  ;; LB_INSERTSTRING
+                    (i32.eq (local.get $msg) (i32.const 0x018C))) ;; LB_SELECTSTRING
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x018F))  ;; LB_FINDSTRING
+                    (i32.eq (local.get $msg) (i32.const 0x01A2)))))))) ;; LB_FINDSTRINGEXACT
+
+  ;; Narrow a W message's string lParam for a WAT-native target, or return 0
+  ;; when nothing needs converting. Only WAT-native controls are converted: a
+  ;; guest window that was sent a W message wants its UTF-16 pointer intact,
+  ;; and for those SendMessage may redirect EIP and read the string long after
+  ;; this returns, so a temporary buffer would be freed out from under it.
+  (func $msg_narrow_text_lparam (param $hwnd i32) (param $msg i32) (param $lParam i32)
+        (result i32)
+    (local $n i32) (local $buf i32)
+    (if (i32.eqz (call $msg_lparam_is_text (local.get $msg))) (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $lParam) (i32.const 0x10000)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd))) (then (return (i32.const 0))))
+    (local.set $n (i32.add (call $guest_wcslen (local.get $lParam)) (i32.const 1)))
+    (local.set $buf (call $heap_alloc (local.get $n)))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (drop (call $wide_to_ansi (local.get $lParam) (local.get $buf) (local.get $n)))
+    (local.get $buf))
+
+  ;; SendMessageW — the A path owns dispatch. Only the text-bearing messages
+  ;; differ, and only when the target is one of our own controls: XP Sound
+  ;; Recorder fills its format combo with CB_ADDSTRING of LoadStringW text, and
+  ;; reading that UTF-16 as bytes left every row showing just its first letter.
   (func $handle_SendMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $narrow i32)
+    (local.set $narrow
+      (call $msg_narrow_text_lparam (local.get $arg0) (local.get $arg1) (local.get $arg3)))
     (call $handle_SendMessageA
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (select (local.get $narrow) (local.get $arg3) (local.get $narrow))
+      (local.get $arg4) (local.get $name_ptr))
+    (if (local.get $narrow) (then (call $heap_free (local.get $narrow))))
   )
 
   ;; 297: PostMessageW — same as PostMessageA
@@ -8105,10 +8154,43 @@
   ;; --- Additional Shell32 APIs ---
 
   ;; ShellExecuteW — same as A version, return >32 for success, 6 args
+  ;; ShellExecuteW(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShow)
+  ;; Narrow the four strings and take the same host path as the A form. This
+  ;; returned 33 ("succeeded") without looking at a single argument, so a
+  ;; Unicode app's shell request vanished with no log and no failure code --
+  ;; XP Sound Recorder's Edit > Audio Properties asks for
+  ;; RUNDLL32.EXE MMSYS.CPL,ShowAudioPropertySheet here and appeared to do
+  ;; nothing at all. Routing it through $host_shell_execute at least makes the
+  ;; request observable; what the host does with rundll32 is its business.
   (func $handle_ShellExecuteW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 33))
+    (local $op i32) (local $file i32) (local $params i32) (local $dir i32)
+    (local.set $op    (call $shellexec_narrow_w (local.get $arg1)))
+    (local.set $file  (call $shellexec_narrow_w (local.get $arg2)))
+    (local.set $params (call $shellexec_narrow_w (local.get $arg3)))
+    (local.set $dir   (call $shellexec_narrow_w (local.get $arg4)))
+    (global.set $eax (call $host_shell_execute
+      (local.get $arg0)
+      (if (result i32) (local.get $op)    (then (call $g2w (local.get $op)))    (else (i32.const 0)))
+      (if (result i32) (local.get $file)  (then (call $g2w (local.get $file)))  (else (i32.const 0)))
+      (if (result i32) (local.get $params) (then (call $g2w (local.get $params))) (else (i32.const 0)))
+      (if (result i32) (local.get $dir)   (then (call $g2w (local.get $dir)))   (else (i32.const 0)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))  ;; nShowCmd
+    (if (local.get $op)     (then (call $heap_free (local.get $op))))
+    (if (local.get $file)   (then (call $heap_free (local.get $file))))
+    (if (local.get $params) (then (call $heap_free (local.get $params))))
+    (if (local.get $dir)    (then (call $heap_free (local.get $dir))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
+
+  ;; UTF-16 → a fresh guest ANSI buffer, or 0 for a NULL argument. Caller frees.
+  (func $shellexec_narrow_w (param $ws i32) (result i32)
+    (local $n i32) (local $buf i32)
+    (if (i32.eqz (local.get $ws)) (then (return (i32.const 0))))
+    (local.set $n (i32.add (call $guest_wcslen (local.get $ws)) (i32.const 1)))
+    (local.set $buf (call $heap_alloc (local.get $n)))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (drop (call $wide_to_ansi (local.get $ws) (local.get $buf) (local.get $n)))
+    (local.get $buf))
 
   ;; ShellExecuteExA(lpExecInfo) — 1 arg, return TRUE
   (func $handle_ShellExecuteExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -11600,9 +11682,26 @@
   )
 
   ;; 668: SetDlgItemTextW — return 1, 3 args stdcall
+  ;; SetDlgItemTextW(hDlg, nIDDlgItem, lpString) — narrow and hand to the A
+  ;; path, which owns the window-text table and the WM_SETTEXT dispatch.
+  ;;
+  ;; This used to return TRUE without storing anything. Every field a Unicode
+  ;; app filled in was then blank with no diagnostic: XP Sound Recorder's
+  ;; File > Properties sets its name, copyright, length, data size and audio
+  ;; format this way, and the whole sheet rendered empty.
   (func $handle_SetDlgItemTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (local $narrow i32) (local $n i32)
+    (if (i32.ge_u (local.get $arg2) (i32.const 0x10000))
+      (then
+        (local.set $n (i32.add (call $guest_wcslen (local.get $arg2)) (i32.const 1)))
+        (local.set $narrow (call $heap_alloc (local.get $n)))
+        (if (local.get $narrow)
+          (then (drop (call $wide_to_ansi
+                  (local.get $arg2) (local.get $narrow) (local.get $n)))))))
+    (call $handle_SetDlgItemTextA
+      (local.get $arg0) (local.get $arg1) (local.get $narrow)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (local.get $narrow) (then (call $heap_free (local.get $narrow))))
   )
 
   ;; 669: IsDlgButtonChecked — BST_UNCHECKED(0) or BST_CHECKED(1)

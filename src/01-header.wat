@@ -518,6 +518,14 @@
   ;; JS formats and logs iff --trace-dx is set. kind: 1=Lock 2=Unlock 3=Blt 4=SetEntries 5=Present 6=Flip
   (import "host" "dx_trace" (func $host_dx_trace (param i32 i32 i32 i32 i32)))
 
+  ;; WAT-native control paint tracing hook — every WAT-owned control wndproc
+  ;; paint, with the window-local rect it is about to draw into. GDI primitives
+  ;; are rasterized inside WAT now, so --trace-gdi sees only surface binds and
+  ;; can no longer answer "who drew these pixels". JS formats and logs iff
+  ;; --trace-ctrl is set.
+  (import "host" "ctrl_paint_trace"
+    (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32)))
+
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0

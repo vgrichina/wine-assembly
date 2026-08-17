@@ -14020,8 +14020,21 @@
   ;; ShowWindow has just made $parent visible, so its descendants should be
   ;; paintable based on their own WS_VISIBLE bits even if ancestor style/state
   ;; is still settling in a nested dialog transition.
+  ;;
+  ;; That premise is the caller's to keep. $win32_dispatch also runs this when
+  ;; CreateDialog's WM_INITDIALOG returns, and a dialog page is routinely built
+  ;; hidden, positioned with SetWindowPos, and only then shown -- a property
+  ;; sheet does exactly that. Its children keep WS_VISIBLE throughout, so
+  ;; without this guard they paint at the pre-move origin onto the top-level
+  ;; back-canvas, and since a child owns no surface nothing ever erases them:
+  ;; Sound Recorder's File > Properties drew every control twice, offset by the
+  ;; SetWindowPos delta. A parent that is not itself shown has no exposed
+  ;; region to flush.
   (func $paint_flush_shown_native_children (param $parent i32) (result i32)
     (local $slot i32) (local $ch i32) (local $style i32) (local $n i32)
+    (if (i32.eqz (i32.and (call $wnd_get_style (local.get $parent))
+                          (i32.const 0x10000000)))  ;; WS_VISIBLE
+      (then (return (i32.const 0))))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
       (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
