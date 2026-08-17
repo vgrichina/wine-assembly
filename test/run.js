@@ -11,24 +11,12 @@ let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
 try {
-  const sk = require('skia-canvas');
-  createCanvas = (w, h) => {
-    const c = new sk.Canvas(w, h);
-    // WA_CANVAS_GPU=0 forces raster. See the note in renderer.js
-    // _createOffscreen for when a run needs that and what it costs.
-    if ('gpu' in c) c.gpu = process.env.WA_CANVAS_GPU !== '0';
-    return c;
-  };
+  // A pure-JS raster surface, not a native canvas -- see lib/raster-canvas.js.
+  // No font registration: WAT measures and rasterizes all text from its own
+  // bitmap FON strikes, and the legacy draw_text/draw_rect host imports are
+  // dead (0 calls for notepad, calc and mspaint).
+  createCanvas = require('../lib/canvas-compat').createCanvas;
   Win98Renderer = require('../lib/renderer').Win98Renderer;
-  const fontsDir = path.join(__dirname, '..', 'fonts');
-  const fontFiles = [
-    { file: 'W95FA.otf',    family: 'W95FA' },
-    { file: 'FSEX302.ttf',  family: 'Fixedsys Excelsior' },
-  ];
-  const fontPaths = fontFiles.map(({ file }) => path.join(fontsDir, file)).filter(p => fs.existsSync(p));
-  if (fontPaths.length && sk.FontLibrary && sk.FontLibrary.use) {
-    try { sk.FontLibrary.use(fontPaths); } catch (_) {}
-  }
 } catch (_) {}
 
 const ROOT = path.join(__dirname, '..');
@@ -211,7 +199,7 @@ const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 // worth naming rather than a gap.
 const WIN16_MODULES = [
   '<unresolved>', 'KERNEL', 'USER', 'GDI', 'KEYBOARD',
-  'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS',
+  'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS', 'DDEML',
 ];
 let win16Ordinals;
 // "KERNEL.91 INITTASK" from (1, 91). The map is generated from the real

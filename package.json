@@ -20,11 +20,10 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "skia-canvas": "^3.0.8",
-    "wabt": "^1.0.39"
+    "wabt": "^1.0.39",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
-    "pngjs": "^7.0.0",
     "puppeteer": "25.7.0",
     "v86": "0.5.432"
   }

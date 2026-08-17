@@ -45,14 +45,10 @@ function nums(s) {
 }
 
 async function readPixels(file) {
-  // skia-canvas is already a dependency of the render path.
-  const { loadImage, Canvas } = require('skia-canvas');
-  const img = await loadImage(file);
-  const canvas = new Canvas(img.width, img.height);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const data = ctx.getImageData(0, 0, img.width, img.height);
-  return { width: img.width, height: img.height, data: data.data };
+  // Decoding a PNG needs a PNG decoder, not a canvas.
+  const { PNG } = require('pngjs');
+  const img = PNG.sync.read(require('fs').readFileSync(file));
+  return { width: img.width, height: img.height, data: img.data };
 }
 
 (async () => {
