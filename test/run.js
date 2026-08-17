@@ -1570,7 +1570,7 @@ async function main() {
     // run. Only the F1/F2 markers mean the task stopped.
     if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
-    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 8, words: [], call: true }; return; }
+    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 9, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 2, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
@@ -1583,11 +1583,16 @@ async function main() {
       }
       const [key, ret, nameAddr] = words;
       const mod = WIN16_MODULES[key >>> 16] || `<module ${key >>> 16}>`;
-      const what = (isCall || nameAddr === undefined)
-        ? win16ApiName(key >>> 16, key & 0xFFFF)
-        : `${mod}.${readPascalStr(nameAddr)} (by name)`;
+      // On a call the last word is the by-name flag; the ordinal field then
+      // holds a name-table offset and there is nothing to look up.
+      const what = isCall
+        ? (words[8] ? `${mod}.<name+${key & 0xFFFF}> (by name)`
+                    : win16ApiName(key >>> 16, key & 0xFFFF))
+        : (nameAddr === undefined
+            ? win16ApiName(key >>> 16, key & 0xFFFF)
+            : `${mod}.${readPascalStr(nameAddr)} (by name)`);
       if (isCall) {
-        logs.push(`[win16] ${what}(${words.slice(2).map(hex).join(', ')})  ret=${hex(ret)}`);
+        logs.push(`[win16] ${what}(${words.slice(2, 8).map(hex).join(', ')})  ret=${hex(ret)}`);
       } else {
         logs.push(`[win16] ${what}  ret=${hex(ret)}`);
       }

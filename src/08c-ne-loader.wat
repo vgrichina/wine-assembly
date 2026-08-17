@@ -550,11 +550,20 @@
     ;; more than that is what the real loader clamps too.
     (if (local.get $ds_index)
       (then
+        ;; The heap goes immediately above the static data and below the stack,
+        ;; which is what makes a local handle a near pointer — see
+        ;; $win16_LocalAlloc. Two bytes of slack keep a zero handle out of it.
+        (global.set $win16_lheap_ptr
+          (i32.add (call $win16_seg_limit (local.get $ds_index)) (i32.const 2)))
+        (global.set $win16_lheap_end
+          (i32.add (global.get $win16_lheap_ptr) (global.get $win16_heap_size)))
         (local.set $limit (i32.add
           (i32.add (call $win16_seg_limit (local.get $ds_index)) (global.get $win16_heap_size))
           (global.get $win16_stack_size)))
         (if (i32.gt_u (local.get $limit) (i32.const 0x10000))
           (then (local.set $limit (i32.const 0x10000))))
+        (if (i32.gt_u (global.get $win16_lheap_end) (local.get $limit))
+          (then (global.set $win16_lheap_end (local.get $limit))))
         (i32.store offset=4
           (i32.add (global.get $WIN16_SEG_TABLE) (i32.mul (local.get $ds_index) (i32.const 16)))
           (local.get $limit))))

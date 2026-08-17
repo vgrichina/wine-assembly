@@ -13044,6 +13044,20 @@
         (if (local.get $edit_state)
           (then (local.set $edit_len_before
             (i32.load offset=4 (call $g2w (local.get $edit_state))))))))
+    ;; A 16-bit task's window procedure cannot be entered this way. The frame
+    ;; built below is stdcall with 32-bit arguments and a near return thunk,
+    ;; and $wp is a packed selector:offset rather than a linear address — the
+    ;; recursive run would decode whatever those bits happen to point at.
+    ;; Posting is both safe and closer to what Win16 does: an app pumps its own
+    ;; messages, so the procedure still sees this one, on its next iteration
+    ;; and with the Pascal frame it expects. See $win16_enter_wndproc in
+    ;; src/09e-win16-api.wat for the path that does call it.
+    (if (global.get $code16)
+      (then
+        (drop (call $post_queue_push (local.get $hwnd) (local.get $msg)
+                (local.get $wParam) (local.get $lParam)))
+        (return (i32.const 0))))
+
     ;; x86 wndproc — synchronous dispatch via recursive $run.
     ;; Save full guest register context: this is invoked between message-pump
     ;; iterations (often via JS test driver or WAT control-side $wnd_send_message

@@ -132,8 +132,8 @@ function runOne(inst, memory, logged, name) {
   for (let i = 0; i < logged.length; i++) {
     if (logged[i] !== 0xca16a9f0) continue;
     const key = logged[i + 1] >>> 0;
-    calls.push({ mod: key >>> 16, ord: key & 0xffff });
-    i += 8;
+    calls.push({ mod: key >>> 16, ord: key & 0xffff, byName: !!logged[i + 9] });
+    i += 9;
   }
   checkThat('the task dispatched several API calls', calls.length >= 3,
     `${calls.length} calls`);
@@ -145,9 +145,14 @@ function runOne(inst, memory, logged, name) {
   checkThat('the first call was KERNEL.91 InitTask',
     calls.length > 0 && calls[0].mod === 1 && calls[0].ord === 91,
     calls.length ? `${MODULE_NAMES[calls[0].mod] || calls[0].mod}.${calls[0].ord}` : 'none');
+  // A by-name import carries a name-table offset where the ordinal would be,
+  // so there is nothing to look up for those; what must hold is that the
+  // module was still identified, which the check below covers.
   const unnamed = calls.filter((c) => {
     const m = MODULE_NAMES[c.mod];
-    return !m || !(ORDINALS.modules[m] && ORDINALS.modules[m].ordinals[String(c.ord)]);
+    if (!m) return true;
+    if (c.byName) return false;
+    return !(ORDINALS.modules[m] && ORDINALS.modules[m].ordinals[String(c.ord)]);
   });
   checkThat('every dispatched ordinal is a named export of its module',
     unnamed.length === 0,
@@ -156,6 +161,18 @@ function runOne(inst, memory, logged, name) {
 
   // If it did stop, the same has to hold of the ordinal it stopped at.
   if (!trapped) { console.log('  still running after 400 batches'); return; }
+  // Not every stop is an unimplemented ordinal. 0xCA16A9F7 is the bridge into
+  // the 32-bit handlers refusing to carry a redirect into guest code back to a
+  // 16-bit task; it names the API and is as legitimate a stopping point as an
+  // unimplemented one. It shows up here and not in a real run because every
+  // host import is a no-op, which sends some APIs down paths they would not
+  // otherwise take.
+  if (logged.indexOf(0xca16a9f7) >= 0) {
+    const at = logged.indexOf(0xca16a9f7);
+    console.log(`  stopped: ${MODULE_NAMES[logged[at + 1]] || logged[at + 1]}.${logged[at + 2]}`
+      + ' redirected EIP into guest code');
+    return;
+  }
   const mod = inst.exports.win16_last_module();
   const ord = inst.exports.win16_last_ordinal();
   const byName = inst.exports.win16_last_is_name();

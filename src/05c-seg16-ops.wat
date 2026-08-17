@@ -187,6 +187,11 @@
     (local.set $ip (call $gl16 (global.get $esp)))
     (local.set $sel (call $gl16 (i32.add (global.get $esp) (i32.const 2))))
     (global.set $esp (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $op))))
+    ;; Returning *into* the thunk segment is how an API that handed control to
+    ;; guest code gets it back — see $win16_enter_wndproc's continuation. A far
+    ;; call there is an API call; a far return there is an API resuming.
+    (if (i32.eq (local.get $sel) (global.get $WIN16_THUNK_SEL))
+      (then (call $win16_dispatch (local.get $ip) (i32.const 0)) (return)))
     (call $win16_set_sreg (i32.const 1) (local.get $sel))
     (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $ip)))
     (call $cs_pop))

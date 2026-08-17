@@ -2131,6 +2131,21 @@
   ;; The task's real ESP while a Win16 handler is borrowing the 32-bit stack to
   ;; call a $handle_* — see $win16_call32_begin in src/09e-win16-api.wat.
   (global $win16_esp_save (mut i32) (i32.const 0))
+  (global $win16_eip_save (mut i32) (i32.const 0))
+  ;; The task's local heap, as offsets within DGROUP: a Win16 local handle is a
+  ;; near pointer, so LocalAlloc can only hand out memory the data segment
+  ;; already contains. See $win16_LocalAlloc.
+  ;; ShowCursor keeps a display count rather than a flag, and apps read it back.
+  ;; The continuation slot in the thunk segment: an API that handed control to
+  ;; a 16-bit window procedure pushes this as the far return address, and
+  ;; $win16_dispatch recognises it. Past the end of the thunk table, so no
+  ;; import can be assigned it.
+  (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
+  (global $win16_cont_ret (mut i32) (i32.const 0))
+  (global $win16_cont_result (mut i32) (i32.const 0))
+  (global $win16_cursor_count (mut i32) (i32.const 0))
+  (global $win16_lheap_ptr (mut i32) (i32.const 0))
+  (global $win16_lheap_end (mut i32) (i32.const 0))
   ;; Linear address of the NE header in the staged file, so a name import can
   ;; find the imported-name table again long after loading, and how much of the
   ;; file was staged, which bounds the resource-table walk.
