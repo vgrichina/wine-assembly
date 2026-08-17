@@ -1028,6 +1028,7 @@
   ;; 0x07F0A600 192B     GDI_BITMAP_FONT_LRU (last-use stamp per strike slot)
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
+  ;; 0x07F0C800 64B      HEAP_SHARED (low-heap chunk cursor, heap_base)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1498,6 +1499,21 @@
   (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x14000000))
   (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))
   (global $VIRTUAL_ALLOC_MIN i32 (i32.const 0x10000000))
+  ;; Process-wide heap state, in memory rather than in globals so every instance
+  ;; over the shared memory sees one copy. Padded to its own 64-byte cache line:
+  ;; sharing a line with another hot shared cell costs more in inter-core line
+  ;; transfers than the loads themselves.
+  ;;   +0  next unreserved chunk in the low guest heap window (0 = uninitialized)
+  ;;   +4  heap_base — immutable after load, published for worker instances
+  (global $HEAP_SHARED i32 (i32.const 0x07F0C800))
+  (global $HEAP_SHARED_SIZE i32 (i32.const 0x40))
+  ;; Where the heap starts when no PE was ever loaded — unit-test harnesses call
+  ;; the WAT exports directly and still expect HeapAlloc to work. This was the
+  ;; old initial value of the $heap_ptr global.
+  (global $HEAP_DEFAULT_BASE i32 (i32.const 0x03D12000))
+  ;; Per-instance arena granularity. MSPaint's entire MFC boot is 215 HeapAllocs,
+  ;; so one reservation per megabyte makes the shared cursor effectively cold.
+  (global $HEAP_ARENA_CHUNK i32 (i32.const 0x00100000))
   ;; DIB sections use a dedicated guest range and fixed linear-memory backing.
   ;; One occupancy byte per 4KB page is 0=free, 1=allocated. The run table
   ;; stores the allocation length only at each allocation's first page.
@@ -1599,9 +1615,16 @@
   (global $entry_point  (mut i32) (i32.const 0))
   (global $num_thunks   (mut i32) (i32.const 0))
 
-  ;; Heap
+  ;; Heap. $heap_ptr/$heap_end bound this INSTANCE's arena, not the process
+  ;; heap: mutable globals are per-instance, and every guest thread is another
+  ;; instance over the same shared memory, so a single process-wide cursor kept
+  ;; in a global is replicated rather than shared and two threads hand out the
+  ;; same block. The process-wide cursor lives in memory at HEAP_SHARED; each
+  ;; instance reserves a chunk from it and bump-allocates privately in between,
+  ;; which keeps the allocation fast path lock-free (see $heap_low_reserve).
   (global $heap_base (mut i32) (i32.const 0))
-  (global $heap_ptr (mut i32) (i32.const 0x03D12000))  ;; heap region: 0x03D12000-0x03E12000 (1MB)
+  (global $heap_ptr (mut i32) (i32.const 0))   ;; 0 = no arena reserved yet
+  (global $heap_end (mut i32) (i32.const 0))   ;; exclusive end of this arena
   (global $heap_sparse_ptr (mut i32) (i32.const 0))
   (global $heap_sparse_end (mut i32) (i32.const 0))
   ;; Guest-space top of the downward-growing sparse VirtualAlloc arena. Kept

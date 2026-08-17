@@ -79,6 +79,7 @@ UNIT=(
   test/test-gdi-patblt-brush.js
   test/test-gdi-surface.js
   test/test-gdi-deferred-presentation.js
+  test/test-heap-partition.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
   test/test-wat-statusbar-grip.js

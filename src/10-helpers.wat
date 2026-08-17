@@ -329,6 +329,80 @@
     (global.set $virtual_alloc_top (local.get $guest))
     (local.get $guest))
 
+  ;; Publish the process heap. Called by the PE loader on the instance that loads
+  ;; the image; every other instance picks the same values up from HEAP_SHARED in
+  ;; $init_thread, because a mutable global would give it a private copy.
+  (func $heap_init (param $base i32)
+    (global.set $heap_base (local.get $base))
+    (global.set $heap_ptr (i32.const 0))
+    (global.set $heap_end (i32.const 0))
+    (i32.store (global.get $HEAP_SHARED) (local.get $base))
+    (i32.store (i32.add (global.get $HEAP_SHARED) (i32.const 4)) (local.get $base)))
+
+  ;; Top of everything the low heap has handed out, process-wide. 0 means the
+  ;; heap has not been touched yet. The DLL loader needs this to place an image
+  ;; clear of every arena; $heap_ptr would only tell it about one instance.
+  (func $heap_low_watermark (result i32)
+    (i32.load (global.get $HEAP_SHARED)))
+
+  ;; Declare that the low heap must not hand out anything below $addr — a DLL
+  ;; image now occupies that range. Only moves the cursor forward, so a DLL
+  ;; loaded below the watermark (fixed preferred base) costs nothing.
+  (func $heap_reserve_below (param $addr i32)
+    (if (i32.gt_u (local.get $addr) (i32.load (global.get $HEAP_SHARED)))
+      (then
+        (i32.store (global.get $HEAP_SHARED) (local.get $addr))
+        (i32.store (i32.add (global.get $HEAP_SHARED) (i32.const 4)) (local.get $addr))
+        (global.set $heap_base (local.get $addr))
+        ;; This instance's arena ended at the old cursor, so it cannot reach into
+        ;; the image — but drop it anyway rather than reason about that here.
+        (global.set $heap_ptr (i32.const 0))
+        (global.set $heap_end (i32.const 0)))))
+
+  ;; Reserve this instance's next private chunk of the low guest heap window.
+  ;; The cursor is shared; the arena handed back is exclusively ours, so the
+  ;; per-allocation fast path in $heap_alloc needs no synchronization at all.
+  ;;
+  ;; The read-modify-write here is plain, not atomic — correct while instances
+  ;; interleave only at slice boundaries, which is how the cooperative scheduler
+  ;; runs them today. Genuine parallelism needs a lock, and that needs atomic
+  ;; opcodes in lib/compile-wat.js, which it does not have yet.
+  (func $heap_low_reserve (param $need i32) (result i32)
+    (local $state i32) (local $cursor i32) (local $chunk i32)
+    (local.set $state (global.get $HEAP_SHARED))
+    (local.set $cursor (i32.load (local.get $state)))
+    ;; Seed the process cursor on first use. $heap_init does this at PE load;
+    ;; harnesses that drive the exports without an image never get there, so fall
+    ;; back to the default heap base rather than failing every allocation.
+    (if (i32.eqz (local.get $cursor))
+      (then
+        (local.set $cursor
+          (select (global.get $heap_base) (global.get $HEAP_DEFAULT_BASE)
+            (i32.ne (global.get $heap_base) (i32.const 0))))
+        (i32.store (local.get $state) (local.get $cursor))
+        (i32.store (i32.add (local.get $state) (i32.const 4)) (local.get $cursor))
+        (if (i32.eqz (global.get $heap_base))
+          (then (global.set $heap_base (local.get $cursor))))))
+    ;; One chunk must satisfy this allocation outright, so an oversized request
+    ;; takes an oversized chunk rather than failing against a 1MB granule.
+    (local.set $chunk (global.get $HEAP_ARENA_CHUNK))
+    (if (i32.gt_u (local.get $need) (local.get $chunk))
+      (then (local.set $chunk
+        (i32.and (i32.add (local.get $need) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))))
+    ;; Overflow, and the boundary where low guest memory would run into the
+    ;; emulator's own decoded-code cache — either way the caller spills to the
+    ;; sparse high arena instead.
+    (if (i32.lt_u (i32.add (local.get $cursor) (local.get $chunk)) (local.get $cursor))
+      (then (return (i32.const 0))))
+    (if (i32.gt_u
+          (call $g2w (i32.add (local.get $cursor) (local.get $chunk)))
+          (global.get $THREAD_CACHE_BASE))
+      (then (return (i32.const 0))))
+    (i32.store (local.get $state) (i32.add (local.get $cursor) (local.get $chunk)))
+    (global.set $heap_ptr (local.get $cursor))
+    (global.set $heap_end (i32.add (local.get $cursor) (local.get $chunk)))
+    (local.get $cursor))
+
   ;; HeapAlloc starts in the low direct guest window for compatibility, then
   ;; spills to sparse high guest chunks when that window reaches emulator-private
   ;; memory. This keeps Windows heap pointers valid without moving code caches.
@@ -406,25 +480,27 @@
       (local.set $prev_w (local.get $cur_w))
       (local.set $cur (i32.load (i32.add (local.get $cur_w) (i32.const 4))))
       (br $fl)))
-      ;; No free block found — bump allocate.
-      ;; OOM guard: refuse if the next heap byte would escape low guest
-      ;; memory and land in emulator-private decoded-code/cache regions.
-      ;; Pawn-style chess engines ask for 64 MB transposition tables that
-      ;; could trip this; return 0 so the app handles OOM. VirtualAlloc
-      ;; reservations are sparse address-space claims in this emulator and do
-      ;; not cap HeapAlloc growth until they commit into real low memory.
-      (if (i32.lt_u
-            (i32.add (global.get $heap_ptr) (local.get $need))
-            (global.get $heap_ptr))
+      ;; No free block found — bump allocate inside this instance's arena.
+      ;; When the arena is exhausted (or was never reserved) take another chunk
+      ;; from the shared cursor. If the low window itself is spent, spill to the
+      ;; sparse high arena: low guest memory must not run into the emulator's own
+      ;; decoded-code cache. Pawn-style chess engines ask for 64 MB transposition
+      ;; tables that land here; returning 0 lets the app handle OOM.
+      (if (i32.or
+            (i32.eqz (global.get $heap_ptr))
+            (i32.or
+              ;; overflow of ptr + need
+              (i32.lt_u
+                (i32.add (global.get $heap_ptr) (local.get $need))
+                (global.get $heap_ptr))
+              (i32.gt_u
+                (i32.add (global.get $heap_ptr) (local.get $need))
+                (global.get $heap_end))))
         (then
-          (local.set $ptr (call $heap_sparse_alloc (local.get $need)))
-          (if (local.get $ptr) (then (br $found)) (else (return (i32.const 0))))))
-      (if (i32.gt_u
-            (call $g2w (i32.add (global.get $heap_ptr) (local.get $need)))
-            (global.get $THREAD_CACHE_BASE))
-        (then
-          (local.set $ptr (call $heap_sparse_alloc (local.get $need)))
-          (if (local.get $ptr) (then (br $found)) (else (return (i32.const 0))))))
+          (if (i32.eqz (call $heap_low_reserve (local.get $need)))
+            (then
+              (local.set $ptr (call $heap_sparse_alloc (local.get $need)))
+              (if (local.get $ptr) (then (br $found)) (else (return (i32.const 0))))))))
       (local.set $ptr (global.get $heap_ptr))
       (i32.store (call $g2w (local.get $ptr)) (local.get $need))
       (global.set $heap_ptr (i32.add (global.get $heap_ptr) (local.get $need))))
@@ -436,7 +512,14 @@
     (local $block i32) (local $w i32)
     (if (i32.eqz (local.get $guest_ptr)) (then (return)))
     ;; Only free blocks in our heap range — ignore foreign blocks
-    ;; (e.g., msvcrt sbh blocks that shouldn't reach our free list)
+    ;; (e.g., msvcrt sbh blocks that shouldn't reach our free list). $heap_base
+    ;; is per-instance and only the PE-loading instance sets it, so a zero here
+    ;; would let a worker admit foreign blocks and then reissue them; read the
+    ;; shared copy when this instance has none.
+    (if (i32.eqz (global.get $heap_base))
+      (then (global.set $heap_base
+        (i32.load (i32.add (global.get $HEAP_SHARED) (i32.const 4))))))
+    (if (i32.eqz (global.get $heap_base)) (then (return)))
     (if (i32.lt_u (local.get $guest_ptr) (global.get $heap_base)) (then (return)))
     ;; Block starts 4 bytes before the user pointer
     (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))

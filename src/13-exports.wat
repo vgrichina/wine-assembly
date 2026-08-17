@@ -297,12 +297,16 @@
   (func (export "get_flag_b") (result i32) (global.get $flag_b))
   (func (export "get_flag_sign_shift") (result i32) (global.get $flag_sign_shift))
 
+  ;; Read-only: these bound one instance's private arena. There are deliberately
+  ;; no setters — JS used to marshal them between instances around every slice to
+  ;; fake shared state, and that is exactly what $heap_low_reserve replaces.
   (func (export "get_heap_ptr") (result i32) (global.get $heap_ptr))
-  (func (export "set_heap_ptr") (param i32) (global.set $heap_ptr (local.get 0)))
+  (func (export "get_heap_end") (result i32) (global.get $heap_end))
   (func (export "get_heap_sparse_ptr") (result i32) (global.get $heap_sparse_ptr))
-  (func (export "set_heap_sparse_ptr") (param i32) (global.set $heap_sparse_ptr (local.get 0)))
   (func (export "get_heap_sparse_end") (result i32) (global.get $heap_sparse_end))
-  (func (export "set_heap_sparse_end") (param i32) (global.set $heap_sparse_end (local.get 0)))
+  ;; Publish the process heap base + chunk cursor. The PE loader calls the same
+  ;; function; exported so a harness can set a heap up without a real image.
+  (func (export "heap_init") (param i32) (call $heap_init (local.get 0)))
   (func (export "get_virtual_alloc_top") (result i32) (global.get $virtual_alloc_top))
   (func (export "set_virtual_alloc_top") (param i32) (global.set $virtual_alloc_top (local.get 0)))
   (func (export "get_heap_base") (result i32) (global.get $heap_base))
@@ -1938,6 +1942,14 @@
       (i32.load (call $g2w (i32.add (local.get $img_base) (i32.const 0x3C))))))
     (global.set $rsrc_rva
       (i32.load (call $g2w (i32.add (local.get $pe_off) (i32.const 136)))))
+    ;; Allocator cursors are per-instance and describe one process-wide arena, so
+    ;; a worker must NOT inherit main's: zero them and let the first allocation
+    ;; reserve a private chunk from the shared cursors. heap_base is immutable
+    ;; after load, so that one is read across directly.
+    (global.set $heap_ptr (i32.const 0))
+    (global.set $heap_end (i32.const 0))
+    (global.set $heap_base
+      (i32.load (i32.add (global.get $HEAP_SHARED) (i32.const 4))))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))

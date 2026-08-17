@@ -184,9 +184,12 @@ emulator rather than the emulated program.
 ```
   SHARED, MUTABLE, TOUCHED BY ANY THREAD          strategy
   ───────────────────────────────────────────────────────────────
-  free-list allocator     $free_list (global!)    → move to memory + lock
-  sparse heap bump        $heap_sparse_ptr        → per-thread arenas
-  VirtualAlloc top        $virtual_alloc_top      → single owner (broker)
+  low heap bump           $heap_ptr/$heap_end     → per-thread arenas ✅ DONE
+  free-list allocator     $free_list (global!)    → per-instance, correct
+                                                    once arenas are disjoint ✅
+  sparse heap bump        $heap_sparse_ptr        → per-thread arenas ✅ already
+  VirtualAlloc top        $virtual_alloc_top      → shared cell ✅, lock ✗
+  virtual map table       VIRTUAL_MAP_TABLE       → append-only publish (§3.1a)
   window table            WND_RECORDS  0x7000     → main-thread-only (§3.3)
   class table             CLASS_RECORDS           → main-thread-only
   timer table             TIMER_TABLE             → main-thread-only
@@ -197,17 +200,81 @@ emulator rather than the emulated program.
   decoded-code cache      per-tid partition       → already safe
 ```
 
-Two of these are worth calling out because they are *already* latent bugs that
-only the single-thread accident hides:
+### 3.1a What the heap actually did, and what replaced it
 
-- **`$free_list` is a per-instance global over shared memory.** Each instance
-  keeps its own free-list head while allocating from the same arena. Two
-  threads can therefore hand out overlapping blocks today; it survives because
-  worker allocations are rare and interleaving is coarse.
-- **`$virtual_alloc_top` is reset per instance in `init_thread`.** Two threads
-  calling `VirtualAlloc` can be handed the same address.
+An earlier draft of this section claimed `$free_list` and `$virtual_alloc_top`
+were live corruption bugs. Both claims were wrong, and how they were wrong is
+the useful part:
 
-Fixing both is a prerequisite for phase 1, and both are worth fixing anyway.
+- **`$virtual_alloc_top` already keeps its authoritative cursor in shared
+  memory** at `VIRTUAL_MAP_STATE+8` (`10-helpers.wat` `$virtual_reserve_down`);
+  the global is only a cache. Divergence was handled. What remains is that the
+  read-modify-write is plain rather than atomic — harmless while instances
+  interleave only at slice boundaries, unsound under real parallelism.
+- **`$free_list` on its own cannot cause an overlap.** A private free list only
+  means a block freed by one instance is never reused by another: fragmentation,
+  not corruption. Two instances can only hand out the *same* block if their bump
+  cursors overlap. It stays per-instance, deliberately.
+- **`$heap_ptr` was the real one**, and it was mitigated in a way worth
+  understanding, because that mitigation is what phase 2 deletes:
+
+```
+  thread-manager.js, per slice, per thread — the OLD protocol
+  ─────────────────────────────────────────────────────────────
+     e.set_heap_ptr(main.get_heap_ptr())     ← sync IN   (was line 863)
+     e.run(sliceSize)
+     main.set_heap_ptr(e.get_heap_ptr())     ← sync OUT  (was line 944)
+
+  This makes a per-instance global behave like shared state, and it is
+  CORRECT — but only because exactly one instance runs at a time and JS gets
+  to run in between. It has two failure modes:
+
+   1. worker mode (phase 1): ThreadManager's `main` is the main-thread
+      instance, which in worker mode is IDLE — the guest runs elsewhere. So
+      threads sync against a stale cursor and allocate over the live heap.
+   2. phase 2: there is no "in between" to marshal in. Slices overlap.
+```
+
+The replacement is a process cursor in memory (`HEAP_SHARED`) from which each
+instance reserves a 1MB chunk, then bump-allocates privately inside it:
+
+```
+  shared, in memory:  HEAP_SHARED+0  next unreserved chunk   (cold: ~1 write/MB)
+                      HEAP_SHARED+4  heap_base, immutable after load
+  private globals:    $heap_ptr, $heap_end, $free_list       (hot: every alloc)
+```
+
+Measured frequency justifies the split: MSPaint's entire MFC boot is 215
+`HeapAlloc` calls and Blobby's steady state is zero, against 10–28M x86 steps
+per second. Atomicity on the reservation is therefore free; what is *not* free is
+a lock on the fast path, and — more decisively — the main thread is not allowed
+to `Atomics.wait`, so any lock it can contend has to spin the UI thread. Hence
+partitioning rather than locking, even though both cost nothing measurable.
+
+One non-obvious consumer: `08b-dll-loader.wat` used `$heap_ptr` as the
+*process-wide* high-water mark, both to push the heap past a freshly loaded DLL
+and, in `$next_dll_addr`, to place the next image clear of the heap. Once
+`$heap_ptr` bounds one instance's arena that is no longer the right number, and
+using it puts heap blocks on top of `mfc42`'s code — WordPad crashes at
+`0x011341c4` in a zeroed page. Those two sites now call `$heap_reserve_below`
+and `$heap_low_watermark`, which operate on the shared cursor.
+
+`test/test-heap-partition.js` pins the invariant with two instances over one
+shared memory and no marshalling at all — the phase-2 shape, testable today
+without a browser or a worker.
+
+### 3.1b Still open before two instances run at once
+
+- **Atomic opcodes do not exist in our toolchain yet.** `lib/compile-wat.js` has
+  no `0xFE`-prefix instructions, and `tools/build.sh` uses it rather than
+  `wat2wasm`. Every lock below needs them added first.
+- `VIRTUAL_MAP_STATE` / `VIRTUAL_MAP_TABLE`: `$virtual_map_commit` does an
+  unlocked scan-then-append, and `$g2w` reads the table on every guest access
+  that misses the direct window — millions of times a second. This one must not
+  take a lock; make the table append-only and publish `count` last.
+- `DX_OBJECTS`, the socket table: coarse locks, cold enough not to care.
+- Pad each lock word to its own 64-byte line. Two unrelated locks sharing a line
+  ping-pong it between cores on every acquire, which costs more than the atomic.
 
 ### 3.2 Host imports are the surface that must be brokered
 
@@ -505,15 +572,18 @@ because the *proof* is the second one.
   forwarding.
 - Compositor: main thread owns the screen canvas and blits offscreen surfaces;
   workers never touch the screen.
-- Fix `$free_list` and `$virtual_alloc_top` (§3.1) — required, and correct
-  regardless.
+- ✅ Partition the low heap per instance and delete the per-slice cursor
+  marshalling (§3.1a). Required for worker mode, not just for phase 2.
 - **Exit criterion:** corpus green in *both* modes, and the perf HUD shows
   `page fps` unchanged while `GAME fps` is unaffected by continuous mouse
   movement — the exact measurement that caught `b7b4d4e`.
 
 ### Phase 2 — N workers actually running at once
+- **Add atomic opcodes to `lib/compile-wat.js` first.** Nothing else in this
+  phase can be made correct without them (§3.1b).
 - `CreateThread` spawns a Worker instead of an in-process instance.
-- Lock the coarse shared tables (DX/COM, sockets, GDI objects).
+- Lock the coarse shared tables (DX/COM, sockets, GDI objects); make
+  `VIRTUAL_MAP_TABLE` append-only instead, since `$g2w` reads it per access.
 - Cross-thread `SendMessage` over `Atomics.wait`.
 - **Exit criterion:** a two-thread app shows >1.0× aggregate steps/sec versus
   phase 1 on a multi-core box, and Winamp's decoder thread stops underrunning
