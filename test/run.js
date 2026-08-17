@@ -12,7 +12,13 @@ try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
 try {
   const sk = require('skia-canvas');
-  createCanvas = (w, h) => new sk.Canvas(w, h);
+  createCanvas = (w, h) => {
+    const c = new sk.Canvas(w, h);
+    // WA_CANVAS_GPU=0 forces raster. See the note in renderer.js
+    // _createOffscreen for when a run needs that and what it costs.
+    if ('gpu' in c) c.gpu = process.env.WA_CANVAS_GPU !== '0';
+    return c;
+  };
   Win98Renderer = require('../lib/renderer').Win98Renderer;
   const fontsDir = path.join(__dirname, '..', 'fonts');
   const fontFiles = [
@@ -27,6 +33,23 @@ try {
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
+
+// Encode a canvas to PNG bytes.
+//
+// skia-canvas types toBuffer() as Promise<Buffer> and toBufferSync() as the
+// synchronous one. Most call sites here used toBuffer() and wrote the result
+// straight to disk, which happens to produce correct files today but is
+// relying on undocumented behaviour from an API declared async. One call site
+// (dlg-png) already guarded for this; now they all share one helper.
+//
+// This is hygiene, not a fix for anything measured: it made no difference to
+// memory or runtime. The snapshot memory problem was GPU surfaces -- see the
+// note in renderer.js _createOffscreen.
+function canvasToPng(canvas) {
+  return typeof canvas.toBufferSync === 'function'
+    ? canvas.toBufferSync('png')
+    : canvas.toBuffer('image/png');
+}
 // Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
 const getArg = (name, def) => {
@@ -4092,9 +4115,7 @@ async function main() {
           const dlgWin = wins[0] || null;
           const canvas = dlgWin && dlgWin._backCanvas;
           if (!canvas) throw new Error('no dialog back-canvas');
-          const buf = typeof canvas.toBufferSync === 'function'
-            ? canvas.toBufferSync('png')
-            : canvas.toBuffer('image/png');
+          const buf = canvasToPng(canvas);
           fs.writeFileSync(ev.path, buf);
           logs.push(`[input] dlg-png ${ev.path} (${buf.length} bytes) hwnd=0x${(dlgWin.hwnd | 0).toString(16)} at batch ${batch}`);
         } catch (e) {
@@ -4766,7 +4787,7 @@ async function main() {
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {
           if (typeof renderer.repaint === 'function') renderer.repaint();
-          const buf = renderer.canvas.toBuffer('image/png');
+          const buf = canvasToPng(renderer.canvas);
           fs.writeFileSync(ev.path, buf);
           logs.push(`[input] png ${ev.path} (${buf.length} bytes) at batch ${batch}`);
           if (DUMP_BACKCANVAS) {
@@ -4775,7 +4796,7 @@ async function main() {
               logs.push(`[input] window hwnd=${hwndStr} pos=${win.x},${win.y} size=${win.w}x${win.h} visible=${win.visible} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas}`);
               if (win._backCanvas && win._backCanvas.toBuffer) {
                 const bcPath = ev.path.replace('.png', `_back_${hwndStr}.png`);
-                fs.writeFileSync(bcPath, win._backCanvas.toBuffer('image/png'));
+                fs.writeFileSync(bcPath, canvasToPng(win._backCanvas));
                 logs.push(`[input] back-canvas ${bcPath}`);
               }
             }
@@ -4785,7 +4806,7 @@ async function main() {
         }
       } else if (ev.action === 'png-raw' && renderer && renderer.canvas) {
         try {
-          const buf = renderer.canvas.toBuffer('image/png');
+          const buf = canvasToPng(renderer.canvas);
           fs.writeFileSync(ev.path, buf);
           logs.push(`[input] png-raw ${ev.path} (${buf.length} bytes) at batch ${batch}`);
         } catch (e) {
@@ -5929,7 +5950,7 @@ if (VERBOSE) {
           console.log(`  hwnd=${hwnd} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} title=${JSON.stringify(win.title)}`);
         }
         if (win && win._backCanvas) {
-          const back = win._backCanvas.toBuffer('image/png');
+          const back = canvasToPng(win._backCanvas);
           const out = PNG_OUT.replace(/\.png$/, `_back_${hwnd}.png`);
           fs.writeFileSync(out, back);
           console.log(`  Wrote ${out} (${back.length} bytes, ${win._backW}x${win._backH})`);
@@ -5951,7 +5972,7 @@ if (VERBOSE) {
       img.data.set(surface.rgbaRect(0, 0, width, height));
       dstCtx.putImageData(img, 0, 0);
       const outFile = path.join(DUMP_GDI, `gdi_${handle}_${width}x${height}.png`);
-      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      fs.writeFileSync(outFile, canvasToPng(c));
       count++;
     }
     console.log(`Dumped ${count} GDI bitmaps to ${DUMP_GDI}/`);
@@ -6034,7 +6055,7 @@ if (VERBOSE) {
         const img = cctx.createImageData(w, h);
         img.data.set(rgba);
         cctx.putImageData(img, 0, 0);
-        fs.writeFileSync(base + '.png', c.toBuffer('image/png'));
+        fs.writeFileSync(base + '.png', canvasToPng(c));
       } else {
         // Canvas isn't available in some sandboxes; emit a simple binary PPM
         // so surface inspection still works without native deps.
@@ -6064,7 +6085,7 @@ if (VERBOSE) {
       id.data.set(img.pixels);
       cc.putImageData(id, 0, 0);
       const outFile = path.join(DUMP_SDB, `sdb_${key}.png`);
-      fs.writeFileSync(outFile, c.toBuffer('image/png'));
+      fs.writeFileSync(outFile, canvasToPng(c));
       imgCount++;
     }
     fs.writeFileSync(path.join(DUMP_SDB, 'calls.log'), ctx.dumpSdb.log.join('\n') + '\n');

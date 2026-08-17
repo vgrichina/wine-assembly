@@ -89,6 +89,12 @@ try {
     timeout: 480000,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
+    // This is the one run long enough to hit skia-canvas's unbounded GPU
+    // surface growth: 328k batches of an animating game peaked at 6.4GB RSS
+    // and the process died partway with a bare status=1 and no crash marker,
+    // which is why the later snapshots simply never appeared. Raster peaks at
+    // 1.3GB and finishes in ~38s, far inside the timeout above.
+    env: { ...process.env, WA_CANVAS_GPU: '0' },
   });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
