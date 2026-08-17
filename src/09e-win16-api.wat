@@ -1771,6 +1771,17 @@
     (local.set $lparam (call $gl32 (i32.add (local.get $msg) (i32.const 6))))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    ;; A WM_TIMER whose timer was created with a TIMERPROC carries that
+    ;; procedure in lParam, and dispatching it means calling that instead of
+    ;; the window procedure — the window never sees the message. A TIMERPROC
+    ;; takes the same four arguments in the same order as a window procedure
+    ;; and RETFs the same 10 bytes, with the tick count where lParam would be,
+    ;; so entering it needs nothing of its own.
+    (if (i32.and (i32.eq (local.get $message) (i32.const 0x0113))
+          (i32.ne (i32.shr_u (local.get $lparam) (i32.const 16)) (i32.const 0)))
+      (then
+        (local.set $proc (local.get $lparam))
+        (local.set $lparam (call $host_get_ticks))))
     ;; WM_NULL is the idle message and has no window procedure to reach.
     (if (i32.or (i32.eqz (local.get $message)) (i32.eqz (local.get $proc)))
       (then
@@ -2190,14 +2201,23 @@
 
   ;; USER.10 SetTimer(hWnd, nIDEvent, uElapse, lpTimerFunc) /
   ;; USER.12 KillTimer(hWnd, nIDEvent).
+  ;;
+  ;; lpTimerFunc is kept as the far pointer it is. A timer created with one
+  ;; delivers WM_TIMER to that procedure and NOT to the window procedure, which
+  ;; is why dropping it is not a harmless simplification: Solitaire drives its
+  ;; whole deal off a TIMERPROC, and with the callback discarded its window
+  ;; procedure passed every WM_TIMER to DefWindowProc and the table stayed
+  ;; empty. The timer table already carries a callback field for the 32-bit
+  ;; side; $win16_DispatchMessage is what calls it.
   (func $win16_SetTimer
-    (local $hwnd i32) (local $id i32) (local $elapse i32)
+    (local $hwnd i32) (local $id i32) (local $elapse i32) (local $proc i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     (local.set $id (call $win16_arg16 (i32.const 3)))
     (local.set $elapse (call $win16_arg16 (i32.const 2)))
+    (local.set $proc (call $win16_arg32 (i32.const 0)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_SetTimer (local.get $hwnd) (local.get $id) (local.get $elapse)
-      (i32.const 0) (i32.const 0) (i32.const 0))
+      (local.get $proc) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
@@ -2552,6 +2572,16 @@
   ;; ---- GDI ----
 
   ;; GDI.80 GetDeviceCaps(hDC, nIndex). Same indices as Win32.
+  ;;
+  ;; NUMCOLORS is the one answer that cannot come through unchanged. Win32
+  ;; returns -1 on any device deeper than 8bpp, which is what this emulator
+  ;; presents; a 16-bit caller gets that back in AX and compares it as a signed
+  ;; 16-bit int, where it reads as fewer colours than a black-and-white screen
+  ;; has. Minesweeper does exactly that -- `cmp ax,2 / jle` picks between its
+  ;; colour and monochrome bitmap sets -- and drew its whole minefield in 1-bit
+  ;; art. Report the largest palettized count instead, which is both what the
+  ;; 256-colour displays these apps were built for reported and a truthful
+  ;; "this is a colour screen".
   (func $win16_GetDeviceCaps
     (local $hdc i32) (local $index i32)
     (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
@@ -2560,6 +2590,9 @@
     (call $handle_GetDeviceCaps (local.get $hdc) (local.get $index)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    (if (i32.and (i32.eq (local.get $index) (i32.const 24))
+          (i32.eq (global.get $eax) (i32.const -1)))
+      (then (global.set $eax (i32.const 256))))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 

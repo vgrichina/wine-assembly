@@ -88,9 +88,16 @@ async function runApp(page, port, app) {
     const app = runningApps.find(item => item && item.name === key);
     sharedRenderer.repaint();
     const screen = document.getElementById('screen');
+    const pixels = screen.getContext('2d')
+      .getImageData(0, 0, screen.width, screen.height).data;
+    let red = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] > 150 && pixels[i] > pixels[i + 1] * 2 && pixels[i] > pixels[i + 2] * 2) red++;
+    }
     return {
       slices: app.wine._runSliceCount,
       running: app.wine.running,
+      red,
       log: document.getElementById('log').textContent,
       png: screen.toDataURL('image/png'),
     };
@@ -127,6 +134,16 @@ async function main() {
       assert(!/ERROR:|LinkError|UNIMPLEMENTED API:/.test(result.log), result.log.slice(-3000));
       console.log(`PASS  ${app.key} reached its "${app.title}" window in ${result.slices} browser slices`);
       pass++;
+      // Minesweeper picks between its colour and monochrome art from
+      // GetDeviceCaps(NUMCOLORS). Its red LED counters are the visible proof it
+      // took the colour path; when NUMCOLORS reads as -1 the whole board is
+      // 1-bit and there is not a red pixel on screen.
+      if (app.key === 'winmine16') {
+        assert(result.red >= 200,
+          `Minesweeper fell back to monochrome art: only ${result.red} red pixels`);
+        console.log(`PASS  winmine16 drew its colour art (${result.red} red pixels)`);
+        pass++;
+      }
     }
 
     // CARDS.DLL is an NE image fetched by host.js, not by the `dlls` list. If
