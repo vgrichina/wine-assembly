@@ -88,79 +88,89 @@ meaningless. Delete it. A baseline worktree needs the font assets too.
 
 ---
 
-## 1. Win16 / NE — Phase 3: the API layer
+## 1. Win16 / NE — Phase 4: two of the four render
 
-Phase 1 (`0c23c78`) loads and links NE images. **Phase 2 (`84c98a1`) runs
-them**: all four images execute their entry code and stop at the first import,
-correctly identified as KERNEL.91 InitTask. `test/test-win16-exec.js` is 68/68
-and `test/test-ne-loader.js` 2452/0; both are now in the `quick` tier.
+Phase 1 (`0c23c78`) loads and links NE images, Phase 2 (`84c98a1`) runs them,
+Phase 3 (`ff6f45a`, `9a0f12f`, `3b18812`, `90e548a`) gives them an API layer.
+**Minesweeper draws completely** — window, LED counters, smiley, minefield.
+**Solitaire draws its window, green baize and "Score: 0 Time: 0" status bar**;
+its cards are missing because they live in CARDS.DLL. All four reach their
+message loops and run their own window procedures.
 
 The address scheme, because everything else depends on it: every segment base
 is 64KB aligned, so the low word of a linear address *is* the offset inside its
 segment. `$esp` therefore stays a linear address with SP as its low half, and
 the pre-existing 16-bit push/pop handlers needed no changes at all.
 
-- Files: `src/05c-seg16-ops.wat` (handlers 363-382 — segmented EA, far
-  transfers, segment-register moves), `src/09e-win16-api.wat` (dispatch
-  skeleton + Pascal argument helpers), `src/07-decoder.wat` (`$code16` inverts
-  the 66/67 prefixes; `$decode_modrm16`; `$branch_target`),
-  `src/08c-ne-loader.wat` (`$win16_start_task`), `src/01-header.wat` (segment
-  register globals)
-- Tooling: `tools/ne-dump.js`, binaries in `test/binaries/win98-16bit/`
-- **Ordinals are solved as a naming problem** (`a889407`, `325a1aa`,
-  `4e9f4da`, `67350e1`). `tools/ne-exports.js` reads an NE's own export tables;
-  `tools/gen_win16_ordinals.js` turns the real Win98 modules into
-  `src/win16-ordinals.generated.json`, 1,468 names across 10 modules, and
-  `run.js` prints `KERNEL.91 INITTASK` rather than a number. All 269 ordinals
-  the four apps import resolve. The source modules are gitignored local
-  fixtures; `test/binaries/dlls/SOURCES.md` has the ISO and the recipe.
-  Two facts that cost time and are worth not rediscovering: **a Win16 module
-  name is not its filename** (SOUND ships as `mmsound.drv`), and **not every
-  import is by ordinal** — FREECELL asks for CARDS and SHELL entry points by
-  name, which the thunk table now flags.
-- **Next: keep implementing ordinals in `src/09e-win16-api.wat`.** Every
-  unimplemented one traps naming itself, so the loop is: run, read the name,
-  implement, repeat. Done: KERNEL.3 GetVersion, KERNEL.30 WaitEvent,
-  KERNEL.91 InitTask, USER.5 InitApp, USER.15 GetCurrentTime,
-  USER.176 LoadString. Where each app stops now:
+- Files: `src/05c-seg16-ops.wat` (handlers 363-387 — segmented EA, far
+  transfers, segment-register moves, string ops), `src/09e-win16-api.wat` (the
+  API layer, ~70 entry points), `src/07-decoder.wat` (`$code16` inverts the
+  66/67 prefixes; `$decode_modrm16`), `src/08c-ne-loader.wat`,
+  `src/01-header.wat`
+- Tooling: `tools/ne-dump.js`, `tools/ne-exports.js`,
+  `tools/gen_win16_ordinals.js` → `src/win16-ordinals.generated.json` (1,468
+  names, 10 modules; all 269 ordinals the four apps import resolve).
+  **`--trace-win16`** logs every call with the six stack words nearest the top
+  and the AX/DX/EIP/ESP that came back — reach for it first on anything here.
+  Two facts worth not rediscovering: a Win16 module name is not its filename
+  (SOUND ships as `mmsound.drv`), and not every import is by ordinal.
 
-  | App | Stops at | What it needs |
-  |---|---|---|
-  | WINMINE | `USER.420 _WSPRINTF` | the leading underscore means **cdecl**, so the *caller* cleans — `argbytes` is 0. `src/12-wsprintf.wat` exists; it needs far pointers for the format and varargs |
-  | FREECELL | `USER.174 LoadIcon` | icon resource → a 16-bit HICON |
-  | MSHEARTS | `USER.66 GetDC` | the 16-bit handle space, below |
-  | SOL | `USER.175 LoadBitmap` | bitmap resource → a 16-bit HBITMAP |
+### The three things that make the layer work
 
-  `$win16_find_resource(type, id)` is in place and verified, so resource-backed
-  APIs have their foundation; RT_STRING is 6, RT_BITMAP 2, RT_ICON 3,
-  RT_MENU 4, RT_DIALOG 5, RT_GROUP_ICON 14.
-- **The design decision that gates the window path: Win16 handles are 16 bits.**
-  Our HWNDs, HDCs and GDI objects are 32-bit values like `0x10002`, which do
-  not fit. Two ways out: keep a `u16 <-> u32` mapping table for a Win16 task
-  and translate at the dispatch boundary, or make the existing tables hand out
-  values that fit in 16 bits. The first is far less invasive — the 32-bit side
-  never learns Win16 exists — and it is where `$win16_alloc_segment`'s sibling
-  handle allocator should live. Decide this before writing GetDC.
-- **Check each argument count.** The ordinal map gives names, not signatures,
-  and `$win16_api_return` takes the byte count the Pascal callee must remove.
-  Get it wrong and the stack drifts silently until a far return goes wild.
-  A scan of the real module for its `RETF imm16` looked like it would settle
-  this mechanically; it does not. Tried and discarded — the first `RETF`-looking
-  byte from an entry point is a byte inside some other instruction often enough
-  to be wrong on 3 of 5 known cases (it claims `GetDC` removes 18 bytes, not 2).
-  Doing it properly needs a 16-bit instruction-length decoder to walk the
-  stream, which does not exist yet and would also be useful for reading app
-  code. Until then: documented signature, then let the run loop validate — a
-  wrong count fails fast and loudly.
-- FREECELL's name imports need **NE DLL loading**: CARDS.DLL is in
-  `test/binaries/win98-16bit/` and `test-ne-loader.js` already parses it, but
-  nothing loads a second NE image into the arena and resolves names against
-  its export table.
-- Known gaps in the execution core, none of them hit yet, all of them traps
-  rather than silent wrong answers: string ops (MOVS/STOS/SCAS/CMPS) still use
-  ESI/EDI as linear addresses and need DS:SI / ES:DI; INT (including the
-  INT 3Fh moveable-segment thunk) is untouched; there is no 16↔32 thunking.
-- Closes the 4 SKIPs in the corpus sweep once a window appears.
+**The handle map** (`$win16_h16`/`$win16_h32`). A Win16 handle is 16 bits and
+ours are 32-bit values like `0x00310001`. Rather than narrow every allocator,
+the two spaces are joined at the dispatch boundary and nothing on the 32-bit
+side learns Win16 exists. The table lives in the one arena slot past the last
+usable selector, so no far pointer can name it.
+
+**The bridge into the 32-bit handlers** (`$win16_call32_begin`/`_end`). Most of
+Win16 is Win32 with narrower arguments, so the Win16 side widens onto a scratch
+stdcall frame and calls `$handle_*` directly. It refuses a handler that moved
+EIP (marker `0xCA16A9F7`), because a redirect into guest code carries a 32-bit
+frame a 16-bit task cannot survive — ShowWindow and CreateWindow are written
+out for that reason.
+
+**The continuation** (`$WIN16_CONT_OFFSET`). An API that must run the window
+procedure before returning pushes a far return address into the thunk segment;
+`$th_retf16` recognises it and `$win16_dispatch` finishes the API. This is how
+CreateWindow delivers WM_CREATE *before* it returns, which matters: Solitaire
+never stores the handle CreateWindow gives it, because its WM_CREATE handler
+sets the global instead.
+
+### Open
+
+- **NE DLL loading.** FreeCell and Solitaire both stop at `CARDS.CDTINIT` /
+  `CARDS.CDTDRAWEXT` — the card images. `test/binaries/win98-16bit/CARDS.DLL`
+  is right there and `test-ne-loader.js` already parses it; what is missing is
+  loading a second NE image beside the task, relocating it, and resolving
+  by-name imports against its export table. This is the single highest-value
+  item left: it finishes Solitaire and unblocks FreeCell.
+- **MSHEARTS needs COMMDLG** (`GETFILETITLE` and the file dialogs).
+- **WINMINE diverges after it renders**, ten-odd message-loop iterations in,
+  and this one is genuinely unexplained. What is known, all reproducible:
+  it traps `0xCA165E20` (16-bit EIP outside the arena) at `0x03ee0000`, which
+  is `0x03ee << 16`; `$dbg_prev2_eip` says the block before was `0x001001f4`,
+  the one whose far call is GetMessage. GetMessage itself returns cleanly
+  (`--trace-win16` shows `eip=0x00100204 esp=0x001137ac`). But
+  `--trace-at=0x00100204` fires eleven times while only six GetMessage calls
+  are traced, and the last three fire with no API call at all between them —
+  so the loop is going round without dispatching, which points at the run
+  loop's 32-bit thunk auto-pop in `13-exports.wat` (`eip = gl32(prev_esp)`,
+  and `gl32` at that ESP is exactly `0x03ee0000`). Start there.
+- Known execution-core gaps, all of which trap loudly: INT (including the
+  INT 3Fh moveable-segment thunks), 16↔32 thunking, named resources
+  (`LoadIcon` with a string name returns 0 — Solitaire's icon).
+- Structure width is the recurring bug class here, and it is worth stating
+  plainly: **a structure that crosses the boundary is a different size in the
+  two worlds.** `SystemParametersInfo(SPI_GETWORKAREA)` wrote a 32-bit RECT
+  into FreeCell's 8-byte one, four bytes below its own return address, and the
+  task returned to zero. A watchpoint on that slot named it in one run. The
+  APIs that carry a structure now convert explicitly and stop on one they do
+  not know rather than guessing at a width.
+- Argument *order* is the second recurring bug class, and it bites in both
+  directions: `CreateWindowEx` takes `dwExStyle` as its **first** parameter, so
+  Pascal pushes it deepest and no other index shifts, while
+  `AdjustWindowRectEx` takes it **last**, where every other index does shift.
 
 ## 2. Fonts — e2e verification and the original measurement (session `ea1ba02f`)
 
