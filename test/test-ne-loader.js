@@ -217,7 +217,7 @@ async function testFile(inst, memory, name) {
         check(`seg${i + 1}+0x${r.site.toString(16)} import slot aligned`, off % 4, 0);
         check(`seg${i + 1}+0x${r.site.toString(16)} import ordinal`,
               inst.exports.win16_thunk_ordinal(off), r.c);
-        const wantModule = ['KERNEL', 'USER', 'GDI', 'KEYBOARD', 'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS']
+        const wantModule = ['KERNEL', 'USER', 'GDI', 'KEYBOARD', 'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS', 'DDEML']
           .indexOf(info.modules[r.a - 1]) + 1;
         check(`seg${i + 1}+0x${r.site.toString(16)} import module`,
               inst.exports.win16_thunk_module(off), wantModule);

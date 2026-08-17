@@ -61,6 +61,28 @@
             (local.set $hc_i (i32.add (local.get $hc_i) (i32.const 1)))
             (br $hc_loop))))
         )
+      ;; Catch a 16-bit task leaving the selector arena here, before
+      ;; $dbg_prev_eip is advanced — at this point it still names the block
+      ;; that just ran and produced the bad EIP, which is the only thing that
+      ;; identifies the transfer. The decoder makes the same check, but by then
+      ;; this assignment has happened and the answer is one step worse.
+      (if (global.get $code16)
+        (then
+          (if (i32.or
+                (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
+                (i32.ge_u (global.get $eip)
+                  (i32.add (global.get $WIN16_ARENA)
+                    (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
+            (then
+              (call $host_log_i32 (i32.const 0xCA165E21))
+              (call $host_log_i32 (global.get $eip))
+              (call $host_log_i32 (global.get $dbg_prev_eip))
+              (call $host_log_i32 (global.get $dbg_prev2_eip))
+              (call $host_log_i32 (global.get $win16_last_module))
+              (call $host_log_i32 (global.get $win16_last_ordinal))
+              (call $host_log_i32 (global.get $esp))
+              (unreachable)))))
+
       ;; Exit if a blocking API yielded. JS owns resuming these waits.
       (br_if $halt (i32.or
         (i32.eq (global.get $yield_reason) (i32.const 1))
@@ -91,28 +113,6 @@
                 (i32.eqz (global.get $handler_set_eip)))
             (then (global.set $eip (call $gl32 (local.get $prev_esp)))))
           (br $main)))
-      ;; Catch a 16-bit task leaving the selector arena here, before
-      ;; $dbg_prev_eip is advanced — at this point it still names the block
-      ;; that just ran and produced the bad EIP, which is the only thing that
-      ;; identifies the transfer. The decoder makes the same check, but by then
-      ;; this assignment has happened and the answer is one step worse.
-      (if (global.get $code16)
-        (then
-          (if (i32.or
-                (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
-                (i32.ge_u (global.get $eip)
-                  (i32.add (global.get $WIN16_ARENA)
-                    (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
-            (then
-              (call $host_log_i32 (i32.const 0xCA165E21))
-              (call $host_log_i32 (global.get $eip))
-              (call $host_log_i32 (global.get $dbg_prev_eip))
-              (call $host_log_i32 (global.get $dbg_prev2_eip))
-              (call $host_log_i32 (global.get $win16_last_module))
-              (call $host_log_i32 (global.get $win16_last_ordinal))
-              (call $host_log_i32 (global.get $esp))
-              (unreachable)))))
-
       ;; $dbg_prev_eip is set to the block about to run, so anything reading it
       ;; *during* that block sees the block itself, not its predecessor. That
       ;; is what $bp_first_caller and the debug prompt want, because they run

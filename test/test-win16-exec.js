@@ -32,7 +32,7 @@ const SREG_ES = 0, SREG_CS = 1, SREG_SS = 2, SREG_DS = 3;
 // Module ids as assigned by $win16_module_id in src/08c-ne-loader.wat.
 const MODULE_NAMES = [
   null, 'KERNEL', 'USER', 'GDI', 'KEYBOARD',
-  'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS',
+  'SOUND', 'SHELL', 'MMSYSTEM', 'COMMDLG', 'CARDS', 'DDEML',
 ];
 const ORDINALS = require(path.join(ROOT, 'src', 'win16-ordinals.generated.json'));
 

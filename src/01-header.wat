@@ -831,7 +831,7 @@
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00")
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -2173,6 +2173,9 @@
   (global $WIN16_NAME_MMSYSTEM i32 (i32.const 0x11E95))
   (global $WIN16_NAME_COMMDLG  i32 (i32.const 0x11E9E))
   (global $WIN16_NAME_CARDS    i32 (i32.const 0x11EA6))
+  ;; Appended into the 84 bytes that were free after CARDS, so no earlier
+  ;; offset moves — see tools/data_offsets.js, which is how to check that.
+  (global $WIN16_NAME_DDEML    i32 (i32.const 0x11EAC))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)

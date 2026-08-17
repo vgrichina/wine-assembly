@@ -1072,6 +1072,17 @@
   ;; continuation thunks the 32-bit side uses.
   (func $win16_enter_wndproc (param $proc i32) (param $hwnd i32) (param $msg i32)
         (param $wparam i32) (param $lparam i32) (param $ret_sel i32) (param $ret_ip i32)
+    ;; A 16-bit window procedure is a far pointer, so its selector is never
+    ;; zero. Anything else is a procedure belonging to the 32-bit side or a
+    ;; window with none at all, and entering it would set CS to the null
+    ;; selector and run from offset zero of nothing.
+    (if (i32.eqz (i32.shr_u (local.get $proc) (i32.const 16)))
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9F9))
+        (call $host_log_i32 (local.get $proc))
+        (call $host_log_i32 (local.get $hwnd))
+        (call $host_log_i32 (local.get $msg))
+        (unreachable)))
     (call $win16_push16 (local.get $hwnd))
     (call $win16_push16 (local.get $msg))
     (call $win16_push16 (local.get $wparam))
