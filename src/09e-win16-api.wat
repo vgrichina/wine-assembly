@@ -170,7 +170,30 @@
     (global.set $esp (global.get $win16_esp_save))
     (local.get $moved))
 
+  ;; A blocking handler yields instead of returning: it leaves its frame on the
+  ;; stack, raises $yield_reason, and expects the host to re-enter it at the
+  ;; same thunk when the wait is satisfied. That contract cannot survive this
+  ;; bridge — the frame it left is on a scratch stack about to be discarded,
+  ;; and the host's resume path pops a 32-bit stdcall frame and takes a linear
+  ;; return address off the *task's* stack. Minesweeper idled in GetMessage,
+  ;; the host resumed it that way, and it returned to two words of its own
+  ;; WNDCLASS read as an address.
+  ;;
+  ;; So the wait is cancelled here and the caller decides what "nothing to
+  ;; report" means for its API. $yield_flag stays raised: ending the batch is
+  ;; still the right thing, it is only the blocking resume that is wrong.
+  (func $win16_call32_waited (result i32)
+    (local $waiting i32)
+    (local.set $waiting (i32.or
+      (i32.eq (global.get $yield_reason) (i32.const 1))
+      (i32.or (i32.eq (global.get $yield_reason) (i32.const 5))
+      (i32.or (i32.eq (global.get $yield_reason) (i32.const 7))
+              (i32.eq (global.get $yield_reason) (i32.const 8))))))
+    (if (local.get $waiting) (then (global.set $yield_reason (i32.const 0))))
+    (local.get $waiting))
+
   (func $win16_call32_end
+    (drop (call $win16_call32_waited))
     (if (i32.ne (global.get $eip) (global.get $win16_eip_save))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F7))
@@ -1062,14 +1085,24 @@
   ;; child creates, post queue, host input, paint, timers — so it fills a
   ;; 32-bit MSG in scratch and this narrows it into the 16-bit one:
   ;;   +0 hwnd(W) +2 message(W) +4 wParam(W) +6 lParam(D) +10 time(D) +14 pt(D)
+  ;; When nothing is pending the 32-bit handler blocks, which this cannot use
+  ;; (see $win16_call32_waited). A Win16 app pumps its own loop, so the honest
+  ;; equivalent is the idle message: WM_NULL, a non-zero return so the loop
+  ;; keeps going, and the yield flag left raised so the host still gets its
+  ;; turn to deliver input between batches.
   (func $win16_GetMessage
-    (local $dst i32) (local $tmp i32)
+    (local $dst i32) (local $tmp i32) (local $waited i32)
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
     (local.set $tmp (global.get $GUEST_STACK))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_GetMessageA (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
+    (local.set $waited (call $win16_call32_waited))
+    (if (local.get $waited)
+      (then
+        (call $zero_memory (call $g2w (local.get $tmp)) (i32.const 28))
+        (global.set $eax (i32.const 1))))
     (call $win16_call32_end)
     (call $gs16 (local.get $dst)
       (call $win16_h16 (call $gl32 (local.get $tmp))))
@@ -2458,6 +2491,22 @@
   ;; The result half of --trace-win16, emitted once the handler has run. DX:AX
   ;; is logged whole because a Win16 DWORD result arrives split across the two.
   (func $win16_trace_ret
+    ;; Whatever the API did, it must leave EIP somewhere a 16-bit task can
+    ;; execute. Checking here rather than waiting for the decoder to notice
+    ;; names the API responsible, which is the whole difficulty: the wild jump
+    ;; and the mistake that caused it are otherwise separated by a batch
+    ;; boundary and any amount of unrelated code.
+    (if (i32.or
+          (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
+          (i32.ge_u (global.get $eip)
+            (i32.add (global.get $WIN16_ARENA)
+              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9F8))
+        (call $host_log_i32 (global.get $win16_last_module))
+        (call $host_log_i32 (global.get $win16_last_ordinal))
+        (call $host_log_i32 (global.get $eip))
+        (unreachable)))
     (if (global.get $win16_trace)
       (then
         (call $host_log_i32 (i32.const 0xCA16A9EF))

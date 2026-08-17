@@ -732,11 +732,27 @@
     (call $gs32 (global.get $esp) (local.get $op))
     (call $cs_push (local.get $op))
     (global.set $eip (local.get $target)))
+  ;; A 16-bit task must never reach these: a near return there pops IP and
+  ;; rebuilds the address from the CS base, which is what handlers 365 and 366
+  ;; do. Getting here means a block was decoded as 32-bit code and then run by
+  ;; a 16-bit task, and the four bytes it pops as a linear address are two
+  ;; words of somebody's stack — which reads as a wild jump thousands of
+  ;; instructions from the actual mistake.
+  (func $th_ret_guard16
+    (if (global.get $code16)
+      (then
+        (call $host_log_i32 (i32.const 0xCA165E30))  ;; 32-bit RET in a 16-bit task
+        (call $host_log_i32 (global.get $eip))
+        (call $host_log_i32 (global.get $dbg_prev2_eip))
+        (unreachable))))
+
   (func $th_ret (param $op i32)
+    (call $th_ret_guard16)
     (global.set $eip (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
     (call $cs_pop))
   (func $th_ret_imm (param $op i32)
+    (call $th_ret_guard16)
     (global.set $eip (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $op))))
     (call $cs_pop))
