@@ -103,7 +103,23 @@ function readOrdOrSz(buf, pos) {
 }
 
 // --- Menu parser ---
+// RT_MENU comes in two grammars and they are not compatible. The classic
+// MENUITEMTEMPLATE is {WORD flags, WORD id (unless popup), WCHAR text[]}, with
+// no alignment. MENUEX -- what the resource compiler emits for a MENUEX
+// statement, and what Win95-era shell apps ship -- is {DWORD type, DWORD
+// state, DWORD id, WORD resInfo, WCHAR text[], pad to DWORD}, with a popup
+// carrying a DWORD help id before its children.
+//
+// Reading a MENUEX with the classic grammar does not fail, it just slides:
+// regedit came back with Import, Export and Connect Network Registry all
+// claiming id 38, while the real ids (658, 659, 768) had empty labels. Since
+// this tool's whole job is to hand ids and labels to something that drives
+// them, silently pairing the wrong two is worse than not parsing at all.
+//
+// The header tells them apart: MENUEX is wVersion=1, and its wOffset says
+// where the items start.
 function parseMenu(buf) {
+  if (buf.length >= 4 && buf.readUInt16LE(0) === 1) return parseMenuEx(buf);
   let pos = 4; // skip version + offset
   function parseItems() {
     const items = [];
@@ -125,6 +141,46 @@ function parseMenu(buf) {
       if (flags & 0x01) item.grayed = true;
       items.push(item);
       if (flags & 0x80) break; // MF_END
+    }
+    return items;
+  }
+  return parseItems();
+}
+
+function parseMenuEx(buf) {
+  const align4 = p => (p + 3) & ~3;
+  // MENUEX_TEMPLATE_HEADER: wVersion, wOffset, dwHelpId. wOffset is measured
+  // from the end of the wOffset field, so the items begin at 4 + wOffset --
+  // normally 8, which is just past the help id.
+  const offset = buf.readUInt16LE(2);
+  let pos = align4(4 + offset);
+  function parseItems() {
+    const items = [];
+    while (pos + 14 <= buf.length) {
+      const type = buf.readUInt32LE(pos);
+      const state = buf.readUInt32LE(pos + 4);
+      const id = buf.readUInt32LE(pos + 8);
+      const resInfo = buf.readUInt16LE(pos + 12);
+      pos += 14;
+      const r = readSz(buf, pos);
+      pos = align4(r.pos);
+      const isPopup = !!(resInfo & 0x01);
+      const item = {};
+      // MFT_SEPARATOR is 0x800 in dwType here, rather than "no text and no id".
+      if ((type & 0x800) && !isPopup) {
+        item.separator = true;
+      } else {
+        item.text = r.str;
+        if (id) item.id = id;
+        if (isPopup) {
+          pos = align4(pos + 4);          // the popup's own dwHelpId
+          item.children = parseItems();
+        }
+      }
+      if (state & 0x08) item.checked = true;   // MFS_CHECKED
+      if (state & 0x03) item.grayed = true;    // MFS_GRAYED / MFS_DISABLED
+      items.push(item);
+      if (resInfo & 0x80) break;               // last item at this level
     }
     return items;
   }
