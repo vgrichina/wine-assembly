@@ -198,12 +198,14 @@ function drive(list) {
   const lines = out.split('\n');
   const snapshots = new Map();   // label -> Map(hwnd -> title)
   const lineOfLabel = new Map(); // label -> first line index, for slicing
+  const menuBarAt = new Set();   // labels where some visible window has a menu
   lines.forEach((line, i) => {
     const m = /\[input\] window:([a-z0-9-]+) hwnd=(\d+)\b/i.exec(line);
     if (!m) return;
     const [, label, hwnd] = m;
     if (!snapshots.has(label)) { snapshots.set(label, new Map()); lineOfLabel.set(label, i); }
     if (!/visible=true/.test(line)) return;
+    if (/menuBar=true/.test(line)) menuBarAt.add(label);
     // Only windows a menu command could have put on screen: a dialog, or a
     // window owned by another (the palettes and tool boxes apps float over
     // themselves). The app's own main window and its child controls are
@@ -218,6 +220,22 @@ function drive(list) {
   });
 
   const baseline = snapshots.get('baseline') || new Map();
+  // An app that is not showing a menu bar cannot be judged by its menu. Two
+  // real cases, both of which this tool used to report as a wall of broken
+  // dialogs:
+  //
+  //   The Organic Art screensavers carry the full editor's RT_MENU, but no
+  //   .SCR mode ever creates a window that shows it -- /s makes a bare
+  //   WindowsScreenSaverClass and /c makes a configuration dialog. The menu
+  //   exists in the file and nowhere on screen.
+  //
+  //   viewer.exe puts up "Failed to load camera.x" and ExitProcesses the
+  //   moment it is dismissed, so its main window is never shown at all.
+  //
+  // Either way the commands go to a window whose wndproc has never heard of
+  // them, and "nothing opened" is the honest outcome, not a defect. Say so
+  // instead of blaming the menu.
+  const noMenuBar = !menuBarAt.has('baseline');
   const results = [];
   let prevLine = 0;
   // Compare each item against the snapshot before it, not against the
@@ -264,10 +282,22 @@ function drive(list) {
   const finalSnap = snapshots.get('final') || new Map();
   const leaked = [...finalSnap.keys()].filter(h => !baseline.has(h))
     .map(h => finalSnap.get(h)).filter(Boolean);
-  return { results, status, leaked };
+  return { results, status, leaked, noMenuBar };
 }
 
 const pass1 = drive(live);
+
+// Established before any verdict is trusted, because it invalidates all of
+// them at once rather than item by item.
+if (pass1.noMenuBar) {
+  console.log(`SKIP  ${name}: no menu bar on screen (${items.length} commands in its resources)`);
+  if (opt('json', null)) {
+    fs.writeFileSync(opt('json'), JSON.stringify(
+      { exe, items: items.length, skipped: 'no menu bar on screen' }, null, 2));
+  }
+  process.exit(0);
+}
+
 const byId = new Map(pass1.results.map(r => [r.id, r]));
 
 // Anything the first pass accused, or could not judge, gets its own process
