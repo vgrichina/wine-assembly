@@ -1,6 +1,9 @@
 # Design: real OS threads for guest threads
 
-**Status:** proposal, unimplemented. Written 2026-08-16.
+**Status:** proposal. Phase 0 substantially answered — isolation is reachable in
+both Chrome and Safari via the service-worker route, and the full module pipeline
+(including on-the-fly WAT compilation) survives the thread boundary. Phases 1-3
+unimplemented. Written 2026-08-16, updated 2026-08-17.
 
 **Goal:** each guest thread runs on its own Web Worker, executing at the same
 time as the others, with the UI thread doing nothing but input and compositing.
@@ -379,16 +382,23 @@ because the *proof* is the second one.
 - Add both headers to `tools/dev-server.js` (two lines) and assert
   `crossOriginIsolated` in a test.
 - Add `sw.js` (§3.5) behind a flag, and measure the matrix that actually
-  decides the plan:
+  decides the plan. `threads-probe.html` + `sw-coi.js` do this; results so far,
+  all on localhost:
 
 ```
-                              isolated?   game still runs?
-  Chrome, 2nd visit              ?             ?
-  Safari, 2nd visit              ?             ?
-  Safari private browsing        ✗ expected    MUST be yes (fallback)
-  inside safari-private-probe    ✗ expected    MUST be yes (fallback)
-  first visit, pre-reload        ✗             MUST be yes (fallback)
+                              isolated?   pipeline?   measured
+  Chrome, server headers         ✅         6/6 PASS   2026-08-16 headless
+  Chrome, service worker         ✅         6/6 PASS   2026-08-16 headless
+  Safari, service worker         ✅         reported   2026-08-17 by hand
+  ──────────────────────────────────────────────────────────────────────
+  first visit, pre-reload        ✗ (as designed)       confirmed
+  Safari private browsing        ✗ expected — no SW    NOT YET RUN
+  inside safari-private-probe    ✗ expected — iframe   NOT YET RUN
+  production (berrry.app)        ?  needs sw-coi.js deployed
 ```
+
+  The three unmeasured rows are all *fallback* cases: what they must show is not
+  isolation but that the emulator still runs. They are the reason §3.6 exists.
 
   The right-hand column is the real deliverable of phase 0: the capability
   check and fallback path exist and work *before* anything depends on
@@ -467,8 +477,8 @@ comparison across modes without saying so is how a session gets misread.
 
 | Risk | Severity | Note |
 |---|---|---|
-| Isolation unreachable in production | high | measured: no COOP/COEP today; SW route (§3.5) is the fallback, unproven on the real host |
-| Safari: worker + shared memory + OffscreenCanvas | high | Safari is half the reported jank; must be tested early, not last |
+| Isolation unreachable in production | **low** | SW route proven on localhost in Chrome (headless, 6/6) and Safari (by hand, 2026-08-17). Remaining: deploy `sw-coi.js` to berrry.app and click the probe there |
+| Safari: worker + shared memory + module transfer | **low** | probe passes in Safari via the service worker. OffscreenCanvas *compositing* under a worker is still untested — the probe does not draw |
 | **Two schedulers, forever** | high | §3.6 — single-threaded is permanent (Safari private, iframes, CLI). Every threading bug needs "does it also happen single-threaded?" |
 | Registry synchronicity | medium | snapshot approach (§3.2) avoids blocking, but INI writeback ordering needs care |
 | Service worker in the cache path | medium | none in the tree today; must re-header only, never cache, or every future "my fix did nothing" starts here |
