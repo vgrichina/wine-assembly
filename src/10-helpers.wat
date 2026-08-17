@@ -480,13 +480,46 @@
         (i32.shr_u (i32.sub (local.get $record) (global.get $GDI_REGION_TABLE)) (i32.const 5))
         (global.get $GDI_REGION_RECT_STRIDE))))
 
-  (func $gdi_rgn_sync_mirror (param $record i32) (result i32)
+  ;; JS keeps a mirror of a region's bands, but only two things ever read it:
+  ;; gdi_set_window_rgn (the compositor needs a shape to blit a non-rectangular
+  ;; window) and get_update_rgn (a stub). Regions used purely for GDI clipping
+  ;; -- which is nearly all of them, because WAT clips its own rasterization --
+  ;; never need it. Mirroring every region on creation and on every mutation
+  ;; cost notepad 1236 host calls and mspaint 443, against zero reads.
+  ;;
+  ;; So the mirror is lazy: $gdi_rgn_mirror_live is only true after something
+  ;; has actually asked JS to hold this region, and only then do mutations
+  ;; propagate. Bit 8 of the record's generation word carries that state; every
+  ;; reader of the generation masks it to 0xFF (see $gdi_rgn_record), so the
+  ;; high bits are ours, and a freshly allocated record has them clear.
+  (global $GDI_RGN_MIRRORED i32 (i32.const 0x100))
+
+  (func $gdi_rgn_mirror_live (param $record i32) (result i32)
+    (i32.and (i32.load offset=4 (local.get $record)) (global.get $GDI_RGN_MIRRORED)))
+
+  ;; Push bands to JS unconditionally and remember that JS now holds them.
+  (func $gdi_rgn_mirror_push (param $record i32) (result i32)
     (if (i32.eqz (i32.load offset=24 (local.get $record)))
       (then (return (i32.const 1))))
+    (i32.store offset=4 (local.get $record)
+      (i32.or (i32.load offset=4 (local.get $record)) (global.get $GDI_RGN_MIRRORED)))
     (call $host_gdi_set_region_bands
       (i32.load offset=24 (local.get $record))
       (call $gdi_rgn_bands (local.get $record))
       (i32.load offset=28 (local.get $record))))
+
+  ;; Mutation hook: a no-op until someone has taken an interest in this region.
+  (func $gdi_rgn_sync_mirror (param $record i32) (result i32)
+    (if (i32.eqz (call $gdi_rgn_mirror_live (local.get $record)))
+      (then (return (i32.const 1))))
+    (call $gdi_rgn_mirror_push (local.get $record)))
+
+  ;; Called from the one place that genuinely needs JS to know the shape.
+  (func $gdi_rgn_mirror_ensure (export "gdi_rgn_mirror_ensure") (param $hrgn i32) (result i32)
+    (local $record i32)
+    (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (call $gdi_rgn_mirror_push (local.get $record)))
 
   (func $gdi_rgn_complexity_record (param $record i32) (result i32)
     (if (i32.or
@@ -595,7 +628,8 @@
             (i32.store offset=24 (local.get $record) (local.get $mirror))
             (call $gdi_rgn_write_rect (local.get $record)
               (local.get $left) (local.get $top) (local.get $right) (local.get $bottom))
-            (drop (call $gdi_rgn_sync_mirror (local.get $record)))
+            ;; No mirror push here -- see $gdi_rgn_sync_mirror. Most regions are
+            ;; transient clip regions that JS never looks at.
             (return (local.get $mirror))))
         (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
         (br $scan)))
@@ -12692,7 +12726,9 @@
     (local $record i32)
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
-    (if (i32.load offset=24 (local.get $record))
+    ;; Only tell JS to forget a region it was actually given.
+    (if (i32.and (i32.load offset=24 (local.get $record))
+                 (i32.ne (call $gdi_rgn_mirror_live (local.get $record)) (i32.const 0)))
       (then (drop (call $host_gdi_set_region_bands
         (i32.load offset=24 (local.get $record)) (i32.const 0) (i32.const -1)))))
     (i32.store (local.get $record) (i32.const 0))

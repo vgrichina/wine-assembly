@@ -12813,6 +12813,12 @@
   ;; 921: SetWindowRgn(hwnd, hRgn, bRedraw) — 3 args stdcall
   (func $handle_SetWindowRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $rect i32) (local $w i32) (local $h i32)
+    ;; This is the only consumer of the JS-side region mirror, so it is the
+    ;; place that pays for it. Regions do not push their bands across on
+    ;; creation any more (see $gdi_rgn_sync_mirror in 10-helpers.wat); prime
+    ;; this one now, and from here on its mutations propagate.
+    (if (local.get $arg1)
+      (then (drop (call $gdi_rgn_mirror_ensure (local.get $arg1)))))
     (global.set $eax (call $host_gdi_set_window_rgn
       (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
     (if (global.get $eax)
