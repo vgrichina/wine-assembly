@@ -586,46 +586,7 @@
         ;; pump out and let execution fall through to the post-MessageBox
         ;; instruction (LocalFree/ExitProcess) on the very next batch.
         (global.set $handler_set_eip (i32.const 1))
-        (if (global.get $modal_dlg_hwnd)
-          (then
-            ;; Drain nc_flags for the dialog hwnd only (filter out child
-            ;; controls; they don't have NC chrome and would leave spurious
-            ;; fragments). Same pattern as CACA0004.
-            (if (global.get $nc_flags_count)
-              (then
-                (local.set $arg1 (call $nc_flags_test (global.get $modal_dlg_hwnd)))
-                ;; WM_NCPAINT (bit 0)
-                (if (i32.and (local.get $arg1) (i32.const 1))
-                  (then
-                    (call $nc_flags_clear (global.get $modal_dlg_hwnd) (i32.const 1))
-                    (call $defwndproc_do_ncpaint (global.get $modal_dlg_hwnd))
-                    (global.set $eip (global.get $modal_loop_thunk))
-                    (global.set $steps (i32.const 0))
-                    (return)))
-                ;; WM_ERASEBKGND (bit 1) — dialogs get COLOR_BTNFACE
-                (if (i32.and (local.get $arg1) (i32.const 2))
-                  (then
-                    (call $nc_flags_clear (global.get $modal_dlg_hwnd) (i32.const 2))
-                    (drop (call $host_erase_background (global.get $modal_dlg_hwnd) (i32.const 16)))
-                    (global.set $eip (global.get $modal_loop_thunk))
-                    (global.set $steps (i32.const 0))
-                    (return)))))
-            ;; Drain paint queue — WM_PAINT for child controls. Only
-            ;; WAT-native wndprocs are valid targets in this modal
-            ;; (dialog was built from WAT ctrls, no x86 dlg_proc).
-            (if (call $paint_flag_any)
-              (then
-                (local.set $arg0 (call $paint_flag_take))
-                (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
-                (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
-                  (then
-                    (drop (call $wat_wndproc_dispatch
-                      (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
-                    (global.set $eip (global.get $modal_loop_thunk))
-                    (global.set $steps (i32.const 0))
-                    (return)))))
-            (global.set $yield_flag (i32.const 1))
-            (return)))
+        (if (call $modal_pump_step (global.get $modal_loop_thunk)) (then (return)))
         ;; Modal complete — splice the API call back together.
         (global.set $eax (global.get $modal_result))
         (global.set $ebx (global.get $modal_saved_ebx))

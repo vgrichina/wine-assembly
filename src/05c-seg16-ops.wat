@@ -58,6 +58,12 @@
         (call $host_log_i32 (i32.const 0xCA165E10))  ;; selector names no segment
         (call $host_log_i32 (local.get $sel))
         (call $host_log_i32 (global.get $eip))
+        ;; Which register, and the stack it came off: a bad CS is nearly always a
+        ;; far return reading something that is not a return address, and the
+        ;; block address alone cannot tell that from a bad far call.
+        (call $host_log_i32 (local.get $id))
+        (call $host_log_i32 (global.get $esp))
+        (call $host_log_i32 (global.get $dbg_prev2_eip))
         (unreachable)))
     (if (i32.eq (local.get $id) (i32.const 0))
       (then (global.set $sreg_es (local.get $sel)) (global.set $seg_base_es (local.get $base)) (return)))

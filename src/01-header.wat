@@ -2153,8 +2153,34 @@
   (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
   (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
   (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
-  (global $win16_cont_ret (mut i32) (i32.const 0))
-  (global $win16_cont_result (mut i32) (i32.const 0))
+  ;; The second continuation slot: CreateWindow calls the WH_CALLWNDPROC hook
+  ;; before the window's own procedure, so the two returns have to be told
+  ;; apart. See $win16_CreateWindow. What each one has to remember lives on the
+  ;; task's stack, not here, because these calls nest.
+  (global $WIN16_CONT_CWP i32 (i32.const 0xFF10))
+  ;; The CWPSTRUCT and CREATESTRUCT the hook is shown, built below SP; a fixed
+  ;; size so the continuation can drop them without being told how big they are.
+  (global $WIN16_CWP_SCRATCH i32 (i32.const 44))
+  ;; A third slot, standing for the window procedure this emulator supplies
+  ;; itself. A 16-bit app that subclasses a window is handed the old procedure
+  ;; and expects to be able to call it; the built-in one has no address in the
+  ;; task's address space, so it gets this far pointer, which comes back through
+  ;; $win16_dispatch and lands on DefWindowProc.
+  (global $WIN16_BUILTIN_WNDPROC i32 (i32.const 0xFF20))
+  ;; A fourth, which is not called but *parked in*: a modal message box takes
+  ;; over the task while it is up, and the run loop re-enters this offset every
+  ;; pass until the box is dismissed. See $win16_MessageBox.
+  (global $WIN16_MODAL_PUMP i32 (i32.const 0xFF30))
+  (global $win16_modal_ret (mut i32) (i32.const 0))
+  ;; The installed WH_CALLWNDPROC filter, as a far pointer selector:offset, and
+  ;; the handle SetWindowsHookEx handed out for it. MFC's window objects are
+  ;; attached to their HWNDs from inside this hook, so a task that installs one
+  ;; and never sees it called has no window objects at all.
+  ;; Module ids 1..8 are the system libraries this emulator implements itself;
+  ;; anything above is a real NE the host has to stage before it can be loaded.
+  (global $WIN16_SYSTEM_MODULES i32 (i32.const 8))
+  (global $WIN16_WH_CALLWNDPROC i32 (i32.const 4))
+  (global $win16_hook_cwp (mut i32) (i32.const 0))
   (global $win16_cursor_count (mut i32) (i32.const 0))
   (global $win16_lheap_ptr (mut i32) (i32.const 0))
   (global $win16_lheap_end (mut i32) (i32.const 0))

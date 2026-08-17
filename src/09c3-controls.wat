@@ -13370,6 +13370,50 @@
     (global.set $yield_reason    (i32.const 6))
     (global.set $steps           (i32.const 0)))
 
+  ;; One pass of the modal pump, shared by the 32-bit CACA0006 thunk and the
+  ;; 16-bit one. Returns 1 while the dialog is still up — EIP has been re-parked
+  ;; at `pump_eip`, or the caller should yield — and 0 once it has been
+  ;; dismissed, which is when the API call it belongs to can be spliced back
+  ;; together. The two worlds differ only in how that splice works, which is why
+  ;; the splice stays with each caller and only this part is shared.
+  (func $modal_pump_step (param $pump_eip i32) (result i32)
+    (local $flags i32) (local $hwnd i32) (local $proc i32)
+    (if (i32.eqz (global.get $modal_dlg_hwnd)) (then (return (i32.const 0))))
+    ;; Drain nc_flags for the dialog hwnd only: child controls have no
+    ;; non-client chrome and would leave spurious fragments.
+    (if (global.get $nc_flags_count)
+      (then
+        (local.set $flags (call $nc_flags_test (global.get $modal_dlg_hwnd)))
+        (if (i32.and (local.get $flags) (i32.const 1))          ;; WM_NCPAINT
+          (then
+            (call $nc_flags_clear (global.get $modal_dlg_hwnd) (i32.const 1))
+            (call $defwndproc_do_ncpaint (global.get $modal_dlg_hwnd))
+            (global.set $eip (local.get $pump_eip))
+            (global.set $steps (i32.const 0))
+            (return (i32.const 1))))
+        (if (i32.and (local.get $flags) (i32.const 2))          ;; WM_ERASEBKGND
+          (then
+            (call $nc_flags_clear (global.get $modal_dlg_hwnd) (i32.const 2))
+            (drop (call $host_erase_background (global.get $modal_dlg_hwnd) (i32.const 16)))
+            (global.set $eip (local.get $pump_eip))
+            (global.set $steps (i32.const 0))
+            (return (i32.const 1))))))
+    ;; WM_PAINT for the child controls. The dialog was built from WAT controls,
+    ;; so every valid target here is a WAT-native window procedure.
+    (if (call $paint_flag_any)
+      (then
+        (local.set $hwnd (call $paint_flag_take))
+        (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+        (if (i32.ge_u (local.get $proc) (i32.const 0xFFFF0000))
+          (then
+            (drop (call $wat_wndproc_dispatch
+              (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
+            (global.set $eip (local.get $pump_eip))
+            (global.set $steps (i32.const 0))
+            (return (i32.const 1))))))
+    (global.set $yield_flag (i32.const 1))
+    (i32.const 1))
+
   (func $modal_done (param $result i32)
     (global.set $modal_result (local.get $result))
     (call $wnd_destroy_tree (global.get $modal_dlg_hwnd))

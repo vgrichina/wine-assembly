@@ -91,6 +91,20 @@
           (i32.or
             (i32.eq (global.get $yield_reason) (i32.const 7))
             (i32.eq (global.get $yield_reason) (i32.const 8))))))
+      ;; The 16-bit twin of the thunk-zone check below. A far call or return
+      ;; into the thunk segment is caught at the transfer, but EIP can also be
+      ;; *parked* there — a modal message box owns the task until it is
+      ;; dismissed and is re-entered here on every pass. Decoding the segment
+      ;; would find nothing but zeros.
+      (if (global.get $code16)
+        (then
+          (if (i32.and
+                (i32.ne (global.get $WIN16_THUNK_SEL) (i32.const 0))
+                (i32.eq (global.get $sreg_cs) (global.get $WIN16_THUNK_SEL)))
+            (then
+              (call $win16_dispatch
+                (i32.sub (global.get $eip) (global.get $seg_base_cs)) (i32.const 0))
+              (br $main)))))
       ;; If EIP landed in thunk zone (e.g. ret-to-thunk for sync message continuation),
       ;; dispatch the thunk directly instead of trying to decode it as x86
       (if (i32.and (i32.ge_u (global.get $eip) (global.get $thunk_guest_base))

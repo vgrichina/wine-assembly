@@ -208,4 +208,6 @@ function main() {
   }
 }
 
-main();
+module.exports = { parse, segRelocs, entries, pstr };
+
+if (require.main === module) main();

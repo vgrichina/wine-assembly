@@ -365,6 +365,36 @@
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0)))))
     (call $win16_api_return (i32.const 4)))
 
+  ;; USER.430 lstrcmp / USER.471 lstrcmpi(lpString1, lpString2) -> <0, 0, >0.
+  ;; Case folding is ASCII only, which is what the code pages these apps run
+  ;; under amount to for the comparisons they make.
+  (func $win16_lstrcmp (param $fold i32)
+    (local $a i32) (local $b i32) (local $i i32) (local $ca i32) (local $cb i32)
+    (local.set $a (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $b (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (block $done (loop $cmp
+      (local.set $ca (call $gl8 (i32.add (local.get $a) (local.get $i))))
+      (local.set $cb (call $gl8 (i32.add (local.get $b) (local.get $i))))
+      (if (local.get $fold)
+        (then
+          (if (i32.and (i32.ge_u (local.get $ca) (i32.const 0x61))
+                       (i32.le_u (local.get $ca) (i32.const 0x7A)))
+            (then (local.set $ca (i32.sub (local.get $ca) (i32.const 0x20)))))
+          (if (i32.and (i32.ge_u (local.get $cb) (i32.const 0x61))
+                       (i32.le_u (local.get $cb) (i32.const 0x7A)))
+            (then (local.set $cb (i32.sub (local.get $cb) (i32.const 0x20)))))))
+      (br_if $done (i32.ne (local.get $ca) (local.get $cb)))
+      (br_if $done (i32.eqz (local.get $ca)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    (global.set $eax (i32.and
+      (select (i32.const 1) (i32.const -1) (i32.gt_u (local.get $ca) (local.get $cb)))
+      (i32.const 0xFFFF)))
+    (if (i32.eq (local.get $ca) (local.get $cb)) (then (global.set $eax (i32.const 0))))
+    (call $win16_api_return (i32.const 8)))
+
   ;; ---- Resources ----
   ;;
   ;; The three calls are a pipeline: FindResource names one, LoadResource
@@ -708,12 +738,9 @@
       (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds))
             (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 50))
-      (then
-        (global.set $edx (i32.const 0))
-        (call $win16_local_identity (i32.const 6) (i32.const 0))
-        (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 95))   ;; LoadLibrary
-      (then (call $win16_local_identity (i32.const 4) (i32.const 0)) (return (i32.const 1))))
+      (then (call $win16_GetProcAddress) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 95))
+      (then (call $win16_LoadLibrary) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 96))   ;; FreeLibrary
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 3))
@@ -723,6 +750,96 @@
     (if (i32.eq (local.get $ordinal) (i32.const 91))
       (then (call $win16_InitTask) (return (i32.const 1))))
     (i32.const 0))
+
+  ;; ---- Loading a library by name ----
+  ;;
+  ;; The names in an NE's tables are upper case Pascal strings, and everything
+  ;; an app passes to LoadLibrary or GetProcAddress is a C string in whatever
+  ;; case it was typed — "cards.dll", "CARDS.DLL". This puts both into the one
+  ;; form the tables can be searched with. `stop_at_dot` is for module names,
+  ;; where the extension is not part of the name.
+  (func $win16_cstr_to_pstr (param $src i32) (param $dst i32) (param $stop_at_dot i32)
+    (local $n i32) (local $c i32)
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $n) (i32.const 63)))
+      (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $n))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (br_if $done (i32.and (local.get $stop_at_dot) (i32.eq (local.get $c) (i32.const 0x2E))))
+      (if (i32.and (i32.ge_u (local.get $c) (i32.const 0x61))
+                   (i32.le_u (local.get $c) (i32.const 0x7A)))
+        (then (local.set $c (i32.sub (local.get $c) (i32.const 0x20)))))
+      (i32.store8 (i32.add (i32.add (call $g2w (local.get $dst)) (i32.const 1)) (local.get $n))
+                  (local.get $c))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (call $g2w (local.get $dst)) (local.get $n)))
+
+  ;; Is this module one the emulator implements itself, rather than a real NE
+  ;; the host has to stage? Ids 1..8 are the system libraries; DDEML is written
+  ;; out here too but had to take an id past them because the low ones were
+  ;; already spoken for.
+  (func $win16_module_emulated (param $id i32) (result i32)
+    (i32.or (i32.le_u (local.get $id) (global.get $WIN16_SYSTEM_MODULES))
+            (i32.eq (local.get $id) (i32.const 10))))
+
+  ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
+  ;; task's stack region, which a 16-bit task never touches.
+  (func $win16_name_scratch (result i32)
+    (i32.add (global.get $GUEST_STACK) (i32.const 0x200)))
+
+  ;; KERNEL.95 LoadLibrary(lpszLibFile) -> HINSTANCE, or an error code below 32.
+  ;;
+  ;; A module this emulator implements is always present, whether or not any
+  ;; file backs it. One that is a real NE — CARDS is the only one so far — is
+  ;; loaded from the bytes the host staged for its module id; a task that asks
+  ;; for a library nothing staged gets 2, which is what Windows returns for a
+  ;; file it cannot find, and which every caller already tests for.
+  (func $win16_LoadLibrary
+    (local $name i32) (local $id i32)
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
+    (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
+    (if (i32.eqz (local.get $id))
+      (then (call $win16_local_identity (i32.const 4) (i32.const 2)) (return)))
+    (if (i32.eqz (call $win16_module_emulated (local.get $id)))
+      (then
+        (if (i32.eqz (call $win16_dll_loaded (local.get $id)))
+          (then
+            (if (i32.eqz (call $load_ne_dll (local.get $id)))
+              (then (call $win16_local_identity (i32.const 4) (i32.const 2)) (return)))))))
+    (call $win16_local_identity (i32.const 4)
+      (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id)))))
+
+  ;; KERNEL.50 GetProcAddress(hModule, lpszProcName) -> FARPROC in DX:AX.
+  ;;
+  ;; lpszProcName is a far pointer to a name, unless its selector half is zero —
+  ;; then the whole thing is an ordinal, and Hearts asks for CARDS.1, .2 and .4
+  ;; that way. Only a loaded NE has entry points to give; the modules this
+  ;; emulator implements itself are reached through the import thunks, not
+  ;; through an address, so asking one for a procedure address answers NULL.
+  (func $win16_GetProcAddress
+    (local $sel i32) (local $off i32) (local $id i32) (local $ord i32) (local $target i32)
+    (local.set $off (call $win16_arg16 (i32.const 0)))
+    (local.set $sel (call $win16_arg16 (i32.const 1)))
+    (local.set $id (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
+      (then
+        (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
+        (if (call $win16_dll_loaded (local.get $id))
+          (then
+            (if (local.get $sel)
+              (then
+                (call $win16_cstr_to_pstr
+                  (call $win16_far_to_guest (local.get $sel) (local.get $off))
+                  (call $win16_name_scratch) (i32.const 0))
+                (local.set $ord (call $win16_dll_ordinal (local.get $id)
+                  (call $g2w (call $win16_name_scratch)))))
+              (else (local.set $ord (local.get $off))))
+            (local.set $target (call $win16_dll_entry (local.get $id) (local.get $ord)))))))
+    (global.set $edx (i32.shr_u (local.get $target) (i32.const 16)))
+    (call $win16_local_identity (i32.const 6)
+      (i32.and (local.get $target) (i32.const 0xFFFF))))
 
   ;; ---- USER ----
 
@@ -873,24 +990,46 @@
     (global.set $eax (call $win16_h16 (i32.const 0x10000)))
     (call $win16_api_return (i32.const 0)))
 
-  ;; USER.1 MessageBox(hWnd, lpText, lpCaption, wType).
-  ;; Arguments are read into locals before $win16_call32_begin moves ESP —
-  ;; $win16_arg16 addresses the task's own frame, which is exactly what the
-  ;; scratch stack replaces.
+  ;; USER.1 MessageBox(hWnd, lpText, lpCaption, wType) -> the button pressed.
+  ;;
+  ;; A message box takes the task over until it is dismissed, so this cannot
+  ;; return: it drops its own frame, remembers where it was going to return, and
+  ;; parks EIP on the modal pump slot in the thunk segment. The run loop
+  ;; re-enters that slot every pass, which drives the dialog's painting and
+  ;; yields to the host for input; when a button is pressed the pump splices the
+  ;; call back together with the result in AX.
+  ;;
+  ;; Not bridged to $handle_MessageBoxA, which parks EIP on the 32-bit pump
+  ;; thunk — an address outside the selector arena, which a 16-bit task cannot
+  ;; execute from. The dialog itself is the same one.
   (func $win16_MessageBox
     (local $hwnd i32) (local $text i32) (local $caption i32) (local $type i32)
+    (local $dlg i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
     (local.set $text (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
     (local.set $caption (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $caption (i32.const 0))))
     (local.set $type (call $win16_arg16 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_MessageBoxA
-      (local.get $hwnd) (local.get $text) (local.get $caption) (local.get $type)
-      (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (call $win16_api_return (i32.const 12)))
+    (global.set $win16_modal_ret (call $win16_take_return (i32.const 12)))
+    (drop (call $host_message_box (local.get $hwnd)
+      (call $g2w (local.get $text)) (call $g2w (local.get $caption)) (local.get $type)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_msgbox_dialog (local.get $dlg) (local.get $hwnd)
+      (select (call $g2w (local.get $caption)) (i32.const 0) (local.get $caption))
+      (call $g2w (local.get $text)) (local.get $type))
+    (global.set $modal_dlg_hwnd (local.get $dlg))
+    (global.set $modal_result (i32.const 0))
+    (call $win16_modal_park))
+
+  (func $win16_modal_park
+    (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (global.get $WIN16_MODAL_PUMP)))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $yield_reason (i32.const 6))
+    (global.set $steps (i32.const 0)))
 
   (func $win16_user (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 121))
@@ -1054,6 +1193,22 @@
       (then (call $win16_GetCurrentTime) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 176))
       (then (call $win16_LoadString) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 404))
+      (then (call $win16_GetClassInfo) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 122))
+      (then (call $win16_CallWindowProc) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 430))
+      (then (call $win16_lstrcmp (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 471))
+      (then (call $win16_lstrcmp (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 133))
+      (then (call $win16_window_long (i32.const 0) (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 134))
+      (then (call $win16_window_long (i32.const 1) (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 135))
+      (then (call $win16_window_long (i32.const 0) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 136))
+      (then (call $win16_window_long (i32.const 1) (i32.const 0)) (return (i32.const 1))))
     (i32.const 0))
 
   ;; ---- Windows ----
@@ -1094,6 +1249,38 @@
     (global.set $eip (i32.add (global.get $seg_base_cs)
                               (i32.and (local.get $proc) (i32.const 0xFFFF))))
     (global.set $steps (i32.const 0)))
+
+  ;; ---- Continuation records ----
+  ;;
+  ;; An API that hands control to guest code has to remember two things across
+  ;; the call: where it was going to return, and what it was going to return.
+  ;; Those live on the task's own stack rather than in globals, under whatever
+  ;; frame is being handed off, because these calls nest — Hearts creates its
+  ;; status bar from inside its main window's WM_CREATE, so a second
+  ;; CreateWindow is in flight before the first has finished. In globals the
+  ;; inner one overwrites the outer's return address and the outer CreateWindow
+  ;; comes back to the wrong place with the wrong handle.
+  ;;
+  ;; Three words: return selector, return offset, result. The guest procedure
+  ;; RETFs its own arguments off and lands on the record.
+  (func $win16_cont_push (param $ret i32) (param $result i32)
+    (call $win16_push16 (i32.shr_u (local.get $ret) (i32.const 16)))
+    (call $win16_push16 (local.get $ret))
+    (call $win16_push16 (local.get $result)))
+
+  (func $win16_cont_result (result i32)
+    (call $gl16 (global.get $esp)))
+
+  (func $win16_cont_resume
+    (local $result i32) (local $ip i32) (local $sel i32)
+    (local.set $result (call $gl16 (global.get $esp)))
+    (local.set $ip     (call $gl16 (i32.add (global.get $esp) (i32.const 2))))
+    (local.set $sel    (call $gl16 (i32.add (global.get $esp) (i32.const 4))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 6)))
+    (global.set $eax (local.get $result))
+    (global.set $edx (i32.const 0))
+    (call $win16_set_sreg (i32.const 1) (local.get $sel))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $ip))))
 
   ;; Drop this API's own frame and report where it was going to return, packed
   ;; as selector:offset. Used by the calls that hand control to guest code
@@ -1158,6 +1345,55 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; USER.404 GetClassInfo(hInstance, lpszClassName, lpWndClass) -> BOOL.
+  ;;
+  ;; The narrowing half of $win16_RegisterClass: the class table holds one
+  ;; 32-bit WNDCLASSA per class whichever world registered it, and this writes
+  ;; it back out in the 16-bit shape. lpfnWndProc goes back as the two words it
+  ;; arrived as, so a class registered by this task round-trips exactly.
+  ;;
+  ;; MFC asks this before registering each of its generated "Afx:..." classes,
+  ;; and a truthful "no such class" is what makes it go on and register one.
+  (func $win16_GetClassInfo
+    (local $name i32) (local $dst i32) (local $tmp i32) (local $proc i32)
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (call $zero_memory (call $g2w (local.get $tmp)) (i32.const 40))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_GetClassInfoA (call $win16_arg16 (i32.const 4))
+      (local.get $name) (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (global.get $eax)
+      (then
+        (call $gs16 (local.get $dst) (call $gl32 (local.get $tmp)))
+        (local.set $proc (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 2)) (local.get $proc))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 4))
+          (i32.shr_u (local.get $proc) (i32.const 16)))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 6))
+          (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 8))
+          (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 10))
+          (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 12))
+          (call $win16_h16 (call $gl32 (i32.add (local.get $tmp) (i32.const 20)))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 14))
+          (call $win16_h16 (call $gl32 (i32.add (local.get $tmp) (i32.const 24)))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 16))
+          (call $win16_h16 (call $gl32 (i32.add (local.get $tmp) (i32.const 28)))))
+        ;; The two names stay where the caller's own strings are: a far pointer
+        ;; into the class record would name memory no selector covers.
+        (call $gs32 (i32.add (local.get $dst) (i32.const 18)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $dst) (i32.const 22)) (i32.or
+          (i32.shl (call $win16_arg16 (i32.const 3)) (i32.const 16))
+          (call $win16_arg16 (i32.const 2))))))
+    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
+    (call $win16_api_return (i32.const 10)))
+
   ;; A 16-bit window coordinate is a signed word, and CW_USEDEFAULT is 0x8000
   ;; rather than 0x80000000 — the same "leave it to the system" sentinel at a
   ;; different width, so it has to be translated rather than sign-extended.
@@ -1165,6 +1401,167 @@
     (if (i32.eq (local.get $v) (i32.const 0x8000))
       (then (return (i32.const 0x80000000))))
     (i32.shr_s (i32.shl (local.get $v) (i32.const 16)) (i32.const 16)))
+
+  ;; USER.133-136 GetWindowWord/SetWindowWord/GetWindowLong/SetWindowLong.
+  ;;
+  ;; The negative indices mean the same things in both worlds — GWL_WNDPROC -4,
+  ;; GWL_HINSTANCE -6, GWL_HWNDPARENT -8, GWL_ID -12, GWL_STYLE -16,
+  ;; GWL_EXSTYLE -20 — so the index goes to the 32-bit handler unchanged and
+  ;; only the width differs. GWL_WNDPROC is the one that matters here: its value
+  ;; is a far pointer packed selector:offset, which is exactly what the window
+  ;; table already holds for a 16-bit window, so subclassing works by storing
+  ;; the dword as-is.
+  (func $win16_window_long (param $set i32) (param $word i32)
+    (local $hwnd i32) (local $index i32) (local $value i32) (local $argbytes i32)
+    (local.set $argbytes (select
+      (select (i32.const 8) (i32.const 6) (i32.eqz (local.get $word)))
+      (i32.const 4)
+      (local.get $set)))
+    (if (local.get $set)
+      (then
+        (if (local.get $word)
+          (then (local.set $value (call $win16_arg16 (i32.const 0))))
+          (else (local.set $value (call $win16_arg32 (i32.const 0)))))
+        (local.set $index (call $win16_arg16
+          (select (i32.const 1) (i32.const 2) (local.get $word))))
+        (local.set $hwnd (call $win16_h32 (call $win16_arg16
+          (select (i32.const 2) (i32.const 3) (local.get $word))))))
+      (else
+        (local.set $index (call $win16_arg16 (i32.const 0)))
+        (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))))
+    ;; The index is a signed word on the wire and a signed dword to the handler.
+    (local.set $index (i32.shr_s (i32.shl (local.get $index) (i32.const 16)) (i32.const 16)))
+    (call $win16_call32_begin (i32.const 3))
+    (if (local.get $set)
+      (then (call $handle_SetWindowLongA (local.get $hwnd) (local.get $index)
+              (local.get $value) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_GetWindowLongA (local.get $hwnd) (local.get $index)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (call $win16_call32_end)
+    ;; A window procedure this emulator supplies has no address a 16-bit task
+    ;; could call, so it is reported as the thunk that stands for it.
+    (if (i32.and (i32.eq (local.get $index) (i32.const -4))
+                 (i32.eqz (call $win16_is_far_proc (global.get $eax))))
+      (then (global.set $eax (call $win16_builtin_wndproc))))
+    ;; A word answer is a word; a long one comes back in DX:AX like any other.
+    (if (local.get $word)
+      (then (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF))))
+      (else (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+            (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))))
+    (call $win16_api_return (local.get $argbytes)))
+
+  (func $win16_builtin_wndproc (result i32)
+    (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
+            (global.get $WIN16_BUILTIN_WNDPROC)))
+
+  ;; Is this window procedure one a 16-bit task can actually far-call? The
+  ;; window table holds both kinds: a far pointer for a procedure the task
+  ;; registered, and a sentinel like 0xFFFE0001 or 0xFFFF0002 for one the
+  ;; emulator supplies. Testing the selector against the loaded segments tells
+  ;; them apart for certain — a sentinel's high word names no segment, and
+  ;; neither does a zero one.
+  (func $win16_is_far_proc (param $proc i32) (result i32)
+    (local $sel i32)
+    (local.set $sel (i32.shr_u (local.get $proc) (i32.const 16)))
+    (if (i32.eqz (local.get $sel)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $sel) (global.get $WIN16_THUNK_SEL))
+      (then (return (i32.const 0))))
+    (i32.ne (call $win16_seg_base (call $win16_sel_to_index (local.get $sel)))
+            (i32.const 0)))
+
+  ;; USER.122 CallWindowProc(lpPrevWndFunc, hWnd, msg, wParam, lParam) -> LONG.
+  ;;
+  ;; This is the other half of subclassing: an app that replaced a window
+  ;; procedure calls the one it replaced. A real 16-bit procedure is entered
+  ;; with the Pascal frame and the caller's own far return, exactly as
+  ;; DispatchMessage does it, so its RETF 10 lands where CallWindowProc was
+  ;; going to return with the result already in DX:AX.
+  (func $win16_CallWindowProc
+    (local $proc i32) (local $hwnd i32) (local $message i32)
+    (local $wparam i32) (local $lparam i32) (local $ret i32)
+    (local.set $proc (call $win16_arg32 (i32.const 5)))
+    (local.set $hwnd (call $win16_arg16 (i32.const 4)))
+    (local.set $message (call $win16_arg16 (i32.const 3)))
+    (local.set $wparam (call $win16_arg16 (i32.const 2)))
+    (local.set $lparam (call $win16_arg32 (i32.const 0)))
+    (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
+      (then
+        (call $win16_call32_begin (i32.const 4))
+        (call $handle_DefWindowProcA (call $win16_h32 (local.get $hwnd))
+          (local.get $message) (local.get $wparam) (local.get $lparam)
+          (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 14))
+        (return)))
+    (local.set $ret (call $win16_take_return (i32.const 14)))
+    (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd)
+      (local.get $message) (local.get $wparam) (local.get $lparam)
+      (i32.shr_u (local.get $ret) (i32.const 16))
+      (i32.and (local.get $ret) (i32.const 0xFFFF))))
+
+  ;; Call the WH_CALLWNDPROC filter for a message about to be sent to a window.
+  ;;
+  ;; The filter takes (nCode, wParam, lParam) with lParam pointing at a
+  ;; CWPSTRUCT — lParam(4) wParam(2) message(2) hwnd(2) — and WM_NCCREATE's own
+  ;; lParam points at a CREATESTRUCT. Both are built below SP in the task's own
+  ;; stack segment, which is where real USER puts them and the only place a far
+  ;; pointer can reach without allocating anything. `cs` is the far pointer to a
+  ;; CREATESTRUCT already built by the caller, or zero.
+  ;;
+  ;; The filter RETFs 8, so it removes its own arguments and leaves SP just
+  ;; above the two structures; the continuation drops those, and their combined
+  ;; size is fixed at $WIN16_CWP_SCRATCH so it needs no bookkeeping.
+  (func $win16_hook_cwp_fire (param $hwnd16 i32) (param $msg i32) (param $wparam i32)
+        (param $lparam i32) (param $cont_off i32)
+    (local $base i32) (local $sel i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 10)))
+    (local.set $base (global.get $esp))
+    (local.set $sel (global.get $sreg_ss))
+    (call $gs32 (local.get $base) (local.get $lparam))
+    (call $gs16 (i32.add (local.get $base) (i32.const 4)) (local.get $wparam))
+    (call $gs16 (i32.add (local.get $base) (i32.const 6)) (local.get $msg))
+    (call $gs16 (i32.add (local.get $base) (i32.const 8)) (local.get $hwnd16))
+    ;; nCode = HC_ACTION, wParam = TRUE for "sent by the current task".
+    (call $win16_push16 (i32.const 0))
+    (call $win16_push16 (i32.const 1))
+    (call $win16_push16 (local.get $sel))
+    (call $win16_push16 (i32.and (local.get $base) (i32.const 0xFFFF)))
+    (call $win16_push16 (global.get $WIN16_THUNK_SEL))
+    (call $win16_push16 (local.get $cont_off))
+    (call $win16_set_sreg (i32.const 1) (i32.shr_u (global.get $win16_hook_cwp) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_hook_cwp) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
+  ;; Build a 16-bit CREATESTRUCT below SP and return a far pointer to it.
+  ;;   +0 lpCreateParams(far) +4 hInstance +6 hMenu +8 hwndParent
+  ;;   +10 cy +12 cx +14 y +16 x +18 style(L) +22 lpszName(far)
+  ;;   +26 lpszClass(far) +30 dwExStyle(L)
+  ;; Every field is the raw 16-bit value the caller passed, not the widened one:
+  ;; an app reading this back expects its own pointers to compare equal.
+  (func $win16_createstruct (param $param i32) (param $inst i32) (param $menu i32)
+        (param $parent i32) (param $h i32) (param $w i32) (param $y i32) (param $x i32)
+        (param $style i32) (param $name i32) (param $class i32) (param $exstyle i32)
+        (result i32)
+    (local $base i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 34)))
+    (local.set $base (global.get $esp))
+    (call $gs32 (local.get $base) (local.get $param))
+    (call $gs16 (i32.add (local.get $base) (i32.const 4)) (local.get $inst))
+    (call $gs16 (i32.add (local.get $base) (i32.const 6)) (local.get $menu))
+    (call $gs16 (i32.add (local.get $base) (i32.const 8)) (local.get $parent))
+    (call $gs16 (i32.add (local.get $base) (i32.const 10)) (local.get $h))
+    (call $gs16 (i32.add (local.get $base) (i32.const 12)) (local.get $w))
+    (call $gs16 (i32.add (local.get $base) (i32.const 14)) (local.get $y))
+    (call $gs16 (i32.add (local.get $base) (i32.const 16)) (local.get $x))
+    (call $gs32 (i32.add (local.get $base) (i32.const 18)) (local.get $style))
+    (call $gs32 (i32.add (local.get $base) (i32.const 22)) (local.get $name))
+    (call $gs32 (i32.add (local.get $base) (i32.const 26)) (local.get $class))
+    (call $gs32 (i32.add (local.get $base) (i32.const 30)) (local.get $exstyle))
+    (i32.or (i32.shl (global.get $sreg_ss) (i32.const 16))
+            (i32.and (local.get $base) (i32.const 0xFFFF))))
 
   ;; USER.41 CreateWindow(lpClassName, lpWindowName, dwStyle, x, y, nWidth,
   ;;   nHeight, hWndParent, hMenu, hInstance, lpParam) -> HWND.
@@ -1178,8 +1575,23 @@
     (local $class i32) (local $title i32) (local $style i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (local $parent i32) (local $menu i32) (local $inst i32) (local $param i32)
-    (local $exstyle i32) (local $hwnd i32)
+    (local $exstyle i32) (local $hwnd i32) (local $cs i32) (local $redirected i32)
+    (local $raw_class i32) (local $raw_title i32) (local $raw_param i32)
+    (local $raw_menu i32) (local $raw_parent i32)
+    (local $raw_x i32) (local $raw_y i32) (local $raw_w i32) (local $raw_h i32)
     (if (local.get $ex) (then (local.set $exstyle (call $win16_arg32 (i32.const 15)))))
+    ;; The CREATESTRUCT the hook is shown carries the caller's own values, so
+    ;; every argument is kept in its 16-bit form as well as the widened one.
+    ;; They have to be read before the frame is dropped, not after.
+    (local.set $raw_class (call $win16_arg32 (i32.const 13)))
+    (local.set $raw_title (call $win16_arg32 (i32.const 11)))
+    (local.set $raw_param (call $win16_arg32 (i32.const 0)))
+    (local.set $raw_menu (call $win16_arg16 (i32.const 3)))
+    (local.set $raw_parent (call $win16_arg16 (i32.const 4)))
+    (local.set $raw_x (call $win16_arg16 (i32.const 8)))
+    (local.set $raw_y (call $win16_arg16 (i32.const 7)))
+    (local.set $raw_w (call $win16_arg16 (i32.const 6)))
+    (local.set $raw_h (call $win16_arg16 (i32.const 5)))
     (local.set $class (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 14)) (call $win16_arg16 (i32.const 13))))
     (local.set $title (call $win16_far_to_guest
@@ -1217,21 +1629,56 @@
     ;; global. Deferring the message left that global zero, and it called
     ;; ShowWindow(NULL).
     ;;
-    ;; lParam is zero rather than a CREATESTRUCT; a 16-bit app reading one
-    ;; would need the narrow layout, and none of these do.
+    ;; WM_CREATE's lParam is zero rather than a CREATESTRUCT; a 16-bit app
+    ;; reading one would need the narrow layout, and none of these do. The
+    ;; WM_NCCREATE shown to the hook below does carry a real one.
     (local.set $hwnd (global.get $eax))
-    (if (call $win16_call32_end_redirected)
+    (local.set $redirected (call $win16_call32_end_redirected))
+    ;; The API's own frame goes now, and everything still owed goes on the stack
+    ;; in its place: the return address, the handle, and whether WM_CREATE is
+    ;; still to be delivered. Anything CreateWindow does from here can create
+    ;; another window without disturbing this one.
+    (call $win16_cont_push
+      (call $win16_take_return (select (i32.const 34) (i32.const 30) (local.get $ex)))
+      (call $win16_h16 (local.get $hwnd)))
+    (call $win16_push16 (local.get $redirected))
+
+    ;; Before the window's own procedure hears anything, the WH_CALLWNDPROC
+    ;; filter sees the WM_NCCREATE that creating it sends. An MFC task attaches
+    ;; its window object and subclasses the window from inside that call, so it
+    ;; has to happen here — after the window exists and before WM_CREATE, which
+    ;; is the first message the object is expected to handle.
+    (if (i32.and (i32.ne (global.get $win16_hook_cwp) (i32.const 0))
+                 (i32.ne (local.get $hwnd) (i32.const 0)))
       (then
-        (global.set $win16_cont_result (call $win16_h16 (local.get $hwnd)))
-        (global.set $win16_cont_ret (call $win16_take_return
-          (select (i32.const 34) (i32.const 30) (local.get $ex))))
+        (local.set $cs (call $win16_createstruct
+          (local.get $raw_param) (local.get $inst) (local.get $raw_menu)
+          (local.get $raw_parent) (local.get $raw_h) (local.get $raw_w)
+          (local.get $raw_y) (local.get $raw_x) (local.get $style)
+          (local.get $raw_title) (local.get $raw_class) (local.get $exstyle)))
+        (call $win16_hook_cwp_fire (call $gl16 (i32.add (global.get $esp) (i32.const 36)))
+          (i32.const 0x0081) (i32.const 0) (local.get $cs)
+          (global.get $WIN16_CONT_CWP))
+        (return)))
+    (call $win16_create_finish))
+
+  ;; Everything CreateWindow still owes after the hook has run: WM_CREATE if the
+  ;; 32-bit handler asked for it, and otherwise just the handle. On entry the
+  ;; top of the stack is the redirected flag over a continuation record.
+  ;; Reached both directly and from the WH_CALLWNDPROC continuation, so the two
+  ;; paths cannot drift apart.
+  (func $win16_create_finish
+    (local $redirected i32)
+    (local.set $redirected (call $gl16 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
+    (if (local.get $redirected)
+      (then
         (call $win16_enter_wndproc
-          (call $wnd_table_get (local.get $hwnd))
-          (global.get $win16_cont_result) (i32.const 0x0001) (i32.const 0) (i32.const 0)
+          (call $wnd_table_get (call $win16_h32 (call $win16_cont_result)))
+          (call $win16_cont_result) (i32.const 0x0001) (i32.const 0) (i32.const 0)
           (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
         (return)))
-    (global.set $eax (call $win16_h16 (local.get $hwnd)))
-    (call $win16_api_return (select (i32.const 34) (i32.const 30) (local.get $ex))))
+    (call $win16_cont_resume))
 
   ;; USER.42 ShowWindow(hWnd, nCmdShow).
   ;;
@@ -2219,6 +2666,26 @@
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; A plain signed word. Not $win16_coord: that one also translates
+  ;; CW_USEDEFAULT, which is a window position sentinel and an ordinary
+  ;; coordinate anywhere else.
+  (func $win16_short (param $v i32) (result i32)
+    (i32.shr_s (i32.shl (local.get $v) (i32.const 16)) (i32.const 16)))
+
+  ;; GDI.64 CreateRectRgn(left, top, right, bottom) -> HRGN.
+  (func $win16_CreateRectRgn
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32)
+    (local.set $l (call $win16_short (call $win16_arg16 (i32.const 3))))
+    (local.set $t (call $win16_short (call $win16_arg16 (i32.const 2))))
+    (local.set $r (call $win16_short (call $win16_arg16 (i32.const 1))))
+    (local.set $b (call $win16_short (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_CreateRectRgn (local.get $l) (local.get $t) (local.get $r)
+      (local.get $b) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 8)))
+
   ;; GDI.45 SelectObject(hDC, hObject) -> the object it replaced.
   (func $win16_SelectObject
     (local $hdc i32) (local $obj i32)
@@ -2661,6 +3128,8 @@
       (then (call $win16_CreateCompatibleDC) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 61))
       (then (call $win16_CreatePen) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 64))
+      (then (call $win16_CreateRectRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 66))
       (then (call $win16_CreateSolidBrush) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 68))
@@ -2712,31 +3181,80 @@
         (call $host_log_i32 (global.get $eip))
         (call $host_log_i32 (global.get $esp)))))
 
-  ;; Hooks. The call succeeds and the handle is real enough to unhook, but no
-  ;; hook procedure is ever called: delivering one means entering 16-bit code
-  ;; from inside a 32-bit handler, which is the thing that does not work here
-  ;; (see $wnd_send_message). Deliberately not routed to
-  ;; $handle_SetWindowsHookExA either — that one remembers a CBT procedure for
-  ;; CreateWindowEx to call as a flat address, and a Win16 one is a far
-  ;; pointer. Hearts installs a CBT hook to position its dialogs; without it
-  ;; they appear where the template puts them.
+  ;; Hooks.
+  ;;
+  ;; Only WH_CALLWNDPROC is delivered, and only from CreateWindow. That is not
+  ;; an arbitrary subset: it is how a 16-bit MFC application gets a C++ object
+  ;; onto an HWND at all. AfxHookWindowCreate installs this filter, the filter
+  ;; watches for the WM_NCCREATE or WM_GETMINMAXINFO that CreateWindow sends,
+  ;; and on the first of those it puts the window in the handle map and
+  ;; subclasses it to AfxWndProc. Never calling it left Hearts' own window
+  ;; procedure looking its window up in an empty map, getting NULL, and calling
+  ;; through the null object's vtable — `les bx,[bx]` with bx zero.
+  ;;
+  ;; Deliberately not routed to $handle_SetWindowsHookExA: that one remembers a
+  ;; CBT procedure for CreateWindowEx to call as a flat address, and a Win16
+  ;; hook procedure is a far pointer.
+  ;;
+  ;; The other filter types still install and unhook without ever being called.
+  ;; They should be delivered from wherever their message actually originates,
+  ;; and each one is its own piece of work; this says so by leaving them alone
+  ;; rather than by pretending the hook does not exist.
+  ;;
+  ;; A Win16 HHOOK is a *far pointer*, not a word — SetWindowsHookEx answers in
+  ;; DX:AX and every call that takes one back pops four bytes. Treating it as a
+  ;; word left two bytes of the caller's frame behind on every unhook and gave
+  ;; the app an uninitialised DX for the other half of the handle it stored;
+  ;; MFC keeps it in two words and hands both back. The handle here is the
+  ;; filter's own address, which is what makes it unambiguous to match on.
   (func $win16_hook (param $which i32)
-    (if (i32.eq (local.get $which) (i32.const 0))       ;; SetWindowsHookEx
-      (then (call $win16_local_identity (i32.const 10) (i32.const 0xBEEF)) (return)))
+    (local $prev i32)
+    ;; SetWindowsHookEx(idHook, lpfn, hMod, hTask) -> HHOOK. The filter type is
+    ;; the first parameter, so under Pascal it lies deepest.
+    (if (i32.eq (local.get $which) (i32.const 0))
+      (then
+        (local.set $prev (call $win16_arg32 (i32.const 2)))
+        (if (i32.eq (call $win16_arg16 (i32.const 4)) (global.get $WIN16_WH_CALLWNDPROC))
+          (then (global.set $win16_hook_cwp (local.get $prev))))
+        (global.set $edx (i32.shr_u (local.get $prev) (i32.const 16)))
+        (call $win16_local_identity (i32.const 10)
+          (i32.and (local.get $prev) (i32.const 0xFFFF)))
+        (return)))
     (if (i32.eq (local.get $which) (i32.const 1))       ;; UnhookWindowsHookEx
-      (then (call $win16_local_identity (i32.const 2) (i32.const 1)) (return)))
+      (then
+        (if (i32.and (i32.ne (global.get $win16_hook_cwp) (i32.const 0))
+                     (i32.eq (call $win16_arg32 (i32.const 0))
+                             (global.get $win16_hook_cwp)))
+          (then (global.set $win16_hook_cwp (i32.const 0))))
+        (call $win16_local_identity (i32.const 4) (i32.const 1))
+        (return)))
     (if (i32.eq (local.get $which) (i32.const 2))       ;; CallNextHookEx
       (then
         (global.set $edx (i32.const 0))
-        (call $win16_local_identity (i32.const 10) (i32.const 0))
+        (call $win16_local_identity (i32.const 12) (i32.const 0))
         (return)))
-    (if (i32.eq (local.get $which) (i32.const 3))       ;; SetWindowsHook
+    ;; SetWindowsHook(idHook, lpfn) -> the previous filter, as a far pointer in
+    ;; DX:AX. The 3.0 spelling of the call above, and the one MFC reaches for
+    ;; when it decides the Ex form is unavailable.
+    (if (i32.eq (local.get $which) (i32.const 3))
       (then
+        (if (i32.eq (call $win16_arg16 (i32.const 2)) (global.get $WIN16_WH_CALLWNDPROC))
+          (then
+            (local.set $prev (global.get $win16_hook_cwp))
+            (global.set $win16_hook_cwp (call $win16_arg32 (i32.const 0)))
+            (global.set $edx (i32.shr_u (local.get $prev) (i32.const 16)))
+            (call $win16_local_identity (i32.const 6)
+              (i32.and (local.get $prev) (i32.const 0xFFFF)))
+            (return)))
         (global.set $edx (i32.const 0))
         (call $win16_local_identity (i32.const 6) (i32.const 0))
         (return)))
     (if (i32.eq (local.get $which) (i32.const 4))       ;; UnhookWindowsHook
-      (then (call $win16_local_identity (i32.const 6) (i32.const 1)) (return)))
+      (then
+        (if (i32.eq (call $win16_arg16 (i32.const 2)) (global.get $WIN16_WH_CALLWNDPROC))
+          (then (global.set $win16_hook_cwp (i32.const 0))))
+        (call $win16_local_identity (i32.const 6) (i32.const 1))
+        (return)))
     (global.set $edx (i32.const 0))                     ;; DefHookProc
     (call $win16_local_identity (i32.const 12) (i32.const 0)))
 
@@ -2757,6 +3275,36 @@
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
+
+  ;; ---- MMSYSTEM ----
+
+  ;; MMSYSTEM.401 waveOutGetNumDevs() -> UINT, and MMSYSTEM.2 sndPlaySound(
+  ;; lpszSound, fuSound) -> BOOL. Hearts asks how many wave devices there are
+  ;; before it will play anything, so answering it is what turns the sound on.
+  (func $win16_mmsystem (param $ordinal i32) (result i32)
+    (local $name i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 401))
+      (then
+        (call $win16_call32_begin (i32.const 0))
+        (call $handle_waveOutGetNumDevs (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 0))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 2))
+      (then
+        (local.set $name (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+        (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $name (i32.const 0))))
+        (call $win16_call32_begin (i32.const 2))
+        (call $handle_sndPlaySoundA (local.get $name) (call $win16_arg16 (i32.const 0))
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
+        (call $win16_api_return (i32.const 6))
+        (return (i32.const 1))))
+    (i32.const 0))
 
   (func $win16_commdlg (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 27))
@@ -2788,13 +3336,36 @@
     ;; in AX and resume the caller. The offset is past the end of the thunk
     ;; table, so no import can ever be assigned it.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_OFFSET))
+      (then (call $win16_cont_resume) (return)))
+    ;; The WH_CALLWNDPROC filter CreateWindow ran has returned. The filter took
+    ;; its own arguments off the stack; the CWPSTRUCT and CREATESTRUCT built
+    ;; underneath them are this side's to drop.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_CWP))
       (then
-        (global.set $eax (global.get $win16_cont_result))
+        (global.set $esp (i32.add (global.get $esp) (global.get $WIN16_CWP_SCRATCH)))
+        (call $win16_create_finish)
+        (return)))
+    ;; The window procedure this emulator supplies, called by an app that
+    ;; subclassed one of its windows. It arrives with a window procedure's own
+    ;; Pascal frame, which is DefWindowProc's frame.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_BUILTIN_WNDPROC))
+      (then (call $win16_DefWindowProc) (return)))
+    ;; The modal pump. EIP is parked here, not called here, so there is no
+    ;; frame to unwind — the API's own frame went when it parked, and the far
+    ;; return it saved is what the completed box goes back to.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_MODAL_PUMP))
+      (then
+        (if (call $modal_pump_step
+              (i32.add (global.get $seg_base_cs) (global.get $WIN16_MODAL_PUMP)))
+          (then (return)))
+        (global.set $eax (i32.and (global.get $modal_result) (i32.const 0xFFFF)))
         (global.set $edx (i32.const 0))
+        (global.set $yield_reason (i32.const 0))
         (call $win16_set_sreg (i32.const 1)
-          (i32.shr_u (global.get $win16_cont_ret) (i32.const 16)))
+          (i32.shr_u (global.get $win16_modal_ret) (i32.const 16)))
         (global.set $eip (i32.add (global.get $seg_base_cs)
-          (i32.and (global.get $win16_cont_ret) (i32.const 0xFFFF))))
+          (i32.and (global.get $win16_modal_ret) (i32.const 0xFFFF))))
+        (global.set $steps (i32.const 0))
         (return)))
 
     (global.set $win16_last_is_name (call $win16_thunk_is_name (local.get $thunk_off)))
@@ -2879,6 +3450,12 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 3))
       (then (if (call $win16_gdi (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (i32.eq (local.get $module) (i32.const 7))
+      (then (if (call $win16_mmsystem (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (i32.eq (local.get $module) (i32.const 10))
+      (then (if (call $win16_ddeml (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 8))
       (then (if (call $win16_commdlg (local.get $ordinal))
