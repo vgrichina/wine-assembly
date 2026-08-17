@@ -744,12 +744,91 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fix)))
 
+    (call $win16_patch_dll_prologues (local.get $ne_off) (local.get $seg_index_base))
+
     (local.set $rec (call $win16_dll_rec (local.get $module_id)))
     (i32.store          (local.get $rec) (local.get $ne_off))
     (i32.store offset=4 (local.get $rec) (local.get $seg_index_base))
     (i32.store offset=8 (local.get $rec) (local.get $base))
     (i32.store offset=12 (local.get $rec) (local.get $seg_count))
     (i32.const 1))
+
+  ;; Point every exported entry at the DLL's OWN data segment.
+  ;;
+  ;; A Win16 exported function starts
+  ;;
+  ;;   1E        push ds          \ three bytes the linker leaves as "AX = the
+  ;;   58        pop ax            / caller's DS"
+  ;;   90        nop
+  ;;   45 55 8B EC  inc bp; push bp; mov bp,sp
+  ;;   1E        push ds
+  ;;   8E D8     mov ds,ax        <- and this is what actually sets DS
+  ;;
+  ;; and the loader is expected to overwrite those three bytes with
+  ;; `B8 sel` (mov ax, DGROUP) for a module that has its own data segment.
+  ;; Skipping it does not fault: the DLL simply runs on whatever DS its caller
+  ;; had and reads the caller's variables as its own. CARDS.DLL keeps a
+  ;; card-number → bitmap cache in its data segment; through FreeCell's DS the
+  ;; slot for the card being drawn held 0x7355, which went to SelectObject as a
+  ;; bitmap handle and stopped the task.
+  ;;
+  ;; Entry table: bundles of `u8 count; u8 seg`, then per entry either
+  ;; `u8 flags; u16 int3F; u8 seg; u16 off` (seg==0xFF, moveable) or
+  ;; `u8 flags; u16 off` (fixed). count==0 ends the table. Flags bit 1 marks an
+  ;; entry that uses the shared data segment, which is exactly the set to
+  ;; patch; bit 0 is EXPORTED.
+  (func $win16_patch_dll_prologues (param $ne_off i32) (param $seg_index_base i32)
+    (local $p i32) (local $end i32) (local $count i32) (local $seg i32)
+    (local $flags i32) (local $off i32) (local $eseg i32)
+    (local $auto_data i32) (local $sel i32) (local $wa i32)
+    (local.set $auto_data (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x0E))))
+    (if (i32.eqz (local.get $auto_data)) (then (return)))
+    (local.set $sel (call $win16_index_to_sel
+      (i32.add (local.get $seg_index_base) (local.get $auto_data))))
+    (local.set $p (i32.add (local.get $ne_off)
+      (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x04)))))
+    (local.set $end (i32.add (local.get $p)
+      (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x06)))))
+    (block $done (loop $bundles
+      (br_if $done (i32.ge_u (i32.add (local.get $p) (i32.const 2)) (local.get $end)))
+      (local.set $count (i32.load8_u (local.get $p)))
+      (local.set $seg (i32.load8_u (i32.add (local.get $p) (i32.const 1))))
+      (br_if $done (i32.eqz (local.get $count)))
+      (local.set $p (i32.add (local.get $p) (i32.const 2)))
+      ;; A bundle with segment 0 is a run of unused ordinals and carries no
+      ;; entry bytes at all.
+      (if (i32.eqz (local.get $seg))
+        (then (br $bundles)))
+      (block $bundle_done (loop $entries
+        (br_if $bundle_done (i32.eqz (local.get $count)))
+        (local.set $flags (i32.load8_u (local.get $p)))
+        (if (i32.eq (local.get $seg) (i32.const 0xFF))
+          (then
+            (local.set $eseg (i32.load8_u (i32.add (local.get $p) (i32.const 3))))
+            (local.set $off (i32.load16_u (i32.add (local.get $p) (i32.const 4))))
+            (local.set $p (i32.add (local.get $p) (i32.const 6))))
+          (else
+            (local.set $eseg (local.get $seg))
+            (local.set $off (i32.load16_u (i32.add (local.get $p) (i32.const 1))))
+            (local.set $p (i32.add (local.get $p) (i32.const 3)))))
+        (if (i32.and (local.get $flags) (i32.const 2))
+          (then
+            (local.set $wa (call $g2w (i32.add
+              (call $win16_seg_base (i32.add (local.get $seg_index_base) (local.get $eseg)))
+              (local.get $off))))
+            ;; Only the untouched prologue is rewritten. Anything else at an
+            ;; entry point is not the pattern this is allowed to assume.
+            (if (i32.and
+                  (i32.eq (i32.load8_u (local.get $wa)) (i32.const 0x1E))
+                  (i32.and
+                    (i32.eq (i32.load8_u offset=1 (local.get $wa)) (i32.const 0x58))
+                    (i32.eq (i32.load8_u offset=2 (local.get $wa)) (i32.const 0x90))))
+              (then
+                (i32.store8 (local.get $wa) (i32.const 0xB8))
+                (i32.store16 offset=1 (local.get $wa) (local.get $sel))))))
+        (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+        (br $entries)))
+      (br $bundles))))
 
   ;; Compare a Pascal string against another Pascal string, case-sensitively.
   ;; NE name tables are upper case and so is the imported-name table, so this
