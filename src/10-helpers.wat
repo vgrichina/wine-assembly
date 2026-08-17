@@ -7096,11 +7096,32 @@
           (then
             (if (i32.lt_s (local.get $binding) (i32.const 0))
               (then
-                ;; Child whole-window DCs have CONTROL_GEOM dimensions.
-                ;; Top-level windows do not, so use the canonical owner
-                ;; surface that gdi_window_dc_bind already ensured. Without
-                ;; this fallback their finite default clip is empty and all
-                ;; WAT nonclient geometry is rejected while text still draws.
+                ;; A whole-window DC on a window that owns its surface is
+                ;; bounded by that surface, so read the size from the surface
+                ;; record itself -- then the clip cannot disagree with what it
+                ;; clips. Deriving it from CONTROL_GEOM instead let the two
+                ;; drift: Sound Recorder's dialog carried 278x163 against a
+                ;; 278x164 surface, and the one-row difference clipped away
+                ;; the bottom of its window frame, leaving it with no dark
+                ;; bottom edge while the right edge (same DrawEdge call) drew
+                ;; fine.
+                ;;
+                ;; Child whole-window DCs still come from CONTROL_GEOM: they
+                ;; draw into their top-level owner's much larger surface, and
+                ;; bounding them by it would let a child paint outside itself.
+                (if (i32.eq (call $wnd_top_level (local.get $hwnd)) (local.get $hwnd))
+                  (then
+                    (local.set $surface (call $gdi_window_surface_record
+                      (local.get $hwnd) (i32.const 0)))
+                    (if (local.get $surface)
+                      (then (return (i32.or
+                        (i32.and (i32.load offset=8 (local.get $surface)) (i32.const 0xFFFF))
+                        (i32.shl
+                          (i32.and (i32.load offset=12 (local.get $surface)) (i32.const 0xFFFF))
+                          (i32.const 16))))))))
+                ;; Without either source a top-level window's finite default
+                ;; clip is empty and all WAT nonclient geometry is rejected
+                ;; while text still draws.
                 (local.set $size (call $ctrl_get_wh_packed (local.get $hwnd)))
                 (if (local.get $size) (then (return (local.get $size))))
                 (local.set $surface (call $gdi_window_surface_record
@@ -7143,23 +7164,36 @@
         (return (local.get $empty))))
     (i32.const 0))
 
+  ;; Size of the backing surface for a top-level window.
+  ;;
+  ;; The window rect comes first because that is the rect everything else
+  ;; drawing here agrees on: $defwndproc_do_ncpaint measures the chrome from
+  ;; it, and the compositor blits the surface over exactly that area. A
+  ;; window's CONTROL_GEOM entry is a second record of the same size and can
+  ;; drift from it -- Sound Recorder's dialog carried 278x163 against a
+  ;; 278x164 window rect, so the frame's bottom edge was drawn one row past
+  ;; the end of a surface sized from CONTROL_GEOM and simply vanished,
+  ;; leaving the window with no dark bottom border.
+  ;;
+  ;; CONTROL_GEOM remains the fallback: during creation a window can have a
+  ;; size in WAT before the renderer has a record to report a rect from.
   (func $gdi_window_surface_dimensions (param $owner i32) (result i32)
     (local $wh i32) (local $rect i32) (local $w i32) (local $h i32)
-    (local.set $wh (call $ctrl_get_wh_packed (local.get $owner)))
-    (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
-    (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
-    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
-          (i32.gt_s (local.get $h) (i32.const 0)))
-      (then (return (local.get $wh))))
     (local.set $rect (global.get $WINDOW_RECT_SCRATCH))
     (call $host_get_window_rect (local.get $owner) (local.get $rect))
     (local.set $w (i32.sub (i32.load offset=8 (local.get $rect)) (i32.load (local.get $rect))))
     (local.set $h (i32.sub (i32.load offset=12 (local.get $rect)) (i32.load offset=4 (local.get $rect))))
+    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+          (i32.gt_s (local.get $h) (i32.const 0)))
+      (then (return (i32.or (i32.and (local.get $w) (i32.const 0xFFFF))
+        (i32.shl (i32.and (local.get $h) (i32.const 0xFFFF)) (i32.const 16))))))
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $owner)))
+    (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
           (i32.le_s (local.get $h) (i32.const 0)))
       (then (return (i32.const 0))))
-    (i32.or (i32.and (local.get $w) (i32.const 0xFFFF))
-      (i32.shl (i32.and (local.get $h) (i32.const 0xFFFF)) (i32.const 16))))
+    (local.get $wh))
 
   (func $gdi_window_surface_ensure (param $hwnd i32) (result i32)
     (local $owner i32) (local $p i32) (local $wh i32) (local $w i32) (local $h i32)
