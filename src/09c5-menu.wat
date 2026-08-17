@@ -1645,21 +1645,29 @@
   ;;   pass 2 — write into a freshly allocated heap blob, sized exactly
   ;; ============================================================
 
-  ;; Read a UTF-16 string starting at $ml_pos. Advances $ml_pos past
-  ;; the trailing NUL, writes the char count to $ml_label_chars, and
-  ;; returns the WASM addr of the first character.
+  ;; Read the label starting at $ml_pos, one $ml_char_stride-wide character at
+  ;; a time. Advances $ml_pos past the trailing NUL, writes the char count to
+  ;; $ml_label_chars, and returns the WASM addr of the first character.
   (func $ml_load_label (result i32)
     (local $start i32) (local $chars i32) (local $ch i32)
     (local.set $start (global.get $ml_pos))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (global.get $ml_pos) (global.get $ml_end)))
-      (local.set $ch (i32.load16_u (global.get $ml_pos)))
-      (global.set $ml_pos (i32.add (global.get $ml_pos) (i32.const 2)))
+      (local.set $ch (call $ml_char_at (global.get $ml_pos) (i32.const 0)))
+      (global.set $ml_pos (i32.add (global.get $ml_pos) (global.get $ml_char_stride)))
       (br_if $done (i32.eqz (local.get $ch)))
       (local.set $chars (i32.add (local.get $chars) (i32.const 1)))
       (br $scan)))
     (global.set $ml_label_chars (local.get $chars))
     (local.get $start))
+
+  ;; Character $i of the label at $wa, in whichever width this template uses.
+  (func $ml_char_at (param $wa i32) (param $i i32) (result i32)
+    (local.set $wa (i32.add (local.get $wa)
+      (i32.mul (local.get $i) (global.get $ml_char_stride))))
+    (if (result i32) (i32.eq (global.get $ml_char_stride) (i32.const 1))
+      (then (i32.load8_u (local.get $wa)))
+      (else (i32.load16_u (local.get $wa)))))
 
   ;; Recursively consume one level of items WITHOUT counting them.
   ;; Used to skip cascading sub-popups in pass 1 / pass 2.
@@ -1785,26 +1793,24 @@
       (br_if $done (i32.and (local.get $resInfo) (i32.const 0x80)))
       (br $items))))
 
-  ;; Find the first '\t' (UTF-16 0x09) in a label, or -1.
+  ;; Find the first '\t' (0x09) in a label, or -1.
   (func $ml_find_tab (param $wa i32) (param $chars i32) (result i32)
     (local $i i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $chars)))
-      (if (i32.eq (i32.load16_u (i32.add (local.get $wa) (i32.shl (local.get $i) (i32.const 1))))
-                  (i32.const 0x09))
+      (if (i32.eq (call $ml_char_at (local.get $wa) (local.get $i)) (i32.const 0x09))
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const -1))
 
-  ;; Copy $chars UTF-16 chars from $src_wa to $dst_wa as ASCII (low byte).
+  ;; Copy $chars characters from $src_wa to $dst_wa as ASCII (low byte).
   (func $ml_copy_ascii (param $src_wa i32) (param $dst_wa i32) (param $chars i32)
     (local $i i32)
     (block $done (loop $cp
       (br_if $done (i32.ge_u (local.get $i) (local.get $chars)))
       (i32.store8 (i32.add (local.get $dst_wa) (local.get $i))
-                  (i32.load16_u (i32.add (local.get $src_wa)
-                                          (i32.shl (local.get $i) (i32.const 1)))))
+                  (call $ml_char_at (local.get $src_wa) (local.get $i)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $cp))))
 
@@ -2101,16 +2107,27 @@
     (if (i32.eq (i32.and (local.get $menu_id) (i32.const 0xFFFF0000))
                 (i32.const 0x00BE0000))
       (then (local.set $menu_id (i32.and (local.get $menu_id) (i32.const 0xFFFF)))))
-    ;; Resolve resource bytes.
-    (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
-    (if (i32.eqz (local.get $entry)) (then (return)))
-    ;; data entry: i32 RVA, i32 size
-    (local.set $bytes_g (i32.add (call $r_base)
-                          (i32.load (call $g2w (i32.add (call $r_base) (local.get $entry))))))
-    (local.set $size (i32.load (call $g2w (i32.add (call $r_base)
-                                                    (i32.add (local.get $entry) (i32.const 4))))))
+    ;; Resolve resource bytes. An NE image keeps its menus in a flat resource
+    ;; table with none of the PE tree, and stores the same MENUITEMTEMPLATE
+    ;; with ANSI rather than UTF-16 labels — which is the whole difference, so
+    ;; both feed the one parser below with the character width set here.
+    (if (global.get $code16)
+      (then
+        (global.set $ml_char_stride (i32.const 1))
+        (local.set $bytes_w (call $win16_find_resource (i32.const 4) (local.get $menu_id)))
+        (if (i32.eqz (local.get $bytes_w)) (then (return)))
+        (local.set $size (global.get $win16_res_len)))
+      (else
+        (global.set $ml_char_stride (i32.const 2))
+        (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
+        (if (i32.eqz (local.get $entry)) (then (return)))
+        ;; data entry: i32 RVA, i32 size
+        (local.set $bytes_g (i32.add (call $r_base)
+                              (i32.load (call $g2w (i32.add (call $r_base) (local.get $entry))))))
+        (local.set $size (i32.load (call $g2w (i32.add (call $r_base)
+                                                        (i32.add (local.get $entry) (i32.const 4))))))
+        (local.set $bytes_w (call $g2w (local.get $bytes_g)))))
     (if (i32.lt_u (local.get $size) (i32.const 8)) (then (return)))
-    (local.set $bytes_w (call $g2w (local.get $bytes_g)))
     (local.set $version (i32.load16_u (local.get $bytes_w)))
     (local.set $headerOffset (i32.load16_u (i32.add (local.get $bytes_w) (i32.const 2))))
     (if (i32.gt_u (local.get $version) (i32.const 1)) (then (return)))

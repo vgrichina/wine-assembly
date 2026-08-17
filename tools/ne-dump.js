@@ -139,6 +139,52 @@ function entries(b, h) {
   return out;
 }
 
+// RT_* by number, as the loader ($win16_find_resource) asks for them. An NE
+// resource table is a flat list of types, each with a run of NAMEINFO records;
+// nothing about it resembles the PE resource tree.
+const RES_TYPES = {
+  1: 'RT_CURSOR', 2: 'RT_BITMAP', 3: 'RT_ICON', 4: 'RT_MENU', 5: 'RT_DIALOG',
+  6: 'RT_STRING', 7: 'RT_FONTDIR', 8: 'RT_FONT', 9: 'RT_ACCELERATOR',
+  10: 'RT_RCDATA', 11: 'RT_MESSAGETABLE', 12: 'RT_GROUP_CURSOR',
+  14: 'RT_GROUP_ICON', 15: 'RT_NAMETABLE', 16: 'RT_VERSION',
+};
+
+// A name in the resource table is an offset from the table start to a Pascal
+// string; the high bit instead marks a plain integer.
+function resName(b, tableStart, value) {
+  if (value & 0x8000) return String(value & 0x7fff);
+  const p = tableStart + value;
+  if (p < 0 || p >= b.length) return `<bad name 0x${value.toString(16)}>`;
+  return `"${pstr(b, p)}"`;
+}
+
+function resources(b, h) {
+  const out = [];
+  const start = h.resTableOff;
+  if (!start || start + 2 > b.length) return out;
+  const shift = b.readUInt16LE(start);
+  let p = start + 2;
+  while (p + 8 <= b.length) {
+    const type = b.readUInt16LE(p);
+    if (!type) break;
+    const count = b.readUInt16LE(p + 2);
+    let q = p + 8;
+    for (let i = 0; i < count && q + 12 <= b.length; i++, q += 12) {
+      const id = b.readUInt16LE(q + 6);
+      out.push({
+        typeName: (type & 0x8000) ? (RES_TYPES[type & 0x7fff] || `type ${type & 0x7fff}`)
+                                  : resName(b, start, type),
+        idName: resName(b, start, id),
+        offset: b.readUInt16LE(q) << shift,
+        length: b.readUInt16LE(q + 2) << shift,
+        flags: b.readUInt16LE(q + 4),
+      });
+    }
+    p = p + 8 + count * 12;
+  }
+  return out;
+}
+
 function flagNames(flags) {
   return SEG_FLAGS.filter(([bit]) => flags & bit).map(([, n]) => n).join('|') || 'CODE';
 }
@@ -172,6 +218,17 @@ function main() {
       console.log(`  [${s.index}] file=0x${s.filePos.toString(16)} len=0x${s.length.toString(16)}` +
                   ` alloc=0x${s.alloc.toString(16)} flags=0x${s.flags.toString(16)} ${flagNames(s.flags)}` +
                   `${s.hasRelocs ? ` relocs=${segRelocs(b, h, s).length}` : ''}`);
+    }
+  }
+
+  if (want('resources')) {
+    console.log('\nResources:');
+    const res = resources(b, h);
+    if (!res.length) console.log('  (none)');
+    for (const r of res) {
+      console.log(`  ${r.typeName.padEnd(14)} id=${r.idName.padEnd(10)}` +
+                  ` file=0x${r.offset.toString(16)} len=0x${r.length.toString(16)}` +
+                  ` flags=0x${r.flags.toString(16)}`);
     }
   }
 

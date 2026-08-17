@@ -3402,7 +3402,15 @@
   ;; Existence check for a resource by (type, int id or guest str ptr).
   ;; Used by the renderer to decide whether a window has a menu resource
   ;; without a JS-side presence map.
+  ;; "Does this module carry that resource?" — asked by the renderer before it
+  ;; hangs a menu on a window. A 16-bit task keeps its resources in the NE
+  ;; table, which the PE walker cannot see at all, so answering from
+  ;; $find_resource alone told the renderer every Win16 app was menu-less.
   (func (export "rsrc_exists") (param $type_id i32) (param $name_id i32) (result i32)
+    (if (global.get $code16)
+      (then (return (i32.ne
+        (call $win16_find_resource (local.get $type_id) (local.get $name_id))
+        (i32.const 0)))))
     (i32.ne (call $find_resource (local.get $type_id) (local.get $name_id)) (i32.const 0)))
 
   (func (export "dlg_get_ctrl_count") (param $hwnd i32) (result i32)

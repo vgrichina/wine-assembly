@@ -2265,6 +2265,10 @@
   (global $ml_struct_cur   (mut i32) (i32.const 0))
   (global $ml_string_cur   (mut i32) (i32.const 0))
   (global $ml_label_chars  (mut i32) (i32.const 0))  ;; out from $ml_load_label
+  ;; Bytes per character in the menu template being parsed. A PE MENU resource
+  ;; stores its labels as UTF-16; an NE one stores the same template with ANSI
+  ;; labels, and that is the only difference between the two. Set by $menu_load.
+  (global $ml_char_stride  (mut i32) (i32.const 2))
 
   ;; Menu tracking state — set by $menu_open / cleared by $menu_close.
   ;; Read by $menu_paint_bar (open_idx) and $menu_paint_dropdown (hover)
