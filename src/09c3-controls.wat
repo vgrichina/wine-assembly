@@ -9668,12 +9668,94 @@
         (return (i32.const 0))))
 
     ;; ---------- LB_INSERTSTRING (0x0181) — wParam=index, lParam=string ptr ----------
-    ;; -1 means "append" (LB_ADDSTRING semantics). For simplicity (and what the
-    ;; combobox forward path needs), forward to LB_ADDSTRING; full mid-list
-    ;; insertion is only needed by sorted listboxes which we don't support.
+    ;; -1 (or any index past the end) means "append" — LB_ADDSTRING semantics.
+    ;; A real mid-list insert matters beyond sorted listboxes: an app that keeps
+    ;; a parallel array of its own records indexes both by row, so appending a
+    ;; string the caller asked to insert at N silently shifts every row past N
+    ;; out of step with that array. Task Manager does exactly this (its rows
+    ;; pair with a comctl32 DSA), and End Task then acted on the wrong window.
+    ;;
+    ;; Strategy: let LB_ADDSTRING do the appending and all three buffer grows,
+    ;; then rotate that last item down into place.
     (if (i32.eq (local.get $msg) (i32.const 0x0181))
-      (then (return (call $listbox_wndproc (local.get $hwnd)
-                      (i32.const 0x0180) (i32.const 0) (local.get $lParam)))))
+      (then
+        (local.set $idx (local.get $wParam))
+        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (local.get $count)))
+          (then (return (call $listbox_wndproc (local.get $hwnd)
+                          (i32.const 0x0180) (i32.const 0) (local.get $lParam)))))
+        (if (i32.lt_s (call $listbox_wndproc (local.get $hwnd)
+                        (i32.const 0x0180) (i32.const 0) (local.get $lParam))
+                      (i32.const 0))
+          (then (return (i32.const -1))))
+        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $used (i32.load offset=4 (local.get $sw)))
+        ;; Byte offset of item $idx, then of the item just appended.
+        (local.set $p (local.get $items_w))
+        (local.set $i (i32.const 0))
+        (block $ins_at (loop $ins_skip
+          (br_if $ins_at (i32.eq (local.get $i) (local.get $idx)))
+          (local.set $p (i32.add (local.get $p)
+                          (i32.add (call $strlen (local.get $p)) (i32.const 1))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $ins_skip)))
+        (local.set $dest_g (i32.sub (local.get $p) (local.get $items_w)))
+        (local.set $tmp_w (local.get $p))
+        (block $ins_last (loop $ins_walk
+          (br_if $ins_last (i32.ge_s (local.get $i) (local.get $count)))
+          (local.set $tmp_w (i32.add (local.get $tmp_w)
+                              (i32.add (call $strlen (local.get $tmp_w)) (i32.const 1))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $ins_walk)))
+        (local.set $last (i32.sub (local.get $tmp_w) (local.get $items_w)))
+        (local.set $slen (i32.sub (local.get $used) (local.get $last)))
+        ;; Park the appended string, open the gap, drop it in. memory.copy is
+        ;; memmove-like, so the overlapping shift up is safe.
+        (local.set $tmp_g (call $heap_alloc (local.get $slen)))
+        (memory.copy (call $g2w (local.get $tmp_g))
+                     (i32.add (local.get $items_w) (local.get $last))
+                     (local.get $slen))
+        (memory.copy (i32.add (local.get $items_w)
+                       (i32.add (local.get $dest_g) (local.get $slen)))
+                     (i32.add (local.get $items_w) (local.get $dest_g))
+                     (i32.sub (local.get $last) (local.get $dest_g)))
+        (memory.copy (i32.add (local.get $items_w) (local.get $dest_g))
+                     (call $g2w (local.get $tmp_g))
+                     (local.get $slen))
+        (call $heap_free (local.get $tmp_g))
+        ;; Rotate the parallel item-data array the same way. LB_ADDSTRING
+        ;; zeroed the appended slot, so $idx ends up with a fresh 0.
+        (if (i32.load offset=36 (local.get $sw))
+          (then
+            (local.set $dest_w (call $g2w (i32.load offset=36 (local.get $sw))))
+            (local.set $sz (i32.load
+              (i32.add (local.get $dest_w) (i32.mul (local.get $count) (i32.const 4)))))
+            (memory.copy
+              (i32.add (local.get $dest_w)
+                (i32.mul (i32.add (local.get $idx) (i32.const 1)) (i32.const 4)))
+              (i32.add (local.get $dest_w) (i32.mul (local.get $idx) (i32.const 4)))
+              (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 4)))
+            (i32.store (i32.add (local.get $dest_w) (i32.mul (local.get $idx) (i32.const 4)))
+              (local.get $sz))))
+        ;; And the byte-per-row multi-selection flags.
+        (if (i32.load offset=44 (local.get $sw))
+          (then
+            (local.set $dest_w (call $g2w (i32.load offset=44 (local.get $sw))))
+            (local.set $sz (i32.load8_u
+              (i32.add (local.get $dest_w) (local.get $count))))
+            (memory.copy
+              (i32.add (local.get $dest_w) (i32.add (local.get $idx) (i32.const 1)))
+              (i32.add (local.get $dest_w) (local.get $idx))
+              (i32.sub (local.get $count) (local.get $idx)))
+            (i32.store8 (i32.add (local.get $dest_w) (local.get $idx)) (local.get $sz))))
+        ;; A selection at or after the insert point moves down a row.
+        (local.set $sel (i32.load offset=16 (local.get $sw)))
+        (if (i32.ge_s (local.get $sel) (local.get $idx))
+          (then (i32.store offset=16 (local.get $sw)
+                  (i32.add (local.get $sel) (i32.const 1)))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $idx))))
 
     ;; ---------- LB_DELETESTRING (0x0182) ----------
     ;; wParam = index. Removes the item; returns new count, or LB_ERR(-1).
