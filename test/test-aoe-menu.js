@@ -73,6 +73,16 @@ const args = [
   `--exe=${EXE}`,
   '--no-build',
   '--max-batches=328000',
+  // 328k batches is by far the longest run in the suite, and at the default of
+  // one composite per batch it was compositing the screen 328,000 times. That
+  // is invisible work -- nothing watches a headless frame -- and it is not
+  // free: skia-canvas 3.0.8 leaks ~320 bytes of unreclaimable native memory
+  // per draw call, so the run grew to 6.3GB and the process died partway with
+  // a bare status=1 and no crash marker, which is why the later snapshots
+  // never appeared. Compositing every 100th batch instead: 0.89GB and 3x
+  // faster. Snapshots call repaint() themselves, so the captured pixels are
+  // byte-identical.
+  '--repaint-every=100',
   '--quiet-api',
   '--quiet-blocks',
   `--input=${inputSpec}`,
@@ -89,12 +99,6 @@ try {
     timeout: 480000,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
-    // This is the one run long enough to hit skia-canvas's unbounded GPU
-    // surface growth: 328k batches of an animating game peaked at 6.4GB RSS
-    // and the process died partway with a bare status=1 and no crash marker,
-    // which is why the later snapshots simply never appeared. Raster peaks at
-    // 1.3GB and finishes in ~38s, far inside the timeout above.
-    env: { ...process.env, WA_CANVAS_GPU: '0' },
   });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();

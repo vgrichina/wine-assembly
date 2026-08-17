@@ -67,6 +67,14 @@ const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: print raw sparse guest-map records
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
+// Composite the screen only every Nth batch. Nobody watches a headless run, so
+// intermediate frames exist only to be overwritten -- and they are not free:
+// skia-canvas 3.0.8 leaks roughly 320 bytes of unreclaimable native memory per
+// draw call (reproduced standalone; identical on GPU and CPU, and unaffected
+// by exports, forced GC, or recreating the Canvas). At one composite per batch
+// a long run pays that leak millions of times over. Snapshot actions call
+// repaint() themselves, so raising this does not affect captured pixels.
+const REPAINT_EVERY = Math.max(1, parseInt(getArg('repaint-every', '1')) || 1);
 // When multiple --break addrs are passed, the WASM `set_bp` only holds one,
 // so the JS fallback (eipBefore check) must see every block entry. Force
 // batch-size=1 so each block run hits the check loop.
@@ -1571,14 +1579,14 @@ async function main() {
     if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 9, words: [], call: true }; return; }
-    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 2, words: [], ret: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
       const { call: isCall, ret: isRet, words } = pendingWin16;
       pendingWin16 = null;
       if (isRet) {
-        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])}`);
+        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])} esp=${hex(words[3])}`);
         return;
       }
       const [key, ret, nameAddr] = words;
@@ -5182,8 +5190,13 @@ async function main() {
       base.gdi.presentBestDxOffscreen();
     }
 
-    // Flush deferred repaint so back canvas composites after all GDI writes
-    if (renderer && renderer.flushRepaint) renderer.flushRepaint();
+    // Flush deferred repaint so back canvas composites after all GDI writes.
+    // The scheduled-repaint flag survives a skipped flush, so coalescing here
+    // delays a composite, never drops one.
+    if (renderer && renderer.flushRepaint
+        && (REPAINT_EVERY === 1 || batch % REPAINT_EVERY === 0)) {
+      renderer.flushRepaint();
+    }
     if (TRACE_BATCH_TIMING) {
       const afterPaintMs = Date.now();
       console.log(`[batch-timing] batch=${batch} run=${afterRunMs - batchStartMs}ms paint=${afterPaintMs - afterRunMs}ms eip=${hex(instance.exports.get_eip())}`);
