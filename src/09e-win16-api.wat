@@ -1177,6 +1177,23 @@
       (then (call $win16_MessageBox) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 286))
       (then (call $win16_GetDesktopWindow) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 259))
+      (then (call $win16_BeginDeferWindowPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 260))
+      (then (call $win16_DeferWindowPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 261))
+      (then (call $win16_EndDeferWindowPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 229))
+      (then (call $win16_GetTopWindow) (return (i32.const 1))))
+    ;; GetNextWindow is GetWindow with the same two arguments; USER kept both
+    ;; names and one implementation.
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 262))
+                (i32.eq (local.get $ordinal) (i32.const 230)))
+      (then (call $win16_GetWindow) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 277))
+      (then (call $win16_GetDlgCtrlID) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 111))
+      (then (call $win16_SendMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 174))
       (then (call $win16_LoadIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 175))
@@ -1700,6 +1717,13 @@
     (local.set $show (call $win16_arg16 (i32.const 0)))
     (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0018)
       (i32.ne (local.get $show) (i32.const 0)) (i32.const 0)))
+    (if (i32.and (i32.ne (local.get $show) (i32.const 0))
+          (i32.and (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+                   (i32.ne (global.get $pending_wm_size) (i32.const 0))))
+      (then
+        (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0005)
+          (i32.const 0) (global.get $pending_wm_size)))
+        (global.set $pending_wm_size (i32.const 0))))
     (drop (call $host_show_window (local.get $hwnd) (local.get $show)))
     (if (local.get $show)
       (then
@@ -1800,6 +1824,41 @@
     (local.set $ret (call $win16_take_return (i32.const 4)))
     (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
       (local.get $message) (local.get $wparam) (local.get $lparam)
+      (i32.shr_u (local.get $ret) (i32.const 16))
+      (i32.and (local.get $ret) (i32.const 0xFFFF))))
+
+  ;; USER.111 SendMessage(hWnd, wMsg, wParam, lParam) -> LONG.
+  ;;
+  ;; Synchronous, and it can be: a 16-bit window procedure returns exactly
+  ;; where a Win16 API returns, so handing it the caller's own far return
+  ;; address makes its RETF 10 land there with the result already in DX:AX.
+  ;; That is the same trick DispatchMessage uses and it needs no continuation.
+  ;;
+  ;; A window whose procedure is not a far pointer belongs to the WAT side —
+  ;; a control, or a window with none at all — and goes through
+  ;; $wnd_send_message, which knows how to run those.
+  (func $win16_SendMessage
+    (local $hwnd16 i32) (local $hwnd i32) (local $msg i32)
+    (local $wp i32) (local $lp i32) (local $proc i32) (local $ret i32)
+    (local.set $hwnd16 (call $win16_arg16 (i32.const 4)))
+    (local.set $msg (call $win16_arg16 (i32.const 3)))
+    (local.set $wp (call $win16_arg16 (i32.const 2)))
+    (local.set $lp (call $win16_arg32 (i32.const 0)))
+    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
+      (then
+        (call $win16_call32_begin (i32.const 4))
+        (global.set $eax (call $wnd_send_message
+          (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp)))
+        (call $win16_call32_end)
+        (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 10))
+        (return)))
+    (local.set $ret (call $win16_take_return (i32.const 10)))
+    (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
+      (local.get $msg) (local.get $wp) (local.get $lp)
       (i32.shr_u (local.get $ret) (i32.const 16))
       (i32.and (local.get $ret) (i32.const 0xFFFF))))
 
@@ -2254,6 +2313,79 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 10)))
+
+  ;; USER.259 BeginDeferWindowPos(nNumWindows) -> HDWP,
+  ;; USER.260 DeferWindowPos(hdwp, hWnd, hWndInsertAfter, x, y, cx, cy, flags),
+  ;; USER.261 EndDeferWindowPos(hdwp).
+  ;;
+  ;; Windows batches the moves so a multi-window relayout lands in one paint;
+  ;; each one is applied as it arrives here instead, which every caller sees as
+  ;; the same final geometry. MFC's CFrameWnd::RecalcLayout arranges a frame's
+  ;; control bars this way, so a 16-bit MFC app reaches this on its first
+  ;; WM_SIZE — Hearts does, positioning its status bar.
+  (func $win16_BeginDeferWindowPos
+    ;; The handle only has to be non-zero and survive to EndDeferWindowPos.
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 2)))
+
+  (func $win16_DeferWindowPos
+    (local $hwnd i32) (local $after i32) (local $x i32) (local $y i32)
+    (local $cx i32) (local $cy i32) (local $flags i32) (local $hdwp i32)
+    (local.set $hdwp (call $win16_arg16 (i32.const 7)))
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (local.set $after (call $win16_arg16 (i32.const 5)))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 4))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 3))))
+    (local.set $cx (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (local.set $cy (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $flags (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 7))
+    (call $win16_call32_arg (i32.const 5) (local.get $cy))
+    (call $win16_call32_arg (i32.const 6) (local.get $flags))
+    (call $handle_SetWindowPos (local.get $hwnd) (local.get $after)
+      (local.get $x) (local.get $y) (local.get $cx) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (local.get $hdwp))
+    (call $win16_api_return (i32.const 16)))
+
+  (func $win16_EndDeferWindowPos
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; USER.229 GetTopWindow(hWnd) and USER.262 GetWindow(hWnd, wCmd) — the pair
+  ;; a frame walks its children with, one after the other.
+  (func $win16_GetTopWindow
+    (local $hwnd i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetTopWindow (local.get $hwnd)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; USER.277 GetDlgCtrlID(hWnd) — the id a child was created with. A frame
+  ;; walking its children reads it to tell one control bar from another.
+  (func $win16_GetDlgCtrlID
+    (local $hwnd i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetDlgCtrlID (local.get $hwnd)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
+  (func $win16_GetWindow
+    (local $hwnd i32) (local $cmd i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local.set $cmd (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetWindow (local.get $hwnd) (local.get $cmd)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 4)))
 
   ;; USER.53 DestroyWindow(hWnd).
   (func $win16_DestroyWindow
