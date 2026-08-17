@@ -87,6 +87,40 @@ function px(canvas, x, y) {
   assert.deepStrictEqual(px(c, 0, 0), [0, 0, 0, 0], 'putImageData is bounded');
 }
 
+// Resizing reallocates and clears, like a real canvas. The screen surface is
+// resized this way (test/run.js sets renderer.canvas.width), and getting it
+// wrong is invisible until a window-resize test notices the surface never grew.
+{
+  const c = createCanvas(4, 4);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ff0000';
+  ctx.fillRect(0, 0, 4, 4);
+
+  c.width = 20;
+  c.height = 10;
+  assert.strictEqual(c.width, 20, 'width takes the new value');
+  assert.strictEqual(c.height, 10, 'height takes the new value');
+  assert.deepStrictEqual(px(c, 1, 1), [0, 0, 0, 0], 'resize clears the surface');
+
+  // The enlarged area must be real, addressable pixels.
+  ctx.fillStyle = '#00ff00';
+  ctx.fillRect(0, 0, 20, 10);
+  assert.deepStrictEqual(px(c, 19, 9), [0, 255, 0, 255], 'the grown region is paintable');
+
+  // Same-size assignment still resets, which is what canvas does.
+  c.width = 20;
+  assert.deepStrictEqual(px(c, 19, 9), [0, 0, 0, 0], 'assigning the same size clears too');
+
+  // And a stale clip must not survive the resize.
+  const c2 = createCanvas(4, 4);
+  const x2 = c2.getContext('2d');
+  x2.beginPath(); x2.rect(0, 0, 2, 2); x2.clip();
+  c2.width = 8; c2.height = 8;
+  x2.fillStyle = '#0000ff';
+  x2.fillRect(0, 0, 8, 8);
+  assert.deepStrictEqual(px(c2, 6, 6), [0, 0, 255, 255], 'resize drops the old clip');
+}
+
 // PNG encode, and decode back to the same pixels.
 (async () => {
   const c = createCanvas(6, 6);
