@@ -2130,6 +2130,9 @@
   ;; name — index WIN16_SEG_MAX — which is why it needs no address here.
   (global $win16_handle_next (mut i32) (i32.const 0))
   (global $WIN16_HANDLE_MAX i32 (i32.const 4096))
+  ;; Indices start here so a small integer an app writes where a handle goes --
+  ;; COLOR_WINDOW+1 in a class background -- can never collide with one.
+  (global $WIN16_HANDLE_BASE i32 (i32.const 0x100))
   ;; --trace-win16: log every dispatch, not only the one that stops the task.
   (global $win16_trace (mut i32) (i32.const 0))
   ;; The task's real ESP while a Win16 handler is borrowing the 32-bit stack to

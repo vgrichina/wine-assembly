@@ -44,7 +44,12 @@
     (local $base i32)
     (local.set $sel (i32.and (local.get $sel) (i32.const 0xFFFF)))
     (local.set $base (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
-    (if (i32.eqz (local.get $base))
+    ;; The null selector is not an error: a NULL far pointer is loaded with it
+    ;; all the time and only faults when something dereferences it. Give it a
+    ;; zero base so an access lands at guest offset 0 rather than stopping the
+    ;; task at the load. A *non*-zero selector that names no segment is a real
+    ;; mistake and still stops.
+    (if (i32.and (i32.eqz (local.get $base)) (i32.ne (local.get $sel) (i32.const 0)))
       (then
         (call $host_log_i32 (i32.const 0xCA165E10))  ;; selector names no segment
         (call $host_log_i32 (local.get $sel))

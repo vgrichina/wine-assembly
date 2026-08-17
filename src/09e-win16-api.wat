@@ -81,20 +81,30 @@
   ;; 16 -> 32. An index the table never handed out is a bug in the translation
   ;; layer, not something to paper over with a zero: it means an API returned a
   ;; raw 32-bit handle, or took one it should have widened.
+  ;; Indices start well above the small integers Windows lets an app write
+  ;; where a handle goes -- a class background may be COLOR_WINDOW+1 rather
+  ;; than a brush, and Hearts does exactly that. Starting at 0x100 makes the
+  ;; two unambiguous by construction instead of by guessing at magnitude, and
+  ;; anything below the base passes through untouched for the 32-bit side to
+  ;; read under the same convention.
   (func $win16_h32 (param $h16 i32) (result i32)
     (local.set $h16 (i32.and (local.get $h16) (i32.const 0xFFFF)))
     (if (i32.eqz (local.get $h16)) (then (return (i32.const 0))))
     ;; 0xFFFF is a sentinel in more places than it is a handle (HWND_BROADCAST,
     ;; and the -1 several APIs take), so it passes through sign-extended.
     (if (i32.eq (local.get $h16) (i32.const 0xFFFF)) (then (return (i32.const -1))))
-    (if (i32.gt_u (local.get $h16) (global.get $win16_handle_next))
+    (if (i32.lt_u (local.get $h16) (global.get $WIN16_HANDLE_BASE))
+      (then (return (local.get $h16))))
+    (if (i32.gt_u (i32.sub (local.get $h16) (global.get $WIN16_HANDLE_BASE))
+                  (global.get $win16_handle_next))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F3))
         (call $host_log_i32 (local.get $h16))
         (call $host_log_i32 (global.get $win16_handle_next))
         (unreachable)))
     (i32.load (i32.add (call $win16_handle_table)
-                       (i32.shl (local.get $h16) (i32.const 2)))))
+                       (i32.shl (i32.sub (local.get $h16) (global.get $WIN16_HANDLE_BASE))
+                                (i32.const 2)))))
 
   ;; 32 -> 16, allocating on first sight. The scan is linear because the table
   ;; holds tens of entries for these apps, not thousands, and a hash would be
@@ -109,7 +119,7 @@
       (br_if $done (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
       (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
                   (local.get $h32))
-        (then (return (local.get $i))))
+        (then (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (if (i32.ge_u (global.get $win16_handle_next) (global.get $WIN16_HANDLE_MAX))
@@ -121,7 +131,7 @@
     (i32.store (i32.add (local.get $t)
                         (i32.shl (global.get $win16_handle_next) (i32.const 2)))
                (local.get $h32))
-    (global.get $win16_handle_next))
+    (i32.add (global.get $win16_handle_next) (global.get $WIN16_HANDLE_BASE)))
 
   ;; ---- Calling the 32-bit handler for the same API ----
   ;;
@@ -427,6 +437,141 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; KERNEL.55 Catch(lpCatchBuf) / KERNEL.56 Throw(lpCatchBuf, nErrLevel) —
+  ;; Win16's setjmp and longjmp. Catch records where it was called from and
+  ;; answers 0; Throw puts execution back there with AX set to its second
+  ;; argument, so the same Catch appears to return twice.
+  ;;
+  ;; The SDK never documented what a CATCHBUF holds, and nothing but these two
+  ;; functions ever reads one, so the layout here is ours: SP as it will be
+  ;; once Catch has returned, then BP, SI, DI, DS, ES, and the return address
+  ;; as IP and CS.
+  (func $win16_Catch
+    (local $buf i32) (local $ip i32) (local $cs i32)
+    (local.set $buf (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $ip (call $gl16 (global.get $esp)))
+    (local.set $cs (call $gl16 (i32.add (global.get $esp) (i32.const 2))))
+    (call $gs16 (local.get $buf)
+      (i32.and (i32.add (global.get $esp) (i32.const 8)) (i32.const 0xFFFF)))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 2))
+      (i32.and (global.get $ebp) (i32.const 0xFFFF)))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 4))
+      (i32.and (global.get $esi) (i32.const 0xFFFF)))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 6))
+      (i32.and (global.get $edi) (i32.const 0xFFFF)))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 8)) (global.get $sreg_ds))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 10)) (global.get $sreg_es))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 12)) (local.get $ip))
+    (call $gs16 (i32.add (local.get $buf) (i32.const 14)) (local.get $cs))
+    (global.set $eax (i32.const 0))
+    (call $win16_api_return (i32.const 4)))
+
+  (func $win16_Throw
+    (local $buf i32) (local $n i32)
+    (local.set $buf (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $n (call $win16_arg16 (i32.const 0)))
+    (call $set_reg16 (i32.const 5) (call $gl16 (i32.add (local.get $buf) (i32.const 2))))
+    (call $set_reg16 (i32.const 6) (call $gl16 (i32.add (local.get $buf) (i32.const 4))))
+    (call $set_reg16 (i32.const 7) (call $gl16 (i32.add (local.get $buf) (i32.const 6))))
+    (call $win16_set_sreg (i32.const 3) (call $gl16 (i32.add (local.get $buf) (i32.const 8))))
+    (call $win16_set_sreg (i32.const 0) (call $gl16 (i32.add (local.get $buf) (i32.const 10))))
+    (call $win16_set_sreg (i32.const 1) (call $gl16 (i32.add (local.get $buf) (i32.const 14))))
+    (global.set $esp (i32.add (global.get $seg_base_ss) (call $gl16 (local.get $buf))))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+      (call $gl16 (i32.add (local.get $buf) (i32.const 12)))))
+    (global.set $eax (local.get $n))
+    (global.set $steps (i32.const 0)))
+
+  ;; ---- The registry ----
+  ;;
+  ;; The Win 3.1 registry API is the Win32 one at its smallest: HKEY is a
+  ;; DWORD in both, and the two calls that exist here take far pointers where
+  ;; Win32 takes flat ones.
+
+  ;; KERNEL.218 RegCreateKey(hKey, lpSubKey, lphkResult).
+  (func $win16_RegCreateKey
+    (local $key i32) (local $sub i32) (local $out i32)
+    (local.set $key (call $win16_arg32 (i32.const 4)))
+    (local.set $sub (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $out (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_RegCreateKeyA (local.get $key) (local.get $sub) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 12)))
+
+  ;; KERNEL.220 RegCloseKey(hKey), KERNEL.227 RegFlushKey(hKey). Flushing is a
+  ;; no-op because the store behind the registry is written through on every
+  ;; set; saying so with success is the truthful answer.
+  (func $win16_RegCloseKey
+    (local $key i32)
+    (local.set $key (call $win16_arg32 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_RegCloseKey (local.get $key)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.const 0))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
+  ;; KERNEL.221 RegSetValue(hKey, lpSubKey, dwType, lpData, cbData).
+  (func $win16_RegSetValue
+    (local $key i32) (local $sub i32) (local $type i32) (local $data i32) (local $cb i32)
+    (local.set $key (call $win16_arg32 (i32.const 7)))
+    (local.set $sub (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5))))
+    (local.set $type (call $win16_arg32 (i32.const 3)))
+    (local.set $data (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $cb (call $win16_arg32 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 5))
+    (call $win16_call32_arg (i32.const 4) (local.get $cb))
+    (call $handle_RegSetValueA (local.get $key) (local.get $sub) (local.get $type)
+      (local.get $data) (local.get $cb) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.const 0))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 20)))
+
+  ;; KERNEL.225 RegQueryValueEx(hKey, lpValueName, lpReserved, lpType, lpData,
+  ;; lpcbData) and KERNEL.226 RegSetValueEx(hKey, lpValueName, dwReserved,
+  ;; dwType, lpData, cbData). Six far-or-dword arguments each, 24 bytes.
+  (func $win16_reg_value_ex (param $is_set i32)
+    (local $key i32) (local $name i32) (local $type i32) (local $data i32)
+    (local $cb i32) (local $reserved i32)
+    (local.set $key (call $win16_arg32 (i32.const 10)))
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 9)) (call $win16_arg16 (i32.const 8))))
+    (local.set $reserved (call $win16_arg32 (i32.const 6)))
+    (local.set $type (if (result i32) (local.get $is_set)
+      (then (call $win16_arg32 (i32.const 4)))
+      (else (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))))
+    (local.set $data (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $cb (if (result i32) (local.get $is_set)
+      (then (call $win16_arg32 (i32.const 0)))
+      (else (call $win16_far_to_guest
+        (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
+    (call $win16_call32_begin (i32.const 6))
+    (call $win16_call32_arg (i32.const 4) (local.get $data))
+    (call $win16_call32_arg (i32.const 5) (local.get $cb))
+    (if (local.get $is_set)
+      (then (call $handle_RegSetValueExA (local.get $key) (local.get $name)
+              (local.get $reserved) (local.get $type) (local.get $data) (i32.const 0)))
+      (else (call $handle_RegQueryValueExA (local.get $key) (local.get $name)
+              (local.get $reserved) (local.get $type) (local.get $data) (i32.const 0))))
+    (call $win16_call32_end)
+    (global.set $edx (i32.const 0))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 24)))
+
   ;; ---- The local heap ----
   ;;
   ;; A Win16 local handle is a near pointer: an offset within the task's own
@@ -528,6 +673,24 @@
       (then (call $win16_lstr (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 90))
       (then (call $win16_lstrlen) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 55))
+      (then (call $win16_Catch) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 56))
+      (then (call $win16_Throw) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 218))
+      (then (call $win16_RegCreateKey) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 220))
+      (then (call $win16_RegCloseKey) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 221))
+      (then (call $win16_RegSetValue) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 225))
+      (then (call $win16_reg_value_ex (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 226))
+      (then (call $win16_reg_value_ex (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 227))   ;; RegFlushKey
+      (then (global.set $edx (i32.const 0))
+            (call $win16_local_identity (i32.const 4) (i32.const 0))
+            (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 60))
       (then (call $win16_FindResource) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 61))
@@ -730,6 +893,18 @@
     (call $win16_api_return (i32.const 12)))
 
   (func $win16_user (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 121))
+      (then (call $win16_hook (i32.const 3)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 234))
+      (then (call $win16_hook (i32.const 4)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 235))
+      (then (call $win16_hook (i32.const 5)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 291))
+      (then (call $win16_hook (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 292))
+      (then (call $win16_hook (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 293))
+      (then (call $win16_hook (i32.const 2)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 18))
       (then (call $win16_hwnd_query (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 19))
@@ -1715,12 +1890,19 @@
         (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
         (call $win16_api_return (i32.const 10))
         (return)))
-    ;; Everything else must have no buffer at all, or the width is a guess.
+    ;; An action that carries a structure this cannot narrow gets FALSE — the
+    ;; documented failure, which every caller has to handle, rather than a
+    ;; structure in the wrong layout. FreeCell asks for SPI_GETNONCLIENTMETRICS
+    ;; to size its fonts and falls back to defaults when it is refused; filling
+    ;; its 16-bit NONCLIENTMETRICS from the Win32 one means converting five
+    ;; LOGFONTs, which is worth doing when something actually needs the answer.
     (if (call $win16_arg16 (i32.const 2))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F6))
         (call $host_log_i32 (local.get $action))
-        (unreachable)))
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 10))
+        (return)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_SystemParametersInfoA (local.get $action) (local.get $param)
       (i32.const 0) (local.get $ini) (i32.const 0) (i32.const 0))
@@ -2519,6 +2701,57 @@
         (call $host_log_i32 (global.get $eip))
         (call $host_log_i32 (global.get $esp)))))
 
+  ;; Hooks. The call succeeds and the handle is real enough to unhook, but no
+  ;; hook procedure is ever called: delivering one means entering 16-bit code
+  ;; from inside a 32-bit handler, which is the thing that does not work here
+  ;; (see $wnd_send_message). Deliberately not routed to
+  ;; $handle_SetWindowsHookExA either — that one remembers a CBT procedure for
+  ;; CreateWindowEx to call as a flat address, and a Win16 one is a far
+  ;; pointer. Hearts installs a CBT hook to position its dialogs; without it
+  ;; they appear where the template puts them.
+  (func $win16_hook (param $which i32)
+    (if (i32.eq (local.get $which) (i32.const 0))       ;; SetWindowsHookEx
+      (then (call $win16_local_identity (i32.const 10) (i32.const 0xBEEF)) (return)))
+    (if (i32.eq (local.get $which) (i32.const 1))       ;; UnhookWindowsHookEx
+      (then (call $win16_local_identity (i32.const 2) (i32.const 1)) (return)))
+    (if (i32.eq (local.get $which) (i32.const 2))       ;; CallNextHookEx
+      (then
+        (global.set $edx (i32.const 0))
+        (call $win16_local_identity (i32.const 10) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $which) (i32.const 3))       ;; SetWindowsHook
+      (then
+        (global.set $edx (i32.const 0))
+        (call $win16_local_identity (i32.const 6) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $which) (i32.const 4))       ;; UnhookWindowsHook
+      (then (call $win16_local_identity (i32.const 6) (i32.const 1)) (return)))
+    (global.set $edx (i32.const 0))                     ;; DefHookProc
+    (call $win16_local_identity (i32.const 12) (i32.const 0)))
+
+  ;; ---- COMMDLG ----
+
+  ;; COMMDLG.27 GetFileTitle(lpszFile, lpszTitle, cbBuf). Both buffers hold
+  ;; bytes in either world, so only the pointers need widening.
+  (func $win16_GetFileTitle
+    (local $file i32) (local $title i32) (local $cb i32)
+    (local.set $file (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    (local.set $title (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $cb (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_GetFileTitleA (local.get $file) (local.get $title) (local.get $cb)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
+  (func $win16_commdlg (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 27))
+      (then (call $win16_GetFileTitle) (return (i32.const 1))))
+    (i32.const 0))
+
   ;; The dispatcher. $thunk_off is the offset within WIN16_THUNK_SEL that the
   ;; loader wrote into the fixup; $ret_lin is the linear return address, which
   ;; is already on the stack and is passed only so a trap can name it.
@@ -2635,6 +2868,9 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 3))
       (then (if (call $win16_gdi (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (i32.eq (local.get $module) (i32.const 8))
+      (then (if (call $win16_commdlg (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
 
     ;; Anything not implemented reports itself and stops, on the same reasoning
