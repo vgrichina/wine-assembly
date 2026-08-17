@@ -802,6 +802,22 @@ Resource-aware Win98 emulator
       if (box) box.checked = on;
     }
 
+    // An app in exclusive fullscreen hides the toolbar, so the checkbox is
+    // unreachable precisely when someone is playing the thing that feels
+    // laggy. Keyboard is the only surface that survives that layout:
+    //   Ctrl+Alt+P  overlay        Ctrl+Alt+S  stream
+    // Capture phase, because the canvas handlers below forward keys to the
+    // guest and would otherwise swallow the combination.
+    window.addEventListener('keydown', e => {
+      if (!e.ctrlKey || !e.altKey) return;
+      const k = (e.key || '').toLowerCase();
+      if (k !== 'p' && k !== 's') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (k === 'p') setPerfHud(!(window.WinePerf && window.WinePerf._visible));
+      else setPerfStream(!(window.WinePerf && window.WinePerf.streamUrl));
+    }, true);
+
     // `?perf-stream` posts samples to the dev server's /api/perf sink, so a
     // session someone is really playing can be watched from a terminal.
     // Collection runs whether or not the overlay is drawn.
