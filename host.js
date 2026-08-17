@@ -713,6 +713,11 @@ class WineAssembly {
       this.instance.exports.set_process_id(this.processId);
     }
     this._wasmModule = wasmModule;
+    // Kept so an experimental guest worker can be handed the SAME host import
+    // table this instance uses — the point of the broker is that there is one
+    // implementation of every host call, not two.
+    this._mainImports = imports;
+    await this._maybeStartGuestWorker(wasmModule);
     if (this.renderer) {
       this.renderer.wasm = this.instance;
       this.renderer.wasmMemory = this.memory;
@@ -949,6 +954,47 @@ class WineAssembly {
     );
   }
 
+  // EXPERIMENTAL: run the guest's main thread in a Worker.
+  //
+  // Only when the page asked for it AND the document is cross-origin isolated,
+  // because a shared WebAssembly.Memory cannot reach a Worker otherwise. Any
+  // failure here falls back to the normal single-threaded path rather than
+  // taking the launch down with it — single-threaded is a supported mode, not a
+  // degraded one (docs/design-real-threads.md §3.6).
+  async _maybeStartGuestWorker(wasmModule) {
+    if (typeof window === 'undefined') return;
+    if (!window.WINE_THREADS) return;
+    if (!(typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated)) {
+      this.logToUI('[threads] not cross-origin isolated — running single-threaded');
+      return;
+    }
+    if (typeof GuestThreadHost !== 'function') {
+      this.logToUI('[threads] lib/guest-thread-host.js not loaded — running single-threaded');
+      return;
+    }
+    try {
+      const res = await fetch('lib/host-import-sigs.generated.json');
+      if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
+      const sigs = (await res.json()).sigs;
+      const self = this;
+      const worker = new GuestThreadHost({
+        memory: this.memory,
+        module: wasmModule,
+        sigs,
+        hostImports: this._mainImports.host,
+        workerUrl: 'lib/guest-worker.js',
+        log: msg => { console.log(msg); self.logToUI(msg); },
+        tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
+      });
+      await worker.start();
+      this.guestWorker = worker;
+      this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
+    } catch (err) {
+      this.guestWorker = null;
+      this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);
+    }
+  }
+
   async loadExe(url) {
     if (!this.instance) await this.init();
 
@@ -976,8 +1022,29 @@ class WineAssembly {
     }
     mem.set(exeBytes.subarray(0, staged), staging);
 
-    // Load PE
-    const entry = this.instance.exports.load_pe(staged);
+    // Load PE. In worker mode the guest instance lives in the Worker, so the
+    // loader runs there — the bytes are already in shared memory, only the call
+    // is marshalled. The idle main-thread instance is then brought up with the
+    // same PE metadata via init_thread, because a handful of host-import paths
+    // read image_base off it (SEH and callstack formatting) and would otherwise
+    // translate every guest address against zero.
+    let entry;
+    if (this.guestWorker) {
+      entry = await this.guestWorker.loadPe(exeBytes, url.replace(/^.*[\\\/]/, ''), this.processId);
+      const meta = await this.guestWorker.readExports([
+        'get_image_base', 'get_code_start', 'get_code_end',
+        'get_thunk_base', 'get_thunk_end', 'get_num_thunks',
+      ]);
+      if (this.instance.exports.init_thread && meta.get_image_base) {
+        // tid 7 is the last worker slot; this instance never executes guest
+        // code, so its decoded-cache partition is irrelevant — only its globals
+        // matter.
+        this.instance.exports.init_thread(7, meta.get_image_base, meta.get_code_start,
+          meta.get_code_end, meta.get_thunk_base, meta.get_thunk_end, meta.get_num_thunks);
+      }
+    } else {
+      entry = this.instance.exports.load_pe(staged);
+    }
     console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
 
     const exeName = url.replace(/^.*[\\\/]/, '');
@@ -1458,8 +1525,80 @@ class WineAssembly {
     return false;
   }
 
+  // Worker-mode run loop. The guest executes inside the Worker, so this loop
+  // does nothing but hand out slices and composite — which is the whole claim
+  // of the design: the UI thread is no longer in the guest's critical path, so
+  // there is no wall-clock budget, no quantum, and no input-wake heuristic here.
+  _runThreaded(stepsPerSlice) {
+    this.running = true;
+    const self = this;
+    let unsupportedYield = 0;
+    const step = async () => {
+      if (!self.running) return;
+      const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
+        ? window.WinePerf : null;
+      if (perf) perf.stepBegin();
+      try {
+        self._beginGuestTickBatch();
+        if (self.guestWorker.broker) {
+          self.guestWorker.broker.publish({ tickMs: self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio) });
+        }
+        const r = await self.guestWorker.slice(Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice));
+        if (!self.running) return;
+        if (perf) {
+          perf.countSteps(stepsPerSlice);
+          // Off-thread time is reported as thread time, not main time: it did
+          // not block this thread, and calling it 'guest' here would make the
+          // HUD's phase shares mean something different than in the other mode.
+          perf.mark('workers', r.ms || 0);
+        }
+        if (r.trapped) {
+          self.logToUI(`[threads] guest trapped in worker: ${r.trapped} @ EIP=0x${(r.eip >>> 0).toString(16)}`);
+          self.stop({ repaint: false });
+          return;
+        }
+        const presentStart = perf ? performance.now() : 0;
+        if (self.renderer && self.renderer.flushRepaint) self.renderer.flushRepaint(true);
+        if (perf) perf.mark('present', performance.now() - presentStart);
+
+        if (!r.eip && !r.yield) {
+          self.logToUI('--- Program exited (worker) ---');
+          self.stop({ repaint: false });
+          return;
+        }
+        // Yield handling is deliberately minimal in this mode. A wait or a
+        // message-wait is cleared and retried, which costs a spin but is
+        // correct; the async yields (DLL load, COM load) need their host-side
+        // sequences ported into the worker and are NOT supported yet. Saying so
+        // beats faking it: an app that needs one stops here with its reason.
+        if (r.yield === 1 || r.yield === 7) {
+          await self.guestWorker.callExport('clear_yield');
+        } else if (r.yield === 8) {
+          await self.guestWorker.callExport('clear_yield');
+          try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
+        } else if (r.yield) {
+          if (++unsupportedYield === 1) {
+            self.logToUI(`[threads] yield ${r.yield} is not supported in worker mode yet `
+              + `(needs its host sequence ported into the worker); stopping.`);
+            self.stop({ repaint: false });
+            return;
+          }
+        }
+      } catch (err) {
+        self.logToUI(`[threads] worker loop failed: ${err.message}`);
+        self.stop({ repaint: false });
+        return;
+      } finally {
+        if (perf) perf.stepEnd();
+      }
+      if (self.running) setTimeout(step, 0);
+    };
+    step();
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
+    if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;
     const self = this;
     const step = async () => {

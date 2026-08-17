@@ -2015,9 +2015,14 @@ async function main() {
   // host-imports' versions with its own logging ones. Wrapping earlier misses
   // exactly the noisy functions the flag exists to find.
   if (HOST_CENSUS) {
-    const counts = new Map();
-    const argCounts = new Map();
+    // Published so the run can print a final census at exit. Printing only on
+    // exact multiples of N means a run that makes fewer than N host calls
+    // reports NOTHING, which reads as "no host calls happened" — the opposite
+    // of the truth, and it cost a design decision once.
+    const counts = globalThis.__hostCensusCounts = new Map();
+    const argCounts = globalThis.__hostCensusArgs = new Map();
     let total = 0;
+    globalThis.__hostCensusTotal = () => total;
     for (const name of Object.keys(h)) {
       if (typeof h[name] !== 'function') continue;
       const orig = h[name];
@@ -5752,6 +5757,15 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  if (HOST_CENSUS && globalThis.__hostCensusCounts) {
+    const total = globalThis.__hostCensusTotal ? globalThis.__hostCensusTotal() : 0;
+    const top = [...globalThis.__hostCensusCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
+    console.log(`\n[host-census] final: ${total} host calls total`);
+    for (const [n, c] of top) {
+      console.log(`  ${String(c).padStart(9)}  ${n}`);
+    }
+  }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
     console.log('\nThreads (final state):');
