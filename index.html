@@ -2437,8 +2437,11 @@ Resource-aware Win98 emulator
       const appIndex = nextAppIndex++;
       const hwndBase = 0x10001 + appIndex * 0x10000;
       wine._hwndBase = hwndBase;
-      if (wine.instance.exports.set_hwnd_base) {
-        wine.instance.exports.set_hwnd_base(hwndBase);
+      // callGuest, not instance.exports: in worker mode the guest instance is
+      // in the Worker, and writing these globals on the idle main instance
+      // silently does nothing.
+      if (wine.hasGuestExport('set_hwnd_base')) {
+        await wine.callGuest('set_hwnd_base', hwndBase);
       }
 
       wireCanvasInput(canvas, sharedRenderer);
@@ -2468,17 +2471,17 @@ Resource-aware Win98 emulator
           log.textContent += `Data files ready: ${app.files.length}\n`;
           log.scrollTop = log.scrollHeight;
         }
-        if (app.winver && wine.instance.exports.set_winver) {
-          wine.instance.exports.set_winver(app.winver);
+        if (app.winver && wine.hasGuestExport('set_winver')) {
+          await wine.callGuest('set_winver', app.winver);
         }
         if (app.args) {
           wine._extraArgs = app.args;
-          if (wine.instance.exports.set_extra_cmdline) {
+          if (wine.hasGuestExport('set_extra_cmdline')) {
             const enc = new TextEncoder();
             const argBytes = enc.encode(app.args);
-            const staging = wine.instance.exports.get_staging();
+            const staging = await wine.callGuest('get_staging');
             new Uint8Array(wine.memory.buffer).set(argBytes, staging);
-            wine.instance.exports.set_extra_cmdline(staging, argBytes.length);
+            await wine.callGuest('set_extra_cmdline', staging, argBytes.length);
           }
         }
         const dllsToLoad = app.dlls ? [...app.dlls] : [];

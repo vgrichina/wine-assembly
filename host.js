@@ -1358,6 +1358,83 @@ class WineAssembly {
     } catch (_) {}
   }
 
+  // Call a guest export wherever the guest actually is.
+  //
+  // Launch-time configuration (set_winver, set_hwnd_base, set_extra_cmdline) is
+  // main-side code writing per-instance globals, so in worker mode it has to
+  // reach the worker's instance — writing them on the idle main instance looks
+  // like it worked and does nothing. That is what made MFC42U refuse to load:
+  // set_winver never reached the running guest, so GetVersion still answered
+  // Win98 and MFC put up "cannot be loaded on Windows 95".
+  //
+  // Returns a promise in worker mode and the value directly otherwise; callers
+  // at launch time can ignore the difference, since nothing reads the result.
+  callGuest(name, ...args) {
+    if (this.guestWorker) return this.guestWorker.callExport(name, ...args);
+    const fn = this.instance && this.instance.exports[name];
+    return typeof fn === 'function' ? fn(...args) : undefined;
+  }
+
+  hasGuestExport(name) {
+    // Both modes instantiate the same module, so the main instance is a valid
+    // oracle for whether an export exists even when the guest runs elsewhere.
+    return !!(this.instance && typeof this.instance.exports[name] === 'function');
+  }
+
+  // Where a DLL's bytes come from: the VFS, the ones already loaded, or a
+  // fetch. Pure host work — no instance involved — so both the single-threaded
+  // handler and the worker-mode one use it rather than keeping two copies of a
+  // four-candidate path search.
+  async _resolveDllBytes(dllName) {
+    const fileName = dllName.split('\\').pop().toLowerCase();
+    const ctx = this._helpCtx;
+    let dllBytes = ctx && ctx.readFile ? ctx.readFile(dllName) : null;
+    if (!dllBytes && this._loadedDllBytesByName) {
+      dllBytes = this._loadedDllBytesByName[fileName] || null;
+    }
+    if (!dllBytes) {
+      const exeDir = this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
+      const paths = [
+        exeDir ? exeDir + fileName : '',
+        `binaries/dlls/${fileName}`,
+        `binaries/plugins/${fileName}`,
+        `dlls/${fileName}`,
+      ].filter(Boolean);
+      for (const p of paths) {
+        try {
+          const resp = await fetch(p);
+          if (resp.ok) { dllBytes = new Uint8Array(await resp.arrayBuffer()); break; }
+        } catch (_) {}
+      }
+    }
+    return { fileName, dllBytes };
+  }
+
+  // Worker-mode LoadLibrary. The split is the same one the design predicted:
+  // resolving bytes is host work and happens here; loading the image, patching
+  // its imports, running DllMain and resuming the guest are guest work and
+  // happen in the worker, because they set EIP/ESP and execute code.
+  async _handleLoadLibraryThreaded() {
+    const gw = this.guestWorker;
+    const nameWA = (await gw.callExport('get_loadlib_name')) >>> 0;
+    let dllName = '';
+    if (nameWA) {
+      const mem = new Uint8Array(this.memory.buffer);
+      for (let i = 0; i < 260 && mem[nameWA + i]; i++) dllName += String.fromCharCode(mem[nameWA + i]);
+    }
+    const { fileName, dllBytes } = dllName ? await this._resolveDllBytes(dllName) : { fileName: '', dllBytes: null };
+    if (!dllBytes) {
+      if (fileName) console.error(`[LoadLibrary] DLL not found: ${fileName}`);
+      await gw.loadLibrary(null, fileName);
+      return;
+    }
+    const res = await gw.loadLibrary(dllBytes, fileName);
+    if (res && res.loadAddr) {
+      console.log(`[LoadLibrary] ${fileName} loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
+      this._registerDllBitmapResources(fileName, dllBytes, res.loadAddr);
+    }
+  }
+
   async handleLoadLibrary() {
     const exports = this.instance.exports;
     const _resumeAfterLoadLibraryYield = (typeof DllLoader !== 'undefined' && DllLoader.resumeAfterLoadLibraryYield) || null;
@@ -1590,10 +1667,17 @@ class WineAssembly {
         // sequences ported into the worker and are NOT supported yet. Saying so
         // beats faking it: an app that needs one stops here with its reason.
         if (r.yield === 1 || r.yield === 7) {
+          // Message-wait resume runs inside the worker before each slice; this
+          // clears a wait it could not satisfy so the guest re-polls.
           await self.guestWorker.callExport('clear_yield');
+        } else if (r.yield === 5) {
+          await self._handleLoadLibraryThreaded();
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');
           try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
+        } else if (r.yield === 6) {
+          // modal_dialog: the single-threaded loop does nothing special here
+          // either — the WAT side drives the dialog — so neither does this.
         } else if (r.yield) {
           if (++unsupportedYield === 1) {
             self.logToUI(`[threads] yield ${r.yield} is not supported in worker mode yet `
