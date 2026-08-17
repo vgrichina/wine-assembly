@@ -2128,6 +2128,9 @@
   (global $WIN16_HANDLE_MAX i32 (i32.const 4096))
   ;; --trace-win16: log every dispatch, not only the one that stops the task.
   (global $win16_trace (mut i32) (i32.const 0))
+  ;; The task's real ESP while a Win16 handler is borrowing the 32-bit stack to
+  ;; call a $handle_* — see $win16_call32_begin in src/09e-win16-api.wat.
+  (global $win16_esp_save (mut i32) (i32.const 0))
   ;; Linear address of the NE header in the staged file, so a name import can
   ;; find the imported-name table again long after loading, and how much of the
   ;; file was staged, which bounds the resource-table walk.

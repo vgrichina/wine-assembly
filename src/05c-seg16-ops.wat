@@ -313,3 +313,117 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
     (call $gs16 (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF)))
     (return_call $next))
+
+  ;; 386: 16-bit string operation.
+  ;;
+  ;; The 32-bit side spends eighteen handlers on these because they sit in the
+  ;; inner loop of every memcpy a flat program makes. In a 16-bit task they run
+  ;; at startup and inside the odd string helper, and every one of them does
+  ;; the same segmented address arithmetic, so one parameterised loop is the
+  ;; better trade. The operand packs everything it needs:
+  ;;
+  ;;   bits 0-2    element size in bytes, 1 or 2
+  ;;   bits 4-6    kind: 0 MOVS, 1 STOS, 2 LODS, 3 CMPS, 4 SCAS
+  ;;   bits 8-9    repeat: 0 none, 1 REP/REPE, 2 REPNE
+  ;;   bits 12-13  source segment, for a prefix override; ES:DI is fixed
+  ;;
+  ;; SI and DI are offsets within their segments, so they wrap at 16 bits
+  ;; rather than running into the next segment's arena slot — a `rep stosw`
+  ;; that walks off the end of a segment is a guest bug, and wrapping is what
+  ;; the hardware does with it.
+  (func $th_string16 (param $op i32)
+    (local $size i32) (local $kind i32) (local $rep i32)
+    (local $src_base i32) (local $dst_base i32) (local $step i32)
+    (local $si i32) (local $di i32) (local $a i32) (local $b i32)
+    (local.set $size (i32.and (local.get $op) (i32.const 7)))
+    (local.set $kind (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)))
+    (local.set $rep  (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 3)))
+    (local.set $src_base (call $seg16_base
+      (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 3))))
+    (local.set $dst_base (global.get $seg_base_es))
+    (local.set $step (select (i32.sub (i32.const 0) (local.get $size)) (local.get $size)
+                             (global.get $df)))
+    (local.set $si (i32.and (global.get $esi) (i32.const 0xFFFF)))
+    (local.set $di (i32.and (global.get $edi) (i32.const 0xFFFF)))
+
+    (block $done (loop $step_one
+      (if (local.get $rep)
+        (then (br_if $done (i32.eqz (i32.and (global.get $ecx) (i32.const 0xFFFF))))))
+
+      ;; The element itself. $a is what was read from the source side, $b what
+      ;; the destination side holds, so CMPS and SCAS share one comparison.
+      (if (i32.eq (local.get $kind) (i32.const 0))            ;; MOVS
+        (then
+          (if (i32.eq (local.get $size) (i32.const 1))
+            (then (call $gs8 (i32.add (local.get $dst_base) (local.get $di))
+                    (call $gl8 (i32.add (local.get $src_base) (local.get $si)))))
+            (else (call $gs16 (i32.add (local.get $dst_base) (local.get $di))
+                    (call $gl16 (i32.add (local.get $src_base) (local.get $si))))))))
+      (if (i32.eq (local.get $kind) (i32.const 1))            ;; STOS
+        (then
+          (if (i32.eq (local.get $size) (i32.const 1))
+            (then (call $gs8 (i32.add (local.get $dst_base) (local.get $di))
+                    (i32.and (global.get $eax) (i32.const 0xFF))))
+            (else (call $gs16 (i32.add (local.get $dst_base) (local.get $di))
+                    (i32.and (global.get $eax) (i32.const 0xFFFF)))))))
+      (if (i32.eq (local.get $kind) (i32.const 2))            ;; LODS
+        (then
+          (if (i32.eq (local.get $size) (i32.const 1))
+            (then (call $set_reg8 (i32.const 0)
+                    (call $gl8 (i32.add (local.get $src_base) (local.get $si)))))
+            (else (call $set_reg16 (i32.const 0)
+                    (call $gl16 (i32.add (local.get $src_base) (local.get $si))))))))
+      (if (i32.ge_u (local.get $kind) (i32.const 3))          ;; CMPS, SCAS
+        (then
+          (if (i32.eq (local.get $kind) (i32.const 3))
+            (then (local.set $a (if (result i32) (i32.eq (local.get $size) (i32.const 1))
+                    (then (call $gl8 (i32.add (local.get $src_base) (local.get $si))))
+                    (else (call $gl16 (i32.add (local.get $src_base) (local.get $si)))))))
+            (else (local.set $a (i32.and (global.get $eax)
+                    (select (i32.const 0xFF) (i32.const 0xFFFF)
+                            (i32.eq (local.get $size) (i32.const 1)))))))
+          (local.set $b (if (result i32) (i32.eq (local.get $size) (i32.const 1))
+            (then (call $gl8 (i32.add (local.get $dst_base) (local.get $di))))
+            (else (call $gl16 (i32.add (local.get $dst_base) (local.get $di))))))
+          (global.set $flag_sign_shift
+            (select (i32.const 7) (i32.const 15) (i32.eq (local.get $size) (i32.const 1))))
+          (call $set_flags_sub (local.get $a) (local.get $b)
+            (i32.sub (local.get $a) (local.get $b)))))
+
+      ;; SI advances for everything that reads a source, DI for everything that
+      ;; touches the destination.
+      (if (i32.or (i32.eq (local.get $kind) (i32.const 0))
+                  (i32.or (i32.eq (local.get $kind) (i32.const 2))
+                          (i32.eq (local.get $kind) (i32.const 3))))
+        (then (local.set $si (i32.and (i32.add (local.get $si) (local.get $step))
+                                      (i32.const 0xFFFF)))))
+      (if (i32.ne (local.get $kind) (i32.const 2))
+        (then (local.set $di (i32.and (i32.add (local.get $di) (local.get $step))
+                                      (i32.const 0xFFFF)))))
+
+      (br_if $done (i32.eqz (local.get $rep)))
+      (call $set_reg16 (i32.const 1)
+        (i32.sub (i32.and (global.get $ecx) (i32.const 0xFFFF)) (i32.const 1)))
+      ;; A repeated compare also stops on the flag the prefix names: REPE runs
+      ;; while equal, REPNE while not.
+      (if (i32.ge_u (local.get $kind) (i32.const 3))
+        (then
+          (if (i32.eq (local.get $rep) (i32.const 1))
+            (then (br_if $done (i32.eqz (call $get_zf)))))
+          (if (i32.eq (local.get $rep) (i32.const 2))
+            (then (br_if $done (call $get_zf))))))
+      (br $step_one)))
+
+    (call $set_reg16 (i32.const 6) (local.get $si))
+    (call $set_reg16 (i32.const 7) (local.get $di))
+    (return_call $next))
+
+  ;; 387: XLAT — AL = DS:[BX + AL], with the same segment override the string
+  ;; ops take. The operand carries the segment id.
+  (func $th_xlat16 (param $op i32)
+    (call $set_reg8 (i32.const 0)
+      (call $gl8 (i32.add (call $seg16_base (local.get $op))
+        (i32.and (i32.add (i32.and (global.get $ebx) (i32.const 0xFFFF))
+                          (i32.and (global.get $eax) (i32.const 0xFF)))
+                 (i32.const 0xFFFF)))))
+    (return_call $next))

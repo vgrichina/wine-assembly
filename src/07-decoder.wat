@@ -1756,10 +1756,33 @@
                        (i32.and (i32.ge_u (local.get $op) (i32.const 0xA4)) (i32.le_u (local.get $op) (i32.const 0xA7)))
                        (i32.and (i32.ge_u (local.get $op) (i32.const 0xAA)) (i32.le_u (local.get $op) (i32.const 0xAF))))))
         (then
-          (call $host_log_i32 (i32.const 0xCA165E51)) ;; 16-bit string op, not implemented
-          (call $host_log_i32 (local.get $op))
-          (call $host_log_i32 (global.get $d_pc))
-          (unreachable)))
+          ;; XLAT reads DS:BX+AL and is the same segment question, so it shares
+          ;; the override handling and nothing else.
+          (global.set $mr_seg (i32.const 3))
+          (call $modrm16_apply_seg)
+          (if (i32.eq (local.get $op) (i32.const 0xD7))
+            (then (call $te (i32.const 387) (global.get $mr_seg)) (br $decode)))
+          ;; size: the B forms are 1, the others follow the operand size, which
+          ;; $code16 has already inverted to 16-bit unless a real 0x66 asks
+          ;; otherwise. kind is fixed by the opcode; repeat comes from F3/F2.
+          (call $te (i32.const 386) (i32.or
+            (i32.or
+              (if (result i32) (i32.and (local.get $op) (i32.const 1))
+                (then (select (i32.const 2) (i32.const 4) (local.get $prefix_66)))
+                (else (i32.const 1)))
+              (i32.shl
+                (if (result i32) (i32.lt_u (local.get $op) (i32.const 0xA8))
+                  (then (select (i32.const 3) (i32.const 0)
+                                (i32.ge_u (local.get $op) (i32.const 0xA6))))
+                  (else (if (result i32) (i32.lt_u (local.get $op) (i32.const 0xAC))
+                    (then (i32.const 1))
+                    (else (select (i32.const 4) (i32.const 2)
+                                  (i32.ge_u (local.get $op) (i32.const 0xAE)))))))
+                (i32.const 4)))
+            (i32.or
+              (i32.shl (local.get $prefix_rep) (i32.const 8))
+              (i32.shl (global.get $mr_seg) (i32.const 12)))))
+          (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA4)) ;; MOVSB
         (then (if (local.get $prefix_rep) (then (call $te (i32.const 82) (i32.const 0))) (else (call $te (i32.const 86) (i32.const 0)))) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA5)) ;; MOVSD / MOVSW

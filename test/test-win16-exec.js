@@ -8,13 +8,17 @@
 // startup register state is the one a Win16 task is entitled to, and that far
 // calls into the import thunk segment are recognised as API calls.
 //
-// The task is expected to stop, because the API layer is incomplete. What is
-// asserted about where it stops is deliberately not a fixed ordinal — that
-// moves every time an API lands — but that it stopped at an entry point the
-// real module exports *under a name*, checked against the map generated from
-// those modules. That invariant holds however far the task gets, and it fails
-// loudly if a bad stack adjustment ever flings the task into a thunk slot at
-// random, which is the failure mode worth catching here.
+// Nothing here is asserted about *which* API the task reaches — that moves
+// every time one lands. The invariant is that every API it dispatches is an
+// entry point the real module exports under a name, checked against the map
+// generated from those modules. That holds however far the task gets, and it
+// fails loudly if a bad stack adjustment ever flings the task into a thunk
+// slot at random, which is the failure mode worth catching here.
+//
+// The host imports are all no-ops, so an app that asks the host a question
+// gets zero and takes whatever path that implies — usually its error path.
+// That is fine for what this test is about, and it is why the sequence of
+// APIs here is not the sequence a real run produces.
 
 const fs = require('fs');
 const path = require('path');
@@ -102,29 +106,56 @@ function runOne(inst, memory, logged, name) {
   const dsSel = inst.exports.win16_sreg(SREG_DS);
 
   // ---- execute ----
-  // The task runs until it reaches an API that is not implemented yet, which
-  // traps. That trap is the assertion: it says the decoder carried the task
-  // through everything before it, and it names the callee.
+  // Run until an unimplemented API traps, or until the task has had a generous
+  // number of batches. Both outcomes are legitimate: early on every image
+  // stopped almost immediately, and as the API layer fills in they run on.
+  inst.exports.set_win16_trace(1);
   let trapped = false;
-  try {
-    inst.exports.run(64);
-  } catch (e) {
-    trapped = e instanceof WebAssembly.RuntimeError;
-    if (!trapped) throw e;
+  for (let i = 0; i < 400 && !trapped; i++) {
+    try {
+      inst.exports.run(64);
+    } catch (e) {
+      trapped = e instanceof WebAssembly.RuntimeError;
+      if (!trapped) throw e;
+    }
   }
-  checkThat('stopped at an unimplemented API rather than running on', trapped);
 
-  // InitTask ran: it is the only thing that builds a PSP and points ES at it.
-  const esSel = inst.exports.win16_sreg(SREG_ES);
-  checkThat('InitTask gave the task a PSP', esSel !== 0 && esSel !== dsSel,
-    `es=${fmt(esSel)} ds=${fmt(dsSel)}`);
   checkThat('execution left the entry point', (inst.exports.get_eip() >>> 0) !== (csBase + entryIP),
     `eip=${fmt(inst.exports.get_eip())}`);
 
-  // Whatever it stopped at, it must be a real exported entry point of a real
-  // module. This is the invariant worth pinning: it stays true as ordinals get
-  // implemented and the stopping point moves, and it fails loudly if a wrong
-  // stack adjustment ever sends the task into a thunk slot at random.
+  // Every call the task made, from the --trace-win16 stream: marker, packed
+  // module/ordinal, return address, then six stack words. Each one has to name
+  // a real export — an ordinal nobody exports means the task far-called into a
+  // thunk slot that was never filled, which is what a wrong stack adjustment
+  // looks like from here.
+  const calls = [];
+  for (let i = 0; i < logged.length; i++) {
+    if (logged[i] !== 0xca16a9f0) continue;
+    const key = logged[i + 1] >>> 0;
+    calls.push({ mod: key >>> 16, ord: key & 0xffff });
+    i += 8;
+  }
+  checkThat('the task dispatched several API calls', calls.length >= 3,
+    `${calls.length} calls`);
+  // Every one of these images starts the same way, and it is the one call
+  // whose position is fixed: InitTask is what turns a loaded image into a
+  // running task. Checking the call rather than the ES it left behind means
+  // the assertion survives the app immediately pointing ES somewhere else,
+  // which FreeCell does three instructions later.
+  checkThat('the first call was KERNEL.91 InitTask',
+    calls.length > 0 && calls[0].mod === 1 && calls[0].ord === 91,
+    calls.length ? `${MODULE_NAMES[calls[0].mod] || calls[0].mod}.${calls[0].ord}` : 'none');
+  const unnamed = calls.filter((c) => {
+    const m = MODULE_NAMES[c.mod];
+    return !m || !(ORDINALS.modules[m] && ORDINALS.modules[m].ordinals[String(c.ord)]);
+  });
+  checkThat('every dispatched ordinal is a named export of its module',
+    unnamed.length === 0,
+    unnamed.map((c) => `${MODULE_NAMES[c.mod] || c.mod}.${c.ord}`).join(' '));
+  console.log(`  ${calls.length} API calls dispatched`);
+
+  // If it did stop, the same has to hold of the ordinal it stopped at.
+  if (!trapped) { console.log('  still running after 400 batches'); return; }
   const mod = inst.exports.win16_last_module();
   const ord = inst.exports.win16_last_ordinal();
   const byName = inst.exports.win16_last_is_name();
