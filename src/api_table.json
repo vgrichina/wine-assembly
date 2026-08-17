@@ -19288,5 +19288,27 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 440087721
+  },
+  {
+    "id": 2461,
+    "name": "SetWindowWord",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 995338151,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "index",
+        "type": "int"
+      },
+      {
+        "name": "value",
+        "type": "int"
+      }
+    ],
+    "ret": "int"
   }
 ]

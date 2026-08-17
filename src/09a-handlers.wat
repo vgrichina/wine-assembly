@@ -2347,6 +2347,46 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; SetWindowWord(hWnd, nIndex, wNewWord) → WORD (previous value)
+  ;;
+  ;; Win16's window-word API, still exported by USER32 and still used: Win98's
+  ;; System Monitor calls it for View > Hide Title Bar, and with no entry point
+  ;; registered that menu item was a hard fail-fast crash.
+  ;;
+  ;; A negative index names the same field as SetWindowLong -- GWL_WNDPROC -4,
+  ;; GWL_ID -12, GWL_STYLE -16 and friends -- so hand those to the 32-bit
+  ;; handler and narrow the result, rather than keeping a second copy of that
+  ;; logic. Both are stdcall(3), so it pops the frame correctly for us too.
+  ;;
+  ;; A non-negative index is a byte offset into the window's extra bytes, and
+  ;; the whole point of this call is that it touches exactly two of them:
+  ;; widening it to a dword store would silently clobber the neighbouring word.
+  (func $handle_SetWindowWord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $p i32) (local $old i32)
+    (if (i32.lt_s (local.get $arg1) (i32.const 0))
+      (then
+        (call $handle_SetWindowLongA
+          (local.get $arg0) (local.get $arg1)
+          (i32.and (local.get $arg2) (i32.const 0xFFFF))
+          (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (return)))
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    ;; 16 bytes of extra storage per window; a word needs both of its bytes
+    ;; inside it.
+    (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
+                (i32.gt_u (local.get $arg1) (i32.const 14)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $p (call $wnd_extra_addr (local.get $slot) (local.get $arg1)))
+    (local.set $old (i32.load16_u (local.get $p)))
+    (i32.store16 (local.get $p) (i32.and (local.get $arg2) (i32.const 0xFFFF)))
+    (global.set $eax (local.get $old))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 102: SetWindowTextA
   (func $handle_SetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $len i32)
@@ -3403,9 +3443,15 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
+    ;; Repaint a moved WAT-native control immediately, but only if it is
+    ;; actually on screen. Its own WS_VISIBLE bit is not enough: a control
+    ;; inside a hidden dialog page keeps that bit set, and painting it writes
+    ;; onto the top-level back-canvas at a position the page is about to leave,
+    ;; where nothing will erase it. $handle_DeferWindowPos already tests it
+    ;; this way.
     (if (i32.and
           (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
-          (i32.ne (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)) (i32.const 0)))
+          (call $wnd_is_effectively_visible (local.get $arg0)))
       (then
         (drop (call $control_wndproc_dispatch
           (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))

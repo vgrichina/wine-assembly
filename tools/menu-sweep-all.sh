@@ -37,13 +37,24 @@ APPS=(
   test/binaries/win98-apps/cleanmgr.exe
   test/binaries/win98-apps/telnet.exe
   test/binaries/win98-apps/tour98.exe
+  test/binaries/win98-apps/vol98.exe
+  test/binaries/win98-apps/hypertrm.exe
+  test/binaries/win98-apps/write.exe
+  test/binaries/win98-apps/welcome.exe
+  test/binaries/win98-apps/winipcfg.exe
   test/binaries/nt/mspaint.exe
   test/binaries/xp/winmine.exe
   test/binaries/xp/sndrec32.exe
+  test/binaries/xp/claass.exe
+  test/binaries/explorer98/explorer.exe
+  test/binaries/help/winhlp32.exe
+  test/binaries/winamp.exe
 )
 
 # Anything else with a menu that lives one directory deeper.
-for d in test/binaries/entertainment-pack test/binaries/pinball test/binaries/shareware; do
+for d in test/binaries/entertainment-pack test/binaries/pinball \
+         test/binaries/pinball-plus95 test/binaries/shareware \
+         test/binaries/wep32-community; do
   [ -d "$d" ] && for f in "$d"/*.exe "$d"/*/*.exe; do
     [ -f "$f" ] && APPS+=("$f")
   done
