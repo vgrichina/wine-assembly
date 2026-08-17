@@ -783,6 +783,25 @@
             (call $cache_store (local.get $start_eip) (local.get $tstart))
             (return (local.get $tstart))))))
 
+    ;; A 16-bit task can only execute inside the selector arena. Landing
+    ;; outside it means a far pointer was used as a linear address somewhere,
+    ;; and this has to be checked before the zeros test below: the runaway
+    ;; usually lands in zeros, and decoding on into them overwrites
+    ;; $dbg_prev_eip with the runaway's own addresses within two blocks, which
+    ;; is exactly the information needed to find the transfer that caused it.
+    (if (global.get $code16)
+      (then
+        (if (i32.or
+              (i32.lt_u (local.get $start_eip) (global.get $WIN16_ARENA))
+              (i32.ge_u (local.get $start_eip)
+                (i32.add (global.get $WIN16_ARENA)
+                  (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
+          (then
+            (call $host_log_i32 (i32.const 0xCA165E20))  ;; 16-bit EIP outside the arena
+            (call $host_log_i32 (local.get $start_eip))
+            (call $host_log_i32 (global.get $dbg_prev2_eip))
+            (unreachable)))))
+
     ;; A block entry pointing at eight zero bytes is not code. Real entries are
     ;; call-return landings, branch targets or function prologues, none of which
     ;; begin `add [eax],al` eight times over. This happens when a call lands in
@@ -796,6 +815,9 @@
       (then
         (call $host_log_i32 (i32.const 0xCA002E20))  ;; execution entered zeros
         (call $host_log_i32 (local.get $start_eip))
+        ;; Where it came from matters more than where it landed: zeros are
+        ;; never the bug, the transfer into them is.
+        (call $host_log_i32 (global.get $dbg_prev2_eip))
         (unreachable)))
 
     (block $exit (loop $decode

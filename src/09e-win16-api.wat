@@ -789,6 +789,16 @@
       (then (call $win16_PostQuitMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 67))
       (then (call $win16_GetWindowDC) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 72))
+      (then (call $win16_SetRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 74))
+      (then (call $win16_CopyRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 76))
+      (then (call $win16_PtInRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 78))
+      (then (call $win16_InflateRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 79))
+      (then (call $win16_IntersectRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 84))
       (then (call $win16_DrawIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 171))
@@ -1350,6 +1360,120 @@
       (local.get $data) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 12)))
+
+  ;; The RECT helpers. These are pure arithmetic on a caller-owned rectangle
+  ;; with no device or window behind them, so they are written out at the
+  ;; 16-bit width rather than widened, copied and narrowed back.
+  ;;
+  ;;   USER.72 SetRect(lpRect, xLeft, yTop, xRight, yBottom)
+  ;;   USER.74 CopyRect(lpDestRect, lpSourceRect)
+  ;;   USER.76 PtInRect(lpRect, Point)
+  ;;   USER.78 InflateRect(lpRect, x, y)
+  (func $win16_rect_get (param $r i32) (param $i i32) (result i32)
+    (call $win16_coord (call $gl16 (i32.add (local.get $r)
+      (i32.shl (local.get $i) (i32.const 1))))))
+
+  (func $win16_rect_set (param $r i32) (param $i i32) (param $v i32)
+    (call $gs16 (i32.add (local.get $r) (i32.shl (local.get $i) (i32.const 1)))
+      (local.get $v)))
+
+  (func $win16_SetRect
+    (local $r i32) (local $i i32)
+    (local.set $r (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (block $done (loop $set
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (call $win16_rect_set (local.get $r) (local.get $i)
+        (call $win16_arg16 (i32.sub (i32.const 3) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $set)))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 12)))
+
+  (func $win16_CopyRect
+    (local $dst i32) (local $src i32) (local $i i32)
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (call $win16_rect_set (local.get $dst) (local.get $i)
+        (call $win16_rect_get (local.get $src) (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; A POINT is one DWORD here, x in the low word.
+  (func $win16_PtInRect
+    (local $r i32) (local $x i32) (local $y i32)
+    (local.set $r (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (global.set $eax (i32.and
+      (i32.and (i32.ge_s (local.get $x) (call $win16_rect_get (local.get $r) (i32.const 0)))
+               (i32.lt_s (local.get $x) (call $win16_rect_get (local.get $r) (i32.const 2))))
+      (i32.and (i32.ge_s (local.get $y) (call $win16_rect_get (local.get $r) (i32.const 1)))
+               (i32.lt_s (local.get $y) (call $win16_rect_get (local.get $r) (i32.const 3))))))
+    (call $win16_api_return (i32.const 8)))
+
+  (func $win16_InflateRect
+    (local $r i32) (local $x i32) (local $y i32)
+    (local.set $r (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_rect_set (local.get $r) (i32.const 0)
+      (i32.sub (call $win16_rect_get (local.get $r) (i32.const 0)) (local.get $x)))
+    (call $win16_rect_set (local.get $r) (i32.const 1)
+      (i32.sub (call $win16_rect_get (local.get $r) (i32.const 1)) (local.get $y)))
+    (call $win16_rect_set (local.get $r) (i32.const 2)
+      (i32.add (call $win16_rect_get (local.get $r) (i32.const 2)) (local.get $x)))
+    (call $win16_rect_set (local.get $r) (i32.const 3)
+      (i32.add (call $win16_rect_get (local.get $r) (i32.const 3)) (local.get $y)))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; USER.79 IntersectRect(lpDestRect, lpSrc1Rect, lpSrc2Rect) -> non-empty?
+  ;; An empty intersection zeroes the destination, which callers rely on.
+  (func $win16_IntersectRect
+    (local $dst i32) (local $a i32) (local $b i32)
+    (local $l i32) (local $t i32) (local $r i32) (local $bo i32)
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (local.set $a (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $b (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $l (call $win16_rect_get (local.get $a) (i32.const 0)))
+    (if (i32.lt_s (local.get $l) (call $win16_rect_get (local.get $b) (i32.const 0)))
+      (then (local.set $l (call $win16_rect_get (local.get $b) (i32.const 0)))))
+    (local.set $t (call $win16_rect_get (local.get $a) (i32.const 1)))
+    (if (i32.lt_s (local.get $t) (call $win16_rect_get (local.get $b) (i32.const 1)))
+      (then (local.set $t (call $win16_rect_get (local.get $b) (i32.const 1)))))
+    (local.set $r (call $win16_rect_get (local.get $a) (i32.const 2)))
+    (if (i32.gt_s (local.get $r) (call $win16_rect_get (local.get $b) (i32.const 2)))
+      (then (local.set $r (call $win16_rect_get (local.get $b) (i32.const 2)))))
+    (local.set $bo (call $win16_rect_get (local.get $a) (i32.const 3)))
+    (if (i32.gt_s (local.get $bo) (call $win16_rect_get (local.get $b) (i32.const 3)))
+      (then (local.set $bo (call $win16_rect_get (local.get $b) (i32.const 3)))))
+    (if (i32.and (i32.lt_s (local.get $l) (local.get $r))
+                 (i32.lt_s (local.get $t) (local.get $bo)))
+      (then
+        (call $win16_rect_set (local.get $dst) (i32.const 0) (local.get $l))
+        (call $win16_rect_set (local.get $dst) (i32.const 1) (local.get $t))
+        (call $win16_rect_set (local.get $dst) (i32.const 2) (local.get $r))
+        (call $win16_rect_set (local.get $dst) (i32.const 3) (local.get $bo))
+        (global.set $eax (i32.const 1)))
+      (else
+        (call $win16_rect_set (local.get $dst) (i32.const 0) (i32.const 0))
+        (call $win16_rect_set (local.get $dst) (i32.const 1) (i32.const 0))
+        (call $win16_rect_set (local.get $dst) (i32.const 2) (i32.const 0))
+        (call $win16_rect_set (local.get $dst) (i32.const 3) (i32.const 0))
+        (global.set $eax (i32.const 0))))
     (call $win16_api_return (i32.const 12)))
 
   ;; USER.180 GetSysColor(nIndex) -> COLORREF in DX:AX.
@@ -2245,7 +2369,28 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 28)))
 
+  ;; GDI.79 GetDCOrg(hDC) -> the DC's origin in screen coordinates, packed in
+  ;; DX:AX. Every DC here is already window-relative, so the origin is the
+  ;; window's own client corner.
+  (func $win16_GetDCOrg
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetDCOrgEx (call $win16_h32 (call $win16_arg16 (i32.const 0)))
+      (global.get $GUEST_STACK) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (call $gl32 (global.get $GUEST_STACK)) (i32.const 0xFFFF)))
+    (global.set $edx (i32.and (call $gl32 (i32.add (global.get $GUEST_STACK) (i32.const 4)))
+                              (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
   (func $win16_gdi (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 79))
+      (then (call $win16_GetDCOrg) (return (i32.const 1))))
+    ;; UnrealizeObject asks a brush or palette to be re-mapped on next select.
+    ;; With no palette realisation here there is nothing to invalidate, and
+    ;; success is the truthful answer rather than a placeholder.
+    (if (i32.eq (local.get $ordinal) (i32.const 150))
+      (then (call $win16_local_identity (i32.const 2) (i32.const 1))
+            (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 148))
       (then (call $win16_SetBrushOrg) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 443))
@@ -2317,7 +2462,13 @@
       (then
         (call $host_log_i32 (i32.const 0xCA16A9EF))
         (call $host_log_i32 (i32.and (global.get $eax) (i32.const 0xFFFF)))
-        (call $host_log_i32 (i32.and (global.get $edx) (i32.const 0xFFFF))))))
+        (call $host_log_i32 (i32.and (global.get $edx) (i32.const 0xFFFF)))
+        ;; Where the API is resuming and on what stack. Both are worth seeing:
+        ;; a handler that left ESP somewhere unexpected, or an EIP that is not
+        ;; the return address the call trace printed, is a frame bug, and those
+        ;; are the bugs this layer actually has.
+        (call $host_log_i32 (global.get $eip))
+        (call $host_log_i32 (global.get $esp)))))
 
   ;; The dispatcher. $thunk_off is the offset within WIN16_THUNK_SEL that the
   ;; loader wrote into the fixup; $ret_lin is the linear return address, which

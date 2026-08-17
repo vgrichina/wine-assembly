@@ -91,6 +91,13 @@
                 (i32.eqz (global.get $handler_set_eip)))
             (then (global.set $eip (call $gl32 (local.get $prev_esp)))))
           (br $main)))
+      ;; $dbg_prev_eip is set to the block about to run, so anything reading it
+      ;; *during* that block sees the block itself, not its predecessor. That
+      ;; is what $bp_first_caller and the debug prompt want, because they run
+      ;; earlier in the same iteration. A trap raised by the decoder does not:
+      ;; by then the assignment has happened, and it would report itself. So
+      ;; the value being overwritten is kept one step longer.
+      (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
       (global.set $dbg_prev_eip (global.get $eip))
       ;; --trace-esp: emit (eip, esp) at block entry for in-range EIPs.
       (if (global.get $trace_esp_flag)

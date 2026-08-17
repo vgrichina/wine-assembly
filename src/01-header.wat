@@ -1543,6 +1543,10 @@
   (global $edi (mut i32) (i32.const 0))
   (global $eip (mut i32) (i32.const 0))
   (global $dbg_prev_eip (mut i32) (i32.const 0))
+  ;; The block before that one — see the run loop in 13-exports.wat. A decoder
+  ;; trap reports this, because $dbg_prev_eip already names the block it is
+  ;; refusing to decode.
+  (global $dbg_prev2_eip (mut i32) (i32.const 0))
   (global $dbg_counter (mut i32) (i32.const -1))
   ;; Shadow call-stack for --trace-callstack: ring buffer of ret_addrs.
   ;; Push on CALL, pop on RET. JS reads via get_cs_depth/get_cs_entry.
