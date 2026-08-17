@@ -1085,15 +1085,69 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 37: HeapReAlloc
+  ;; 37: HeapReAlloc(hHeap, dwFlags, lpMem, dwBytes)
+  ;;
+  ;; A growing block must carry over only what the OLD block actually held.
+  ;; This used to copy dwBytes — the NEW size — out of the old allocation,
+  ;; so every grow read past the end of the source and pulled whatever
+  ;; happened to sit behind it into the fresh block. HEAP_ZERO_MEMORY was
+  ;; ignored on top of that, so the caller asked for zeros and got that
+  ;; trailing garbage instead. Real d3drm's .x parser grows its arrays this
+  ;; way (4 bytes to 8, HEAP_ZERO_MEMORY) while parsing a ProgressiveMesh.
+  ;;
+  ;; $heap_alloc puts the block size at ptr-4 and it covers the header plus
+  ;; padding, so the usable old payload is that size minus the header. A
+  ;; pointer below $heap_base is not ours (msvcrt's own sub-allocator hands
+  ;; those out) and has no header to read, so it keeps the old best-effort
+  ;; copy — there is nothing better to be had without knowing its size.
   (func $handle_HeapReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    (local.set $tmp (call $heap_alloc (local.get $arg3)))
-    (if (local.get $tmp)
-    (then
-    (if (local.get $arg2) ;; old ptr
-    (then (call $memcpy (call $g2w (local.get $tmp)) (call $g2w (local.get $arg2)) (local.get $arg3))
-    (call $heap_free (local.get $arg2))))))
+    (local $tmp i32) (local $old_usable i32) (local $copy i32)
+    (block $done
+      (if (i32.eqz (local.get $arg2))
+        (then
+          ;; No old block: this is a plain allocation.
+          (local.set $tmp (call $heap_alloc (local.get $arg3)))
+          (if (i32.and (i32.ne (local.get $tmp) (i32.const 0))
+                       (i32.ne (i32.and (local.get $arg1) (i32.const 0x08)) (i32.const 0)))
+            (then (call $zero_memory (call $g2w (local.get $tmp)) (local.get $arg3))))
+          (br $done)))
+      (if (i32.lt_u (local.get $arg2) (global.get $heap_base))
+        (then (local.set $old_usable (i32.const -1)))   ;; foreign: size unknown
+        (else
+          (local.set $old_usable
+            (i32.sub (i32.load (call $g2w (i32.sub (local.get $arg2) (i32.const 4))))
+                     (i32.const 4)))))
+      ;; HEAP_REALLOC_IN_PLACE_ONLY (0x10): the caller is telling us other
+      ;; pointers into this block are still live, so moving it would corrupt
+      ;; them. Satisfy it only when the block already has the room; Windows
+      ;; returns NULL rather than relocating, and so do we.
+      (if (i32.ne (i32.and (local.get $arg1) (i32.const 0x10)) (i32.const 0))
+        (then
+          (if (i32.or (i32.eq (local.get $old_usable) (i32.const -1))
+                      (i32.gt_u (local.get $arg3) (local.get $old_usable)))
+            (then (local.set $tmp (i32.const 0)) (br $done)))
+          (if (i32.and (i32.ne (i32.and (local.get $arg1) (i32.const 0x08)) (i32.const 0))
+                       (i32.gt_u (local.get $arg3) (local.get $old_usable)))
+            (then (call $zero_memory
+                    (call $g2w (i32.add (local.get $arg2) (local.get $old_usable)))
+                    (i32.sub (local.get $arg3) (local.get $old_usable)))))
+          (local.set $tmp (local.get $arg2))
+          (br $done)))
+      (local.set $tmp (call $heap_alloc (local.get $arg3)))
+      (if (i32.eqz (local.get $tmp)) (then (br $done)))
+      ;; Carry over min(old payload, new size); a shrink copies only what fits.
+      (local.set $copy (local.get $arg3))
+      (if (i32.and (i32.ne (local.get $old_usable) (i32.const -1))
+                   (i32.lt_u (local.get $old_usable) (local.get $copy)))
+        (then (local.set $copy (local.get $old_usable))))
+      (call $memcpy (call $g2w (local.get $tmp)) (call $g2w (local.get $arg2)) (local.get $copy))
+      ;; The grown tail is the caller's to define; zero it when asked.
+      (if (i32.and (i32.ne (i32.and (local.get $arg1) (i32.const 0x08)) (i32.const 0))
+                   (i32.gt_u (local.get $arg3) (local.get $copy)))
+        (then (call $zero_memory
+                (call $g2w (i32.add (local.get $tmp) (local.get $copy)))
+                (i32.sub (local.get $arg3) (local.get $copy)))))
+      (call $heap_free (local.get $arg2)))
     (global.set $eax (local.get $tmp))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -5849,19 +5903,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 343: IsBadReadPtr(lp, ucb) → BOOL
-  ;; Validates read access to memory range. Returns 0 if valid, 1 if bad.
-  ;; Check if address falls within our WASM memory range.
+  ;; Is [ptr, ptr+len) unreadable? $g2w already knows the answer: it translates
+  ;; every mapped guest region — the direct image window, DIB sections and the
+  ;; sparse VirtualAlloc mappings — and returns $NULL_SENTINEL for anything it
+  ;; cannot place. Asking it is the only test that stays true as the address
+  ;; space grows.
+  ;;
+  ;; The previous test was a flat "above 0x02000000 is bad", which stopped being
+  ;; true long ago: the sparse heap and VirtualAlloc arena live up near
+  ;; 0x3F800000, and an app's own stack sits well above the cutoff too (the
+  ;; Direct3D viewer runs on one at 0x074FFxxx). A caller handing us a stack
+  ;; buffer — the ordinary way to use this API — was told its own frame was
+  ;; unreadable.
+  (func $ptr_range_bad (param $ptr i32) (param $len i32) (result i32)
+    (local $last i32)
+    (if (i32.eqz (local.get $ptr)) (then (return (i32.const 1))))
+    ;; A zero-length range is readable by definition; Windows says so too.
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+    (local.set $last (i32.add (local.get $ptr) (i32.sub (local.get $len) (i32.const 1))))
+    (if (i32.lt_u (local.get $last) (local.get $ptr)) (then (return (i32.const 1))))
+    (if (i32.eq (call $g2w (local.get $ptr)) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 1))))
+    (if (i32.eq (call $g2w (local.get $last)) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; 343: IsBadReadPtr(lp, ucb) → BOOL. Nonzero means the range is NOT readable.
   (func $handle_IsBadReadPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (select (i32.const 1) (i32.const 0)
-      (i32.or (i32.eqz (local.get $arg0))
-              (i32.gt_u (i32.add (local.get $arg0) (local.get $arg1)) (i32.const 0x02000000)))))
+    (global.set $eax (call $ptr_range_bad (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 344: IsBadWritePtr — return 0 (valid) — STUB: unimplemented
-  ;; IsBadWritePtr(lp, ucb) — return 0 (memory is always valid in our flat address space)
+  ;; 344: IsBadWritePtr(lp, ucb) → BOOL. Every page we can address is writable
+  ;; here, so readability is the whole question.
   (func $handle_IsBadWritePtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))  ;; 0 = pointer is valid
+    (global.set $eax (call $ptr_range_bad (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
