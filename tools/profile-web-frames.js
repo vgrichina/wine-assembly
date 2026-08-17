@@ -37,6 +37,17 @@ const SECONDS = Number(opt('seconds', 15));
 const WARMUP = Number(opt('warmup', 8));
 const CLICKS = (opt('guest-click', '') || '').split(',').filter(Boolean);
 const SHOT = opt('screenshot', '');
+// Query string appended to index.html. "?debug" is a materially different
+// page -- it keeps the debug log panel, and that panel is a plausible cost
+// centre in its own right -- so profiling without it can miss the report.
+const QUERY = opt('query', '');
+// JS evaluated once after the instance is up, before sampling. Use it to A/B
+// a single page setting against an otherwise identical run.
+const AFTER_LAUNCH = opt('after-launch', '');
+const CPU_PROFILE = argv.includes('--cpu-profile');
+// JS evaluated after sampling; its result is printed. Pairs with
+// --after-launch to install a counter and then read it back.
+const REPORT_EVAL = opt('report-eval', '');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 function mimeType(file) {
@@ -101,7 +112,7 @@ async function main() {
       const t = m.text();
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|crashed|FATAL:/i.test(t)) problems.push(t);
     });
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'load', timeout: 60000 });
+    await page.goto(`http://127.0.0.1:${port}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 
     console.log(`launching ${APP} ...`);
@@ -150,6 +161,10 @@ async function main() {
       }).catch(() => null);
       console.error('app did not come up:\n' + JSON.stringify(state, null, 2));
       throw e;
+    }
+    if (AFTER_LAUNCH) {
+      const r = await page.evaluate(js => String(eval(js)), AFTER_LAUNCH);
+      console.log(`  after-launch: ${AFTER_LAUNCH} => ${r}`);
     }
     // The guest needs to be past its loader before pacing means anything.
     await wait(WARMUP * 1000);
@@ -213,6 +228,25 @@ async function main() {
       }
     });
 
+    // --cpu-profile: V8 sampling profiler over the same window, aggregated by
+    // self time. Long tasks tell you a frame was blocked; this tells you by
+    // what. Costs a little overhead, so it is opt-in.
+    let cdp = null;
+    if (CPU_PROFILE) {
+      cdp = await page.target().createCDPSession();
+      await cdp.send('Profiler.enable');
+      await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
+      await cdp.send('Profiler.start');
+    }
+
+    // MACHINE LOAD, printed either side of the sample. This is not a detail:
+    // on a busy box the SAME command has produced 48, 19 and 0 long tasks,
+    // and reading that spread as a difference between configurations is the
+    // easiest wrong conclusion available here. A frame profile taken at load
+    // 40 measures the box, not the app.
+    const loadBefore = os.loadavg();
+    console.log(`load average before: ${loadBefore.map(n => n.toFixed(2)).join(' ')}`);
+
     console.log(`sampling ${SECONDS}s ...`);
     const result = await page.evaluate(seconds => new Promise(resolve => {
       const frames = [];
@@ -230,9 +264,14 @@ async function main() {
       thumb.width = 64; thumb.height = 48;
       const probeCtx = thumb.getContext('2d', { willReadFrequently: true });
       const hashes = [];
+      const sizes = [];
       const probe = () => {
         if (!probeCtx || !screen || !screen.width || !screen.height) return;
         try {
+          // Track the backing store size too: a canvas whose width/height is
+          // reassigned reallocates and drops any GPU acceleration, which makes
+          // every canvas op on it slower at once.
+          sizes.push(screen.width + 'x' + screen.height);
           probeCtx.drawImage(screen, 0, 0, thumb.width, thumb.height);
           const d = probeCtx.getImageData(0, 0, thumb.width, thumb.height).data;
           let acc = 0;
@@ -262,11 +301,42 @@ async function main() {
           resolve({
             frames, tasks, elapsed: now - t0,
             probes: hashes.length, distinct: new Set(hashes).size,
+            canvasSizes: [...new Set(sizes)],
           });
         }
       }
       requestAnimationFrame(tick);
     }), SECONDS);
+
+    if (cdp) {
+      const { profile } = await cdp.send('Profiler.stop');
+      const byId = new Map(profile.nodes.map(n => [n.id, n]));
+      const self = new Map();
+      // timeDeltas[i] is the time attributed to samples[i].
+      for (let i = 0; i < profile.samples.length; i++) {
+        const n = byId.get(profile.samples[i]);
+        if (!n) continue;
+        const f = n.callFrame;
+        const where = f.url ? `${f.url.replace(/^https?:\/\/[^/]+\//, '')}:${f.lineNumber + 1}` : '';
+        const key = `${f.functionName || '(anonymous)'}  ${where}`;
+        self.set(key, (self.get(key) || 0) + (profile.timeDeltas[i] || 0));
+      }
+      const total = [...self.values()].reduce((a, b) => a + b, 0) || 1;
+      console.log('');
+      console.log('CPU self time (top 12):');
+      for (const [k, us] of [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) {
+        console.log(`  ${(100 * us / total).toFixed(1).padStart(5)}%  ${(us / 1000).toFixed(0).padStart(6)}ms  ${k}`);
+      }
+    }
+
+    // The debug log panel grows without bound and appendDebugLog rebuilds its
+    // whole textContent then forces a synchronous layout via scrollTop. Its
+    // size is therefore a cost, not a curiosity.
+    const logChars = await page.evaluate(() => {
+      const el = document.getElementById('log');
+      return el ? el.textContent.length : -1;
+    });
+    if (logChars >= 0) console.log(`debug log panel: ${logChars} chars`);
 
     const canvasStats = await page.evaluate(() => window.__canvasStats);
     console.log('');
@@ -295,6 +365,15 @@ async function main() {
       console.log(`screenshot: ${SHOT}`);
     }
 
+    if (REPORT_EVAL) {
+      const r = await page.evaluate(js => String(eval(js)), REPORT_EVAL).catch(e => `error: ${e.message}`);
+      console.log(`report-eval: ${r}`);
+    }
+
+    const loadAfter = os.loadavg();
+    console.log(`load average after:  ${loadAfter.map(n => n.toFixed(2)).join(' ')}` +
+      (loadAfter[0] > 4 ? '   <-- BUSY: treat the numbers below as a floor, not a measurement of the app' : ''));
+
     const f = stats(result.frames);
     console.log('');
     // Report liveness FIRST -- every number below is meaningless without it.
@@ -303,6 +382,11 @@ async function main() {
       console.log('The guest is idle or stopped, so the frame numbers below measure an idle page, not gameplay.');
     } else {
       console.log(`screen changed in ${result.distinct} of ${result.probes} probes (guest is live)`);
+    }
+    if (result.canvasSizes && result.canvasSizes.length > 1) {
+      console.log(`WARNING: canvas backing store was resized during the sample: ${result.canvasSizes.join(' -> ')}`);
+    } else if (result.canvasSizes) {
+      console.log(`canvas: ${result.canvasSizes[0]} (stable)`);
     }
     console.log(`frames: ${f.n} in ${(result.elapsed / 1000).toFixed(1)}s  =>  ${(f.n / (result.elapsed / 1000)).toFixed(1)} fps average`);
     console.log('frame interval (ms)   mean    p50    p90    p99    max');
