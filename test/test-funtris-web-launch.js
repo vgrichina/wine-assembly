@@ -328,6 +328,43 @@ async function main() {
     tick();
   })`, 10000);
 
+  // A tetromino is whatever colour the game picked for it, so counting a
+  // specific colour measures the shuffle, not the game. This counts saturated
+  // pixels -- anything whose channels are far enough apart to not be part of
+  // the black playfield or the grey chrome around it. Funtris' pieces are
+  // drawn with lit and shadowed bevels, so a piece contributes several shades
+  // of one hue and all of them count. The narrower predicate this replaces
+  // scored a correctly drawn green piece at 68 against a threshold of 100,
+  // which is most of why this test was unreliable.
+  await evalExpr(`(() => {
+    window.PLAYFIELD = { x0: 70, y0: 60, x1: 210, y1: 315 };
+    window.countPlayfieldInk = () => {
+      const canvas = document.getElementById('screen');
+      const r = window.PLAYFIELD;
+      const w = Math.min(r.x1, canvas.width) - r.x0;
+      const h = Math.min(r.y1, canvas.height) - r.y0;
+      if (w <= 0 || h <= 0) return 0;
+      const data = canvas.getContext('2d').getImageData(r.x0, r.y0, w, h).data;
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const max = Math.max(data[i], data[i + 1], data[i + 2]);
+        const min = Math.min(data[i], data[i + 1], data[i + 2]);
+        if (max - min > 30) ink++;
+      }
+      return ink;
+    };
+    return 1;
+  })()`);
+
+  // What an empty playfield looks like, measured the same way as the piece
+  // below. A brick count only means "a brick appeared" if the same count was
+  // zero a moment earlier -- otherwise a chrome change anywhere in the rect
+  // reads as gameplay.
+  const inkBefore = await evalExpr(`(() => {
+    if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
+    return countPlayfieldInk();
+  })()`);
+
   await evalExpr(`(() => {
     const app = runningApps[0];
     const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
@@ -367,12 +404,7 @@ async function main() {
       };
       const playfieldBlack = count({ x0: 70, y0: 60, x1: 210, y1: 315 },
         (r, g, b) => r === 0 && g === 0 && b === 0);
-      const fallingBrick = count({ x0: 70, y0: 60, x1: 210, y1: 315 },
-        (r, g, b) =>
-          (r > 120 && g < 110 && b < 110) ||
-          (g > 120 && r < 110 && b < 110) ||
-          (b > 120 && r < 110 && g < 110) ||
-          (r > 150 && g > 150 && b < 100));
+      const fallingBrick = countPlayfieldInk();
       const result = {
         status: document.getElementById('status').textContent,
         log: document.getElementById('log').textContent.slice(-3000),
@@ -382,16 +414,27 @@ async function main() {
         playfieldBlack,
         fallingBrick,
       };
-      if ((playfieldBlack > 20000 && fallingBrick > 100) || performance.now() - started > 6000) {
+      if ((playfieldBlack > 20000 && fallingBrick > 100) || performance.now() - started > 10000) {
+        // A failure here is "the board never started", which is invisible in
+        // a pixel count. Carry the frame out with it.
+        result.screen = document.getElementById('screen').toDataURL('image/png');
         resolve(result);
       } else {
         setTimeout(sample, 100);
       }
     };
     sample();
-  })`, 8000);
+  })`, 12000);
   result.consoleEvents = consoleEventSummary(cdp.events);
   cdp.close();
+
+  const shotDir = path.join(ROOT, 'scratch', 'funtris-web');
+  fs.mkdirSync(shotDir, { recursive: true });
+  const shot = path.join(shotDir, 'new-game.png');
+  if (result.screen) {
+    fs.writeFileSync(shot, Buffer.from(result.screen.replace(/^data:image\/png;base64,/, ''), 'base64'));
+  }
+  delete result.screen;
 
   const titles = result.windows.map(w => w.title).join(', ');
   const resultSummary = JSON.stringify({
@@ -408,10 +451,13 @@ async function main() {
   assert(/"GetStarted":\{"type":4,"data":0\}/.test(result.registry || ''), 'browser launch should seed GetStarted=0: ' + resultSummary);
   assert(!/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(result.log), 'browser log should not contain launch errors\n' + result.log);
   assert(result.playfieldBlack > 20000, `new game should render initialized playfield, black=${result.playfieldBlack}`);
-  assert(result.fallingBrick > 100, `new game should render a falling brick, brick=${result.fallingBrick}`);
+  assert.strictEqual(inkBefore, 0,
+    `playfield should be empty before New Game, ink=${inkBefore} (see ${shot})`);
+  assert(result.fallingBrick > 100,
+    `new game should render a falling brick, ink ${inkBefore} -> ${result.fallingBrick} (see ${shot})`);
 
   console.log('PASS  Funtris browser launch dismisses startup dialog and starts gameplay');
-  console.log(`windows=${JSON.stringify(result.windows)} black=${result.playfieldBlack} brick=${result.fallingBrick}`);
+  console.log(`windows=${JSON.stringify(result.windows)} black=${result.playfieldBlack} ink ${inkBefore} -> ${result.fallingBrick}`);
   cleanup();
 }
 
