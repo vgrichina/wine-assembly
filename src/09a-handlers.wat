@@ -4465,6 +4465,21 @@
     (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
+  ;; GetSaveFileNameW(lpOFN) — the W twin of the above, exactly as
+  ;; GetOpenFileNameW is to GetOpenFileNameA. It was simply missing, so
+  ;; the XP Sound Recorder (a Unicode app) trapped on File > Save and
+  ;; File > Save As instead of showing a dialog.
+  (func $handle_GetSaveFileNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $owner i32)
+    (call $modal_capture_nonvolatile)
+    (global.set $opendlg_wide (i32.const 1))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_open_dialog (local.get $dlg) (local.get $owner) (i32.const 1) (local.get $arg0))
+    (call $modal_begin (local.get $dlg) (i32.const 8))
+  )
+
   ;; 249: SetViewportExtEx(hdc, x, y, lpSize) → BOOL
   (func $handle_SetViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg3)
@@ -6749,8 +6764,15 @@
   )
 
   ;; 393: wvsprintfW — STUB: unimplemented
+  ;; wvsprintfW(lpOut, lpFmt, arglist) — the W twin of wvsprintfA, using the
+  ;; same wide implementation wsprintfW already goes through. The only
+  ;; difference from wsprintfW is where the arguments come from: an explicit
+  ;; va_list pointer rather than the caller's stack. NT Paint formats its
+  ;; Stretch/Skew dialog through this, and trapped here.
   (func $handle_wvsprintfW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $wsprintf_impl_w
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 121: DrawFocusRect(hdc, lprc)
@@ -8013,7 +8035,28 @@
   )
 
   ;; 466: ShellAboutW — return 1, 4 args stdcall
+  ;; ShellAboutW(hwnd, szApp, szOtherStuff, hIcon) — the W twin of
+  ;; ShellAboutA, which builds the whole dialog in WAT. This returned TRUE
+  ;; without drawing anything, so XP Minesweeper's Help > About Minesweeper...
+  ;; reported success and showed nothing.
+  ;;
+  ;; The narrowed copies are deliberately not freed: $create_about_dialog hands
+  ;; the body string straight to a STATIC that keeps the pointer, and these
+  ;; heap copies outlive the call in a way the caller's own stack buffers
+  ;; (0x080ffc94 in Minesweeper's case) would not.
   (func $handle_ShellAboutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $app i32) (local $other i32)
+    (local.set $app (call $atom_narrow_w (local.get $arg1)))
+    (if (local.get $arg2)
+      (then (local.set $other (call $atom_narrow_w (local.get $arg2)))))
+    (if (local.get $app)
+      (then
+        (local.set $dlg (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+        (drop (call $host_shell_about
+          (local.get $dlg) (local.get $arg0) (call $g2w (local.get $app))))
+        (call $create_about_dialog
+          (local.get $dlg) (local.get $arg0) (local.get $app) (local.get $other))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )

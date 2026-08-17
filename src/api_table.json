@@ -19201,5 +19201,12 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 821380304
+  },
+  {
+    "id": 2456,
+    "name": "GetSaveFileNameW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2760246904
   }
 ]
