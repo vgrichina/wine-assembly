@@ -611,21 +611,68 @@
   ;; of the block. Each block carries its size in the two bytes before it, so
   ;; LocalSize and LocalReAlloc have something to read.
   ;;
-  ;; Freed blocks are not reused. These apps allocate a handful of structures
-  ;; at startup and keep them, and a real free list is worth writing when
-  ;; something actually churns.
+  ;; Sizes are rounded up to even, so the low bit of a size word is spare and
+  ;; carries "this block is free". That makes the heap a walkable chain of
+  ;; {size, payload} runs with no separate bookkeeping, which is all a first-fit
+  ;; allocator needs. Reuse matters: Solitaire allocates one 26-byte node per
+  ;; card and frees all 28 of them on the next deal, so a bump allocator runs a
+  ;; 4KB heap dry on the third hand and the game silently stops placing cards.
+  (func $win16_lblock_size (param $p i32) (result i32)
+    (i32.and (call $gl16 (i32.add (global.get $seg_base_ds) (local.get $p)))
+             (i32.const 0xFFFE)))
+  (func $win16_lblock_free (param $p i32) (result i32)
+    (i32.and (call $gl16 (i32.add (global.get $seg_base_ds) (local.get $p)))
+             (i32.const 1)))
+  (func $win16_lblock_set (param $p i32) (param $size i32) (param $free i32)
+    (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $p))
+      (i32.or (local.get $size) (local.get $free))))
+
   (func $win16_LocalAlloc
-    (local $bytes i32) (local $h i32)
+    (local $bytes i32) (local $h i32) (local $p i32) (local $size i32)
     (local.set $bytes (i32.and (i32.add (call $win16_arg16 (i32.const 0)) (i32.const 1))
                                (i32.const 0xFFFE)))
+    ;; A zero-length block would make the walk below stand still.
+    (if (i32.eqz (local.get $bytes)) (then (local.set $bytes (i32.const 2))))
+
+    ;; First fit across the blocks already handed out.
+    (local.set $p (global.get $win16_lheap_base))
+    (block $found
+      (loop $walk
+        (br_if $found (i32.ge_u (local.get $p) (global.get $win16_lheap_ptr)))
+        (local.set $size (call $win16_lblock_size (local.get $p)))
+        (if (i32.and (call $win16_lblock_free (local.get $p))
+                     (i32.ge_u (local.get $size) (local.get $bytes)))
+          (then
+            ;; Split only when the tail can hold a header and a payload of its
+            ;; own; otherwise the block goes out whole and its slack is lost
+            ;; until it is freed again.
+            (if (i32.ge_u (i32.sub (local.get $size) (local.get $bytes)) (i32.const 4))
+              (then
+                (call $win16_lblock_set
+                  (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $bytes))
+                  (i32.sub (i32.sub (local.get $size) (local.get $bytes)) (i32.const 2))
+                  (i32.const 1))
+                (call $win16_lblock_set (local.get $p) (local.get $bytes) (i32.const 0)))
+              (else
+                (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 0))
+                (local.set $bytes (local.get $size))))
+            (local.set $h (i32.add (local.get $p) (i32.const 2)))
+            (call $zero_memory
+              (call $g2w (i32.add (global.get $seg_base_ds) (local.get $h)))
+              (local.get $bytes))
+            (global.set $eax (local.get $h))
+            (call $win16_api_return (i32.const 4))
+            (return)))
+        (local.set $p (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
+        (br $walk)))
+
     (local.set $h (i32.add (global.get $win16_lheap_ptr) (i32.const 2)))
     (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes)) (global.get $win16_lheap_end))
       (then
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 4))
         (return)))
-    (call $gs16 (i32.add (global.get $seg_base_ds) (global.get $win16_lheap_ptr))
-      (local.get $bytes))
+    (call $win16_lblock_set (global.get $win16_lheap_ptr) (local.get $bytes) (i32.const 0))
     (global.set $win16_lheap_ptr (i32.add (local.get $h) (local.get $bytes)))
     ;; LMEM_ZEROINIT is the common flag and zeroing unconditionally is both
     ;; cheap and what every caller here expects of fresh memory.
@@ -634,15 +681,41 @@
     (global.set $eax (local.get $h))
     (call $win16_api_return (i32.const 4)))
 
-  (func $win16_LocalSize
-    (global.set $eax (call $gl16 (i32.sub
-      (i32.add (global.get $seg_base_ds) (call $win16_arg16 (i32.const 0)))
-      (i32.const 2))))
+  ;; Mark the block free, absorb any free blocks that follow it, and give the
+  ;; space straight back to the bump pointer when it turns out to be the last
+  ;; one — without that the heap only ever grows by its high-water mark.
+  (func $win16_LocalFree
+    (local $p i32) (local $size i32) (local $next i32)
+    (local.set $p (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2)))
+    (if (i32.or (i32.lt_u (local.get $p) (global.get $win16_lheap_base))
+                (i32.ge_u (local.get $p) (global.get $win16_lheap_ptr)))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 2))
+        (return)))
+    (local.set $size (call $win16_lblock_size (local.get $p)))
+    (block $done
+      (loop $merge
+        (local.set $next (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
+        (br_if $done (i32.ge_u (local.get $next) (global.get $win16_lheap_ptr)))
+        (br_if $done (i32.eqz (call $win16_lblock_free (local.get $next))))
+        (local.set $size (i32.add (i32.add (local.get $size) (i32.const 2))
+                                  (call $win16_lblock_size (local.get $next))))
+        (br $merge)))
+    (if (i32.ge_u (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size))
+                  (global.get $win16_lheap_ptr))
+      (then (global.set $win16_lheap_ptr (local.get $p)))
+      (else (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1))))
+    (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 2)))
 
-  ;; LocalLock, LocalUnlock, LocalFree and LocalCompact on a fixed block: the
-  ;; handle is already the pointer, nothing moves, and freeing returns NULL to
-  ;; say it succeeded.
+  (func $win16_LocalSize
+    (global.set $eax (call $win16_lblock_size
+      (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2))))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; LocalLock, LocalUnlock and LocalCompact on a fixed block: the handle is
+  ;; already the pointer and nothing moves.
   (func $win16_local_identity (param $argbytes i32) (param $result i32)
     (global.set $eax (local.get $result))
     (call $win16_api_return (local.get $argbytes)))
@@ -650,8 +723,8 @@
   (func $win16_kernel (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_LocalAlloc) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 7))    ;; LocalFree -> NULL
-      (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 7))
+      (then (call $win16_LocalFree) (return (i32.const 1))))
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 8))    ;; LocalLock
                 (i32.eq (local.get $ordinal) (i32.const 23)))  ;; LockSegment
       (then (call $win16_local_identity (i32.const 2)

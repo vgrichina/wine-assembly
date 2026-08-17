@@ -565,6 +565,7 @@
         ;; $win16_LocalAlloc. Two bytes of slack keep a zero handle out of it.
         (global.set $win16_lheap_ptr
           (i32.add (call $win16_seg_limit (local.get $ds_index)) (i32.const 2)))
+        (global.set $win16_lheap_base (global.get $win16_lheap_ptr))
         (global.set $win16_lheap_end
           (i32.add (global.get $win16_lheap_ptr) (global.get $win16_heap_size)))
         (local.set $limit (i32.add

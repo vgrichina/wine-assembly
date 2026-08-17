@@ -2187,6 +2187,7 @@
   (global $WIN16_WH_CALLWNDPROC i32 (i32.const 4))
   (global $win16_hook_cwp (mut i32) (i32.const 0))
   (global $win16_cursor_count (mut i32) (i32.const 0))
+  (global $win16_lheap_base (mut i32) (i32.const 0))
   (global $win16_lheap_ptr (mut i32) (i32.const 0))
   (global $win16_lheap_end (mut i32) (i32.const 0))
   ;; Linear address of the NE header in the staged file, so a name import can

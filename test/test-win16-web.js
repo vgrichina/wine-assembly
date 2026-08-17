@@ -32,7 +32,7 @@ if (!fs.existsSync(CHROME)) {
 const APPS = [
   { key: 'winmine16', title: 'Minesweeper' },
   { key: 'freecell16', title: 'FreeCell', deal: 102 },
-  { key: 'sol16', title: 'Solitaire' },
+  { key: 'sol16', title: 'Solitaire', deal: 1000 },
   { key: 'mshearts16', title: 'The Microsoft Hearts Network' },
 ];
 
@@ -116,13 +116,16 @@ async function runApp(page, port, app) {
     const pixels = screen.getContext('2d')
       .getImageData(0, 0, screen.width, screen.height).data;
     let red = 0;
+    let white = 0;
     for (let i = 0; i < pixels.length; i += 4) {
       if (pixels[i] > 150 && pixels[i] > pixels[i + 1] * 2 && pixels[i] > pixels[i + 2] * 2) red++;
+      if (pixels[i] > 240 && pixels[i + 1] > 240 && pixels[i + 2] > 240) white++;
     }
     return {
       slices: app.wine._runSliceCount,
       running: app.wine.running,
       red,
+      white,
       log: document.getElementById('log').textContent,
       png: screen.toDataURL('image/png'),
     };
@@ -184,10 +187,20 @@ async function main() {
         console.log(`PASS  freecell16 dealt a game from CARDS.DLL (${result.red} red pixels)`);
         pass++;
       }
+      // Solitaire is asked for a second hand, which is where the local heap
+      // gets reused: it frees all 28 card nodes and allocates 28 more. While
+      // LocalFree was a no-op the heap ran dry part way through and the deal
+      // simply stopped, leaving the last piles face down. Seven face-up card
+      // faces are worth about 40k white pixels; four are worth about 24k.
       if (app.key === 'sol16') {
         assert(result.red >= 200,
           `Solitaire dealt no cards: only ${result.red} red pixels on the table`);
         console.log(`PASS  sol16 dealt a hand (${result.red} red pixels)`);
+        pass++;
+        assert(result.white >= 34000,
+          `Solitaire's second deal stopped early: only ${result.white} white pixels, `
+            + 'so some piles never got their face-up card');
+        console.log(`PASS  sol16 dealt a full second hand (${result.white} white pixels)`);
         pass++;
       }
     }

@@ -388,6 +388,10 @@ function disasmAt(buf, offset, va, count, importNames, opts) {
     const rawBytes = Array.from(buf.slice(startPos, startPos + len)).map(b => b.toString(16).padStart(2, '0')).join(' ');
     lines.push(`${curVA.toString(16).padStart(8, '0')}  ${rawBytes.padEnd(28)} ${insn}`);
 
+    // Following one function stops where control leaves it. A linear sweep of a
+    // whole segment keeps going instead: everything past the first `ret` is
+    // still code, it is just a different function.
+    if (opts && opts.linear) continue;
     if (insn === 'ret' || insn.startsWith('ret ') || insn === 'retf' || insn.startsWith('retf ')
       || insn === 'iret' || insn === 'iretd'
       || (insn.startsWith('jmp ') && !insn.includes('short')) || insn === 'int3') break;

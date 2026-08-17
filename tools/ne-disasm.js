@@ -59,9 +59,11 @@ function nameOrdinal(ord, target) {
 function main() {
   const argv = process.argv.slice(2);
   let arena = 0x100000;
+  let all = false;
   const rest = argv.filter((a) => {
     const m = /^--arena=(?:0x)?([0-9a-fA-F]+)$/.exec(a);
     if (m) { arena = parseInt(m[1], 16); return false; }
+    if (a === '--all') { all = true; return false; }
     return true;
   });
   const file = rest[0];
@@ -70,6 +72,8 @@ function main() {
   if (!file || !spec) {
     console.error('Usage: node tools/ne-disasm.js <file.exe> <seg>:<off>[,...] [count=24]');
     console.error('       node tools/ne-disasm.js <file.exe> 0xLINEAR [count]   (arena address)');
+    console.error('       --all   sweep each named segment to its end instead of');
+    console.error('               following one function (for grepping a whole module)');
     process.exit(1);
   }
 
@@ -106,9 +110,11 @@ function main() {
     console.log(`\n${path.basename(file)}  seg ${segIndex}:0x${off.toString(16)}`
       + `  (arena 0x${(arena + (segIndex - 1) * 0x10000 + off).toString(16)})`
       + `${seg.flags & 0x0001 ? '  DATA' : ''}`);
-    const lines = disasmAt(b, seg.filePos + off, off, count, null, { bits: 16 });
+    const lines = disasmAt(b, seg.filePos + off, off,
+      all ? seg.length - off : count, null, { bits: 16, linear: all });
     for (const line of lines) {
       const at = parseInt(line.trim().split(/\s/)[0], 16);
+      if (all && at >= seg.length) break;
       // A fixup patches operand bytes, never the opcode, so look inside the
       // instruction rather than only at its first byte.
       let note = null;
