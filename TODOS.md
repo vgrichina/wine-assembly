@@ -88,14 +88,19 @@ meaningless. Delete it. A baseline worktree needs the font assets too.
 
 ---
 
-## 1. Win16 / NE — Phase 4: two of the four render
+## 1. Win16 / NE — Phase 5: all four run, three of the four play
 
 Phase 1 (`0c23c78`) loads and links NE images, Phase 2 (`84c98a1`) runs them,
-Phase 3 (`ff6f45a`, `9a0f12f`, `3b18812`, `90e548a`) gives them an API layer.
+Phase 3 (`ff6f45a`, `9a0f12f`, `3b18812`, `90e548a`) gives them an API layer,
+Phase 4 (`919f011`, `5e8a9f3`, `e78ba7f`, `0af03d5`) adds NE DLL loading, and
+Phase 5 (`d5a09f7`) gets Hearts running.
+
 **Minesweeper draws completely** — window, LED counters, smiley, minefield.
-**Solitaire draws its window, green baize and "Score: 0 Time: 0" status bar**;
-its cards are missing because they live in CARDS.DLL. All four reach their
-message loops and run their own window procedures.
+**Solitaire draws its window, green baize and status bar. FreeCell draws its
+board with real card graphics out of CARDS.DLL. Hearts creates its frame, its
+status bar and its buttons, runs its message loop, initialises DDEML and puts
+up a real message box.** All four reach their message loops and run their own
+window procedures with no trap.
 
 The address scheme, because everything else depends on it: every segment base
 is 64KB aligned, so the low word of a linear address *is* the offset inside its
@@ -139,24 +144,26 @@ sets the global instead.
 
 ### Open
 
-- **NE DLL loading.** FreeCell and Solitaire both stop at `CARDS.CDTINIT` /
-  `CARDS.CDTDRAWEXT` — the card images. `test/binaries/win98-16bit/CARDS.DLL`
-  is right there and `test-ne-loader.js` already parses it; what is missing is
-  loading a second NE image beside the task, relocating it, and resolving
-  by-name imports against its export table. This is the single highest-value
-  item left: it finishes Solitaire and unblocks FreeCell.
-- **MSHEARTS needs COMMDLG** (`GETFILETITLE` and the file dialogs).
-- **WINMINE diverges after it renders**, ten-odd message-loop iterations in,
-  and this one is genuinely unexplained. What is known, all reproducible:
-  it traps `0xCA165E20` (16-bit EIP outside the arena) at `0x03ee0000`, which
-  is `0x03ee << 16`; `$dbg_prev2_eip` says the block before was `0x001001f4`,
-  the one whose far call is GetMessage. GetMessage itself returns cleanly
-  (`--trace-win16` shows `eip=0x00100204 esp=0x001137ac`). But
-  `--trace-at=0x00100204` fires eleven times while only six GetMessage calls
-  are traced, and the last three fire with no API call at all between them —
-  so the loop is going round without dispatching, which points at the run
-  loop's 32-bit thunk auto-pop in `13-exports.wat` (`eip = gl32(prev_esp)`,
-  and `gl32` at that ESP is exactly `0x03ee0000`). Start there.
+- **Hearts goes straight to the client path and finds no dealer.** It gets all
+  the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
+  and puts up "Unable to connect with dealer. Hearts will end." What it should
+  do first is show its startup dialog: the resources contain "What is your
+  name?", "I want to be &dealer." and "&Computer player names", so the dealer
+  path fills the empty seats with computer players and is a complete
+  single-player game. `DialogBox` (USER.87) and `DialogBoxIndirect` (USER.218)
+  are imported and reached through one MFC `DoModal` at `seg 1:0xaf20`, and
+  neither is ever called in a run, so something upstream of the dialog decided
+  client mode. Start by finding what picks between the DDE server wrapper near
+  `seg 1:0x79ec` (which calls `DdeNameService`) and the client one near
+  `seg 1:0x7a80` (which calls `DdeConnect`) — only the second ever runs. Use
+  `tools/ne-disasm.js`.
+- **DDEML has no conversations.** `src/09f-win16-ddeml.wat` implements the
+  twelve entry points Hearts imports, with real interning string handles and
+  real data handles, but `DdeConnect` always finds nobody because nothing
+  carries a conversation between two emulator instances. Two players in one
+  room is the same shape of problem the virtual LAN in `09d-winsock.wat`
+  already solves for Winsock, and worth doing that way when there is a second
+  player to test against.
 - Known execution-core gaps, all of which trap loudly: INT (including the
   INT 3Fh moveable-segment thunks), 16↔32 thunking, named resources
   (`LoadIcon` with a string name returns 0 — Solitaire's icon).
@@ -171,6 +178,14 @@ sets the global instead.
   directions: `CreateWindowEx` takes `dwExStyle` as its **first** parameter, so
   Pascal pushes it deepest and no other index shifts, while
   `AdjustWindowRectEx` takes it **last**, where every other index does shift.
+- Argument *width* is the third, and it is the nastiest because it is silent
+  and delayed. A Win16 `HHOOK`, `HSZ`, `HCONV` and `HDDEDATA` are all **far
+  pointers**, not words. Getting one wrong pops two bytes too few, and the
+  caller's frame drifts two bytes at a time until some unrelated `RETF` half a
+  screen away reads a garbage CS and the trap names a function that has
+  nothing to do with it. Do not guess a Win16 signature: `tools/ne-dump.js
+  --relocs=N` gives the offset of every import call site and
+  `tools/ne-disasm.js` shows what the app actually pushes there.
 
 ## 2. Fonts — e2e verification and the original measurement (session `ea1ba02f`)
 
