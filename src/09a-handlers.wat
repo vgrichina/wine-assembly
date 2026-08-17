@@ -12652,17 +12652,50 @@
   )
 
   ;; DSA_InsertItem(hdsa, index, pitem) — 3 args, returns index or -1
+  ;; Callers index a DSA in lockstep with a parallel list control — Task
+  ;; Manager reads row N of its listbox and asks the DSA for item N — so an
+  ;; insert in the middle has to move the later items up rather than overwrite
+  ;; the one already there, and has to grow the buffer instead of running off
+  ;; the end of it once the initial capacity fills.
   (func $handle_DSA_InsertItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $item_size i32)
     (local $count i32)
+    (local $cap i32)
     (local $data_ptr i32)
     (local $idx i32)
+    (local $new_cap i32)
+    (local $new_data i32)
     (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
     (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
+    (local.set $cap (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
     (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
     ;; Clamp index: if index > count or DA_LAST (0x7FFFFFFF), append
     (local.set $idx (select (local.get $count) (local.get $arg1)
       (i32.gt_u (local.get $arg1) (local.get $count))))
+    ;; Grow first so the extra slot exists before the shift.
+    (if (i32.ge_u (local.get $count) (local.get $cap))
+      (then
+        (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
+        (if (i32.lt_u (local.get $new_cap) (i32.const 8))
+          (then (local.set $new_cap (i32.const 8))))
+        (local.set $new_data (call $heap_alloc (i32.mul (local.get $new_cap) (local.get $item_size))))
+        (if (local.get $count)
+          (then
+            (memory.copy (call $g2w (local.get $new_data)) (call $g2w (local.get $data_ptr))
+              (i32.mul (local.get $count) (local.get $item_size)))))
+        (if (local.get $data_ptr) (then (call $heap_free (local.get $data_ptr))))
+        (local.set $data_ptr (local.get $new_data))
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $new_cap))
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 12))) (local.get $new_data))))
+    ;; Shift [idx, count) up one slot. memory.copy is defined to behave like
+    ;; memmove, so the overlap here is safe.
+    (if (i32.gt_u (local.get $count) (local.get $idx))
+      (then
+        (memory.copy
+          (call $g2w (i32.add (local.get $data_ptr)
+            (i32.mul (i32.add (local.get $idx) (i32.const 1)) (local.get $item_size))))
+          (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
+          (i32.mul (i32.sub (local.get $count) (local.get $idx)) (local.get $item_size)))))
     ;; Copy item data to data[idx * item_size]
     (memory.copy
       (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
@@ -12676,12 +12709,28 @@
   )
 
   ;; DSA_DeleteItem(hdsa, index) — 2 args, returns BOOL
+  ;; Removing item N must close the gap. Only decrementing the count drops the
+  ;; LAST item logically while every index from N on still reads its old
+  ;; neighbour — which is how Task Manager's End Task came to act on the row
+  ;; above the one the user had selected.
   (func $handle_DSA_DeleteItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $item_size i32)
     (local $count i32)
+    (local $data_ptr i32)
+    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
     (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (if (i32.and (i32.lt_u (local.get $arg1) (local.get $count)) (i32.gt_u (local.get $count) (i32.const 0)))
+    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
+    (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
-        ;; Decrement count (simplified — doesn't shift items, but works for stack-like usage)
+        ;; Shift (index, count) down over the removed slot.
+        (if (i32.gt_u (i32.sub (local.get $count) (i32.const 1)) (local.get $arg1))
+          (then
+            (memory.copy
+              (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size))))
+              (call $g2w (i32.add (local.get $data_ptr)
+                (i32.mul (i32.add (local.get $arg1) (i32.const 1)) (local.get $item_size))))
+              (i32.mul (i32.sub (i32.sub (local.get $count) (i32.const 1)) (local.get $arg1))
+                (local.get $item_size)))))
         (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
           (i32.sub (local.get $count) (i32.const 1)))
         (global.set $eax (i32.const 1)))
@@ -12730,33 +12779,86 @@
   )
 
   ;; DPA_InsertPtr(hdpa, index, p) — 3 args, returns index or -1
+  ;; A DPA is an ordered array, and callers index it in lockstep with a
+  ;; parallel list control: Task Manager reads row N of its listbox and asks
+  ;; the DPA for element N. So an insert must move the later elements up
+  ;; rather than overwrite the one already at that slot, and must grow the
+  ;; backing array instead of writing past it once the initial capacity fills.
   (func $handle_DPA_InsertPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $count i32)
+    (local $cap i32)
     (local $ptrs i32)
     (local $idx i32)
+    (local $i i32)
+    (local $new_cap i32)
+    (local $new_ptrs i32)
     (local.set $count (i32.load (call $g2w (local.get $arg0))))
+    (local.set $cap (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
     (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
+    ;; DPA_APPEND (0x7FFFFFFF) and any out-of-range index append.
     (local.set $idx (select (local.get $count) (local.get $arg1)
       (i32.gt_u (local.get $arg1) (local.get $count))))
-    ;; Store pointer at ptrs[idx]
+    ;; Grow before the shift so the extra slot exists.
+    (if (i32.ge_u (local.get $count) (local.get $cap))
+      (then
+        (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
+        (if (i32.lt_u (local.get $new_cap) (i32.const 8))
+          (then (local.set $new_cap (i32.const 8))))
+        (local.set $new_ptrs (call $heap_alloc (i32.shl (local.get $new_cap) (i32.const 2))))
+        (local.set $i (i32.const 0))
+        (block $copy_done (loop $copy
+          (br_if $copy_done (i32.ge_u (local.get $i) (local.get $count)))
+          (i32.store
+            (call $g2w (i32.add (local.get $new_ptrs) (i32.shl (local.get $i) (i32.const 2))))
+            (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $i) (i32.const 2))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy)))
+        (if (local.get $ptrs) (then (call $heap_free (local.get $ptrs))))
+        (local.set $ptrs (local.get $new_ptrs))
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4))) (local.get $new_cap))
+        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $new_ptrs))))
+    ;; Shift [idx, count) up one slot, walking down so the copy cannot
+    ;; overwrite a source it has not read yet.
+    (local.set $i (local.get $count))
+    (block $shift_done (loop $shift
+      (br_if $shift_done (i32.le_u (local.get $i) (local.get $idx)))
+      (i32.store
+        (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $i) (i32.const 2))))
+        (i32.load (call $g2w (i32.add (local.get $ptrs)
+          (i32.shl (i32.sub (local.get $i) (i32.const 1)) (i32.const 2))))))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $shift)))
     (i32.store (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $idx) (i32.const 2))))
       (local.get $arg2))
-    ;; Increment count
     (i32.store (call $g2w (local.get $arg0)) (i32.add (local.get $count) (i32.const 1)))
     (global.set $eax (local.get $idx))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; DPA_DeletePtr(hdpa, index) — 2 args, returns removed pointer
+  ;; Removing element N must close the gap. Only decrementing the count
+  ;; drops the LAST element logically while leaving every index from N on
+  ;; pointing at its old record — which is how Task Manager's End Task came
+  ;; to post WM_CLOSE to a window belonging to an app that had already quit.
   (func $handle_DPA_DeletePtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $count i32)
     (local $ptrs i32)
     (local $removed i32)
+    (local $i i32)
     (local.set $count (i32.load (call $g2w (local.get $arg0))))
     (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
         (local.set $removed (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $arg1) (i32.const 2))))))
+        (local.set $i (local.get $arg1))
+        (block $shift_done (loop $shift
+          (br_if $shift_done (i32.ge_u (local.get $i) (i32.sub (local.get $count) (i32.const 1))))
+          (i32.store
+            (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $i) (i32.const 2))))
+            (i32.load (call $g2w (i32.add (local.get $ptrs)
+              (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $shift)))
         (i32.store (call $g2w (local.get $arg0)) (i32.sub (local.get $count) (i32.const 1)))
         (global.set $eax (local.get $removed)))
       (else
