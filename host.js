@@ -783,6 +783,9 @@ class WineAssembly {
       return wi;
     };
     this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports, {
+      // Opt-in from the debug toolbar. It does not switch schedulers yet —
+      // ThreadManager reports which backend it really used.
+      threadsRequested: !!(typeof window !== 'undefined' && window.WINE_THREADS),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       onThreadExit: (info) => self._cleanupWinampVisualizerThread(info),

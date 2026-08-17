@@ -582,6 +582,8 @@
       <span class="debug-profile">
         <label><input id="perf-hud-toggle" type="checkbox" onchange="setPerfHud(this.checked)">FPS graph</label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
+        <label title="Experimental: opt into real guest threads. Needs cross-origin isolation; the worker backend is still phase 1."><input id="threads-toggle" type="checkbox" onchange="setThreads(this.checked)">Threads</label>
+        <span id="threads-status" style="color:#606060"></span>
       </span>
       <span class="debug-record">
         <button id="record-btn" onclick="toggleRecording()" title="Record screen + audio to .webm">● Record</button>
@@ -800,6 +802,87 @@ Resource-aware Win98 emulator
       }
       const box = document.getElementById('perf-stream-toggle');
       if (box) box.checked = on;
+    }
+
+    // ---- experimental: real guest threads ---------------------------------
+    //
+    // Two separate things, and conflating them would make this switch a lie:
+    //
+    //   1. CAPABILITY — cross-origin isolation, so a shared WebAssembly.Memory
+    //      can reach a Worker at all. That part is real and works here: the
+    //      switch registers sw-coi.js and reloads, and threads-probe.html
+    //      verifies the whole pipeline (isolation, memory transfer, module
+    //      transfer including on-the-fly WAT compilation, worker rendering).
+    //
+    //   2. THE SCHEDULER — guest threads actually running in Workers. NOT
+    //      BUILT. It needs a broker for every host import that touches the DOM,
+    //      audio, or localStorage (which does not exist in a worker at all).
+    //      See docs/design-real-threads.md phase 1.
+    //
+    // So the switch records the opt-in and reports the true state; it does not
+    // pretend the second half exists. ThreadManager logs which backend it ran.
+    const THREADS_KEY = 'wine-assembly.threads';
+    window.WINE_THREADS = false;
+
+    function threadsIsolated() {
+      return typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+    }
+
+    function updateThreadsStatus() {
+      const el = document.getElementById('threads-status');
+      const box = document.getElementById('threads-toggle');
+      if (!el || !box) return;
+      const wanted = localStorage.getItem(THREADS_KEY) === '1';
+      box.checked = wanted;
+      if (!wanted) { el.textContent = ''; return; }
+      if (!threadsIsolated()) {
+        el.textContent = 'not isolated';
+        el.title = 'No COOP/COEP in effect. Toggle again to install the service worker and reload.';
+        return;
+      }
+      // Honest wording: isolation is real, the worker scheduler is not.
+      el.textContent = 'isolated · cooperative sched';
+      el.title = 'Cross-origin isolation is active, so real threads are possible. '
+        + 'The Worker backend is not implemented yet (docs/design-real-threads.md phase 1), '
+        + 'so guest threads still share this thread.';
+    }
+
+    async function setThreads(on) {
+      localStorage.setItem(THREADS_KEY, on ? '1' : '0');
+      if (!on) {
+        window.WINE_THREADS = false;
+        updateThreadsStatus();
+        appendDebugLog('[threads] opt-out recorded (isolation left in place; use threads-probe.html to remove the service worker)');
+        return;
+      }
+      window.WINE_THREADS = true;
+      if (threadsIsolated()) {
+        updateThreadsStatus();
+        appendDebugLog('[threads] isolated. Worker scheduler is not implemented yet — '
+          + 'guest threads still run cooperatively on this thread (design-real-threads.md phase 1).');
+        return;
+      }
+      if (!navigator.serviceWorker) {
+        updateThreadsStatus();
+        appendDebugLog('[threads] no service worker API (private browsing?) — isolation is unavailable here, '
+          + 'so this session can only ever run single-threaded. That is a supported mode, not a failure.');
+        return;
+      }
+      appendDebugLog('[threads] installing isolation service worker and reloading…');
+      try {
+        await navigator.serviceWorker.register('sw-coi.js', { scope: './' });
+        await navigator.serviceWorker.ready;
+        setTimeout(() => location.reload(), 300);
+      } catch (err) {
+        appendDebugLog('[threads] service worker registration failed: ' + (err && err.message || err));
+        updateThreadsStatus();
+      }
+    }
+
+    // Restore the opt-in across the reload the service worker needs.
+    if (localStorage.getItem(THREADS_KEY) === '1') {
+      window.WINE_THREADS = true;
+      window.addEventListener('load', updateThreadsStatus);
     }
 
     // An app in exclusive fullscreen hides the toolbar, so the checkbox is
