@@ -352,6 +352,14 @@ async function handlePerf(req, res, opts) {
   if (opts.quiet) return;
 
   const steps = Array.isArray(batch.steps) ? batch.steps : [];
+  if (batch.idle) {
+    // Say why it is quiet. A hidden tab is not idle in the same sense: the
+    // browser clamps its timers, so the emulator crawls whether or not the
+    // app is running, and any measurement taken there is meaningless.
+    console.log(`${new Date().toISOString().slice(11, 19)} ${String(batch.session || '?').slice(0, 6)} `
+      + (batch.hidden ? 'tab hidden (timers clamped — nothing measurable)' : 'idle — no app launched'));
+    return;
+  }
   const totals = steps.map(s => s[0]).sort((a, b) => a - b);
   const snap = batch.snapshot || {};
   const throttled = steps.filter(s => s[5]).length;

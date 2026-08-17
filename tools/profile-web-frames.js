@@ -45,6 +45,10 @@ const QUERY = opt('query', '');
 // a single page setting against an otherwise identical run.
 const AFTER_LAUNCH = opt('after-launch', '');
 const CPU_PROFILE = argv.includes('--cpu-profile');
+// Use an already-running server (e.g. `node tools/dev-server.js`) instead of
+// this file's own static one. Required for anything that talks to a same-
+// origin API, since the throwaway server serves files and nothing else.
+const ORIGIN = (opt('origin', '') || '').replace(/\/$/, '');
 // JS evaluated after sampling; its result is printed. Pairs with
 // --after-launch to install a counter and then read it back.
 const REPORT_EVAL = opt('report-eval', '');
@@ -94,8 +98,13 @@ function stats(vals) {
 }
 
 async function main() {
-  const server = await startStaticServer();
-  const port = server.address().port;
+  // --origin points the run at a server that is already up (typically
+  // tools/dev-server.js, which is the only one with the /api/perf sink), so
+  // a relative-URL feature like ?perf-stream can be exercised for real
+  // instead of against this file's throwaway static server.
+  const server = ORIGIN ? null : await startStaticServer();
+  const port = server ? server.address().port : 0;
+  const base = ORIGIN || `http://127.0.0.1:${port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-frames-'));
   const browser = await puppeteer.launch({
     headless: true,
@@ -112,7 +121,7 @@ async function main() {
       const t = m.text();
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|crashed|FATAL:/i.test(t)) problems.push(t);
     });
-    await page.goto(`http://127.0.0.1:${port}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
+    await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 
     console.log(`launching ${APP} ...`);
@@ -438,7 +447,7 @@ async function main() {
     }
   } finally {
     await browser.close();
-    server.close();
+    if (server) server.close();
     fs.rmSync(profile, { recursive: true, force: true });
   }
 }
