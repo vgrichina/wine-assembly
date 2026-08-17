@@ -117,15 +117,18 @@ async function runApp(page, port, app) {
       .getImageData(0, 0, screen.width, screen.height).data;
     let red = 0;
     let white = 0;
+    let green = 0;
     for (let i = 0; i < pixels.length; i += 4) {
       if (pixels[i] > 150 && pixels[i] > pixels[i + 1] * 2 && pixels[i] > pixels[i + 2] * 2) red++;
       if (pixels[i] > 240 && pixels[i + 1] > 240 && pixels[i + 2] > 240) white++;
+      if (pixels[i] < 40 && pixels[i + 1] > 100 && pixels[i + 1] < 160 && pixels[i + 2] < 40) green++;
     }
     return {
       slices: app.wine._runSliceCount,
       running: app.wine.running,
       red,
       white,
+      green,
       log: document.getElementById('log').textContent,
       png: screen.toDataURL('image/png'),
     };
@@ -185,6 +188,16 @@ async function main() {
         assert(result.red >= 200,
           `FreeCell dealt no cards from CARDS.DLL: only ${result.red} red pixels`);
         console.log(`PASS  freecell16 dealt a game from CARDS.DLL (${result.red} red pixels)`);
+        pass++;
+        // FreeCell registers its class with a NULL hbrBackground and paints its
+        // own green baize in WM_ERASEBKGND. Its whole client should be green,
+        // not just the strip behind the free cells: while the message never
+        // arrived, only the eight cell bitmaps were green and the rest of the
+        // table stayed the colour the surface happened to be cleared to.
+        assert(result.green >= 120000,
+          `FreeCell's table is not green: only ${result.green} baize pixels, so `
+            + 'WM_ERASEBKGND never reached its window procedure');
+        console.log(`PASS  freecell16 painted its baize (${result.green} green pixels)`);
         pass++;
       }
       // Solitaire is asked for a second hand, which is where the local heap

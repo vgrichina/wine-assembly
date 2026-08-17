@@ -1811,6 +1811,15 @@
     (drop (call $host_show_window (local.get $hwnd) (local.get $show)))
     (if (local.get $show)
       (then
+        ;; CreateWindow defers the initial erase for a window that is not yet
+        ;; visible, so showing one has to re-arm it. A class registered with a
+        ;; NULL hbrBackground means "the window paints its own background", and
+        ;; the only place it gets to is WM_ERASEBKGND — FreeCell's green baize
+        ;; is a PATCOPY over GetClientRect there, and without the message the
+        ;; client stays whatever the surface was cleared to.
+        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd))
+                              (i32.const 0x10000000)))
+          (then (call $nc_flags_set (local.get $hwnd) (i32.const 2))))
         (drop (call $wnd_set_style (local.get $hwnd)
           (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
         (global.set $paint_pending (i32.const 1))
@@ -1858,7 +1867,9 @@
     (call $gs16 (i32.add (local.get $dst) (i32.const 2))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
     (call $gs16 (i32.add (local.get $dst) (i32.const 4))
-      (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
+      (call $win16_msg_wparam16
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 6))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 10))
@@ -1866,6 +1877,19 @@
     (call $gs32 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
+
+  ;; Narrowing a MSG is not always a truncation: when wParam carries a handle it
+  ;; has to go through the handle map, because a 32-bit handle's low word means
+  ;; nothing on its own. WM_ERASEBKGND is the one that matters here — its wParam
+  ;; is the HDC to paint into, and truncating our window DC (hwnd | 0x40000) to
+  ;; 0x0001 hands the app a DC that is not one. WM_ICONERASEBKGND is the same
+  ;; message for the iconic case. (Win16's WM_CTLCOLOR also passes an HDC in
+  ;; wParam, but it is sent rather than posted, so it never comes through here.)
+  (func $win16_msg_wparam16 (param $message i32) (param $wparam i32) (result i32)
+    (if (i32.or (i32.eq (local.get $message) (i32.const 0x0014))
+                (i32.eq (local.get $message) (i32.const 0x0027)))
+      (then (return (call $win16_h16 (local.get $wparam)))))
+    (local.get $wparam))
 
   ;; USER.113 TranslateMessage(lpMsg). Key translation happens where the host
   ;; input is decoded, so there is nothing left to do here.

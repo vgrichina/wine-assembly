@@ -1172,6 +1172,10 @@
   ;; 71: ShowWindow
   (func $handle_ShowWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $wndproc i32) (local $client_size i32)
+    (local $was_visible i32)
+    (local.set $was_visible (i32.ne
+      (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
+      (i32.const 0)))
     ;; WM_SHOWWINDOW(fShow=wParam, status=lParam=0 for ShowWindow API) before
     ;; the host toggles visibility, so wndprocs can observe the transition.
     (drop (call $post_queue_push
@@ -1186,13 +1190,21 @@
       (then
         (drop (call $wnd_set_style (local.get $arg0)
           (i32.or (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))))
-        ;; A hidden child has no visible region, so CreateWindowEx correctly
+        ;; A hidden window has no visible region, so CreateWindowEx correctly
         ;; defers its initial erase work. Showing it must re-arm that work
         ;; before the first WM_PAINT. Custom Win9x controls commonly handle
         ;; WM_ERASEBKGND themselves (WinHelp's topic pane fills its authored
         ;; yellow background from window-extra state); queueing only WM_PAINT
         ;; leaves stale parent/default pixels behind.
-        (if (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000))
+        ;; This is not a child-only concern. A main window created without
+        ;; WS_VISIBLE and shown from WinMain's nCmdShow is the ordinary shape of
+        ;; a Win16 app, and one that registers a NULL hbrBackground paints its
+        ;; own background in WM_ERASEBKGND — FreeCell's green baize is a
+        ;; PATCOPY over GetClientRect, and without the message it never runs.
+        (if (i32.or
+              (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
+                               (i32.const 0x40000000)) (i32.const 0))
+              (i32.eqz (local.get $was_visible)))
           (then (call $nc_flags_set (local.get $arg0) (i32.const 2)))))
       (else
         (drop (call $wnd_set_style (local.get $arg0)
