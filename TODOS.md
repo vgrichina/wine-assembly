@@ -95,19 +95,21 @@ Phase 3 (`ff6f45a`, `9a0f12f`, `3b18812`, `90e548a`) gives them an API layer,
 Phase 4 (`919f011`, `5e8a9f3`, `e78ba7f`, `0af03d5`) adds NE DLL loading, and
 Phase 5 (`d5a09f7`) gets Hearts running.
 
-Phase 6 (`fd04a70`, `df6b6b5`) makes them look right rather than merely run.
+Phase 6 (`fd04a70`, `df6b6b5`, `653da1d`, `3716c6f`, `f82cc5d`, `7f464ce`)
+makes them look right rather than merely run.
 
-**Minesweeper draws completely** — window, red LED counters, yellow smiley,
-raised minefield. **Solitaire deals a hand: seven tableau columns of real
-cards on green baize, with its status bar.** **FreeCell draws its empty board
-— eight green cells, the logo card, "Cards Left:" — which is what it shows
-until you start a game.** **Hearts creates its frame, its status bar and its
-buttons, runs its message loop, initialises DDEML and puts up a real message
-box.** All four reach their message loops and run their own window procedures
-with no trap. All four are in the browser shell under "16-bit (Win16 / NE)"
-(`8dc244e`), covered by `test/test-win16-web.js`.
+**Minesweeper is complete** — Game/Help menu, red LED counters, yellow smiley,
+raised minefield. **Solitaire deals: stock, four foundations and seven tableau
+columns of real cards on green baize.** **FreeCell deals a full board out of
+CARDS.DLL** — eight columns of card faces, free cells, "FreeCell Game #2574"
+in the title (it opens empty by design; Game▸New Game, command 102, deals).
+**Hearts creates its frame, its status bar and its buttons, runs its message
+loop, initialises DDEML and puts up a real message box.** All four are in the
+browser shell under "16-bit (Win16 / NE)" (`8dc244e`), covered by
+`test/test-win16-web.js`, which asserts Minesweeper's colour art and that both
+card games actually deal.
 
-Three of the bugs behind the previously-empty tables were **not** Win16 bugs
+Most of the bugs behind the previously-empty tables were **not** Win16-only
 and are worth knowing about for 32-bit apps too:
 
 - `$handle_AdjustWindowRectEx` ignored `dwExStyle` while
@@ -120,6 +122,19 @@ and are worth knowing about for 32-bit apps too:
 - `GetDeviceCaps(NUMCOLORS)` answered Win32's `-1`, which a 16-bit caller
   compares as a signed word. Minesweeper's `cmp ax,2 / jle` therefore chose
   its monochrome bitmap set and drew the whole board in 1-bit art.
+- `$menu_load` and `rsrc_exists` both meant "PE resource", so no 16-bit app
+  had a menu bar. An NE menu is the same MENUITEMTEMPLATE with ANSI labels.
+- **A DLL's exported prologue was never patched.** `push ds / pop ax / nop` is
+  three bytes the linker leaves meaning "AX = the caller's DS", and the loader
+  is expected to replace them with `mov ax, DGROUP`. Without it every export
+  runs on its caller's data segment and reads the caller's variables as its
+  own — nothing faults, it just reads the wrong memory. CARDS.DLL found
+  FreeCell's data where its card-bitmap cache should be.
+- **A 16-bit task never became the active window.** WM_ACTIVATEAPP,
+  WM_ACTIVATE and WM_SETFOCUS are delivered from CreateWindowExA through
+  32-bit continuation thunks, which a 16-bit task cannot be resumed on.
+- ShowWindow's WM_SIZE arrived *after* whatever WinMain posted, rather than
+  before it as on Windows, so Solitaire dealt onto a table with no layout.
 
 The address scheme, because everything else depends on it: every segment base
 is 64KB aligned, so the low word of a linear address *is* the offset inside its
@@ -167,16 +182,21 @@ sets the global instead.
 
 ### Open
 
-- **Solitaire deals one row, not the full staircase.** All 28 cards move —
-  the deal loop at `seg 4:0xdd3` runs its 7 outer and 21 inner iterations, and
-  the deck's count drops — but the table shows one card per pile and no stock
-  or foundation row above the tableau. Two threads to pull: the piles are laid
-  out at y=9 with the top row absent, which looks like the vertical half of the
-  layout hitting a minimum-height check the way the horizontal half hit a
-  minimum-width one; and the engine's animation tick (`seg 4:0x13ac`, reached
-  from the TIMERPROC) returns immediately every time because the table object's
-  `+0x14` is zero, so whatever the tick would finish never happens. `--count`
-  on those two addresses answers both.
+- **Solitaire's animated deal never advances.** The board it opens with is
+  right, but ask for another (Game▸Deal, command 1000) and the table clears to
+  stock plus foundation outlines and stays there. The engine's animation tick
+  — `seg 4:0x13ac`, reached from the TIMERPROC through the dispatcher at
+  `seg 4:0x1644` — takes its early-out every single time because the table
+  object's `+0x14` is zero. The other three gates pass (`[0x2e]`=1,
+  `+0x12`=1, `[0x14]`=0 meaning not iconic), and a watchpoint on `+0x14`
+  (`--watch-word=0x1a02ce --watch-log`) shows nothing ever writes it. Find what
+  should. Two observations that may or may not be related: after that second
+  deal the app's own 250ms timer is delivered on nearly every pump iteration
+  (~15000 WM_TIMER in a 2s run, one per idle poll, id and TIMERPROC both
+  correct) while `--dump=0xac00:60` shows an empty TIMER_TABLE at run end, so
+  where those deliveries come from is not yet explained; and the tableau piles
+  draw their cards with a 3px fan, which is right for face-down cards, but
+  three of the seven still show a back rather than a turned top card.
 - **Hearts goes straight to the client path and finds no dealer.** It gets all
   the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
   and puts up "Unable to connect with dealer. Hearts will end." What it should
@@ -197,9 +217,11 @@ sets the global instead.
   room is the same shape of problem the virtual LAN in `09d-winsock.wat`
   already solves for Winsock, and worth doing that way when there is a second
   player to test against.
-- Known execution-core gaps, all of which trap loudly: INT (including the
-  INT 3Fh moveable-segment thunks), 16↔32 thunking, named resources
-  (`LoadIcon` with a string name returns 0 — Solitaire's icon).
+- Known execution-core gaps, all of which trap loudly and none of which the
+  four apps reach: INT (including the INT 3Fh moveable-segment thunks), 16↔32
+  thunking, named resources (`LoadIcon` with a string name returns 0 —
+  Solitaire's icon). `tools/ne-dump.js --resources` shows what a module
+  actually ships, including named types and ids.
 - Structure width is the recurring bug class here, and it is worth stating
   plainly: **a structure that crosses the boundary is a different size in the
   two worlds.** `SystemParametersInfo(SPI_GETWORKAREA)` wrote a 32-bit RECT
