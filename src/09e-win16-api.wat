@@ -883,7 +883,8 @@
   ;; already spoken for.
   (func $win16_module_emulated (param $id i32) (result i32)
     (i32.or (i32.le_u (local.get $id) (global.get $WIN16_SYSTEM_MODULES))
-            (i32.eq (local.get $id) (i32.const 10))))
+            (i32.or (i32.eq (local.get $id) (i32.const 10))
+                    (i32.eq (local.get $id) (i32.const 11)))))
 
   ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
   ;; task's stack region, which a 16-bit task never touches.
@@ -914,6 +915,34 @@
     (call $win16_local_identity (i32.const 4)
       (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id)))))
 
+  ;; NDDEAPI.NDdeGetWindow() -> HWND of the agent that serves network DDE, or
+  ;; NULL when there is none and the caller should start NETDDE.EXE.
+  ;;
+  ;; There is one, and it is us: DDEML is implemented in WAT rather than by a
+  ;; separate agent process, so the honest answer is a window of ours rather
+  ;; than a zero. It is a real entry in the window table — no host window, no
+  ;; painting, nothing on screen — so the handle names something that can be
+  ;; posted to and looked up, which is what a caller does with it.
+  ;;
+  ;; Hearts asks before it will let you choose how to play: a NULL here greys
+  ;; out both "connect to another game" and "be dealer", which leaves it able
+  ;; to do neither.
+  (func $win16_ndde_window (result i32)
+    (local $hwnd i32)
+    (if (global.get $win16_ndde_hwnd)
+      (then (return (global.get $win16_ndde_hwnd))))
+    (local.set $hwnd (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (local.get $hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_WAT_NATIVE))
+    (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x80000000)))  ;; WS_POPUP, not visible
+    (global.set $win16_ndde_hwnd (local.get $hwnd))
+    (local.get $hwnd))
+
+  (func $win16_NDdeGetWindow
+    (global.set $eax (call $win16_h16 (call $win16_ndde_window)))
+    (global.set $edx (i32.const 0))
+    (call $win16_api_return (i32.const 0)))
+
   ;; KERNEL.50 GetProcAddress(hModule, lpszProcName) -> FARPROC in DX:AX.
   ;;
   ;; lpszProcName is a far pointer to a name, unless its selector half is zero —
@@ -929,6 +958,21 @@
     (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
+        ;; A module this emulator implements has no export table to read, so
+        ;; the few entry points that are asked for by address rather than
+        ;; called through an import thunk get a fixed thunk-segment slot each.
+        ;; NDDEAPI's one is the only one so far; anything else still answers
+        ;; NULL, which is what a caller checks for.
+        (if (i32.and (i32.eq (local.get $id) (i32.const 11)) (local.get $sel))
+          (then
+            (call $win16_cstr_to_pstr
+              (call $win16_far_to_guest (local.get $sel) (local.get $off))
+              (call $win16_name_scratch) (i32.const 0))
+            (if (call $win16_pstr_eq (call $g2w (call $win16_name_scratch))
+                                     (global.get $WIN16_NAME_NDDEGETWINDOW))
+              (then (local.set $target
+                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
+                        (global.get $WIN16_NDDE_GETWINDOW)))))))
         (if (call $win16_dll_loaded (local.get $id))
           (then
             (if (local.get $sel)
@@ -2028,7 +2072,10 @@
         (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
         (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 6))
-      (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
+      (call $win16_msg_lparam16_cmd
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 12)))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 10))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0))
@@ -2047,6 +2094,78 @@
                 (i32.eq (local.get $message) (i32.const 0x0027)))
       (then (return (call $win16_h16 (local.get $wparam)))))
     (local.get $wparam))
+
+  ;; Control messages are numbered differently in the two worlds, and unlike
+  ;; every other difference here it cannot be worked out from the message alone.
+  ;;
+  ;; Win16 gave each control class its own block starting at WM_USER, so BM_,
+  ;; EM_, LB_, CB_, SBM_ and STM_ all begin at 0x400 and mean different things.
+  ;; Win32 moved them into distinct ranges precisely so they could be told
+  ;; apart. Translating therefore needs the class of the window being addressed,
+  ;; which is why this takes an hwnd; each block is contiguous in both worlds,
+  ;; so one offset per class covers it.
+  ;;
+  ;;   BUTTON     0x400 -> 0x00F0   EDIT     0x400 -> 0x00B0
+  ;;   LISTBOX    0x401 -> 0x0180   COMBOBOX 0x400 -> 0x0140
+  ;;   SCROLLBAR  0x400 -> 0x00E0   STATIC   0x400 -> 0x0170
+  ;;
+  ;; Hearts asks its radio buttons which one is set with BM_GETCHECK, and a
+  ;; 0x400 that nothing understood answered zero for all of them — so choosing
+  ;; "I want to be dealer" changed nothing and the game went looking for a
+  ;; dealer on the network instead.
+  (func $win16_ctrl_msg32 (param $hwnd i32) (param $msg i32) (result i32)
+    (local $class i32)
+    (if (i32.or (i32.lt_u (local.get $msg) (i32.const 0x0400))
+                (i32.ge_u (local.get $msg) (i32.const 0x0500)))
+      (then (return (local.get $msg))))
+    (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+    ;; 1 BUTTON
+    (if (i32.eq (local.get $class) (i32.const 1))
+      (then (return (i32.sub (local.get $msg) (i32.const 0x0310)))))
+    ;; 2 EDIT, and the two RichEdit classes answer the same numbers
+    (if (i32.or (i32.eq (local.get $class) (i32.const 2))
+          (i32.or (i32.eq (local.get $class) (i32.const 24))
+                  (i32.eq (local.get $class) (i32.const 25))))
+      (then (return (i32.sub (local.get $msg) (i32.const 0x0350)))))
+    ;; 3 STATIC
+    (if (i32.eq (local.get $class) (i32.const 3))
+      (then (return (i32.sub (local.get $msg) (i32.const 0x0290)))))
+    ;; 4 LISTBOX
+    (if (i32.eq (local.get $class) (i32.const 4))
+      (then (return (i32.sub (local.get $msg) (i32.const 0x0281)))))
+    ;; 5 COMBOBOX
+    (if (i32.eq (local.get $class) (i32.const 5))
+      (then (return (i32.sub (local.get $msg) (i32.const 0x02C0)))))
+    ;; 7 SCROLLBAR
+    (if (i32.eq (local.get $class) (i32.const 7))
+      (then (return (i32.sub (local.get $msg) (i32.const 0x0320)))))
+    ;; Not one of ours, or a class with no WM_USER block of its own: the app is
+    ;; talking to its own window and the number is its own business.
+    (local.get $msg))
+
+  ;; WM_COMMAND is packed differently in the two worlds, and this is the only
+  ;; message where narrowing lParam needs to see wParam as well:
+  ;;
+  ;;   Win32   wParam = MAKEWPARAM(id, notifyCode)   lParam = hwndCtl
+  ;;   Win16   wParam = id                           lParam = MAKELPARAM(hwndCtl, notifyCode)
+  ;;
+  ;; Passed straight through, the task gets the top half of a 32-bit HWND where
+  ;; the notification code belongs — 0x0001000b reads as control 0x000b sending
+  ;; notification 1. Hearts' OK button arrived that way: BN_CLICKED is 0, so
+  ;; MFC found no ON_BN_CLICKED entry for it, handled nothing, and passed the
+  ;; command down the subclass chain without ever running CDialog::OnOK. Its
+  ;; radio buttons were read by that OnOK, so the game never learned which way
+  ;; you had chosen to play.
+  ;;
+  ;; A command from a menu or an accelerator has no control and no notification
+  ;; code, and lParam is zero in both worlds.
+  (func $win16_msg_lparam16_cmd (param $message i32) (param $wparam i32)
+        (param $lparam i32) (result i32)
+    (if (i32.ne (local.get $message) (i32.const 0x0111))
+      (then (return (local.get $lparam))))
+    (if (i32.eqz (local.get $lparam)) (then (return (i32.const 0))))
+    (i32.or (call $win16_h16 (local.get $lparam))
+            (i32.shl (i32.shr_u (local.get $wparam) (i32.const 16)) (i32.const 16))))
 
   ;; USER.113 TranslateMessage(lpMsg). Key translation happens where the host
   ;; input is decoded, so there is nothing left to do here.
@@ -2129,9 +2248,14 @@
     (local.set $proc (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
       (then
+        ;; One of ours, so the control-message numbering has to be translated —
+        ;; but only here. A message going to the task's own window procedure
+        ;; below keeps the number the task chose.
         (call $win16_call32_begin (i32.const 4))
         (global.set $eax (call $wnd_send_message
-          (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp)))
+          (local.get $hwnd)
+          (call $win16_ctrl_msg32 (local.get $hwnd) (local.get $msg))
+          (local.get $wp) (local.get $lp)))
         (call $win16_call32_end)
         (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
         (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
@@ -3048,6 +3172,16 @@
     (call $win16_api_return (i32.const 14)))
 
   ;; USER.109 PeekMessage(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg).
+  ;;
+  ;; The one handler that ends by *setting* EIP rather than returning: on an
+  ;; empty peek it takes its own return address off the stack, moves EIP there
+  ;; and raises the yield flag, so an idle loop spinning on PM_NOREMOVE gives
+  ;; the host a turn instead of burning the whole slice. Across this bridge the
+  ;; address it reads is the zero $win16_call32_begin wrote as the scratch
+  ;; frame's return address, so it lands on EIP = 0 — which is exactly what
+  ;; $win16_call32_end refuses. Ending the call the redirect-tolerant way puts
+  ;; the task's own EIP back; the yield it asked for is still right here, since
+  ;; MFC's Run loop peeks this way between every idle pass.
   (func $win16_PeekMessage
     (local $dst i32) (local $remove i32) (local $tmp i32)
     (local.set $dst (call $win16_far_to_guest
@@ -3058,7 +3192,7 @@
     (call $win16_call32_arg (i32.const 4) (local.get $remove))
     (call $handle_PeekMessageA (local.get $tmp) (i32.const 0) (i32.const 0)
       (i32.const 0) (local.get $remove) (i32.const 0))
-    (call $win16_call32_end)
+    (drop (call $win16_call32_end_redirected))
     (if (global.get $eax)
       (then
         (call $gs16 (local.get $dst) (call $win16_h16 (call $gl32 (local.get $tmp))))
@@ -3926,6 +4060,9 @@
     ;; what it was standing in front of.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLG_CWP))
       (then (call $win16_dlg_cwp_resume) (return)))
+    ;; An NDDEAPI entry point the task took the address of and called.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_NDDE_GETWINDOW))
+      (then (call $win16_NDdeGetWindow) (return)))
     ;; The modal pump. EIP is parked here, not called here, so there is no
     ;; frame to unwind — the API's own frame went when it parked, and the far
     ;; return it saved is what the completed box goes back to.

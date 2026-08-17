@@ -439,7 +439,9 @@
           (local.get $msg)
           (call $win16_msg_wparam16
             (local.get $msg) (call $gl32 (i32.add (local.get $scratch) (i32.const 8))))
-          (call $gl32 (i32.add (local.get $scratch) (i32.const 12))))
+          (call $win16_msg_lparam16_cmd (local.get $msg)
+            (call $gl32 (i32.add (local.get $scratch) (i32.const 8)))
+            (call $gl32 (i32.add (local.get $scratch) (i32.const 12)))))
       (then (return)))
     (call $win16_dlg_park))
 
@@ -599,6 +601,11 @@
     (local.set $wp (call $win16_arg16 (i32.const 2)))
     (local.set $lp (i32.or (call $win16_arg16 (i32.const 0))
               (i32.shl (call $win16_arg16 (i32.const 1)) (i32.const 16))))
+    ;; The control is one of ours, so its message needs the Win16-to-Win32
+    ;; renumbering — see $win16_ctrl_msg32. Resolving the child here rather
+    ;; than inside the handler is the only way to know its class.
+    (local.set $msg (call $win16_ctrl_msg32
+      (call $ctrl_find_by_id (local.get $dlg) (local.get $id)) (local.get $msg)))
     (call $win16_call32_begin (i32.const 5))
     (call $handle_SendDlgItemMessageA (local.get $dlg)
       (local.get $id) (local.get $msg) (local.get $wp) (local.get $lp)

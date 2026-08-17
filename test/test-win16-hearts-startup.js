@@ -25,8 +25,14 @@
 //      the *window* procedure, and the procedure behind that has to end the
 //      dialog the way DefDlgProc does.
 //
-// Getting a game running still needs NetDDE, which is a separate open item —
-// this stops where Hearts asks for the dealer's computer name.
+// Then two more, to get a game on the table rather than a dialog:
+//
+//   6. Hearts will not let you choose how to play until NDDEAPI.DLL loads and
+//      NDdeGetWindow answers with a window, so both radio buttons are greyed
+//      and neither path is open to it.
+//   7. Control messages are numbered per class from WM_USER in Win16 and in
+//      distinct ranges in Win32, so BM_GETCHECK has to be translated or the
+//      radio buttons all answer "not me".
 
 'use strict';
 
@@ -40,9 +46,11 @@ const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'test', 'output', 'win16-hearts');
 const EXE = path.join(ROOT, 'test', 'binaries', 'win98-16bit', 'MSHEARTS.EXE');
 
-// The OK button of the startup dialog, from its own geometry: the dialog's
-// client origin plus the button's position in the template.
-const OK_CLICK = '319:92';
+// Points on the startup dialog, each the dialog's client origin (18,69) plus
+// the control's position in its own template.
+const OK_CLICK = '319:92';        // OK, at client 264,12 size 75x24
+const NAME_CLICK = '200:122';     // the name edit, id 201
+const DEALER_CLICK = '55:210';    // "I want to be dealer", id 203
 
 let pass = 0;
 function check(name, cond, detail) {
@@ -96,16 +104,43 @@ function main() {
   // Rendered, not merely created: the caption bar and the dialog body.
   check('the dialog is drawn', inkFraction(shot, 20, 50, 370, 250) > 0.05);
 
-  // OK: MFC's message map has no handler for it, so it goes down the subclass
-  // chain, and what is behind our window is what has to end the dialog.
-  const log2 = run(`4000:click:${OK_CLICK},20000:png:${after}`, 25000);
-  check('clicking OK did not crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
-  const dialogs2 = log2.match(/^\[CreateDialog\].*$/gm) || [];
-  check('OK closed it and Hearts moved on to the next dialog',
-    dialogs2.length === 2, dialogs2.join(' / '));
-  // 213x78dlu is "Locate dealer", the next step of the same flow.
-  check('the next dialog is Locate dealer', /size=213x78dlu/.test(dialogs2[1]),
-    dialogs2[1] || '(none)');
+  // OK with nothing typed must NOT close it: MFC's CDialog::OnOK validates
+  // first, and the name is required. That it declines is the evidence OnOK ran
+  // at all — before WM_COMMAND was packed the Win16 way, MFC saw a notification
+  // code of 1 where BN_CLICKED is 0, matched no handler, and let the command
+  // fall past it to be swallowed.
+  const logEmpty = run(`4000:click:${OK_CLICK},9000:png:${after}`, 12000);
+  check('clicking OK did not crash', !/CRASH|UNIMPLEMENTED API/.test(logEmpty));
+  check('OK with no name keeps the dialog up',
+    (logEmpty.match(/^\[CreateDialog\].*$/gm) || []).length === 1);
+
+  // The whole flow: a name, "I want to be dealer", OK, then New Game.
+  const table = path.join(OUT, 'table.png');
+  const log2 = run(`3000:click:${NAME_CLICK},3500:keypress:65,` +
+    `4500:click:${DEALER_CLICK},6000:click:${OK_CLICK},` +
+    `30000:post-cmd:102,52000:png:${table}`, 60000);
+  check('the dealer path did not crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
+  check('the dealer path put up no further dialog',
+    (log2.match(/^\[CreateDialog\].*$/gm) || []).length === 1,
+    'a "Locate dealer" box here means the play-mode choice was not read');
+
+  // A dealt hand: the table is green baize, and the three computer players'
+  // face-down hands plus the thirteen cards of your own are white.
+  const png = PNG.sync.read(fs.readFileSync(table));
+  let green = 0, white = 0, total = 0;
+  for (let y = 30; y < 440; y++) {
+    for (let x = 60; x < 580; x++) {
+      const i = (y * png.width + x) * 4;
+      const [r, g, b] = [png.data[i], png.data[i + 1], png.data[i + 2]];
+      total++;
+      if (g > 90 && r < 60 && b < 60) green++;
+      else if (r > 230 && g > 230 && b > 230) white++;
+    }
+  }
+  check(`the table is green baize (${(green / total * 100).toFixed(0)}%)`,
+    green / total > 0.4);
+  check(`cards are on it (${(white / total * 100).toFixed(0)}% white)`,
+    white / total > 0.1);
 
   console.log(`\n${pass} passed, 0 failed`);
   console.log(`Snapshots: ${OUT}`);

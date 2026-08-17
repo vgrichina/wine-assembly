@@ -831,7 +831,7 @@
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00")
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -2186,6 +2186,13 @@
   ;; Where a dialog resumes after its WH_CALLWNDPROC filter has seen the
   ;; WM_NCCREATE that creating it sends — see $win16_dlg_cwp_resume.
   (global $WIN16_DLG_CWP i32 (i32.const 0xFF50))
+  ;; NDDEAPI.NDdeGetWindow. A module this emulator implements has no export
+  ;; table for GetProcAddress to read, so its one entry point is reached
+  ;; through a fixed thunk-segment slot, the same way the pumps above are.
+  (global $WIN16_NDDE_GETWINDOW i32 (i32.const 0xFF60))
+  ;; The window that answers for network DDE in this emulator — see
+  ;; $win16_ndde_window.
+  (global $win16_ndde_hwnd (mut i32) (i32.const 0))
   ;; EndDialog's two words. A dialog procedure calls it and then returns, and
   ;; the pump acts on it at that return, so an inner dialog has always consumed
   ;; these before an outer one can look — nesting needs nothing more.
@@ -2234,6 +2241,8 @@
   (global $WIN16_NAME_DDEML    i32 (i32.const 0x11EAC))
   ;; Not a module — the one SHELL export reached by name rather than ordinal.
   (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
+  (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
+  (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)
