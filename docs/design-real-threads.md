@@ -437,7 +437,10 @@ because the *proof* is the second one.
                               isolated?   pipeline?   measured
   Chrome, server headers         ✅         6/6 PASS   2026-08-16 headless
   Chrome, service worker         ✅         6/6 PASS   2026-08-16 headless
-  Safari, service worker         ✅         reported   2026-08-17 by hand
+  Safari, service worker         ✅         6/6 PASS   2026-08-17 by hand
+  Safari, THE APP isolated       ✅         runs       2026-08-17 by hand
+    (index.html + emulator under COEP require-corp: no subresource breakage,
+     debug toolbar reports "isolated · cooperative sched")
   ──────────────────────────────────────────────────────────────────────
   first visit, pre-reload        ✗ (as designed)       confirmed
   Safari private browsing        ✗ expected — no SW    NOT YET RUN
