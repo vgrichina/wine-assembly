@@ -19097,5 +19097,102 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 2450,
+    "name": "OleBuildVersion",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1202850745,
+    "ret": "DWORD"
+  },
+  {
+    "id": 2451,
+    "name": "acmFormatDetailsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3587570054,
+    "args": [
+      {
+        "name": "had",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pafd",
+        "type": "DWORD",
+        "out": true
+      },
+      {
+        "name": "fdwDetails",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2452,
+    "name": "acmFormatTagDetailsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1932521400,
+    "args": [
+      {
+        "name": "had",
+        "type": "HANDLE"
+      },
+      {
+        "name": "paftd",
+        "type": "DWORD"
+      },
+      {
+        "name": "fdwDetails",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2453,
+    "name": "acmFormatTagDetailsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2301629018,
+    "args": [
+      {
+        "name": "had",
+        "type": "HANDLE"
+      },
+      {
+        "name": "paftd",
+        "type": "DWORD"
+      },
+      {
+        "name": "fdwDetails",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2454,
+    "name": "acmFormatDetailsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3889567196,
+    "args": [
+      {
+        "name": "had",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pafd",
+        "type": "DWORD"
+      },
+      {
+        "name": "fdwDetails",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

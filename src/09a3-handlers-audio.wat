@@ -2,6 +2,238 @@
   ;; AUDIO/WAVE API HANDLERS
   ;; ============================================================
 
+  ;; acmFormatTagDetailsA(had, paftd, fdwDetails) — describe one format tag.
+  ;;
+  ;; ACMFORMATTAGDETAILS is 24 bytes of fields then a 48-byte name:
+  ;;   +0  cbStruct   +4  dwFormatTagIndex   +8  dwFormatTag
+  ;;   +12 cbFormatSize   +16 fdwSupport   +20 cStandardFormats
+  ;;   +24 szFormatTag[48]
+  ;;
+  ;; The low nibble of fdwDetails selects what identifies the tag: INDEX(0)
+  ;; means dwFormatTagIndex, FORMATTAG(1) means dwFormatTag. This emulator
+  ;; converts nothing, so there is exactly one tag to describe -- PCM -- and
+  ;; anything else is ACMERR_NOTPOSSIBLE, which is the same answer a machine
+  ;; with no codecs installed gives. cbFormatSize 16 is sizeof(WAVEFORMATEX)
+  ;; without the cbSize word, which is what PCM uses.
+  ;;
+  ;; Sound Recorder asks this to name the format in its About box, and used to
+  ;; crash there.
+  ;; The A and W entry points differ only in whether the name at the end of the
+  ;; struct is written as ASCII or as UTF-16, so both call this. XP's Sound
+  ;; Recorder is the W caller; Win98's is the A caller.
+  (func $acm_format_tag_details (param $paftd i32) (param $fdw i32) (param $wide i32) (result i32)
+    (local $wa i32) (local $query i32)
+    (if (i32.eqz (local.get $paftd))
+      (then (return (i32.const 0x00000057))))     ;; MMSYSERR_INVALPARAM
+    (local.set $wa (call $g2w (local.get $paftd)))
+    (local.set $query (i32.and (local.get $fdw) (i32.const 0x0000000F)))
+    ;; INDEX asks for the n-th tag and PCM is the only one; FORMATTAG asks for
+    ;; a named tag and PCM (1) is the only one we have.
+    (if (i32.eqz
+          (i32.or
+            (i32.and (i32.eqz (local.get $query))
+                     (i32.eqz (i32.load offset=4 (local.get $wa))))
+            (i32.and (i32.eq (local.get $query) (i32.const 1))
+                     (i32.eq (i32.load offset=8 (local.get $wa)) (i32.const 1)))))
+      (then (return (i32.const 512))))            ;; ACMERR_NOTPOSSIBLE
+    ;; Keep the caller's cbStruct — it declares the size it allocated. The
+    ;; name field is 48 chars, so a wide one runs to +24+96.
+    (call $zero_memory (i32.add (local.get $wa) (i32.const 4))
+      (select (i32.const 116) (i32.const 68) (local.get $wide)))
+    (i32.store offset=8  (local.get $wa) (i32.const 1))    ;; WAVE_FORMAT_PCM
+    (i32.store offset=12 (local.get $wa) (i32.const 16))   ;; PCM WAVEFORMATEX
+    (i32.store offset=16 (local.get $wa) (i32.const 0x04)) ;; SUPPORTF_CONVERTER
+    ;; 4 sample rates x 8/16 bit x mono/stereo, the set waveOutGetDevCaps
+    ;; below reports as supported.
+    (i32.store offset=20 (local.get $wa) (i32.const 16))
+    (i32.store offset=24 (local.get $wa) (i32.const 0x004D4350))  ;; "PCM\0"
+    (if (local.get $wide)
+      (then (call $acm_widen_in_place
+              (i32.add (local.get $paftd) (i32.const 24)) (i32.const 3))))
+    (i32.const 0))                                 ;; MMSYSERR_NOERROR
+
+  (func $handle_acmFormatTagDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $acm_format_tag_details
+      (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
+  )
+
+  (func $handle_acmFormatTagDetailsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $acm_format_tag_details
+      (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; The standard PCM formats this emulator offers, in the order ACM
+  ;; enumerates them: sample rate slowest first, then 8 before 16 bit, then
+  ;; mono before stereo. 4 x 2 x 2 = the 16 that acmFormatTagDetailsA reports
+  ;; as cStandardFormats, and the same set waveOutGetDevCaps advertises.
+  (func $acm_pcm_rate (param $index i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (i32.shr_u (local.get $index) (i32.const 2)))
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 8000))))
+    (if (i32.eq (local.get $slot) (i32.const 1)) (then (return (i32.const 11025))))
+    (if (i32.eq (local.get $slot) (i32.const 2)) (then (return (i32.const 22050))))
+    (i32.const 44100))
+  (func $acm_pcm_bits (param $index i32) (result i32)
+    (select (i32.const 16) (i32.const 8)
+      (i32.and (i32.shr_u (local.get $index) (i32.const 1)) (i32.const 1))))
+  (func $acm_pcm_channels (param $index i32) (result i32)
+    (i32.add (i32.and (local.get $index) (i32.const 1)) (i32.const 1)))
+
+  ;; "22.050 kHz, 16 Bit, Stereo" — how Windows names a PCM format in Sound
+  ;; Recorder's format list. The rate is written as kHz with three decimals,
+  ;; which for these rates is the sample rate with a dot after the thousands.
+  ;; $dst is a GUEST address: this writes through $gs8/$gs32 because
+  ;; $write_uint does, and mixing the two address spaces in one buffer reads a
+  ;; WASM offset as a guest one and lands outside memory entirely.
+  (func $acm_pcm_format_name (param $dst i32) (param $index i32) (result i32)
+    (local $p i32) (local $rate i32)
+    (local.set $p (local.get $dst))
+    (local.set $rate (call $acm_pcm_rate (local.get $index)))
+    (local.set $p (i32.add (local.get $p)
+      (call $write_uint (local.get $p) (i32.div_u (local.get $rate) (i32.const 1000)))))
+    (call $gs8 (local.get $p) (i32.const 0x2E))                  ;; '.'
+    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    ;; three digits, zero padded — 8000 is ".000", 11025 is ".025"
+    (call $gs8 (local.get $p)
+      (i32.add (i32.const 0x30)
+        (i32.rem_u (i32.div_u (local.get $rate) (i32.const 100)) (i32.const 10))))
+    (call $gs8 (i32.add (local.get $p) (i32.const 1))
+      (i32.add (i32.const 0x30)
+        (i32.rem_u (i32.div_u (local.get $rate) (i32.const 10)) (i32.const 10))))
+    (call $gs8 (i32.add (local.get $p) (i32.const 2))
+      (i32.add (i32.const 0x30) (i32.rem_u (local.get $rate) (i32.const 10))))
+    (local.set $p (i32.add (local.get $p) (i32.const 3)))
+    ;; " kHz, " and " Bit, " written as their bytes rather than as data
+    ;; segments: the ordinal-import tables address 01-header's segment by
+    ;; absolute offset, so adding a string there shifts every later entry.
+    (call $gs32 (local.get $p) (i32.const 0x7A486B20))                     ;; " kHz"
+    (call $gs16 (i32.add (local.get $p) (i32.const 4)) (i32.const 0x202C)) ;; ", "
+    (local.set $p (i32.add (local.get $p) (i32.const 6)))
+    (local.set $p (i32.add (local.get $p)
+      (call $write_uint (local.get $p) (call $acm_pcm_bits (local.get $index)))))
+    (call $gs32 (local.get $p) (i32.const 0x74694220))                     ;; " Bit"
+    (call $gs16 (i32.add (local.get $p) (i32.const 4)) (i32.const 0x202C)) ;; ", "
+    (local.set $p (i32.add (local.get $p) (i32.const 6)))
+    (if (i32.eq (call $acm_pcm_channels (local.get $index)) (i32.const 2))
+      (then
+        (call $gs32 (local.get $p) (i32.const 0x72657453))                     ;; "Ster"
+        (call $gs16 (i32.add (local.get $p) (i32.const 4)) (i32.const 0x6F65)) ;; "eo"
+        (local.set $p (i32.add (local.get $p) (i32.const 6))))
+      (else
+        (call $gs32 (local.get $p) (i32.const 0x6F6E6F4D))                     ;; "Mono"
+        (local.set $p (i32.add (local.get $p) (i32.const 4)))))
+    (call $gs8 (local.get $p) (i32.const 0))
+    (i32.sub (local.get $p) (local.get $dst)))
+
+  ;; Expand an ASCII string already written at $dst into UTF-16 in place.
+  ;; Walking backwards means each character is read before the wide character
+  ;; that will sit on top of it is written, so no copy buffer is needed -- and
+  ;; the wide field these land in is always at least twice the ASCII length.
+  (func $acm_widen_in_place (param $dst i32) (param $len i32)
+    (local $i i32)
+    (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $len) (i32.const 1)))
+      (i32.const 0))
+    (local.set $i (local.get $len))
+    (block $done (loop $back
+      (br_if $done (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1)))
+        (call $gl8 (i32.add (local.get $dst) (local.get $i))))
+      (br $back))))
+
+  ;; acmFormatDetailsA(had, pafd, fdwDetails) — describe one format.
+  ;;
+  ;; ACMFORMATDETAILS is 24 bytes then a 128-byte name:
+  ;;   +0  cbStruct   +4  dwFormatIndex   +8  dwFormatTag   +12 fdwSupport
+  ;;   +16 pwfx (caller's WAVEFORMATEX buffer)   +20 cbwfx   +24 szFormat[128]
+  ;;
+  ;; INDEX(0) means "fill in the n-th format of dwFormatTag"; FORMAT(1) means
+  ;; the caller already put a WAVEFORMATEX in pwfx and wants it named. Both
+  ;; write szFormat, which is the part an app puts in front of a user.
+  (func $acm_format_details (param $pafd i32) (param $fdw i32) (param $wide i32) (result i32)
+    (local $wa i32) (local $query i32) (local $index i32)
+    (local $pwfx i32) (local $cbwfx i32) (local $rate i32) (local $bits i32) (local $ch i32)
+    (if (i32.eqz (local.get $pafd))
+      (then (return (i32.const 0x00000057))))     ;; MMSYSERR_INVALPARAM
+    (local.set $wa (call $g2w (local.get $pafd)))
+    (local.set $query (i32.and (local.get $fdw) (i32.const 0x0000000F)))
+    (local.set $index (i32.load offset=4 (local.get $wa)))
+    (local.set $pwfx (i32.load offset=16 (local.get $wa)))
+    (local.set $cbwfx (i32.load offset=20 (local.get $wa)))
+    ;; PCM is the only tag; tag 0 (WAVE_FORMAT_UNKNOWN) means "any".
+    (if (i32.and
+          (i32.ne (i32.load offset=8 (local.get $wa)) (i32.const 1))
+          (i32.ne (i32.load offset=8 (local.get $wa)) (i32.const 0)))
+      (then (return (i32.const 512))))            ;; ACMERR_NOTPOSSIBLE
+    (if (i32.eqz (local.get $query))
+      (then
+        (if (i32.ge_u (local.get $index) (i32.const 16))
+          (then (return (i32.const 512))))        ;; past the last format
+        (local.set $rate (call $acm_pcm_rate (local.get $index)))
+        (local.set $bits (call $acm_pcm_bits (local.get $index)))
+        (local.set $ch   (call $acm_pcm_channels (local.get $index)))
+        (if (i32.and (i32.ne (local.get $pwfx) (i32.const 0))
+              (i32.ge_u (local.get $cbwfx) (i32.const 16)))
+          (then
+            (local.set $pwfx (call $g2w (local.get $pwfx)))
+            (i32.store16 (local.get $pwfx) (i32.const 1))              ;; WAVE_FORMAT_PCM
+            (i32.store16 offset=2 (local.get $pwfx) (local.get $ch))
+            (i32.store offset=4 (local.get $pwfx) (local.get $rate))
+            (i32.store offset=8 (local.get $pwfx)                       ;; nAvgBytesPerSec
+              (i32.mul (local.get $rate)
+                (i32.mul (local.get $ch) (i32.shr_u (local.get $bits) (i32.const 3)))))
+            (i32.store16 offset=12 (local.get $pwfx)                    ;; nBlockAlign
+              (i32.mul (local.get $ch) (i32.shr_u (local.get $bits) (i32.const 3))))
+            (i32.store16 offset=14 (local.get $pwfx) (local.get $bits))
+            (if (i32.ge_u (local.get $cbwfx) (i32.const 18))
+              (then (i32.store16 offset=16 (local.get $pwfx) (i32.const 0))))))
+        (i32.store offset=8 (local.get $wa) (i32.const 1)))
+      (else
+        ;; Name the caller's own format. Read it back rather than trusting the
+        ;; index, and find the matching standard entry for the name.
+        (if (i32.eqz (local.get $pwfx))
+          (then (return (i32.const 0x00000057))))
+        (local.set $pwfx (call $g2w (local.get $pwfx)))
+        (local.set $rate (i32.load offset=4 (local.get $pwfx)))
+        (local.set $bits (i32.load16_u offset=14 (local.get $pwfx)))
+        (local.set $ch   (i32.load16_u offset=2 (local.get $pwfx)))
+        (local.set $index
+          (i32.or
+            (i32.shl
+              (select (i32.const 3)
+                (select (i32.const 2)
+                  (select (i32.const 1) (i32.const 0)
+                    (i32.ge_u (local.get $rate) (i32.const 11025)))
+                  (i32.ge_u (local.get $rate) (i32.const 22050)))
+                (i32.ge_u (local.get $rate) (i32.const 44100)))
+              (i32.const 2))
+            (i32.or
+              (i32.shl (select (i32.const 1) (i32.const 0)
+                (i32.ge_u (local.get $bits) (i32.const 16))) (i32.const 1))
+              (select (i32.const 1) (i32.const 0)
+                (i32.ge_u (local.get $ch) (i32.const 2))))))))
+    (i32.store offset=12 (local.get $wa) (i32.const 0x04))   ;; SUPPORTF_CONVERTER
+    (local.set $index (call $acm_pcm_format_name
+      (i32.add (local.get $pafd) (i32.const 24)) (local.get $index)))
+    (if (local.get $wide)
+      (then (call $acm_widen_in_place
+              (i32.add (local.get $pafd) (i32.const 24)) (local.get $index))))
+    (i32.const 0))                                           ;; MMSYSERR_NOERROR
+
+  (func $handle_acmFormatDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $acm_format_details
+      (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
+  )
+
+  (func $handle_acmFormatDetailsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $acm_format_details
+      (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 794: waveOutGetDevCapsA(uDeviceID, lpCaps, cbCaps) — 3 args stdcall
   ;; Fill WAVEOUTCAPSA struct with basic PCM support
   (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

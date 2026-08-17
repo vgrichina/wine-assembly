@@ -758,6 +758,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
+  ;; OleBuildVersion() — the OLE version ole32 was built for, as
+  ;; (rmm << 16) | rup. An app compares it against the rmm it was compiled
+  ;; against and refuses to talk to a library from a different major version.
+  ;; rmm 23 is the OLE 2 / Win32 value every ole32.dll of this era reports.
+  ;;
+  ;; Sound Recorder calls this from Edit > Copy, on its way to putting a
+  ;; waveform on the clipboard, and crashed there.
+  (func $handle_OleBuildVersion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x0017027F))   ;; rmm=23, rup=639
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
   ;; 761: OleUninitialize() — no-op
   (func $handle_OleUninitialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
