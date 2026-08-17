@@ -733,9 +733,196 @@
     ;; Class 28 = SysLink
     (if (i32.eq (local.get $class) (i32.const 28))
       (then (return (call $syslink_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 29 = Shell Run / Shut Down dialog parent (WAT-built)
+    (if (i32.eq (local.get $class) (i32.const 29))
+      (then (return (call $shelldlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
+
+  ;; ---- Shell dialogs: Run (SHELL32 #61) and Shut Down (SHELL32 #60) ----
+  ;;
+  ;; These are the two commands on Task Manager's File menu, and both were
+  ;; no-op stubs that popped their arguments and returned -- so the menu items
+  ;; existed, did nothing, and reported nothing. They are shell-owned dialogs:
+  ;; the app supplies at most a title, and every control belongs to SHELL32,
+  ;; which is us. So they are built here the way ShellAbout's dialog is, out of
+  ;; $host_register_dialog_frame plus $ctrl_create_child.
+  (global $shelldlg_kind (mut i32) (i32.const 0))        ;; 1 = Run, 2 = Shut Down
+  (global $shelldlg_edit_hwnd (mut i32) (i32.const 0))
+  (global $shelldlg_owner (mut i32) (i32.const 0))
+
+  (data (i32.const 0x11F00) "Run\00")
+  (data (i32.const 0x11F04) "Type the name of a program, folder, or\00")
+  (data (i32.const 0x11F2B) "document, and Windows will open it for you.\00")
+  (data (i32.const 0x11F57) "Open:\00")
+  (data (i32.const 0x11F5D) "Browse...\00")
+  (data (i32.const 0x11F67) "Shut Down Windows\00")
+  (data (i32.const 0x11F79) "Shut down the computer\00")
+  (data (i32.const 0x11F90) "Restart the computer\00")
+
+  ;; Shared frame setup for both dialogs. $title_wa is a linear address.
+  (func $shelldlg_frame (param $dlg i32) (param $owner i32)
+                        (param $title_wa i32) (param $w i32) (param $h i32)
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner) (local.get $title_wa)
+      (local.get $w) (local.get $h) (i32.const 1))
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (local.get $title_wa)
+      (call $strlen (local.get $title_wa)))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    ;; Client geometry must exist before the first WM_NCPAINT, or the frame
+    ;; repaint erases the child controls (the same ordering ShellAbout needs).
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 29) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg)))
+
+  ;; RunFileDlg's dialog. $title_g / $desc_g are guest pointers and may be 0,
+  ;; in which case the shell's own wording is used -- which is what the real
+  ;; one does when an app passes NULL.
+  (func $create_run_dialog (param $dlg i32) (param $owner i32)
+                           (param $title_g i32) (param $desc_g i32)
+    (local $title_wa i32)
+    (local.set $title_wa (i32.const 0x11F00))
+    (if (local.get $title_g)
+      (then
+        (if (i32.load8_u (call $g2w (local.get $title_g)))
+          (then (local.set $title_wa (call $g2w (local.get $title_g)))))))
+    (global.set $shelldlg_kind (i32.const 1))
+    (global.set $shelldlg_owner (local.get $owner))
+    (call $shelldlg_frame (local.get $dlg) (local.get $owner)
+      (local.get $title_wa) (i32.const 400) (i32.const 176))
+    ;; Prompt. A caller-supplied description replaces the first line; the
+    ;; standard text is two lines because a STATIC does not wrap.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 14) (i32.const 14) (i32.const 366) (i32.const 18)
+            (i32.const 0x50000000)
+            (if (result i32) (local.get $desc_g)
+              (then (local.get $desc_g))
+              (else (call $wat_str_to_heap (i32.const 0x11F04) (i32.const 38))))))
+    (if (i32.eqz (local.get $desc_g))
+      (then
+        (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+                (i32.const 14) (i32.const 32) (i32.const 366) (i32.const 18)
+                (i32.const 0x50000000)
+                (call $wat_str_to_heap (i32.const 0x11F2B) (i32.const 43))))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 14) (i32.const 66) (i32.const 44) (i32.const 18)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x11F57) (i32.const 5))))
+    (global.set $shelldlg_edit_hwnd
+      (call $ctrl_create_child (local.get $dlg) (i32.const 2) (i32.const 1001)
+        (i32.const 60) (i32.const 62) (i32.const 320) (i32.const 22)
+        (i32.const 0x50810080) (i32.const 0)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 148) (i32.const 108) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 228) (i32.const 108) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1002)
+            (i32.const 308) (i32.const 108) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x11F5D) (i32.const 9)))))
+
+  (func $create_shutdown_dialog (param $dlg i32) (param $owner i32)
+    (local $first i32)
+    (global.set $shelldlg_kind (i32.const 2))
+    (global.set $shelldlg_owner (local.get $owner))
+    (global.set $shelldlg_edit_hwnd (i32.const 0))
+    (call $shelldlg_frame (local.get $dlg) (local.get $owner)
+      (i32.const 0x11F67) (i32.const 300) (i32.const 160))
+    ;; BS_AUTORADIOBUTTON = 9. The first carries WS_GROUP so the pair behaves
+    ;; as one group, which is what makes the selection exclusive.
+    (local.set $first (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1010)
+            (i32.const 20) (i32.const 20) (i32.const 250) (i32.const 20)
+            (i32.const 0x50030009)
+            (call $wat_str_to_heap (i32.const 0x11F79) (i32.const 22))))
+    ;; Windows opens this dialog with the first option already chosen, so OK
+    ;; is immediately meaningful. BM_SETCHECK = 0x00F1.
+    (drop (call $wnd_send_message (local.get $first) (i32.const 0x00F1)
+            (i32.const 1) (i32.const 0)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1011)
+            (i32.const 20) (i32.const 44) (i32.const 250) (i32.const 20)
+            (i32.const 0x50010009)
+            (call $wat_str_to_heap (i32.const 0x11F90) (i32.const 20))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 66) (i32.const 96) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010001)
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 152) (i32.const 96) (i32.const 72) (i32.const 24)
+            (i32.const 0x50010000)
+            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
+
+  ;; Class 29. Frame painting and the title-bar-X translation are the same as
+  ;; every other WAT-built dialog; what differs is what OK means.
+  (func $shelldlg_wndproc
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32) (local $close i32)
+    (local $state i32) (local $state_w i32) (local $len i32) (local $text_g i32)
+    (local.set $close (i32.const 0))
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))
+      (then (local.set $close (i32.const 1))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x00A1))
+          (i32.eq (local.get $wParam) (i32.const 20)))     ;; HTCLOSE
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0112) (i32.const 0xF060) (i32.const 0)))
+        (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0112))
+          (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFF0)) (i32.const 0xF060)))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))
+      (then
+        (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        ;; Cancel, and Browse until there is a file dialog to open from here.
+        (if (i32.eq (local.get $cmd) (i32.const 2))
+          (then (local.set $close (i32.const 1))))
+        (if (i32.eq (local.get $cmd) (i32.const 1))
+          (then
+            (if (i32.eq (global.get $shelldlg_kind) (i32.const 1))
+              (then
+                ;; Run: hand the typed command to the same shell-execute path
+                ;; ShellExecuteA uses. An EDIT keeps its text pointer at +0 of
+                ;; its state block and the length at +4.
+                (local.set $state (call $wnd_get_state_ptr (global.get $shelldlg_edit_hwnd)))
+                (if (local.get $state)
+                  (then
+                    (local.set $state_w (call $g2w (local.get $state)))
+                    (local.set $len (i32.load offset=4 (local.get $state_w)))
+                    (local.set $text_g (i32.load (local.get $state_w)))
+                    (if (local.get $text_g)
+                      (then (if (local.get $len)
+                        (then (drop (call $host_shell_execute
+                          (global.get $shelldlg_owner)
+                          (i32.const 0) (call $g2w (local.get $text_g))
+                          (i32.const 0) (i32.const 0) (i32.const 1)))))))))))
+            (if (i32.eq (global.get $shelldlg_kind) (i32.const 2))
+              (then (global.set $quit_flag (i32.const 1))))
+            (local.set $close (i32.const 1))))))
+    (if (local.get $close)
+      (then
+        (global.set $shelldlg_kind (i32.const 0))
+        (global.set $shelldlg_edit_hwnd (i32.const 0))
+        (call $wnd_destroy_tree (local.get $hwnd))
+        (call $host_destroy_window (local.get $hwnd))
+        (return (i32.const 0))))
+    (i32.const 0))
 
   ;; ---- Find/Replace dialog parent wndproc ----
   ;;

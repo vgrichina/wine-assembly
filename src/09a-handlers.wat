@@ -8115,13 +8115,32 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; RunFileDlg(hwndOwner, hIcon, lpszDir, lpszTitle, lpszDesc) — 5 args, no return value
+  ;; RunFileDlg(hwndOwner, hIcon, lpszDir, lpszTitle, lpszDesc, uFlags)
+  ;; SHELL32 ordinal 61 — Task Manager's File > Run Application...
+  ;;
+  ;; Six arguments, not five: taskman pushes hwnd, 0, 0, &title, 0, 0 at
+  ;; 0x402b9c..0x402ba4. The old stub popped five and left a dword of the
+  ;; caller's frame on the stack every time it was called.
+  ;;
+  ;; The dialog is the shell's, so it is built here rather than by the app --
+  ;; the caller supplies at most a title and a prompt.
   (func $handle_RunFileDlg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (local $dlg i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_run_dialog
+      (local.get $dlg) (local.get $arg0) (local.get $arg3) (local.get $arg4))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args + ret
   )
 
-  ;; ExitWindowsDialog(hwndOwner) — 1 arg, no meaningful return
+  ;; ExitWindowsDialog(hwndOwner) — SHELL32 ordinal 60, Task Manager's
+  ;; File > Shutdown Windows... OK sets the quit flag, which is as far as
+  ;; "shut down" goes when the emulator is the machine.
   (func $handle_ExitWindowsDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_shutdown_dialog (local.get $dlg) (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
