@@ -43,7 +43,24 @@
   ;; Read argument `n` counting from the last one pushed, in words: word 0 is
   ;; the argument nearest the top of the stack, which under Pascal is the
   ;; rightmost parameter.
+  ;; An argument of the Win16 call being dispatched, counted in words from the
+  ;; top of the task's stack past the far return address.
+  ;;
+  ;; It is ESP-relative, and $win16_call32_begin points ESP at the 32-bit
+  ;; scratch stack — so reading an argument once the bridge is open returns
+  ;; whatever that frame holds at the same offset, which for index 0 is the
+  ;; zero written there as a return address. That is a silent wrong answer, and
+  ;; it was wrong in ten places: every Win16 GetDlgItem asked for control 0
+  ;; whatever id it was given. Hoist arguments into locals before the bridge
+  ;; call; this stops rather than lets the next one hide.
   (func $win16_arg16 (param $n i32) (result i32)
+    (if (global.get $win16_in_call32)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9FA))
+        (call $host_log_i32 (local.get $n))
+        (call $host_log_i32 (call $win16_api_key (global.get $win16_last_module)
+                                                 (global.get $win16_last_ordinal)))
+        (unreachable)))
     (call $gl16 (i32.add (global.get $esp)
                          (i32.add (i32.const 4) (i32.shl (local.get $n) (i32.const 1))))))
 
@@ -152,6 +169,7 @@
   ;; guest code — SendMessage, DispatchMessage — would resume with a 32-bit
   ;; frame and a 16-bit task, so those get their own Win16 implementations.
   (func $win16_call32_begin (param $argc i32)
+    (global.set $win16_in_call32 (i32.const 1))
     (global.set $win16_esp_save (global.get $esp))
     (global.set $win16_eip_save (global.get $eip))
     (global.set $esp (i32.sub (i32.add (global.get $GUEST_STACK) (global.get $GUEST_STACK_SIZE))
@@ -175,6 +193,7 @@
   ;; a 16-bit task can be given through its own message queue.
   (func $win16_call32_end_redirected (result i32)
     (local $moved i32)
+    (global.set $win16_in_call32 (i32.const 0))
     (local.set $moved (i32.ne (global.get $eip) (global.get $win16_eip_save)))
     (global.set $eip (global.get $win16_eip_save))
     (global.set $esp (global.get $win16_esp_save))
@@ -211,6 +230,7 @@
         (call $host_log_i32 (global.get $win16_last_ordinal))
         (call $host_log_i32 (global.get $eip))
         (unreachable)))
+    (global.set $win16_in_call32 (i32.const 0))
     (global.set $esp (global.get $win16_esp_save)))
 
   ;; ---- KERNEL ----
@@ -237,11 +257,21 @@
         (local.set $psp (call $win16_alloc_segment))
         (global.set $win16_psp_sel (call $win16_index_to_sel (local.get $psp)))
         (local.set $base (call $win16_seg_base (local.get $psp)))
-        ;; DOS command-line block: a length byte at 0x80, the text at 0x81, and
-        ;; a carriage return closing it. An empty command line is still a
-        ;; well-formed one, and the startup code does parse this.
+        ;; The command-line block: a length byte at 0x80 and the text at 0x81.
+        ;;
+        ;; DOS closes that text with a carriage return and this used to as well,
+        ;; which is wrong for a Windows task: ES:BX from here is the same
+        ;; pointer WinMain is handed as lpCmdLine, and that is documented
+        ;; null-terminated. Nothing in the startup converts it — Hearts hands
+        ;; the pointer straight to MFC, which asked "is the command line empty?"
+        ;; by comparing the first byte, saw 0x0D, and spent the rest of the run
+        ;; behaving like it had been told to join somebody else's game.
+        ;;
+        ;; The carriage return still follows the terminator, so anything reading
+        ;; this the DOS way finds the byte it expects one place further on.
         (call $gs8 (i32.add (local.get $base) (i32.const 0x80)) (i32.const 0))
-        (call $gs8 (i32.add (local.get $base) (i32.const 0x81)) (i32.const 0x0D))))
+        (call $gs8 (i32.add (local.get $base) (i32.const 0x81)) (i32.const 0))
+        (call $gs8 (i32.add (local.get $base) (i32.const 0x82)) (i32.const 0x0D))))
 
     (global.set $eax (i32.const 1))
     (global.set $ecx (global.get $win16_stack_size))
@@ -1531,14 +1561,16 @@
   ;; and a truthful "no such class" is what makes it go on and register one.
   (func $win16_GetClassInfo
     (local $name i32) (local $dst i32) (local $tmp i32) (local $proc i32)
+    (local $inst i32)
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (local.set $name (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
     (local.set $tmp (global.get $GUEST_STACK))
     (call $zero_memory (call $g2w (local.get $tmp)) (i32.const 40))
+    (local.set $inst (call $win16_arg16 (i32.const 4)))
     (call $win16_call32_begin (i32.const 3))
-    (call $handle_GetClassInfoA (call $win16_arg16 (i32.const 4))
+    (call $handle_GetClassInfoA (local.get $inst)
       (local.get $name) (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (if (global.get $eax)
@@ -1644,6 +1676,27 @@
     (i32.ne (call $win16_seg_base (call $win16_sel_to_index (local.get $sel)))
             (i32.const 0)))
 
+  ;; DefDlgProc's share of a dialog's messages, reached by the two routes a
+  ;; task can take to the procedure it did not write: DefWindowProc, and
+  ;; CallWindowProc with the procedure our own window handed back when it was
+  ;; subclassed. A command from the OK or Cancel button ends the dialog with
+  ;; that id; the pump acts on it at its next pass, which is where Windows ends
+  ;; the loop too. Returns 1 when it took the message.
+  (func $win16_defdlg_command (param $hwnd i32) (param $message i32)
+        (param $wparam i32) (result i32)
+    (local $id i32)
+    (if (i32.ne (local.get $message) (i32.const 0x0111))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $dialog_proc_get (local.get $hwnd)))
+      (then (return (i32.const 0))))
+    (local.set $id (i32.and (local.get $wparam) (i32.const 0xFFFF)))
+    (if (i32.and (i32.ne (local.get $id) (i32.const 1))
+                 (i32.ne (local.get $id) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (global.set $win16_dlg_result (local.get $id))
+    (global.set $win16_dlg_ended (i32.const 1))
+    (i32.const 1))
+
   ;; USER.122 CallWindowProc(lpPrevWndFunc, hWnd, msg, wParam, lParam) -> LONG.
   ;;
   ;; This is the other half of subclassing: an app that replaced a window
@@ -1661,6 +1714,13 @@
     (local.set $lparam (call $win16_arg32 (i32.const 0)))
     (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
       (then
+        (if (call $win16_defdlg_command (call $win16_h32 (local.get $hwnd))
+                  (local.get $message) (local.get $wparam))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $edx (i32.const 0))
+            (call $win16_api_return (i32.const 14))
+            (return)))
         (call $win16_call32_begin (i32.const 4))
         (call $handle_DefWindowProcA (call $win16_h32 (local.get $hwnd))
           (local.get $message) (local.get $wparam) (local.get $lparam)
@@ -1947,6 +2007,18 @@
         (call $zero_memory (call $g2w (local.get $tmp)) (i32.const 28))
         (global.set $eax (i32.const 1))))
     (call $win16_call32_end)
+    ;; Same shape as the modal pump's line below, with a zero dialog to mean
+    ;; "the task's own loop". Seeing both is what tells one delivery of a
+    ;; message from two.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9EB))
+        (call $host_log_i32 (call $gl32 (local.get $tmp)))
+        (call $host_log_i32 (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+        (call $host_log_i32 (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
+        (call $host_log_i32 (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
+        (call $host_log_i32 (i32.const 0))
+        (call $host_log_i32 (global.get $post_queue_count))))
     (call $gs16 (local.get $dst)
       (call $win16_h16 (call $gl32 (local.get $tmp))))
     (call $gs16 (i32.add (local.get $dst) (i32.const 2))
@@ -2072,12 +2144,27 @@
       (i32.and (local.get $ret) (i32.const 0xFFFF))))
 
   ;; USER.107 DefWindowProc(hWnd, message, wParam, lParam) -> LONG.
+  ;;
+  ;; This is also the procedure a task gets back when it subclasses one of our
+  ;; windows, so for a dialog it stands where DefDlgProc stands on Windows —
+  ;; and DefDlgProc is what ends a dialog on IDOK or IDCANCEL when the dialog
+  ;; procedure declines the command. MFC relies on exactly that: it subclasses
+  ;; the dialog, finds no handler for IDOK in its message map, and passes the
+  ;; command down the chain expecting the dialog to close. Hearts' OK button
+  ;; did nothing at all until this was here.
   (func $win16_DefWindowProc
     (local $hwnd i32) (local $message i32) (local $wparam i32) (local $lparam i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     (local.set $message (call $win16_arg16 (i32.const 3)))
     (local.set $wparam (call $win16_arg16 (i32.const 2)))
     (local.set $lparam (call $win16_arg32 (i32.const 0)))
+    (if (call $win16_defdlg_command (local.get $hwnd)
+              (local.get $message) (local.get $wparam))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $edx (i32.const 0))
+        (call $win16_api_return (i32.const 10))
+        (return)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_DefWindowProcA (local.get $hwnd) (local.get $message)
       (local.get $wparam) (local.get $lparam) (i32.const 0) (i32.const 0))
@@ -3527,8 +3614,10 @@
   ;; DX:AX. Every DC here is already window-relative, so the origin is the
   ;; window's own client corner.
   (func $win16_GetDCOrg
+    (local $hdc i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
     (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetDCOrgEx (call $win16_h32 (call $win16_arg16 (i32.const 0)))
+    (call $handle_GetDCOrgEx (local.get $hdc)
       (global.get $GUEST_STACK) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.and (call $gl32 (global.get $GUEST_STACK)) (i32.const 0xFFFF)))
@@ -3743,7 +3832,7 @@
   ;; lpszSound, fuSound) -> BOOL. Hearts asks how many wave devices there are
   ;; before it will play anything, so answering it is what turns the sound on.
   (func $win16_mmsystem (param $ordinal i32) (result i32)
-    (local $name i32)
+    (local $name i32) (local $flags i32)
     (if (i32.eq (local.get $ordinal) (i32.const 401))
       (then
         (call $win16_call32_begin (i32.const 0))
@@ -3758,8 +3847,9 @@
         (local.set $name (call $win16_far_to_guest
           (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
         (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $name (i32.const 0))))
+        (local.set $flags (call $win16_arg16 (i32.const 0)))
         (call $win16_call32_begin (i32.const 2))
-        (call $handle_sndPlaySoundA (local.get $name) (call $win16_arg16 (i32.const 0))
+        (call $handle_sndPlaySoundA (local.get $name) (local.get $flags)
           (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
         (call $win16_call32_end)
         (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
@@ -3832,6 +3922,10 @@
     ;; driving the task's own DLGPROC. It owns its splice, so nothing here.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLG_PUMP))
       (then (call $win16_dlg_pump) (return)))
+    ;; The dialog's own WH_CALLWNDPROC filter has returned; WM_INITDIALOG is
+    ;; what it was standing in front of.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLG_CWP))
+      (then (call $win16_dlg_cwp_resume) (return)))
     ;; The modal pump. EIP is parked here, not called here, so there is no
     ;; frame to unwind — the API's own frame went when it parked, and the far
     ;; return it saved is what the completed box goes back to.

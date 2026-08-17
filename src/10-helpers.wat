@@ -16020,6 +16020,18 @@
     (i32.store offset=8  (local.get $slot) (local.get $wParam))
     (i32.store offset=12 (local.get $slot) (local.get $lParam))
     (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))
+    ;; --trace-win16 shows every posted message going in, which is the other
+    ;; half of the dlg-pump/task-loop lines showing them come out. A message
+    ;; delivered twice is either pushed twice or popped twice, and only both
+    ;; halves together say which.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9EC))
+        (call $host_log_i32 (local.get $hwnd))
+        (call $host_log_i32 (local.get $msg))
+        (call $host_log_i32 (local.get $wParam))
+        (call $host_log_i32 (local.get $lParam))
+        (call $host_log_i32 (global.get $post_queue_count))))
     (i32.const 1))
 
   ;; Skip a DLGTEMPLATE variable-length field (OrdOrString):

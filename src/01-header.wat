@@ -2183,6 +2183,9 @@
   ;; either dispatches one and comes back here when the procedure returns, or
   ;; finds nothing to do and yields. See $win16_DialogBox in 09e2.
   (global $WIN16_DLG_PUMP i32 (i32.const 0xFF40))
+  ;; Where a dialog resumes after its WH_CALLWNDPROC filter has seen the
+  ;; WM_NCCREATE that creating it sends — see $win16_dlg_cwp_resume.
+  (global $WIN16_DLG_CWP i32 (i32.const 0xFF50))
   ;; EndDialog's two words. A dialog procedure calls it and then returns, and
   ;; the pump acts on it at that return, so an inner dialog has always consumed
   ;; these before an outer one can look — nesting needs nothing more.
@@ -2203,6 +2206,9 @@
   ;; an address one of its own selectors covers. Four, not one, because a
   ;; dialog redraws several owner-draw controls before any of them returns.
   (global $WIN16_MSG_SCRATCH_SIZE i32 (i32.const 128))
+  ;; Raised while the 32-bit bridge frame is open, so $win16_arg16 can refuse
+  ;; to read an argument off the scratch stack instead of the task's.
+  (global $win16_in_call32 (mut i32) (i32.const 0))
   (global $win16_msg_scratch (mut i32) (i32.const 0))
   (global $win16_msg_slot (mut i32) (i32.const 0))
   (global $win16_lheap_base (mut i32) (i32.const 0))

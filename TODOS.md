@@ -237,10 +237,46 @@ sets the global instead.
     a 16-bit procedure `les`-es the pointer it is handed, so it is now rebuilt
     in the task's own DGROUP (`$win16_msg_lparam16`, scratch reserved at the
     bottom of DGROUP by the NE loader).
-- **Hearts goes straight to the client path and finds no dealer.** Its three
-  dialog commands (Options, Score, Quote) open nothing for this reason and this
-  reason only: the sweep finds the app still sitting behind its startup
-  message box, so they are not three separate bugs. It gets all
+- ~~**Hearts goes straight to the client path and finds no dealer.**~~ FIXED,
+  and it was five bugs in five different layers, none of them the DDE guess the
+  previous version of this item made. Hearts now puts up its own startup dialog
+  ("What is your name?" / "I want to be dealer"), OK closes it, and it goes on
+  to ask for the dealer's computer name — `test/test-win16-hearts-startup.js`
+  pins the whole sequence.
+  - **The command line was `"\r"`, not `""`.** InitTask handed back the DOS
+    command tail, carriage-return-terminated. That pointer *is* WinMain's
+    lpCmdLine, which is documented null-terminated, so MFC compared the first
+    byte, saw 0x0D, and concluded it had been given a command line telling it
+    to join a game. One byte.
+  - **Every Win16 dialog-item API read the wrong argument.** `$win16_arg16` is
+    ESP-relative and `$win16_call32_begin` moves ESP to the 32-bit scratch
+    stack, so an argument read after the bridge opens comes off that frame
+    instead — index 0 being the zero written there as a return address. Ten
+    functions did it, so GetDlgItem asked for control 0 whatever it was passed.
+    `$win16_arg16` now traps if called while the bridge is open.
+  - **One posted message was delivered twice.** `$handle_PostMessageA` decided
+    "is this window another instance's?" with `i32.and`, which evaluates both
+    operands — so the host call that queues the message on the owning instance
+    ran for our own windows too, and then this side queued it again. Not a
+    Win16 bug: any app posting to itself got the message twice.
+  - **Creating a dialog never ran the WH_CALLWNDPROC filter.** CreateWindow
+    always had; DialogBox did not. MFC attaches its C++ object to the HWND from
+    inside that call, and its dialog procedure's first act is to look the object
+    back up — it called a virtual through the null it got.
+  - **DefDlgProc's share was missing.** MFC subclasses the dialog and passes
+    IDOK down the chain expecting the dialog to close, so the procedure our
+    window hands back on subclassing has to end the dialog, and the pump has to
+    route to the *window* procedure once one is installed rather than to the
+    DLGPROC.
+
+  What is left for a playable game is NetDDE: Hearts disables "I want to be
+  dealer" because `LoadLibrary("NDDEAPI.DLL")` fails, so the only path open to
+  it is joining a game that is not there. Making that library load — and
+  answering the one entry point it asks for by name — is what would give it the
+  single-player dealer game, and it is the same conversation problem as below.
+- **Hearts' menu commands.** Options, Score and Quote open nothing while the
+  app is still behind its startup dialogs; whether they work once a game is
+  running is untested, because no game runs yet. It gets all
   the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
   and puts up "Unable to connect with dealer. Hearts will end." What it should
   do first is show its startup dialog: the resources contain "What is your
@@ -268,7 +304,16 @@ sets the global instead.
   decode the RT_MENU and RT_DIALOG templates, which are the two resources whose
   16-bit layout shares nothing with the 32-bit one and so cannot be read with
   `tools/parse-rsrc.js`. `--menus-json=` is what `tools/menu-sweep.js` falls
-  back to when the PE walker finds nothing.
+  back to when the PE walker finds nothing, and `--seg-bytes=N:OFF[:LEN]` reads
+  raw segment bytes, which is the only way to look at the DGROUP string a
+  disassembly names as `push 0x1e8`.
+- Tracing for message-queue problems, added while chasing the Hearts duplicate:
+  `--trace-win16` now prints `post ->` for every message going into the posted
+  queue and `task-loop ->` / `dlg-pump ->` for every one coming out, each with
+  the queue depth. A message delivered twice is either pushed twice or popped
+  twice, and only both halves together say which. `--input=N:dump-msgq` prints
+  the queue itself, which `--dump` cannot: it lives at WASM 0x400, below
+  GUEST_BASE, so that address goes through `g2w` and lands somewhere else.
 - Structure width is the recurring bug class here, and it is worth stating
   plainly: **a structure that crosses the boundary is a different size in the
   two worlds.** `SystemParametersInfo(SPI_GETWORKAREA)` wrote a 32-bit RECT

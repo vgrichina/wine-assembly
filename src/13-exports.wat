@@ -1743,6 +1743,19 @@
   ;; queue so pending non-client work drains before parent/child WM_PAINT.
   (func (export "paint_invalidate_visible_tree") (param $hwnd i32)
     (call $paint_mark_visible_tree (local.get $hwnd)))
+  ;; The posted-message queue, for looking at rather than guessing about. It
+  ;; lives at WASM 0x400, below GUEST_BASE, so --dump cannot reach it: that
+  ;; address goes through g2w and lands somewhere else entirely. `field` is
+  ;; 0 hwnd, 1 message, 2 wParam, 3 lParam.
+  (func (export "post_queue_depth") (result i32)
+    (global.get $post_queue_count))
+  (func (export "post_queue_peek") (param $i i32) (param $field i32) (result i32)
+    (if (i32.ge_u (local.get $i) (global.get $post_queue_count))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (i32.add (i32.const 0x400)
+                                (i32.mul (local.get $i) (i32.const 16)))
+                       (i32.shl (local.get $field) (i32.const 2)))))
+
   (func (export "nc_flags_test") (param $hwnd i32) (result i32)
     (call $nc_flags_test (local.get $hwnd)))
   ;; Is this window still owed a WM_PAINT? Pairs with nc_flags_test above: those

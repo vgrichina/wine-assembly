@@ -157,6 +157,7 @@ E2E=(
   test/test-win16-web.js
   test/test-win16-dialog.js
   test/test-win16-menus.js
+  test/test-win16-hearts-startup.js
   test/test-local-candidates-playability.js
   test/test-dxball-candidate.js
   test/test-blobby-volley.js
