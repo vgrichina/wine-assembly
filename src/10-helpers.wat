@@ -7198,6 +7198,7 @@
   (func $gdi_window_surface_ensure (param $hwnd i32) (result i32)
     (local $owner i32) (local $p i32) (local $wh i32) (local $w i32) (local $h i32)
     (local $size64 i64) (local $bits_ga i32) (local $bits i32) (local $id i32)
+    (local $had_surface i32)
     (local.set $owner (call $wnd_top_level (local.get $hwnd)))
     (if (i32.eqz (local.get $owner)) (then (local.set $owner (local.get $hwnd))))
     (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
@@ -7221,10 +7222,21 @@
       (then
         (drop (call $host_gdi_surface_attach (local.get $id) (local.get $owner)))
         (return (local.get $p))))
-    (if (i32.load offset=16 (local.get $p))
+    ;; Reaching here means the window changed size, so the surface it was
+    ;; drawn on is about to be thrown away and replaced with a blank one.
+    ;; Everything painted on it goes with it -- including the chrome, which
+    ;; unlike the client area nobody repaints on their own: an app redraws its
+    ;; client from WM_PAINT, but the caption and frame are ours. Volume Control
+    ;; sizes its dialog to the mixer lines it finds, so its window grew once
+    ;; after $defwndproc_do_ncpaint had already drawn the title bar, and it
+    ;; spent the rest of the session with a blank grey strip where the caption
+    ;; had been. Mark the window tree dirty so the NC pass and WM_PAINT run
+    ;; again over the new surface.
+    (local.set $had_surface (i32.load offset=16 (local.get $p)))
+    (if (local.get $had_surface)
       (then
         (drop (call $host_gdi_surface_delete (local.get $id)))
-        (call $dib_free_wasm (i32.load offset=16 (local.get $p)))))
+        (call $dib_free_wasm (local.get $had_surface))))
     (local.set $size64 (i64.mul
       (i64.mul (i64.extend_i32_u (local.get $w)) (i64.extend_i32_u (local.get $h)))
       (i64.const 4)))
@@ -7256,6 +7268,23 @@
         (i32.store offset=12 (local.get $p) (i32.const 0))
         (i32.store offset=16 (local.get $p) (i32.const 0))
         (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $had_surface) (i32.const 0))
+          (i32.eqz (global.get $gdi_surface_resize_repaint)))
+      (then
+        ;; Draw the chrome straight back on rather than only queueing
+        ;; WM_NCPAINT: a window's nonclient area is repainted by its
+        ;; DefWindowProc, and an app whose window procedure answers
+        ;; WM_NCPAINT itself never lets it run. Volume Control is one, so a
+        ;; queued repaint left its caption a blank grey strip for the rest of
+        ;; the session. The guard stops the recursion through
+        ;; $host_alloc_window_dc, which lands back here -- by now the record
+        ;; carries the new size, so the nested call returns at the size check.
+        (global.set $gdi_surface_resize_repaint (i32.const 1))
+        (call $defwndproc_do_ncpaint (local.get $owner))
+        (global.set $gdi_surface_resize_repaint (i32.const 0))
+        ;; The client area was on that surface too. Its owner does repaint
+        ;; that itself, once it knows there is something to repaint.
+        (call $paint_mark_visible_tree (local.get $owner))))
     (local.get $p))
 
   (func $gdi_window_surface_release (param $hwnd i32)

@@ -1793,7 +1793,21 @@ async function main() {
   };
 
   h.dialog_loaded = (hwnd, parentHwnd) => {
-    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}`);
+    // Report the same facts as [CreateWindow]. A dialog's style comes from its
+    // template, not from a CreateWindowEx argument, so without this the only
+    // record of "what style did this window end up with" is the chrome that
+    // does or doesn't appear on screen. wnd_style is what $defwndproc_ncpaint
+    // reads; dlg_style is what the template asked for. They should agree.
+    const ex = ctx.exports;
+    const hex = v => `0x${(v >>> 0).toString(16)}`;
+    let detail = '';
+    if (ex && ex.dlg_get_style) {
+      detail = ` dlg_style=${hex(ex.dlg_get_style(hwnd))}` +
+        ` wnd_style=${hex(ex.wnd_get_style_export ? ex.wnd_get_style_export(hwnd) : 0)}` +
+        ` size=${ex.dlg_get_cx(hwnd)}x${ex.dlg_get_cy(hwnd)}dlu` +
+        ` menu=${hex(ex.dlg_get_menu(hwnd))}`;
+    }
+    logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}${detail}`);
     if (renderer) renderer.createDialog(hwnd, parentHwnd);
   };
 

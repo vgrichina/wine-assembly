@@ -1259,6 +1259,11 @@
   ;; display gamma ramp remain observable process state.
   (global $gdi_batch_limit (mut i32) (i32.const 310))
   (global $gdi_gamma_ramp_guest (mut i32) (i32.const 0))
+  ;; Set while a window's backing surface is being replaced after a resize and
+  ;; its chrome is being drawn back onto the new one. The repaint allocates a
+  ;; window DC, which comes back through $gdi_window_surface_ensure; this stops
+  ;; that from starting a second repaint.
+  (global $gdi_surface_resize_repaint (mut i32) (i32.const 0))
   ;; Screen-coordinate popup menus use an ordinary WAT bitmap selected into
   ;; this persistent memory DC. JavaScript only attaches its derived Canvas
   ;; presentation as the compositor overlay; it never rasterizes menu chrome.
