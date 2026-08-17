@@ -12988,6 +12988,53 @@
       (then (return (i32.const 0))))
     (global.get $rsrc_matched_eid))
 
+  ;; Choose which language of a resource to load, given the level-3 directory.
+  ;; Returns the data-entry offset (relative to the resource directory), or 0.
+  ;;
+  ;; This used to take whichever entry came first, and a multilingual binary
+  ;; does not put the one you want first: Win98's sndrec32.exe carries Arabic
+  ;; alongside English, Arabic sorts lower, and its Properties sheet came up
+  ;; with "EH'AB" and "%D:'! 'D#E1" on the buttons -- Arabic text read as
+  ;; CP1252. The entries are sorted by language id, so preference has to be
+  ;; expressed as a search rather than as an ordering.
+  ;;
+  ;; We present an en-US environment, so the order is: exact en-US, then
+  ;; language-neutral, then any English sublanguage, then whatever is first.
+  ;; That last fallback matters -- a single-language binary in any language is
+  ;; still the resource the app expects.
+  (func $rsrc_pick_language (param $lang_off i32) (result i32)
+    (local $n i32) (local $i i32) (local $e i32) (local $id i32)
+    (local $first i32) (local $neutral i32) (local $english i32)
+    (local.set $n (i32.add
+      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 12)))))
+      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    (local.set $e (i32.add (local.get $lang_off) (i32.const 16)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $id (call $gl32 (i32.add (call $r_base) (local.get $e))))
+      ;; A level-3 entry id is a plain LANGID; nothing here is a named entry.
+      (if (i32.eqz (local.get $first))
+        (then (local.set $first (call $gl32
+          (i32.add (call $r_base) (i32.add (local.get $e) (i32.const 4)))))))
+      (if (i32.eq (local.get $id) (i32.const 0x0409))          ;; en-US, exact
+        (then (return (call $gl32
+          (i32.add (call $r_base) (i32.add (local.get $e) (i32.const 4)))))))
+      (if (i32.eqz (local.get $id))                            ;; LANG_NEUTRAL
+        (then (if (i32.eqz (local.get $neutral))
+          (then (local.set $neutral (call $gl32
+            (i32.add (call $r_base) (i32.add (local.get $e) (i32.const 4)))))))))
+      (if (i32.eq (i32.and (local.get $id) (i32.const 0x3FF)) (i32.const 0x09)) ;; any English
+        (then (if (i32.eqz (local.get $english))
+          (then (local.set $english (call $gl32
+            (i32.add (call $r_base) (i32.add (local.get $e) (i32.const 4)))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $e (i32.add (local.get $e) (i32.const 8)))
+      (br $scan)))
+    (if (local.get $neutral) (then (return (local.get $neutral))))
+    (if (local.get $english) (then (return (local.get $english))))
+    (local.get $first))
+
   ;; FindResourceA: walk type→name→lang, return data entry offset
   (func $find_resource (param $type_id i32) (param $name_id i32) (result i32)
     (local $d i32) (local $lang_off i32) (local $n i32)
@@ -13002,14 +13049,10 @@
       (i32.add (call $r_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF)))
       (local.get $name_id)))
     (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
-    ;; Level 3: take first language entry
+    ;; Level 3: pick a language.
     (local.set $lang_off (i32.add (call $r_rva) (i32.and (local.get $d) (i32.const 0x7FFFFFFF))))
-    (local.set $n (i32.add
-      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 12)))))
-      (i32.load16_u (call $g2w (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 14)))))))
-    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
-    ;; Return the data offset from first entry (skip directory header 16 bytes, read second dword)
-    (local.set $d (call $gl32 (i32.add (call $r_base) (i32.add (local.get $lang_off) (i32.const 20)))))
+    (local.set $d (call $rsrc_pick_language (local.get $lang_off)))
+    (if (i32.eqz (local.get $d)) (then (return (i32.const 0))))
     ;; d is now the offset of the data entry (RVA, size, codepage, reserved) relative to rsrc start
     ;; Return as offset from image_base (rsrc_rva + d)
     (i32.add (call $r_rva) (local.get $d)))

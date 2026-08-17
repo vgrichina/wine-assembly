@@ -673,7 +673,7 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=16 (local.get $it)))
 
-  (func (export "menu_child_label_ptr")
+  (func $menu_child_label_ptr (export "menu_child_label_ptr")
         (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
     (local $blob i32) (local $it i32)
     (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
@@ -682,7 +682,7 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.add (local.get $blob) (i32.load (local.get $it))))
 
-  (func (export "menu_child_label_len")
+  (func $menu_child_label_len (export "menu_child_label_len")
         (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
     (local $blob i32) (local $it i32)
     (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
