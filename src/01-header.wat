@@ -2144,6 +2144,11 @@
   ;; a 16-bit window procedure pushes this as the far return address, and
   ;; $win16_dispatch recognises it. Past the end of the thunk table, so no
   ;; import can be assigned it.
+  ;; NE DLLs are staged above the task image, one 256KB slot per module id, in
+  ;; the upper half of the 8MB PE staging area. A Win16 DLL is a few tens of
+  ;; KB, and there are at most nine module ids.
+  (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
+  (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
   (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
   (global $win16_cont_ret (mut i32) (i32.const 0))
   (global $win16_cont_result (mut i32) (i32.const 0))

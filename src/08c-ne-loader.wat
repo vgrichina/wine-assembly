@@ -228,8 +228,11 @@
   ;; its relocation records live in the staged file. They are not the same
   ;; place: the records sit past the segment's own length, and only `seg_len`
   ;; bytes were copied out.
+  ;; $seg_index_base offsets every INTERNALREF: an image's segment N lives at
+  ;; arena index base+N. It is zero for the task's own image, whose segment N
+  ;; is index N, and non-zero for a DLL placed after it.
   (func $win16_apply_relocs (param $seg_wa i32) (param $seg_len i32) (param $rec_wa i32)
-        (param $ne_off i32)
+        (param $ne_off i32) (param $seg_index_base i32)
     (local $p i32) (local $count i32) (local $i i32)
     (local $addr_type i32) (local $rel_type i32) (local $additive i32)
     (local $site i32) (local $a i32) (local $c i32)
@@ -257,9 +260,11 @@
           (if (i32.eq (local.get $a) (i32.const 0xFF))
             (then
               (local.set $tgt_off (call $win16_entry_lookup (local.get $ne_off) (local.get $c) (local.get $seg_out)))
-              (local.set $tgt_sel (call $win16_index_to_sel (i32.load (local.get $seg_out)))))
+              (local.set $tgt_sel (call $win16_index_to_sel
+                (i32.add (local.get $seg_index_base) (i32.load (local.get $seg_out))))))
             (else
-              (local.set $tgt_sel (call $win16_index_to_sel (local.get $a)))
+              (local.set $tgt_sel (call $win16_index_to_sel
+                (i32.add (local.get $seg_index_base) (local.get $a))))
               (local.set $tgt_off (local.get $c)))))
         (else
           (if (i32.eq (local.get $rel_type) (i32.const 1))
@@ -421,7 +426,7 @@
             (call $g2w (call $win16_seg_base (i32.add (local.get $i) (i32.const 1))))
             (local.get $len)
             (i32.add (i32.add (global.get $PE_STAGING) (local.get $file_pos)) (local.get $len))
-            (local.get $ne_off))))
+            (local.get $ne_off) (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fix)))
 
@@ -463,17 +468,21 @@
   (func $win16_find_resource (export "win16_find_resource")
         (param $type_id i32) (param $res_id i32) (result i32)
     (local $p i32) (local $shift i32) (local $type i32) (local $count i32)
-    (local $q i32) (local $i i32) (local $end i32)
+    (local $q i32) (local $i i32) (local $end i32) (local $ne_off i32) (local $img i32)
     (global.set $win16_res_len (i32.const 0))
-    (local.set $p (i32.load16_u (i32.add (global.get $win16_ne_off) (i32.const 0x24))))
+    (local.set $ne_off (call $win16_image_ne_off))
+    (local.set $img (call $win16_image_base_addr))
+    (local.set $p (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x24))))
     ;; A resource table offset of zero means the module has no resources at all.
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
-    (local.set $p (i32.add (global.get $win16_ne_off) (local.get $p)))
+    (local.set $p (i32.add (local.get $ne_off) (local.get $p)))
     (local.set $shift (i32.load16_u (local.get $p)))
     (local.set $p (i32.add (local.get $p) (i32.const 2)))
     ;; The table lives inside the staged file; refuse to walk past it rather
     ;; than read whatever follows as if it were another TYPEINFO.
-    (local.set $end (i32.add (global.get $PE_STAGING) (global.get $win16_file_size)))
+    (local.set $end (i32.add (local.get $img)
+      (select (global.get $win16_file_size) (global.get $WIN16_DLL_STAGING_STRIDE)
+              (i32.eq (local.get $img) (global.get $PE_STAGING)))))
 
     (block $done (loop $types
       (br_if $done (i32.ge_u (i32.add (local.get $p) (i32.const 8)) (local.get $end)))
@@ -493,7 +502,7 @@
               (then
                 (global.set $win16_res_len
                   (i32.shl (i32.load16_u (i32.add (local.get $q) (i32.const 2))) (local.get $shift)))
-                (return (i32.add (global.get $PE_STAGING)
+                (return (i32.add (local.get $img)
                   (i32.shl (i32.load16_u (local.get $q)) (local.get $shift))))))
             (local.set $q (i32.add (local.get $q) (i32.const 12)))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -599,6 +608,221 @@
     (global.set $edi (global.get $sreg_ds))
     (global.set $df (i32.const 0))
     (global.set $code16 (i32.const 1)))
+
+  ;; ---- NE DLLs ----
+  ;;
+  ;; A Win16 DLL is the same file format as the task, so it loads the same way:
+  ;; its segments go into arena slots after the task's and its own relocations
+  ;; run against the same thunk table. Two things differ. Its segment N is not
+  ;; arena index N, which is what `seg_index_base` is for. And the task reaches
+  ;; it by name rather than by ordinal, so its name tables have to be searched.
+  ;;
+  ;; The record per module id: ne_off, seg_index_base, staging base, loaded.
+  ;; It lives in the arena slot past the last usable selector, above the handle
+  ;; table, for the same reason that one does — no far pointer can name it.
+  (func $win16_dll_rec (param $module_id i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0x8000) (i32.mul (local.get $module_id) (i32.const 16)))))
+
+  ;; A record's segment count doubles as its loaded flag: an NE with no
+  ;; segments is not something that can be loaded.
+  (func $win16_dll_loaded (param $module_id i32) (result i32)
+    (i32.load offset=12 (call $win16_dll_rec (local.get $module_id))))
+
+  ;; Which image owns the code currently running, as (ne_off, staging base).
+  ;; Resource lookups follow this rather than the hInstance the caller passed:
+  ;; a DLL asking for its own resources passes an instance handle this emulator
+  ;; never issued -- CARDS passes 0xFFFF -- while its CS is unambiguous.
+  (func $win16_image_ne_off (result i32)
+    (local $index i32) (local $id i32) (local $rec i32) (local $n i32) (local $base i32)
+    (local.set $index (call $win16_sel_to_index (global.get $sreg_cs)))
+    (local.set $id (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $id) (i32.const 15)))
+      (local.set $rec (call $win16_dll_rec (local.get $id)))
+      (local.set $n (i32.load offset=12 (local.get $rec)))
+      (local.set $base (i32.load offset=4 (local.get $rec)))
+      (if (i32.and (i32.ne (local.get $n) (i32.const 0))
+            (i32.and (i32.gt_u (local.get $index) (local.get $base))
+                     (i32.le_u (local.get $index)
+                               (i32.add (local.get $base) (local.get $n)))))
+        (then (return (i32.load (local.get $rec)))))
+      (local.set $id (i32.add (local.get $id) (i32.const 1)))
+      (br $scan)))
+    (global.get $win16_ne_off))
+
+  (func $win16_image_base_addr (result i32)
+    (local $index i32) (local $id i32) (local $rec i32) (local $n i32) (local $base i32)
+    (local.set $index (call $win16_sel_to_index (global.get $sreg_cs)))
+    (local.set $id (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $id) (i32.const 15)))
+      (local.set $rec (call $win16_dll_rec (local.get $id)))
+      (local.set $n (i32.load offset=12 (local.get $rec)))
+      (local.set $base (i32.load offset=4 (local.get $rec)))
+      (if (i32.and (i32.ne (local.get $n) (i32.const 0))
+            (i32.and (i32.gt_u (local.get $index) (local.get $base))
+                     (i32.le_u (local.get $index)
+                               (i32.add (local.get $base) (local.get $n)))))
+        (then (return (i32.load offset=8 (local.get $rec)))))
+      (local.set $id (i32.add (local.get $id) (i32.const 1)))
+      (br $scan)))
+    (global.get $PE_STAGING))
+
+  ;; The staging area for module `id`, which is where JS puts the file bytes.
+  (func $win16_dll_staging (export "win16_dll_staging") (param $module_id i32) (result i32)
+    (i32.add (global.get $WIN16_DLL_STAGING)
+             (i32.mul (local.get $module_id) (global.get $WIN16_DLL_STAGING_STRIDE))))
+
+  ;; Load the NE already staged for `module_id`. Returns 1 on success.
+  (func $load_ne_dll (export "load_ne_dll") (param $module_id i32) (result i32)
+    (local $base i32) (local $ne_off i32) (local $seg_tab i32) (local $seg_count i32)
+    (local $shift i32) (local $i i32) (local $e i32) (local $index i32)
+    (local $file_pos i32) (local $len i32) (local $flags i32) (local $alloc i32)
+    (local $seg_index_base i32) (local $rec i32)
+
+    (local.set $base (call $win16_dll_staging (local.get $module_id)))
+    (if (i32.ne (i32.load16_u (local.get $base)) (i32.const 0x5A4D))
+      (then (return (i32.const 0))))
+    (local.set $ne_off (i32.add (local.get $base)
+      (i32.load (i32.add (local.get $base) (i32.const 0x3C)))))
+    (if (i32.ne (i32.load16_u (local.get $ne_off)) (i32.const 0x454E))
+      (then (return (i32.const 0))))
+
+    (local.set $seg_count (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1C))))
+    (local.set $shift (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x32))))
+    (if (i32.eqz (local.get $shift)) (then (local.set $shift (i32.const 9))))
+    (local.set $seg_tab (i32.add (local.get $ne_off)
+      (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x22)))))
+
+    ;; Segment 1 lands at the next free index, so the base is one less.
+    (local.set $seg_index_base (i32.sub (global.get $win16_next_seg) (i32.const 1)))
+
+    (local.set $i (i32.const 0))
+    (block $place_done (loop $place
+      (br_if $place_done (i32.ge_u (local.get $i) (local.get $seg_count)))
+      (local.set $e (i32.add (local.get $seg_tab) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $file_pos (i32.shl (i32.load16_u (local.get $e)) (local.get $shift)))
+      (local.set $len   (i32.load16_u (i32.add (local.get $e) (i32.const 2))))
+      (local.set $flags (i32.load16_u (i32.add (local.get $e) (i32.const 4))))
+      (local.set $alloc (i32.load16_u (i32.add (local.get $e) (i32.const 6))))
+      (if (i32.and (i32.eqz (local.get $len)) (i32.ne (local.get $file_pos) (i32.const 0)))
+        (then (local.set $len (i32.const 0x10000))))
+      (if (i32.eqz (local.get $alloc)) (then (local.set $alloc (i32.const 0x10000))))
+      (local.set $index (call $win16_alloc_segment))
+      (call $win16_seg_set (local.get $index)
+        (call $win16_seg_base (local.get $index)) (local.get $alloc)
+        (local.get $flags) (i32.add (local.get $i) (i32.const 1)))
+      (if (local.get $file_pos)
+        (then (call $memcpy (call $g2w (call $win16_seg_base (local.get $index)))
+                (i32.add (local.get $base) (local.get $file_pos)) (local.get $len))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $place)))
+
+    ;; Relocations, after every segment is placed: a fixup in one can name
+    ;; another, exactly as in the task's own image.
+    (local.set $i (i32.const 0))
+    (block $fix_done (loop $fix
+      (br_if $fix_done (i32.ge_u (local.get $i) (local.get $seg_count)))
+      (local.set $e (i32.add (local.get $seg_tab) (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $file_pos (i32.shl (i32.load16_u (local.get $e)) (local.get $shift)))
+      (local.set $len   (i32.load16_u (i32.add (local.get $e) (i32.const 2))))
+      (local.set $flags (i32.load16_u (i32.add (local.get $e) (i32.const 4))))
+      (if (i32.and (i32.eqz (local.get $len)) (i32.ne (local.get $file_pos) (i32.const 0)))
+        (then (local.set $len (i32.const 0x10000))))
+      (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x0100)) (i32.const 0))
+                   (i32.ne (local.get $file_pos) (i32.const 0)))
+        (then
+          (call $win16_apply_relocs
+            (call $g2w (call $win16_seg_base
+              (i32.add (local.get $seg_index_base) (i32.add (local.get $i) (i32.const 1)))))
+            (local.get $len)
+            (i32.add (i32.add (local.get $base) (local.get $file_pos)) (local.get $len))
+            (local.get $ne_off) (local.get $seg_index_base))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fix)))
+
+    (local.set $rec (call $win16_dll_rec (local.get $module_id)))
+    (i32.store          (local.get $rec) (local.get $ne_off))
+    (i32.store offset=4 (local.get $rec) (local.get $seg_index_base))
+    (i32.store offset=8 (local.get $rec) (local.get $base))
+    (i32.store offset=12 (local.get $rec) (local.get $seg_count))
+    (i32.const 1))
+
+  ;; Compare a Pascal string against another Pascal string, case-sensitively.
+  ;; NE name tables are upper case and so is the imported-name table, so this
+  ;; needs no folding.
+  (func $win16_pstr_eq_pstr (param $a i32) (param $b i32) (result i32)
+    (local $n i32) (local $i i32)
+    (local.set $n (i32.load8_u (local.get $a)))
+    (if (i32.ne (local.get $n) (i32.load8_u (local.get $b))) (then (return (i32.const 0))))
+    (block $done (loop $cmp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 1)) (local.get $i)))
+                  (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 1)) (local.get $i))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    (i32.const 1))
+
+  ;; Walk one name table looking for `name`, a Pascal string. Entries are a
+  ;; length byte, the characters, and a WORD ordinal; a zero length ends it.
+  (func $win16_name_table_find (param $p i32) (param $end i32) (param $name i32) (result i32)
+    (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (local.set $n (i32.load8_u (local.get $p)))
+      (br_if $done (i32.eqz (local.get $n)))
+      (if (call $win16_pstr_eq_pstr (local.get $p) (local.get $name))
+        (then (return (i32.load16_u (i32.add (i32.add (local.get $p) (i32.const 1))
+                                             (local.get $n))))))
+      (local.set $p (i32.add (i32.add (local.get $p) (i32.const 3)) (local.get $n)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; The exported ordinal for `name` in a loaded DLL, or 0. Both tables have to
+  ;; be searched: the resident one holds what the linker thought would be
+  ;; called often, the non-resident one everything else, and CARDS puts all
+  ;; five of its entry points in the second.
+  (func $win16_dll_ordinal (param $module_id i32) (param $name i32) (result i32)
+    (local $rec i32) (local $ne_off i32) (local $base i32) (local $p i32) (local $ord i32)
+    (local.set $rec (call $win16_dll_rec (local.get $module_id)))
+    (local.set $ne_off (i32.load (local.get $rec)))
+    (local.set $base (i32.load offset=8 (local.get $rec)))
+    ;; Resident: at ne_off + the offset at 0x26, running to the module-reference
+    ;; table. Its first entry is the module's own name with ordinal 0.
+    (local.set $p (i32.add (local.get $ne_off)
+      (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x26)))))
+    (local.set $ord (call $win16_name_table_find (local.get $p)
+      (i32.add (local.get $ne_off)
+        (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x28))))
+      (local.get $name)))
+    (if (local.get $ord) (then (return (local.get $ord))))
+    ;; Non-resident: the offset at 0x2C is from the start of the file, not from
+    ;; the NE header, and its length is at 0x20 — 0x30 is the moveable entry
+    ;; count, which is a plausible-looking small number and truncates the table
+    ;; to its first entry. That entry is the module description, so the search
+    ;; finds nothing and every by-name import looks unexported.
+    (local.set $p (i32.add (local.get $base)
+      (i32.load (i32.add (local.get $ne_off) (i32.const 0x2C)))))
+    (call $win16_name_table_find (local.get $p)
+      (i32.add (local.get $p) (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x20))))
+      (local.get $name)))
+
+  ;; Where an ordinal exported by a loaded DLL actually is, packed selector:off.
+  (func $win16_dll_entry (param $module_id i32) (param $ordinal i32) (result i32)
+    (local $rec i32) (local $off i32) (local $seg i32)
+    (local.set $rec (call $win16_dll_rec (local.get $module_id)))
+    (local.set $seg (i32.add (global.get $WIN16_SEG_TABLE)
+                             (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 16))))
+    (local.set $off (call $win16_entry_lookup
+      (i32.load (local.get $rec)) (local.get $ordinal) (local.get $seg)))
+    (if (i32.eqz (i32.load (local.get $seg))) (then (return (i32.const 0))))
+    (i32.or (i32.shl (call $win16_index_to_sel
+              (i32.add (i32.load offset=4 (local.get $rec)) (i32.load (local.get $seg))))
+            (i32.const 16))
+            (local.get $off)))
 
   ;; ---- Inspection exports (used by test/test-ne-loader.js) ----
   (func (export "win16_seg_count") (result i32) (global.get $win16_seg_count))

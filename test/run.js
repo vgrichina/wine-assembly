@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
-const { loadDlls, detectRequiredDlls, shouldReportNtForDlls } = require('../lib/dll-loader');
+const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
@@ -1578,12 +1578,15 @@ async function main() {
     // run. Only the F1/F2 markers mean the task stopped.
     if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
+    // A by-name call into a loaded DLL that resolved: same three words as the
+    // unresolved marker, but it is a call rather than a stop.
+    if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 9, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
-      const { call: isCall, ret: isRet, words } = pendingWin16;
+      const { call: isCall, ret: isRet, resolved, words } = pendingWin16;
       pendingWin16 = null;
       if (isRet) {
         logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])} esp=${hex(words[3])}`);
@@ -1598,7 +1601,7 @@ async function main() {
                     : win16ApiName(key >>> 16, key & 0xFFFF))
         : (nameAddr === undefined
             ? win16ApiName(key >>> 16, key & 0xFFFF)
-            : `${mod}.${readPascalStr(nameAddr)} (by name)`);
+            : `${mod}.${readPascalStr(nameAddr)} (by name${resolved ? ', resolved' : ''})`);
       if (isCall) {
         logs.push(`[win16] ${what}(${words.slice(2, 8).map(hex).join(', ')})  ret=${hex(ret)}`);
       } else {
@@ -2140,6 +2143,16 @@ async function main() {
   const entry = instance.exports.load_pe(staged);
   console.log('PE loaded. Entry: ' + hex(entry));
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
+  // A 16-bit task's DLLs load into the same selector arena its own segments
+  // went into, so this has to follow load_pe.
+  loadWin16Dlls(instance.exports, memory, exeBytes, path.dirname(EXE_PATH),
+    (dir, name) => {
+      for (const f of [`${name}.DLL`, `${name}.dll`, `${name}.EXE`]) {
+        const p = path.join(dir, f);
+        if (fs.existsSync(p)) return fs.readFileSync(p);
+      }
+      return null;
+    }, (m) => console.log(m));
   const requiredDlls = detectRequiredDlls(exeBytes);
 
   // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base)

@@ -2522,8 +2522,18 @@
   ;; The dispatcher. $thunk_off is the offset within WIN16_THUNK_SEL that the
   ;; loader wrote into the fixup; $ret_lin is the linear return address, which
   ;; is already on the stack and is passed only so a trap can name it.
+  ;; A by-name call into a loaded DLL, for --trace-win16. The name is the only
+  ;; thing that identifies it, so it is logged instead of an ordinal.
+  (func $win16_trace_call_name (param $module i32) (param $ret_lin i32) (param $name i32)
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9EE))
+        (call $host_log_i32 (i32.shl (local.get $module) (i32.const 16)))
+        (call $host_log_i32 (local.get $ret_lin))
+        (call $host_log_i32 (local.get $name)))))
+
   (func $win16_dispatch (export "win16_dispatch") (param $thunk_off i32) (param $ret_lin i32)
-    (local $module i32) (local $ordinal i32)
+    (local $module i32) (local $ordinal i32) (local $target i32)
     (local.set $module  (call $win16_thunk_module  (local.get $thunk_off)))
     (local.set $ordinal (call $win16_thunk_ordinal (local.get $thunk_off)))
     (global.set $win16_last_module (local.get $module))
@@ -2567,18 +2577,55 @@
         ;; a reader of this stream has to be told not to look it up.
         (call $host_log_i32 (global.get $win16_last_is_name))))
 
-    ;; A name import has no ordinal to dispatch on. Resolving one means loading
-    ;; the exporting module and reading its export table — CARDS.DLL is right
-    ;; there in the test binaries and FREECELL wants three entry points from
-    ;; it — but that is NE DLL loading, which does not exist yet. Report the
-    ;; name so the trap says CARDS.CDTINIT rather than a number.
+    ;; A name import has a name-table offset where an ordinal would be. If the
+    ;; exporting module is a DLL we loaded, its export tables answer the
+    ;; question and control goes straight there: the far return address is
+    ;; already on the stack, so the DLL's own RETF returns to the app and this
+    ;; needs no continuation.
     (if (call $win16_thunk_is_name (local.get $thunk_off))
       (then
+        (if (call $win16_dll_loaded (local.get $module))
+          (then
+            (local.set $target (call $win16_dll_entry (local.get $module)
+              (call $win16_dll_ordinal (local.get $module)
+                (call $win16_thunk_name_addr (local.get $thunk_off)))))
+            (if (local.get $target)
+              (then
+                (call $win16_trace_call_name (local.get $module) (local.get $ret_lin)
+                  (call $win16_thunk_name_addr (local.get $thunk_off)))
+                (call $win16_set_sreg (i32.const 1)
+                  (i32.shr_u (local.get $target) (i32.const 16)))
+                (global.set $eip (i32.add (global.get $seg_base_cs)
+                  (i32.and (local.get $target) (i32.const 0xFFFF))))
+                (global.set $steps (i32.const 0))
+                (return)))))
+        ;; Say why it could not be resolved: whether the module was loaded at
+        ;; all, what ordinal its name tables gave, and where the entry table
+        ;; put that ordinal. Those three answer every version of this failure.
         (call $host_log_i32 (i32.const 0xCA16A9F2))
         (call $host_log_i32 (call $win16_api_key (local.get $module) (local.get $ordinal)))
         (call $host_log_i32 (local.get $ret_lin))
         (call $host_log_i32 (call $win16_thunk_name_addr (local.get $thunk_off)))
+        (call $host_log_i32 (i32.const 0xCA16DBAD))
+        (call $host_log_i32 (call $win16_dll_loaded (local.get $module)))
+        (call $host_log_i32 (call $win16_dll_ordinal (local.get $module)
+          (call $win16_thunk_name_addr (local.get $thunk_off))))
+        (call $host_log_i32 (local.get $target))
         (unreachable)))
+
+    ;; An ordinal import from a loaded DLL resolves the same way, without the
+    ;; name lookup.
+    (if (call $win16_dll_loaded (local.get $module))
+      (then
+        (local.set $target (call $win16_dll_entry (local.get $module) (local.get $ordinal)))
+        (if (local.get $target)
+          (then
+            (call $win16_set_sreg (i32.const 1)
+              (i32.shr_u (local.get $target) (i32.const 16)))
+            (global.set $eip (i32.add (global.get $seg_base_cs)
+              (i32.and (local.get $target) (i32.const 0xFFFF))))
+            (global.set $steps (i32.const 0))
+            (return)))))
 
     (if (i32.eq (local.get $module) (i32.const 1))
       (then (if (call $win16_kernel (local.get $ordinal))
