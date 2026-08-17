@@ -57,23 +57,41 @@ what the page feels. The workload is calibrated to a 14ms uninterrupted chunk,
 because that is Blobby's measured step p50 — a workload that yields every 2ms
 cannot block input on any thread, and measuring one proves nothing.
 
-```
-                    page fps   frame p50/p99    input latency p50/p99/max   paint fps
-  idle baseline       60.0      16.7 / 17.7      0.0 / 0.2 / 0 ms              —
-  paint on MAIN       60.0      16.9 / 29.0      0.0 / 12.4 / 13 ms           59.7
-  same work, 2 WORKERS 60.0     16.7 / 17.6      0.0 / 0.1 / 0 ms            100.7
-```
-*(Chrome headless, 8 cores, load ~4, 154 fills per chunk ≈ 14ms)*
+**Safari, run by hand, 2026-08-17** — the measurement that counts, since the
+guest is played in a real browser and this is the engine half the jank reports
+come from:
 
-Three things to read out of it:
+```
+                       page fps   frame p50/p99   input latency p50/p99/max   paint fps
+  idle baseline          60.2      16.7 / 24.7     0.2 / 11.6 / 32 ms            —
+  paint on MAIN          60.5      15.3 / 24.9     0.4 / 18.7 / 29 ms          83.0
+  same work, 2 WORKERS   60.0      16.7 / 18.7     0.2 /  1.7 /  2 ms         160.3
+```
 
-1. **Input latency p99 collapses from 12.4ms to the idle floor.** Half a chunk
-   of queueing delay is what the main-thread architecture costs every input,
-   before any handler runs.
-2. **Frame p99 drops from 29.0ms to 17.6ms** — the main-thread version drops
-   frames at the tail; the worker version does not.
-3. **Throughput rises 1.69× on two workers**, which single-worker designs
-   (the rejected "stage 1") cannot deliver.
+Read it with the machine in mind — it was under heavy load, and **the idle row
+proves it**: an 11.6ms latency p99 and a 24.7ms frame p99 with *no work at all*
+is not a floor, it is contention. The worker row even beats idle on latency
+(1.7ms vs 11.6ms), which is impossible as a causal claim and is simply the noise
+moving between samples. So the absolute deltas are lower bounds, not values.
+
+What survives that, because each is a ratio measured inside the same seconds:
+
+1. **Input latency p99: 18.7ms → 1.7ms, an order of magnitude.** Even against
+   the inflated idle baseline, the main-thread version adds ≥7ms of queueing to
+   every input before a handler can run.
+2. **Frame p99: 24.9ms → 18.7ms**, while idle sat at 24.7ms — the worker version
+   is the only one that beat the ambient noise.
+3. **Throughput 1.93× on two workers** (83.0 → 160.3), near-linear. This is the
+   most load-robust number here and the one the rejected single-worker variant
+   cannot deliver at all.
+4. **Safari renders from a worker at all.** `transferControlToOffscreen` plus
+   `putImageData` inside the worker was the last untested dependency of phase 1,
+   and it sustained 160 blits/sec.
+
+An earlier Chrome run (headless, load ~4) gave the same shape — latency p99
+12.4ms → 0.1ms and 1.69× throughput. Treat that one as evidence the mechanism
+works rather than as a measurement: see the note on measuring perf headlessly in
+§6.
 
 And a fourth, which matters for how any of this gets reported: **page fps reads
 60.0 in all three rows.** The number most likely to be quoted is the one number
@@ -488,6 +506,12 @@ this plan:
   recorded human session, not only against scripted runs — the starvation bug
   was invisible to every headless test precisely because no script moves a
   mouse for 30 seconds.
+- **Do not take timing numbers from a headless browser.** Functional headless
+  checks are fine — does it load, does a worker instantiate, does a check pass —
+  but every fps/latency figure should come from a real browser, and `uptime`
+  should be read before believing it. This project's box regularly sits at load
+  20-70 with agent sessions sweeping, which has already invalidated one published
+  conclusion and inflated an "idle floor" to 11.6ms.
 - `--trace-sched` already prints one line per change in the set of thread
   states. Under real threads it becomes the primary debugging tool for lock
   contention and lost wakeups.
@@ -508,7 +532,7 @@ comparison across modes without saying so is how a session gets misread.
 | Risk | Severity | Note |
 |---|---|---|
 | Isolation unreachable in production | **low** | SW route proven on localhost in Chrome (headless, 6/6) and Safari (by hand, 2026-08-17). Remaining: deploy `sw-coi.js` to berrry.app and click the probe there |
-| Safari: worker + shared memory + module transfer | **low** | probe passes in Safari via the service worker. OffscreenCanvas *compositing* under a worker is still untested — the probe does not draw |
+| Safari: worker + shared memory + module transfer + canvas | **low** | probe passes in Safari via the service worker, including `transferControlToOffscreen` + `putImageData` from the worker at 160 blits/sec (§1). No known Safari blocker remains for phase 1 |
 | **Two schedulers, forever** | high | §3.6 — single-threaded is permanent (Safari private, iframes, CLI). Every threading bug needs "does it also happen single-threaded?" |
 | Registry synchronicity | medium | snapshot approach (§3.2) avoids blocking, but INI writeback ordering needs care |
 | Service worker in the cache path | medium | none in the tree today; must re-header only, never cache, or every future "my fix did nothing" starts here |
