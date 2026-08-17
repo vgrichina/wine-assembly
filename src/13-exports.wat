@@ -1745,6 +1745,14 @@
     (call $paint_mark_visible_tree (local.get $hwnd)))
   (func (export "nc_flags_test") (param $hwnd i32) (result i32)
     (call $nc_flags_test (local.get $hwnd)))
+  ;; Is this window still owed a WM_PAINT? Pairs with nc_flags_test above: those
+  ;; two flags are what decides whether a native child is allowed to draw yet,
+  ;; and a control that never appears is nearly always one of them stuck.
+  (func (export "paint_flag_test") (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $slot))))
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))

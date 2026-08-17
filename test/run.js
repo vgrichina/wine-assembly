@@ -4110,11 +4110,18 @@ async function main() {
             const xy = we.ctrl_get_xy ? (we.ctrl_get_xy(hwnd) >>> 0) : 0;
             const wh = we.ctrl_get_wh ? (we.ctrl_get_wh(hwnd) >>> 0) : 0;
             const buttonFlags = cls === 1 && we.button_get_flags ? (we.button_get_flags(hwnd) >>> 0) : 0;
-            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16}`);
+            // A control that never appears is nearly always still owed a paint
+            // it is not allowed to take: `dirty` says it is queued, and the
+            // parent's `nc` bit 1 (erase) or its own `dirty` bit is what holds
+            // the queue up.
+            const dirty = we.paint_flag_test ? (we.paint_flag_test(hwnd) | 0) : -1;
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} dirty=${dirty}`);
             slot++;
           }
         }
-        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} ${children.length ? children.join(' | ') : '(none)'}`);
+        const parentNc = we.nc_flags_test ? (we.nc_flags_test(parent) >>> 0) : 0;
+        const parentDirty = we.paint_flag_test ? (we.paint_flag_test(parent) | 0) : -1;
+        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} nc=0x${parentNc.toString(16)} dirty=${parentDirty} ${children.length ? children.join(' | ') : '(none)'}`);
       } else if (ev.action === 'menu-dump') {
         const we = instance.exports;
         const hwnd = we.menu_open_hwnd ? (we.menu_open_hwnd() >>> 0) : 0;

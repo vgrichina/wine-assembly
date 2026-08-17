@@ -1267,6 +1267,25 @@
       (then (call $win16_GetDlgCtrlID) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 111))
       (then (call $win16_SendMessage) (return (i32.const 1))))
+    ;; Dialogs — see 09e2.
+    (if (i32.eq (local.get $ordinal) (i32.const 87))
+      (then (call $win16_DialogBox (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 239))
+      (then (call $win16_DialogBox (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 88))
+      (then (call $win16_EndDialog) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 91))
+      (then (call $win16_GetDlgItem) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 93))
+      (then (call $win16_GetDlgItemText) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 96))
+      (then (call $win16_CheckRadioButton) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 97))
+      (then (call $win16_CheckDlgButton) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 98))
+      (then (call $win16_IsDlgButtonChecked) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 101))
+      (then (call $win16_SendDlgItemMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 174))
       (then (call $win16_LoadIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 175))
@@ -3641,6 +3660,10 @@
     ;; Pascal frame, which is DefWindowProc's frame.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_BUILTIN_WNDPROC))
       (then (call $win16_DefWindowProc) (return)))
+    ;; The dialog pump, parked in the same way as the modal one below but
+    ;; driving the task's own DLGPROC. It owns its splice, so nothing here.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLG_PUMP))
+      (then (call $win16_dlg_pump) (return)))
     ;; The modal pump. EIP is parked here, not called here, so there is no
     ;; frame to unwind — the API's own frame went when it parked, and the far
     ;; return it saved is what the completed box goes back to.

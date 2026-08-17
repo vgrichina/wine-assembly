@@ -2177,6 +2177,17 @@
   ;; pass until the box is dismissed. See $win16_MessageBox.
   (global $WIN16_MODAL_PUMP i32 (i32.const 0xFF30))
   (global $win16_modal_ret (mut i32) (i32.const 0))
+  ;; A fifth, parked in the same way, for a dialog built from the task's own
+  ;; RT_DIALOG and driven by the task's own DLGPROC. Unlike the modal box above
+  ;; this one hands control back to guest code for every message, so each pass
+  ;; either dispatches one and comes back here when the procedure returns, or
+  ;; finds nothing to do and yields. See $win16_DialogBox in 09e2.
+  (global $WIN16_DLG_PUMP i32 (i32.const 0xFF40))
+  ;; EndDialog's two words. A dialog procedure calls it and then returns, and
+  ;; the pump acts on it at that return, so an inner dialog has always consumed
+  ;; these before an outer one can look — nesting needs nothing more.
+  (global $win16_dlg_ended (mut i32) (i32.const 0))
+  (global $win16_dlg_result (mut i32) (i32.const 0))
   ;; The installed WH_CALLWNDPROC filter, as a far pointer selector:offset, and
   ;; the handle SetWindowsHookEx handed out for it. MFC's window objects are
   ;; attached to their HWNDs from inside this hook, so a task that installs one
