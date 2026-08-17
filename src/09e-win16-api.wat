@@ -1723,7 +1723,18 @@
       (then
         (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0005)
           (i32.const 0) (global.get $pending_wm_size)))
-        (global.set $pending_wm_size (i32.const 0))))
+        (global.set $pending_wm_size (i32.const 0))
+        ;; Becoming the active application, which the 32-bit side delivers
+        ;; synchronously from CreateWindowExA through its CACA0007 continuation
+        ;; chain — a 32-bit frame a 16-bit task cannot be resumed on, so these
+        ;; never reached one. An app that pauses while it is not the active
+        ;; window simply stayed paused: Solitaire deals its rows on this.
+        (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x001C)
+          (i32.const 1) (i32.const 0)))                    ;; WM_ACTIVATEAPP
+        (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0006)
+          (i32.const 1) (i32.const 0)))                    ;; WM_ACTIVATE, WA_ACTIVE
+        (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0007)
+          (i32.const 0) (i32.const 0)))))                  ;; WM_SETFOCUS
     (drop (call $host_show_window (local.get $hwnd) (local.get $show)))
     (if (local.get $show)
       (then
