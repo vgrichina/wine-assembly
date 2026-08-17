@@ -124,16 +124,17 @@ function runOne(inst, memory, logged, name) {
     `eip=${fmt(inst.exports.get_eip())}`);
 
   // Every call the task made, from the --trace-win16 stream: marker, packed
-  // module/ordinal, return address, then six stack words. Each one has to name
-  // a real export — an ordinal nobody exports means the task far-called into a
-  // thunk slot that was never filled, which is what a wrong stack adjustment
-  // looks like from here.
+  // module/ordinal, return address, ten stack words, then the by-name flag —
+  // thirteen words after the marker. Each call has to name a real export: an
+  // ordinal nobody exports means the task far-called into a thunk slot that was
+  // never filled, which is what a wrong stack adjustment looks like from here.
+  const CALL_WORDS = 13;
   const calls = [];
   for (let i = 0; i < logged.length; i++) {
     if (logged[i] !== 0xca16a9f0) continue;
     const key = logged[i + 1] >>> 0;
-    calls.push({ mod: key >>> 16, ord: key & 0xffff, byName: !!logged[i + 9] });
-    i += 9;
+    calls.push({ mod: key >>> 16, ord: key & 0xffff, byName: !!logged[i + CALL_WORDS] });
+    i += CALL_WORDS;
   }
   checkThat('the task dispatched several API calls', calls.length >= 3,
     `${calls.length} calls`);

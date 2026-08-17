@@ -1686,6 +1686,14 @@
   ;; window procedure by redirecting EIP into a 32-bit frame, which is the one
   ;; thing a 16-bit task cannot survive. A Win16 app pumps messages for those
   ;; anyway, so this does the state change and lets the queue deliver the rest.
+  ;;
+  ;; Note on ordering: Windows sends WM_SIZE from inside ShowWindow, so
+  ;; anything WinMain posts afterwards arrives behind it, while here it waits
+  ;; for GetMessage's pending-size phase, which runs *after* the post queue.
+  ;; Queueing it here does reverse that back — and was tried — but it is not a
+  ;; free correction: Minesweeper paints less of itself and Hearts traps in its
+  ;; MFC frame two batches in. Whatever those two depend on has to be
+  ;; understood before the order moves.
   (func $win16_ShowWindow
     (local $hwnd i32) (local $show i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))
@@ -3421,6 +3429,13 @@
         (call $host_log_i32 (call $win16_arg16 (i32.const 3)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 4)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 5)))
+        ;; Ten words, not six: BitBlt's Pascal frame is exactly ten, and its
+        ;; destination DC is the deepest of them. A trace that stops at six
+        ;; shows every card blit without ever saying where the card went.
+        (call $host_log_i32 (call $win16_arg16 (i32.const 6)))
+        (call $host_log_i32 (call $win16_arg16 (i32.const 7)))
+        (call $host_log_i32 (call $win16_arg16 (i32.const 8)))
+        (call $host_log_i32 (call $win16_arg16 (i32.const 9)))
         ;; A name import has a name-table offset where the ordinal would be, so
         ;; a reader of this stream has to be told not to look it up.
         (call $host_log_i32 (global.get $win16_last_is_name))))

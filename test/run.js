@@ -1195,6 +1195,45 @@ async function main() {
     if (!len || len > 64) return `<bad name at ${hex(addr)}>`;
     return Buffer.from(b.subarray(addr + 1, addr + 1 + len)).toString('latin1');
   };
+  // A far pointer into the Win16 selector arena. Selector index N is at
+  // WIN16_ARENA + (N-1)*64K (see $win16_seg_base in 08c-ne-loader.wat), and
+  // the arena is a direct WASM offset, so this needs no guest translation.
+  const win16Linear = (sel, off) =>
+    0x100000 + (((sel >> 3) - 1) * 0x10000) + (off & 0xFFFF);
+  const WIN16_MSG_NAMES = {
+    0x0000: 'WM_NULL', 0x0001: 'WM_CREATE', 0x0002: 'WM_DESTROY',
+    0x0003: 'WM_MOVE', 0x0005: 'WM_SIZE', 0x0006: 'WM_ACTIVATE',
+    0x0007: 'WM_SETFOCUS', 0x0008: 'WM_KILLFOCUS', 0x000A: 'WM_ENABLE',
+    0x000B: 'WM_SETREDRAW', 0x000C: 'WM_SETTEXT', 0x000D: 'WM_GETTEXT',
+    0x000F: 'WM_PAINT', 0x0010: 'WM_CLOSE', 0x0011: 'WM_QUERYENDSESSION',
+    0x0012: 'WM_QUIT', 0x0014: 'WM_ERASEBKGND', 0x0018: 'WM_SHOWWINDOW',
+    0x001C: 'WM_ACTIVATEAPP', 0x001F: 'WM_CANCELMODE', 0x0020: 'WM_SETCURSOR',
+    0x0021: 'WM_MOUSEACTIVATE', 0x0024: 'WM_GETMINMAXINFO',
+    0x0046: 'WM_WINDOWPOSCHANGING', 0x0047: 'WM_WINDOWPOSCHANGED',
+    0x0081: 'WM_NCCREATE', 0x0082: 'WM_NCDESTROY', 0x0083: 'WM_NCCALCSIZE',
+    0x0084: 'WM_NCHITTEST', 0x0085: 'WM_NCPAINT', 0x0086: 'WM_NCACTIVATE',
+    0x00A0: 'WM_NCMOUSEMOVE', 0x00A1: 'WM_NCLBUTTONDOWN',
+    0x0100: 'WM_KEYDOWN', 0x0101: 'WM_KEYUP', 0x0102: 'WM_CHAR',
+    0x0104: 'WM_SYSKEYDOWN', 0x0105: 'WM_SYSKEYUP', 0x0106: 'WM_SYSCHAR',
+    0x0110: 'WM_INITDIALOG', 0x0111: 'WM_COMMAND', 0x0112: 'WM_SYSCOMMAND',
+    0x0113: 'WM_TIMER', 0x0114: 'WM_HSCROLL', 0x0115: 'WM_VSCROLL',
+    0x0116: 'WM_INITMENU', 0x0117: 'WM_INITMENUPOPUP', 0x011F: 'WM_MENUSELECT',
+    0x0200: 'WM_MOUSEMOVE', 0x0201: 'WM_LBUTTONDOWN', 0x0202: 'WM_LBUTTONUP',
+    0x0203: 'WM_LBUTTONDBLCLK', 0x0204: 'WM_RBUTTONDOWN',
+    0x0205: 'WM_RBUTTONUP', 0x0206: 'WM_RBUTTONDBLCLK',
+  };
+  // The 16-bit MSG is not the 32-bit one narrowed in place:
+  //   +0 hwnd(W) +2 message(W) +4 wParam(W) +6 lParam(D) +10 time(D) +14 pt(D)
+  const readWin16Msg = (sel, off) => {
+    try {
+      const dv = new DataView(memory.buffer);
+      const p = ctx.g2w(win16Linear(sel, off));
+      const message = dv.getUint16(p + 2, true);
+      return `hwnd=${hex(dv.getUint16(p, true))} ` +
+        `${WIN16_MSG_NAMES[message] || hex(message)} ` +
+        `wP=${hex(dv.getUint16(p + 4, true))} lP=${hex(dv.getUint32(p + 6, true))}`;
+    } catch (_) { return null; }
+  };
   const h = base.host;
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
@@ -1569,7 +1608,7 @@ async function main() {
     // A by-name call into a loaded DLL that resolved: same three words as the
     // unresolved marker, but it is a call rather than a stop.
     if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
-    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 9, words: [], call: true }; return; }
+    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 13, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
@@ -1585,13 +1624,20 @@ async function main() {
       // On a call the last word is the by-name flag; the ordinal field then
       // holds a name-table offset and there is nothing to look up.
       const what = isCall
-        ? (words[8] ? `${mod}.<name+${key & 0xFFFF}> (by name)`
+        ? (words[12] ? `${mod}.<name+${key & 0xFFFF}> (by name)`
                     : win16ApiName(key >>> 16, key & 0xFFFF))
         : (nameAddr === undefined
             ? win16ApiName(key >>> 16, key & 0xFFFF)
             : `${mod}.${readPascalStr(nameAddr)} (by name${resolved ? ', resolved' : ''})`);
       if (isCall) {
-        logs.push(`[win16] ${what}(${words.slice(2, 8).map(hex).join(', ')})  ret=${hex(ret)}`);
+        // The message pump's four entry points all take an lpMsg, and an
+        // argument dump of a far pointer says nothing about which message is
+        // in flight. Decode the MSG itself — this is how you see whether a
+        // posted command ever reached the window procedure.
+        const msgArg = /USER\.(108|109|113|114) /.test(what)
+          ? readWin16Msg(words[3], words[2]) : null;
+        logs.push(`[win16] ${what}(${words.slice(2, 12).map(hex).join(', ')})  ret=${hex(ret)}` +
+          (msgArg ? `  {${msgArg}}` : ''));
       } else {
         logs.push(`[win16] ${what}  ret=${hex(ret)}`);
       }
