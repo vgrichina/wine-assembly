@@ -1,9 +1,46 @@
 # Design: real OS threads for guest threads
 
-**Status:** proposal. Phase 0 substantially answered — isolation is reachable in
-both Chrome and Safari via the service-worker route, and the full module pipeline
-(including on-the-fly WAT compilation) survives the thread boundary. Phases 1-3
-unimplemented. Written 2026-08-16, updated 2026-08-17.
+**Status:** phase 0 answered, **phase 1 partially implemented and working** on
+branch `worktree-real-threads`. Written 2026-08-16, updated 2026-08-17.
+
+Notepad, Calculator and Paint boot and render with the guest's main thread
+executing inside a Web Worker and all 178 host imports running on the main
+thread. `test/test-worker-guest.js` asserts window-count and window-title parity
+against single-threaded runs (16/16 checks). Not done: guest threads beyond the
+main one, the `com_load_dll` / `help_load` yields, and the locking the shared
+emulator tables will need once two guest threads run at once (§3.1). Off by
+default, behind the Threads switch and cross-origin isolation.
+
+### What the implementation actually looks like
+
+```
+  MAIN THREAD                                WORKER
+  ─────────────────────────────────────      ──────────────────────────────
+  createHostImports()  ← unchanged           instance with brokered imports
+  broker.serveRpc()  ←──── Atomics.wait ──── host call (value-returning)
+  broker.serveCall() ←──── postMessage ───── host call (void, allowlisted)
+  publish(tick, inputPending) ──── shared ──▶ read locally, no round trip
+  resolve DLL bytes ─────────────────────▶   loadDll + DllMain (guest work)
+  drive slices ──────────────────────────▶   run(steps), yields handled here
+  composite, input, audio, registry          decoded-code cache, CPU state
+```
+
+Four rules fell out of getting it to work, and each came from a failure:
+
+1. **Guest execution belongs wherever the instance is.** DLL loading looked like
+   host work and is not — it sets EIP/ESP and calls `run()` for DllMain. Left on
+   the main thread it produced "Offset is outside the bounds of the DataView".
+2. **Main-side writes to guest globals must be routed.** `set_winver` written to
+   the idle main instance succeeded and did nothing, so `GetVersion` still said
+   Win98 and MFC42U refused to load. `wine.callGuest()` now reaches the running
+   instance; `set_hwnd_base` and `set_extra_cmdline` had the same bug.
+3. **Yield handling must be local.** Clearing yield 7 and retrying leaves the
+   guest re-entering its message wait forever: the frame paints, the caption and
+   scrollbars never do. The resume sequence is three instance calls, so it moved
+   into the worker.
+4. **Void does not mean fire-and-forget.** A void import taking a pointer is read
+   after the guest has run on, by which time the buffer may be reused —
+   `log(ptr, len)` exactly. Only value-argument void calls may skip the trip.
 
 **Goal:** each guest thread runs on its own Web Worker, executing at the same
 time as the others, with the UI thread doing nothing but input and compositing.

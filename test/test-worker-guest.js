@@ -1,0 +1,170 @@
+#!/usr/bin/env node
+
+// The guest's main thread running in a Web Worker, with host imports brokered
+// back to the main thread (lib/guest-rpc.js, lib/guest-worker.js).
+//
+// Only reachable from a browser: it needs a Worker, a shared WebAssembly.Memory
+// that survives postMessage, and therefore cross-origin isolation — so this
+// test's own server sends COOP/COEP, which is also what makes the mode testable
+// at all before the service-worker route is deployed anywhere.
+//
+// What it asserts is PARITY, not just liveness. The same app launched both ways
+// must create the same windows: worker mode has already produced two failures
+// that looked fine from the outside — a caption-less window because the guest's
+// message wait was never resumed, and MFC refusing to load because set_winver
+// was written to the idle main-thread instance. Both were invisible without a
+// side-by-side count.
+
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+const puppeteer = require('puppeteer');
+
+const ROOT = path.join(__dirname, '..');
+const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const OUT = path.join(ROOT, 'test', 'output', 'worker-guest');
+const SECONDS = Number(process.env.WORKER_GUEST_SECONDS || 18);
+
+if (!fs.existsSync(CHROME)) {
+  console.log('SKIP  Chrome not found for worker-guest test');
+  process.exit(0);
+}
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm',
+  '.wat': 'text/plain; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.png': 'image/png', '.exe': 'application/octet-stream', '.dll': 'application/octet-stream',
+  '.fon': 'application/octet-stream', '.ttf': 'font/ttf', '.mid': 'audio/midi',
+};
+
+function startIsolatedServer() {
+  const root = fs.realpathSync(ROOT);
+  const server = http.createServer((req, res) => {
+    let pathname;
+    try { pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); }
+    catch (_) { res.writeHead(400); res.end(); return; }
+    if (pathname === '/') pathname = '/index.html';
+    const full = path.join(root, pathname);
+    if (!full.startsWith(root)) { res.writeHead(403); res.end(); return; }
+    fs.stat(full, (err, st) => {
+      if (err || !st.isFile()) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream',
+        'Content-Length': st.size,
+        'Cache-Control': 'no-cache',
+        // The whole point: without these a shared memory cannot reach a Worker.
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      });
+      fs.createReadStream(full).pipe(res).on('error', () => res.destroy());
+    });
+  });
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function launch(browser, port, app, { threaded }) {
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1100, height: 820 });
+  const problems = [];
+  page.on('pageerror', e => problems.push(String(e)));
+  page.on('console', m => {
+    const t = m.text();
+    if (/UNIMPLEMENTED API:|RuntimeError|LinkError|not supported in worker mode|trapped/i.test(t)) {
+      problems.push(t);
+    }
+  });
+  await page.evaluateOnNewDocument(v => {
+    localStorage.setItem('wine-assembly.threads', v);
+  }, threaded ? '1' : '0');
+  await page.goto(`http://127.0.0.1:${port}/index.html?debug`, { waitUntil: 'load', timeout: 60000 });
+  await page.waitForFunction('typeof launchApp === "function"', { timeout: 30000 });
+
+  const isolated = await page.evaluate(() => crossOriginIsolated);
+  assert(isolated, 'test server must make the page cross-origin isolated');
+
+  await page.evaluate(name => {
+    const sel = document.getElementById('app-select');
+    if (sel && ![...sel.options].some(o => o.value === name)) {
+      const o = document.createElement('option');
+      o.value = name; o.textContent = name;
+      sel.appendChild(o);
+    }
+    if (sel) sel.value = name;
+    launchApp();
+  }, app);
+
+  await wait(SECONDS * 1000);
+
+  const state = await page.evaluate(() => {
+    const running = (typeof runningApps !== 'undefined' && runningApps[0]) || null;
+    const wine = running ? running.wine : null;
+    const gw = wine && wine.guestWorker;
+    return {
+      threaded: !!gw,
+      broker: gw && gw.broker ? gw.broker.stats() : null,
+      slices: gw ? gw.sliceStats.slices : 0,
+      windows: wine && wine.renderer && wine.renderer.windows
+        ? Object.keys(wine.renderer.windows).length : 0,
+      titles: wine && wine.renderer && wine.renderer.windows
+        ? Object.values(wine.renderer.windows).map(w => w && w.title).filter(Boolean).sort() : [],
+    };
+  });
+
+  fs.mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, `${app}-${threaded ? 'worker' : 'single'}.png`) });
+  await page.close();
+  return { state, problems };
+}
+
+(async () => {
+  const server = await startIsolatedServer();
+  const port = server.address().port;
+  const browser = await puppeteer.launch({
+    headless: true, executablePath: CHROME,
+    args: ['--no-sandbox', '--no-first-run', '--no-default-browser-check'],
+  });
+  let failures = 0;
+  const check = (ok, label, detail) => {
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
+    if (!ok) failures++;
+  };
+
+  try {
+    for (const app of ['notepad', 'calc']) {
+      const worker = await launch(browser, port, app, { threaded: true });
+      const single = await launch(browser, port, app, { threaded: false });
+
+      check(worker.state.threaded, `${app}: guest runs in a worker`);
+      check(!single.state.threaded, `${app}: control run is single-threaded`);
+      check(worker.state.slices > 10, `${app}: worker executed slices`,
+        `slices=${worker.state.slices}`);
+      check(!!worker.state.broker && worker.state.broker.missing.length === 0,
+        `${app}: every host import the guest called was found`,
+        worker.state.broker ? `served=${worker.state.broker.served} missing=${JSON.stringify(worker.state.broker.missing)}` : '');
+      check(worker.state.windows > 0, `${app}: windows exist in worker mode`,
+        `windows=${worker.state.windows}`);
+      // Parity is the real assertion. A worker-mode run that boots but delivers
+      // no messages still creates SOME windows, so only the comparison catches it.
+      check(worker.state.windows === single.state.windows,
+        `${app}: same window count as single-threaded`,
+        `worker=${worker.state.windows} single=${single.state.windows}`);
+      check(JSON.stringify(worker.state.titles) === JSON.stringify(single.state.titles),
+        `${app}: same window titles as single-threaded`,
+        `worker=${JSON.stringify(worker.state.titles)} single=${JSON.stringify(single.state.titles)}`);
+      check(worker.problems.length === 0, `${app}: no errors in worker mode`,
+        worker.problems.slice(0, 2).join(' | '));
+    }
+  } finally {
+    await browser.close();
+    server.close();
+  }
+
+  console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
+  process.exit(failures ? 1 : 0);
+})().catch(err => { console.error('test-worker-guest failed:', err); process.exit(1); });
