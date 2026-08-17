@@ -581,6 +581,7 @@
       </span>
       <span class="debug-profile">
         <label><input id="perf-hud-toggle" type="checkbox" onchange="setPerfHud(this.checked)">FPS graph</label>
+        <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
       </span>
       <span class="debug-record">
         <button id="record-btn" onclick="toggleRecording()" title="Record screen + audio to .webm">● Record</button>
@@ -785,6 +786,22 @@ Resource-aware Win98 emulator
     if (new URLSearchParams(location.search).has('perf')) {
       window.addEventListener('load', () => setPerfHud(true));
     }
+    // Streaming can be switched on mid-session from the toolbar. Requiring a
+    // URL parameter meant deciding to measure before loading the page, which
+    // is the wrong order: you notice jank while playing, not before.
+    function setPerfStream(on) {
+      if (!window.WinePerf) return;
+      if (on) {
+        const id = window.WinePerf.startStream('/api/perf');
+        setPerfHud(true);
+        console.log('[perf] streaming to /api/perf, session', id);
+      } else {
+        window.WinePerf.stopStream();
+      }
+      const box = document.getElementById('perf-stream-toggle');
+      if (box) box.checked = on;
+    }
+
     // `?perf-stream` posts samples to the dev server's /api/perf sink, so a
     // session someone is really playing can be watched from a terminal.
     // Collection runs whether or not the overlay is drawn.
@@ -792,6 +809,8 @@ Resource-aware Win98 emulator
       window.addEventListener('load', () => {
         const url = new URLSearchParams(location.search).get('perf-stream') || '/api/perf';
         const id = window.WinePerf && window.WinePerf.startStream(url);
+        const box = document.getElementById('perf-stream-toggle');
+        if (box) box.checked = true;
         console.log('[perf] streaming to', url, 'session', id);
       });
     }
