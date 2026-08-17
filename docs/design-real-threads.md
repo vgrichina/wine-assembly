@@ -181,8 +181,27 @@ wine-assembly.berrry.app it is unknown whether headers can be set at all**, and
 if they cannot, this design ships to localhost only. `require-corp` also breaks
 any cross-origin subresource that lacks CORP — worth auditing before starting.
 
-**This question should be answered before phase 1 begins.** It is the one
-finding that can invalidate the whole plan, and it costs one curl to check.
+Measured 2026-08-16, `curl -sI https://wine-assembly.berrry.app`:
+
+```
+HTTP/2 200      server: cloudflare      x-render-origin-server: Render
+(no cross-origin-opener-policy, no cross-origin-embedder-policy)
+```
+
+So production is **not** isolated today. Two mitigating facts:
+
+- The page has no cross-origin *subresources* — the only external URLs in
+  `index.html` are two anchor `href`s (berrry remix link, GitHub). So
+  `require-corp` would break nothing in the page itself.
+- If the platform cannot set headers, a **service worker can synthesise them**
+  for the documents it serves (the `coi-serviceworker` pattern): the SW
+  intercepts the navigation and adds COOP/COEP to its response, which is what
+  the browser uses to decide isolation. Costs one extra reload on first visit,
+  and is how projects on header-less hosts (GitHub Pages) ship SAB today.
+
+That downgrades the gate from "fatal" to "one of two known paths", but it still
+has to be *proved* on the real host, in Safari as well as Chrome, before phase 1
+is worth starting.
 
 ---
 
