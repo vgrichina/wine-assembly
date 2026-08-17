@@ -128,7 +128,8 @@ function runOne(inst, memory, logged, name) {
   // thirteen words after the marker. Each call has to name a real export: an
   // ordinal nobody exports means the task far-called into a thunk slot that was
   // never filled, which is what a wrong stack adjustment looks like from here.
-  const CALL_WORDS = 13;
+  // key, return address, twelve stack words, by-name flag.
+  const CALL_WORDS = 15;
   const calls = [];
   for (let i = 0; i < logged.length; i++) {
     if (logged[i] !== 0xca16a9f0) continue;

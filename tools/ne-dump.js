@@ -185,6 +185,96 @@ function resources(b, h) {
   return out;
 }
 
+// A 16-bit RT_MENU is the same MENUHEADER/MENUITEMTEMPLATE pair Win32 still
+// accepts, with ANSI strings instead of UTF-16: WORD version(0), WORD
+// headerSize(0), then items. An item is WORD flags; MF_POPUP (0x10) means a
+// NUL-terminated name follows and then that popup's own item list, otherwise a
+// WORD id comes before the name. MF_END (0x80) marks the last item of a list.
+function menuItems(b, p, end) {
+  const out = [];
+  while (p + 2 <= end) {
+    const flags = b.readUInt16LE(p); p += 2;
+    let id = null;
+    if (!(flags & 0x10)) { id = b.readUInt16LE(p); p += 2; }
+    let s = p;
+    while (p < end && b[p] !== 0) p++;
+    const text = b.toString('latin1', s, p);
+    p++;                                       // the NUL
+    const item = { text: text || null, id, flags };
+    if (flags & 0x10) {
+      const sub = menuItems(b, p, end);
+      item.children = sub.items;
+      p = sub.next;
+    } else if (id === 0 && !text) {
+      item.text = null;                        // separator
+    }
+    out.push(item);
+    if (flags & 0x80) break;
+  }
+  return { items: out, next: p };
+}
+
+function menus(b, h) {
+  const out = {};
+  for (const r of resources(b, h)) {
+    if (r.typeName !== 'RT_MENU') continue;
+    const p = r.offset;
+    if (p + 4 > b.length) continue;
+    out[r.idName] = menuItems(b, p + 4, Math.min(p + r.length, b.length)).items;
+  }
+  return out;
+}
+
+// A 16-bit DLGTEMPLATE, which shares no layout with the 32-bit one beyond the
+// leading style DWORD: a byte item count, unaligned WORD coordinates, ANSI
+// strings, and a predefined item class written as one byte >= 0x80 with no
+// terminator. Everything is in dialog units, which is the point of printing it
+// -- the pixel size a dialog comes out at is base units times these numbers.
+const DLG_CLASSES = {
+  0x80: 'BUTTON', 0x81: 'EDIT', 0x82: 'STATIC', 0x83: 'LISTBOX',
+  0x84: 'SCROLLBAR', 0x85: 'COMBOBOX',
+};
+
+function dialog(b, p, end) {
+  const sz = () => {
+    const s = p;
+    while (p < end && b[p] !== 0) p++;
+    const out = b.toString('latin1', s, p);
+    p++;
+    return out;
+  };
+  const w = () => { const v = b.readUInt16LE(p); p += 2; return v; };
+  const style = b.readUInt32LE(p); p += 4;
+  const count = b[p]; p += 1;
+  const d = { style, x: w(), y: w(), cx: w(), cy: w() };
+  d.menu = sz(); d.class = sz(); d.caption = sz();
+  if (style & 0x40) { d.pointSize = w(); d.typeface = sz(); }   // DS_SETFONT
+  d.items = [];
+  for (let i = 0; i < count && p < end; i++) {
+    const it = { x: w(), y: w(), cx: w(), cy: w(), id: w() };
+    it.style = b.readUInt32LE(p); p += 4;
+    if (b[p] >= 0x80) { it.class = DLG_CLASSES[b[p]] || `0x${b[p].toString(16)}`; p += 1; }
+    else it.class = sz();
+    it.text = sz();
+    p += 1 + b[p];                              // per-item extra data
+    d.items.push(it);
+  }
+  return d;
+}
+
+function dialogs(b, h) {
+  const out = {};
+  for (const r of resources(b, h)) {
+    if (r.typeName !== 'RT_DIALOG') continue;
+    try {
+      out[r.idName] = dialog(b, r.offset, Math.min(r.offset + r.length, b.length));
+    } catch (e) {
+      out[r.idName] = { error: e.message };
+    }
+  }
+  return out;
+}
+
 function flagNames(flags) {
   return SEG_FLAGS.filter(([bit]) => flags & bit).map(([, n]) => n).join('|') || 'CODE';
 }
@@ -199,6 +289,7 @@ function main() {
   const all = args.includes('--all');
   const want = k => all || args.includes('--' + k);
   const relocArg = args.find(a => a.startsWith('--relocs='));
+  const menuJsonArg = args.find(a => a.startsWith('--menus-json='));
 
   let b, h;
   try {
@@ -229,6 +320,44 @@ function main() {
       console.log(`  ${r.typeName.padEnd(14)} id=${r.idName.padEnd(10)}` +
                   ` file=0x${r.offset.toString(16)} len=0x${r.length.toString(16)}` +
                   ` flags=0x${r.flags.toString(16)}`);
+    }
+  }
+
+  if (want('menus') || menuJsonArg) {
+    const m = menus(b, h);
+    if (menuJsonArg) {
+      fs.writeFileSync(menuJsonArg.split('=').slice(1).join('='),
+        JSON.stringify({ menus: m }, null, 2));
+    }
+    if (want('menus')) {
+      console.log('\nMenus:');
+      const walk = (items, depth) => {
+        for (const it of items) {
+          const pad = '  '.repeat(depth + 1);
+          if (it.text == null) { console.log(`${pad}---`); continue; }
+          console.log(`${pad}${it.children ? '' : String(it.id).padStart(6) + '  '}${it.text}`);
+          if (it.children) walk(it.children, depth + 1);
+        }
+      };
+      for (const id of Object.keys(m)) { console.log(`  menu ${id}:`); walk(m[id], 1); }
+      if (!Object.keys(m).length) console.log('  (none)');
+    }
+  }
+
+  if (want('dialogs')) {
+    console.log('\nDialogs:');
+    const d = dialogs(b, h);
+    if (!Object.keys(d).length) console.log('  (none)');
+    for (const id of Object.keys(d)) {
+      const t = d[id];
+      if (t.error) { console.log(`  dialog ${id}: ${t.error}`); continue; }
+      console.log(`  dialog ${id}: style=0x${t.style.toString(16)} ${t.x},${t.y} ${t.cx}x${t.cy}dlu` +
+                  ` "${t.caption}"${t.typeface ? `  font="${t.typeface}" ${t.pointSize}pt` : ''}`);
+      for (const it of t.items) {
+        console.log(`    id=${String(it.id).padStart(5)} ${it.class.padEnd(9)}` +
+                    ` ${it.x},${it.y} ${it.cx}x${it.cy}dlu style=0x${it.style.toString(16)}` +
+                    `${it.text ? ` "${it.text}"` : ''}`);
+      }
     }
   }
 

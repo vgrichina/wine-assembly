@@ -77,24 +77,35 @@ const TERMINAL_LABEL = /^(e&?xit|close|quit)\b/i;
 const isTerminal = it => it.id >= 0xF000 || TERMINAL_IDS.has(it.id) ||
   TERMINAL_LABEL.test(it.label.trim());
 
+// parse-rsrc.js walks a PE resource tree, which a 16-bit NE does not have --
+// its resources are a flat type/NAMEINFO list in the NE header. ne-dump.js
+// reads that and decodes RT_MENU into the same shape, so the sweep itself does
+// not care which kind of executable it was handed.
 function readMenus(exePath) {
   const tmp = path.join(os.tmpdir(), `menu-sweep-${process.pid}.json`);
-  try {
-    execFileSync('node', [path.join(__dirname, 'parse-rsrc.js'), exePath, `--out=${tmp}`],
-      { stdio: ['ignore', 'ignore', 'pipe'] });
-    return JSON.parse(fs.readFileSync(tmp, 'utf8')).menus || {};
-  } catch (e) {
-    return {};
-  } finally {
-    try { fs.unlinkSync(tmp); } catch (_) {}
-  }
+  const attempt = args => {
+    try {
+      execFileSync('node', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      return JSON.parse(fs.readFileSync(tmp, 'utf8')).menus || {};
+    } catch (e) {
+      return {};
+    } finally {
+      try { fs.unlinkSync(tmp); } catch (_) {}
+    }
+  };
+  const pe = attempt([path.join(__dirname, 'parse-rsrc.js'), exePath, `--out=${tmp}`]);
+  if (Object.keys(pe).length) return pe;
+  return attempt([path.join(__dirname, 'ne-dump.js'), exePath, `--menus-json=${tmp}`]);
 }
 
 // Flatten to leaves, keeping the path so a report can say File > Page Setup...
 function collect(items, trail, out) {
   for (const item of items || []) {
     if (!item || item.text == null) continue;            // separator
-    const label = String(item.text).replace(/&/g, '');
+    // A label carries its accelerator after a tab -- "Select Game...\tF3" --
+    // and the ellipsis that says "this opens a dialog" is on the label, not on
+    // the whole string.
+    const label = String(item.text).split('\t')[0].replace(/&/g, '').trim();
     const here = trail.concat(label);
     if (item.children && item.children.length) {
       collect(item.children, here, out);

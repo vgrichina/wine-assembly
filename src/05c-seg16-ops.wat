@@ -359,7 +359,31 @@
   ;; the same segmented address arithmetic, so one parameterised loop is the
   ;; better trade. The operand packs everything it needs:
   ;;
-  ;;   bits 0-2    element size in bytes, 1 or 2
+  ;; One element, by size. A 16-bit task is not limited to 16-bit elements: a
+  ;; 0x66 prefix asks for a doubleword, and a compiler emits `66 A5` wherever it
+  ;; would rather move eight bytes in two instructions than four in four —
+  ;; copying a RECT, most often. Reading that as a word moved half the data and
+  ;; still advanced by four, so every other word arrived stale.
+  (func $str16_load (param $addr i32) (param $size i32) (result i32)
+    (if (i32.eq (local.get $size) (i32.const 1))
+      (then (return (call $gl8 (local.get $addr)))))
+    (if (i32.eq (local.get $size) (i32.const 2))
+      (then (return (call $gl16 (local.get $addr)))))
+    (call $gl32 (local.get $addr)))
+
+  (func $str16_store (param $addr i32) (param $size i32) (param $v i32)
+    (if (i32.eq (local.get $size) (i32.const 1))
+      (then (call $gs8 (local.get $addr) (local.get $v)) (return)))
+    (if (i32.eq (local.get $size) (i32.const 2))
+      (then (call $gs16 (local.get $addr) (local.get $v)) (return)))
+    (call $gs32 (local.get $addr) (local.get $v)))
+
+  (func $str16_mask (param $size i32) (result i32)
+    (if (i32.eq (local.get $size) (i32.const 1)) (then (return (i32.const 0xFF))))
+    (if (i32.eq (local.get $size) (i32.const 2)) (then (return (i32.const 0xFFFF))))
+    (i32.const -1))
+
+  ;;   bits 0-2    element size in bytes, 1, 2 or 4
   ;;   bits 4-6    kind: 0 MOVS, 1 STOS, 2 LODS, 3 CMPS, 4 SCAS
   ;;   bits 8-9    repeat: 0 none, 1 REP/REPE, 2 REPNE
   ;;   bits 12-13  source segment, for a prefix override; ES:DI is fixed
@@ -391,39 +415,39 @@
       ;; the destination side holds, so CMPS and SCAS share one comparison.
       (if (i32.eq (local.get $kind) (i32.const 0))            ;; MOVS
         (then
-          (if (i32.eq (local.get $size) (i32.const 1))
-            (then (call $gs8 (i32.add (local.get $dst_base) (local.get $di))
-                    (call $gl8 (i32.add (local.get $src_base) (local.get $si)))))
-            (else (call $gs16 (i32.add (local.get $dst_base) (local.get $di))
-                    (call $gl16 (i32.add (local.get $src_base) (local.get $si))))))))
+          (call $str16_store (i32.add (local.get $dst_base) (local.get $di))
+            (local.get $size)
+            (call $str16_load (i32.add (local.get $src_base) (local.get $si))
+              (local.get $size)))))
       (if (i32.eq (local.get $kind) (i32.const 1))            ;; STOS
         (then
-          (if (i32.eq (local.get $size) (i32.const 1))
-            (then (call $gs8 (i32.add (local.get $dst_base) (local.get $di))
-                    (i32.and (global.get $eax) (i32.const 0xFF))))
-            (else (call $gs16 (i32.add (local.get $dst_base) (local.get $di))
-                    (i32.and (global.get $eax) (i32.const 0xFFFF)))))))
+          (call $str16_store (i32.add (local.get $dst_base) (local.get $di))
+            (local.get $size)
+            (i32.and (global.get $eax) (call $str16_mask (local.get $size))))))
       (if (i32.eq (local.get $kind) (i32.const 2))            ;; LODS
         (then
+          (local.set $a (call $str16_load
+            (i32.add (local.get $src_base) (local.get $si)) (local.get $size)))
           (if (i32.eq (local.get $size) (i32.const 1))
-            (then (call $set_reg8 (i32.const 0)
-                    (call $gl8 (i32.add (local.get $src_base) (local.get $si)))))
-            (else (call $set_reg16 (i32.const 0)
-                    (call $gl16 (i32.add (local.get $src_base) (local.get $si))))))))
+            (then (call $set_reg8 (i32.const 0) (local.get $a))))
+          (if (i32.eq (local.get $size) (i32.const 2))
+            (then (call $set_reg16 (i32.const 0) (local.get $a))))
+          (if (i32.eq (local.get $size) (i32.const 4))
+            (then (global.set $eax (local.get $a))))))
       (if (i32.ge_u (local.get $kind) (i32.const 3))          ;; CMPS, SCAS
         (then
           (if (i32.eq (local.get $kind) (i32.const 3))
-            (then (local.set $a (if (result i32) (i32.eq (local.get $size) (i32.const 1))
-                    (then (call $gl8 (i32.add (local.get $src_base) (local.get $si))))
-                    (else (call $gl16 (i32.add (local.get $src_base) (local.get $si)))))))
+            (then (local.set $a (call $str16_load
+                    (i32.add (local.get $src_base) (local.get $si)) (local.get $size))))
             (else (local.set $a (i32.and (global.get $eax)
-                    (select (i32.const 0xFF) (i32.const 0xFFFF)
-                            (i32.eq (local.get $size) (i32.const 1)))))))
-          (local.set $b (if (result i32) (i32.eq (local.get $size) (i32.const 1))
-            (then (call $gl8 (i32.add (local.get $dst_base) (local.get $di))))
-            (else (call $gl16 (i32.add (local.get $dst_base) (local.get $di))))))
+                    (call $str16_mask (local.get $size))))))
+          (local.set $b (call $str16_load
+            (i32.add (local.get $dst_base) (local.get $di)) (local.get $size)))
           (global.set $flag_sign_shift
-            (select (i32.const 7) (i32.const 15) (i32.eq (local.get $size) (i32.const 1))))
+            (if (result i32) (i32.eq (local.get $size) (i32.const 1))
+              (then (i32.const 7))
+              (else (select (i32.const 15) (i32.const 31)
+                            (i32.eq (local.get $size) (i32.const 2))))))
           (call $set_flags_sub (local.get $a) (local.get $b)
             (i32.sub (local.get $a) (local.get $b)))))
 

@@ -563,14 +563,23 @@
         ;; The heap goes immediately above the static data and below the stack,
         ;; which is what makes a local handle a near pointer — see
         ;; $win16_LocalAlloc. Two bytes of slack keep a zero handle out of it.
-        (global.set $win16_lheap_ptr
+        ;; The message scratch sits below the heap rather than inside it: the
+        ;; heap is the app's to fill and this has to stay put for the life of
+        ;; the task. DGROUP is grown by exactly as much, so the app's own heap
+        ;; is not the smaller for it.
+        (global.set $win16_msg_scratch
           (i32.add (call $win16_seg_limit (local.get $ds_index)) (i32.const 2)))
+        (global.set $win16_msg_slot (i32.const 0))
+        (global.set $win16_lheap_ptr
+          (i32.add (global.get $win16_msg_scratch) (global.get $WIN16_MSG_SCRATCH_SIZE)))
         (global.set $win16_lheap_base (global.get $win16_lheap_ptr))
         (global.set $win16_lheap_end
           (i32.add (global.get $win16_lheap_ptr) (global.get $win16_heap_size)))
         (local.set $limit (i32.add
-          (i32.add (call $win16_seg_limit (local.get $ds_index)) (global.get $win16_heap_size))
-          (global.get $win16_stack_size)))
+          (i32.add
+            (i32.add (call $win16_seg_limit (local.get $ds_index)) (global.get $win16_heap_size))
+            (global.get $win16_stack_size))
+          (global.get $WIN16_MSG_SCRATCH_SIZE)))
         (if (i32.gt_u (local.get $limit) (i32.const 0x10000))
           (then (local.set $limit (i32.const 0x10000))))
         (if (i32.gt_u (global.get $win16_lheap_end) (local.get $limit))

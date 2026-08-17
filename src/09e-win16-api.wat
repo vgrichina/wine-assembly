@@ -1183,6 +1183,8 @@
       (then (call $win16_DestroyWindow) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 81))
       (then (call $win16_FillRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 83))
+      (then (call $win16_FrameRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 110))
       (then (call $win16_PostMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 118))
@@ -1256,6 +1258,8 @@
       (then (call $win16_DeferWindowPos) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 261))
       (then (call $win16_EndDeferWindowPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 232))
+      (then (call $win16_SetWindowPos) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 229))
       (then (call $win16_GetTopWindow) (return (i32.const 1))))
     ;; GetNextWindow is GetWindow with the same two arguments; USER kept both
@@ -1276,8 +1280,14 @@
       (then (call $win16_EndDialog) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 91))
       (then (call $win16_GetDlgItem) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 92))
+      (then (call $win16_SetDlgItemText) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 93))
       (then (call $win16_GetDlgItemText) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 94))
+      (then (call $win16_SetDlgItemInt) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 95))
+      (then (call $win16_GetDlgItemInt) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 96))
       (then (call $win16_CheckRadioButton) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 97))
@@ -1326,6 +1336,61 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
     (call $gs16 (global.get $esp) (local.get $v)))
 
+  ;; Narrowing lParam is not always a truncation either. When it points at a
+  ;; struct, the struct itself is the 32-bit shape and a 16-bit procedure will
+  ;; `les` the two words it is handed and then read every field at the wrong
+  ;; offset — Solitaire's Deck dialog draws each card back from a
+  ;; DRAWITEMSTRUCT and got ES = the top half of a 32-bit heap address, which
+  ;; is no selector at all. So it is rebuilt in the task's own DGROUP, in the
+  ;; 16-bit shape, and passed as a far pointer there.
+  ;;
+  ;; WM_DRAWITEM is the only one of this family the controls ever send. Its
+  ;; struct is read-only to the procedure, so a copy out is all it needs;
+  ;; WM_MEASUREITEM would want the width and height copied back and has no
+  ;; sender here, so it is deliberately not translated rather than translated
+  ;; wrongly.
+  ;;
+  ;; DRAWITEMSTRUCT is 48 bytes in Win32 and 26 in Win16: five UINTs, two
+  ;; handles, a RECT of ints, and the itemData DWORD.
+  (func $win16_msg_lparam16 (param $msg i32) (param $lparam i32) (result i32)
+    (local $src i32) (local $dst i32)
+    (if (i32.ne (local.get $msg) (i32.const 0x002B))
+      (then (return (local.get $lparam))))
+    (if (i32.eqz (global.get $win16_msg_scratch))
+      (then (return (local.get $lparam))))
+    (local.set $src (local.get $lparam))
+    ;; DGROUP by segment index, not through $seg_base_ds: DS is whatever the
+    ;; last 16-bit code to run left in it — a DLL's own data segment, as often
+    ;; as not — and the far pointer handed out below names DGROUP.
+    (local.set $dst (i32.add (call $win16_seg_base (global.get $win16_auto_data))
+      (i32.add (global.get $win16_msg_scratch)
+               (i32.shl (global.get $win16_msg_slot) (i32.const 5)))))
+    (call $gs16 (local.get $dst) (call $gl32 (local.get $src)))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 2))
+      (call $gl32 (i32.add (local.get $src) (i32.const 4))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 4))
+      (call $gl32 (i32.add (local.get $src) (i32.const 8))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 6))
+      (call $gl32 (i32.add (local.get $src) (i32.const 12))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 8))
+      (call $gl32 (i32.add (local.get $src) (i32.const 16))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 10))
+      (call $win16_h16 (call $gl32 (i32.add (local.get $src) (i32.const 20)))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 12))
+      (call $win16_h16 (call $gl32 (i32.add (local.get $src) (i32.const 24)))))
+    (call $win16_rect_narrow (i32.add (local.get $dst) (i32.const 14))
+      (i32.add (local.get $src) (i32.const 28)))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 22))
+      (call $gl32 (i32.add (local.get $src) (i32.const 44))))
+    (local.set $lparam
+      (i32.or
+        (i32.shl (call $win16_index_to_sel (global.get $win16_auto_data)) (i32.const 16))
+        (i32.add (global.get $win16_msg_scratch)
+                 (i32.shl (global.get $win16_msg_slot) (i32.const 5)))))
+    (global.set $win16_msg_slot
+      (i32.and (i32.add (global.get $win16_msg_slot) (i32.const 1)) (i32.const 3)))
+    (local.get $lparam))
+
   ;; Enter a 16-bit window procedure.
   ;;
   ;; The Pascal frame is hWnd, message, wParam, lParam, and the far return
@@ -1347,6 +1412,7 @@
         (call $host_log_i32 (local.get $hwnd))
         (call $host_log_i32 (local.get $msg))
         (unreachable)))
+    (local.set $lparam (call $win16_msg_lparam16 (local.get $msg) (local.get $lparam)))
     (call $win16_push16 (local.get $hwnd))
     (call $win16_push16 (local.get $msg))
     (call $win16_push16 (local.get $wparam))
@@ -1948,6 +2014,22 @@
         (global.set $edx (i32.const 0))
         (call $win16_api_return (i32.const 4))
         (return)))
+    ;; The message need not be for a window of the task's own. A 16-bit app
+    ;; whose About box this emulator put up (SHELL.ShellAbout) pumps that
+    ;; dialog's messages through its own loop, and its procedure is one of
+    ;; ours, not a far pointer — entering it as one loads 0xFFFF into CS.
+    ;; SendMessage has always made this distinction; DispatchMessage did not,
+    ;; because until ShellAbout no window of ours was ever posted to.
+    (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
+      (then
+        (call $win16_call32_begin (i32.const 4))
+        (global.set $eax (call $wnd_send_message
+          (local.get $hwnd) (local.get $message) (local.get $wparam) (local.get $lparam)))
+        (call $win16_call32_end)
+        (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 4))
+        (return)))
     (local.set $ret (call $win16_take_return (i32.const 4)))
     (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
       (local.get $message) (local.get $wparam) (local.get $lparam)
@@ -2116,6 +2198,23 @@
     (call $win16_rect_widen (local.get $tmp) (local.get $src))
     (call $win16_call32_begin (i32.const 3))
     (call $handle_FillRect (local.get $hdc) (local.get $tmp) (local.get $brush)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; USER.83 FrameRect(hDC, lpRect, hBrush) — FillRect's outline. Solitaire's
+  ;; Deck dialog draws the selection box around the chosen card back with it.
+  (func $win16_FrameRect
+    (local $hdc i32) (local $src i32) (local $brush i32) (local $tmp i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $brush (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (call $win16_rect_widen (local.get $tmp) (local.get $src))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_FrameRect (local.get $hdc) (local.get $tmp) (local.get $brush)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
@@ -2478,6 +2577,58 @@
   (func $win16_EndDeferWindowPos
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 2)))
+
+  ;; USER.232 SetWindowPos(hWnd, hWndInsertAfter, x, y, cx, cy, wFlags) — the
+  ;; ungathered form of DeferWindowPos above, and the same call underneath.
+  ;;
+  ;; This is how a 16-bit app centres a dialog: GetWindowRect the dialog and its
+  ;; owner, work out the offset, and SetWindowPos with SWP_NOSIZE|SWP_NOZORDER.
+  ;; FreeCell has one such routine and every dialog it owns goes through it, so
+  ;; four of its five menu commands stopped here.
+  ;;
+  ;; hWndInsertAfter stays raw: HWND_TOP and friends are small constants, not
+  ;; handles, and mapping them would turn them into windows.
+  (func $win16_SetWindowPos
+    (local $hwnd i32) (local $after i32) (local $x i32) (local $y i32)
+    (local $cx i32) (local $cy i32) (local $flags i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (local.set $after (call $win16_arg16 (i32.const 5)))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 4))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 3))))
+    (local.set $cx (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (local.set $cy (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $flags (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 7))
+    (call $win16_call32_arg (i32.const 5) (local.get $cy))
+    (call $win16_call32_arg (i32.const 6) (local.get $flags))
+    (call $handle_SetWindowPos (local.get $hwnd) (local.get $after)
+      (local.get $x) (local.get $y) (local.get $cx) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 14)))
+
+  ;; SHELL.ShellAbout(hWnd, lpszApp, lpszOtherStuff, hIcon) — the About box the
+  ;; shell puts up on an app's behalf, which is what the entertainment-pack
+  ;; games use instead of a dialog resource of their own.
+  ;;
+  ;; The 32-bit handler builds the dialog in WAT and returns without moving EIP,
+  ;; so it bridges directly. It is not modal there and is not modal here: the
+  ;; dialog is a window of ours and the task's own message loop keeps running,
+  ;; which is what a 16-bit task needs anyway, having no other loop to run.
+  (func $win16_ShellAbout
+    (local $hwnd i32) (local $app i32) (local $other i32) (local $icon i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
+    (local.set $app (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    (local.set $other (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $icon (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_ShellAboutA (local.get $hwnd) (local.get $app)
+      (local.get $other) (local.get $icon) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 12)))
 
   ;; USER.229 GetTopWindow(hWnd) and USER.262 GetWindow(hWnd, wCmd) — the pair
   ;; a frame walks its children with, one after the other.
@@ -3634,6 +3785,23 @@
         (call $host_log_i32 (local.get $ret_lin))
         (call $host_log_i32 (local.get $name)))))
 
+  ;; SHELL, of which the games use exactly one entry — by ordinal here,
+  ;; by name in $win16_builtin_by_name. Both spellings occur in the corpus:
+  ;; Solitaire and Minesweeper import SHELL.22, FreeCell imports the name.
+  (func $win16_shell (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 22))
+      (then (call $win16_ShellAbout) (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; A by-name import of a module this emulator implements. Returns 1 when the
+  ;; call was made, 0 to leave it to the caller's trap.
+  (func $win16_builtin_by_name (param $module i32) (param $name i32) (result i32)
+    (if (i32.eq (local.get $module) (i32.const 6))
+      (then
+        (if (call $win16_pstr_eq (local.get $name) (global.get $WIN16_NAME_SHELLABOUT))
+          (then (call $win16_ShellAbout) (return (i32.const 1))))))
+    (i32.const 0))
+
   (func $win16_dispatch (export "win16_dispatch") (param $thunk_off i32) (param $ret_lin i32)
     (local $module i32) (local $ordinal i32) (local $target i32)
     (local.set $module  (call $win16_thunk_module  (local.get $thunk_off)))
@@ -3702,13 +3870,16 @@
         (call $host_log_i32 (call $win16_arg16 (i32.const 3)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 4)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 5)))
-        ;; Ten words, not six: BitBlt's Pascal frame is exactly ten, and its
-        ;; destination DC is the deepest of them. A trace that stops at six
-        ;; shows every card blit without ever saying where the card went.
+        ;; Twelve words, not six: StretchBlt's Pascal frame is exactly twelve
+        ;; and its destination DC is the deepest of them (BitBlt's is ten). A
+        ;; trace that stops short shows every card blit without ever saying
+        ;; where the card went.
         (call $host_log_i32 (call $win16_arg16 (i32.const 6)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 7)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 8)))
         (call $host_log_i32 (call $win16_arg16 (i32.const 9)))
+        (call $host_log_i32 (call $win16_arg16 (i32.const 10)))
+        (call $host_log_i32 (call $win16_arg16 (i32.const 11)))
         ;; A name import has a name-table offset where the ordinal would be, so
         ;; a reader of this stream has to be told not to look it up.
         (call $host_log_i32 (global.get $win16_last_is_name))))
@@ -3735,6 +3906,15 @@
                   (i32.and (local.get $target) (i32.const 0xFFFF))))
                 (global.set $steps (i32.const 0))
                 (return)))))
+        ;; Not every by-name import names a DLL we loaded. A module this
+        ;; emulator supplies itself has no export table to look a name up in,
+        ;; so the name is the whole address: FreeCell, Hearts and Minesweeper
+        ;; all import SHELL.ShellAbout that way, and nothing else in the corpus
+        ;; imports a built-in by name at all. Matching on the name keeps that
+        ;; honest — an unrecognised one still falls through to the trap below.
+        (if (call $win16_builtin_by_name (local.get $module)
+              (call $win16_thunk_name_addr (local.get $thunk_off)))
+          (then (call $win16_trace_ret) (return)))
         ;; Say why it could not be resolved: whether the module was loaded at
         ;; all, what ordinal its name tables gave, and where the entry table
         ;; put that ordinal. Those three answer every version of this failure.
@@ -3771,6 +3951,9 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 3))
       (then (if (call $win16_gdi (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (i32.eq (local.get $module) (i32.const 6))
+      (then (if (call $win16_shell (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 7))
       (then (if (call $win16_mmsystem (local.get $ordinal))

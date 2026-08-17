@@ -831,7 +831,7 @@
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00")
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -2198,6 +2198,13 @@
   (global $WIN16_WH_CALLWNDPROC i32 (i32.const 4))
   (global $win16_hook_cwp (mut i32) (i32.const 0))
   (global $win16_cursor_count (mut i32) (i32.const 0))
+  ;; A ring of four 32-byte buffers at the bottom of DGROUP, where a message
+  ;; that carries a pointer can hand a 16-bit task a struct in its own shape at
+  ;; an address one of its own selectors covers. Four, not one, because a
+  ;; dialog redraws several owner-draw controls before any of them returns.
+  (global $WIN16_MSG_SCRATCH_SIZE i32 (i32.const 128))
+  (global $win16_msg_scratch (mut i32) (i32.const 0))
+  (global $win16_msg_slot (mut i32) (i32.const 0))
   (global $win16_lheap_base (mut i32) (i32.const 0))
   (global $win16_lheap_ptr (mut i32) (i32.const 0))
   (global $win16_lheap_end (mut i32) (i32.const 0))
@@ -2219,6 +2226,8 @@
   ;; Appended into the 84 bytes that were free after CARDS, so no earlier
   ;; offset moves — see tools/data_offsets.js, which is how to check that.
   (global $WIN16_NAME_DDEML    i32 (i32.const 0x11EAC))
+  ;; Not a module — the one SHELL export reached by name rather than ordinal.
+  (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)

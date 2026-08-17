@@ -211,7 +211,36 @@ sets the global instead.
   (the browser uses real time); and `--dump` runs its address through `g2w`, so
   `--dump=0xac00` never reads TIMER_TABLE at all — that address is a raw WASM
   offset below GUEST_BASE, not a guest address.
-- **Hearts goes straight to the client path and finds no dealer.** It gets all
+- ~~**Menu commands crash or draw nothing.**~~ FIXED. Every menu command of
+  FreeCell, Solitaire and Minesweeper now runs — `test/test-win16-menus.js`
+  drives all of them from each app's own `RT_MENU` via `tools/menu-sweep.js`,
+  which is worth reaching for on any app, 16- or 32-bit: "it launches" says
+  nothing about the twenty-seven things its menus do. Five causes, and only two
+  of them were Win16 plumbing:
+  - `SetWindowPos` (USER.232) was missing. Four of FreeCell's five commands go
+    through one centre-the-dialog routine that calls it.
+  - `ShellAbout` was missing, and reached two different ways: Solitaire and
+    Minesweeper import SHELL.22, FreeCell imports the name. A built-in module
+    called by name never reached module dispatch at all — `$win16_dispatch`
+    trapped first — so there is now a name path beside the ordinal one.
+  - `DispatchMessage` entered any non-zero window procedure as a far pointer.
+    SendMessage had always checked; nothing had posted to a window of *ours*
+    until ShellAbout put one up, and then CS took 0xFFFF.
+  - `SetDlgItemText`/`SetDlgItemInt`/`GetDlgItemInt` (USER.92/94/95).
+  - **A 16-bit MOVSD copied two bytes and advanced four.** `$th_string16` read
+    its packed element size as "byte or word", so the 0x66-prefixed forms —
+    which is how a compiler copies a RECT in one instruction pair — moved half
+    the data and left every other word stale. This is an execution-core bug,
+    not a Win16-layer one, and it is the reason Solitaire's Deck dialog drew
+    twelve unreadable smears while opening perfectly well. Also fixed: the
+    DRAWITEMSTRUCT behind WM_DRAWITEM is 48 bytes in Win32 and 26 in Win16, and
+    a 16-bit procedure `les`-es the pointer it is handed, so it is now rebuilt
+    in the task's own DGROUP (`$win16_msg_lparam16`, scratch reserved at the
+    bottom of DGROUP by the NE loader).
+- **Hearts goes straight to the client path and finds no dealer.** Its three
+  dialog commands (Options, Score, Quote) open nothing for this reason and this
+  reason only: the sweep finds the app still sitting behind its startup
+  message box, so they are not three separate bugs. It gets all
   the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
   and puts up "Unable to connect with dealer. Hearts will end." What it should
   do first is show its startup dialog: the resources contain "What is your
@@ -235,7 +264,11 @@ sets the global instead.
   four apps reach: INT (including the INT 3Fh moveable-segment thunks), 16↔32
   thunking, named resources (`LoadIcon` with a string name returns 0 —
   Solitaire's icon). `tools/ne-dump.js --resources` shows what a module
-  actually ships, including named types and ids.
+  actually ships, including named types and ids; `--menus` and `--dialogs`
+  decode the RT_MENU and RT_DIALOG templates, which are the two resources whose
+  16-bit layout shares nothing with the 32-bit one and so cannot be read with
+  `tools/parse-rsrc.js`. `--menus-json=` is what `tools/menu-sweep.js` falls
+  back to when the PE walker finds nothing.
 - Structure width is the recurring bug class here, and it is worth stating
   plainly: **a structure that crosses the boundary is a different size in the
   two worlds.** `SystemParametersInfo(SPI_GETWORKAREA)` wrote a 32-bit RECT

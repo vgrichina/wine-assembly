@@ -432,6 +432,55 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
 
+  ;; USER.92 SetDlgItemText(hDlg, nIDDlgItem, lpString).
+  (func $win16_SetDlgItemText
+    (local $dlg i32) (local $str i32)
+    (local.set $dlg (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $str (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_SetDlgItemTextA (local.get $dlg) (call $win16_arg16 (i32.const 2))
+      (local.get $str) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 0))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; USER.94 SetDlgItemInt(hDlg, nIDDlgItem, wValue, bSigned) — how a dialog
+  ;; puts a number in an edit control. FreeCell's Restart Game fills the game
+  ;; number in with it before showing the box.
+  (func $win16_SetDlgItemInt
+    (local $dlg i32) (local $value i32)
+    (local.set $dlg (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    ;; A signed value arrives as a word and has to be widened before the
+    ;; 32-bit handler formats it, or -1 prints as 65535.
+    (local.set $value (call $win16_arg16 (i32.const 1)))
+    (if (call $win16_arg16 (i32.const 0))
+      (then (local.set $value (call $win16_coord (local.get $value)))))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_SetDlgItemInt (local.get $dlg) (call $win16_arg16 (i32.const 2))
+      (local.get $value) (call $win16_arg16 (i32.const 0)) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 0))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; USER.95 GetDlgItemInt(hDlg, nIDDlgItem, lpTranslated, bSigned) -> UINT.
+  ;; lpTranslated is optional and is a BOOL word here, not the 32-bit dword.
+  (func $win16_GetDlgItemInt
+    (local $dlg i32) (local $ok i32) (local $tmp i32)
+    (local.set $dlg (call $win16_h32 (call $win16_arg16 (i32.const 4))))
+    (local.set $ok (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (call $gs32 (local.get $tmp) (i32.const 0))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_GetDlgItemInt (local.get $dlg) (call $win16_arg16 (i32.const 3))
+      (local.get $tmp) (call $win16_arg16 (i32.const 0)) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (call $win16_arg16 (i32.const 2))
+      (then (call $gs16 (local.get $ok) (call $gl32 (local.get $tmp)))))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
   ;; USER.101 SendDlgItemMessage(hDlg, nIDDlgItem, wMsg, wParam, lParam) -> LONG.
   ;; lParam is the only DWORD, so it is the two words nearest the top.
   (func $win16_SendDlgItemMessage

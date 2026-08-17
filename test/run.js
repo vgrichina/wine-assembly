@@ -1608,7 +1608,7 @@ async function main() {
     // A by-name call into a loaded DLL that resolved: same three words as the
     // unresolved marker, but it is a call rather than a stop.
     if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
-    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 13, words: [], call: true }; return; }
+    if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
@@ -1624,7 +1624,7 @@ async function main() {
       // On a call the last word is the by-name flag; the ordinal field then
       // holds a name-table offset and there is nothing to look up.
       const what = isCall
-        ? (words[12] ? `${mod}.<name+${key & 0xFFFF}> (by name)`
+        ? (words[14] ? `${mod}.<name+${key & 0xFFFF}> (by name)`
                     : win16ApiName(key >>> 16, key & 0xFFFF))
         : (nameAddr === undefined
             ? win16ApiName(key >>> 16, key & 0xFFFF)
@@ -1636,7 +1636,7 @@ async function main() {
         // posted command ever reached the window procedure.
         const msgArg = /USER\.(108|109|113|114) /.test(what)
           ? readWin16Msg(words[3], words[2]) : null;
-        logs.push(`[win16] ${what}(${words.slice(2, 12).map(hex).join(', ')})  ret=${hex(ret)}` +
+        logs.push(`[win16] ${what}(${words.slice(2, 14).map(hex).join(', ')})  ret=${hex(ret)}` +
           (msgArg ? `  {${msgArg}}` : ''));
       } else {
         logs.push(`[win16] ${what}  ret=${hex(ret)}`);
