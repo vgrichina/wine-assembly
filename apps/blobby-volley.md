@@ -122,11 +122,45 @@ computer (three difficulties), and `DEFINE KEYS...` holds the keyboard layout.
 `bvbg.bmp` (800x600 custom backdrop, manual §4); it is absent here, as expected.
 
 **`DEFINE KEYS...` hangs the emulator.** Clicking it (settings screen, y≈325)
-sends T1 to 0x4159fc and the batch never returns — no further `--trace-sched`
-line after that point, at low machine load, for minutes. This is the one known
-emulator bug in the app, and it is why the default key bindings are not recorded
-above. Reach for `--host-census` on it: everything else we log is drained
-between batches, so a batch that never returns prints nothing at all.
+sends T1 to 0x4159fc and the batch never returns. Reproduces every time with:
+
+```
+--input=500:mousemove:400:330,520:mousemove:401:331,560:mousedown:401:331,\
+600:mouseup:401:331,800:mousemove:400:325,820:mousemove:401:326,\
+860:mousedown:401:326,900:mouseup:401:326
+```
+
+What is established about it, so nobody re-derives it:
+
+- **It is the worker, not the main thread.** With `--trace`, the main
+  instance keeps stepping for ~5 more batches (861..865, all at 0x43d3ac, the
+  VCL idle pump) and then everything stops. The main loop is blocked inside
+  the worker's slice call.
+- **It is stuck inside ONE WASM function, not executing guest code.** A native
+  `sample` of the hung process puts 100% of samples in a tight loop whose leaf
+  spans ~170 bytes of JIT code under a stable parent chain. Threaded dispatch
+  executing guest instructions would show many different leaves.
+- **It makes no host calls.** `--host-census=200000` prints nothing after the
+  click, which is also why every other trace flag is blind here — they buffer
+  and drain between batches.
+- **It is NOT an oversized REP string op.** Instrumenting `th_rep_movsb`,
+  `movsd`, `stosb`, `stosd`, `scasb` and `cmpsb` to log any `ECX > 0x1000000`
+  showed exactly 7 hits, all `REPNE SCASB` with `ECX=0xFFFFFFFF`, all during
+  startup, all completing normally — that is the ordinary `strlen` idiom
+  (`mov ecx,-1; repne scasb`), not a runaway. None fire at the click.
+- 0x4159fc itself is not the loop: it sits in a 6-byte fragment ending
+  `call [ebx+0x30]; ret`, i.e. an indirect (VMT / event handler) call. The
+  loop is downstream of that call.
+- The last block EIPs flushed before the stall are varied ordinary Delphi RTL
+  code ending at 0x402174, so the guest was running normally right up to it.
+  Note the log buffer drains between batches, so these belong to the last
+  *completed* batch, not to the hung one.
+
+Next step: the remaining candidates are unbounded loops inside WAT helpers
+reachable from a draw or dispatch path. The marker technique above is the way
+to bisect them — `(if (i32.gt_u ...) (then (call $host_log_i32 ...)))` at the
+top of a suspect loop, since `$host_log_i32` output does escape a hung batch
+once the buffer fills.
 
 ## Regression coverage
 
