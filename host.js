@@ -972,6 +972,11 @@ class WineAssembly {
     const exeName = url.replace(/^.*[\\\/]/, '');
     this._applyExeCompatibilityPatches(exeName);
 
+    // A 16-bit task's DLLs go into the same selector arena its own segments
+    // just went into, so this has to follow load_pe and precede its first call
+    // into one.
+    await this._loadWin16Dlls(url, exeBytes);
+
     // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base).
     if (this.instance.exports.init_dx_com_thunks) {
       this.instance.exports.init_dx_com_thunks();
@@ -995,6 +1000,35 @@ class WineAssembly {
     }
 
     return entry;
+  }
+
+  // Fetch and load the NE DLLs a 16-bit task can ask for. loadWin16Dlls reads
+  // files synchronously, so every candidate is fetched first and answered out
+  // of a map; a name that 404s is simply absent, exactly as a missing file is
+  // for the CLI. Hearts loads CARDS through LoadLibrary rather than importing
+  // it, so this cannot be driven by the module-reference table.
+  async _loadWin16Dlls(url, exeBytes) {
+    const _loadWin16Dlls = (typeof DllLoader !== 'undefined' && DllLoader.loadWin16Dlls) || null;
+    const _stageable = (typeof DllLoader !== 'undefined' && DllLoader.win16StageableModules) || null;
+    if (!_loadWin16Dlls || !_stageable) return;
+    const exports = this.instance.exports;
+    if (!exports.load_ne_dll || !exports.is_win16 || !exports.is_win16()) return;
+
+    const dir = url.replace(/[^\\\/]*$/, '');
+    const files = new Map();
+    await Promise.all(_stageable().flatMap(name =>
+      [`${name}.DLL`, `${name}.dll`, `${name}.EXE`].map(async file => {
+        if (files.has(name)) return;
+        try {
+          const resp = await fetch(dir + file);
+          if (!resp.ok) return;
+          const bytes = new Uint8Array(await resp.arrayBuffer());
+          if (!files.has(name)) files.set(name, bytes);
+        } catch (_) { /* absent is a valid answer */ }
+      })));
+
+    _loadWin16Dlls(exports, this.memory, exeBytes, dir,
+      (_dir, name) => files.get(name) || null, (m) => console.log(m));
   }
 
   // Mount every vendored open font at the Win98 filename it substitutes.

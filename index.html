@@ -449,6 +449,12 @@
           <option value="rsrcmtr">Resource Meter</option>
           <option value="cleanmgr">Disk Cleanup</option>
         </optgroup>
+        <optgroup label="16-bit (Win16 / NE)">
+          <option value="winmine16">Minesweeper (16-bit)</option>
+          <option value="freecell16">FreeCell (16-bit)</option>
+          <option value="sol16">Solitaire (16-bit)</option>
+          <option value="mshearts16">Hearts (16-bit)</option>
+        </optgroup>
         <optgroup label="XP">
           <option value="claass">Calculator (XP)</option>
           <option value="xp_eos">XP End of Life</option>
@@ -1284,6 +1290,13 @@ Resource-aware Win98 emulator
       tictac:   { exe: 'binaries/entertainment-pack/tictac.exe' },
       reversi:  { exe: 'binaries/entertainment-pack/reversi.exe' },
       winmine_wep: { exe: 'binaries/entertainment-pack/winmine.exe' },
+      // The original 16-bit NE builds. Their DLLs are NE too, so they do not
+      // go in `dlls` (which loads 32-bit PEs) — host.js fetches them from the
+      // exe's own directory once it sees the task is 16-bit.
+      winmine16:  { exe: 'binaries/win98-16bit/WINMINE.EXE' },
+      freecell16: { exe: 'binaries/win98-16bit/FREECELL.EXE' },
+      sol16:      { exe: 'binaries/win98-16bit/SOL.EXE' },
+      mshearts16: { exe: 'binaries/win98-16bit/MSHEARTS.EXE' },
       mspaint98: { exe: 'binaries/mspaint.exe', files: helpFiles('mspaint') },
       notepad98: { exe: 'binaries/win98-apps/notepad98.exe', files: helpFiles('notepad') },
       wordpad:   {
@@ -2055,6 +2068,10 @@ Resource-aware Win98 emulator
         case 'pyramid':
         case 'winmine_wep':
         case 'winmine':
+        case 'winmine16':
+        case 'freecell16':
+        case 'sol16':
+        case 'mshearts16':
         case 'reversi':
         case 'tictac':
           return compatDispatch ? 100 : 25000;

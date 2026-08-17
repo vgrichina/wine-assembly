@@ -153,6 +153,7 @@ E2E=(
   test/test-funtris-web-launch.js
   test/test-win98-audio-web.js
   test/test-local-candidate-desktop-web.js
+  test/test-win16-web.js
   test/test-local-candidates-playability.js
   test/test-dxball-candidate.js
   test/test-blobby-volley.js
