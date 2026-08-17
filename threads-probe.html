@@ -68,6 +68,24 @@
   </div>
 
   <div class="verdict" id="verdict">Press “Run probe”.</div>
+
+  <h2 style="font:600 16px system-ui,sans-serif; margin:26px 0 4px;">Latency &amp; fps impact</h2>
+  <p style="margin-top:0">
+    Feasibility is not benefit. This runs the <em>same</em> paint workload three
+    ways and measures what the page feels: frame cadence from
+    <code>requestAnimationFrame</code>, and main-thread queue delay from a
+    <code>MessageChannel</code> round trip — the delay an input event would wait
+    out before anything could handle it.
+  </p>
+  <div><button id="measure">Measure latency &amp; fps</button></div>
+  <table>
+    <thead><tr>
+      <th>scenario</th><th class="v">page fps</th><th>frame p50 / p99</th>
+      <th>input latency p50 / p99 / max</th><th>paint fps</th>
+    </tr></thead>
+    <tbody id="perf-rows"></tbody>
+  </table>
+  <div class="verdict" id="perf-verdict">Run the probe first, then measure.</div>
 </main>
 
 <script src="lib/compile-wat.js"></script>
@@ -344,6 +362,193 @@ function verdict(isolated, controlled) {
   }
   verdictEl.textContent = lines.join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Latency & fps impact
+// ---------------------------------------------------------------------------
+
+// CHUNK_MS is the point of the whole comparison: host.js runs the guest in
+// uninterrupted chunks and Blobby measured a step p50 of ~14ms, so the probe
+// calibrates its paint work to that. A workload that yields every 2ms cannot
+// block input no matter which thread it is on, and measuring one proves nothing.
+const PERF = { W: 320, H: 240, MS: 3000, CHUNK_MS: 14, REPEATS: 8 };
+let perfModule = null;   // compiled probe/paint.wat, reused across scenarios
+
+function pct(sorted, p) {
+  if (!sorted.length) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.round((p / 100) * (sorted.length - 1)))];
+}
+
+// Samples what the page experiences: rAF cadence, and how long a message sits
+// in the main-thread task queue before it is handled. The second one is the
+// honest proxy for input latency — a click cannot be processed any sooner than
+// a queued task can run, whatever is blocking the thread.
+function startSampling() {
+  const frames = [], latency = [];
+  let last = 0, running = true;
+  const raf = () => {
+    if (!running) return;
+    const t = performance.now();
+    if (last) frames.push(t - last);
+    last = t;
+    requestAnimationFrame(raf);
+  };
+  requestAnimationFrame(raf);
+
+  const chan = new MessageChannel();
+  chan.port1.onmessage = e => { latency.push(performance.now() - e.data); };
+  const ping = () => {
+    if (!running) return;
+    chan.port2.postMessage(performance.now());
+    setTimeout(ping, 16);
+  };
+  ping();
+
+  return {
+    stop() {
+      running = false;
+      chan.port1.close(); chan.port2.close();
+      const f = frames.slice().sort((a, b) => a - b);
+      const l = latency.slice().sort((a, b) => a - b);
+      return {
+        fps: frames.length ? 1000 / (frames.reduce((a, b) => a + b, 0) / frames.length) : 0,
+        frameP50: pct(f, 50), frameP99: pct(f, 99),
+        latP50: pct(l, 50), latP99: pct(l, 99), latMax: l.length ? l[l.length - 1] : 0,
+        samples: `${frames.length} frames, ${latency.length} pings`,
+      };
+    },
+  };
+}
+
+function perfRow(name, stats, paintFps, note) {
+  const tr = document.createElement('tr');
+  const cls = v => v > 33 ? 'fail' : (v > 20 ? 'wait' : 'pass');
+  tr.innerHTML = `<td>${name}${note ? `<br><span class="detail">${note}</span>` : ''}</td>`
+    + `<td class="v ${cls(1000 / Math.max(1, stats.fps))}">${stats.fps.toFixed(1)}</td>`
+    + `<td class="detail">${stats.frameP50.toFixed(1)} / ${stats.frameP99.toFixed(1)} ms</td>`
+    + `<td class="detail ${stats.latP99 > 50 ? 'fail' : ''}">`
+    + `${stats.latP50.toFixed(1)} / ${stats.latP99.toFixed(1)} / ${stats.latMax.toFixed(0)} ms</td>`
+    + `<td class="detail">${paintFps == null ? '—' : paintFps.toFixed(1)}</td>`;
+  document.getElementById('perf-rows').appendChild(tr);
+}
+
+async function measure() {
+  const rows = document.getElementById('perf-rows');
+  rows.innerHTML = '';
+  const out = document.getElementById('perf-verdict');
+  out.textContent = 'measuring…';
+
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  if (!perfModule) {
+    const bytes = await compileWatSnapshot(
+      async file => (await fetch(file)).text(),
+      { files: ['probe/paint.wat'], cacheKey: 'probe-paint-perf', tailCalls: supportsTailCalls() }
+    );
+    perfModule = await WebAssembly.compile(bytes);
+  }
+  const results = {};
+
+  // --- calibrate: how many fills add up to one emulator-sized chunk of work.
+  {
+    const base = 0x03800000;
+    const inst = await WebAssembly.instantiate(perfModule, { host: { memory } });
+    inst.exports.paint(base, PERF.W, PERF.H, 1, 0);          // warm the JIT
+    const t0 = performance.now();
+    for (let i = 0; i < 20; i++) inst.exports.paint(base, PERF.W, PERF.H, 1, i);
+    const per = (performance.now() - t0) / 20;
+    PERF.REPEATS = Math.max(1, Math.round(PERF.CHUNK_MS / Math.max(0.01, per)));
+    document.getElementById('perf-verdict').textContent =
+      `calibrated: one ${PERF.W}×${PERF.H} fill = ${per.toFixed(2)}ms, `
+      + `so ${PERF.REPEATS} per chunk ≈ ${PERF.CHUNK_MS}ms — measuring…`;
+  }
+
+  // --- A: idle baseline. Whatever the browser and the machine cost anyway.
+  {
+    const s = startSampling();
+    await new Promise(r => setTimeout(r, PERF.MS));
+    results.idle = s.stop();
+    perfRow('idle (baseline)', results.idle, null, 'no paint work at all');
+  }
+
+  // --- B: paint on the main thread. This is today's architecture: the guest
+  // and the page share a thread, so the work lands in the same queue as input.
+  {
+    const canvas = document.createElement('canvas');
+    canvas.width = PERF.W; canvas.height = PERF.H;
+    canvas.style.cssText = 'width:160px;height:120px;border:1px solid #3f6b88';
+    document.getElementById('perf-rows').parentElement.parentElement.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    const image = ctx.createImageData(PERF.W, PERF.H);
+    const base = 0x03000000;
+    const inst = await WebAssembly.instantiate(perfModule, { host: { memory } });
+    const pixels = new Uint8Array(memory.buffer, base, PERF.W * PERF.H * 4);
+
+    const s = startSampling();
+    const deadline = performance.now() + PERF.MS;
+    let frames = 0;
+    while (performance.now() < deadline) {
+      for (let i = 0; i < PERF.REPEATS; i++) inst.exports.paint(base, PERF.W, PERF.H, 1, frames * 3 + i);
+      image.data.set(pixels);
+      ctx.putImageData(image, 0, 0);
+      frames++;
+      await new Promise(r => setTimeout(r, 0));   // same shape as host.js's loop
+    }
+    results.main = s.stop();
+    perfRow('paint on MAIN thread', results.main, frames / (PERF.MS / 1000),
+      `${PERF.REPEATS}× ${PERF.W}×${PERF.H} per chunk ≈ ${PERF.CHUNK_MS}ms — today's architecture`);
+    canvas.remove();
+  }
+
+  // --- C: identical work in two workers.
+  {
+    const workers = [];
+    const jobs = [0, 1].map(i => {
+      const w = new Worker('threads-probe-worker.js');
+      workers.push(w);
+      return ask(w, {
+        kind: 'paint-loop', module: perfModule, memory, canvas: null,
+        base: 0x03400000 + i * 0x00400000, width: PERF.W, height: PERF.H,
+        tid: i + 1, ms: PERF.MS, repeats: PERF.REPEATS,
+      });
+    });
+    const s = startSampling();
+    const replies = await Promise.all(jobs);
+    results.worker = s.stop();
+    const totalFrames = replies.reduce((a, r) => a + (r.frames || 0), 0);
+    perfRow('same work in 2 WORKERS', results.worker, totalFrames / (PERF.MS / 1000),
+      'identical workload, off the UI thread');
+    for (const w of workers) w.terminate();
+  }
+
+  // --- verdict: the numbers that decide whether phase 1 is worth weeks.
+  const lines = [];
+  const dLat = results.main.latP99 - results.worker.latP99;
+  const dFps = results.worker.fps - results.main.fps;
+  lines.push(`Input latency p99: ${results.main.latP99.toFixed(1)}ms on the main thread `
+    + `vs ${results.worker.latP99.toFixed(1)}ms in workers `
+    + `(idle floor ${results.idle.latP99.toFixed(1)}ms).`);
+  lines.push(`Page fps: ${results.main.fps.toFixed(1)} vs ${results.worker.fps.toFixed(1)} `
+    + `(idle ${results.idle.fps.toFixed(1)}).`);
+  if (dLat > 5 || dFps > 5) {
+    lines.push('');
+    lines.push('Moving the work off the UI thread measurably improves what the page feels.');
+    lines.push('That is the case for phase 1, in numbers rather than in principle.');
+  } else {
+    lines.push('');
+    lines.push('No meaningful difference at this workload — which is itself a finding:');
+    lines.push('either the work is too small to block the thread, or this machine is');
+    lines.push('too loaded to resolve the difference. Raise PERF.REPEATS and retry on');
+    lines.push('an idle box before treating it as a verdict.');
+  }
+  out.textContent = lines.join('\n');
+}
+
+document.getElementById('measure').onclick = () => {
+  const b = document.getElementById('measure');
+  b.disabled = true;
+  measure().catch(e => { document.getElementById('perf-verdict').textContent = 'failed: ' + e.message; })
+    .finally(() => { b.disabled = false; });
+};
 
 document.getElementById('run').onclick = () => {
   document.getElementById('run').disabled = true;

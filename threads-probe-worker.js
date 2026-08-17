@@ -97,6 +97,30 @@ self.onmessage = async (event) => {
       });
     }
 
+    if (msg.kind === 'paint-loop') {
+      // Paint continuously for a fixed wall-clock window, so the page can
+      // measure its own responsiveness while this runs. `repeats` scales the
+      // work per frame: one 320x240 fill is far cheaper than a guest slice, and
+      // the comparison is only meaningful at a comparable load.
+      const { module, memory, canvas, base, width, height, tid, ms, repeats } = msg;
+      const instance = await WebAssembly.instantiate(module, { host: { memory } });
+      const paint = instance.exports.paint;
+      const ctx = canvas ? canvas.getContext('2d') : null;
+      const image = ctx ? ctx.createImageData(width, height) : null;
+      const pixels = new Uint8Array(memory.buffer, base, width * height * 4);
+      const deadline = performance.now() + ms;
+      let frames = 0, work = 0;
+      while (performance.now() < deadline) {
+        const t0 = performance.now();
+        for (let i = 0; i < repeats; i++) paint(base, width, height, tid, frames * 3 + i);
+        if (ctx) { image.data.set(pixels); ctx.putImageData(image, 0, 0); }
+        work += performance.now() - t0;
+        frames++;
+        await new Promise(r => setTimeout(r, 0));
+      }
+      return reply({ ok: true, frames, workMs: work, detail: `${frames} frames, ${work.toFixed(0)}ms busy` });
+    }
+
     reply({ ok: false, detail: `unknown kind ${msg.kind}` });
   } catch (err) {
     reply({ ok: false, detail: String(err && err.message || err) });

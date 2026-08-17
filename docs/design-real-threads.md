@@ -50,6 +50,36 @@ Everything downstream of that shared thread has the same shape:
 Four of those five are not bugs to fix; they are properties of running an
 operating system's threads inside one event loop.
 
+### Measured benefit
+
+`threads-probe.html` runs an identical paint workload three ways and measures
+what the page feels. The workload is calibrated to a 14ms uninterrupted chunk,
+because that is Blobby's measured step p50 — a workload that yields every 2ms
+cannot block input on any thread, and measuring one proves nothing.
+
+```
+                    page fps   frame p50/p99    input latency p50/p99/max   paint fps
+  idle baseline       60.0      16.7 / 17.7      0.0 / 0.2 / 0 ms              —
+  paint on MAIN       60.0      16.9 / 29.0      0.0 / 12.4 / 13 ms           59.7
+  same work, 2 WORKERS 60.0     16.7 / 17.6      0.0 / 0.1 / 0 ms            100.7
+```
+*(Chrome headless, 8 cores, load ~4, 154 fills per chunk ≈ 14ms)*
+
+Three things to read out of it:
+
+1. **Input latency p99 collapses from 12.4ms to the idle floor.** Half a chunk
+   of queueing delay is what the main-thread architecture costs every input,
+   before any handler runs.
+2. **Frame p99 drops from 29.0ms to 17.6ms** — the main-thread version drops
+   frames at the tail; the worker version does not.
+3. **Throughput rises 1.69× on two workers**, which single-worker designs
+   (the rejected "stage 1") cannot deliver.
+
+And a fourth, which matters for how any of this gets reported: **page fps reads
+60.0 in all three rows.** The number most likely to be quoted is the one number
+that cannot detect the problem — the same trap that hid the mouse-starvation
+bug (§6).
+
 ---
 
 ## 2. Where we actually are
