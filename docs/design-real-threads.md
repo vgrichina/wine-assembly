@@ -6,10 +6,18 @@ branch `worktree-real-threads`. Written 2026-08-16, updated 2026-08-17.
 Notepad, Calculator and Paint boot and render with the guest's main thread
 executing inside a Web Worker and all 178 host imports running on the main
 thread. `test/test-worker-guest.js` asserts window-count and window-title parity
-against single-threaded runs (16/16 checks). Not done: guest threads beyond the
-main one, the `com_load_dll` / `help_load` yields, and the locking the shared
-emulator tables will need once two guest threads run at once (§3.1). Off by
-default, behind the Threads switch and cross-origin isolation.
+against single-threaded runs, plus the COM server-load round trip (21/21 checks).
+
+**Every yield the WAT actually raises is now handled in worker mode** — 1 wait,
+2 exit, 3 com_load_dll, 5 load_library, 6 modal_dialog, 7 message_wait, 8
+net_wait. Reason 4 was listed as `help_load` in `thread-manager.js` and is set by
+nothing in the codebase; the help engine fetches through host imports rather than
+parking the guest. It has been dropped from the map, because leaving it there
+made worker mode look like it had two async yields left to port when it had one.
+
+Not done: guest threads beyond the main one, and the locking the shared emulator
+tables will need once two guest threads run at once (§3.1b). Off by default,
+behind the Threads switch and cross-origin isolation.
 
 ### What the implementation actually looks like
 
@@ -574,6 +582,14 @@ because the *proof* is the second one.
   workers never touch the screen.
 - ✅ Partition the low heap per instance and delete the per-slice cursor
   marshalling (§3.1a). Required for worker mode, not just for phase 2.
+- ✅ Port every async yield the WAT raises. `com_load_dll` splits the same way
+  `load_library` does: the name and the DLL bytes resolve on the main thread,
+  the image load, DllMain and the guest resume happen in the worker. The success
+  path must NOT advance ESP — clearing the yield re-enters the CoCreateInstance
+  handler, which retries and now finds the class registered — while the miss path
+  must return an HRESULT and drop the frame, or the guest parks forever.
+  Unexercised by the corpus: no app registers a COM server in HKCR for a DLL we
+  do not preload, so the test drives the worker message path directly.
 - **Exit criterion:** corpus green in *both* modes, and the perf HUD shows
   `page fps` unchanged while `GAME fps` is unaffected by continuous mouse
   movement — the exact measurement that caught `b7b4d4e`.

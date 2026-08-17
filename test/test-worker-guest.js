@@ -122,6 +122,49 @@ async function launch(browser, port, app, { threaded }) {
   return { state, problems };
 }
 
+// Launch notepad in worker mode, then exercise the comLoadDll round trip on the
+// live worker. msvcrt is the probe DLL: notepad does not load it, so the count
+// has to move, and the emulator already runs its DllMain for MFC apps — so a
+// failure here is the message path, not the DLL.
+async function comLoadDllProbe(browser, port) {
+  const page = await browser.newPage();
+  await page.evaluateOnNewDocument(() => localStorage.setItem('wine-assembly.threads', '1'));
+  await page.goto(`http://127.0.0.1:${port}/index.html?debug`, { waitUntil: 'load', timeout: 60000 });
+  await page.waitForFunction('typeof launchApp === "function"', { timeout: 30000 });
+  await page.evaluate(() => { document.getElementById('app-select').value = 'notepad'; launchApp(); });
+  // `runningApps` is a module-scope binding in index.html, not a window
+  // property, so it has to be referenced bare.
+  await page.waitForFunction(
+    () => typeof runningApps !== 'undefined' && !!(runningApps[0] && runningApps[0].wine
+      && runningApps[0].wine.guestWorker),
+    { timeout: 30000 });
+  await wait(6000);
+
+  const result = await page.evaluate(async () => {
+    const gw = runningApps[0].wine.guestWorker;
+    const read = async () => (await gw.readExports(['get_dll_count', 'get_yield_reason', 'get_esp', 'get_eax']));
+    const before = await read();
+    const bytes = new Uint8Array(await (await fetch('binaries/dlls/msvcrt.dll')).arrayBuffer());
+    const hit = await gw.comLoadDll(bytes, 'msvcrt.dll', null);
+    const afterHit = await read();
+
+    // Miss path: no bytes at all, which is what a failed fetch produces.
+    await gw.comLoadDll(null, 'nosuch.dll', null);
+    const afterMiss = await read();
+
+    return {
+      dllCountBefore: before.get_dll_count,
+      dllCountAfter: afterHit.get_dll_count,
+      loadAddr: hit && hit.loadAddr ? hit.loadAddr : 0,
+      error: (hit && hit.error) || null,
+      yieldAfter: afterHit.get_yield_reason,
+      missYield: afterMiss.get_yield_reason,
+    };
+  });
+  await page.close();
+  return result;
+}
+
 (async () => {
   const server = await startIsolatedServer();
   const port = server.address().port;
@@ -160,6 +203,32 @@ async function launch(browser, port, app, { threaded }) {
       check(worker.problems.length === 0, `${app}: no errors in worker mode`,
         worker.problems.slice(0, 2).join(' | '));
     }
+
+    // The COM server load (yield reason 3) has no corpus app that reaches it —
+    // it needs a CLSID registered in HKCR pointing at a DLL that is not loaded,
+    // and nothing we ship does that. So drive the ported message path directly:
+    // it is the half that only exists in worker mode, and an untested branch
+    // there is what left worker mode stopping on this yield in the first place.
+    const com = await comLoadDllProbe(browser, port);
+    check(com.dllCountBefore >= 0 && com.dllCountAfter === com.dllCountBefore + 1,
+      'comLoadDll loads the server into the worker instance',
+      `dll_count ${com.dllCountBefore} -> ${com.dllCountAfter}`);
+    check(com.loadAddr > 0, 'comLoadDll reports the load address', `0x${(com.loadAddr >>> 0).toString(16)}`);
+    check(!com.error, 'comLoadDll reported no error', com.error || '');
+    // Reason 3 specifically: the app under the probe is a live notepad, so it is
+    // normally parked on a message_wait (7) and re-parks between reads. What
+    // matters is that it is not left parked on the COM yield.
+    check(com.yieldAfter !== 3, 'comLoadDll does not leave the guest parked on the COM yield',
+      `yield=${com.yieldAfter}`);
+    check(com.missYield !== 3, 'a COM server that cannot be fetched also unparks',
+      `yield=${com.missYield}`);
+    // NOT asserted here: that the miss path returns REGDB_E_CLASSNOTREG in EAX
+    // and drops the return address plus 5 stdcall args. Both are only observable
+    // on a guest actually parked mid-CoCreateInstance, which needs an app that
+    // registers a COM server in HKCR for a DLL we do not preload — nothing in
+    // the corpus does. The 24-byte figure is taken from the synchronous error
+    // path in 09a7-handlers-dispatch.wat, which the WAT reaches for the same
+    // frame; if a COM app ever lands in the corpus, assert it here.
   } finally {
     await browser.close();
     server.close();

@@ -1435,6 +1435,51 @@ class WineAssembly {
     }
   }
 
+  // Worker-mode COM server load (yield reason 3). Same split as LoadLibrary:
+  // the name and bytes are resolved here, the image load, DllMain and the guest
+  // resume happen in the worker.
+  //
+  // The COM search order is not LoadLibrary's — a class's server is looked up by
+  // bare filename in the DLL and plugin directories — so this resolves its own
+  // candidates rather than sharing _resolveDllBytes.
+  async _handleComDllLoadThreaded() {
+    const gw = this.guestWorker;
+    const nameWA = (await gw.callExport('get_com_dll_name')) >>> 0;
+    if (!nameWA) {
+      console.error('COM yield but no pending DLL name');
+      await gw.callExport('clear_yield');
+      return;
+    }
+    const mem = new Uint8Array(this.memory.buffer);
+    let dllName = '';
+    for (let i = 0; i < 260 && mem[nameWA + i]; i++) dllName += String.fromCharCode(mem[nameWA + i]);
+    const fileName = dllName.split('\\').pop().toLowerCase();
+    console.log(`[COM] Loading DLL: ${fileName} (worker)`);
+
+    let dllBytes = null;
+    for (const p of [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`]) {
+      try {
+        const resp = await fetch(p);
+        if (resp.ok) { dllBytes = new Uint8Array(await resp.arrayBuffer()); break; }
+      } catch (_) {}
+    }
+    if (!dllBytes && this._helpCtx && this._helpCtx.vfs) {
+      const vfs = this._helpCtx.vfs;
+      for (const vp of [dllName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName]) {
+        const entry = vfs.files.get(vp);
+        if (entry && entry.data) { dllBytes = entry.data; break; }
+      }
+    }
+    if (!dllBytes) {
+      console.error(`[COM] Failed to fetch DLL: ${fileName}`);
+      await gw.comLoadDll(null, fileName, null);
+      return;
+    }
+    const res = await gw.comLoadDll(dllBytes, fileName, this._exeBytes || null);
+    if (res && res.error) console.error('[COM] DLL load error:', res.error);
+    else if (res) console.log(`[COM] DLL loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
+  }
+
   async handleLoadLibrary() {
     const exports = this.instance.exports;
     const _resumeAfterLoadLibraryYield = (typeof DllLoader !== 'undefined' && DllLoader.resumeAfterLoadLibraryYield) || null;
@@ -1661,15 +1706,18 @@ class WineAssembly {
           self.stop({ repaint: false });
           return;
         }
-        // Yield handling is deliberately minimal in this mode. A wait or a
-        // message-wait is cleared and retried, which costs a spin but is
-        // correct; the async yields (DLL load, COM load) need their host-side
-        // sequences ported into the worker and are NOT supported yet. Saying so
-        // beats faking it: an app that needs one stops here with its reason.
+        // Every yield the WAT actually raises is handled here: 1 wait, 2 exit
+        // (caught above as eip=0), 3 com_load_dll, 5 load_library, 6
+        // modal_dialog, 7 message_wait, 8 net_wait. Reason 4 (help_load) is
+        // named in thread-manager.js's map but is never set by any WAT or JS
+        // path, so there is nothing to port for it. The fallback below stays as
+        // a guard for anything added later.
         if (r.yield === 1 || r.yield === 7) {
           // Message-wait resume runs inside the worker before each slice; this
           // clears a wait it could not satisfy so the guest re-polls.
           await self.guestWorker.callExport('clear_yield');
+        } else if (r.yield === 3) {
+          await self._handleComDllLoadThreaded();
         } else if (r.yield === 5) {
           await self._handleLoadLibraryThreaded();
         } else if (r.yield === 8) {
