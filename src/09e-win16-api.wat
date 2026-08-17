@@ -2930,6 +2930,14 @@
     (call $win16_api_return (i32.const 24)))
 
   ;; GDI.29 PatBlt(hDC, X, Y, nWidth, nHeight, dwRop).
+  ;;
+  ;; $handle_PatBlt takes only hdc/x/y as parameters and reads the width,
+  ;; height AND rop back off the stack frame, so all three have to be written
+  ;; into it — passing the width and height as arguments 3 and 4 looks right
+  ;; and leaves the handler reading whatever the scratch stack happened to
+  ;; hold. FreeCell fills its empty-cell bitmap with one PATCOPY and blits the
+  ;; result into all eight cells; with a garbage size the fill covered nothing
+  ;; and the cells came out the black a fresh bitmap starts as.
   (func $win16_PatBlt
     (local $hdc i32) (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (local $rop i32)
@@ -2940,6 +2948,8 @@
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 2))))
     (local.set $rop (call $win16_arg32 (i32.const 0)))
     (call $win16_call32_begin (i32.const 6))
+    (call $win16_call32_arg (i32.const 3) (local.get $w))
+    (call $win16_call32_arg (i32.const 4) (local.get $h))
     (call $win16_call32_arg (i32.const 5) (local.get $rop))
     (call $handle_PatBlt (local.get $hdc) (local.get $x) (local.get $y)
       (local.get $w) (local.get $h) (i32.const 0))

@@ -10544,6 +10544,19 @@
       (i32.store offset=8 (local.get $wa) (i32.add (i32.load offset=8 (local.get $wa)) (i32.const 4)))
       (i32.store offset=12 (local.get $wa) (i32.add (i32.load offset=12 (local.get $wa)) (i32.const 4)))
     ))
+    ;; WS_EX_CLIENTEDGE sinks the client two pixels on every side, and
+    ;; $defwndproc_do_nccalcsize takes those two pixels back out. The two have
+    ;; to agree: an app that sizes its window through this call and then lays
+    ;; itself out inside GetClientRect gets four pixels less than it asked for
+    ;; when they do not. Solitaire is exactly that app -- it asks for the width
+    ;; seven card columns need, is handed four pixels less, decides the window
+    ;; is too narrow to lay out at all, and leaves every pile at the origin.
+    (if (i32.and (local.get $arg3) (i32.const 0x00000200)) (then
+      (i32.store           (local.get $wa) (i32.sub (i32.load           (local.get $wa)) (i32.const 2)))
+      (i32.store offset=4  (local.get $wa) (i32.sub (i32.load offset=4  (local.get $wa)) (i32.const 2)))
+      (i32.store offset=8  (local.get $wa) (i32.add (i32.load offset=8  (local.get $wa)) (i32.const 2)))
+      (i32.store offset=12 (local.get $wa) (i32.add (i32.load offset=12 (local.get $wa)) (i32.const 2)))
+    ))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )

@@ -76,6 +76,7 @@ UNIT=(
   test/test-wat-gdi-public-metafile.js
   test/test-wat-gdi-printer-surface.js
   test/test-compatible-bitmap-wat.js
+  test/test-gdi-patblt-brush.js
   test/test-gdi-surface.js
   test/test-gdi-deferred-presentation.js
   test/test-wat-memory-map.js

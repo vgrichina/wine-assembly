@@ -144,6 +144,17 @@ async function main() {
         console.log(`PASS  winmine16 drew its colour art (${result.red} red pixels)`);
         pass++;
       }
+      // Solitaire deals only if its window is as wide as it asked for. When
+      // AdjustWindowRectEx forgets the WS_EX_CLIENTEDGE border the client comes
+      // back four pixels narrow, Solitaire decides seven columns will not fit
+      // and lays nothing out — leaving an empty green table with no red suit
+      // anywhere on it.
+      if (app.key === 'sol16') {
+        assert(result.red >= 200,
+          `Solitaire dealt no cards: only ${result.red} red pixels on the table`);
+        console.log(`PASS  sol16 dealt a hand (${result.red} red pixels)`);
+        pass++;
+      }
     }
 
     // CARDS.DLL is an NE image fetched by host.js, not by the `dlls` list. If
