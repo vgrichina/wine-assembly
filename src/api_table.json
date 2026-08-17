@@ -19215,5 +19215,26 @@
     "nargs": 9,
     "convention": "stdcall",
     "hash": 765069751
+  },
+  {
+    "id": 2458,
+    "name": "PrintDlgW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1957666990
+  },
+  {
+    "id": 2459,
+    "name": "ChooseColorW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2333816448
+  },
+  {
+    "id": 2460,
+    "name": "PageSetupDlgW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 440087721
   }
 ]

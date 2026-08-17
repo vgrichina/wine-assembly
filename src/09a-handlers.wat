@@ -13304,6 +13304,67 @@
     (call $create_print_dialog (local.get $dlg) (local.get $owner))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
 
+  ;; PrintDlgW(lppd) — the wide twin of PrintDlgA.
+  ;;
+  ;; NT Paint delay-loads this, so a failed GetProcAddress does not return an
+  ;; error to the app: the delay-load helper raises 0xC06D007F, nothing handles
+  ;; it, and the process exits. File > Print, Page Setup and Print Preview all
+  ;; killed Paint outright rather than doing nothing.
+  ;;
+  ;; PRINTDLG itself has the same layout in both flavours; DEVMODE does not.
+  ;; DEVMODEW's dmDeviceName is 32 WCHARs rather than 32 chars, so every field
+  ;; after it sits 32 bytes further along and the struct is 220 bytes, not 156.
+  ;; DEVNAMES offsets are counted in characters, so those move too.
+  (func $handle_PrintDlgW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $owner i32) (local $flags i32)
+    (local $devmode i32) (local $devnames i32) (local $dn_w i32)
+    (call $modal_capture_nonvolatile)
+    (local.set $flags (call $gl32 (i32.add (local.get $arg0) (i32.const 20))))
+    (local.set $devmode (call $heap_alloc (i32.const 220)))
+    (memory.fill (call $g2w (local.get $devmode)) (i32.const 0) (i32.const 220))
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 68)) (i32.const 220)) ;; dmSize
+    (call $gs32 (i32.add (local.get $devmode) (i32.const 72)) (i32.const 0x00000F03)) ;; dmFields
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 76)) (i32.const 1))    ;; portrait
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 78)) (i32.const 1))    ;; Letter
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 80)) (i32.const 2794)) ;; 11in in 0.1mm
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 82)) (i32.const 2159)) ;; 8.5in
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 86)) (i32.const 1))    ;; copies
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 90)) (i32.const 300))  ;; quality
+    ;; DEVNAMES: 8-byte header, then the strings. The offsets are in
+    ;; characters, so byte 8 is character 4 here rather than character 8.
+    (local.set $devnames (call $heap_alloc (i32.const 64)))
+    (local.set $dn_w (call $g2w (local.get $devnames)))
+    (memory.fill (local.get $dn_w) (i32.const 0) (i32.const 64))
+    (call $gs16 (local.get $devnames) (i32.const 4))                              ;; wDriverOffset
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 13))     ;; wDeviceOffset
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 4)) (i32.const 25))     ;; wOutputOffset
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 6)) (i32.const 0))      ;; wDefault
+    (call $memcpy (i32.add (local.get $dn_w) (i32.const 8)) (i32.const 0x11220) (i32.const 8))
+    (call $acm_widen_in_place (i32.add (local.get $devnames) (i32.const 8)) (i32.const 8))
+    (call $memcpy (i32.add (local.get $dn_w) (i32.const 26)) (i32.const 0x11229) (i32.const 11))
+    (call $acm_widen_in_place (i32.add (local.get $devnames) (i32.const 26)) (i32.const 11))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
+    (global.set $printer_hdc (call $gdi_printer_dc_alloc))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 16)) (global.get $printer_hdc))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 24)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 26)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 28)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 30)) (i32.const 9999))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 32)) (i32.const 1))
+    (if (i32.and (local.get $flags) (i32.const 0x00000400))   ;; PD_RETURNDEFAULT
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (global.set $common_dialog_kind (i32.const 2))
+    (global.set $common_dialog_struct (local.get $arg0))
+    (call $create_print_dialog (local.get $dlg) (local.get $owner))
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
+
   ;; 954: CoFreeUnusedLibraries() — no args, no-op
   (func $handle_CoFreeUnusedLibraries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -13513,6 +13574,23 @@
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (call $create_color_dialog (local.get $dlg) (local.get $owner) (local.get $arg0))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
+
+  ;; ChooseColorW / PageSetupDlgW — CHOOSECOLOR and PAGESETUPDLG have the same
+  ;; layout in both flavours, and the only members that differ are the template
+  ;; name pointers, which neither implementation reads. So these are the same
+  ;; call, not a reimplementation.
+  ;;
+  ;; They are worth registering rather than leaving absent because NT Paint
+  ;; delay-loads them: a failed GetProcAddress does not come back as an error,
+  ;; it raises 0xC06D007F and takes the process down. Options > Edit Colors...
+  ;; and File > Page Setup... each killed Paint outright.
+  (func $handle_ChooseColorW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_ChooseColorA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_PageSetupDlgW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_PageSetupDlgA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; === VERSION.DLL APIs ===
 
