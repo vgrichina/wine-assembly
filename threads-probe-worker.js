@@ -1,0 +1,65 @@
+// Worker half of threads-probe.html. Receives a shared memory and a compiled
+// module from the page and reports what it could actually do with them.
+//
+// The point is to test THIS project's pipeline, not a textbook one: the module
+// may be the prebuilt artifact or one produced at load time by our own
+// WAT->WASM compiler (lib/compile-wat.js), and it imports 174 host functions
+// plus the memory. Those imports are stubbed here — instantiation succeeding is
+// the signal, since it proves the module crossed a postMessage boundary and
+// linked against memory created on the other thread.
+
+self.onmessage = async (event) => {
+  const msg = event.data || {};
+  const reply = r => self.postMessage(Object.assign({ id: msg.id }, r));
+
+  try {
+    if (msg.kind === 'atomics') {
+      // Prove the memory is genuinely shared: bump a counter the page is
+      // watching, then wait for the page to bump one back. thread-manager.js
+      // synchronises exactly this way (Atomics from JS, not wasm atomics), so
+      // this is the representative test rather than a synthetic one.
+      const view = new Int32Array(msg.memory.buffer, msg.offset, 4);
+      for (let i = 0; i < 1000; i++) Atomics.add(view, 0, 1);
+      Atomics.store(view, 1, 0xBEEF);
+      Atomics.notify(view, 1);
+      const waited = Atomics.wait(view, 2, 0, 3000);
+      return reply({ ok: true, detail: `counter=${Atomics.load(view, 0)} wait=${waited}` });
+    }
+
+    if (msg.kind === 'instantiate') {
+      const module = msg.module;
+      const imports = {};
+      let stubbed = 0;
+      for (const imp of WebAssembly.Module.imports(module)) {
+        imports[imp.module] = imports[imp.module] || {};
+        if (imp.kind === 'memory') {
+          imports[imp.module][imp.name] = msg.memory;
+        } else if (imp.kind === 'function') {
+          imports[imp.module][imp.name] = () => 0;
+          stubbed++;
+        } else if (imp.kind === 'global') {
+          imports[imp.module][imp.name] = 0;
+        }
+      }
+      const t0 = performance.now();
+      const instance = await WebAssembly.instantiate(module, imports);
+      const ms = performance.now() - t0;
+      const exports = Object.keys(instance.exports || {});
+      // Touch the memory through the instance so linkage is proven, not assumed.
+      let readBack = null;
+      if (typeof instance.exports.get_image_base === 'function') {
+        readBack = instance.exports.get_image_base() >>> 0;
+      }
+      return reply({
+        ok: true,
+        detail: `instantiated in ${ms.toFixed(0)}ms, ${stubbed} host fns stubbed, `
+          + `${exports.length} exports`
+          + (readBack === null ? '' : `, get_image_base()=0x${readBack.toString(16)}`),
+      });
+    }
+
+    reply({ ok: false, detail: `unknown kind ${msg.kind}` });
+  } catch (err) {
+    reply({ ok: false, detail: String(err && err.message || err) });
+  }
+};

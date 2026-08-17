@@ -40,6 +40,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..');
+const ISOLATE = process.argv.includes('--isolate');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -209,13 +210,22 @@ function serveStatic(req, res, urlPath) {
       return;
     }
     const type = MIME[path.extname(full).toLowerCase()] || 'application/octet-stream';
+    // --isolate serves the two headers that let a shared WebAssembly.Memory
+    // reach a Worker. Off by default: it is a change in how the page is
+    // isolated, and threads-probe.html needs to be able to see BOTH states —
+    // the header path here, and the service-worker path that production would
+    // have to use (see docs/design-real-threads.md §3.4-3.5).
+    const isolationHeaders = ISOLATE ? {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    } : null;
     // The build output and the WAT sources change on every rebuild, and a
     // cached copy of either produces a confusing "my fix did nothing".
-    res.writeHead(200, {
+    res.writeHead(200, Object.assign({
       'Content-Type': type,
       'Content-Length': st.size,
       'Cache-Control': 'no-cache',
-    });
+    }, isolationHeaders || {}));
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(full).pipe(res)
       .on('error', () => res.destroy());
@@ -446,6 +456,8 @@ function main() {
     console.log(`  serving ${ROOT}`);
     console.log('  signaling API at /api/data, /api/public-data (no login, in memory)');
     console.log(`  perf stream sink at /api/perf — open http://${host}:${port}/?debug&perf&perf-stream`);
+    console.log(`  threads probe: http://${host}:${port}/threads-probe.html`
+      + (ISOLATE ? '  (COOP/COEP served: isolated)' : '  (no COOP/COEP; use --isolate or the page\'s service-worker button)'));
     if (perfLog) console.log(`  perf batches appended as NDJSON to ${perfLog}`);
     if (host === '0.0.0.0') {
       console.log('  NOTE: bound to all interfaces and unauthenticated — trusted networks only');

@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wine-Assembly Threads Probe</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    body { margin: 0; background: #101418; color: #dce7ef; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 4px; font: 600 22px system-ui, sans-serif; }
+    p { color: #9fb2c0; line-height: 1.5; }
+    .env { margin: 16px 0; padding: 12px; border: 1px solid #385466; background: #15212a; }
+    .env b { color: #dce7ef; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #26333d; vertical-align: top; }
+    th { color: #7d94a5; font-weight: 600; }
+    td.v { width: 74px; font-weight: 700; }
+    .pass { color: #6ee7a2; } .fail { color: #ff8f8f; } .wait { color: #8ab4ff; } .skip { color: #8b9aa6; }
+    .detail { color: #9fb2c0; }
+    button { padding: 7px 14px; margin: 4px 6px 4px 0; background: #24384a; color: #dce7ef;
+             border: 1px solid #3f6b88; font: inherit; cursor: pointer; }
+    button:hover { background: #2d475d; } button:disabled { opacity: .45; cursor: default; }
+    .verdict { margin-top: 18px; padding: 12px; border: 1px solid #385466; background: #15212a;
+               white-space: pre-wrap; line-height: 1.5; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Threads probe</h1>
+  <p>
+    Answers one question: can this browser run wine-assembly's guest threads as
+    real Web Workers? That needs cross-origin isolation, a shared
+    <code>WebAssembly.Memory</code> that survives <code>postMessage</code>, and a
+    compiled module that links in a worker — including a module produced at load
+    time by our own WAT&nbsp;&rarr;&nbsp;WASM compiler, which is how this project
+    normally builds in the browser.
+  </p>
+
+  <div class="env" id="env">reading environment…</div>
+
+  <div>
+    <button id="run">Run probe</button>
+    <button id="install">Install isolation service worker + reload</button>
+    <button id="uninstall">Uninstall service worker</button>
+  </div>
+
+  <table>
+    <thead><tr><th>#</th><th>check</th><th class="v">result</th><th>detail</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div class="verdict" id="verdict">Press “Run probe”.</div>
+</main>
+
+<script src="lib/compile-wat.js"></script>
+<script>
+const rowsEl = document.getElementById('rows');
+const verdictEl = document.getElementById('verdict');
+const results = [];
+
+function row(name) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${rowsEl.children.length + 1}</td><td>${name}</td>`
+    + `<td class="v wait">…</td><td class="detail"></td>`;
+  rowsEl.appendChild(tr);
+  const t0 = performance.now();
+  return {
+    set(state, detail) {
+      const cell = tr.children[2];
+      cell.className = 'v ' + state;
+      cell.textContent = state.toUpperCase();
+      const ms = performance.now() - t0;
+      tr.children[3].textContent = (detail || '') + (ms > 50 ? `  (${ms.toFixed(0)}ms)` : '');
+      results.push({ name, state, detail });
+    },
+  };
+}
+
+function describeEnv() {
+  const sw = navigator.serviceWorker;
+  const controlled = !!(sw && sw.controller);
+  document.getElementById('env').innerHTML = [
+    `<b>crossOriginIsolated:</b> ${typeof crossOriginIsolated === 'undefined' ? 'undefined' : crossOriginIsolated}`,
+    `<b>service worker:</b> ${sw ? (controlled ? 'controlling this page' : 'available, not controlling') : 'unavailable (private browsing?)'}`,
+    `<b>SharedArrayBuffer:</b> ${typeof SharedArrayBuffer === 'undefined' ? 'absent' : 'present'}`,
+    `<b>OffscreenCanvas:</b> ${typeof OffscreenCanvas === 'undefined' ? 'absent' : 'present'}`,
+    `<b>hardwareConcurrency:</b> ${navigator.hardwareConcurrency || '?'}`,
+    `<b>top-level:</b> ${window.top === window ? 'yes' : 'NO — inside an iframe'}`,
+    `<b>origin:</b> ${location.origin}`,
+    `<b>UA:</b> ${navigator.userAgent}`,
+  ].join('<br>');
+  return controlled;
+}
+
+// Mirrors host.js: the prebuilt artifact differs by tail-call support, and the
+// probe must exercise whichever one this browser would really load.
+function supportsTailCalls() {
+  try {
+    // (module (func $t (result i32) (i32.const 1)) (func (export "f") (result i32) (return_call $t)))
+    const bytes = new Uint8Array([
+      0,97,115,109,1,0,0,0, 1,5,1,96,0,1,127, 3,3,2,0,0,
+      7,5,1,1,102,0,1, 10,11,2,4,0,65,1,11, 4,0,18,0,11,
+    ]);
+    return WebAssembly.validate(bytes);
+  } catch (_) { return false; }
+}
+
+function ask(worker, msg, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => reject(new Error('worker did not reply in 30s')), 30000);
+    const onMsg = e => {
+      if (!e.data || e.data.id !== id) return;
+      clearTimeout(timer);
+      worker.removeEventListener('message', onMsg);
+      resolve(e.data);
+    };
+    worker.addEventListener('message', onMsg);
+    worker.postMessage(Object.assign({ id }, msg), transfer || []);
+  });
+}
+
+async function run() {
+  rowsEl.innerHTML = '';
+  results.length = 0;
+  const controlled = describeEnv();
+  const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+
+  // 1 — isolation
+  const r1 = row('cross-origin isolated');
+  r1.set(isolated ? 'pass' : 'fail',
+    isolated ? (controlled ? 'via service worker' : 'via server headers')
+             : 'no COOP/COEP in effect — shared memory cannot reach a worker');
+
+  // 2 — shared memory of the real size
+  const r2 = row('shared WebAssembly.Memory (8192 pages = 512MB)');
+  let memory = null;
+  try {
+    memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+    const isSab = typeof SharedArrayBuffer !== 'undefined' && memory.buffer instanceof SharedArrayBuffer;
+    r2.set('pass', `allocated, buffer is ${isSab ? 'SharedArrayBuffer' : memory.buffer.constructor.name}`);
+  } catch (err) {
+    r2.set('fail', String(err && err.message || err));
+  }
+
+  // 3 — worker creation
+  const r3 = row('spawn Worker');
+  let worker = null;
+  try {
+    worker = new Worker('threads-probe-worker.js');
+    r3.set('pass', 'worker running');
+  } catch (err) {
+    r3.set('fail', String(err && err.message || err));
+  }
+
+  // 4 — the isolation-gated step: hand the memory across
+  const r4 = row('postMessage shared memory to worker + Atomics both ways');
+  if (!worker || !memory) {
+    r4.set('skip', 'needs worker and memory');
+  } else {
+    try {
+      const offset = 1024;            // scratch, below anything the emulator uses
+      const view = new Int32Array(memory.buffer, offset, 4);
+      Atomics.store(view, 0, 0); Atomics.store(view, 1, 0); Atomics.store(view, 2, 0);
+      const pending = ask(worker, { kind: 'atomics', memory, offset });
+      // Wait for the worker's flag, then answer it — proving both directions.
+      const deadline = Date.now() + 3000;
+      while (Atomics.load(view, 1) !== 0xBEEF && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 10));
+      }
+      const sawWorker = Atomics.load(view, 1) === 0xBEEF;
+      Atomics.store(view, 2, 1);
+      Atomics.notify(view, 2);
+      const res = await pending;
+      const counter = Atomics.load(view, 0);
+      r4.set(res.ok && sawWorker && counter === 1000 ? 'pass' : 'fail',
+        `${res.detail}; page sees counter=${counter}, worker flag ${sawWorker ? 'seen' : 'MISSING'}`);
+    } catch (err) {
+      r4.set('fail', String(err && err.message || err));
+    }
+  }
+
+  // 5 — prebuilt artifact: compile here, instantiate there
+  const tailCalls = supportsTailCalls();
+  const artifact = tailCalls ? 'build/wine-assembly.wasm' : 'build/wine-assembly.compat.wasm';
+  const r5 = row(`prebuilt module crosses to worker (${artifact})`);
+  if (!worker || !memory) {
+    r5.set('skip', 'needs worker and memory');
+  } else {
+    try {
+      const res = await fetch(artifact);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      const module = await WebAssembly.compile(buf);
+      const reply = await ask(worker, { kind: 'instantiate', module, memory });
+      r5.set(reply.ok ? 'pass' : 'fail',
+        `${(buf.byteLength / 1048576).toFixed(1)}MB, tail-calls ${tailCalls ? 'yes' : 'no'} — ${reply.detail}`);
+    } catch (err) {
+      r5.set('fail', String(err && err.message || err));
+    }
+  }
+
+  // 6 — the question that prompted this: OUR OWN on-the-fly compiler
+  const r6 = row('module built at load time by lib/compile-wat.js, then crosses to worker');
+  if (!worker || !memory) {
+    r6.set('skip', 'needs worker and memory');
+  } else if (typeof compileWatSnapshot !== 'function') {
+    r6.set('fail', 'compileWatSnapshot not exposed — check lib/compile-wat.js loaded');
+  } else {
+    try {
+      const t0 = performance.now();
+      const bytes = await compileWatSnapshot(
+        async file => {
+          const res = await fetch(`src/${file}`);
+          if (!res.ok) throw new Error(`src/${file}: HTTP ${res.status}`);
+          return res.text();
+        },
+        { tailCalls, cacheKey: `threads-probe:${tailCalls}` }
+      );
+      const compileMs = performance.now() - t0;
+      const module = await WebAssembly.compile(bytes);
+      const reply = await ask(worker, { kind: 'instantiate', module, memory });
+      r6.set(reply.ok ? 'pass' : 'fail',
+        `WAT→WASM in ${compileMs.toFixed(0)}ms, ${(bytes.length / 1048576).toFixed(1)}MB — ${reply.detail}`);
+    } catch (err) {
+      r6.set('fail', String(err && err.message || err));
+    }
+  }
+
+  if (worker) worker.terminate();
+  verdict(isolated, controlled);
+}
+
+function verdict(isolated, controlled) {
+  const failed = results.filter(r => r.state === 'fail');
+  const lines = [];
+  if (!failed.length) {
+    lines.push('VERDICT: real threads are possible in this browser'
+      + (controlled ? ' (isolation supplied by the service worker).' : ' (isolation supplied by server headers).'));
+    lines.push('Every step of the actual pipeline worked, including a module compiled here at load time.');
+  } else if (!isolated) {
+    lines.push('VERDICT: not isolated, so no real threads here — this is the expected result for');
+    lines.push('Safari private browsing, for a cross-origin iframe, and for a first visit before the');
+    lines.push('service worker takes over. The emulator must fall back to the single-threaded');
+    lines.push('scheduler in exactly this case (docs/design-real-threads.md §3.6).');
+    if (navigator.serviceWorker) lines.push('\nTry “Install isolation service worker + reload”.');
+    else lines.push('\nNo service worker API at all — private browsing. Fallback is the only option.');
+  } else {
+    lines.push('VERDICT: isolated, but part of the pipeline failed. These are the blocking items:');
+    for (const f of failed) lines.push(`  - ${f.name}: ${f.detail}`);
+  }
+  verdictEl.textContent = lines.join('\n');
+}
+
+document.getElementById('run').onclick = () => {
+  document.getElementById('run').disabled = true;
+  run().finally(() => { document.getElementById('run').disabled = false; });
+};
+
+document.getElementById('install').onclick = async () => {
+  if (!navigator.serviceWorker) {
+    verdictEl.textContent = 'No service worker API — private browsing blocks registration.';
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register('sw-coi.js', { scope: './' });
+    await navigator.serviceWorker.ready;
+    verdictEl.textContent = `registered (${reg.scope}); reloading so the worker controls this document…`;
+    setTimeout(() => location.reload(), 400);
+  } catch (err) {
+    verdictEl.textContent = 'registration failed: ' + (err && err.message || err);
+  }
+};
+
+document.getElementById('uninstall').onclick = async () => {
+  if (!navigator.serviceWorker) return;
+  const regs = await navigator.serviceWorker.getRegistrations();
+  await Promise.all(regs.map(r => r.unregister()));
+  verdictEl.textContent = `unregistered ${regs.length}; reloading…`;
+  setTimeout(() => location.reload(), 400);
+};
+
+describeEnv();
+</script>
+</body>
+</html>
