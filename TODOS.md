@@ -88,26 +88,28 @@ meaningless. Delete it. A baseline worktree needs the font assets too.
 
 ---
 
-## 1. Win16 / NE — Phase 6: three of the four are playable
+## 1. Win16 / NE — Phase 6: three of the four are playable, one is complete
 
 Phase 1 (`0c23c78`) loads and links NE images, Phase 2 (`84c98a1`) runs them,
 Phase 3 (`ff6f45a`, `9a0f12f`, `3b18812`, `90e548a`) gives them an API layer,
 Phase 4 (`919f011`, `5e8a9f3`, `e78ba7f`, `0af03d5`) adds NE DLL loading, and
 Phase 5 (`d5a09f7`) gets Hearts running.
 
-Phase 6 (`fd04a70`, `df6b6b5`, `653da1d`, `3716c6f`, `f82cc5d`, `7f464ce`)
-makes them look right rather than merely run.
+Phase 6 (`fd04a70`, `df6b6b5`, `653da1d`, `3716c6f`, `f82cc5d`, `7f464ce`,
+`72b3ba8`) makes them look right rather than merely run.
 
 **Minesweeper is complete** — Game/Help menu, red LED counters, yellow smiley,
-raised minefield. **Solitaire deals: stock, four foundations and seven tableau
-columns of real cards on green baize.** **FreeCell deals a full board out of
+raised minefield. **Solitaire deals a full hand, and keeps dealing** — stock,
+four foundations, seven tableau columns each with its face-up top card over a
+face-down fan, hand after hand. **FreeCell deals a full board out of
 CARDS.DLL** — eight columns of card faces, free cells, "FreeCell Game #2574"
 in the title (it opens empty by design; Game▸New Game, command 102, deals).
 **Hearts creates its frame, its status bar and its buttons, runs its message
 loop, initialises DDEML and puts up a real message box.** All four are in the
 browser shell under "16-bit (Win16 / NE)" (`8dc244e`), covered by
-`test/test-win16-web.js`, which asserts Minesweeper's colour art and that both
-card games actually deal.
+`test/test-win16-web.js`, which asserts Minesweeper's colour art, that both
+card games actually deal, and that Solitaire's *second* hand is as full as its
+first.
 
 Most of the bugs behind the previously-empty tables were **not** Win16-only
 and are worth knowing about for 32-bit apps too:
@@ -135,6 +137,11 @@ and are worth knowing about for 32-bit apps too:
   32-bit continuation thunks, which a 16-bit task cannot be resumed on.
 - ShowWindow's WM_SIZE arrived *after* whatever WinMain posted, rather than
   before it as on Windows, so Solitaire dealt onto a table with no layout.
+- **The local heap never reused a freed block.** `LocalFree` was a no-op and
+  `LocalAlloc` a bump pointer. An app that churns — Solitaire allocates a node
+  per card and frees all 28 on the next deal — exhausts a 4KB heap in two
+  hands. A NULL from LocalAlloc is rarely reported by the caller, so this
+  reads as a feature quietly not working rather than as an error.
 
 The address scheme, because everything else depends on it: every segment base
 is 64KB aligned, so the low word of a linear address *is* the offset inside its
@@ -155,6 +162,10 @@ the pre-existing 16-bit push/pop handlers needed no changes at all.
   `lpMsg` for the four message-pump entry points — reach for it first on
   anything here. `tools/png-probe.js --at=x,y` reads a dumped surface's alpha,
   which is how you tell "filled black" from "never drawn".
+  `tools/ne-disasm.js --all` sweeps a whole segment linearly rather than
+  following one function to its first `ret`, which is how you grep a module for
+  every write to a struct field — none of the `find_*` tools read NE images or
+  16-bit ModRM.
   Two facts worth not rediscovering: a Win16 module name is not its filename
   (SOUND ships as `mmsound.drv`), and not every import is by ordinal.
 
@@ -182,21 +193,24 @@ sets the global instead.
 
 ### Open
 
-- **Solitaire's animated deal never advances.** The board it opens with is
-  right, but ask for another (Game▸Deal, command 1000) and the table clears to
-  stock plus foundation outlines and stays there. The engine's animation tick
-  — `seg 4:0x13ac`, reached from the TIMERPROC through the dispatcher at
-  `seg 4:0x1644` — takes its early-out every single time because the table
-  object's `+0x14` is zero. The other three gates pass (`[0x2e]`=1,
-  `+0x12`=1, `[0x14]`=0 meaning not iconic), and a watchpoint on `+0x14`
-  (`--watch-word=0x1a02ce --watch-log`) shows nothing ever writes it. Find what
-  should. Two observations that may or may not be related: after that second
-  deal the app's own 250ms timer is delivered on nearly every pump iteration
-  (~15000 WM_TIMER in a 2s run, one per idle poll, id and TIMERPROC both
-  correct) while `--dump=0xac00:60` shows an empty TIMER_TABLE at run end, so
-  where those deliveries come from is not yet explained; and the tableau piles
-  draw their cards with a 3px fan, which is right for face-down cards, but
-  three of the seven still show a back rather than a turned top card.
+- ~~**Solitaire's deal stops part way.**~~ FIXED `72b3ba8`, and the diagnosis
+  in the previous version of this item was wrong in an instructive way — the
+  animation tick at `seg 4:0x13ac` is a *drag* tick, `+0x14` means "a card is
+  in hand", and it is correctly zero. The deal is synchronous: the loop at
+  `seg 4:0xdd3` places all 28 cards every time. What failed was drawing them.
+  `$win16_LocalAlloc` was a bump pointer and `LocalFree` a no-op, as its own
+  comment admitted; Solitaire allocates one 26-byte node per card and frees all
+  28 on the next deal, so a 4KB heap runs dry mid-way through the second hand
+  and entirely by the third. A NULL from LocalAlloc is not an error the game
+  reports — the pile just declines the card — so it looked like an animation
+  that stalled. The heap now has a first-fit free list.
+  The two "unexplained" observations were both artifacts of the harness, worth
+  writing down so nobody chases them again: `test/run.js` gives the guest a
+  synthetic clock of **200ms per batch**, so a 250ms timer is due on nearly
+  every pump iteration and thousands of WM_TIMER in a short run are expected
+  (the browser uses real time); and `--dump` runs its address through `g2w`, so
+  `--dump=0xac00` never reads TIMER_TABLE at all — that address is a raw WASM
+  offset below GUEST_BASE, not a guest address.
 - **Hearts goes straight to the client path and finds no dealer.** It gets all
   the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
   and puts up "Unable to connect with dealer. Hearts will end." What it should
