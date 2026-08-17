@@ -49,17 +49,31 @@ for d in test/binaries/entertainment-pack test/binaries/pinball test/binaries/sh
   done
 done
 
+# One app at a time takes about ten minutes on a loaded box, which is most of
+# a day for the corpus. The runs are independent, so fan them out; JOBS=3 keeps
+# enough cores free that the emulator inside each run still gets scheduled
+# (the numbers stop meaning anything if the runs starve each other).
+JOBS="${MENU_SWEEP_JOBS:-3}"
+list=$(mktemp)
 for exe in "${APPS[@]}"; do
-  [ -f "$exe" ] || continue
+  [ -f "$exe" ] && echo "$exe" >> "$list"
+done
+
+export OUT
+sweep_one() {
+  exe="$1"; shift
   name=$(basename "$exe" .exe)
   # Two apps can share a basename (mspaint ships in three places); keep the
   # parent directory in the log name so neither result overwrites the other.
   parent=$(basename "$(dirname "$exe")")
   log="$OUT/${parent}-${name}.log"
-  echo "=== $exe"
   node tools/menu-sweep.js "$exe" "$@" > "$log" 2>&1
   head -1 "$log"
-done
+}
+export -f sweep_one 2>/dev/null || true
+
+xargs -P "$JOBS" -I{} bash -c 'sweep_one "$@"' _ {} "$@" < "$list"
+rm -f "$list"
 
 {
   echo "menu sweep: $(date -Iseconds)"
