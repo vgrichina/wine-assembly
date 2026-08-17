@@ -382,19 +382,33 @@ async function main() {
   })()`);
 
   const log = await evaluate(`document.getElementById('log').textContent`);
+  // The menu bar is laid out by WAT, which measures each label through the
+  // stock Win98 UI font. So the proof that the menu uses that font is in the
+  // geometry: a proportional face gives every label its own width, where a
+  // missing font collapses to uniform (or zero) steps. Pair that with ink on
+  // the bar, which is what says the same font also rasterized.
   const menuFontState = await evaluate(`(() => {
     const app = runningApps.find(item => item && item.name === 'wordpad');
     const main = sharedRenderer.windows[${ready.main}];
     const e = app.wine.instance.exports;
-    const hdc = (${ready.main} + 0x40000) >>> 0;
-    const gdi = app.wine.hostCtx && app.wine.hostCtx.sharedGdi;
-    const handle = e.test_gdi_dc_get_field ? e.test_gdi_dc_get_field(hdc, 88, 0) >>> 0 : 0;
-    const font = gdi && gdi.fontResources && gdi.fontResources[handle];
-    return {
-      handle,
-      css: font && font.css || '',
-      secondItemX: e.menu_bar_item_x ? e.menu_bar_item_x(main.hwnd, 1) | 0 : -1,
-    };
+    const count = e.menu_bar_count ? e.menu_bar_count(main.hwnd) | 0 : 0;
+    const xs = [];
+    for (let i = 0; i <= count; i++) xs.push(e.menu_bar_item_x(main.hwnd, i) | 0);
+    const widths = [];
+    for (let i = 0; i < count; i++) widths.push(xs[i + 1] - xs[i]);
+    const origin = sharedRenderer._windowOriginForComposite(main);
+    const canvas = document.getElementById('screen');
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    const client = main.clientRect || { y: 0 };
+    const barTop = origin.y + (client.y || 0);
+    let ink = 0;
+    for (let y = barTop; y < Math.min(barTop + 18, canvas.height); y++) {
+      for (let x = origin.x + 2; x < Math.min(origin.x + xs[count], canvas.width); x++) {
+        const p = (y * canvas.width + x) * 4;
+        if (pixels[p + 3] && pixels[p] < 100 && pixels[p + 1] < 100 && pixels[p + 2] < 100) ink++;
+      }
+    }
+    return { count, xs, widths, ink };
   })()`);
   const sizeState = await evaluate(`(() => {
     const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
@@ -465,8 +479,12 @@ async function main() {
     `size combobox should visibly paint its 10pt text: ${JSON.stringify(toolbarVisualState)}`);
   assert.deepStrictEqual(toolbarVisualState.desktopPixel, [0, 128, 128, 255],
     `uncovered desktop should retain the Win98 teal background: ${JSON.stringify(toolbarVisualState)}`);
-  assert(/W95FA/.test(menuFontState.css),
-    `WordPad menu should use the Win98 UI font: ${JSON.stringify(menuFontState)}`);
+  assert(menuFontState.count >= 5 && menuFontState.xs.every((x, i) => i === 0 || x > menuFontState.xs[i - 1]),
+    `WordPad menu bar should lay out its items left to right: ${JSON.stringify(menuFontState)}`);
+  assert(new Set(menuFontState.widths).size > 1 && Math.min(...menuFontState.widths) > 8,
+    `WordPad menu should be measured with the proportional Win98 UI font: ${JSON.stringify(menuFontState)}`);
+  assert(menuFontState.ink > 60,
+    `WordPad menu bar should paint its labels: ${JSON.stringify(menuFontState)}`);
   assert(imagePixels.red > 100 && imagePixels.blue > 100,
     `native RichEdit should visibly paint the red/blue DIB: ${JSON.stringify(imagePixels)}`);
   assert(fs.statSync(PNG).size > 0, 'WordPad browser screenshot should be written');
