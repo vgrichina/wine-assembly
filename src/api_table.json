@@ -7374,7 +7374,7 @@
   {
     "id": 873,
     "name": "RunFileDlg",
-    "nargs": 5,
+    "nargs": 6,
     "convention": "stdcall",
     "hash": 1426548385
   },

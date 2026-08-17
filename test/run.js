@@ -4235,7 +4235,14 @@ async function main() {
           if (!style) style = win.style >>> 0;
           const parent = win.parentHwnd ? `0x${(win.parentHwnd >>> 0).toString(16)}` : '0x0';
           const enabled = (style & 0x08000000) === 0;
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          // Whether this window shows a menu bar. Anything driving an app
+          // through WM_COMMAND needs it: a window with no menu has no menu
+          // commands, so "I posted a command and nothing happened" says
+          // nothing about the app. The renderer already decides this to lay
+          // the window out, so ask it rather than guessing from the style.
+          let menuBar = false;
+          try { if (renderer._hasMenuBar) menuBar = !!renderer._hasMenuBar(win); } catch (_) {}
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';
