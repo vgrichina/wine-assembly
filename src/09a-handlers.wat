@@ -8035,6 +8035,30 @@
   )
 
   ;; 466: ShellAboutW — return 1, 4 args stdcall
+  ;; OleUIAddVerbMenuA(lpOleObj, lpszShortType, hMenu, uPos, uIDVerbMin,
+  ;;                   uIDVerbMax, bAddConvert, idConvert, lphMenu) → BOOL
+  ;;
+  ;; MFC builds the "<<OLE VERBS GO HERE>>" entry of an Edit menu through this,
+  ;; from its WM_INITMENUPOPUP handler. It was not registered, so
+  ;; GetProcAddress("OleUIAddVerbMenuA") returned 0 and MFC put up "This
+  ;; program is linked to the missing export ... in OLEDLG.DLL" -- which only
+  ;; became visible once WM_INITMENUPOPUP started being delivered at all.
+  ;;
+  ;; With no object selected there are no verbs to add, and FALSE with
+  ;; *lphMenu = NULL is the documented answer, not a placeholder. An actual
+  ;; embedded object would need IOleObject::EnumVerbs, so that case still
+  ;; fails loudly rather than silently doing nothing.
+  (func $handle_OleUIAddVerbMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $lphMenu i32)
+    (if (local.get $arg0)
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (local.set $lphMenu (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    (if (local.get $lphMenu)
+      (then (call $gs32 (local.get $lphMenu) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))  ;; 9 args
+  )
+
   ;; ShellAboutW(hwnd, szApp, szOtherStuff, hIcon) — the W twin of
   ;; ShellAboutA, which builds the whole dialog in WAT. This returned TRUE
   ;; without drawing anything, so XP Minesweeper's Help > About Minesweeper...

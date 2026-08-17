@@ -19208,5 +19208,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2760246904
+  },
+  {
+    "id": 2457,
+    "name": "OleUIAddVerbMenuA",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 765069751
   }
 ]
