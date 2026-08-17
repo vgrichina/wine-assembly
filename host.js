@@ -280,7 +280,15 @@ class WineAssembly {
         const stillHasTopLevel = WineAssembly.hasRemainingAppWindow(
           destroyed, remainingTopLevel
         );
-        if (!stillHasTopLevel) self.stop({ repaint: false });
+        // "No windows left" is a guess that the app is finished, not proof:
+        // a Win32 app ends when its message loop ends, not when its window
+        // count reaches zero. Funtris opens on a modal splash and only builds
+        // its game window once that is dismissed, so stopping the instant the
+        // splash closed killed it in between. Give the guest a short grace
+        // period to put another top-level window up; _checkLastWindowStop
+        // finishes the teardown if it does not.
+        if (!stillHasTopLevel) self._lastWindowStopAt = Date.now() + 750;
+        else self._lastWindowStopAt = 0;
       },
       onExit: (code) => {
         self.stop({ repaint: false });
@@ -1349,6 +1357,23 @@ class WineAssembly {
     exports.clear_yield && exports.clear_yield();
   }
 
+  // Finish (or cancel) a deferred last-window teardown. Called once per run
+  // slice: a replacement top-level window cancels it, and the deadline
+  // passing without one completes the stop.
+  _checkLastWindowStop() {
+    if (!this._lastWindowStopAt) return;
+    if (!this.renderer || !this._hwndBase) { this._lastWindowStopAt = 0; return; }
+    const lo = this._hwndBase;
+    const hi = lo + 0x10000;
+    const hasTopLevel = Object.values(this.renderer.windows).some(w =>
+      w && !w.isChild && w.hwnd >= lo && w.hwnd < hi
+    );
+    if (hasTopLevel) { this._lastWindowStopAt = 0; return; }
+    if (Date.now() < this._lastWindowStopAt) return;
+    this._lastWindowStopAt = 0;
+    this.stop({ repaint: false });
+  }
+
   _removeAppWindows() {
     if (!this.renderer || !this._hwndBase) return;
     const lo = this._hwndBase;
@@ -1436,6 +1461,13 @@ class WineAssembly {
     const self = this;
     const step = async () => {
       if (!self.running) return;
+      // Debug-mode HUD seam (lib/perf-hud.js). Null unless the HUD is on, so
+      // a normal run pays one property read per step. Phases are timed here
+      // rather than sampled from outside because the whole point is knowing
+      // *which* part of a long step held the main thread.
+      const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
+        ? window.WinePerf : null;
+      if (perf) perf.stepBegin();
       try {
         const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         self._beginGuestTickBatch();
@@ -1453,7 +1485,10 @@ class WineAssembly {
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
           const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
           const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
+          const perfMainStart = perf ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          if (perf) perf.mark('main', performance.now() - perfMainStart);
+          self._checkLastWindowStop();
           // ExitProcess/last-window teardown can stop the app from inside a
           // host callback while the current guest slice still unwinds. Run a
           // final ownership cleanup at the slice boundary so those trailing
@@ -1476,6 +1511,7 @@ class WineAssembly {
               ms: self.renderer._profileNow() - runStart,
             });
           }
+          const perfPresentStart = perf ? performance.now() : 0;
           self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
           if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
             self.hostCtx.sharedGdi.presentBestDxOffscreen();
@@ -1483,6 +1519,7 @@ class WineAssembly {
           if (self.renderer && self.renderer.flushRepaint) {
             self.renderer.flushRepaint(true);
           }
+          if (perf) perf.mark('present', performance.now() - perfPresentStart);
           self._runSliceCount = (self._runSliceCount || 0) + 1;
           self._runHeartbeat = ((self._runHeartbeat || 0) + 1) & 31;
           if (self.instance && self.instance.exports) {
@@ -1553,6 +1590,7 @@ class WineAssembly {
             const threadBudget = windowCount
               ? (recentInputWake ? 0 : activeStepsPerSlice)
               : activeStepsPerSlice;
+            const perfThreadStart = perf ? performance.now() : 0;
             if (threadBudget > 0) {
               if (windowCount && self.threadManager.runBudgeted) {
                 const quantumSteps = audioHot ? (menuOpen ? 20000 : 10000) : 50000;
@@ -1573,6 +1611,8 @@ class WineAssembly {
                 self.threadManager.runSlice(threadBudget);
               }
             }
+            if (perf) perf.mark('workers', performance.now() - perfThreadStart);
+            const perfPresentStart2 = perf ? performance.now() : 0;
             self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
             if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
               self.hostCtx.sharedGdi.presentBestDxOffscreen();
@@ -1580,6 +1620,7 @@ class WineAssembly {
             if (self.renderer && self.renderer.flushRepaint) {
               self.renderer.flushRepaint(true);
             }
+            if (perf) perf.mark('present', performance.now() - perfPresentStart2);
           }
         }
       } catch (e) {
@@ -1597,6 +1638,12 @@ class WineAssembly {
         self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' ESP=' + espHex + ' EBP=' + ebpHex + ' yield=' + yr + tag);
         self.stop({ repaint: false });
         return;
+      } finally {
+        // Every yield reason returns early from inside the try, so closing
+        // the step anywhere else would silently drop those slices — exactly
+        // the ones worth seeing, since a DLL load or a net_wait is a step
+        // that did something unusual with the main thread.
+        if (perf) perf.stepEnd();
       }
       if (self.running) {
         setTimeout(step, 0);

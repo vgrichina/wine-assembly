@@ -251,6 +251,50 @@ async function main() {
     };
     tick();
   })`, 22000);
+  // Funtris opens on a modal "Version 1.0" splash and does not create its game
+  // window until that is acknowledged, so the splash has to be clicked -- it
+  // never times out. test/test-funtris-new-game.js clicks the same button.
+  // Find OK by walking the dialog's children rather than hardcoding a point,
+  // so a layout change fails the click instead of silently missing it.
+  const dismissed = await evalExpr(`new Promise((resolve, reject) => {
+    const started = performance.now();
+    const tick = () => {
+      const app = runningApps[0];
+      const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+      const dlg = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+        .find(w => w && w.visible && w.isDialog && /^Funtris$/i.test(w.title || ''));
+      if (e && dlg) {
+        let slot = 0;
+        let hwnd = 0;
+        while ((slot = e.wnd_next_child_slot(dlg.hwnd, slot) | 0) >= 0) {
+          const child = e.wnd_slot_hwnd(slot) | 0;
+          slot++;
+          if (child && (e.ctrl_get_id(child) | 0) === 1) { hwnd = child; break; }
+        }
+        if (hwnd) {
+          if (sharedRenderer._computeClientRect) sharedRenderer._computeClientRect(dlg);
+          const client = dlg.clientRect || { x: dlg.x + 3, y: dlg.y + 23 };
+          const xy = e.ctrl_get_xy(hwnd) | 0;
+          const wh = e.ctrl_get_wh(hwnd) | 0;
+          const cx = client.x + (xy & 0xffff) + ((wh & 0xffff) >> 1);
+          const cy = client.y + (xy >>> 16) + ((wh >>> 16) >> 1);
+          sharedRenderer.handleMouseDown(cx, cy, 0);
+          resolve({ hwnd, cx, cy });
+          return;
+        }
+      }
+      if (performance.now() - started > 8000) reject(new Error('Funtris startup dialog had no OK button'));
+      else setTimeout(tick, 50);
+    };
+    tick();
+  })`, 10000);
+  // Press and release have to land in separate slices with the guest running
+  // in between; a synchronous down+up never lets the button see the press.
+  await new Promise(r => setTimeout(r, 250));
+  await evalExpr(`(() => {
+    sharedRenderer.handleMouseUp(${dismissed.cx}, ${dismissed.cy}, 0);
+    return 1;
+  })()`);
   await evalExpr(`new Promise((resolve, reject) => {
     const started = performance.now();
     const tick = () => {
@@ -260,6 +304,26 @@ async function main() {
       if (main && !startupDlg) resolve(1);
       else if (performance.now() - started > 8000) reject(new Error('Funtris startup dialog was not dismissed'));
       else setTimeout(tick, 50);
+    };
+    tick();
+  })`, 10000);
+
+  // The game window exists as soon as the splash closes, but New Game is only
+  // meaningful once the playfield has been painted -- commanding it earlier
+  // leaves the board half-built and the falling brick never shows.
+  await evalExpr(`new Promise((resolve, reject) => {
+    const started = performance.now();
+    const tick = () => {
+      const canvas = document.getElementById('screen');
+      if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
+      const data = canvas.getContext('2d').getImageData(70, 60, 140, 255).data;
+      let black = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (!data[i] && !data[i + 1] && !data[i + 2]) black++;
+      }
+      if (black > 20000) resolve(black);
+      else if (performance.now() - started > 8000) reject(new Error('Funtris playfield never painted, black=' + black));
+      else setTimeout(tick, 100);
     };
     tick();
   })`, 10000);
