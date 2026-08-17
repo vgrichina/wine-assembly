@@ -785,6 +785,16 @@ Resource-aware Win98 emulator
     if (new URLSearchParams(location.search).has('perf')) {
       window.addEventListener('load', () => setPerfHud(true));
     }
+    // `?perf-stream` posts samples to the dev server's /api/perf sink, so a
+    // session someone is really playing can be watched from a terminal.
+    // Collection runs whether or not the overlay is drawn.
+    if (new URLSearchParams(location.search).has('perf-stream')) {
+      window.addEventListener('load', () => {
+        const url = new URLSearchParams(location.search).get('perf-stream') || '/api/perf';
+        const id = window.WinePerf && window.WinePerf.startStream(url);
+        console.log('[perf] streaming to', url, 'session', id);
+      });
+    }
 
     function initDesktop() {
       const desktopApps = LOCAL_DESKTOP

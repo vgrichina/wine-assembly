@@ -56,6 +56,23 @@ The browser run loop is a `setTimeout(step, 0)` chain in `host.js`: each step ru
 
 Turn on **FPS graph** in the `?debug` toolbar (or load `?debug&perf` to start it enabled). The overlay draws, per step, a stacked bar of `guest` / `threads` / `paint` / `other` against 16.7ms and 33ms guides, plus the rAF frame-interval line underneath. A tall bar is literally a step the browser could not interrupt; its color says who to blame.
 
+**`GAME fps` and `page fps` are different numbers and only the first one is what "laggy" means.** The page composites at a steady 60 no matter how slowly the emulated machine runs, so a single fps readout hides the entire problem. `GAME` counts GDI surface flushes with a real dirty rect — frames the guest actually put on screen — and `M steps/s` is x86 throughput. Blobby in its menu: game 59fps at 28M steps/s. Blobby in a match: game 29fps at 10.4M steps/s, page 60fps throughout.
+
+`throttled%` is the share of steps where the worker budget (`maxWallMs` in `host.js`) expired with work still pending. **A high number is not automatically the bug** — measured on Blobby: 100% throttled, but quadrupling the budget *lowered* guest fps from 29 to 17 and produced 240 long tasks. It means the game loop always has work, not that the scheduler is starving it. The ceiling there is interpreter throughput, so look at what costs instructions, not at the budget.
+
+### Streaming a real session
+
+`?debug&perf&perf-stream` posts batched samples to `tools/dev-server.js`, which prints one line per second and can append NDJSON. Use it when someone reports jank *they* experienced — a scripted run is a different session on a different machine load:
+
+```bash
+node tools/dev-server.js --perf-log=/tmp/perf.ndjson
+# then open http://127.0.0.1:8080/?debug&perf&perf-stream and play
+04:24:15 ssnalq game  59fps  page 60  steps 28.0M/s  step p50 2.3 p99 3.6ms  guest 3% thr 94%  throttled 0%    ▁▂▂▁▂▂
+04:24:19 ssnalq game  29fps  page 60  steps 10.5M/s  step p50 14.8 p99 21.2ms  guest 0% thr 99%  throttled 100% ▅▅▅▆▆▇
+```
+
+`?perf-stream=URL` aims it elsewhere; the sink accepts cross-origin posts so the page can be served from another port.
+
 `host.js` feeds it through `window.WinePerf.{stepBegin,mark,stepEnd}` — four `performance.now()` calls per step, and the seam is null unless the HUD is on. `window.WinePerf.snapshot()` returns the same numbers as JSON, so headless runs get real phase attribution instead of inferring it:
 
 ```bash

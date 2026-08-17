@@ -1485,6 +1485,7 @@ class WineAssembly {
           const runStart = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : 0;
           const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
           const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
+          if (perf) perf.countSteps(activeStepsPerSlice);
           const perfMainStart = perf ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
           if (perf) perf.mark('main', performance.now() - perfMainStart);
@@ -1597,7 +1598,7 @@ class WineAssembly {
                 const maxWallMs = audioHot
                   ? (menuOpen ? (mainThreadWaiting ? 8 : 6) : 4)
                   : (mainThreadWaiting ? 16 : 12);
-                self.threadManager.runBudgeted({
+                const threadStats = self.threadManager.runBudgeted({
                   // Non-audio UI workers should be limited by the wall-clock
                   // budget, not by one nominal interpreter slice. Credits
                   // needs several quanta before it can present its first frame.
@@ -1607,8 +1608,17 @@ class WineAssembly {
                   prioritizeAudioThreads: audioHot && !menuOpen,
                   stopIfMessagePending: false,
                 });
+                // hitDeadline means the worker was cut off by maxWallMs with
+                // work still to do — the guest is being throttled by us, not
+                // by its own idle loop. That distinction is invisible from
+                // the page's frame rate, which stays a perfect 60 either way.
+                if (perf && threadStats) {
+                  perf.countSteps(threadStats.steps | 0);
+                  perf.markThrottled(!!threadStats.hitDeadline);
+                }
               } else {
-                self.threadManager.runSlice(threadBudget);
+                const sliceStats = self.threadManager.runSlice(threadBudget);
+                if (perf && sliceStats) perf.countSteps(sliceStats.steps | 0);
               }
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);

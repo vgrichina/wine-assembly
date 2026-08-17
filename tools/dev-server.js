@@ -298,6 +298,83 @@ async function handleApi(req, res, url, store) {
 }
 
 // ---------------------------------------------------------------------------
+// Perf stream sink  (POST /api/perf, from lib/perf-hud.js)
+// ---------------------------------------------------------------------------
+//
+// Someone playing in their own browser is the only source of the jank they
+// actually experience — a scripted run reproduces a different session on a
+// different load. So the HUD posts its samples here once a second, and this
+// prints one line per batch while it happens.
+//
+// The line leads with the GUEST frame rate, because a page compositing at a
+// steady 60 while the emulated machine presents 9 frames a second is exactly
+// what "super laggy but shows 60 fps" means, and only one of those two
+// numbers is the complaint.
+
+const MAX_PERF_BYTES = 4 * 1024 * 1024;
+const SPARK = '▁▂▃▄▅▆▇█';
+
+function sparkline(values, cap) {
+  if (!values.length) return '';
+  const top = Math.max(cap || 0, ...values);
+  return values.map(v => SPARK[Math.min(SPARK.length - 1, Math.max(0, Math.floor((v / top) * (SPARK.length - 1))))]).join('');
+}
+
+function pct(sorted, p) {
+  if (!sorted.length) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.round((p / 100) * (sorted.length - 1)))];
+}
+
+async function handlePerf(req, res, opts) {
+  // The page under test is often served from a different port (the headless
+  // profiler runs its own server), so the sink accepts cross-origin posts.
+  // It only ever appends timing numbers to a local file, and the server is
+  // bound to localhost unless someone asks otherwise.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+  if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+  let raw;
+  try {
+    raw = await readBody(req, MAX_PERF_BYTES);
+  } catch (err) {
+    return sendJson(res, err.status || 400, { error: err.message });
+  }
+  let batch;
+  try { batch = JSON.parse(raw); } catch (_) { return sendJson(res, 400, { error: 'body must be JSON' }); }
+  sendJson(res, 200, { ok: true });
+
+  if (opts.perfLog) {
+    // NDJSON so a session can be tailed live and re-cut later without
+    // having to have decided the aggregation up front.
+    try { fs.appendFileSync(opts.perfLog, JSON.stringify(batch) + '\n'); } catch (_) {}
+  }
+  if (opts.quiet) return;
+
+  const steps = Array.isArray(batch.steps) ? batch.steps : [];
+  const totals = steps.map(s => s[0]).sort((a, b) => a - b);
+  const snap = batch.snapshot || {};
+  const throttled = steps.filter(s => s[5]).length;
+  const guestFps = Number(batch.guestFrames || 0);
+  const share = k => {
+    const sum = steps.reduce((a, s) => a + s[k], 0);
+    const all = steps.reduce((a, s) => a + s[0], 0) || 1;
+    return Math.round((sum / all) * 100);
+  };
+  const t = new Date().toISOString().slice(11, 19);
+  const warn = guestFps > 0 && guestFps < 20 ? ' LAGGY' : '';
+  console.log(
+    `${t} ${String(batch.session || '?').slice(0, 6)} `
+    + `game ${String(guestFps).padStart(3)}fps  page ${String(Math.round(snap.fps || 0)).padStart(2)}  `
+    + `steps ${((snap.stepsPerSec || 0) / 1e6).toFixed(1)}M/s  `
+    + `step p50 ${pct(totals, 50).toFixed(1)} p99 ${pct(totals, 99).toFixed(1)}ms  `
+    + `guest ${share(1)}% thr ${share(2)}% paint ${share(3)}%  `
+    + `throttled ${Math.round((throttled / Math.max(1, steps.length)) * 100)}%  `
+    + `${sparkline(steps.map(s => s[0]), 16.7)}${warn}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 function createServer(opts) {
   const store = (opts && opts.store) || new Store();
@@ -307,6 +384,15 @@ function createServer(opts) {
   const verbose = !!(opts && opts.verbose);
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+
+    // Perf batches arrive ~1/sec and would bury the signaling log, so they
+    // are routed before it and print their own one-line summary instead.
+    if (url.pathname === '/api/perf') {
+      handlePerf(req, res, { quiet, perfLog: opts && opts.perfLog }).catch(err => {
+        if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
+      });
+      return;
+    }
 
     if (url.pathname.startsWith('/api/')) {
       // Log who is asking, not just what. Two browsers failing to see each
@@ -341,14 +427,18 @@ function main() {
   };
   const port = parseInt(arg('port', '8080'), 10);
   const host = arg('host', '127.0.0.1');
+  const perfLog = arg('perf-log', '');
   const server = createServer({
     quiet: process.argv.includes('--quiet'),
     verbose: process.argv.includes('--verbose'),
+    perfLog,
   });
   server.listen(port, host, () => {
     console.log(`wine-assembly dev server: http://${host}:${port}`);
     console.log(`  serving ${ROOT}`);
     console.log('  signaling API at /api/data, /api/public-data (no login, in memory)');
+    console.log(`  perf stream sink at /api/perf — open http://${host}:${port}/?debug&perf&perf-stream`);
+    if (perfLog) console.log(`  perf batches appended as NDJSON to ${perfLog}`);
     if (host === '0.0.0.0') {
       console.log('  NOTE: bound to all interfaces and unauthenticated — trusted networks only');
     }
