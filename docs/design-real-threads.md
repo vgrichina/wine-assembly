@@ -9,6 +9,12 @@ time as the others, with the UI thread doing nothing but input and compositing.
 ~10-20M x86 steps/sec a single guest thread gets. This is about *concurrency*
 and about the UI never being hostage to guest execution.
 
+**Hard constraint:** the emulator must stay fully functional with no threads at
+all. Isolation is unavailable in Safari private browsing, in a cross-origin
+iframe, on a first visit before the service worker takes over, and in the CLI —
+so today's cooperative scheduler is a permanent second mode, not scaffolding.
+See §3.6.
+
 ---
 
 ## 1. Why this is worth doing
@@ -194,14 +200,136 @@ So production is **not** isolated today. Two mitigating facts:
   `index.html` are two anchor `href`s (berrry remix link, GitHub). So
   `require-corp` would break nothing in the page itself.
 - If the platform cannot set headers, a **service worker can synthesise them**
-  for the documents it serves (the `coi-serviceworker` pattern): the SW
-  intercepts the navigation and adds COOP/COEP to its response, which is what
-  the browser uses to decide isolation. Costs one extra reload on first visit,
-  and is how projects on header-less hosts (GitHub Pages) ship SAB today.
+  (§3.5).
 
 That downgrades the gate from "fatal" to "one of two known paths", but it still
 has to be *proved* on the real host, in Safari as well as Chrome, before phase 1
 is worth starting.
+
+### 3.5 The service-worker route to isolation
+
+A document's isolation is decided by the headers on the response that created
+it — and nothing requires that response to come from the network. A service
+worker that controls the page builds its own response, and the browser reads
+those headers:
+
+```
+  WITHOUT SW (today)
+   browser ──navigate──▶ Render/Cloudflare ──▶ 200, no COOP/COEP
+                                         crossOriginIsolated = false
+
+  WITH SW (controlling the page)
+   browser ──navigate──▶ ┌ service worker ─────────────────┐
+                         │  const r = await fetch(req)     │
+                         │  return new Response(r.body, {  │
+                         │    headers: {...r.headers,      │
+                         │      COOP: 'same-origin',       │
+                         │      COEP: 'require-corp' }})   │
+                         └──────────────┬──────────────────┘
+                                        ▼   browser treats this as
+                                            the document's response
+                                         crossOriginIsolated = TRUE
+```
+
+This is not a way around the security model: a worker can only do it within its
+own origin's scope, and COEP still genuinely blocks foreign subresources
+afterwards. The header states intent; enforcement happens downstream either way.
+It is the `coi-serviceworker` pattern, and it is how projects on header-less
+hosts (GitHub Pages) ship SharedArrayBuffer today.
+
+**Why it costs one reload.** The first navigation cannot be intercepted, because
+nothing is controlling the page yet. That document is committed un-isolated; the
+page registers the worker, sees `crossOriginIsolated === false`, and reloads.
+Every later visit is a single load. One reload per browser profile, or after a
+cache clear.
+
+```js
+// sw.js — the whole mechanism, minus edge cases
+self.addEventListener('install',  () => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => e.respondWith((async () => {
+  const r = await fetch(e.request);
+  const h = new Headers(r.headers);
+  h.set('Cross-Origin-Opener-Policy', 'same-origin');
+  h.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  return new Response(r.body, { status: r.status, headers: h });
+})()));
+```
+
+What it gets us, and where it stops:
+
+```
+  ✅ needs zero platform cooperation — Cloudflare/Render never see it
+  ✅ our page has NO cross-origin subresources (the only external URLs in
+     index.html are two anchor hrefs), so require-corp breaks nothing.
+     This is usually what kills the approach; here it is free.
+  ✅ the SW can also stamp Cross-Origin-Resource-Policy onto CORS-fetchable
+     third-party responses, if we ever add any
+  ────────────────────────────────────────────────────────────────────
+  ❌ opaque (no-cors) responses cannot be laundered — their bodies are
+     unreadable, so a plain CDN <script> stays blocked
+  ❌ Safari private browsing refuses service-worker registration
+     ⇒ no SW ⇒ no isolation ⇒ single-threaded, permanently, in that mode
+  ❌ shift-reload bypasses the SW for that load
+  ❌ cross-origin iframe: the TOP-LEVEL document must be isolated too, and
+     our SW cannot fix a frame we do not own. Note this repo already ships
+     safari-private-probe.html, which embeds the app in an iframe.
+  ❌ one more moving part in caching. There is deliberately no service
+     worker in this tree today, and cache-staleness bugs are miserable to
+     diagnose — the SW must never cache, only re-header.
+```
+
+Two of those are load-bearing for this design: Safari private mode and the
+cross-origin iframe case both leave us with no isolation at all. Isolation is
+therefore a **runtime capability, never a build-time assumption** — see §3.6.
+
+### 3.6 Single-threaded mode is a permanent, first-class mode
+
+Not a test convenience and not a temporary scaffold. There are at least four
+ways a real user ends up without isolation, and the emulator has to be fully
+functional in all of them:
+
+| Situation | Isolated? |
+|---|---|
+| Chrome/Safari, SW installed, second visit onward | ✅ |
+| First visit, before the SW controls the page | ❌ (until reload) |
+| Safari private browsing (no SW registration) | ❌ permanently |
+| Embedded in a cross-origin iframe we do not own | ❌ permanently |
+| `test/run.js` and the whole CLI corpus | ❌ by choice |
+
+So the shape is one build with two schedulers behind a capability check:
+
+```js
+const threaded = (typeof crossOriginIsolated !== 'undefined') && crossOriginIsolated
+                 && !FORCE_SINGLE_THREAD;
+```
+
+Design rules that follow, and they constrain phase 1 rather than phase 2:
+
+1. **The broker interface is the seam, not the worker.** Every non-pure host
+   import gets a broker method (`registry.query`, `audio.push`, `input.poll`,
+   `composite.blit`). In threaded mode the broker marshals to the main thread;
+   in single-threaded mode it calls the same code directly, in-process. Both
+   paths share one implementation of the actual work.
+2. **`ThreadManager` keeps its current cooperative implementation** as the
+   single-threaded backend, and gains a Worker backend. `createThread`,
+   `waitSingle`, `setEvent` and friends keep their signatures — they already
+   sit on `Atomics` over shared memory, which works in both modes (the
+   single-threaded path just never actually blocks).
+3. **No feature may exist only in threaded mode.** If an app runs threaded and
+   not single-threaded, that is a bug, and the corpus will catch it because the
+   corpus runs single-threaded.
+4. **Both modes are tested.** CLI corpus covers single-threaded. Browser tests
+   must assert both: `?threads=0` forces the fallback, so the same e2e case can
+   run twice.
+5. **The fallback must be silent to the user and visible to us.** No degraded
+   banner; the perf HUD reports which mode it is in, since every timing number
+   means something different between them.
+
+The cost is real: two schedulers to keep honest, and every threading bug has to
+be checked against "does it also happen single-threaded?". The alternative —
+threaded-only — is not available, because Safari private mode alone would break
+the app for a real fraction of visitors.
 
 ---
 
@@ -247,23 +375,43 @@ for the blocking cases, which is a simplification, not just a move.
 Real threads from the start, as asked — but the first phase is one worker
 because the *proof* is the second one.
 
-### Phase 0 — answer the gate (hours)
-- Does berrry.app allow COOP/COEP? If not, decide whether localhost-only is
-  acceptable before spending the rest.
-- Add both headers to `tools/dev-server.js`, assert `crossOriginIsolated` in a
-  test.
+### Phase 0 — prove isolation is reachable (a day)
+- Add both headers to `tools/dev-server.js` (two lines) and assert
+  `crossOriginIsolated` in a test.
+- Add `sw.js` (§3.5) behind a flag, and measure the matrix that actually
+  decides the plan:
+
+```
+                              isolated?   game still runs?
+  Chrome, 2nd visit              ?             ?
+  Safari, 2nd visit              ?             ?
+  Safari private browsing        ✗ expected    MUST be yes (fallback)
+  inside safari-private-probe    ✗ expected    MUST be yes (fallback)
+  first visit, pre-reload        ✗             MUST be yes (fallback)
+```
+
+  The right-hand column is the real deliverable of phase 0: the capability
+  check and fallback path exist and work *before* anything depends on
+  isolation. That way the threading work can never strand a browser.
+- Deliverable: `crossOriginIsolated` true in at least Chrome and Safari
+  non-private on the real host, plus a documented single-threaded path
+  everywhere else.
 
 ### Phase 1 — the guest main thread moves off the UI thread (the real work)
 - Worker bootstrap: `postMessage({module, memory})`, instantiate in worker.
+- **Broker interface first, both backends from day one** (§3.6 rule 1): every
+  non-pure import goes through a broker whose direct in-process backend is
+  today's behaviour. Land and ship that refactor *before* the worker exists —
+  it is a no-op change that the corpus can validate on its own.
 - Broker: input ring, audio ring, registry snapshot + writeback, log/trace
   forwarding.
 - Compositor: main thread owns the screen canvas and blits offscreen surfaces;
   workers never touch the screen.
 - Fix `$free_list` and `$virtual_alloc_top` (§3.1) — required, and correct
   regardless.
-- **Exit criterion:** corpus green, and the perf HUD shows `page fps` unchanged
-  while `GAME fps` is unaffected by continuous mouse movement — the exact
-  measurement that caught `b7b4d4e`.
+- **Exit criterion:** corpus green in *both* modes, and the perf HUD shows
+  `page fps` unchanged while `GAME fps` is unaffected by continuous mouse
+  movement — the exact measurement that caught `b7b4d4e`.
 
 ### Phase 2 — N workers actually running at once
 - `CreateThread` spawns a Worker instead of an in-process instance.
@@ -274,10 +422,15 @@ because the *proof* is the second one.
   under UI load.
 
 ### Phase 3 — cleanup
-- Delete the scheduling heuristics, the input-wake gate, `runBudgeted`'s
-  wall-clock caps, and the `_isAudioHot`/`_hasOpenMenu` priority hacks.
-- Node/CLI parity: `test/run.js` needs the same broker shape, or an explicit
-  single-threaded mode.
+- Delete the scheduling heuristics **from the threaded path only**: the
+  input-wake gate, `runBudgeted`'s wall-clock caps, and the
+  `_isAudioHot`/`_hasOpenMenu` priority hacks all still earn their keep in the
+  single-threaded fallback, which remains the CLI default and the Safari-private
+  path. This is the one place where "delete the hack" does not apply.
+- `test/run.js` stays single-threaded by default; add `--threads` to opt in so
+  the threaded path gets CLI coverage too (Node has `worker_threads` and
+  supports shared memory without any isolation ceremony — a cheap way to test
+  the threaded scheduler deterministically-ish before trusting a browser).
 
 ---
 
@@ -303,9 +456,10 @@ this plan:
 
 **Determinism is the thing we lose.** Today a run is reproducible; with real
 threads it is not, and a flaky corpus failure becomes "which interleaving".
-Mitigation: keep a single-threaded mode (workers disabled, current round-robin)
-as the default for CLI tests, and make threading an explicit opt-in that the
-browser turns on. That also keeps `test/run.js` viable without a broker.
+Mitigation is §3.6: single-threaded stays the CLI default, so the corpus keeps
+its reproducibility, and threading is the browser's opt-in. Also report the mode
+in the perf HUD — a timing number means something different in each, and a
+comparison across modes without saying so is how a session gets misread.
 
 ---
 
@@ -313,10 +467,12 @@ browser turns on. That also keeps `test/run.js` viable without a broker.
 
 | Risk | Severity | Note |
 |---|---|---|
-| COOP/COEP unavailable in production | **fatal to the plan** | check first (Phase 0) |
+| Isolation unreachable in production | high | measured: no COOP/COEP today; SW route (§3.5) is the fallback, unproven on the real host |
 | Safari: worker + shared memory + OffscreenCanvas | high | Safari is half the reported jank; must be tested early, not last |
+| **Two schedulers, forever** | high | §3.6 — single-threaded is permanent (Safari private, iframes, CLI). Every threading bug needs "does it also happen single-threaded?" |
 | Registry synchronicity | medium | snapshot approach (§3.2) avoids blocking, but INI writeback ordering needs care |
-| Non-determinism in tests | medium | keep single-threaded mode for CLI |
+| Service worker in the cache path | medium | none in the tree today; must re-header only, never cache, or every future "my fix did nothing" starts here |
+| Non-determinism in tests | medium | CLI stays single-threaded (§3.6 rule 4) |
 | Debugger/tracing regressions | medium | `--break`, `--trace-at`, memory dumps all assume synchronous access to instance state |
 | Guest memory races surfacing | low | authentic; apps that break were broken on Win98 too |
 | Effort | high | phase 1 is a broker for every non-pure import — weeks, not days |
