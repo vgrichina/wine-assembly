@@ -269,14 +269,28 @@ sets the global instead.
     route to the *window* procedure once one is installed rather than to the
     DLGPROC.
 
-  What is left for a playable game is NetDDE: Hearts disables "I want to be
-  dealer" because `LoadLibrary("NDDEAPI.DLL")` fails, so the only path open to
-  it is joining a game that is not there. Making that library load — and
-  answering the one entry point it asks for by name — is what would give it the
-  single-player dealer game, and it is the same conversation problem as below.
-- **Hearts' menu commands.** Options, Score and Quote open nothing while the
-  app is still behind its startup dialogs; whether they work once a game is
-  running is untested, because no game runs yet. It gets all
+  Three more things stood between that and a game, all now fixed:
+  - **NDDEAPI.DLL would not load**, and Hearts greys out the whole "How do you
+    want to play?" group when it cannot ask `NDdeGetWindow` whether network DDE
+    is there. NDDEAPI is now a module the emulator implements, and its one
+    entry point answers with a window of ours: DDEML is implemented in WAT
+    rather than by a separate agent process, so that is the truthful answer
+    rather than a zero. A module we implement has no export table for
+    GetProcAddress to read, so the entry point gets a fixed thunk-segment slot
+    the way the pumps do.
+  - **Control messages are numbered per class from WM_USER in Win16** and in
+    distinct ranges in Win32 — BM_, EM_, LB_, CB_, SBM_ and STM_ all start at
+    0x400 — so which block a number belongs to can only be decided from the
+    class of the window being addressed. `BM_GETCHECK` arriving as 0x400 meant
+    every radio button answered "not me".
+  - **PeekMessage cannot be bridged the ordinary way.** It is the one handler
+    that ends by setting EIP from its own stack frame, so an idle PM_NOREMOVE
+    loop yields; across the bridge that address is the scratch frame's zero.
+
+  Hearts now deals: `test/test-win16-hearts-startup.js` drives name, dealer, OK
+  and New Game and checks a green table with cards on it. Its menu commands
+  (Options, Score, Quote) are still untested — the sweep runs them before a game
+  exists. It gets all
   the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
   and puts up "Unable to connect with dealer. Hearts will end." What it should
   do first is show its startup dialog: the resources contain "What is your
@@ -314,6 +328,33 @@ sets the global instead.
   twice, and only both halves together say which. `--input=N:dump-msgq` prints
   the queue itself, which `--dump` cannot: it lives at WASM 0x400, below
   GUEST_BASE, so that address goes through `g2w` and lands somewhere else.
+- ~~**Solitaire showed an empty table, and cards could not be dragged.**~~
+  FIXED, and neither was a Solitaire bug.
+  - **The initial erase arrived too late.** It was left to the non-client flag,
+    which GetMessage drains *after* the post queue — so it landed behind
+    whatever the app had posted for itself. Solitaire posts its deal from
+    WM_CREATE and draws each card as it deals rather than from WM_PAINT, so the
+    erase painted the table green over a hand already laid out and nothing
+    asked for it back. The cards appearing "only when you touch a menu" was the
+    menu invalidating the window. `$win16_ShowWindow` now posts the erase with
+    its own WM_SIZE/activation group, ahead of the app's, which is the order
+    Windows gives it: there the erase happens inside ShowWindow before the
+    task's message loop runs at all.
+    Worth recording what did *not* work, since both look right: invalidating
+    the window when the erase is delivered fixes Solitaire but costs a full
+    repaint per erase per window, which timed mspaint's tool sweep out; and
+    invalidating at ShowWindow is dropped on the floor, because the window has
+    no size yet and the paint phase silently discards an empty update rect.
+  - **PtInRect had x and y the wrong way round.** Its POINT is one argument
+    passed *by value*, so a doubleword push puts x nearest the top of the stack
+    — the opposite of the separate x and y of InflateRect beside it. The test
+    asked whether (y, x) was in the rectangle, which is false for every card, so
+    the button-down that starts a drag found nothing under the cursor. Any
+    future Win16 API taking a POINT by value has the same trap: `ChildWindowFromPoint`
+    and `WindowFromPoint` are the two that are not implemented yet.
+  - `GDI.103 PtVisible` was missing; Solitaire asks it while drawing the stack
+    it has picked up. `test/test-win16-solitaire-play.js` covers both the
+    untouched deal and a drag that empties the column it came from.
 - Structure width is the recurring bug class here, and it is worth stating
   plainly: **a structure that crosses the boundary is a different size in the
   two worlds.** `SystemParametersInfo(SPI_GETWORKAREA)` wrote a 32-bit RECT

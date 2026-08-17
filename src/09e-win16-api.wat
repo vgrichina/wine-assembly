@@ -2006,9 +2006,22 @@
         ;; the only place it gets to is WM_ERASEBKGND — FreeCell's green baize
         ;; is a PATCOPY over GetClientRect there, and without the message the
         ;; client stays whatever the surface was cleared to.
+        ;; Queued here rather than left to the non-client flag, because *when*
+        ;; it arrives decides whether it helps or hurts. The flag is drained
+        ;; after the post queue, so the erase landed behind whatever the app
+        ;; had posted for itself — and Solitaire posts its deal, deals from the
+        ;; command, and draws each card as it deals rather than from WM_PAINT.
+        ;; The erase then painted the table green over a hand already laid out,
+        ;; and nothing asked for it back: the cards only appeared once
+        ;; something else invalidated the window, which is why opening a menu
+        ;; brought them out. Posted from here it arrives with ShowWindow's own
+        ;; messages, ahead of the app's, which is the order Windows gives it —
+        ;; there the erase happens inside ShowWindow before the task's message
+        ;; loop runs at all.
         (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd))
                               (i32.const 0x10000000)))
-          (then (call $nc_flags_set (local.get $hwnd) (i32.const 2))))
+          (then (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0014)
+                  (i32.add (local.get $hwnd) (i32.const 0x40000)) (i32.const 0)))))
         (drop (call $wnd_set_style (local.get $hwnd)
           (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
         (global.set $paint_pending (i32.const 1))
@@ -2587,19 +2600,41 @@
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 8)))
 
-  ;; A POINT is one DWORD here, x in the low word.
+  ;; USER.76 PtInRect(lprc, pt) — and the POINT is one argument passed *by
+  ;; value*, not two. That makes its two words the other way round from
+  ;; InflateRect's separate x and y below: a doubleword push puts the low half
+  ;; (x) nearest the top of the stack. Read as InflateRect's are, the test asks
+  ;; whether (y, x) is in the rectangle, which is false for every card on the
+  ;; table — 16-bit Solitaire hit-tests the click that starts a drag with this,
+  ;; found nothing under the cursor, and never picked a card up.
   (func $win16_PtInRect
     (local $r i32) (local $x i32) (local $y i32)
     (local.set $r (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 1))))
     (global.set $eax (i32.and
       (i32.and (i32.ge_s (local.get $x) (call $win16_rect_get (local.get $r) (i32.const 0)))
                (i32.lt_s (local.get $x) (call $win16_rect_get (local.get $r) (i32.const 2))))
       (i32.and (i32.ge_s (local.get $y) (call $win16_rect_get (local.get $r) (i32.const 1)))
                (i32.lt_s (local.get $y) (call $win16_rect_get (local.get $r) (i32.const 3))))))
     (call $win16_api_return (i32.const 8)))
+
+  ;; GDI.103 PtVisible(hDC, X, Y) — is the point inside the DC's clip. Here the
+  ;; coordinates are two separate arguments, so they read the ordinary way
+  ;; round, unlike PtInRect's packed POINT above. Solitaire asks before drawing
+  ;; each card of the stack it has picked up.
+  (func $win16_PtVisible
+    (local $hdc i32) (local $x i32) (local $y i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_PtVisible (local.get $hdc) (local.get $x) (local.get $y)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 6)))
 
   (func $win16_InflateRect
     (local $r i32) (local $x i32) (local $y i32)
@@ -3762,6 +3797,8 @@
   (func $win16_gdi (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 79))
       (then (call $win16_GetDCOrg) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 103))
+      (then (call $win16_PtVisible) (return (i32.const 1))))
     ;; UnrealizeObject asks a brush or palette to be re-mapped on next select.
     ;; With no palette realisation here there is nothing to invalidate, and
     ;; success is the truthful answer rather than a placeholder.
