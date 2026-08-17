@@ -19194,5 +19194,12 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 2455,
+    "name": "GetMenuStringA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 821380304
   }
 ]

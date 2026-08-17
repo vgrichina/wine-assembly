@@ -2758,9 +2758,17 @@
   )
 
   ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable).
+  ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable). MF_BYPOSITION is 0x400 and
+  ;; has to be honoured: it is how MFC addresses items while walking a popup,
+  ;; and treating a position as a command id put the state on the wrong item.
   (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_enable_item_global
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
+        (then (call $menu_enable_position_global
+          (local.get $arg0) (local.get $arg1)
+          (i32.ne (i32.and (local.get $arg2) (i32.const 3)) (i32.const 0))))
+        (else (call $menu_enable_item_global
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -10383,8 +10391,11 @@
   )
 
   ;; 620: GetMenuItemID — STUB: unimplemented
+  ;; GetMenuItemID(hMenu, nPos) — 0 for a separator or a submenu, which is
+  ;; what Windows answers and what MFC's update loop expects to skip on.
   (func $handle_GetMenuItemID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $menu_handle_item_id (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
   )
 
   ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; menu subsystem
@@ -10404,8 +10415,13 @@
   ;; 621: GetMenuItemCount(hMenu) — the menu subsystem is a stub that doesn't
   ;; track items, so report 0 (empty menu) rather than crashing. DX samples
   ;; like flip2d call this during window setup but don't care about the count.
+  ;; GetMenuItemCount(hMenu). Returning 0 here is what kept every MFC menu
+  ;; stale: CFrameWnd::OnInitMenuPopup walks the popup by index to run its
+  ;; ON_UPDATE_COMMAND_UI handlers, and a count of zero means it walks nothing
+  ;; and never enables or greys anything. Paint offered File > Send... in black
+  ;; on a machine with no mail subsystem because of this.
   (func $handle_GetMenuItemCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $menu_handle_item_count (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
@@ -11622,8 +11638,14 @@
   )
 
   ;; 674: GetMenuState — STUB: unimplemented
+  ;; GetMenuState(hMenu, uId, uFlags) → MF_* state, or -1 when the item is not
+  ;; there. MF_BYPOSITION is 0x400; without it uId is a command id.
   (func $handle_GetMenuState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
+        (then (call $menu_handle_item_state (local.get $arg0) (local.get $arg1)))
+        (else (call $menu_handle_state_by_id (local.get $arg0) (local.get $arg1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args
   )
 
   ;; 735: GetMenuItemRect(hWnd, hMenu, uItem, lprcItem) -> BOOL
@@ -11711,6 +11733,20 @@
   (func $handle_InsertMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; GetMenuStringA(hMenu, uIDItem, lpString, cchMax, uFlag) → chars copied.
+  ;; MFC reads every label back while walking a popup, so this sits directly
+  ;; behind the WM_INITMENUPOPUP path -- it was not registered at all, and the
+  ;; unimplemented-API crash was the first thing Paint hit once its update loop
+  ;; started running. MF_BYPOSITION is 0x400.
+  (func $handle_GetMenuStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_handle_copy_label
+      (local.get $arg0) (local.get $arg1)
+      (i32.and (local.get $arg4) (i32.const 0x400))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
   )
 
   ;; 683: GetMenuStringW — STUB: unimplemented

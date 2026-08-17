@@ -906,6 +906,43 @@
   ;; Set/clear checked state by submenu position. GetSubMenu handles are
   ;; represented as menu-id | ((top-index+1)<<16), which makes the resource
   ;; submenu deterministic without a separate HMENU object table.
+  ;; EnableMenuItem with MF_BYPOSITION. MFC addresses every item this way while
+  ;; walking a popup -- it asks GetMenuItemID what is at position N and then
+  ;; enables or greys position N -- so routing the whole API through the
+  ;; by-command path meant those calls landed on whichever item happened to
+  ;; have that number as its ID, or on nothing at all. Paint greys File > Send
+  ;; as position 9 of the File popup; before this, nothing moved.
+  (func $menu_enable_position_global (export "menu_enable_position_global")
+        (param $hmenu i32) (param $pos i32) (param $disabled i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $blob i32) (local $it i32)
+    (local $tidx i32) (local $flags i32) (local $prev i32)
+    (local.set $prev (i32.const -1))
+    (local.set $tidx (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
+    (if (i32.lt_s (local.get $tidx) (i32.const 0)) (then (return (local.get $prev))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+      (if (local.get $hwnd)
+        (then
+          (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+          (if (local.get $blob)
+            (then
+              (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $pos)))
+              (if (local.get $it)
+                (then
+                  (local.set $flags (i32.load offset=16 (local.get $it)))
+                  (if (i32.eq (local.get $prev) (i32.const -1))
+                    (then (local.set $prev
+                      (select (i32.const 1) (i32.const 0)
+                        (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))))
+                  (i32.store offset=16 (local.get $it)
+                    (select (i32.or (local.get $flags) (i32.const 2))
+                            (i32.and (local.get $flags) (i32.const -3))
+                            (local.get $disabled)))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $prev))
+
   (func $menu_check_position_global (export "menu_check_position_global")
         (param $hmenu i32) (param $pos i32) (param $check i32) (result i32)
     (local $i i32) (local $hwnd i32) (local $blob i32) (local $it i32)
@@ -2237,6 +2274,205 @@
       (br $scan)))
     (i32.const -1))
 
+  ;; ---- Menu handle queries (GetMenuItemCount / GetMenuItemID / GetMenuState)
+  ;;
+  ;; A menu handle here is the window's own menu id, and GetSubMenu turns that
+  ;; into (hmenu & 0xFFFF) | ((pos+1) << 16). So the low word identifies which
+  ;; window's menu this is, and a non-matching high word says which dropdown.
+  ;; Find the window by the low word and everything else follows from the menu
+  ;; model we already keep.
+  (func $menu_hwnd_from_handle (param $hmenu i32) (result i32)
+    (local $i i32) (local $hwnd i32) (local $src i32)
+    (if (i32.eqz (local.get $hmenu)) (then (return (i32.const 0))))
+    (block $done
+      (loop $wins
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+        (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+        (if (local.get $hwnd)
+          (then
+            (local.set $src (call $menu_source_get (local.get $hwnd)))
+            (if (i32.eqz (local.get $src))
+              (then (if (i32.gt_s (call $menu_bar_count (local.get $hwnd)) (i32.const 0))
+                (then (local.set $src (i32.const 0x80001))))))
+            (if (local.get $src)
+              (then
+                (if (i32.eq (i32.and (local.get $src) (i32.const 0xFFFF))
+                            (i32.and (local.get $hmenu) (i32.const 0xFFFF)))
+                  (then (return (local.get $hwnd))))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $wins)))
+    (i32.const 0))
+
+  ;; Is this handle the menu bar itself, or one of its dropdowns? The bar's
+  ;; handle is whatever GetMenu hands out; a dropdown always carries pos+1 in
+  ;; its high word, so it differs from the bar's own handle.
+  (func $menu_handle_top_index (param $hwnd i32) (param $hmenu i32) (result i32)
+    (local $src i32)
+    (local.set $src (call $menu_source_get (local.get $hwnd)))
+    (if (i32.eqz (local.get $src)) (then (local.set $src (i32.const 0x80001))))
+    (if (i32.eq (local.get $src) (local.get $hmenu)) (then (return (i32.const -1))))
+    (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
+
+  (func $menu_handle_item_count (export "menu_handle_item_count")
+        (param $hmenu i32) (result i32)
+    (local $hwnd i32) (local $top i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+    (if (i32.lt_s (local.get $top) (i32.const 0))
+      (then (return (call $menu_bar_count (local.get $hwnd)))))
+    (call $menu_child_count (local.get $hwnd) (local.get $top)))
+
+  ;; Command id at a position. A submenu or separator has none, and Windows
+  ;; answers 0 for both.
+  (func $menu_handle_item_id (export "menu_handle_item_id")
+        (param $hmenu i32) (param $pos i32) (result i32)
+    (local $hwnd i32) (local $top i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+    (if (i32.lt_s (local.get $top) (i32.const 0))
+      (then (return (call $menu_bar_id (local.get $hwnd) (local.get $pos)))))
+    (if (i32.ge_u (local.get $pos) (call $menu_child_count (local.get $hwnd) (local.get $top)))
+      (then (return (i32.const 0))))
+    (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $pos)))
+
+  ;; Our item flags are internal (bit 1 = disabled, bit 2 = checked); Windows
+  ;; wants MF_GRAYED 1 / MF_DISABLED 2 / MF_CHECKED 8. Translate rather than
+  ;; leak the internal encoding through the API.
+  (func $menu_flags_to_mf (param $flags i32) (result i32)
+    (i32.or
+      (select (i32.const 3) (i32.const 0)
+        (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0)))
+      (select (i32.const 8) (i32.const 0)
+        (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0)))))
+
+  (func $menu_handle_item_state (export "menu_handle_item_state")
+        (param $hmenu i32) (param $pos i32) (result i32)
+    (local $hwnd i32) (local $top i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
+    (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $pos) (call $menu_child_count (local.get $hwnd) (local.get $top)))
+      (then (return (i32.const -1))))
+    (call $menu_flags_to_mf
+      (call $menu_child_flags (local.get $hwnd) (local.get $top) (local.get $pos))))
+
+  ;; Same, addressed by command id rather than position -- MF_BYCOMMAND.
+  (func $menu_handle_state_by_id (export "menu_handle_state_by_id")
+        (param $hmenu i32) (param $id i32) (result i32)
+    (local $hwnd i32) (local $bar i32) (local $bars i32)
+    (local $i i32) (local $n i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
+    (local.set $bars (call $menu_bar_count (local.get $hwnd)))
+    (block $done
+      (loop $tops
+        (br_if $done (i32.ge_s (local.get $bar) (local.get $bars)))
+        (local.set $n (call $menu_child_count (local.get $hwnd) (local.get $bar)))
+        (local.set $i (i32.const 0))
+        (block $next (loop $items
+          (br_if $next (i32.ge_u (local.get $i) (local.get $n)))
+          (if (i32.eq (call $menu_child_id (local.get $hwnd) (local.get $bar) (local.get $i))
+                      (local.get $id))
+            (then (return (call $menu_flags_to_mf
+              (call $menu_child_flags (local.get $hwnd) (local.get $bar) (local.get $i))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $items)))
+        (local.set $bar (i32.add (local.get $bar) (i32.const 1)))
+        (br $tops)))
+    (i32.const -1))
+
+  ;; Resolve a handle+item pair to (top index, child index). Returns -1 in the
+  ;; high half when the item is not found. Packed because WAT has no tuples:
+  ;; (top << 16) | child, or -1.
+  (func $menu_handle_locate (param $hmenu i32) (param $item i32) (param $by_pos i32) (result i32)
+    (local $hwnd i32) (local $top i32) (local $bar i32) (local $bars i32)
+    (local $i i32) (local $n i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
+    (if (local.get $by_pos)
+      (then
+        (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+        (if (i32.lt_s (local.get $top) (i32.const 0)) (then (return (i32.const -1))))
+        (if (i32.ge_u (local.get $item) (call $menu_child_count (local.get $hwnd) (local.get $top)))
+          (then (return (i32.const -1))))
+        (return (i32.or (i32.shl (local.get $top) (i32.const 16)) (local.get $item)))))
+    ;; By command id: the id is unique across the whole menu, so scan it all.
+    (local.set $bars (call $menu_bar_count (local.get $hwnd)))
+    (block $done
+      (loop $tops
+        (br_if $done (i32.ge_s (local.get $bar) (local.get $bars)))
+        (local.set $n (call $menu_child_count (local.get $hwnd) (local.get $bar)))
+        (local.set $i (i32.const 0))
+        (block $next (loop $items
+          (br_if $next (i32.ge_u (local.get $i) (local.get $n)))
+          (if (i32.eq (call $menu_child_id (local.get $hwnd) (local.get $bar) (local.get $i))
+                      (local.get $item))
+            (then (return (i32.or (i32.shl (local.get $bar) (i32.const 16)) (local.get $i)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $items)))
+        (local.set $bar (i32.add (local.get $bar) (i32.const 1)))
+        (br $tops)))
+    (i32.const -1))
+
+  ;; GetMenuString's body. $out_wa is a linear address; $cch counts bytes
+  ;; including the terminator, as Windows does. Returns characters copied.
+  (func $menu_handle_copy_label (export "menu_handle_copy_label")
+        (param $hmenu i32) (param $item i32) (param $by_pos i32)
+        (param $out_wa i32) (param $cch i32) (result i32)
+    (local $hwnd i32) (local $loc i32) (local $top i32) (local $child i32)
+    (local $src i32) (local $len i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $loc (call $menu_handle_locate
+      (local.get $hmenu) (local.get $item) (local.get $by_pos)))
+    (if (i32.eq (local.get $loc) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $top (i32.shr_u (local.get $loc) (i32.const 16)))
+    (local.set $child (i32.and (local.get $loc) (i32.const 0xFFFF)))
+    (local.set $src (call $menu_child_label_ptr
+      (local.get $hwnd) (local.get $top) (local.get $child)))
+    (local.set $len (call $menu_child_label_len
+      (local.get $hwnd) (local.get $top) (local.get $child)))
+    ;; A NULL buffer means "just tell me how long it is".
+    (if (i32.eqz (local.get $out_wa)) (then (return (local.get $len))))
+    (if (i32.eqz (local.get $cch)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $len) (local.get $cch))
+      (then (local.set $len (i32.sub (local.get $cch) (i32.const 1)))))
+    (if (local.get $len)
+      (then (call $memcpy (local.get $out_wa) (local.get $src) (local.get $len))))
+    (i32.store8 (i32.add (local.get $out_wa) (local.get $len)) (i32.const 0))
+    (local.get $len))
+
+  ;; Opening a dropdown is an app's cue to bring the menu up to date, and it
+  ;; was never given: WM_INITMENU and WM_INITMENUPOPUP were not sent by
+  ;; anything. That is where every MFC app runs its ON_UPDATE_COMMAND_UI
+  ;; handlers, so their menus showed whatever state the resource shipped with
+  ;; -- Paint offered File > Send... in black on a machine with no mail
+  ;; subsystem, and clicking it correctly did nothing, which reads from the
+  ;; outside exactly like a broken command.
+  ;;
+  ;; These are posted rather than sent. A dropdown stays open for many frames
+  ;; and is repainted from this model each time, so the app's EnableMenuItem
+  ;; calls land well before anyone can pick an item -- and posting avoids
+  ;; re-entering a guest wndproc from inside the click that opened the menu.
+  ;;
+  ;; The submenu handle follows GetSubMenu's encoding, (hmenu & 0xFFFF) |
+  ;; ((pos+1) << 16), so an app that stashes what GetSubMenu gave it compares
+  ;; equal to what arrives here.
+  (func $menu_init_popup (param $hwnd i32) (param $top_idx i32)
+    (local $hmenu i32)
+    (local.set $hmenu (call $menu_source_get (local.get $hwnd)))
+    (if (i32.eqz (local.get $hmenu))
+      (then (local.set $hmenu (i32.const 0x80001))))
+    (call $menu_post (local.get $hwnd) (i32.const 0x0116)   ;; WM_INITMENU
+      (local.get $hmenu) (i32.const 0))
+    (call $menu_post (local.get $hwnd) (i32.const 0x0117)   ;; WM_INITMENUPOPUP
+      (i32.or (i32.and (local.get $hmenu) (i32.const 0xFFFF))
+              (i32.shl (i32.add (local.get $top_idx) (i32.const 1)) (i32.const 16)))
+      (local.get $top_idx)))
+
   (func $menu_open (export "menu_open") (param $hwnd i32) (param $top_idx i32)
     (if (global.get $menu_open_popup_blob)
       (then
@@ -2247,7 +2483,8 @@
     (global.set $menu_open_hover (i32.const -1))
     (global.set $menu_open_sub_hover (i32.const -1))
     (global.set $menu_open_x     (i32.const -1))
-    (global.set $menu_open_y     (i32.const -1)))
+    (global.set $menu_open_y     (i32.const -1))
+    (call $menu_init_popup (local.get $hwnd) (local.get $top_idx)))
 
   (func $menu_track_popup_open (export "menu_track_popup_open")
         (param $hmenu i32) (param $flags i32) (param $x i32) (param $y i32) (param $hwnd i32)
