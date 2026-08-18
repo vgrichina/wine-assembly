@@ -8098,6 +8098,283 @@
                 (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 24)))
               (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 16))))))))
 
+  ;; ---- row-band span filling ------------------------------------------
+  ;; A DC clip is one of three things: absent, one rectangle, or a real
+  ;; multi-rectangle region. Only the third needs per-pixel membership, and
+  ;; even then only along the row being filled — canonical regions are sorted,
+  ;; disjoint, half-open rectangles, so a row meets each of them at most once
+  ;; and the visible part of a span is a handful of intervals.
+  ;;
+  ;; This matters because the ordinary case *is* multi-rectangle: the
+  ;; non-client clip is window-minus-client, which is four bands, and
+  ;; $defwndproc_ncpaint fills the whole window rect through it. Treating that
+  ;; as a weird shape sent every chrome pixel of every repaint down the
+  ;; per-pixel path. Genuinely odd geometry (an elliptic SetWindowRgn, a
+  ;; clip built from a polygon) still lands there; a window with a border
+  ;; no longer does.
+  ;;
+  ;; Resolve one clip operand for row walking: 1 = no clip, a record pointer
+  ;; = walk its bands, 0 = the DC names a region that no longer resolves,
+  ;; which $gdi_dc_clip_device_point_visible treats as nothing visible.
+  (func $gdi_raster_clip_operand (param $clip i32) (result i32)
+    (local $record i32)
+    (if (i32.eqz (local.get $clip)) (then (return (i32.const 1))))
+    (local.set $record (call $gdi_rgn_record (local.get $clip)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.get $record))
+
+  (func $gdi_raster_app_clip_operand (param $hdc i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $gdi_dc_clip_entry (local.get $hdc) (i32.const 0)))
+    (call $gdi_raster_clip_operand
+      (if (result i32) (local.get $entry)
+        (then (i32.load offset=4 (local.get $entry)))
+        (else (i32.const 0)))))
+
+  (func $gdi_raster_system_clip_operand (param $hdc i32) (result i32)
+    (call $gdi_raster_clip_operand
+      (call $gdi_dc_system_clip_handle (local.get $hdc))))
+
+  ;; Rect count of an operand. The unclipped operand behaves as one rectangle
+  ;; covering whatever bounds the caller already computed.
+  (func $gdi_clip_operand_count (param $operand i32) (result i32)
+    (if (i32.eq (local.get $operand) (i32.const 1)) (then (return (i32.const 1))))
+    (i32.load offset=28 (local.get $operand)))
+
+  ;; field: 0=left 1=top 2=right 3=bottom, in DC device coordinates.
+  (func $gdi_clip_operand_field (param $operand i32) (param $idx i32)
+        (param $field i32) (param $dflt i32) (result i32)
+    (if (i32.eq (local.get $operand) (i32.const 1)) (then (return (local.get $dflt))))
+    (i32.load (i32.add
+      (i32.add (call $gdi_rgn_bands (local.get $operand))
+        (i32.shl (local.get $idx) (i32.const 4)))
+      (i32.shl (local.get $field) (i32.const 2)))))
+
+  ;; ---- per-row clip memo for glyph rasterization -----------------------
+  ;; Glyph blitting cannot fill runs — it writes the ink pixels of a bitmap —
+  ;; so it asked $gdi_dc_clip_device_point_visible about every pixel, and that
+  ;; walk (target size, two DC table scans, two region scans) was 54% of the
+  ;; GDI benchmark. The answer is constant along a row, so resolve the row once
+  ;; and let the glyph loop compare against an interval.
+  ;;
+  ;; The memo is only consulted by text rasterization, which never mutates a
+  ;; clip while it runs, and every text entry point resets it. A row that needs
+  ;; more than one interval (a real region straddling the text) records state 2
+  ;; and falls back to the exact per-pixel test.
+  (global $gdi_clip_row_hdc (mut i32) (i32.const 0))
+  (global $gdi_clip_row_desc (mut i32) (i32.const 0))
+  (global $gdi_clip_row_y (mut i32) (i32.const 0))
+  (global $gdi_clip_row_l (mut i32) (i32.const 0))
+  (global $gdi_clip_row_r (mut i32) (i32.const 0))
+  (global $gdi_clip_row_state (mut i32) (i32.const 0)) ;; 0 none, 1 interval, 2 per-pixel
+
+  (func $gdi_clip_row_reset (export "gdi_clip_row_reset")
+    (global.set $gdi_clip_row_state (i32.const 0)))
+
+  (func $gdi_clip_row_keyed (param $hdc i32) (param $desc i32) (param $y i32) (result i32)
+    (i32.and
+      (i32.ne (global.get $gdi_clip_row_state) (i32.const 0))
+      (i32.and (i32.eq (global.get $gdi_clip_row_hdc) (local.get $hdc))
+        (i32.and (i32.eq (global.get $gdi_clip_row_desc) (local.get $desc))
+          (i32.eq (global.get $gdi_clip_row_y) (local.get $y))))))
+
+  (func $gdi_clip_row_resolve (param $hdc i32) (param $desc i32) (param $y i32)
+    (local $app i32) (local $system i32) (local $row i32) (local $size i32)
+    (local $bl i32) (local $br i32) (local $ox i32) (local $oy i32)
+    (local $ai i32) (local $si i32) (local $acount i32) (local $scount i32)
+    (local $l i32) (local $r i32) (local $count i32)
+    (global.set $gdi_clip_row_hdc (local.get $hdc))
+    (global.set $gdi_clip_row_desc (local.get $desc))
+    (global.set $gdi_clip_row_y (local.get $y))
+    (global.set $gdi_clip_row_l (i32.const 0))
+    (global.set $gdi_clip_row_r (i32.const 0))
+    (local.set $bl (i32.const -1073741824))
+    (local.set $br (i32.const 1073741823))
+    ;; No DC is unclipped, exactly as $gdi_raster_clip_visible reports.
+    (if (i32.eqz (local.get $hdc))
+      (then
+        (global.set $gdi_clip_row_l (local.get $bl))
+        (global.set $gdi_clip_row_r (local.get $br))
+        (global.set $gdi_clip_row_state (i32.const 1))
+        (return)))
+    (local.set $ox (i32.load offset=72 (local.get $desc)))
+    (local.set $oy (i32.load offset=76 (local.get $desc)))
+    (local.set $row (i32.sub (local.get $y) (local.get $oy)))
+    (local.set $app (call $gdi_raster_app_clip_operand (local.get $hdc)))
+    (local.set $system (call $gdi_raster_system_clip_operand (local.get $hdc)))
+    ;; An unresolvable region hides the row; memo an empty interval.
+    (if (i32.or (i32.eqz (local.get $app)) (i32.eqz (local.get $system)))
+      (then (global.set $gdi_clip_row_state (i32.const 1)) (return)))
+    (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
+    (if (local.get $size)
+      (then
+        (if (i32.or (i32.lt_s (local.get $row) (i32.const 0))
+              (i32.ge_s (local.get $row) (i32.shr_u (local.get $size) (i32.const 16))))
+          (then (global.set $gdi_clip_row_state (i32.const 1)) (return)))
+        (local.set $bl (i32.const 0))
+        (local.set $br (i32.and (local.get $size) (i32.const 0xFFFF)))))
+    (local.set $acount (call $gdi_clip_operand_count (local.get $app)))
+    (local.set $scount (call $gdi_clip_operand_count (local.get $system)))
+    (block $adone (loop $arects
+      (br_if $adone (i32.ge_u (local.get $ai) (local.get $acount)))
+      (if (i32.and
+            (i32.le_s (call $gdi_clip_operand_field
+              (local.get $app) (local.get $ai) (i32.const 1) (local.get $row))
+              (local.get $row))
+            (i32.gt_s (call $gdi_clip_operand_field
+              (local.get $app) (local.get $ai) (i32.const 3)
+              (i32.add (local.get $row) (i32.const 1)))
+              (local.get $row)))
+        (then
+          (local.set $si (i32.const 0))
+          (block $sdone (loop $srects
+            (br_if $sdone (i32.ge_u (local.get $si) (local.get $scount)))
+            (if (i32.and
+                  (i32.le_s (call $gdi_clip_operand_field
+                    (local.get $system) (local.get $si) (i32.const 1) (local.get $row))
+                    (local.get $row))
+                  (i32.gt_s (call $gdi_clip_operand_field
+                    (local.get $system) (local.get $si) (i32.const 3)
+                    (i32.add (local.get $row) (i32.const 1)))
+                    (local.get $row)))
+              (then
+                (local.set $l (call $gdi_clip_operand_field
+                  (local.get $app) (local.get $ai) (i32.const 0) (local.get $bl)))
+                (local.set $r (call $gdi_clip_operand_field
+                  (local.get $app) (local.get $ai) (i32.const 2) (local.get $br)))
+                (if (i32.lt_s (local.get $l) (call $gdi_clip_operand_field
+                      (local.get $system) (local.get $si) (i32.const 0) (local.get $bl)))
+                  (then (local.set $l (call $gdi_clip_operand_field
+                    (local.get $system) (local.get $si) (i32.const 0) (local.get $bl)))))
+                (if (i32.gt_s (local.get $r) (call $gdi_clip_operand_field
+                      (local.get $system) (local.get $si) (i32.const 2) (local.get $br)))
+                  (then (local.set $r (call $gdi_clip_operand_field
+                    (local.get $system) (local.get $si) (i32.const 2) (local.get $br)))))
+                (if (i32.lt_s (local.get $l) (local.get $bl))
+                  (then (local.set $l (local.get $bl))))
+                (if (i32.gt_s (local.get $r) (local.get $br))
+                  (then (local.set $r (local.get $br))))
+                (if (i32.lt_s (local.get $l) (local.get $r))
+                  (then
+                    (local.set $count (i32.add (local.get $count) (i32.const 1)))
+                    (if (i32.eq (local.get $count) (i32.const 1))
+                      (then
+                        (global.set $gdi_clip_row_l (i32.add (local.get $ox) (local.get $l)))
+                        (global.set $gdi_clip_row_r (i32.add (local.get $ox) (local.get $r)))))))))
+            (local.set $si (i32.add (local.get $si) (i32.const 1)))
+            (br $srects)))))
+      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))
+      (br $arects)))
+    (if (i32.gt_u (local.get $count) (i32.const 1))
+      (then
+        (global.set $gdi_clip_row_state (i32.const 2))
+        (return)))
+    (global.set $gdi_clip_row_state (i32.const 1)))
+
+  ;; Point visibility for glyph rasterization: identical answers to
+  ;; $gdi_raster_clip_visible, resolved once per row instead of once per pixel.
+  (func $gdi_raster_clip_visible_row (export "gdi_raster_clip_visible_row")
+        (param $hdc i32) (param $desc i32) (param $x i32) (param $y i32) (result i32)
+    (if (i32.eqz (call $gdi_clip_row_keyed
+          (local.get $hdc) (local.get $desc) (local.get $y)))
+      (then (call $gdi_clip_row_resolve
+        (local.get $hdc) (local.get $desc) (local.get $y))))
+    (if (i32.eq (global.get $gdi_clip_row_state) (i32.const 1))
+      (then (return (i32.and
+        (i32.ge_s (local.get $x) (global.get $gdi_clip_row_l))
+        (i32.lt_s (local.get $x) (global.get $gdi_clip_row_r))))))
+    (call $gdi_raster_clip_visible
+      (local.get $hdc) (local.get $desc) (local.get $x) (local.get $y)))
+
+  ;; Write one clipped run of canonical XRGB words. Coordinates are surface
+  ;; pixels; the caller owns clipping.
+  (func $gdi_raster_fill_run_32 (param $desc i32) (param $y i32)
+        (param $left i32) (param $right i32) (param $packed i32)
+    (local $p i32) (local $x i32)
+    (if (i32.ge_s (local.get $left) (local.get $right)) (then (return)))
+    (local.set $p (call $gdi_raster_row_ptr_32
+      (local.get $desc) (local.get $left) (local.get $y)))
+    (local.set $x (local.get $left))
+    (block $done (loop $pixels
+      (br_if $done (i32.ge_s (local.get $x) (local.get $right)))
+      (i32.store (local.get $p) (local.get $packed))
+      (local.set $p (i32.add (local.get $p) (i32.const 4)))
+      (local.set $x (i32.add (local.get $x) (i32.const 1)))
+      (br $pixels)))
+    (global.set $gdi_fast_span_px
+      (i32.add (global.get $gdi_fast_span_px)
+        (i32.sub (local.get $right) (local.get $left)))))
+
+  ;; Fill row $y of [$left,$right) (already clamped to surface/target bounds)
+  ;; against two clip operands, in surface coordinates. $ox/$oy translate
+  ;; surface pixels to the DC device space the regions are stored in.
+  (func $gdi_span_fill_bands (param $desc i32) (param $y i32)
+        (param $left i32) (param $right i32) (param $packed i32)
+        (param $app i32) (param $system i32) (param $ox i32) (param $oy i32)
+        (result i32)
+    (local $row i32) (local $ai i32) (local $si i32)
+    (local $acount i32) (local $scount i32)
+    (local $al i32) (local $ar i32) (local $sl i32) (local $sr i32)
+    (local $wrote i32)
+    (local.set $row (i32.sub (local.get $y) (local.get $oy)))
+    (local.set $acount (call $gdi_clip_operand_count (local.get $app)))
+    (local.set $scount (call $gdi_clip_operand_count (local.get $system)))
+    (block $adone (loop $arects
+      (br_if $adone (i32.ge_u (local.get $ai) (local.get $acount)))
+      (if (i32.and
+            (i32.le_s (call $gdi_clip_operand_field
+              (local.get $app) (local.get $ai) (i32.const 1) (local.get $row))
+              (local.get $row))
+            (i32.gt_s (call $gdi_clip_operand_field
+              (local.get $app) (local.get $ai) (i32.const 3)
+              (i32.add (local.get $row) (i32.const 1)))
+              (local.get $row)))
+        (then
+          (local.set $al (i32.add (local.get $ox) (call $gdi_clip_operand_field
+            (local.get $app) (local.get $ai) (i32.const 0)
+            (i32.sub (local.get $left) (local.get $ox)))))
+          (local.set $ar (i32.add (local.get $ox) (call $gdi_clip_operand_field
+            (local.get $app) (local.get $ai) (i32.const 2)
+            (i32.sub (local.get $right) (local.get $ox)))))
+          (if (i32.lt_s (local.get $al) (local.get $left))
+            (then (local.set $al (local.get $left))))
+          (if (i32.gt_s (local.get $ar) (local.get $right))
+            (then (local.set $ar (local.get $right))))
+          (if (i32.lt_s (local.get $al) (local.get $ar))
+            (then
+              (local.set $si (i32.const 0))
+              (block $sdone (loop $srects
+                (br_if $sdone (i32.ge_u (local.get $si) (local.get $scount)))
+                (if (i32.and
+                      (i32.le_s (call $gdi_clip_operand_field
+                        (local.get $system) (local.get $si) (i32.const 1) (local.get $row))
+                        (local.get $row))
+                      (i32.gt_s (call $gdi_clip_operand_field
+                        (local.get $system) (local.get $si) (i32.const 3)
+                        (i32.add (local.get $row) (i32.const 1)))
+                        (local.get $row)))
+                  (then
+                    (local.set $sl (i32.add (local.get $ox) (call $gdi_clip_operand_field
+                      (local.get $system) (local.get $si) (i32.const 0)
+                      (i32.sub (local.get $al) (local.get $ox)))))
+                    (local.set $sr (i32.add (local.get $ox) (call $gdi_clip_operand_field
+                      (local.get $system) (local.get $si) (i32.const 2)
+                      (i32.sub (local.get $ar) (local.get $ox)))))
+                    (if (i32.lt_s (local.get $sl) (local.get $al))
+                      (then (local.set $sl (local.get $al))))
+                    (if (i32.gt_s (local.get $sr) (local.get $ar))
+                      (then (local.set $sr (local.get $ar))))
+                    (if (i32.lt_s (local.get $sl) (local.get $sr))
+                      (then
+                        (call $gdi_raster_fill_run_32 (local.get $desc) (local.get $y)
+                          (local.get $sl) (local.get $sr) (local.get $packed))
+                        (local.set $wrote (i32.const 1))))))
+                (local.set $si (i32.add (local.get $si) (i32.const 1)))
+                (br $srects)))))))
+      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))
+      (br $arects)))
+    (local.get $wrote))
+
   (func $gdi_shape_fill_span (param $hdc i32) (param $desc i32)
         (param $y i32) (param $left i32) (param $right i32)
         (param $color i32) (param $rop2 i32) (result i32)
@@ -8188,7 +8465,78 @@
           (br $fast_pixels)))
         (global.set $gdi_fast_span_hits
           (i32.add (global.get $gdi_fast_span_hits) (i32.const 1)))
+        (global.set $gdi_fast_span_px
+          (i32.add (global.get $gdi_fast_span_px)
+            (i32.sub (local.get $right) (local.get $left))))
         (return (i32.const 1))))
+    ;; Not a single rectangle — but almost always still a region, and a region
+    ;; meets this row in a few intervals. Walk them instead of asking every
+    ;; pixel whether it is inside.
+    (if (i32.and (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32))
+          (i32.eq (local.get $rop2) (i32.const 13)))
+      (then
+        (local.set $app_clip (call $gdi_raster_app_clip_operand (local.get $hdc)))
+        (local.set $system_clip (call $gdi_raster_system_clip_operand (local.get $hdc)))
+        ;; A clip handle whose region has gone away hides everything, which is
+        ;; what the per-pixel path would have concluded one pixel at a time.
+        (if (i32.or (i32.eqz (local.get $app_clip)) (i32.eqz (local.get $system_clip)))
+          (then (return (i32.const 0))))
+        (local.set $clip_left (i32.const 0))
+        (local.set $clip_top (i32.const 0))
+        (local.set $clip_right (i32.load offset=4 (local.get $desc)))
+        (local.set $clip_bottom (i32.load offset=8 (local.get $desc)))
+        (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
+        (if (local.get $size)
+          (then
+            (local.set $clip_left (i32.load offset=72 (local.get $desc)))
+            (local.set $clip_top (i32.load offset=76 (local.get $desc)))
+            (local.set $clip_right (i32.add (local.get $clip_left)
+              (i32.and (local.get $size) (i32.const 0xFFFF))))
+            (local.set $clip_bottom (i32.add (local.get $clip_top)
+              (i32.shr_u (local.get $size) (i32.const 16))))))
+        ;; Surface bounds bind regardless of what the target reports.
+        (if (i32.lt_s (local.get $clip_left) (i32.const 0))
+          (then (local.set $clip_left (i32.const 0))))
+        (if (i32.lt_s (local.get $clip_top) (i32.const 0))
+          (then (local.set $clip_top (i32.const 0))))
+        (if (i32.gt_s (local.get $clip_right) (i32.load offset=4 (local.get $desc)))
+          (then (local.set $clip_right (i32.load offset=4 (local.get $desc)))))
+        (if (i32.gt_s (local.get $clip_bottom) (i32.load offset=8 (local.get $desc)))
+          (then (local.set $clip_bottom (i32.load offset=8 (local.get $desc)))))
+        (if (i32.or (i32.lt_s (local.get $y) (local.get $clip_top))
+              (i32.ge_s (local.get $y) (local.get $clip_bottom)))
+          (then (return (i32.const 0))))
+        (if (i32.lt_s (local.get $left) (local.get $clip_left))
+          (then (local.set $left (local.get $clip_left))))
+        (if (i32.gt_s (local.get $right) (local.get $clip_right))
+          (then (local.set $right (local.get $clip_right))))
+        (if (i32.ge_s (local.get $left) (local.get $right))
+          (then (return (i32.const 0))))
+        (global.set $gdi_band_span_hits
+          (i32.add (global.get $gdi_band_span_hits) (i32.const 1)))
+        (return (call $gdi_span_fill_bands
+          (local.get $desc) (local.get $y) (local.get $left) (local.get $right)
+          (call $gdi_raster_swap_rb (local.get $color))
+          (local.get $app_clip) (local.get $system_clip)
+          (i32.load offset=72 (local.get $desc))
+          (i32.load offset=76 (local.get $desc))))))
+    (global.set $gdi_slow_span_hits
+      (i32.add (global.get $gdi_slow_span_hits) (i32.const 1)))
+    ;; Two very different reasons land here: a surface/ROP the fast path does
+    ;; not model, or a clip the retained region layer cannot reduce to one
+    ;; rectangle. Counting them apart is the difference between "make the
+    ;; caller use COPYPEN" and "make regions rectangular".
+    (if (i32.and (i32.eq (i32.load offset=16 (local.get $desc)) (i32.const 32))
+          (i32.eq (local.get $rop2) (i32.const 13)))
+      (then (global.set $gdi_slow_span_clip
+              (i32.add (global.get $gdi_slow_span_clip) (i32.const 1))))
+      (else (global.set $gdi_slow_span_rop
+              (i32.add (global.get $gdi_slow_span_rop) (i32.const 1)))))
+    (if (i32.gt_s (local.get $right) (local.get $left))
+      (then
+        (global.set $gdi_slow_span_px
+          (i32.add (global.get $gdi_slow_span_px)
+            (i32.sub (local.get $right) (local.get $left))))))
     (local.set $x (local.get $left))
     (block $done (loop $pixels
       (br_if $done (i32.ge_s (local.get $x) (local.get $right)))
@@ -10102,6 +10450,16 @@
   (global $gdi_fast_span_hits (mut i32) (i32.const 0))
   (global $gdi_fast_bitblt_hits (mut i32) (i32.const 0))
   (global $gdi_fast_stretch_hits (mut i32) (i32.const 0))
+  ;; Span counts alone cannot say whether a repaint is expensive: one span can
+  ;; be a scrollbar arrow or a full window row. Count written pixels too, and
+  ;; count the per-pixel fallback separately — a repaint that misses the fast
+  ;; path costs an order of magnitude more per pixel.
+  (global $gdi_slow_span_hits (mut i32) (i32.const 0))
+  (global $gdi_fast_span_px (mut i32) (i32.const 0))
+  (global $gdi_slow_span_px (mut i32) (i32.const 0))
+  (global $gdi_band_span_hits (mut i32) (i32.const 0))
+  (global $gdi_slow_span_clip (mut i32) (i32.const 0))
+  (global $gdi_slow_span_rop (mut i32) (i32.const 0))
 
   ;; Return 1 for no clip, a canonical record for a single rectangle, or 0
   ;; when exact rasterization still requires per-pixel region membership.
@@ -11692,13 +12050,31 @@
   (func (export "test_gdi_fast_reset")
     (global.set $gdi_fast_span_hits (i32.const 0))
     (global.set $gdi_fast_bitblt_hits (i32.const 0))
-    (global.set $gdi_fast_stretch_hits (i32.const 0)))
+    (global.set $gdi_fast_stretch_hits (i32.const 0))
+    (global.set $gdi_slow_span_hits (i32.const 0))
+    (global.set $gdi_fast_span_px (i32.const 0))
+    (global.set $gdi_slow_span_px (i32.const 0))
+    (global.set $gdi_band_span_hits (i32.const 0))
+    (global.set $gdi_slow_span_clip (i32.const 0))
+    (global.set $gdi_slow_span_rop (i32.const 0)))
   (func (export "test_gdi_fast_count") (param i32) (result i32)
-    (if (result i32) (i32.eq (local.get 0) (i32.const 0))
-      (then (global.get $gdi_fast_span_hits))
-      (else (if (result i32) (i32.eq (local.get 0) (i32.const 1))
-        (then (global.get $gdi_fast_bitblt_hits))
-        (else (global.get $gdi_fast_stretch_hits))))))
+    (if (i32.eq (local.get 0) (i32.const 0))
+      (then (return (global.get $gdi_fast_span_hits))))
+    (if (i32.eq (local.get 0) (i32.const 1))
+      (then (return (global.get $gdi_fast_bitblt_hits))))
+    (if (i32.eq (local.get 0) (i32.const 2))
+      (then (return (global.get $gdi_fast_stretch_hits))))
+    (if (i32.eq (local.get 0) (i32.const 3))
+      (then (return (global.get $gdi_slow_span_hits))))
+    (if (i32.eq (local.get 0) (i32.const 4))
+      (then (return (global.get $gdi_fast_span_px))))
+    (if (i32.eq (local.get 0) (i32.const 5))
+      (then (return (global.get $gdi_slow_span_px))))
+    (if (i32.eq (local.get 0) (i32.const 6))
+      (then (return (global.get $gdi_slow_span_clip))))
+    (if (i32.eq (local.get 0) (i32.const 8))
+      (then (return (global.get $gdi_band_span_hits))))
+    (global.get $gdi_slow_span_rop))
   (func (export "test_gdi_raster_bitblt")
         (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_raster_bitblt (i32.const 0) (i32.const 0)

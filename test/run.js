@@ -5828,6 +5828,7 @@ if (VERBOSE) {
     console.log(`\nGDI raster: ${c(0)} fast spans (${fastPx} px), ${c(3)} slow spans (${slowPx} px)`);
     console.log(`            ${c(1)} fast bitblts, ${c(2)} fast stretches`);
     console.log(`            ${(px / MAX_BATCHES).toFixed(0)} px/batch, slow-path share ${px ? (100 * slowPx / px).toFixed(1) : '0.0'}%`);
+    console.log(`            ${c(8)} band-walked spans (multi-rect clip, still fast)`);
     console.log(`            slow spans by cause: ${c(6)} clip/bounds, ${c(7)} surface-or-ROP`);
   }
 
