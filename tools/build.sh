@@ -24,6 +24,10 @@ node tools/check-handler-count.js
 # a surplus ')' that closes a function early and orphans its cleanup line, so
 # this gate is the thing that catches it — keep it in the build, not on demand.
 node tools/check-handler-esp.js
+# Every handler's stdcall epilogue, checked against api_table.json's nargs —
+# the values are derived from the table now, not typed. `--sync` rewrites any
+# that drift.
+node tools/esp-epilogue.js --check
 
 echo "Concatenating WAT parts..."
 # From WAT_FILES, not a shell glob: combined.wat must be the same sequence the
