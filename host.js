@@ -452,8 +452,7 @@ class WineAssembly {
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
       const title = self.readString(titlePtr);
-      if (!ctx._windowText) ctx._windowText = new Map();
-      ctx._windowText.set(hwnd, title);
+      ctx.recordWindowText(hwnd, title);
       if (self.verbose) console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
       self.logToUI(`[CreateWindow] "${title}"`);
       const ownerInstance = ctx.instance || self.instance;
@@ -476,8 +475,7 @@ class WineAssembly {
 
     h.set_window_text = (hwnd, textPtr) => {
       const text = self.readString(textPtr);
-      if (!ctx._windowText) ctx._windowText = new Map();
-      ctx._windowText.set(hwnd, text);
+      ctx.recordWindowText(hwnd, text);
       console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
       if (self.renderer) self.renderer.setWindowText(hwnd, text);
     };
