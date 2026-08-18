@@ -398,12 +398,23 @@ sets the global instead.
   A conversation now remembers its topic, because `XTYP_REQUEST` hands the
   callback the topic and the item and only the conversation knows the former.
 
-  **Still to do:** `XTYP_POKE` and `XTYP_EXECUTE` (both return
-  `DMLERR_NOTPROCESSED` today, which is what a server that ignores a
-  transaction produces, so nothing is being told a falsehood), and
-  `DdePostAdvise` has no advise loops to feed — which is how Hearts actually
-  distributes play once a game is running. Advise is the bigger one and it is
-  the same pattern again, with the server pushing rather than answering.
+  ~~**`DdePostAdvise` has no advise loops to feed.**~~ DONE, and this is the
+  one Hearts actually runs on: its dealer posts an advise after each move
+  rather than being polled. A client's `XTYP_ADVSTART` is offered to the
+  server's application like any other transaction; if it agrees, the loop is
+  recorded against that conversation. `DdePostAdvise` then turns into
+  `XTYP_ADVREQ` back to the same application — "what does it say now?" — and
+  the answer is pushed as `XTYP_ADVDATA` to a client that is not waiting on
+  anything, so it goes straight to *that* application's callback. Asking twice
+  for one item does not open two loops, and a loop dies with its conversation:
+  one left pointing at a closed conversation would push into a handle that has
+  since been reused. `XTYP_POKE` and `XTYP_EXECUTE` cross too.
+
+  **What is genuinely left:** `XTYP_WILDCONNECT`, `XTYP_MONITOR`, and the
+  `DDE_FBUSY`/retry half of acknowledgements — none of which anything in the
+  corpus asks for. `DdeClientTransaction`'s `dwTimeout` is ignored in favour of
+  the fixed wait; an app passing a short one gets a longer one, which is
+  generous rather than wrong, but it is a difference.
 
   **On testing any of this:** use the in-process harness. Two instances on a
   `LoopbackSegment`, each with a real NE loaded so selectors and a message loop

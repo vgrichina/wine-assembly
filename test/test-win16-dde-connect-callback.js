@@ -214,6 +214,82 @@ function settle(a, b, pumpNode, batches = 200) {
     check(`and says what the application said ("${text}")`, text === 'JOINED');
   }
 
+  // --- an advise loop -------------------------------------------------------
+  // This is how Hearts distributes play: the dealer posts an advise after each
+  // move rather than being polled. A client asks to be told about an item, the
+  // server's application agrees, and from then on DdePostAdvise turns into a
+  // question back to that same application -- "what does it say now?" -- whose
+  // answer is pushed to the client without anyone waiting on it.
+  {
+    const segment = new LoopbackSegment();
+    const server = await makeNode(wasm, segment.attach(), '10.77.0.1');
+    const client = await makeNode(wasm, segment.attach(), '10.77.0.2');
+    boot(server, bytes, 400);
+    boot(client, bytes, 400);
+    server.wat.test_dde_instance(0, 1);
+    client.wat.test_dde_instance(0, 1);
+    server.wat.test_dde_register(1, intern(server, SERVICE));
+
+    const payload = Buffer.from('TRICK-2', 'latin1');
+    const handle = server.wat.test_dde_make_data(
+      server.buf(payload), payload.length) | 0;
+    const srvBase = server.wat.win16_seg_base(CODE_SEG) >>> 0;
+    [0xb8, handle & 0xff, (handle >> 8) & 0xff, 0x31, 0xd2, 0xca, 0x1c, 0x00]
+      .forEach((b, i) => server.wat.guest_write8(srvBase + STUB_OFF + i, b));
+    server.wat.test_dde_set_callback(1, ((SEL << 16) | STUB_OFF) >>> 0);
+
+    // The client needs a callback too: an advise arrives as XTYP_ADVDATA with
+    // nobody waiting, so it goes straight to the application.
+    const cliBase = client.wat.win16_seg_base(CODE_SEG) >>> 0;
+    [0xb8, 0x01, 0x00, 0x31, 0xd2, 0xca, 0x1c, 0x00]
+      .forEach((b, i) => client.wat.guest_write8(cliBase + STUB_OFF + i, b));
+    client.wat.test_dde_set_callback(1, ((SEL << 16) | STUB_OFF) >>> 0);
+
+    const conv = client.wat.test_dde_connect_begin(
+      1, intern(client, SERVICE), intern(client, TOPIC)) | 0;
+    settle(server, client, server);
+    assert((client.wat.test_dde_connect_done() | 0) === conv, 'no conversation');
+
+    check('a server holds no advise loops until asked',
+      (server.wat.test_dde_advise_count() | 0) === 0);
+    assert(client.wat.test_dde_advstart(conv, intern(client, 'Table')) | 0,
+      'the advise start was not sent');
+    settle(server, client, server);
+    check('the application agreed and the loop is open',
+      (server.wat.test_dde_advise_count() | 0) === 1);
+    // Asking twice must not open a second loop, or one update goes out twice.
+    assert(client.wat.test_dde_advstart(conv, intern(client, 'Table')) | 0);
+    settle(server, client, server);
+    check('asking again does not open a second loop',
+      (server.wat.test_dde_advise_count() | 0) === 1);
+
+    check('nothing has been pushed yet',
+      (client.wat.test_dde_last_advdata() | 0) === 0);
+    server.wat.test_dde_post_advise(1, intern(server, TOPIC), 0);
+    // The server asks its own application for the value, pushes it, and the
+    // client hands it to its callback -- so both sides have to pump.
+    for (let i = 0; i < 4; i++) { server.pump(); client.pump(); }
+    for (let i = 0; i < 200; i++) server.wat.run(64);
+    for (let i = 0; i < 4; i++) { server.pump(); client.pump(); }
+    for (let i = 0; i < 200; i++) client.wat.run(64);
+
+    const got = client.wat.test_dde_last_advdata() | 0;
+    check('the advise reached the client application', got !== 0,
+      'DdePostAdvise did not turn into a push');
+    check(`the pushed data crossed intact (${payload.length} bytes)`,
+      (client.wat.test_dde_data_len(got) | 0) === payload.length);
+    const text = Array.from({ length: payload.length },
+      (_, i) => String.fromCharCode(client.wat.test_dde_data_byte(got, i) | 0)).join('');
+    check(`and says what the server application said ("${text}")`, text === 'TRICK-2');
+
+    // A client that leaves is not owed updates, and a loop pointing at a dead
+    // conversation would push into a handle that has since been reused.
+    client.wat.test_dde_disconnect(conv);
+    for (let i = 0; i < 4; i++) { server.pump(); client.pump(); }
+    check('the loop goes when the conversation does',
+      (server.wat.test_dde_advise_count() | 0) === 0);
+  }
+
   console.log(`\n${passed} passed, 0 failed`);
 })().catch(error => {
   console.error(error.stack || error);
