@@ -333,23 +333,28 @@ a few unrelated commits from a parallel session are interleaved in the log.*
 | 2.2 | `lib/dll-registry.js` — one loadable-DLL list; the browser's copy had 14 names to the CLI's 32; window-title bookkeeping collapsed from three copies to one | `125e25d`, `53b4e4e` |
 | — | Extras this pass earned: the build now validates the wasm with `WebAssembly.Module` (it was shipping modules that failed to instantiate), `check-handler-esp` reads every part instead of ten named files, and `test/run-all.sh` runs a tier N-at-a-time | `83fef1b`, `f93ebba`, `dc37c8d` |
 
-**Deliberately not done, with reasons**
+**The three I first declined, then did**
 
-- **Generate the ~969 stdcall epilogues (§2.1).** The pop cannot move to the
-  caller: a handler that trampolines into a guest callback (`EnumDisplayMonitors`)
-  pops its own frame and then builds the callback's on top of it. Generating the
-  common case buys a two-mode convention whose opt-outs are exactly the subtle
-  handlers, replacing one uniform rule that a build gate already enforces —
-  the gate caught GlobalSize's wrong `nargs` during this pass. Widened the gate
-  instead.
-- **Unify `$do_shift32/16/8` (§2.1).** The three differ in sign-extension,
-  rotate-modulo and RCL/RCR carry width, not just constants. That is where
-  subtle flag bugs live, and the review itself rates the win as drift-risk
-  rather than size.
-- **Relocate 09a's scattered GDI and menu handlers (§1.4).** The comctl32 slab
-  was contiguous and moved. The 38 menu handlers are spread across a dozen
-  places; moving the contiguous half would leave them in three files instead of
-  two, which is worse to search.
+- **09a's scattered GDI and menu handlers (§1.4).** Declined because they could
+  not be moved as a range; that was a tool limitation. `wat-split.js --names=`
+  moves a set in one pass, so all 35 menu handlers went to `09c5-menu.wat` and
+  all 116 GDI handlers to `09a4-handlers-gdi.wat` (`185afb3`). 09a-handlers.wat:
+  12,940 → 11,012 lines.
+- **`$do_shift32/16/8` (§2.1).** Declined because the three differ in
+  sign-extension, rotate-modulo and RCL/RCR carry width. They are now one
+  `$do_shift(bits, …)`, merged under a differential test: the originals were
+  kept as `_ref` copies and every one of 29,376 (width, op, value, count,
+  carry) combinations was compared on result *and* CF/ZF/SF before the copies
+  were deleted. `test/test-shift-equivalence.js` keeps the coverage against an
+  independent model (`747ddd1`).
+- **Generating the ~969 epilogues (§2.1).** Done, but *into the handler*, not
+  into the dispatch table (`a33f44a`). The caller-side version was implemented
+  and backed out after it broke WordPad and TWorld; the four reasons are in
+  that commit and in `tools/esp-epilogue.js`. The last one is worth repeating:
+  with 113 of the "provably simple" handlers converted WordPad crashes in
+  HeapAlloc, with 112 it does not, and the 113th is safe on its own. Static
+  shape does not predict it. `--check` now verifies all 1,325 epilogue lines
+  against `nargs` in the build, and `--sync` rewrites drift.
 
 **Still open**
 
