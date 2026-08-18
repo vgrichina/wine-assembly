@@ -36,6 +36,7 @@ done
 
 UNIT=(
   test/test-x86-ops.js
+  test/test-shift-equivalence.js
   test/test-ne-loader.js
   test/test-win16-exec.js
   test/test-fs-prefix.js

@@ -178,6 +178,24 @@
       (call $next)
       (br $main))))
 
+  ;; Hook for test/test-shift-equivalence.js, which checks the unified
+  ;; $do_shift against an independent model of the x86 semantics over every
+  ;; (width, op, count) and a spread of values. Runs one shift with a chosen
+  ;; carry-in and leaves CF/ZF/SF readable.
+  (func (export "test_shift") (param $bits i32) (param $type i32)
+        (param $val i32) (param $count i32) (param $cf_in i32) (result i32)
+    ;; flag_op 8 with a/b is the raw-carry form, which is how a carry-in is
+    ;; seeded without disturbing the result flags.
+    (global.set $flag_op (i32.const 8))
+    (global.set $flag_a (local.get $cf_in))
+    (global.set $flag_b (i32.const 0))
+    (call $do_shift (local.get $bits) (local.get $type) (local.get $val) (local.get $count)))
+
+  (func (export "test_shift_flags") (result i32)
+    (i32.or (call $get_cf)
+      (i32.or (i32.shl (call $get_zf) (i32.const 1))
+              (i32.shl (call $get_sf) (i32.const 2)))))
+
   ;; ============================================================
   ;; DEBUG EXPORTS
   ;; ============================================================

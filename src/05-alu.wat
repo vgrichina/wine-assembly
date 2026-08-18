@@ -61,242 +61,131 @@
     (local.get $a) ;; CMP does not modify dst
   )
 
-  ;; Shift/rotate helper
+  ;; ============================================================
+  ;; SHIFT / ROTATE — one implementation, parameterized on width
+  ;; ============================================================
   ;; type: 0=ROL,1=ROR,2=RCL,3=RCR,4=SHL,5=SHR,6=SAL(=SHL),7=SAR
-  (func $do_shift32 (param $type i32) (param $val i32) (param $count i32) (result i32)
-    (local $r i32) (local $cf i32)
+  ;;
+  ;; This existed three times, once per operand width, ~80 lines each. The
+  ;; three differed in more than constants — sign-extension for SAR, the
+  ;; rotate-modulo for ROL/ROR, and the carry width for RCL/RCR (9/17/33 bits)
+  ;; — which is exactly why keeping them in step by hand was a bad bet.
+  ;;
+  ;; The width-dependent pieces are:
+  ;;   $mask   (1<<bits)-1, and the identity for 32
+  ;;   $sign   1<<(bits-1)
+  ;;   rotate counts taken modulo $bits, and RCL/RCR modulo $bits+1 (the carry
+  ;;           flag is the extra bit). Both are no-ops at 32 because the count
+  ;;           has already been masked to 0..31, which is why the 32-bit
+  ;;           version could omit them and still be correct.
+  (func $do_shift (param $bits i32) (param $type i32) (param $val i32) (param $count i32) (result i32)
+    (local $r i32) (local $cf i32) (local $mask i32) (local $sign i32)
+    (local.set $mask
+      (if (result i32) (i32.eq (local.get $bits) (i32.const 32))
+        (then (i32.const -1))
+        (else (i32.sub (i32.shl (i32.const 1) (local.get $bits)) (i32.const 1)))))
+    (local.set $sign (i32.shl (i32.const 1) (i32.sub (local.get $bits) (i32.const 1))))
+    (local.set $val (i32.and (local.get $val) (local.get $mask)))
     (local.set $count (i32.and (local.get $count) (i32.const 31)))
     (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 4)) ;; SHL
+
+    ;; SHL and SAL are the same instruction.
+    (if (i32.or (i32.eq (local.get $type) (i32.const 4))
+                (i32.eq (local.get $type) (i32.const 6)))
       (then
-        (local.set $r (i32.shl (local.get $val) (local.get $count)))
-        ;; CF = bit (32 - count) of original value = last bit shifted out
+        (local.set $r (i32.and (i32.shl (local.get $val) (local.get $count)) (local.get $mask)))
+        ;; CF is the last bit shifted out: bit (bits - count) of the original.
         (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (i32.const 32) (local.get $count))) (i32.const 1)))
+          (i32.and (i32.shr_u (local.get $val)
+                     (i32.sub (local.get $bits) (local.get $count))) (i32.const 1)))
         (return (local.get $r))))
+
     (if (i32.eq (local.get $type) (i32.const 5)) ;; SHR
       (then
         (local.set $r (i32.shr_u (local.get $val) (local.get $count)))
-        ;; CF = bit (count - 1) of original value
         (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
+          (i32.and (i32.shr_u (local.get $val)
+                     (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
         (return (local.get $r))))
+
     (if (i32.eq (local.get $type) (i32.const 7)) ;; SAR
       (then
-        (local.set $r (i32.shr_s (local.get $val) (local.get $count)))
-        ;; CF = bit (count - 1) of original value
+        ;; Sign-extend into the bits above the operand before the arithmetic
+        ;; shift. At 32 there are none, and ~mask is 0, so this is a no-op.
+        (if (i32.and (local.get $val) (local.get $sign))
+          (then (local.set $val (i32.or (local.get $val) (i32.xor (local.get $mask) (i32.const -1))))))
+        (local.set $r (i32.and (i32.shr_s (local.get $val) (local.get $count)) (local.get $mask)))
         (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
+          (i32.and (i32.shr_u (local.get $val)
+                     (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
         (return (local.get $r))))
+
     (if (i32.eq (local.get $type) (i32.const 0)) ;; ROL — CF = bit 0 of result
       (then
-        (local.set $r (i32.or
-          (i32.shl (local.get $val) (local.get $count))
-          (i32.shr_u (local.get $val) (i32.sub (i32.const 32) (local.get $count)))))
+        (local.set $count (i32.rem_u (local.get $count) (local.get $bits)))
+        (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
+        (local.set $r (i32.and
+          (i32.or (i32.shl (local.get $val) (local.get $count))
+                  (i32.shr_u (local.get $val) (i32.sub (local.get $bits) (local.get $count))))
+          (local.get $mask)))
         (call $set_flags_shift (local.get $r) (i32.and (local.get $r) (i32.const 1)))
         (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 1)) ;; ROR — CF = bit 31 of result
-      (then
-        (local.set $r (i32.or
-          (i32.shr_u (local.get $val) (local.get $count))
-          (i32.shl (local.get $val) (i32.sub (i32.const 32) (local.get $count)))))
-        (call $set_flags_shift (local.get $r) (i32.shr_u (local.get $r) (i32.const 31)))
-        (return (local.get $r))))
-    ;; RCL: rotate left through carry (33-bit rotation)
-    (if (i32.eq (local.get $type) (i32.const 2))
-      (then
-        (local.set $cf (call $get_cf))
-        (block $done (loop $lp
-          (br_if $done (i32.eqz (local.get $count)))
-          (local.set $r (i32.or (i32.shl (local.get $val) (i32.const 1)) (local.get $cf)))
-          (local.set $cf (i32.shr_u (local.get $val) (i32.const 31)))
-          (local.set $val (local.get $r))
-          (local.set $count (i32.sub (local.get $count) (i32.const 1)))
-          (br $lp)))
-        (call $set_flags_shift (local.get $val) (local.get $cf))
-        (return (local.get $val))))
-    ;; RCR: rotate right through carry (33-bit rotation)
-    (if (i32.eq (local.get $type) (i32.const 3))
-      (then
-        (local.set $cf (call $get_cf))
-        (block $done (loop $lp
-          (br_if $done (i32.eqz (local.get $count)))
-          (local.set $r (i32.or (i32.shr_u (local.get $val) (i32.const 1)) (i32.shl (local.get $cf) (i32.const 31))))
-          (local.set $cf (i32.and (local.get $val) (i32.const 1)))
-          (local.set $val (local.get $r))
-          (local.set $count (i32.sub (local.get $count) (i32.const 1)))
-          (br $lp)))
-        (call $set_flags_shift (local.get $val) (local.get $cf))
-        (return (local.get $val))))
-    ;; SAL = SHL
-    (if (i32.eq (local.get $type) (i32.const 6))
-      (then
-        (local.set $r (i32.shl (local.get $val) (local.get $count)))
-        (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (i32.const 32) (local.get $count))) (i32.const 1)))
-        (return (local.get $r))))
-    ;; Fallback
-    (local.get $val)
-  )
 
-  ;; 8-bit shift: mask to 8 bits, shift, mask result
-  (func $do_shift8 (param $type i32) (param $val i32) (param $count i32) (result i32)
-    (local $r i32) (local $cf i32)
-    (local.set $val (i32.and (local.get $val) (i32.const 0xFF)))
-    (local.set $count (i32.and (local.get $count) (i32.const 31)))
-    (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 4)) ;; SHL
+    (if (i32.eq (local.get $type) (i32.const 1)) ;; ROR — CF = top bit of result
       (then
-        (local.set $r (i32.shl (local.get $val) (local.get $count)))
-        (call $set_flags_shift (i32.and (local.get $r) (i32.const 0xFF))
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (i32.const 8) (local.get $count))) (i32.const 1)))
-        (return (i32.and (local.get $r) (i32.const 0xFF)))))
-    (if (i32.eq (local.get $type) (i32.const 5)) ;; SHR
-      (then
-        (local.set $r (i32.shr_u (local.get $val) (local.get $count)))
-        (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 7)) ;; SAR
-      (then
-        ;; Sign-extend from bit 7, then shift
-        (if (i32.and (local.get $val) (i32.const 0x80))
-          (then (local.set $val (i32.or (local.get $val) (i32.const 0xFFFFFF00)))))
-        (local.set $r (i32.and (i32.shr_s (local.get $val) (local.get $count)) (i32.const 0xFF)))
-        (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 0)) ;; ROL
-      (then
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 8)))
+        (local.set $count (i32.rem_u (local.get $count) (local.get $bits)))
         (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-        (local.set $r (i32.and (i32.or
-          (i32.shl (local.get $val) (local.get $count))
-          (i32.shr_u (local.get $val) (i32.sub (i32.const 8) (local.get $count)))) (i32.const 0xFF)))
-        (call $set_flags_shift (local.get $r) (i32.and (local.get $r) (i32.const 1)))
+        (local.set $r (i32.and
+          (i32.or (i32.shr_u (local.get $val) (local.get $count))
+                  (i32.shl (local.get $val) (i32.sub (local.get $bits) (local.get $count))))
+          (local.get $mask)))
+        (call $set_flags_shift (local.get $r)
+          (i32.shr_u (local.get $r) (i32.sub (local.get $bits) (i32.const 1))))
         (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 1)) ;; ROR
-      (then
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 8)))
-        (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-        (local.set $r (i32.and (i32.or
-          (i32.shr_u (local.get $val) (local.get $count))
-          (i32.shl (local.get $val) (i32.sub (i32.const 8) (local.get $count)))) (i32.const 0xFF)))
-        (call $set_flags_shift (local.get $r) (i32.shr_u (local.get $r) (i32.const 7)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 2)) ;; RCL (9-bit rotation)
+
+    ;; RCL / RCR rotate through the carry flag, so the cycle is bits+1 long.
+    (if (i32.eq (local.get $type) (i32.const 2)) ;; RCL
       (then
         (local.set $cf (call $get_cf))
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 9)))
+        (local.set $count (i32.rem_u (local.get $count) (i32.add (local.get $bits) (i32.const 1))))
         (block $done (loop $lp
           (br_if $done (i32.eqz (local.get $count)))
-          (local.set $r (i32.or (i32.and (i32.shl (local.get $val) (i32.const 1)) (i32.const 0xFF)) (local.get $cf)))
-          (local.set $cf (i32.shr_u (local.get $val) (i32.const 7)))
+          (local.set $r (i32.or
+            (i32.and (i32.shl (local.get $val) (i32.const 1)) (local.get $mask))
+            (local.get $cf)))
+          (local.set $cf (i32.shr_u (local.get $val) (i32.sub (local.get $bits) (i32.const 1))))
           (local.set $val (local.get $r))
           (local.set $count (i32.sub (local.get $count) (i32.const 1)))
           (br $lp)))
         (call $set_flags_shift (local.get $val) (local.get $cf))
         (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 3)) ;; RCR (9-bit rotation)
+
+    (if (i32.eq (local.get $type) (i32.const 3)) ;; RCR
       (then
         (local.set $cf (call $get_cf))
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 9)))
+        (local.set $count (i32.rem_u (local.get $count) (i32.add (local.get $bits) (i32.const 1))))
         (block $done (loop $lp
           (br_if $done (i32.eqz (local.get $count)))
-          (local.set $r (i32.or (i32.shr_u (local.get $val) (i32.const 1)) (i32.shl (local.get $cf) (i32.const 7))))
+          (local.set $r (i32.or (i32.shr_u (local.get $val) (i32.const 1))
+            (i32.shl (local.get $cf) (i32.sub (local.get $bits) (i32.const 1)))))
           (local.set $cf (i32.and (local.get $val) (i32.const 1)))
           (local.set $val (local.get $r))
           (local.set $count (i32.sub (local.get $count) (i32.const 1)))
           (br $lp)))
         (call $set_flags_shift (local.get $val) (local.get $cf))
         (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 6)) ;; SAL = SHL
-      (then
-        (local.set $r (i32.shl (local.get $val) (local.get $count)))
-        (call $set_flags_shift (i32.and (local.get $r) (i32.const 0xFF))
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (i32.const 8) (local.get $count))) (i32.const 1)))
-        (return (i32.and (local.get $r) (i32.const 0xFF)))))
+
+    ;; Unknown type: leave the value alone, as all three copies did.
     (local.get $val))
 
-  ;; 16-bit shift: mask to 16 bits, shift, mask result
+  (func $do_shift32 (param $type i32) (param $val i32) (param $count i32) (result i32)
+    (call $do_shift (i32.const 32) (local.get $type) (local.get $val) (local.get $count)))
   (func $do_shift16 (param $type i32) (param $val i32) (param $count i32) (result i32)
-    (local $r i32) (local $cf i32)
-    (local.set $val (i32.and (local.get $val) (i32.const 0xFFFF)))
-    (local.set $count (i32.and (local.get $count) (i32.const 31)))
-    (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 4)) ;; SHL
-      (then
-        (local.set $r (i32.shl (local.get $val) (local.get $count)))
-        (call $set_flags_shift (i32.and (local.get $r) (i32.const 0xFFFF))
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (i32.const 16) (local.get $count))) (i32.const 1)))
-        (return (i32.and (local.get $r) (i32.const 0xFFFF)))))
-    (if (i32.eq (local.get $type) (i32.const 5)) ;; SHR
-      (then
-        (local.set $r (i32.shr_u (local.get $val) (local.get $count)))
-        (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 7)) ;; SAR
-      (then
-        (if (i32.and (local.get $val) (i32.const 0x8000))
-          (then (local.set $val (i32.or (local.get $val) (i32.const 0xFFFF0000)))))
-        (local.set $r (i32.and (i32.shr_s (local.get $val) (local.get $count)) (i32.const 0xFFFF)))
-        (call $set_flags_shift (local.get $r)
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $count) (i32.const 1))) (i32.const 1)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 0)) ;; ROL
-      (then
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 16)))
-        (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-        (local.set $r (i32.and (i32.or
-          (i32.shl (local.get $val) (local.get $count))
-          (i32.shr_u (local.get $val) (i32.sub (i32.const 16) (local.get $count)))) (i32.const 0xFFFF)))
-        (call $set_flags_shift (local.get $r) (i32.and (local.get $r) (i32.const 1)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 1)) ;; ROR
-      (then
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 16)))
-        (if (i32.eqz (local.get $count)) (then (return (local.get $val))))
-        (local.set $r (i32.and (i32.or
-          (i32.shr_u (local.get $val) (local.get $count))
-          (i32.shl (local.get $val) (i32.sub (i32.const 16) (local.get $count)))) (i32.const 0xFFFF)))
-        (call $set_flags_shift (local.get $r) (i32.shr_u (local.get $r) (i32.const 15)))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $type) (i32.const 2)) ;; RCL (17-bit)
-      (then
-        (local.set $cf (call $get_cf))
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 17)))
-        (block $done (loop $lp
-          (br_if $done (i32.eqz (local.get $count)))
-          (local.set $r (i32.or (i32.and (i32.shl (local.get $val) (i32.const 1)) (i32.const 0xFFFF)) (local.get $cf)))
-          (local.set $cf (i32.shr_u (local.get $val) (i32.const 15)))
-          (local.set $val (local.get $r))
-          (local.set $count (i32.sub (local.get $count) (i32.const 1)))
-          (br $lp)))
-        (call $set_flags_shift (local.get $val) (local.get $cf))
-        (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 3)) ;; RCR (17-bit)
-      (then
-        (local.set $cf (call $get_cf))
-        (local.set $count (i32.rem_u (local.get $count) (i32.const 17)))
-        (block $done (loop $lp
-          (br_if $done (i32.eqz (local.get $count)))
-          (local.set $r (i32.or (i32.shr_u (local.get $val) (i32.const 1)) (i32.shl (local.get $cf) (i32.const 15))))
-          (local.set $cf (i32.and (local.get $val) (i32.const 1)))
-          (local.set $val (local.get $r))
-          (local.set $count (i32.sub (local.get $count) (i32.const 1)))
-          (br $lp)))
-        (call $set_flags_shift (local.get $val) (local.get $cf))
-        (return (local.get $val))))
-    (if (i32.eq (local.get $type) (i32.const 6)) ;; SAL = SHL
-      (then
-        (local.set $r (i32.shl (local.get $val) (local.get $count)))
-        (call $set_flags_shift (i32.and (local.get $r) (i32.const 0xFFFF))
-          (i32.and (i32.shr_u (local.get $val) (i32.sub (i32.const 16) (local.get $count))) (i32.const 1)))
-        (return (i32.and (local.get $r) (i32.const 0xFFFF)))))
-    (local.get $val))
+    (call $do_shift (i32.const 16) (local.get $type) (local.get $val) (local.get $count)))
+  (func $do_shift8 (param $type i32) (param $val i32) (param $count i32) (result i32)
+    (call $do_shift (i32.const 8) (local.get $type) (local.get $val) (local.get $count)))
 
-  ;; ============================================================
+;; ============================================================
   ;; THREAD HANDLERS
   ;; ============================================================
 
