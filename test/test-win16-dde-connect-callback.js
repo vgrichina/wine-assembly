@@ -290,6 +290,45 @@ function settle(a, b, pumpNode, batches = 200) {
       (server.wat.test_dde_advise_count() | 0) === 0);
   }
 
+  // --- a connect that names nobody ------------------------------------------
+  // A wildconnect asks "who is out there?" rather than for anyone in
+  // particular, and the application is asked XTYP_WILDCONNECT rather than
+  // XTYP_CONNECT: it is being asked what it will serve, not whether it will
+  // serve this. Any instance with a service to offer is a candidate.
+  {
+    const segment = new LoopbackSegment();
+    const server = await makeNode(wasm, segment.attach(), '10.77.0.1');
+    const client = await makeNode(wasm, segment.attach(), '10.77.0.2');
+    boot(server, bytes, 400);
+    boot(client, bytes, 50);
+    server.wat.test_dde_instance(0, 1);
+    client.wat.test_dde_instance(0, 1);
+    server.wat.test_dde_register(1, intern(server, SERVICE));
+    installCallback(server, true);
+
+    // An empty service name is what makes it wild.
+    const conv = client.wat.test_dde_connect_begin(
+      1, intern(client, ''), intern(client, TOPIC)) | 0;
+    assert(conv, 'no conversation slot');
+    settle(server, client, server);
+    check('a wildconnect finds a server that never named itself to the client',
+      (client.wat.test_dde_connect_done() | 0) === conv);
+
+    // And a room with nothing registered still answers nobody, so "wild" does
+    // not mean "anyone will do".
+    const bare = await makeNode(wasm, segment.attach(), '10.77.0.3');
+    boot(bare, bytes, 50);
+    bare.wat.test_dde_instance(0, 1);
+    installCallback(bare, true);
+    const none = bare.wat.test_dde_connect_begin(
+      1, intern(bare, ''), intern(bare, TOPIC)) | 0;
+    for (let i = 0; i < 4; i++) { bare.pump(); client.pump(); }
+    for (let i = 0; i < 200; i++) bare.wat.run(64);
+    for (let i = 0; i < 4; i++) { bare.pump(); client.pump(); }
+    check('a wildconnect is still not answered by an instance serving nothing',
+      (bare.wat.test_dde_connect_done() | 0) === 0, `conv ${none}`);
+  }
+
   console.log(`\n${passed} passed, 0 failed`);
 })().catch(error => {
   console.error(error.stack || error);

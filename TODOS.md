@@ -410,11 +410,26 @@ sets the global instead.
   one left pointing at a closed conversation would push into a handle that has
   since been reused. `XTYP_POKE` and `XTYP_EXECUTE` cross too.
 
-  **What is genuinely left:** `XTYP_WILDCONNECT`, `XTYP_MONITOR`, and the
-  `DDE_FBUSY`/retry half of acknowledgements — none of which anything in the
-  corpus asks for. `DdeClientTransaction`'s `dwTimeout` is ignored in favour of
-  the fixed wait; an app passing a short one gets a longer one, which is
-  generous rather than wrong, but it is a difference.
+  `XTYP_WILDCONNECT` works too: a connect naming no service asks who is out
+  there, every instance with a service to offer is a candidate, and the
+  application is asked what it will serve rather than whether it will serve
+  this. An instance serving nothing still answers nobody. `DDE_FBUSY` is
+  honoured as its own answer — "not now" is neither yes nor no, so the caller
+  keeps waiting and a wait that only ever saw busy ends in `DMLERR_BUSY`
+  rather than a timeout. `DdeClientTransaction` uses the caller's `dwTimeout`,
+  clamped so a hopeful two milliseconds still gives the far machine a chance.
+
+  **`XTYP_MONITOR` is refused, on purpose.** A monitor is a DDE spy that
+  expects to be told about every transaction in the system, and none of that
+  is delivered. An instance that registered happily and then saw nothing would
+  be the worst outcome — a debugging tool silently reporting that nothing is
+  happening — so `DdeInitialize` with `APPCLASS_MONITOR` fails with
+  `DMLERR_DLL_USAGE`, which is what Windows uses for a class the DLL will not
+  serve. Implement the delivery before accepting the registration.
+
+  **Also fixed while checking the codes:** `DMLERR_LOW_MEMORY` is `0x4007`, not
+  `0x4001` — `0x4001` is `DMLERR_BUSY`. Five sites were returning "busy" where
+  they meant "out of memory", which an app retrying on busy would loop on.
 
   **On testing any of this:** use the in-process harness. Two instances on a
   `LoopbackSegment`, each with a real NE loaded so selectors and a message loop

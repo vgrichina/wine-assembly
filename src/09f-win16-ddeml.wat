@@ -63,7 +63,8 @@
              (i32.add (i32.const 0xD000) (i32.mul (local.get $i) (i32.const 24)))))
 
   ;; The one call this instance is waiting on:
-  ;; {active, started_ms, conv, answered, kind, result}. DdeConnect and
+  ;; {active, started_ms, conv, answered, kind, result, timeout_ms}. DdeConnect
+  ;; and
   ;; DdeClientTransaction are both synchronous to their caller and a task has
   ;; exactly one such call outstanding, so one slot is the whole of it.
   (func $win16_dde_pending_slot (result i32)
@@ -209,9 +210,19 @@
   (global $XTYP_ADVSTOP i32 (i32.const 0x8040))
   (global $XTYP_ADVREQ i32 (i32.const 0x2020))
   (global $XTYP_ADVDATA i32 (i32.const 0x4010))
+  ;; A connect that names no service or no topic: "who is out there, and what
+  ;; will you talk about?". The application answers with the pair it is willing
+  ;; to serve rather than with a yes.
+  (global $XTYP_WILDCONNECT i32 (i32.const 0x20E2))
+  ;; APPCLASS_MONITOR in DdeInitialize's afCmd. A monitor is a DDE spy: it
+  ;; serves nothing and is told about everything.
+  (global $APPCLASS_MONITOR i32 (i32.const 0x00000001))
   ;; The acknowledgement a callback returns for the transactions that carry
   ;; data in rather than out. Only the low byte is the status.
   (global $DDE_FACK i32 (i32.const 0x8000))
+  ;; "Not now, ask again" — different from a refusal, and the difference is
+  ;; whether the caller keeps waiting or gives up.
+  (global $DDE_FBUSY i32 (i32.const 0x4000))
 
   ;; What the one outstanding wait is for. A task has at most one synchronous
   ;; DDEML call in flight, so connect and transaction share the slot and this
@@ -608,7 +619,7 @@
     (local $type i32)
     (local $tag i32) (local $src_conv i32) (local $dst_conv i32)
     (local $i i32) (local $slot i32) (local $conv i32) (local $svc i32)
-    (local $want i32)
+    (local $want i32) (local $wild i32)
     (if (i32.lt_u (local.get $n) (global.get $DDE_HDR)) (then (return)))
     (local.set $type     (i32.load offset=4  (local.get $wa)))
     (local.set $tag      (i32.load offset=8  (local.get $wa)))
@@ -624,6 +635,13 @@
     (if (i32.eq (local.get $type) (i32.const 1))
       (then
         (local.set $want (i32.add (local.get $wa) (global.get $DDE_HDR)))
+        ;; A connect naming no service is a wildconnect: the client is asking
+        ;; who is out there rather than for anyone in particular. Every
+        ;; instance that has registered a service is a candidate, and the
+        ;; application is asked with XTYP_WILDCONNECT instead of XTYP_CONNECT —
+        ;; the difference the app sees is that it is being asked what it will
+        ;; serve, not whether it will serve this.
+        (local.set $wild (i32.eqz (i32.load8_u (local.get $want))))
         (if (call $win16_dde_is_agent (local.get $want))
           (then
             ;; The topic follows the service in the payload, and it is the
@@ -638,7 +656,11 @@
           (local.set $svc (i32.load (call $win16_dde_service_slot (local.get $i))))
           (if (i32.and
                 (i32.ne (i32.load (call $win16_dde_inst (local.get $i))) (i32.const 0))
-                (call $win16_dde_hsz_is (local.get $svc) (local.get $want)))
+                ;; A wildconnect matches any instance that has a service to
+                ;; offer at all; a named one has to be that name.
+                (select (i32.ne (local.get $svc) (i32.const 0))
+                        (call $win16_dde_hsz_is (local.get $svc) (local.get $want))
+                        (local.get $wild)))
             (then
               (local.set $conv (call $win16_dde_conv_alloc
                 (i32.add (local.get $i) (i32.const 1)) (i32.const 1)))
@@ -656,7 +678,9 @@
                   ;; text off the wire is interned here rather than passed
                   ;; through. hsz1 is the topic and hsz2 the service, the way
                   ;; XTYP_CONNECT is documented.
-                  (if (i32.eqz (call $win16_dde_ask_push (global.get $XTYP_CONNECT)
+                  (if (i32.eqz (call $win16_dde_ask_push
+                        (select (global.get $XTYP_WILDCONNECT)
+                                (global.get $XTYP_CONNECT) (local.get $wild))
                         (i32.add (local.get $i) (i32.const 1)) (local.get $conv)
                         (call $win16_dde_hsz_intern_wa
                           (i32.add (i32.add (local.get $wa) (global.get $DDE_HDR))
@@ -766,11 +790,19 @@
                     (global.get $DDE_WAIT_XACT)) (then (return)))
         (if (i32.ne (local.get $dst_conv) (i32.load offset=8 (local.get $slot)))
           (then (return)))
-        ;; A refusal is a real answer and must not read as data: the caller
-        ;; gets zero, and DdeClientTransaction turns that into NOTPROCESSED.
+        ;; Three answers, not two. DDE_FBUSY is the application saying "not
+        ;; now" rather than "no", and Windows keeps trying until the timeout —
+        ;; so this leaves the transaction unanswered and the parked caller
+        ;; simply waits, which is what a retry looks like from here. A plain
+        ;; refusal is a real answer and must not read as data: the caller gets
+        ;; zero and DdeClientTransaction turns that into NOTPROCESSED.
+        (local.set $i (i32.load (i32.add (local.get $wa) (global.get $DDE_HDR))))
+        (if (i32.and (local.get $i) (global.get $DDE_FBUSY))
+          (then
+            (i32.store offset=28 (local.get $slot) (i32.const 1))
+            (return)))
         (i32.store offset=20 (local.get $slot)
-          (select (global.get $DDE_FACK) (i32.const 0)
-                  (i32.load (i32.add (local.get $wa) (global.get $DDE_HDR)))))
+          (select (global.get $DDE_FACK) (i32.const 0) (local.get $i)))
         (i32.store offset=12 (local.get $slot) (i32.const 1))
         (return)))
 
@@ -840,7 +872,7 @@
       (br $scan)))
     (if (i32.eq (local.get $free) (i32.const -1))
       (then
-        (call $win16_dde_set_error (i32.const 0x4001))   ;; DMLERR_LOW_MEMORY
+        (call $win16_dde_set_error (i32.const 0x4007))   ;; DMLERR_LOW_MEMORY
         (return (i32.const 0))))
     (local.set $slot (call $win16_dde_hsz_slot (local.get $free)))
     (i32.store (local.get $slot) (i32.const 1))
@@ -883,7 +915,20 @@
       (br $scan)))
     (if (i32.ge_u (local.get $i) (i32.const 8))
       (then
-        (global.set $eax (i32.const 0x4001))            ;; DMLERR_LOW_MEMORY
+        (global.set $eax (i32.const 0x4007))            ;; DMLERR_LOW_MEMORY
+        (call $win16_api_return (i32.const 16))
+        (return)))
+    ;; A monitor is a DDE spy: it serves nothing and expects to be told about
+    ;; every transaction in the system through XTYP_MONITOR. None of that is
+    ;; delivered here, and an instance that registered happily and then saw
+    ;; nothing would be the worst of both — a debugging tool silently
+    ;; reporting that nothing is happening. Refusing outright is the honest
+    ;; answer, and DMLERR_DLL_USAGE is the one Windows uses for a class this
+    ;; DLL will not serve.
+    (if (i32.and (call $win16_arg32 (i32.const 2)) (global.get $APPCLASS_MONITOR))
+      (then
+        (call $win16_dde_set_error (i32.const 0x4004))   ;; DMLERR_DLL_USAGE
+        (global.set $eax (i32.const 0x4004))
         (call $win16_api_return (i32.const 16))
         (return)))
     (local.set $slot (call $win16_dde_inst (local.get $i)))
@@ -1016,7 +1061,7 @@
     (local.set $conv (call $win16_dde_conv_alloc (local.get $inst) (i32.const 0)))
     (if (i32.eqz (local.get $conv))
       (then
-        (call $win16_dde_set_error (i32.const 0x4001))   ;; DMLERR_LOW_MEMORY
+        (call $win16_dde_set_error (i32.const 0x4007))   ;; DMLERR_LOW_MEMORY
         (global.set $edx (i32.const 0))
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 16))
@@ -1027,6 +1072,9 @@
     (i32.store offset=12 (local.get $pend) (i32.const 0))
     (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_CONNECT))
     (i32.store offset=20 (local.get $pend) (i32.const 0))
+    ;; DdeConnect takes no timeout of its own, so it keeps the default.
+    (i32.store offset=24 (local.get $pend) (global.get $DDE_CONNECT_TIMEOUT_MS))
+    (i32.store offset=28 (local.get $pend) (i32.const 0))
 
     ;; Put the request on the wire before parking, so the room has something
     ;; to answer on the very first pass.
@@ -1107,7 +1155,7 @@
         (return (i32.const 0))))
     (if (i32.lt_u (i32.sub (call $host_real_time_ms)
                            (i32.load offset=4 (local.get $pend)))
-                  (global.get $DDE_CONNECT_TIMEOUT_MS))
+                  (i32.load offset=24 (local.get $pend)))
       (then
         (global.set $yield_reason (i32.const 8))
         (global.set $yield_flag (i32.const 1))
@@ -1118,9 +1166,14 @@
       (then
         ;; The conversation is still good; it is this transaction that went
         ;; unanswered, which is what DMLERR_DATAACKTIMEOUT means. Tearing the
-        ;; conversation down here would lose a session over one slow item.
+        ;; conversation down here would lose a session over one slow item. A
+        ;; server that kept saying DDE_FBUSY right up to the deadline is a
+        ;; different story and gets its own error, because "it was busy" and
+        ;; "it never spoke" are different things to an app deciding what next.
         (i32.store (local.get $pend) (i32.const 0))
-        (call $win16_dde_set_error (i32.const 0x4002))   ;; DMLERR_DATAACKTIMEOUT
+        (call $win16_dde_set_error
+          (select (i32.const 0x4001) (i32.const 0x4002)   ;; BUSY / DATAACKTIMEOUT
+                  (i32.load offset=28 (local.get $pend))))
         (global.set $edx (i32.const 0))
         (global.set $eax (i32.const 0))
         (return (i32.const 0))))
@@ -1223,6 +1276,18 @@
     (i32.store offset=12 (local.get $pend) (i32.const 0))
     (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
     (i32.store offset=20 (local.get $pend) (i32.const 0))
+    ;; The caller's own dwTimeout, which is the whole point of the argument.
+    ;; TIMEOUT_ASYNC (-1) asks for an asynchronous transaction, which this does
+    ;; not do; a zero is not a real answer either. Both fall back to the
+    ;; default, and anything else is clamped so a hopeful two milliseconds
+    ;; still gives the far machine a chance to be scheduled.
+    (local.set $cb (call $win16_arg32 (i32.const 2)))
+    (if (i32.or (i32.eqz (local.get $cb)) (i32.eq (local.get $cb) (i32.const -1)))
+      (then (local.set $cb (global.get $DDE_CONNECT_TIMEOUT_MS))))
+    (if (i32.lt_u (local.get $cb) (i32.const 250)) (then (local.set $cb (i32.const 250))))
+    (if (i32.gt_u (local.get $cb) (i32.const 60000)) (then (local.set $cb (i32.const 60000))))
+    (i32.store offset=24 (local.get $pend) (local.get $cb))
+    (i32.store offset=28 (local.get $pend) (i32.const 0))
     (local.set $wa (call $win16_dde_frame_wa))
     (if (local.get $wa)
       (then
@@ -1304,7 +1369,7 @@
       (br $scan)))
     (if (i32.ge_u (local.get $i) (i32.const 16))
       (then
-        (call $win16_dde_set_error (i32.const 0x4001))   ;; DMLERR_LOW_MEMORY
+        (call $win16_dde_set_error (i32.const 0x4007))   ;; DMLERR_LOW_MEMORY
         (global.set $edx (i32.const 0))
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 24))
@@ -1313,7 +1378,7 @@
     ;; is refused with the error the caller already tests for.
     (if (i32.gt_u (i32.add (local.get $cb) (local.get $off)) (i32.const 512))
       (then
-        (call $win16_dde_set_error (i32.const 0x4001))
+        (call $win16_dde_set_error (i32.const 0x4007))   ;; DMLERR_LOW_MEMORY
         (global.set $edx (i32.const 0))
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 24))

@@ -2573,6 +2573,8 @@
     (i32.store offset=12 (local.get $pend) (i32.const 0))
     (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
     (i32.store offset=20 (local.get $pend) (i32.const 0))
+    (i32.store offset=24 (local.get $pend) (global.get $DDE_CONNECT_TIMEOUT_MS))
+    (i32.store offset=28 (local.get $pend) (i32.const 0))
     (local.set $wa (call $win16_dde_frame_wa))
     (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
     (local.set $len (call $win16_dde_put_hsz
@@ -2601,6 +2603,8 @@
     (i32.store offset=12 (local.get $pend) (i32.const 0))
     (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
     (i32.store offset=20 (local.get $pend) (i32.const 0))
+    (i32.store offset=24 (local.get $pend) (global.get $DDE_CONNECT_TIMEOUT_MS))
+    (i32.store offset=28 (local.get $pend) (i32.const 0))
     (local.set $wa (call $win16_dde_frame_wa))
     (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
     (local.set $len (call $win16_dde_put_hsz
