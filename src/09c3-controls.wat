@@ -695,54 +695,65 @@
 
   ;; ---- Control WndProc dispatch ----
 
+  ;; One --trace-ctrl line for a WAT-native control. $reason is 0 when the
+  ;; control is about to paint, and otherwise says why it will not:
+  ;;   1 = an ancestor still owes an erase or a paint
+  ;;   2 = the control (or an ancestor) is not effectively visible
+  ;;   3 = its update rect is empty
+  ;;   4 = it has no CONTROL_TABLE class, so this drain never paints it
+  ;; A control that never appears in this trace at all was never asked --
+  ;; nothing invalidated it, which is a different bug from any of the above.
+  ;;
+  ;; Two controls painting the same pixels, or one painting twice at
+  ;; different origins, is invisible in --trace-gdi now that the GDI
+  ;; primitives rasterize inside WAT. JS drops this unless --trace-ctrl.
+  (func $ctrl_paint_trace_emit (param $hwnd i32) (param $class i32) (param $reason i32)
+    (local $wh i32)
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (call $host_ctrl_paint_trace
+      (local.get $hwnd)
+      ;; Reason rides above the class byte -- the packed word below is full.
+      (i32.or (local.get $class) (i32.shl (local.get $reason) (i32.const 8)))
+      (call $wnd_window_screen_x (local.get $hwnd))
+      (call $wnd_window_screen_y (local.get $hwnd))
+      (i32.and (local.get $wh) (i32.const 0xFFFF))
+      (i32.or (i32.shl (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1))
+              (call $wnd_is_effectively_visible (local.get $hwnd)))
+      ;; Paint order alone cannot say which surface a control lands on --
+      ;; that is decided by its top-level ancestor. A child whose parent is
+      ;; not the window it appears over paints onto the wrong back-canvas
+      ;; and vanishes under whatever is stacked above.
+      ;;
+      ;; Everything reported here is a pure read. Resolving the control's
+      ;; hwnd+0x40000 DC would say whether its surface exists yet, which is
+      ;; the other way to paint no pixels -- but $gdi_surface_descriptor
+      ;; ENSURES the window surface, so asking the question changes the
+      ;; answer, and a trace call sits on every control paint.
+      (i32.or
+          (call $wnd_get_parent (local.get $hwnd))
+          ;; state=0 is another way to paint nothing: most control
+          ;; wndprocs bail out of WM_PAINT before their first primitive
+          ;; when the hwnd has no state record.
+          (i32.or
+            (i32.shl (i32.ne (call $wnd_get_state_ptr (local.get $hwnd))
+                             (i32.const 0))
+                     (i32.const 25))
+            ;; Low style nibble. Every class that composes its face from
+            ;; primitives dispatches on it, and a value no branch claims
+            ;; draws nothing at all -- indistinguishable, from the
+            ;; outside, from a control that never got asked to paint.
+            (i32.shl (i32.and (call $wnd_get_style (local.get $hwnd))
+                              (i32.const 0x0F))
+                     (i32.const 26))))))
+
   ;; Dispatch to the correct control wndproc based on control class
   (func $control_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $class i32) (local $wh i32)
+    (local $class i32)
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
-    ;; Every WAT-native control paint, with the screen rect it lands on.
-    ;; Two controls painting the same pixels, or one painting twice at
-    ;; different origins, is invisible in --trace-gdi now that the GDI
-    ;; primitives rasterize inside WAT. JS drops this unless --trace-ctrl.
     (if (i32.and (i32.eq (local.get $msg) (i32.const 0x000F))
           (i32.ne (local.get $class) (i32.const 0)))
-      (then
-        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
-        (call $host_ctrl_paint_trace
-          (local.get $hwnd) (local.get $class)
-          (call $wnd_window_screen_x (local.get $hwnd))
-          (call $wnd_window_screen_y (local.get $hwnd))
-          (i32.and (local.get $wh) (i32.const 0xFFFF))
-          (i32.or (i32.shl (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1))
-                  (call $wnd_is_effectively_visible (local.get $hwnd)))
-          ;; Paint order alone cannot say which surface a control lands on --
-          ;; that is decided by its top-level ancestor. A child whose parent is
-          ;; not the window it appears over paints onto the wrong back-canvas
-          ;; and vanishes under whatever is stacked above. surf=0 is the other
-          ;; way to leave no pixels: every GDI primitive below silently returns
-          ;; 0 when the control's hwnd+0x40000 DC resolves to no surface yet,
-          ;; and the paint path clears the update flag anyway, so the control
-          ;; is never asked to paint again.
-          (i32.or
-            (i32.or (call $wnd_get_parent (local.get $hwnd))
-                    (i32.shl (i32.ne (call $gdi_surface_descriptor
-                                       (i32.add (local.get $hwnd) (i32.const 0x40000))
-                                       (global.get $GDI_LINE_DESC))
-                                     (i32.const 0))
-                             (i32.const 24)))
-                  ;; state=0 is the third way to paint nothing: most control
-                  ;; wndprocs bail out of WM_PAINT before their first primitive
-                  ;; when the hwnd has no state record.
-                  (i32.or
-                    (i32.shl (i32.ne (call $wnd_get_state_ptr (local.get $hwnd))
-                                     (i32.const 0))
-                             (i32.const 25))
-                    ;; Low style nibble. Every class that composes its face from
-                    ;; primitives dispatches on it, and a value no branch claims
-                    ;; draws nothing at all -- indistinguishable, from the
-                    ;; outside, from a control that never got asked to paint.
-                    (i32.shl (i32.and (call $wnd_get_style (local.get $hwnd))
-                                      (i32.const 0x0F))
-                             (i32.const 26)))))))
+      (then (call $ctrl_paint_trace_emit
+              (local.get $hwnd) (local.get $class) (i32.const 0))))
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -5831,22 +5842,70 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Per-item record, 44 bytes: 8 subitem text pointers, then image (+32),
+  ;; lParam (+36) and state (+40). $lv_ensure_item_capacity, the insert and
+  ;; delete shifts and the LVM_SETITEMCOUNT clear all stride by 44 too --
+  ;; a WAT global would read better, but lib/compile-wat.js only parses
+  ;; globals ahead of the functions and silently loses every definition
+  ;; after one declared here.
   (func $lv_cell_addr (param $sw i32) (param $item i32) (param $sub i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
       (i32.add
-        (i32.mul (local.get $item) (i32.const 40))
+        (i32.mul (local.get $item) (i32.const 44))
         (i32.mul (local.get $sub) (i32.const 4)))))
 
   (func $lv_item_image_addr (param $sw i32) (param $item i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
-      (i32.add (i32.mul (local.get $item) (i32.const 40)) (i32.const 32))))
+      (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 32))))
 
   (func $lv_item_param_addr (param $sw i32) (param $item i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
-      (i32.add (i32.mul (local.get $item) (i32.const 40)) (i32.const 36))))
+      (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 36))))
+
+  ;; A Win98 list-view check box: 13x13 sunken well with a black tick. The
+  ;; app supplies these as a two-image LVSIL_STATE list, but the images are
+  ;; comctl32's own standard check boxes, so compose them the way the BUTTON
+  ;; painter does rather than trying to rasterize an image list.
+  (func $lv_paint_check_box (param $hdc i32) (param $x i32) (param $y i32) (param $checked i32)
+    (local $i i32)
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (i32.const 13)) (i32.add (local.get $y) (i32.const 13))
+      (i32.const 0x30010)))
+    ;; EDGE_SUNKEN (0x0A), BF_RECT (0x0F).
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (i32.const 13)) (i32.add (local.get $y) (i32.const 13))
+      (i32.const 0x0A) (i32.const 0x0F)))
+    (if (local.get $checked)
+      (then
+        ;; Six 2px strokes: down-right to the elbow, then up-right.
+        (block $done (loop $tick
+          (br_if $done (i32.ge_s (local.get $i) (i32.const 6)))
+          (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.add (local.get $x) (i32.add (local.get $i) (i32.const 3)))
+            (i32.add (local.get $y)
+              (select (i32.add (local.get $i) (i32.const 4))
+                      (i32.sub (i32.const 10) (local.get $i))
+                      (i32.lt_s (local.get $i) (i32.const 3))))
+            (i32.add (local.get $x) (i32.add (local.get $i) (i32.const 4)))
+            (i32.add (local.get $y)
+              (select (i32.add (local.get $i) (i32.const 6))
+                      (i32.sub (i32.const 12) (local.get $i))
+                      (i32.lt_s (local.get $i) (i32.const 3))))
+            (i32.const 0x30014)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $tick))))))
+
+  ;; LVIS_* state bits for one item. Only the state-image field (0xF000) is
+  ;; kept here; selection lives in the control's own "selected index" slot.
+  (func $lv_item_state_addr (param $sw i32) (param $item i32) (result i32)
+    (i32.add
+      (call $g2w (i32.load offset=8 (local.get $sw)))
+      (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 40))))
 
   (func $lv_ensure_item_capacity (param $sw i32) (param $want i32)
     (local $cap i32) (local $new_cap i32) (local $new_bytes i32)
@@ -5861,7 +5920,7 @@
       (br_if $grown (i32.le_u (local.get $want) (local.get $new_cap)))
       (local.set $new_cap (i32.mul (local.get $new_cap) (i32.const 2)))
       (br $grow)))
-    (local.set $new_bytes (i32.mul (local.get $new_cap) (i32.const 40)))
+    (local.set $new_bytes (i32.mul (local.get $new_cap) (i32.const 44)))
     (local.set $new_buf (call $heap_alloc (local.get $new_bytes)))
     (call $zero_memory (call $g2w (local.get $new_buf)) (local.get $new_bytes))
     (local.set $old_buf (i32.load offset=8 (local.get $sw)))
@@ -5872,7 +5931,7 @@
           (then
             (call $memcpy (call $g2w (local.get $new_buf))
                           (call $g2w (local.get $old_buf))
-                          (i32.mul (local.get $count) (i32.const 40)))))))
+                          (i32.mul (local.get $count) (i32.const 44)))))))
     (call $heap_free (local.get $old_buf))
     (i32.store offset=4 (local.get $sw) (local.get $new_cap))
     (i32.store offset=8 (local.get $sw) (local.get $new_buf)))
@@ -6042,10 +6101,10 @@
         (call $memcpy
           (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0))
           (call $lv_cell_addr (local.get $sw) (i32.add (local.get $idx) (i32.const 1)) (i32.const 0))
-          (i32.mul (local.get $tail) (i32.const 40)))))
+          (i32.mul (local.get $tail) (i32.const 44)))))
     (call $zero_memory
       (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $count) (i32.const 1)) (i32.const 0))
-      (i32.const 40))
+      (i32.const 44))
     (i32.store (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
     (local.set $selected (i32.load offset=32 (local.get $sw)))
     (if (i32.gt_s (local.get $selected) (local.get $idx))
@@ -6282,6 +6341,43 @@
     (drop (call $host_gdi_delete_dc (local.get $img_memdc)))
     (local.get $ret))
 
+  ;; Does this LVM_* message change what the control looks like?
+  ;;
+  ;; A real SysListView32 invalidates itself whenever its content, columns
+  ;; or colours change; ours only ever painted when something else happened
+  ;; to invalidate it. sndvol32 fills its "Show the following volume
+  ;; controls" list from WM_INITDIALOG, after the dialog's one paint pass,
+  ;; so the list stayed empty for the life of the window. Enumerated rather
+  ;; than range-tested on purpose: the LVM_GET* messages outnumber these and
+  ;; repainting on a query would be a repaint per redraw.
+  (func $lv_msg_repaints (param $msg i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1001))  ;; SETBKCOLOR
+                  (i32.eq (local.get $msg) (i32.const 0x1003))) ;; SETIMAGELIST
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1006))  ;; SETITEMA
+                  (i32.eq (local.get $msg) (i32.const 0x1007)))) ;; INSERTITEMA
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1008))  ;; DELETEITEM
+                  (i32.eq (local.get $msg) (i32.const 0x1009))) ;; DELETEALLITEMS
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x100F))  ;; SETITEMPOSITION
+                  (i32.eq (local.get $msg) (i32.const 0x1013))))) ;; ENSUREVISIBLE
+      (i32.or
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x101A))  ;; SETCOLUMNA
+                  (i32.eq (local.get $msg) (i32.const 0x101B))) ;; INSERTCOLUMNA
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x101C))  ;; DELETECOLUMN
+                  (i32.eq (local.get $msg) (i32.const 0x101E)))) ;; SETCOLUMNWIDTH
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1024))  ;; SETTEXTCOLOR
+                  (i32.eq (local.get $msg) (i32.const 0x1026))) ;; SETTEXTBKCOLOR
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x102B))  ;; SETITEMSTATE
+                    (i32.eq (local.get $msg) (i32.const 0x102E))) ;; SETITEMTEXTA
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x1030))  ;; SORTITEMS
+                    (i32.eq (local.get $msg) (i32.const 0x1036)))))))) ;; SETEXTENDEDLISTVIEWSTYLE
+
   (func $listview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $sw i32) (local $cs_w i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
@@ -6296,6 +6392,7 @@
     (local $col_count i32) (local $col_x i32) (local $col_idx i32)
     (local $widths_w i32) (local $texts_w i32) (local $pressed_part i32)
     (local $delta i32) (local $code i32)
+    (local $indent i32) (local $icon_x i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -6303,9 +6400,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 72)))
+        (local.set $state (call $heap_alloc (i32.const 76)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 72))
+        (call $zero_memory (local.get $sw) (i32.const 76))
         (i32.store offset=32 (local.get $sw) (i32.const -1))
         (i32.store offset=40 (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
         (i32.store offset=60 (local.get $sw) (i32.const 0x00FFFFFF))
@@ -6332,12 +6429,25 @@
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
 
+    (if (call $lv_msg_repaints (local.get $msg))
+      (then (call $invalidate_hwnd (local.get $hwnd))))
+
     ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep the assigned small-image
     ;; list handle so report rows reserve authentic icon space.
     (if (i32.eq (local.get $msg) (i32.const 0x1002))
       (then (return (i32.load offset=56 (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1003))
       (then
+        ;; LVSIL_STATE (2) is how a pre-XP app asks for check boxes: it hands
+        ;; over a two-image list and then sets each item's state-image index.
+        ;; Keep it apart from the small-icon list -- what it selects is not an
+        ;; icon to draw but a check box to compose, and only its presence
+        ;; matters to the painter.
+        (if (i32.eq (local.get $wParam) (i32.const 2))
+          (then
+            (local.set $old (i32.load offset=72 (local.get $sw)))
+            (i32.store offset=72 (local.get $sw) (local.get $lParam))
+            (return (local.get $old))))
         (local.set $old (i32.load offset=56 (local.get $sw)))
         (i32.store offset=56 (local.get $sw) (local.get $lParam))
         (return (local.get $old))))
@@ -6471,7 +6581,7 @@
             (local.set $i (local.get $count))
             (block $done2 (loop $clear_new
               (br_if $done2 (i32.ge_u (local.get $i) (local.get $wParam)))
-              (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 40))
+              (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 44))
               (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $i)) (i32.const -1))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $clear_new)))))
@@ -6833,10 +6943,10 @@
           (call $memcpy
             (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0))
             (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $i) (i32.const 1)) (i32.const 0))
-            (i32.const 40))
+            (i32.const 44))
           (local.set $i (i32.sub (local.get $i) (i32.const 1)))
           (br $item_shift)))
-        (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 40))
+        (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 44))
         (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $idx)) (i32.const -1))
         (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (if (i32.and (local.get $mask) (i32.const 0x0001))
@@ -6943,6 +7053,15 @@
                     (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
           (then (return (i32.const 0))))
         (local.set $lvi_w (call $g2w (local.get $lParam)))
+        ;; LVIS_STATEIMAGEMASK -- the check box. Index 1 is unchecked and 2 is
+        ;; checked by the convention every caller of LVSIL_STATE follows.
+        (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0xF000))
+          (then
+            (i32.store (call $lv_item_state_addr (local.get $sw) (local.get $idx))
+              (i32.or
+                (i32.and (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $idx)))
+                         (i32.const 0xFFFF0FFF))
+                (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0xF000))))))
         (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
           (then
             (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
@@ -6959,11 +7078,22 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $msg) (i32.const 0x102C))
       (then
+        (local.set $old (i32.const 0))
         (if (i32.and (local.get $lParam) (i32.const 0x0002))
           (then
-            (return (select (i32.const 0x0002) (i32.const 0)
-                      (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $wParam))))))
-        (return (i32.const 0))))
+            (if (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $wParam))
+              (then (local.set $old (i32.const 0x0002))))))
+        ;; ListView_GetCheckState is this message masked to 0xF000, so the
+        ;; check box has to answer here or every app reads back "unchecked".
+        (if (i32.and (local.get $lParam) (i32.const 0xF000))
+          (then
+            (if (i32.and (i32.ge_s (local.get $wParam) (i32.const 0))
+                         (i32.lt_s (local.get $wParam) (i32.load (local.get $sw))))
+              (then
+                (local.set $old (i32.or (local.get $old)
+                  (i32.and (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $wParam)))
+                           (i32.const 0xF000))))))))
+        (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x1032))
       (then
         (return (select (i32.const 1) (i32.const 0)
@@ -7460,34 +7590,57 @@
                   (then
                     (local.set $cell_w (call $g2w (local.get $cell_g)))
                     (local.set $text_len (call $strlen (local.get $cell_w)))
+                    ;; Column 0 carries the check box (LVSIL_STATE) and then the
+                    ;; small icon, each claiming 17px, and the text starts after
+                    ;; whichever of them are present.
+                    (local.set $indent (i32.const 4))
+                    ;; A row with a state-image index gets a check box, which is
+                    ;; what that index selects out of an LVSIL_STATE list. The
+                    ;; list itself is not consulted: sndvol32 hands us a NULL
+                    ;; one and then sets indices anyway, and the images every
+                    ;; caller means are comctl32's own two check boxes.
+                    (if (i32.and (i32.eqz (local.get $col_idx))
+                          (i32.ne (i32.and
+                                    (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $row)))
+                                    (i32.const 0xF000))
+                                  (i32.const 0)))
+                      (then
+                        (call $lv_paint_check_box (local.get $hdc)
+                          (i32.add (local.get $col_x) (i32.const 3))
+                          (i32.add (local.get $y) (i32.const 1))
+                          ;; Index 2 is the checked box, 1 the empty one.
+                          (i32.eq (i32.and
+                                    (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $row)))
+                                    (i32.const 0xF000))
+                                  (i32.const 0x2000)))
+                        (local.set $indent (i32.add (local.get $indent) (i32.const 17)))))
+                    (local.set $icon_x
+                      (i32.add (local.get $col_x) (i32.sub (local.get $indent) (i32.const 4))))
                     (if (i32.eqz (local.get $col_idx))
                       (then
                         (if (i32.load offset=56 (local.get $sw))
                           (then
                             (if (i32.eqz (call $lv_paint_report_icon
                                   (local.get $hdc) (local.get $sw) (local.get $row)
-                                  (local.get $col_x) (local.get $y)))
+                                  (local.get $icon_x) (local.get $y)))
                               (then
                                 ;; Fallback registry/document glyph: outlined page
                                 ;; with the blue Win98 registry mark inside.
                                 (drop (call $host_gdi_fill_rect (local.get $hdc)
-                                  (i32.add (local.get $col_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
-                                  (i32.add (local.get $col_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
+                                  (i32.add (local.get $icon_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
+                                  (i32.add (local.get $icon_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
                                   (i32.const 0x30014)))
                                 (drop (call $host_gdi_fill_rect (local.get $hdc)
-                                  (i32.add (local.get $col_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
-                                  (i32.add (local.get $col_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
+                                  (i32.add (local.get $icon_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
+                                  (i32.add (local.get $icon_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
                                   (i32.const 0x30010)))
                                 (drop (call $host_gdi_fill_rect (local.get $hdc)
-                                  (i32.add (local.get $col_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
-                                  (i32.add (local.get $col_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
-                                  (local.get $icon_brush)))))))))
+                                  (i32.add (local.get $icon_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
+                                  (i32.add (local.get $icon_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
+                                  (local.get $icon_brush)))))
+                        (local.set $indent (i32.add (local.get $indent) (i32.const 17)))))))
                     (drop (call $host_gdi_text_out (local.get $hdc)
-                      (i32.add (local.get $col_x)
-                        (select (i32.const 21) (i32.const 4)
-                          (i32.and
-                            (i32.eqz (local.get $col_idx))
-                            (i32.ne (i32.load offset=56 (local.get $sw)) (i32.const 0)))))
+                      (i32.add (local.get $col_x) (local.get $indent))
                       (i32.add (local.get $y) (i32.const 2))
                       (local.get $cell_w) (local.get $text_len) (i32.const 0)))))
                 (local.set $col_x (i32.add (local.get $col_x) (local.get $width)))
