@@ -80,6 +80,10 @@ UNIT=(
   test/test-gdi-surface.js
   test/test-gdi-deferred-presentation.js
   test/test-heap-partition.js
+  test/test-wat-atomics.js
+  test/test-wat-locks.js
+  test/test-wat-rpc-region.js
+  test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
   test/test-wat-statusbar-grip.js
