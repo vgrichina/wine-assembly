@@ -4000,7 +4000,118 @@
                               (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; GDI.100 LineDDA(nXStart, nYStart, nXEnd, nYEnd, lpLineFunc, lpData).
+  ;;
+  ;; Windows walks the line and hands each point to the application; none of the
+  ;; drawing is GDI's. Solitaire uses it for the card that flies to a foundation
+  ;; on a double-click, so this is what a double-click reached — and, being
+  ;; unimplemented, what it died on.
+  ;;
+  ;; The callback is guest code, so this cannot be a loop: every point has to
+  ;; give the interpreter the task back and be picked up again on the far
+  ;; return. The walk's state lives in globals between points and the Pascal
+  ;; frame goes up front, the way the modal pump parks — the far return saved
+  ;; here is what the last point resumes.
+  (global $WIN16_DDA_CB i32 (i32.const 0xFF90))
+  (global $win16_dda_ret  (mut i32) (i32.const 0))
+  (global $win16_dda_proc (mut i32) (i32.const 0))
+  (global $win16_dda_data (mut i32) (i32.const 0))
+  (global $win16_dda_x    (mut i32) (i32.const 0))
+  (global $win16_dda_y    (mut i32) (i32.const 0))
+  (global $win16_dda_dx   (mut i32) (i32.const 0))
+  (global $win16_dda_dy   (mut i32) (i32.const 0))
+  (global $win16_dda_sx   (mut i32) (i32.const 0))
+  (global $win16_dda_sy   (mut i32) (i32.const 0))
+  (global $win16_dda_err  (mut i32) (i32.const 0))
+  (global $win16_dda_left (mut i32) (i32.const 0))
+
+  (func $win16_LineDDA
+    (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
+    (local $dx i32) (local $dy i32)
+    (local.set $x0 (call $win16_coord (call $win16_arg16 (i32.const 7))))
+    (local.set $y0 (call $win16_coord (call $win16_arg16 (i32.const 6))))
+    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 5))))
+    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 4))))
+    (global.set $win16_dda_proc (call $win16_arg32 (i32.const 2)))
+    (global.set $win16_dda_data (call $win16_arg32 (i32.const 0)))
+    (global.set $win16_dda_ret (i32.or
+      (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2))) (i32.const 16))
+      (call $gl16 (global.get $esp))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; far return + 16 argbytes
+    (local.set $dx (i32.sub (local.get $x1) (local.get $x0)))
+    (local.set $dy (i32.sub (local.get $y1) (local.get $y0)))
+    (global.set $win16_dda_sx
+      (select (i32.const 1) (i32.const -1) (i32.ge_s (local.get $dx) (i32.const 0))))
+    (global.set $win16_dda_sy
+      (select (i32.const 1) (i32.const -1) (i32.ge_s (local.get $dy) (i32.const 0))))
+    (local.set $dx (select (local.get $dx) (i32.sub (i32.const 0) (local.get $dx))
+                           (i32.ge_s (local.get $dx) (i32.const 0))))
+    (local.set $dy (select (local.get $dy) (i32.sub (i32.const 0) (local.get $dy))
+                           (i32.ge_s (local.get $dy) (i32.const 0))))
+    (global.set $win16_dda_dx (local.get $dx))
+    (global.set $win16_dda_dy (local.get $dy))
+    (global.set $win16_dda_err (i32.sub (local.get $dx) (local.get $dy)))
+    (global.set $win16_dda_x (local.get $x0))
+    (global.set $win16_dda_y (local.get $y0))
+    ;; The end point is not one of the points, so a line from a point to itself
+    ;; calls back not at all.
+    (global.set $win16_dda_left
+      (select (local.get $dx) (local.get $dy) (i32.gt_s (local.get $dx) (local.get $dy))))
+    (if (i32.eqz (global.get $win16_dda_left))
+      (then (call $win16_dda_resume) (return)))
+    (call $win16_dda_enter))
+
+  ;; One point, handed over with the callback's own Pascal frame: x, y, the
+  ;; application's DWORD, and a far return onto $WIN16_DDA_CB. The callback
+  ;; removes its arguments itself, so the stack comes back as it went in.
+  (func $win16_dda_enter
+    (call $win16_push16 (global.get $win16_dda_x))
+    (call $win16_push16 (global.get $win16_dda_y))
+    (call $win16_push16 (i32.shr_u (global.get $win16_dda_data) (i32.const 16)))
+    (call $win16_push16 (global.get $win16_dda_data))
+    (call $win16_push16 (global.get $WIN16_THUNK_SEL))
+    (call $win16_push16 (global.get $WIN16_DDA_CB))
+    (call $win16_set_sreg (i32.const 1) (i32.shr_u (global.get $win16_dda_proc) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_dda_proc) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
+  ;; The callback has returned. Step the line on by one point — Bresenham, so
+  ;; the points are the ones a drawn line would cover — and either hand over the
+  ;; next or give the caller its call back.
+  (func $win16_dda_step
+    (local $e2 i32)
+    (local.set $e2 (i32.shl (global.get $win16_dda_err) (i32.const 1)))
+    (if (i32.gt_s (local.get $e2) (i32.sub (i32.const 0) (global.get $win16_dda_dy)))
+      (then
+        (global.set $win16_dda_err
+          (i32.sub (global.get $win16_dda_err) (global.get $win16_dda_dy)))
+        (global.set $win16_dda_x
+          (i32.add (global.get $win16_dda_x) (global.get $win16_dda_sx)))))
+    (if (i32.lt_s (local.get $e2) (global.get $win16_dda_dx))
+      (then
+        (global.set $win16_dda_err
+          (i32.add (global.get $win16_dda_err) (global.get $win16_dda_dx)))
+        (global.set $win16_dda_y
+          (i32.add (global.get $win16_dda_y) (global.get $win16_dda_sy)))))
+    (global.set $win16_dda_left (i32.sub (global.get $win16_dda_left) (i32.const 1)))
+    (if (i32.gt_s (global.get $win16_dda_left) (i32.const 0))
+      (then (call $win16_dda_enter) (return)))
+    (call $win16_dda_resume))
+
+  ;; LineDDA returns nothing, so AX carries nothing worth setting beyond a
+  ;; defined zero. The frame went when the walk started; this is the splice back
+  ;; to the instruction after the call.
+  (func $win16_dda_resume
+    (global.set $eax (i32.const 0))
+    (call $win16_set_sreg (i32.const 1) (i32.shr_u (global.get $win16_dda_ret) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_dda_ret) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
   (func $win16_gdi (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 100))
+      (then (call $win16_LineDDA) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 79))
       (then (call $win16_GetDCOrg) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 103))
@@ -4306,6 +4417,9 @@
     ;; what it was standing in front of.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLG_CWP))
       (then (call $win16_dlg_cwp_resume) (return)))
+    ;; A LineDDA callback has returned; the next point of the line is owed to it.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDA_CB))
+      (then (call $win16_dda_step) (return)))
     ;; An NDDEAPI entry point the task took the address of and called.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_NDDE_GETWINDOW))
       (then (call $win16_NDdeGetWindow) (return)))
