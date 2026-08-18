@@ -509,30 +509,18 @@
             (call $draw_sb_arrow (local.get $hdc)
               (i32.sub (i32.add (local.get $x) (local.get $long)) (local.get $arrow)) (local.get $y)
               (local.get $arrow) (local.get $cross) (i32.const 3) (i32.const 0))))))
-    (local.set $track (i32.sub (local.get $long) (i32.mul (local.get $arrow) (i32.const 2))))
+    ;; Geometry lives in $sb_page_* so that whoever hit-tests this scrollbar
+    ;; computes the same thumb this draws. It used to be inline here, which is
+    ;; why the EDIT could not tell a click on its thumb from a click on text.
+    (local.set $track (call $sb_track_len (local.get $long)))
     (local.set $total (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1)))
     (if (i32.or (i32.le_s (local.get $track) (i32.const 0))
                 (i32.le_s (local.get $total) (i32.const 0)))
       (then (return)))
-    (local.set $thumb
-      (if (result i32) (i32.gt_u (local.get $page) (i32.const 0))
-        (then (i32.div_u (i32.mul (local.get $track) (local.get $page)) (local.get $total)))
-        (else (i32.const 16))))
-    (if (i32.lt_u (local.get $thumb) (i32.const 16)) (then (local.set $thumb (i32.const 16))))
-    (if (i32.gt_u (local.get $thumb) (local.get $track)) (then (local.set $thumb (local.get $track))))
-    (local.set $max_pos (local.get $smax))
-    (if (i32.gt_u (local.get $page) (i32.const 1))
-      (then (local.set $max_pos (i32.sub (local.get $smax) (i32.sub (local.get $page) (i32.const 1))))))
-    (if (i32.lt_s (local.get $max_pos) (local.get $smin)) (then (local.set $max_pos (local.get $smin))))
-    (local.set $range (i32.sub (local.get $max_pos) (local.get $smin)))
-    (local.set $travel (i32.sub (local.get $track) (local.get $thumb)))
-    (local.set $thumb_pos (local.get $arrow))
-    (if (i32.and (i32.gt_s (local.get $range) (i32.const 0)) (i32.gt_s (local.get $travel) (i32.const 0)))
-      (then (local.set $thumb_pos
-        (i32.add (local.get $arrow)
-          (i32.div_u
-            (i32.mul (i32.sub (local.get $pos) (local.get $smin)) (local.get $travel))
-            (local.get $range))))))
+    (local.set $thumb (call $sb_page_thumb
+      (local.get $track) (local.get $page) (local.get $total)))
+    (local.set $thumb_pos (call $sb_page_thumb_pos
+      (local.get $long) (local.get $pos) (local.get $smin) (local.get $smax) (local.get $page)))
     (if (local.get $vert)
       (then
         ;; Win98 standard thumbs span the complete 16px scrollbar strip. The

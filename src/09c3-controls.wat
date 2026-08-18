@@ -11402,6 +11402,83 @@
     (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
     (if (i32.gt_s (local.get $top) (local.get $max)) (then (local.set $top (local.get $max))))
     (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
+    (call $edit_publish_scroll_info (local.get $hwnd)
+      (local.get $top) (local.get $total) (local.get $visible))
+    (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
+      (then (return (i32.const 0))))
+    (i32.store offset=20 (local.get $state_w) (local.get $top))
+    (i32.const 1))
+
+  ;; Publish the viewport into the window's scrollbar state, which is what an
+  ;; EDIT does with SetScrollInfo after every change. $defwndproc_ncpaint
+  ;; paints the strip straight out of SCROLL_TABLE, so without this the thumb
+  ;; sits at the top of the track no matter where the text is scrolled to --
+  ;; and a click on that stale thumb gets classified as a page, not a drag.
+  (func $edit_publish_scroll_info (param $hwnd i32)
+        (param $pos i32) (param $total i32) (param $visible i32)
+    (local $slot i32) (local $base i32) (local $aux i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (local.set $base (i32.add (global.get $SCROLL_TABLE)
+      (i32.mul (local.get $slot) (i32.const 24))))
+    (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
+      (i32.mul (local.get $slot) (i32.const 16))))
+    (if (i32.lt_s (local.get $total) (i32.const 1)) (then (local.set $total (i32.const 1))))
+    (if (i32.lt_s (local.get $visible) (i32.const 1)) (then (local.set $visible (i32.const 1))))
+    (i32.store offset=12 (local.get $base) (local.get $pos))
+    (i32.store offset=16 (local.get $base) (i32.const 0))
+    (i32.store offset=20 (local.get $base) (i32.sub (local.get $total) (i32.const 1)))
+    (i32.store offset=8 (local.get $aux) (local.get $visible)))
+
+  ;; Total lines and visible rows for a multiline edit, packed visible<<16 |
+  ;; total. The wheel handler, the scrollbar click, the thumb drag and the
+  ;; painter each computed this inline, and any drift between the four showed
+  ;; up as a scrollbar that scrolled somewhere the text was not. It runs per
+  ;; input event, not per pixel, so sharing it costs nothing measurable.
+  (func $edit_view_metrics (param $hwnd i32) (param $state_w i32) (result i32)
+    (local $style i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $total i32) (local $visible i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then
+        (if (i32.gt_u (local.get $w) (i32.const 16))
+          (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then
+        (if (i32.gt_u (local.get $h) (i32.const 16))
+          (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
+    (local.set $visible (i32.div_u
+      (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+              (i32.gt_u (local.get $h) (i32.const 8)))
+      (i32.const 16)))
+    (if (i32.eqz (local.get $visible)) (then (local.set $visible (i32.const 1))))
+    (if (i32.and
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080))))
+      (then (local.set $total (call $edit_layout_build (local.get $state_w)
+        (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w))))
+      (else (local.set $total (i32.add
+        (call $edit_line_from_char (local.get $state_w)
+          (i32.load offset=4 (local.get $state_w)))
+        (i32.const 1)))))
+    (if (i32.lt_s (local.get $total) (i32.const 1)) (then (local.set $total (i32.const 1))))
+    (i32.or (i32.and (local.get $total) (i32.const 0xFFFF))
+            (i32.shl (local.get $visible) (i32.const 16))))
+
+  ;; Clamp and store a new first-visible line, publishing it to the scrollbar.
+  ;; Returns 1 when the viewport actually moved.
+  (func $edit_scroll_to (param $hwnd i32) (param $state_w i32) (param $top i32)
+        (param $total i32) (param $visible i32) (result i32)
+    (local $max i32)
+    (local.set $max (i32.sub (local.get $total) (local.get $visible)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
+    (if (i32.gt_s (local.get $top) (local.get $max)) (then (local.set $top (local.get $max))))
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
+    (call $edit_publish_scroll_info (local.get $hwnd)
+      (local.get $top) (local.get $total) (local.get $visible))
     (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
       (then (return (i32.const 0))))
     (i32.store offset=20 (local.get $state_w) (local.get $top))
@@ -12455,77 +12532,53 @@
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $full_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
+	            ;; Inside the vertical strip: classify with the same geometry
+	            ;; $defwndproc_paint_standard_scrollbar painted it with, so a
+	            ;; press on the thumb the user can see starts a drag rather than
+	            ;; a page. This used to be a fourth private copy of the thumb
+	            ;; arithmetic, which sized the thumb at 16px while the painter
+	            ;; sized it by nPage -- so most of the visible thumb paged.
 	            (if (i32.ge_s (local.get $w) (i32.sub (local.get $full_w) (i32.const 16)))
 	              (then
-	                (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
-	                  (then
-	                    (local.set $total_lines
-	                      (call $edit_layout_build
-	                        (local.get $state_w) (local.get $hdc)
-	                        (i32.sub (local.get $full_w) (i32.const 16)))))
-	                  (else
-	                    (local.set $total_lines
-	                      (i32.add (call $edit_line_from_char (local.get $state_w)
-	                                               (i32.load offset=4 (local.get $state_w)))
-	                               (i32.const 1)))))
-	                (local.set $visible_lines (i32.div_u
-	                  (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
-	                          (i32.gt_u (local.get $line_y) (i32.const 8)))
-	                  (i32.const 16)))
-	                (if (i32.eqz (local.get $visible_lines))
-	                  (then (local.set $visible_lines (i32.const 1))))
-	                (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
-	                (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
-	                  (then (local.set $max_scroll (i32.const 0))))
+	                (local.set $a (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+	                (local.set $total_lines (i32.and (local.get $a) (i32.const 0xFFFF)))
+	                (local.set $visible_lines (i32.shr_u (local.get $a) (i32.const 16)))
 	                (local.set $lo (i32.load offset=20 (local.get $state_w)))
-	                (if (i32.lt_s (local.get $h) (i32.const 16))
+	                (local.set $b (call $sb_page_hit_part
+	                  (local.get $line_y) (local.get $h) (local.get $lo)
+	                  (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+	                  (local.get $visible_lines)))
+	                (if (i32.eq (local.get $b) (i32.const 1))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.sub (local.get $lo) (i32.const 1))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 2))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.add (local.get $lo) (i32.const 1))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 3))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.sub (local.get $lo) (local.get $visible_lines))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 4))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.add (local.get $lo) (local.get $visible_lines))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 5))
 	                  (then
-	                    (if (i32.gt_s (local.get $lo) (i32.const 0))
-	                      (then (i32.store offset=20 (local.get $state_w)
-	                              (i32.sub (local.get $lo) (i32.const 1)))))
+	                    (global.set $edit_sb_drag_anchor_y (local.get $h))
+	                    (global.set $edit_sb_drag_anchor_top (local.get $lo))))
+	                (if (local.get $b)
+	                  (then
 	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                    (global.set $sb_pressed_part (i32.const 1)))
-	                  (else (if (i32.ge_s (local.get $h) (i32.sub (local.get $line_y) (i32.const 16)))
-	                    (then
-	                      (if (i32.lt_s (local.get $lo) (local.get $max_scroll))
-	                        (then (i32.store offset=20 (local.get $state_w)
-	                                (i32.add (local.get $lo) (i32.const 1)))))
-	                      (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                      (global.set $sb_pressed_part (i32.const 2)))
-	                    (else (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
-	                      (then
-	                        (local.set $a (i32.sub (local.get $line_y) (i32.const 32)))
-	                        (if (i32.gt_s (local.get $a) (i32.const 0))
-	                          (then
-	                            (local.set $b (i32.div_u (local.get $a)
-	                                             (i32.add (local.get $max_scroll) (i32.const 1))))
-	                            (if (i32.lt_u (local.get $b) (i32.const 16))
-	                              (then (local.set $b (i32.const 16))))
-	                            (if (i32.gt_u (local.get $b) (local.get $a))
-	                              (then (local.set $b (local.get $a))))
-	                            (local.set $px
-	                              (i32.add (i32.const 16)
-	                                (i32.div_u
-	                                  (i32.mul (local.get $lo)
-	                                           (i32.sub (local.get $a) (local.get $b)))
-	                                  (local.get $max_scroll))))
-	                            (if (i32.lt_s (local.get $h) (local.get $px))
-	                              (then
-	                                (local.set $lo (i32.sub (local.get $lo) (local.get $visible_lines)))
-	                                (if (i32.lt_s (local.get $lo) (i32.const 0))
-	                                  (then (local.set $lo (i32.const 0))))
-	                                (i32.store offset=20 (local.get $state_w) (local.get $lo)))
-	                              (else (if (i32.ge_s (local.get $h) (i32.add (local.get $px) (local.get $b)))
-	                                (then
-	                                  (local.set $lo (i32.add (local.get $lo) (local.get $visible_lines)))
-	                                  (if (i32.gt_s (local.get $lo) (local.get $max_scroll))
-	                                    (then (local.set $lo (local.get $max_scroll))))
-	                                  (i32.store offset=20 (local.get $state_w) (local.get $lo)))
-	                                (else
-	                                  (global.set $edit_sb_drag_anchor_y (local.get $h))
-	                                  (global.set $edit_sb_drag_anchor_top (local.get $lo))
-	                                  (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                                  (global.set $sb_pressed_part (i32.const 5))))))))))))))
+	                    (global.set $sb_pressed_part (local.get $b))))
+	                ;; A press on the scrollbar is not the start of a text
+	                ;; selection. WM_LBUTTONDOWN arms tracking bit 0x10 before it
+	                ;; knows where the click landed, so clear it here or every
+	                ;; following WM_MOUSEMOVE extends a selection while the user
+	                ;; is only dragging the thumb.
+	                (i32.store offset=24 (local.get $state_w)
+	                  (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))
 	                (drop (call $wnd_send_message
 	                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
 	                (call $invalidate_hwnd (local.get $hwnd))
@@ -12576,55 +12629,22 @@
 	                (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
 	                  (then (global.set $capture_hwnd (i32.const 0))))
 	                (return (i32.const 0))))
+	            ;; Thumb drag through the shared geometry, so the thumb tracks
+	            ;; the pointer instead of the private 16px thumb this used to
+	            ;; assume while the painter drew one sized by nPage.
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
 	            (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
-	            (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
-	              (then
-	                (local.set $total_lines
-	                  (call $edit_layout_build
-	                    (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
-	                    (i32.sub (i32.and (local.get $sz) (i32.const 0xFFFF)) (i32.const 16)))))
-	              (else
-	                (local.set $total_lines
-	                  (i32.add (call $edit_line_from_char (local.get $state_w)
-	                                           (i32.load offset=4 (local.get $state_w)))
-	                           (i32.const 1)))))
-	            (local.set $visible_lines (i32.div_u
-	              (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
-	                      (i32.gt_u (local.get $line_y) (i32.const 8)))
-	              (i32.const 16)))
-	            (if (i32.eqz (local.get $visible_lines))
-	              (then (local.set $visible_lines (i32.const 1))))
-	            (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
-	            (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
-	              (then (local.set $max_scroll (i32.const 0))))
-	            (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
-	              (then
-	                (local.set $a (i32.sub (local.get $line_y) (i32.const 32)))
-	                (if (i32.gt_s (local.get $a) (i32.const 0))
-	                  (then
-	                    (local.set $b (i32.div_u (local.get $a)
-	                                     (i32.add (local.get $max_scroll) (i32.const 1))))
-	                    (if (i32.lt_u (local.get $b) (i32.const 16))
-	                      (then (local.set $b (i32.const 16))))
-	                    (if (i32.gt_u (local.get $b) (local.get $a))
-	                      (then (local.set $b (local.get $a))))
-	                    (local.set $px (i32.sub (local.get $a) (local.get $b)))
-	                    (if (i32.gt_s (local.get $px) (i32.const 0))
-	                      (then
-	                        (local.set $lo
-	                          (i32.add (global.get $edit_sb_drag_anchor_top)
-	                            (i32.div_s
-	                              (i32.mul
-	                                (i32.sub (local.get $h) (global.get $edit_sb_drag_anchor_y))
-	                                (local.get $max_scroll))
-	                              (local.get $px))))
-	                        (if (i32.lt_s (local.get $lo) (i32.const 0))
-	                          (then (local.set $lo (i32.const 0))))
-	                        (if (i32.gt_s (local.get $lo) (local.get $max_scroll))
-	                          (then (local.set $lo (local.get $max_scroll))))
-	                        (i32.store offset=20 (local.get $state_w) (local.get $lo))))))))
+	            (local.set $a (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+	            (local.set $total_lines (i32.and (local.get $a) (i32.const 0xFFFF)))
+	            (local.set $visible_lines (i32.shr_u (local.get $a) (i32.const 16)))
+	            (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	              (call $sb_page_drag_pos
+	                (local.get $line_y) (local.get $h)
+	                (global.get $edit_sb_drag_anchor_y) (global.get $edit_sb_drag_anchor_top)
+	                (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+	                (local.get $visible_lines))
+	              (local.get $total_lines) (local.get $visible_lines)))
 	            (call $invalidate_hwnd (local.get $hwnd))
 	            (return (i32.const 0))))
 	        (local.set $flags (i32.load offset=24 (local.get $state_w)))
@@ -14201,6 +14221,119 @@
           (i32.sub (local.get $pos) (local.get $smin))
           (i32.sub (local.get $track_len) (local.get $thumb_size)))
         (local.get $range))))
+
+  ;; ---- SCROLLINFO scrollbar geometry ----------------------------------
+  ;; The helpers below this block predate SCROLLINFO: they size the thumb from
+  ;; the range alone, which is what TreeView and ListView still expect. USER's
+  ;; own scrollbars size it from nPage instead -- the thumb is as big a
+  ;; fraction of the track as the visible page is of the document -- and the
+  ;; last valid position is smax - (nPage - 1), not smax.
+  ;;
+  ;; $defwndproc_paint_standard_scrollbar drew the frame scrollbars with that
+  ;; second model inline, so nothing else could hit-test what it painted.
+  ;; These are that model, factored out, so the painter and the hit test agree
+  ;; by construction rather than by two people doing the same arithmetic.
+  (func $sb_track_len (param $long_dim i32) (result i32)
+    (i32.sub (local.get $long_dim)
+      (i32.mul (call $scrollbar_arrow_size (local.get $long_dim)) (i32.const 2))))
+
+  ;; Thumb length in pixels. total = smax - smin + 1 scroll units.
+  (func $sb_page_thumb (param $track i32) (param $page i32) (param $total i32) (result i32)
+    (local $thumb i32)
+    (if (i32.or (i32.le_s (local.get $track) (i32.const 0))
+                (i32.le_s (local.get $total) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $thumb
+      (if (result i32) (i32.gt_u (local.get $page) (i32.const 0))
+        (then (i32.div_u (i32.mul (local.get $track) (local.get $page)) (local.get $total)))
+        (else (i32.const 16))))
+    (if (i32.lt_u (local.get $thumb) (i32.const 16)) (then (local.set $thumb (i32.const 16))))
+    (if (i32.gt_u (local.get $thumb) (local.get $track)) (then (local.set $thumb (local.get $track))))
+    (local.get $thumb))
+
+  ;; Highest position the thumb can represent: a full page is always visible.
+  (func $sb_page_max_pos (param $smin i32) (param $smax i32) (param $page i32) (result i32)
+    (local $max_pos i32)
+    (local.set $max_pos (local.get $smax))
+    (if (i32.gt_u (local.get $page) (i32.const 1))
+      (then (local.set $max_pos
+        (i32.sub (local.get $smax) (i32.sub (local.get $page) (i32.const 1))))))
+    (if (i32.lt_s (local.get $max_pos) (local.get $smin))
+      (then (local.set $max_pos (local.get $smin))))
+    (local.get $max_pos))
+
+  ;; Offset of the thumb from the start of the long axis (past the low arrow).
+  (func $sb_page_thumb_pos (param $long_dim i32) (param $pos i32)
+        (param $smin i32) (param $smax i32) (param $page i32) (result i32)
+    (local $arrow i32) (local $track i32) (local $thumb i32)
+    (local $max_pos i32) (local $range i32) (local $travel i32)
+    (local.set $arrow (call $scrollbar_arrow_size (local.get $long_dim)))
+    (local.set $track (call $sb_track_len (local.get $long_dim)))
+    (local.set $thumb (call $sb_page_thumb (local.get $track) (local.get $page)
+      (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))
+    (local.set $max_pos (call $sb_page_max_pos
+      (local.get $smin) (local.get $smax) (local.get $page)))
+    (local.set $range (i32.sub (local.get $max_pos) (local.get $smin)))
+    (local.set $travel (i32.sub (local.get $track) (local.get $thumb)))
+    (if (i32.or (i32.le_s (local.get $range) (i32.const 0))
+                (i32.le_s (local.get $travel) (i32.const 0)))
+      (then (return (local.get $arrow))))
+    (i32.add (local.get $arrow)
+      (i32.div_u
+        (i32.mul (i32.sub (local.get $pos) (local.get $smin)) (local.get $travel))
+        (local.get $range))))
+
+  ;; Which part of a SCROLLINFO scrollbar a coordinate lands on. Same return
+  ;; codes as $scrollbar_hit_part: 0 none, 1 low arrow, 2 high arrow,
+  ;; 3 page towards min, 4 page towards max, 5 thumb.
+  (func $sb_page_hit_part (param $long_dim i32) (param $coord i32)
+        (param $pos i32) (param $smin i32) (param $smax i32) (param $page i32)
+        (result i32)
+    (local $arrow i32) (local $thumb i32) (local $thumb_pos i32)
+    (local.set $arrow (call $scrollbar_arrow_size (local.get $long_dim)))
+    (if (local.get $arrow)
+      (then
+        (if (i32.lt_s (local.get $coord) (local.get $arrow))
+          (then (return (i32.const 1))))
+        (if (i32.ge_s (local.get $coord) (i32.sub (local.get $long_dim) (local.get $arrow)))
+          (then (return (i32.const 2))))))
+    (if (i32.le_s (i32.sub (local.get $smax) (local.get $smin)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $thumb (call $sb_page_thumb
+      (call $sb_track_len (local.get $long_dim)) (local.get $page)
+      (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))
+    (if (i32.eqz (local.get $thumb)) (then (return (i32.const 0))))
+    (local.set $thumb_pos (call $sb_page_thumb_pos (local.get $long_dim)
+      (local.get $pos) (local.get $smin) (local.get $smax) (local.get $page)))
+    (if (i32.lt_s (local.get $coord) (local.get $thumb_pos))
+      (then (return (i32.const 3))))
+    (if (i32.ge_s (local.get $coord) (i32.add (local.get $thumb_pos) (local.get $thumb)))
+      (then (return (i32.const 4))))
+    (i32.const 5))
+
+  ;; Position for a thumb dragged to $coord, given where the drag started.
+  (func $sb_page_drag_pos (param $long_dim i32) (param $coord i32)
+        (param $anchor_coord i32) (param $anchor_pos i32)
+        (param $smin i32) (param $smax i32) (param $page i32) (result i32)
+    (local $track i32) (local $thumb i32) (local $max_pos i32)
+    (local $range i32) (local $travel i32) (local $pos i32)
+    (local.set $track (call $sb_track_len (local.get $long_dim)))
+    (local.set $thumb (call $sb_page_thumb (local.get $track) (local.get $page)
+      (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))
+    (local.set $max_pos (call $sb_page_max_pos
+      (local.get $smin) (local.get $smax) (local.get $page)))
+    (local.set $range (i32.sub (local.get $max_pos) (local.get $smin)))
+    (local.set $travel (i32.sub (local.get $track) (local.get $thumb)))
+    (if (i32.or (i32.le_s (local.get $range) (i32.const 0))
+                (i32.le_s (local.get $travel) (i32.const 0)))
+      (then (return (local.get $anchor_pos))))
+    (local.set $pos (i32.add (local.get $anchor_pos)
+      (i32.div_s
+        (i32.mul (i32.sub (local.get $coord) (local.get $anchor_coord)) (local.get $range))
+        (local.get $travel))))
+    (if (i32.lt_s (local.get $pos) (local.get $smin)) (then (local.set $pos (local.get $smin))))
+    (if (i32.gt_s (local.get $pos) (local.get $max_pos)) (then (local.set $pos (local.get $max_pos))))
+    (local.get $pos))
 
   ;; Generic scrollbar hit test on the long axis. Returns:
   ;; 0=none/disabled, 1=low arrow, 2=high arrow, 3=low page, 4=high page, 5=thumb.
