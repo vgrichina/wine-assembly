@@ -194,6 +194,7 @@ const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // 
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
 const WORKER_THREADS = hasFlag('threads'); // --threads: run each guest thread in a real OS thread (node worker_threads) instead of the cooperative scheduler
 const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE * --thread-slices, min 20000)
+const CS_STEAL_AFTER = parseInt(getArg('cs-steal-after', '0'), 10) || 0; // --cs-steal-after=N: fruitless EnterCriticalSection rounds before taking the section by force (0 = WAT default; huge = never, to tell "waiting forever" from "took it")
 const THREADS_SERIAL = hasFlag('threads-serial'); // --threads-serial: with --threads, never run two guest threads at once (splits "race" from "wrong per-thread state")
 // Module scope so every exit path can terminate the threads: a live worker keeps
 // node alive, so a run that ends — cleanly or by throwing — would otherwise hang
@@ -2286,6 +2287,7 @@ async function main() {
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
     serialSlices: THREADS_SERIAL,
+    csStealAfter: CS_STEAL_AFTER,
     traceThread: TRACE_THREAD,
     traceYield: TRACE_YIELD,
     breakThreadFilter: breakThreadFilter,
@@ -2316,6 +2318,9 @@ async function main() {
   mem.set(exeBytes.subarray(0, staged), instance.exports.get_staging());
   const entry = instance.exports.load_pe(staged);
   console.log('PE loaded. Entry: ' + hex(entry));
+  if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
+    instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
+  }
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
   // A 16-bit task's DLLs load into the same selector arena its own segments
   // went into, so this has to follow load_pe.

@@ -196,6 +196,7 @@
   ;; Sections entered while already held, because a nested synchronous wndproc
   ;; was running and could not be parked. Exclusion was not honoured for these.
   (func (export "get_cs_barges") (result i32) (global.get $cs_barges))
+  (func (export "set_cs_steal_after") (param i32) (global.set $cs_steal_after (local.get 0)))
   (func (export "get_process_id") (result i32) (call $current_process_id))
   (func (export "set_process_id") (param $pid i32)
     ;; PID zero is reserved by Win32 and means "use the compatibility default"

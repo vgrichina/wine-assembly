@@ -6009,9 +6009,9 @@
         ;; audio from near-silence to full scale.
         (if (i32.or (i32.eq (global.get $current_thread_id) (i32.const 1))
               (i32.or (i32.ne (global.get $sync_msg_depth) (i32.const 0))
-                      (i32.ge_u (global.get $cs_wait_spins) (i32.const 2000))))
+                      (i32.ge_u (global.get $cs_wait_spins) (global.get $cs_steal_after))))
           (then
-            (if (i32.lt_u (global.get $cs_wait_spins) (i32.const 2000))
+            (if (i32.lt_u (global.get $cs_wait_spins) (global.get $cs_steal_after))
               (then (global.set $cs_barges (i32.add (global.get $cs_barges) (i32.const 1))))
               (else (global.set $cs_steals (i32.add (global.get $cs_steals) (i32.const 1)))))
             (if (call $cs_owner_aligned (local.get $cs))

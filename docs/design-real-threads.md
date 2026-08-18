@@ -793,6 +793,16 @@ Four things this had to get right:
   was needed anyway: worker threads excluding each other is what took worker-mode
   audio from near-silence to full scale. `$cs_barges` counts every entry that
   therefore was not excluded, including the `$sync_msg_depth` cases on any thread.
+- **Nothing is taken by force, by default.** The first version took a section
+  after 2000 fruitless rounds so that a lost section could not hang the app. It
+  hangs nothing and corrupts instead: a steal rewrites `LockCount` and
+  `RecursionCount` under a thread that still believes it owns the section, guest
+  CRT lock code reads those fields, and two of Winamp's worker threads ended up
+  jumping into a heap structure — `EIP` = out_wave's thread parameter + 0xc — and
+  trapping. Controlled: the same 6000-batch run traps **twice** with a 2000-round
+  steal and **zero** times with stealing off. So the default is effectively never,
+  `--cs-steal-after=N` sets it, and a waiter that cannot proceed parks with a
+  climbing `$cs_waits` — a stuck thread rather than damage somewhere else.
 - **A non-owner `Leave` still releases.** NT would refuse, and refusing is the
   wrong trade here: this emulator still runs some guest callbacks on the calling
   thread rather than the owning one (cross-thread `SendMessage` is not
@@ -820,10 +830,30 @@ Contended Enter also spins before it parks — a few thousand CAS attempts, whic
 is what `SpinCount` is for on a multiprocessor, since the holder is on another OS
 thread and running right now. **It did not help Winamp at all** (parks per thread
 stayed at ~1900-2300), and that is the useful measurement: its contention is not
-brief. One thread sits inside a section across thousands of blocking host imports,
-every other thread parks ~2000 times and then takes it by force. Something holds a
-section while waiting for a thread that is waiting for the section — which is
-where the next session should start, with `csPark/steal` per thread as the meter.
+brief.
+
+### The next bug, already isolated: a section outlives its owner
+
+With stealing off, a 6000-batch worker-mode Winamp run ends like this:
+
+```
+T1 slices=21586 csPark/steal=21544/0     <- parked on the same section 21544 times
+T2 slices=30    csPark/steal=1/0  state=exited
+T3 slices=21703 waitPolls=21675 csPark/steal=1/0
+```
+
+T2 — in_mp3's decode thread — **exits after 30 slices while owning the section**,
+and T1 then parks on it forever. That is the whole of the remaining audio failure:
+not a race, not the scheduler, not throughput. Windows behaves the same way if a
+thread really does exit inside a section, so the question is whether the guest ever
+released it and we lost the release (the prime suspect is a `Leave` arriving on the
+wrong thread — cross-thread `SendMessage` still runs the wndproc on the caller) or
+whether the thread is being ended somewhere the guest did not intend.
+
+The principled fix is a registry of initialised sections (`InitializeCriticalSection`
+records them) and releasing whatever a thread still owns when it exits. That is
+strictly better than the steal it would replace: it happens at a moment when the
+owner is known to be gone, rather than guessing from a timeout.
 
 **Where this leaves worker mode.** Better and not yet right, and the state is
 worth being exact about:
@@ -832,13 +862,28 @@ worth being exact about:
 |---|---|---|
 | cooperative (default, everywhere) | works | **unchanged** — 0 parks, 0 barges, 0 steals; one instance at a time never contends |
 | CLI `--threads` audio | peak 40 of 32768 | full scale when the decoder gets there, but arrival varies from byte 2304 to never inside the captured window |
-| browser worker (`?threads`) | `test-worker-guest.js` green | 20 of 21 checks; a guest thread traps at `EIP=0xc18b84` after running 5x further than it used to (85451 slices vs 16854) |
+| browser worker (`?threads`) | `test-worker-guest.js` green, threads mostly starved (16854 slices) | 20 of 21 checks; threads run **271151** slices — 16x further — and two of them trap |
 
-The browser trap is the open regression. It is at a real code address rather than a
-garbage one, on a thread that now reaches code it never used to reach, so it reads
-as something genuinely unimplemented rather than as stack damage — but it is not
-diagnosed, and worker mode is experimental and off by default, which is the only
-reason this is written down instead of blocking.
+The one failing check is `no traps or failed spawns with guest threads live`, and it
+is worth being precise about what changed: the threads were previously starved, and
+now they execute sixteen times more guest code and reach bugs nothing had reached.
+Both traps come with full register context now, because the worker trap log prints
+what the slice reply always carried:
+
+```
+worker thread 1 trapped at EIP=0x1     prev_eip=0x1  edi=0x75000a0  csPark=10
+worker thread 2 trapped at EIP=0xc18bbf prev_eip=0xc18bbf eax=0xc18b6c ecx=0xc18b02 csPark=4
+```
+
+T1 called through a bad pointer and landed at address 1, with a thunk-zone address
+in `edi` — so the pointer it called through is an API thunk slot, which points back
+at the thunk cursor work. T2 is looping inside real code at `0xc18bbf` (EIP,
+prev_eip, `eax` and `ecx` all sit inside the same 0x100 bytes), so that one is an
+unimplemented instruction or an unreachable guard rather than stack damage. Neither
+is diagnosed. `csSteal=0` on both, so neither is the steal.
+
+The CLI does not reproduce either trap, which is itself information: out_wave drives
+WebAudio in the browser and a file here.
 
 ---
 

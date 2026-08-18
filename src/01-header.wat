@@ -1958,6 +1958,22 @@
   (global $cs_waits (mut i32) (i32.const 0))
   (global $cs_bad_leaves (mut i32) (i32.const 0))
   (global $cs_barges (mut i32) (i32.const 0))
+  ;; Fruitless Enter rounds before a section is taken from its holder by force.
+  ;;
+  ;; Effectively never, and that default is a measurement rather than a
+  ;; preference. Stealing rewrites LockCount/RecursionCount under a thread that
+  ;; still believes it owns the section, and guest CRT lock code reads those
+  ;; fields: with a 2000-round steal, two of Winamp's worker threads jumped into
+  ;; a heap structure (EIP = out_wave's thread parameter + 0xc) and trapped. With
+  ;; stealing off, the same run traps zero times — the waiter just parks, which is
+  ;; a stuck thread with a climbing $cs_waits instead of memory corruption
+  ;; somewhere else. A stuck thread is the more honest failure and by far the
+  ;; easier one to debug.
+  ;;
+  ;; `--cs-steal-after=N` sets it, because the two behaviours distinguish two
+  ;; different bugs: what is actually wrong in that Winamp run is that a section
+  ;; is orphaned by a thread that exits while owning it.
+  (global $cs_steal_after (mut i32) (i32.const 0x3FFFFFFF))
   (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait (EnterCriticalSection held by another thread; clear to re-enter the same call)
   ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
   ;; WsControl's view of the virtual adapter (src/09d-winsock.wat): subnet mask
