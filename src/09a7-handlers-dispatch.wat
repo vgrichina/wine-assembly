@@ -486,13 +486,189 @@
     (i32.store8 (i32.add (local.get $out_wa) (local.get $n)) (i32.const 0))
     (local.get $n))
 
+  ;; One output byte of $format_message_expand. $dst == 0 means "measure only",
+  ;; which is how the ALLOCATE_BUFFER path learns the size before it allocates.
+  ;; $max counts the NUL, so the last writable index is $max - 2.
+  (func $fmsg_put (param $dst i32) (param $o i32) (param $max i32) (param $ch i32) (result i32)
+    (if (i32.and (i32.ne (local.get $dst) (i32.const 0))
+                 (i32.or (i32.eqz (local.get $max))
+                         (i32.lt_u (local.get $o) (i32.sub (local.get $max) (i32.const 1)))))
+      (then (i32.store8 (i32.add (local.get $dst) (local.get $o)) (local.get $ch))))
+    (i32.add (local.get $o) (i32.const 1)))
+
+  ;; Write $val in base $base, no buffer of its own — the digits go straight
+  ;; out through $fmsg_put, so this works in measure mode too.
+  (func $fmsg_put_num (param $dst i32) (param $o i32) (param $max i32)
+                      (param $val i32) (param $base i32) (param $signed i32) (result i32)
+    (local $div i32) (local $d i32)
+    (if (i32.and (local.get $signed) (i32.lt_s (local.get $val) (i32.const 0)))
+      (then
+        (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 45)))
+        (local.set $val (i32.sub (i32.const 0) (local.get $val)))))
+    (local.set $div (i32.const 1))
+    (block $sized (loop $grow
+      (br_if $sized (i32.lt_u (i32.div_u (local.get $val) (local.get $div)) (local.get $base)))
+      ;; Stop before $div overflows: 10 digits is already the whole i32 range.
+      (br_if $sized (i32.gt_u (local.get $div) (i32.const 0x19999999)))
+      (local.set $div (i32.mul (local.get $div) (local.get $base)))
+      (br $grow)))
+    (block $done (loop $emit
+      (local.set $d (i32.rem_u (i32.div_u (local.get $val) (local.get $div)) (local.get $base)))
+      (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max)
+        (select (i32.add (local.get $d) (i32.const 87))     ;; 'a'..'f'
+                (i32.add (local.get $d) (i32.const 48))     ;; '0'..'9'
+                (i32.gt_u (local.get $d) (i32.const 9)))))
+      (br_if $done (i32.eq (local.get $div) (i32.const 1)))
+      (local.set $div (i32.div_u (local.get $div) (local.get $base)))
+      (br $emit)))
+    (local.get $o))
+
+  ;; Expand a message template's inserts. Everything here is the documented
+  ;; FormatMessage syntax, which is not printf: %1..%99 name the Arguments
+  ;; entries positionally, and the escapes are their own small language.
+  ;;
+  ;;   %%      a literal percent          %.  a literal period
+  ;;   %!      a literal exclamation      %b  a space
+  ;;   %r      a carriage return          %n  a hard line break
+  ;;   %0      ends the message here, with no trailing newline
+  ;;   %N      Arguments[N-1] as a string (the default when no spec follows)
+  ;;   %N!spec!  the same argument through a printf-style spec; a spec ending
+  ;;             in s is a string, d/i/u/x/X are numbers, anything else is
+  ;;             treated as a string because that is the safer guess.
+  ;;
+  ;; $src and $dst are WASM addresses; the Arguments array is a guest pointer
+  ;; to DWORDs (a va_list on x86 is exactly that, so ARGUMENT_ARRAY needs no
+  ;; separate path). Returns the length not counting the NUL, which is what
+  ;; FormatMessage returns, and is the true length even when the output was
+  ;; truncated to $max.
+  (func $format_message_expand
+      (param $src i32) (param $dst i32) (param $max i32) (param $args_g i32) (result i32)
+    (local $i i32) (local $o i32) (local $ch i32) (local $nxt i32)
+    (local $n i32) (local $base i32) (local $as_int i32) (local $spec i32)
+    (local $argv i32) (local $p i32)
+    (block $done (loop $scan
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.ne (local.get $ch) (i32.const 37))   ;; '%'
+        (then
+          (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (local.get $ch)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+      (local.set $nxt (i32.load8_u (i32.add (local.get $src) (i32.add (local.get $i) (i32.const 1)))))
+      ;; A trailing '%' is just a '%'.
+      (if (i32.eqz (local.get $nxt))
+        (then
+          (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 37)))
+          (br $done)))
+      (if (i32.or (i32.lt_u (local.get $nxt) (i32.const 48))
+                  (i32.gt_u (local.get $nxt) (i32.const 57)))
+        (then
+          ;; Not a digit — one of the escapes, or an unknown sequence that is
+          ;; safest passed through unchanged.
+          (local.set $i (i32.add (local.get $i) (i32.const 2)))
+          (if (i32.eq (local.get $nxt) (i32.const 98))        ;; 'b'
+            (then (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 32))) (br $scan)))
+          (if (i32.eq (local.get $nxt) (i32.const 114))       ;; 'r'
+            (then (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 13))) (br $scan)))
+          (if (i32.eq (local.get $nxt) (i32.const 110))       ;; 'n'
+            (then
+              (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 13)))
+              (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 10)))
+              (br $scan)))
+          (if (i32.or (i32.eq (local.get $nxt) (i32.const 37))     ;; '%'
+                (i32.or (i32.eq (local.get $nxt) (i32.const 46))   ;; '.'
+                        (i32.eq (local.get $nxt) (i32.const 33)))) ;; '!'
+            (then (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (local.get $nxt))) (br $scan)))
+          (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 37)))
+          (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (local.get $nxt)))
+          (br $scan)))
+      ;; %N — read the index, which is one or two digits.
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $n (i32.const 0))
+      (block $num_done (loop $num
+        (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+        (br_if $num_done (i32.or (i32.lt_u (local.get $ch) (i32.const 48))
+                                 (i32.gt_u (local.get $ch) (i32.const 57))))
+        (local.set $n (i32.add (i32.mul (local.get $n) (i32.const 10))
+                               (i32.sub (local.get $ch) (i32.const 48))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $num)))
+      ;; %0 ends the message.
+      (br_if $done (i32.eqz (local.get $n)))
+      (local.set $as_int (i32.const 0))
+      (local.set $base (i32.const 10))
+      ;; An optional !printf-spec! follows the number. Only its last letter
+      ;; decides how the argument is read; width and flags are dropped, which
+      ;; costs padding and never costs the value itself.
+      (if (i32.eq (i32.load8_u (i32.add (local.get $src) (local.get $i))) (i32.const 33))
+        (then
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (local.set $spec (i32.const 0))
+          (block $spec_done (loop $spec_scan
+            (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+            (br_if $spec_done (i32.eqz (local.get $ch)))
+            (if (i32.eq (local.get $ch) (i32.const 33))
+              (then (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $spec_done)))
+            (local.set $spec (local.get $ch))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $spec_scan)))
+          (if (i32.or (i32.eq (local.get $spec) (i32.const 100))     ;; 'd'
+                (i32.or (i32.eq (local.get $spec) (i32.const 105))   ;; 'i'
+                        (i32.eq (local.get $spec) (i32.const 117)))) ;; 'u'
+            (then (local.set $as_int (i32.const 1))))
+          (if (i32.or (i32.eq (local.get $spec) (i32.const 120))     ;; 'x'
+                      (i32.eq (local.get $spec) (i32.const 88)))     ;; 'X'
+            (then (local.set $as_int (i32.const 1)) (local.set $base (i32.const 16))))))
+      ;; With no Arguments there is nothing to substitute; leaving the insert
+      ;; visible beats inventing a value.
+      (if (i32.eqz (local.get $args_g))
+        (then
+          (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 37)))
+          (local.set $o (call $fmsg_put_num (local.get $dst) (local.get $o) (local.get $max)
+            (local.get $n) (i32.const 10) (i32.const 0)))
+          (br $scan)))
+      (local.set $argv (i32.load (call $g2w
+        (i32.add (local.get $args_g) (i32.shl (i32.sub (local.get $n) (i32.const 1)) (i32.const 2))))))
+      (if (local.get $as_int)
+        (then
+          (local.set $o (call $fmsg_put_num (local.get $dst) (local.get $o) (local.get $max)
+            (local.get $argv) (local.get $base)
+            (i32.eq (local.get $spec) (i32.const 100))))
+          (br $scan)))
+      (if (i32.eqz (local.get $argv)) (then (br $scan)))
+      (local.set $p (call $g2w (local.get $argv)))
+      (block $str_done (loop $str
+        (local.set $ch (i32.load8_u (local.get $p)))
+        (br_if $str_done (i32.eqz (local.get $ch)))
+        (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (local.get $ch)))
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))
+        (br $str)))
+      (br $scan)))
+    (if (i32.ne (local.get $dst) (i32.const 0))
+      (then
+        (if (i32.and (i32.ne (local.get $max) (i32.const 0))
+                     (i32.ge_u (local.get $o) (local.get $max)))
+          (then (i32.store8 (i32.add (local.get $dst) (i32.sub (local.get $max) (i32.const 1))) (i32.const 0)))
+          (else (i32.store8 (i32.add (local.get $dst) (local.get $o)) (i32.const 0))))))
+    (local.get $o))
+
   ;; 754: FormatMessageA(dwFlags, lpSource, dwMessageId, dwLanguageId, lpBuffer, nSize, Arguments)
   (func $handle_FormatMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $buf_ga i32) (local $len i32) (local $nSize i32)
+    (local $args_g i32)
     ;; dwFlags=arg0, lpSource=arg1, dwMessageId=arg2, dwLangId=arg3, lpBuffer=arg4
     ;; FORMAT_MESSAGE_FROM_STRING: copy lpSource into the caller's output.
     ;; RegEdit uses this for resource strings before CreateWindowEx.
     (local.set $nSize (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; Arguments is the 7th parameter. FORMAT_MESSAGE_IGNORE_INSERTS (0x200)
+    ;; says to leave %1 and the escapes exactly as they are, and is expressed
+    ;; here as "there are no arguments" — which is also what a caller that
+    ;; passes none gets, insert text and all. RegEdit's "Cannot create key:
+    ;; Error while opening the key %1." used to reach the user with the %1
+    ;; still in it, because nothing ever looked at this pointer.
+    (local.set $args_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.and (local.get $arg0) (i32.const 0x200))
+      (then (local.set $args_g (i32.const 0))))
     (if (i32.and (local.get $arg0) (i32.const 0x400))
       (then
         (if (i32.eqz (local.get $arg1))
@@ -500,16 +676,18 @@
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
             (return)))
-        (local.set $len (call $guest_strlen (local.get $arg1)))
+        (local.set $len (call $format_message_expand
+          (call $g2w (local.get $arg1)) (i32.const 0) (i32.const 0) (local.get $args_g)))
         (if (i32.and (local.get $arg0) (i32.const 0x100))
           (then
             (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
             (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
-            (call $guest_strcpy (local.get $buf_ga) (local.get $arg1)))
+            (local.set $wa (call $g2w (local.get $buf_ga)))
+            (local.set $nSize (i32.add (local.get $len) (i32.const 1))))
           (else
-            (if (local.get $nSize)
-              (then (call $guest_strncpy (local.get $arg4) (local.get $arg1) (local.get $nSize)))
-              (else (call $guest_strcpy (local.get $arg4) (local.get $arg1))))))
+            (local.set $wa (call $g2w (local.get $arg4)))))
+        (drop (call $format_message_expand
+          (call $g2w (local.get $arg1)) (local.get $wa) (local.get $nSize) (local.get $args_g)))
         (global.set $eax (local.get $len))
         (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
         (return)))
@@ -524,18 +702,21 @@
         (call $pop_rsrc_ctx)
         (if (i32.ne (local.get $len) (i32.const -1))
           (then
+            ;; A message-table entry carries inserts too, so it goes through
+            ;; the same expansion — measured first, since ALLOCATE_BUFFER has
+            ;; to size the buffer before it writes into it.
+            (local.set $len (call $format_message_expand
+              (global.get $TEXT_SCRATCH) (i32.const 0) (i32.const 0) (local.get $args_g)))
             (if (i32.and (local.get $arg0) (i32.const 0x100))
               (then
                 (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
                 (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
-                (local.set $wa (call $g2w (local.get $buf_ga))))
+                (local.set $wa (call $g2w (local.get $buf_ga)))
+                (local.set $nSize (i32.add (local.get $len) (i32.const 1))))
               (else
-                (local.set $wa (call $g2w (local.get $arg4)))
-                (if (i32.and (i32.ne (local.get $nSize) (i32.const 0))
-                             (i32.ge_u (local.get $len) (local.get $nSize)))
-                  (then (local.set $len (i32.sub (local.get $nSize) (i32.const 1)))))))
-            (call $memcpy (local.get $wa) (global.get $TEXT_SCRATCH) (local.get $len))
-            (i32.store8 (i32.add (local.get $wa) (local.get $len)) (i32.const 0))
+                (local.set $wa (call $g2w (local.get $arg4)))))
+            (drop (call $format_message_expand
+              (global.get $TEXT_SCRATCH) (local.get $wa) (local.get $nSize) (local.get $args_g)))
             (global.set $eax (local.get $len))
             (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
             (return)))))

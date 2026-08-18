@@ -2335,6 +2335,17 @@
   (func (export "guest_read8") (param $ga i32) (result i32)
     (call $gl8 (local.get $ga)))
 
+  ;; FormatMessage insert expansion, exercised by
+  ;; test/test-format-message-inserts.js. All three addresses are guest
+  ;; addresses; $dst_g == 0 is the measure-only mode the real handler uses to
+  ;; size an ALLOCATE_BUFFER allocation before writing into it.
+  (func (export "test_format_message_expand")
+      (param $src_g i32) (param $dst_g i32) (param $max i32) (param $args_g i32) (result i32)
+    (call $format_message_expand
+      (call $g2w (local.get $src_g))
+      (select (i32.const 0) (call $g2w (local.get $dst_g)) (i32.eqz (local.get $dst_g)))
+      (local.get $max) (local.get $args_g)))
+
   ;; Allocate guest heap memory (returns guest address)
   (func (export "guest_alloc") (param $size i32) (result i32)
     (call $heap_alloc (local.get $size)))
