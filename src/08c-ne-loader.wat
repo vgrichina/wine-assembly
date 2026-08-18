@@ -467,10 +467,47 @@
   ;; Offsets are from the start of the file, not from the NE header. Returns a
   ;; linear address into the staged image, or 0, and leaves the byte length in
   ;; $win16_res_len.
+  ;; A NAMEINFO id with bit 15 CLEAR is not an id at all: it is an offset from
+  ;; the start of the resource table to a Pascal string, and the resource is
+  ;; addressed by that name. Solitaire's icon is `RT_GROUP_ICON id="SOL"`, and
+  ;; every Load* here used to refuse a name outright, so it had no icon.
+  ;;
+  ;; Names are compared without case, the way USER does it — modules are
+  ;; inconsistent about which case they store and which they ask with.
+  (func $win16_res_name_eq (param $entry i32) (param $want i32) (result i32)
+    (local $n i32) (local $i i32) (local $a i32) (local $b i32)
+    (if (i32.eqz (local.get $want)) (then (return (i32.const 0))))
+    (local.set $n (i32.load8_u (local.get $entry)))
+    (block $done (loop $cmp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $a (i32.load8_u
+        (i32.add (i32.add (local.get $entry) (i32.const 1)) (local.get $i))))
+      (local.set $b (i32.load8_u (i32.add (local.get $want) (local.get $i))))
+      (if (i32.eqz (local.get $b)) (then (return (i32.const 0))))
+      (if (i32.and (i32.ge_u (local.get $a) (i32.const 0x61))
+                   (i32.le_u (local.get $a) (i32.const 0x7A)))
+        (then (local.set $a (i32.sub (local.get $a) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x61))
+                   (i32.le_u (local.get $b) (i32.const 0x7A)))
+        (then (local.set $b (i32.sub (local.get $b) (i32.const 0x20)))))
+      (if (i32.ne (local.get $a) (local.get $b)) (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    ;; Both ended together, or the caller's string runs on past the stored one.
+    (i32.eqz (i32.load8_u (i32.add (local.get $want) (local.get $n)))))
+
   (func $win16_find_resource (export "win16_find_resource")
         (param $type_id i32) (param $res_id i32) (result i32)
+    (call $win16_find_resource_ex
+      (local.get $type_id) (local.get $res_id) (i32.const 0)))
+
+  ;; `name_wa` is the WASM address of a NUL-terminated name to match instead of
+  ;; `res_id`; zero means match by id as before.
+  (func $win16_find_resource_ex (export "win16_find_resource_ex")
+        (param $type_id i32) (param $res_id i32) (param $name_wa i32) (result i32)
     (local $p i32) (local $shift i32) (local $type i32) (local $count i32)
     (local $q i32) (local $i i32) (local $end i32) (local $ne_off i32) (local $img i32)
+    (local $rt i32) (local $rid i32)
     (global.set $win16_res_len (i32.const 0))
     (local.set $ne_off (call $win16_image_ne_off))
     (local.set $img (call $win16_image_base_addr))
@@ -478,6 +515,8 @@
     ;; A resource table offset of zero means the module has no resources at all.
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
     (local.set $p (i32.add (local.get $ne_off) (local.get $p)))
+    ;; Name offsets below are measured from here, the table's own start.
+    (local.set $rt (local.get $p))
     (local.set $shift (i32.load16_u (local.get $p)))
     (local.set $p (i32.add (local.get $p) (i32.const 2)))
     ;; The table lives inside the staged file; refuse to walk past it rather
@@ -499,8 +538,17 @@
           (local.set $i (i32.const 0))
           (block $scanned (loop $names
             (br_if $scanned (i32.ge_u (local.get $i) (local.get $count)))
-            (if (i32.eq (i32.load16_u (i32.add (local.get $q) (i32.const 6)))
-                        (i32.or (local.get $res_id) (i32.const 0x8000)))
+            (local.set $rid (i32.load16_u (i32.add (local.get $q) (i32.const 6))))
+            (if (select
+                  ;; Asking by name: only the named entries can match, and the
+                  ;; id field is the offset to the stored string.
+                  (i32.and (i32.eqz (i32.and (local.get $rid) (i32.const 0x8000)))
+                           (call $win16_res_name_eq
+                             (i32.add (local.get $rt) (local.get $rid))
+                             (local.get $name_wa)))
+                  (i32.eq (local.get $rid)
+                          (i32.or (local.get $res_id) (i32.const 0x8000)))
+                  (local.get $name_wa))
               (then
                 (global.set $win16_res_len
                   (i32.shl (i32.load16_u (i32.add (local.get $q) (i32.const 2))) (local.get $shift)))

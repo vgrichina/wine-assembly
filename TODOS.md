@@ -334,10 +334,22 @@ sets the global instead.
   fault. Building it means a second emulator process and a DDE wire, in the
   shape `vlan-wire.js` already has — and a pairing harness to test against,
   which is most of the work.
+- ~~**Named resources returned 0.**~~ FIXED. A NAMEINFO id with bit 15 clear
+  is not an id: it is an offset from the start of the resource table to a
+  Pascal string, and the walker matched integer ids only, so every `Load*`
+  handed a string failed outright. That is not a rare corner — Solitaire's
+  group icon is stored as `"SOL"`, which is why it had no icon.
+  `$win16_find_resource_ex` takes a name to match instead of an id, comparing
+  without case the way USER does, and `$win16_res_lookup` picks between the two
+  from the argument's selector. `LoadIcon` and `LoadBitmap` go through it.
+  `LoadMenu` and `LoadAccelerators` deliberately do **not** yet: they bridge to
+  the 32-bit `$handle_Load*A`, which take an integer id and walk the PE tree,
+  so accepting a name there means teaching those handlers a second grammar.
+  Nothing in the four apps needs it — Hearts' named `HEARTSMENU` arrives by
+  another path — so it is left rather than half-done.
 - Known execution-core gaps, all of which trap loudly and none of which the
   four apps reach: INT (including the INT 3Fh moveable-segment thunks), 16↔32
-  thunking, named resources (`LoadIcon` with a string name returns 0 —
-  Solitaire's icon). `tools/ne-dump.js --resources` shows what a module
+  thunking. `tools/ne-dump.js --resources` shows what a module
   actually ships, including named types and ids; `--menus` and `--dialogs`
   decode the RT_MENU and RT_DIALOG templates, which are the two resources whose
   16-bit layout shares nothing with the 32-bit one and so cannot be read with

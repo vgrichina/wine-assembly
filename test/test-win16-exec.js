@@ -105,6 +105,35 @@ function runOne(inst, memory, logged, name) {
 
   const dsSel = inst.exports.win16_sreg(SREG_DS);
 
+  // ---- named resources ----
+  // A NAMEINFO id with bit 15 clear is an offset to a Pascal string, not an
+  // id, and the walker used to match integer ids only — so every Load* handed
+  // a string returned 0. Solitaire's icon is the one that shows: its group
+  // icon is stored as "SOL" and it therefore had no icon at all.
+  if (name === 'SOL.EXE') {
+    const scratch = inst.exports.get_staging() + 0x180000;
+    const mem8 = new Uint8Array(memory.buffer);
+    const put = (text) => {
+      for (let i = 0; i < text.length; i++) mem8[scratch + i] = text.charCodeAt(i);
+      mem8[scratch + text.length] = 0;
+      return scratch;
+    };
+    checkThat('RT_GROUP_ICON "SOL" is found by name',
+      inst.exports.win16_find_resource_ex(14, 0, put('SOL')) !== 0);
+    // USER compares without case, and modules are inconsistent about which
+    // case they store and which they ask with.
+    checkThat('the name match ignores case',
+      inst.exports.win16_find_resource_ex(14, 0, put('sol')) !== 0);
+    // A prefix must not match: "SO" and "SOLITAIRE" are both other resources.
+    checkThat('a shorter name does not match',
+      inst.exports.win16_find_resource_ex(14, 0, put('SO')) === 0);
+    checkThat('a longer name does not match',
+      inst.exports.win16_find_resource_ex(14, 0, put('SOLX')) === 0);
+    // Integer lookup must keep working next to it: the bitmaps are numbered.
+    checkThat('numbered resources still resolve',
+      inst.exports.win16_find_resource(2, 54) !== 0);
+  }
+
   // ---- execute ----
   // Run until an unimplemented API traps, or until the task has had a generous
   // number of batches. Both outcomes are legitimate: early on every image

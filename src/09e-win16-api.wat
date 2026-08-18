@@ -1094,6 +1094,30 @@
       (then (return (i32.const -1))))
     (call $win16_arg16 (local.get $n)))
 
+  ;; The same argument read the other way: a resource named by string rather
+  ;; than by number arrives as a far pointer, and the selector is what tells
+  ;; the two apart. Returns the WASM address of the name, or 0 when the
+  ;; argument is an integer id after all.
+  ;;
+  ;; MAKEINTRESOURCE puts the id in the offset with a zero selector, which is
+  ;; exactly the shape this rejects, so the two never disagree about an
+  ;; argument.
+  (func $win16_res_name_wa (param $n i32) (result i32)
+    (if (i32.eqz (call $win16_arg16 (i32.add (local.get $n) (i32.const 1))))
+      (then (return (i32.const 0))))
+    (call $g2w (call $win16_far_to_guest
+      (call $win16_arg16 (i32.add (local.get $n) (i32.const 1)))
+      (call $win16_arg16 (local.get $n)))))
+
+  ;; Find a resource from a Load*-style argument pair, by id or by name.
+  (func $win16_res_lookup (param $type i32) (param $n i32) (result i32)
+    (local $id i32)
+    (local.set $id (call $win16_res_arg (local.get $n)))
+    (if (i32.ne (local.get $id) (i32.const -1))
+      (then (return (call $win16_find_resource (local.get $type) (local.get $id)))))
+    (call $win16_find_resource_ex (local.get $type) (i32.const 0)
+      (call $win16_res_name_wa (local.get $n))))
+
   ;; USER.179 GetSystemMetrics(nIndex). Same indices, same answers as Win32 —
   ;; see $system_metric in 09a-handlers.wat.
   (func $win16_GetSystemMetrics
@@ -1106,15 +1130,12 @@
   ;; what $gdi_bitmap_create_resource already parses for the Win32 side; only
   ;; the walk that finds the bytes differs.
   (func $win16_LoadBitmap
-    (local $id i32) (local $data i32)
-    (local.set $id (call $win16_res_arg (i32.const 0)))
+    (local $data i32)
     (global.set $eax (i32.const 0))
-    (if (i32.ne (local.get $id) (i32.const -1))
-      (then
-        (local.set $data (call $win16_find_resource (i32.const 2) (local.get $id)))
-        (if (local.get $data)
-          (then (global.set $eax (call $win16_h16 (call $gdi_bitmap_create_resource
-                  (local.get $data) (global.get $win16_res_len))))))))
+    (local.set $data (call $win16_res_lookup (i32.const 2) (i32.const 0)))
+    (if (local.get $data)
+      (then (global.set $eax (call $win16_h16 (call $gdi_bitmap_create_resource
+              (local.get $data) (global.get $win16_res_len))))))
     (call $win16_api_return (i32.const 6)))
 
   ;; USER.174 LoadIcon(hInstance, lpIconName) -> HICON.
@@ -1123,11 +1144,28 @@
   ;; nothing decodes NE icon pixels yet. That is the same answer the Win32 path
   ;; gives for an icon it cannot intern, and it is enough for the overwhelmingly
   ;; common use — handing the icon straight to RegisterClass.
+  ;;
+  ;; An icon named by string used to fail outright here, which is not a rare
+  ;; corner: Solitaire's is `RT_GROUP_ICON id="SOL"`, and both the standard
+  ;; `IDI_APPLICATION`-style predefined names and a module's own named icon
+  ;; arrive this way. Answer for a name we can actually find in the module, and
+  ;; for the predefined ones, which belong to USER rather than to the task and
+  ;; so will never be in its resource table.
   (func $win16_LoadIcon
-    (local $id i32)
+    (local $id i32) (local $name i32)
     (local.set $id (call $win16_res_arg (i32.const 0)))
     (global.set $eax (i32.const 0))
     (if (i32.ne (local.get $id) (i32.const -1))
+      (then
+        (global.set $eax (call $win16_h16 (i32.const 0x60001)))
+        (call $win16_api_return (i32.const 6))
+        (return)))
+    (local.set $name (call $win16_res_name_wa (i32.const 0)))
+    (if (i32.or
+          (i32.ne (call $win16_find_resource_ex
+                    (i32.const 14) (i32.const 0) (local.get $name)) (i32.const 0))
+          (i32.ne (call $win16_find_resource_ex
+                    (i32.const 3) (i32.const 0) (local.get $name)) (i32.const 0)))
       (then (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
     (call $win16_api_return (i32.const 6)))
 
