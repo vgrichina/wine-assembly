@@ -640,8 +640,8 @@
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ge_s (local.get $slot) (i32.const 0))
           (then
-            (local.set $base (i32.add (global.get $SCROLL_TABLE) (i32.mul (local.get $slot) (i32.const 24))))
-            (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+            (local.set $base (call $scroll_record_addr (local.get $slot)))
+            (local.set $aux (call $scroll_aux_addr (local.get $slot)))
             (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
             (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
             (local.set $cr (call $client_rect_get_r (local.get $hwnd)))

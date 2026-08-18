@@ -760,3 +760,32 @@
     (if (local.get $new_hwnd)
       (then (drop (call $wnd_send_message (local.get $new_hwnd) (i32.const 0x0007) (local.get $old) (i32.const 0)))))
   )
+
+  ;; ---- SCROLL_TABLE / SCROLL_AUX_TABLE accessors ----
+  ;;
+  ;; Both tables are per-WND_RECORDS-slot, and they use *different* strides —
+  ;; 24 bytes for the legacy low-memory record, 16 for the SCROLLINFO fields
+  ;; that did not fit in it. That is exactly the mistake `base + slot*N` spread
+  ;; over four files invites, so the address arithmetic lives here now. Field
+  ;; layout is documented at $SCROLL_TABLE in 01-header.wat.
+  (func $scroll_record_addr (param $slot i32) (result i32)
+    (i32.add (global.get $SCROLL_TABLE) (i32.mul (local.get $slot) (i32.const 24))))
+
+  (func $scroll_aux_addr (param $slot i32) (result i32)
+    (i32.add (global.get $SCROLL_AUX_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+
+  ;; $bar is SB_HORZ(0) / SB_VERT(1); the vertical triple sits 12 bytes after
+  ;; the horizontal one, and the aux pair 8 bytes after its horizontal one.
+  (func $scroll_bar_addr (param $slot i32) (param $vert i32) (result i32)
+    (i32.add (call $scroll_record_addr (local.get $slot))
+             (select (i32.const 12) (i32.const 0) (local.get $vert))))
+
+  (func $scroll_aux_bar_addr (param $slot i32) (param $vert i32) (result i32)
+    (i32.add (call $scroll_aux_addr (local.get $slot))
+             (select (i32.const 8) (i32.const 0) (local.get $vert))))
+
+  ;; Zero one slot's scroll state. Called from the slot-reset path so a reused
+  ;; hwnd does not inherit the previous window's scroll range.
+  (func $scroll_reset_slot (param $slot i32)
+    (call $zero_memory (call $scroll_record_addr (local.get $slot)) (i32.const 24))
+    (call $zero_memory (call $scroll_aux_addr (local.get $slot)) (i32.const 16)))

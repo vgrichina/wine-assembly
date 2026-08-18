@@ -5462,12 +5462,10 @@
                       (then
                         (local.set $coord_x
                           (i32.add (local.get $coord_x)
-                            (i32.load (i32.add (global.get $SCROLL_TABLE)
-                              (i32.mul (local.get $slot) (i32.const 24))))))
+                            (i32.load (call $scroll_record_addr (local.get $slot)))))
                         (local.set $coord_y
                           (i32.add (local.get $coord_y)
-                            (i32.load offset=12 (i32.add (global.get $SCROLL_TABLE)
-                              (i32.mul (local.get $slot) (i32.const 24))))))))
+                            (i32.load offset=12 (call $scroll_record_addr (local.get $slot)))))))
                     (if (i32.gt_u (local.get $coord_x) (i32.const 99999))
                       (then (local.set $coord_x (i32.const 99999))))
                     (if (i32.gt_u (local.get $coord_y) (i32.const 99999))
@@ -11520,10 +11518,8 @@
     (local $slot i32) (local $base i32) (local $aux i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
-    (local.set $base (i32.add (global.get $SCROLL_TABLE)
-      (i32.mul (local.get $slot) (i32.const 24))))
-    (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
-      (i32.mul (local.get $slot) (i32.const 16))))
+    (local.set $base (call $scroll_record_addr (local.get $slot)))
+    (local.set $aux (call $scroll_aux_addr (local.get $slot)))
     (if (i32.lt_s (local.get $total) (i32.const 1)) (then (local.set $total (i32.const 1))))
     (if (i32.lt_s (local.get $visible) (i32.const 1)) (then (local.set $visible (i32.const 1))))
     (i32.store offset=12 (local.get $base) (local.get $pos))
@@ -14525,10 +14521,7 @@
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ge_s (local.get $slot) (i32.const 0))
           (then
-            (local.set $base (i32.add (global.get $SCROLL_TABLE)
-              (i32.mul (local.get $slot) (i32.const 24))))
-            (if (local.get $is_vert)
-              (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
+            (local.set $base (call $scroll_bar_addr (local.get $slot) (local.get $is_vert)))
             (local.set $pos (i32.load (local.get $base)))
             (local.set $smin (i32.load offset=4 (local.get $base)))
             (local.set $smax (i32.load offset=8 (local.get $base)))))
@@ -14585,8 +14578,7 @@
             (local.set $slot (call $wnd_table_find (local.get $hwnd)))
             (if (i32.ge_s (local.get $slot) (i32.const 0))
               (then
-                (local.set $base (i32.add (global.get $SCROLL_TABLE)
-                  (i32.mul (local.get $slot) (i32.const 24))))
+                (local.set $base (call $scroll_record_addr (local.get $slot)))
                 (if (local.get $is_vert)
                   (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
                 (local.set $smin (i32.load offset=4 (local.get $base)))
@@ -14619,8 +14611,7 @@
                 (local.set $slot (call $wnd_table_find (local.get $hwnd)))
                 (if (i32.ge_s (local.get $slot) (i32.const 0))
                   (then
-                    (local.set $base (i32.add (global.get $SCROLL_TABLE)
-                      (i32.mul (local.get $slot) (i32.const 24))))
+                    (local.set $base (call $scroll_record_addr (local.get $slot)))
                     (if (local.get $is_vert)
                       (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
                     (local.set $pos (i32.load (local.get $base)))
@@ -14702,8 +14693,7 @@
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ge_s (local.get $slot) (i32.const 0))
           (then
-            (local.set $base (i32.add (global.get $SCROLL_TABLE)
-              (i32.mul (local.get $slot) (i32.const 24))))
+            (local.set $base (call $scroll_record_addr (local.get $slot)))
             ;; Vertical scrollbar: use offset +12
             (if (local.get $is_vert)
               (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
