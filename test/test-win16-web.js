@@ -43,6 +43,16 @@ function startStaticServer() {
     try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
     catch (_) { response.writeHead(400); response.end(); return; }
     if (pathname === '/') pathname = '/index.html';
+    // The page asks for /binaries/..., which in a normal checkout is a
+    // root-level symlink to test/binaries. That symlink is gitignored, so a
+    // git worktree never has it and every guest binary 404s — the app then
+    // loads a zero-length PE, reports "Entry: 0xffffffff", exits at slice 1,
+    // and the only visible symptom is this test timing out waiting for a
+    // window. Resolve the path ourselves rather than depend on the link.
+    if (pathname.startsWith('/binaries/')
+        && !fs.existsSync(path.join(root, 'binaries'))) {
+      pathname = '/test' + pathname;
+    }
     const file = path.normalize(path.join(root, pathname));
     if (file !== root && !file.startsWith(root + path.sep)) {
       response.writeHead(403); response.end(); return;
@@ -155,10 +165,32 @@ async function main() {
     page.on('console', msg => {
       if (current) consoleByApp.get(current).push(msg.text());
     });
+    // "Failed to load resource: 404" reaches the console without the URL,
+    // which makes a missing asset indistinguishable from any other. Name it.
+    page.on('response', res => {
+      if (current && res.status() >= 400) {
+        consoleByApp.get(current).push(`[http ${res.status()}] ${res.url()}`);
+      }
+    });
     for (const app of APPS) {
       current = app.key;
       consoleByApp.set(app.key, []);
-      const result = await runApp(page, port, app);
+      let result;
+      try {
+        result = await runApp(page, port, app);
+      } catch (error) {
+        // A wait that times out here says only "it did not get there", which
+        // cannot tell a real fault from a machine too loaded to arrive in
+        // time — and this box regularly sits at load 30+ with several agents
+        // on it. The guest reports through the console, so print what it did
+        // say: a LinkError or an UNIMPLEMENTED API names the bug outright,
+        // and a run that simply stopped short is the slow case.
+        const said = consoleByApp.get(app.key) || [];
+        console.error(`\n--- ${app.key} did not reach its "${app.title}" window`);
+        console.error(`--- last ${Math.min(said.length, 40)} of ${said.length} console lines:`);
+        console.error(said.slice(-40).join('\n') || '(the page said nothing at all)');
+        throw error;
+      }
       const png = path.join(OUT, `${app.key}.png`);
       fs.writeFileSync(png, Buffer.from(result.png.split(',')[1], 'base64'));
       assert(result.running, `${app.key} stopped running before its window settled`);
