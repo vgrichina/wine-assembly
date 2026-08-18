@@ -27,9 +27,34 @@ for (let i = 0; i < prof.samples.length; i++) {
   self.set(id, (self.get(id) || 0) + dt);
 }
 
+// wasm frames come out as wasm-function[N]; resolve N to its $name the same
+// way tools/wasm-func-name.js does, so a profile reads as source rather than
+// as indices. Off by default: it parses every src/*.wat.
+const withNames = process.argv.includes('--names');
+const wasmNames = (() => {
+  if (!withNames) return null;
+  const { execFileSync } = require('child_process');
+  const path = require('path');
+  const out = execFileSync('node',
+    [path.join(__dirname, 'wasm-func-name.js'), '--dump'], { encoding: 'utf8' });
+  const map = new Map();
+  for (const line of out.split('\n')) {
+    const m = line.match(/^\[(\d+)\] (.+?) \(/);
+    if (m) map.set(Number(m[1]), m[2]);
+  }
+  return map;
+})();
+
+const wasmLabels = new Set();
 const label = n => {
   const f = n.callFrame;
-  const name = f.functionName || '(anonymous)';
+  let name = f.functionName || '(anonymous)';
+  const wasmIdx = name.match(/^wasm-function\[(\d+)\]$/);
+  if (wasmIdx) {
+    const resolved = (wasmNames && wasmNames.get(Number(wasmIdx[1]))) || name;
+    wasmLabels.add(resolved);   // resolved names no longer look like wasm frames
+    return resolved;
+  }
   const url = (f.url || '').replace(/^file:\/\//, '').split('/').slice(-1)[0];
   return url ? `${name} @ ${url}:${f.lineNumber + 1}` : name;
 };
@@ -45,12 +70,23 @@ for (const [id, ms] of self) {
 // Wasm vs JS split: in this project the wasm half is the emulator itself and
 // the JS half is host/harness work, so the ratio says which one to profile next.
 let wasmMs = 0;
-for (const [k, ms] of agg) if (k.startsWith('wasm-function[')) wasmMs += ms;
+for (const [k, ms] of agg) if (wasmLabels.has(k) || k.startsWith('wasm-function[')) wasmMs += ms;
 console.log(`total sampled: ${total.toFixed(1)} ms, ${prof.samples.length} samples`);
 console.log(`wasm: ${wasmMs.toFixed(1)} ms (${(100 * wasmMs / total).toFixed(1)}%), other: ${(total - wasmMs).toFixed(1)} ms`);
 console.log('--- self time ---');
 for (const [k, ms] of [...agg].sort((a, b) => b[1] - a[1]).slice(0, top)) {
   console.log(`${ms.toFixed(1).padStart(9)} ms  ${(100 * ms / total).toFixed(1).padStart(5)}%  ${k}`);
+}
+
+// The emulator is usually a minority of a headless run -- the harness reads the
+// VFS off disk and rasterizes into a software canvas, neither of which exists
+// in the browser. Show the guest's own cost on its own terms.
+if (process.argv.includes('--wasm-only')) {
+  console.log('--- self time, wasm only ---');
+  const wasmAgg = [...agg].filter(([k]) => wasmLabels.has(k) || k.startsWith('wasm-function['));
+  for (const [k, ms] of wasmAgg.sort((a, b) => b[1] - a[1]).slice(0, top)) {
+    console.log(`${ms.toFixed(1).padStart(9)} ms  ${(100 * ms / wasmMs).toFixed(1).padStart(5)}% of wasm  ${k}`);
+  }
 }
 
 if (callersOf) {

@@ -10,7 +10,10 @@ const watArg = (process.argv.find(a => a.startsWith('--wat=')) || '').split('=')
 // shifts every index. Rebuild the same concatenation here unless told otherwise.
 const wat = watArg || 'src/*.wat (WAT_FILES order)';
 const indices = process.argv.slice(2).filter(a => !a.startsWith('--')).map(Number);
-if (!indices.length) {
+// --dump prints the whole table, which is how tools/cpuprof-top.js --names
+// turns wasm-function[N] frames back into source names.
+const dumpAll = process.argv.includes('--dump');
+if (!indices.length && !dumpAll) {
   console.error('usage: node tools/wasm-func-name.js <index> [...] [--wat=PATH]');
   process.exit(1);
 }
@@ -60,6 +63,10 @@ for (const arg of process.argv.filter(a => a.startsWith('--find='))) {
     if (d.name.includes(want)) { console.log(`${d.name} -> wasm-function[${i + imports.length}] (${wat}:${d.line})`); hit = true; }
   });
   if (!hit) console.log(`${want}: not found`);
+}
+if (dumpAll) {
+  imports.forEach((im, i) => console.log(`[${i}] ${im.name} (${wat}:${im.line})`));
+  defs.forEach((d, i) => console.log(`[${i + imports.length}] ${d.name} (${wat}:${d.line})`));
 }
 for (const idx of indices) {
   if (idx < imports.length) { console.log(`[${idx}] ${imports[idx].name} (${wat}:${imports[idx].line})`); continue; }

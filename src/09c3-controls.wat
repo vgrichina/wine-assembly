@@ -11290,6 +11290,75 @@
   ;;                       bit4=dragging selection bit5=caret visible
   ;;   +28  max_length     0 = unlimited
 
+  ;; Keep the caret inside the viewport, which is what USER's EM_SCROLLCARET
+  ;; does and what every EDIT operation that moves the caret ends with. Without
+  ;; it, typing past the last visible line keeps editing text nobody can see:
+  ;; the buffer grows, the caret advances, and the window still shows line 1.
+  ;; Returns 1 when the viewport moved, so callers can tell a scroll from a
+  ;; plain edit if they ever need to.
+  (func $edit_scroll_caret_into_view (param $hwnd i32) (result i32)
+    (local $state i32) (local $state_w i32) (local $style i32)
+    (local $sz i32) (local $w i32) (local $h i32)
+    (local $visible i32) (local $line i32) (local $top i32)
+    (local $total i32) (local $max i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $state_w (call $g2w (local.get $state)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    ;; ES_MULTILINE only: a single-line edit scrolls horizontally, and that is
+    ;; handled by the painter's own left-clamp.
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x00000004)))
+      (then (return (i32.const 0))))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then
+        (if (i32.gt_u (local.get $w) (i32.const 16))
+          (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then
+        (if (i32.gt_u (local.get $h) (i32.const 16))
+          (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
+    ;; Same viewport arithmetic the wheel handler and the painter use.
+    (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 8)) (i32.const 16)))
+    (if (i32.eqz (local.get $visible)) (then (local.set $visible (i32.const 1))))
+    (if (i32.and
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080)))) ;; not ES_AUTOHSCROLL
+      (then
+        ;; Wrapped: visual lines, so a wrapped paragraph counts for each row.
+        (local.set $total (call $edit_layout_build (local.get $state_w)
+          (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w)))
+        (local.set $line (call $edit_layout_line_for_char (local.get $total)
+          (i32.load offset=12 (local.get $state_w)))))
+      (else
+        (local.set $total (i32.add
+          (call $edit_line_from_char (local.get $state_w)
+            (i32.load offset=4 (local.get $state_w)))
+          (i32.const 1)))
+        (local.set $line (call $edit_line_from_char (local.get $state_w)
+          (i32.load offset=12 (local.get $state_w))))))
+    (local.set $top (i32.load offset=20 (local.get $state_w)))
+    (if (i32.lt_s (local.get $line) (local.get $top))
+      (then (local.set $top (local.get $line))))
+    (if (i32.ge_s (local.get $line) (i32.add (local.get $top) (local.get $visible)))
+      (then (local.set $top (i32.add (i32.sub (local.get $line) (local.get $visible))
+                                     (i32.const 1)))))
+    (local.set $max (i32.sub (local.get $total) (local.get $visible)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
+    (if (i32.gt_s (local.get $top) (local.get $max)) (then (local.set $top (local.get $max))))
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
+    (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
+      (then (return (i32.const 0))))
+    (i32.store offset=20 (local.get $state_w) (local.get $top))
+    (i32.const 1))
+
+  ;; Drop-in for $invalidate_hwnd at the sites where the user moved the caret.
+  (func $edit_invalidate_caret (param $hwnd i32)
+    (drop (call $edit_scroll_caret_into_view (local.get $hwnd)))
+    (call $invalidate_hwnd (local.get $hwnd)))
+
   (func $edit_reset_caret_timer (param $hwnd i32) (param $state_w i32)
     (global.set $tick_count (call $host_get_ticks))
     (i32.store offset=24 (local.get $state_w)
@@ -12078,7 +12147,7 @@
                           (local.get $lo))))))
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
             (call $edit_notify_change (local.get $hwnd))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
         (if (i32.eq (local.get $wParam) (i32.const 0x0D))
@@ -12090,7 +12159,7 @@
                   (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
                 (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
                 (call $edit_notify_change (local.get $hwnd))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
@@ -12099,7 +12168,7 @@
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
         (call $edit_notify_change (local.get $hwnd))
-        (call $invalidate_hwnd (local.get $hwnd))
+        (call $edit_invalidate_caret (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_KEYDOWN (0x0100) ----------
@@ -12125,7 +12194,7 @@
               (then
                 (i32.store offset=16 (local.get $state_w) (i32.const 0))
                 (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-                (call $invalidate_hwnd (local.get $hwnd))
+                (call $edit_invalidate_caret (local.get $hwnd))
                 (return (i32.const 0))))
             ;; Ctrl+C (0x43) — copy
             (if (i32.eq (local.get $vk) (i32.const 0x43))
@@ -12144,7 +12213,7 @@
                   (then
                     (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
                     (call $edit_notify_change (local.get $hwnd))
-                    (call $invalidate_hwnd (local.get $hwnd))))
+                    (call $edit_invalidate_caret (local.get $hwnd))))
                 (return (i32.const 0))))
             ;; Ctrl+V (0x56) — paste
             (if (i32.eq (local.get $vk) (i32.const 0x56))
@@ -12155,7 +12224,7 @@
                       (then (call $edit_insert_bytes (local.get $state_w)
                               (global.get $clipboard_ptr) (global.get $clipboard_len))
                             (call $edit_notify_change (local.get $hwnd))))
-                    (call $invalidate_hwnd (local.get $hwnd))))
+                    (call $edit_invalidate_caret (local.get $hwnd))))
                 (return (i32.const 0))))))
         ;; VK_LEFT 0x25
         (if (i32.eq (local.get $vk) (i32.const 0x25))
@@ -12169,7 +12238,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_RIGHT 0x27
         (if (i32.eq (local.get $vk) (i32.const 0x27))
@@ -12183,7 +12252,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_HOME 0x24 — start of line (or start of text with Ctrl)
         (if (i32.eq (local.get $vk) (i32.const 0x24))
@@ -12194,7 +12263,7 @@
             (i32.store offset=12 (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
               (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_END 0x23 — end of line (or end of text with Ctrl)
         (if (i32.eq (local.get $vk) (i32.const 0x23))
@@ -12208,7 +12277,7 @@
             (i32.store offset=12 (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
               (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_BACK 0x08 — backspace. Browsers don't fire keypress for VK_BACK,
         ;; so WM_CHAR 0x08 never arrives for WAT-native edits; handle it here.
@@ -12226,7 +12295,7 @@
                           (i32.sub (local.get $cur) (i32.const 1))
                           (local.get $cur))))))
             (call $edit_notify_change (local.get $hwnd))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_DELETE 0x2E
         (if (i32.eq (local.get $vk) (i32.const 0x2E))
@@ -12243,7 +12312,7 @@
                           (local.get $cur)
                           (i32.add (local.get $cur) (i32.const 1)))))))
             (call $edit_notify_change (local.get $hwnd))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_UP 0x26
         (if (i32.eq (local.get $vk) (i32.const 0x26))
@@ -12264,7 +12333,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_DOWN 0x28
         (if (i32.eq (local.get $vk) (i32.const 0x28))
@@ -12287,7 +12356,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         (return (i32.const 0))))
 
@@ -12584,6 +12653,13 @@
           (then
             (if (i32.gt_u (local.get $w) (i32.const 16))
               (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+        ;; And the bottom strip for WS_HSCROLL. Without this the last row of
+        ;; text and its caret are drawn underneath the horizontal scrollbar,
+        ;; which only became visible once the caret could reach the last row.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+          (then
+            (if (i32.gt_u (local.get $h) (i32.const 16))
+              (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
         ;; Use the font installed with WM_SETFONT, falling back to the default
         ;; GUI font. Paint relies on this when committing its text object into
         ;; the picture memory DC.
@@ -13134,8 +13210,14 @@
         (return (call $edit_line_len (local.get $state_w) (local.get $lo)))))
 
     ;; ---------- EM_SCROLLCARET (0x00B7) ----------
+    ;; The EM_SETSEL + EM_SCROLLCARET pair is how an app (notepad's Find, for
+    ;; one) brings a selection into view, so this has to do the scrolling that
+    ;; EM_SETSEL deliberately does not.
     (if (i32.eq (local.get $msg) (i32.const 0x00B7))
-      (then (return (i32.const 0))))
+      (then
+        (if (call $edit_scroll_caret_into_view (local.get $hwnd))
+          (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
 
     ;; ---------- EM_GETFIRSTVISIBLELINE (0x00CE) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00CE))
