@@ -30,11 +30,12 @@
 // Verdicts per item:
 //   CRASH    an unimplemented API, a WASM trap, or a stuck emulator followed
 //   NODLG    label promises a dialog ("...") and no window appeared
+//   ERRBOX   a window opened, but it is an error/warning box: the app refused
 //   dialog   a new window appeared
 //   ok       command accepted, nothing new on screen (Copy, Paste, a toggle)
 //   skipped  Exit/Close and other ids that end the app or the sweep
 //
-// Exit code is nonzero when any item is CRASH or NODLG.
+// Exit code is nonzero when any item is CRASH, NODLG or ERRBOX.
 
 const fs = require('fs');
 const os = require('os');
@@ -147,6 +148,8 @@ const live = items.filter(it => !isTerminal(it));
 const skipped = items.filter(it => isTerminal(it));
 
 const BAD = /UNIMPLEMENTED API|RuntimeError|LinkError|CRASH|STUCK|unreachable/i;
+// [MessageBox] "caption": "text" type=0xNN -- see test/run.js h.message_box.
+const ERRBOX = /^\[MessageBox\] "([^"]*)": "([^"]*)" type=0x([0-9a-f]+)/;
 
 // Drive a list of menu commands through one freshly launched app and say what
 // each one did. Each item gets: post the command, let it run, photograph the
@@ -256,7 +259,18 @@ function drive(list) {
       continue;
     }
     const here = lineOfLabel.get(label);
-    const bad = BAD.exec(lines.slice(prevLine, here).join('\n'));
+    const slice = lines.slice(prevLine, here);
+    const bad = BAD.exec(slice.join('\n'));
+    // The last error/warning box this command put up, if any. run.js logs every
+    // message_box with its uType; the icon bits are what separate a refusal
+    // from an ordinary informational box (About, "3 mines left").
+    let errbox = null;
+    for (const line of slice) {
+      const m = ERRBOX.exec(line);
+      if (!m) continue;
+      const icon = parseInt(m[3], 16) & 0xF0;
+      if (icon === 0x10 || icon === 0x30) errbox = `${m[1]}: ${m[2]}`;
+    }
     prevLine = here;
     const opened = [...snap.keys()].filter(h => !prevSnap.has(h));
     const openedTitles = opened.map(h => snap.get(h)).filter(Boolean);
@@ -277,6 +291,12 @@ function drive(list) {
       results.push({ ...it, verdict: 'nomenu', detail: 'no menu bar on screen yet' });
     } else if (wantsDialog && !opened.length) {
       results.push({ ...it, verdict: 'NODLG', detail: 'label promises a dialog, no window appeared' });
+    } else if (opened.length && errbox) {
+      // A window did open, but it is the app saying no. Scoring that as a
+      // working command is how kodakimg reported 97 of 98 commands as opening
+      // a dialog while every one of them was the same "The Image Admin control
+      // cannot be found" box -- a total failure that read as a clean app.
+      results.push({ ...it, verdict: 'ERRBOX', detail: errbox });
     } else if (opened.length) {
       results.push({ ...it, verdict: 'dialog',
         detail: openedTitles.length ? openedTitles.join(', ') : `${opened.length} new window(s)` });
@@ -325,7 +345,8 @@ let confirmed = 0;
 if (CONFIRM) {
   const unresolved = () => live.filter(it => {
     const v = byId.get(it.id).verdict;
-    return v === 'CRASH' || v === 'NODLG' || v === 'blocked' || v === 'nomenu';
+    return v === 'CRASH' || v === 'NODLG' || v === 'ERRBOX' ||
+           v === 'blocked' || v === 'nomenu';
   });
   const first = new Map(pass1.results.map(r => [r.id, r.verdict]));
   const note = (r) => {
@@ -354,7 +375,8 @@ if (CONFIRM) {
 
 const results = live.map(it => byId.get(it.id))
   .concat(skipped.map(it => ({ ...it, verdict: 'skipped', detail: 'terminates the app' })));
-const bad = results.filter(r => r.verdict === 'CRASH' || r.verdict === 'NODLG');
+const bad = results.filter(r => r.verdict === 'CRASH' || r.verdict === 'NODLG' ||
+                               r.verdict === 'ERRBOX');
 const tally = results.reduce((a, r) => (a[r.verdict] = (a[r.verdict] || 0) + 1, a), {});
 
 console.log(`${name}  ${items.length} menu commands  ` +
