@@ -778,6 +778,8 @@
     (local $btn_y i32) (local $btn_bot i32)
     (local $close_x i32) (local $max_x i32) (local $min_x i32)
     (local $bw i32) (local $bh i32)
+    (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
+    (local $has_vsb i32) (local $has_hsb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
     (local.set $rect (global.get $PAINT_SCRATCH))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
@@ -918,6 +920,46 @@
         (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $corner)))
           (then (return (i32.const 17))))                                  ;; HTBOTTOMRIGHT
         (return (i32.const 11))))                                          ;; HTRIGHT
+    ;; Standard scrollbars are non-client: $defwndproc_do_nccalcsize carves
+    ;; their 16px strips out of the window just outside the client rect, and
+    ;; $defwndproc_do_ncpaint draws them there. Classifying them is what lets
+    ;; the pointer go back to IDC_ARROW over a scrollbar while the app's own
+    ;; tool cursor still owns the client area — mspaint sets a pencil on
+    ;; WM_SETCURSOR/HTCLIENT, so without this its image view kept the pencil
+    ;; all the way out over both bars.
+    (if (i32.and (local.get $style) (i32.const 0x00300000)) ;; WS_VSCROLL|WS_HSCROLL
+      (then
+        (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+        (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+        (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+        (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+        (local.set $has_vsb (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0)))
+        (local.set $has_hsb (i32.ne (i32.and (local.get $style) (i32.const 0x00100000)) (i32.const 0)))
+        ;; The square where the two bars meet is the sizing box, not either bar.
+        (if (i32.and
+              (i32.and (local.get $has_vsb) (local.get $has_hsb))
+              (i32.and
+                (i32.and (i32.ge_s (local.get $lx) (local.get $cr))
+                         (i32.lt_s (local.get $lx) (i32.add (local.get $cr) (i32.const 16))))
+                (i32.and (i32.ge_s (local.get $ly) (local.get $cb))
+                         (i32.lt_s (local.get $ly) (i32.add (local.get $cb) (i32.const 16))))))
+          (then (return (i32.const 4))))                                   ;; HTSIZE
+        (if (i32.and
+              (local.get $has_vsb)
+              (i32.and
+                (i32.and (i32.ge_s (local.get $lx) (local.get $cr))
+                         (i32.lt_s (local.get $lx) (i32.add (local.get $cr) (i32.const 16))))
+                (i32.and (i32.ge_s (local.get $ly) (local.get $ct))
+                         (i32.lt_s (local.get $ly) (local.get $cb)))))
+          (then (return (i32.const 7))))                                   ;; HTVSCROLL
+        (if (i32.and
+              (local.get $has_hsb)
+              (i32.and
+                (i32.and (i32.ge_s (local.get $ly) (local.get $cb))
+                         (i32.lt_s (local.get $ly) (i32.add (local.get $cb) (i32.const 16))))
+                (i32.and (i32.ge_s (local.get $lx) (local.get $cl))
+                         (i32.lt_s (local.get $lx) (local.get $cr)))))
+          (then (return (i32.const 6))))))                                 ;; HTHSCROLL
     (i32.const 1))                    ;; HTCLIENT
 
   ;; Default WM_SETCURSOR handler.

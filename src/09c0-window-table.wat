@@ -737,11 +737,20 @@
   ;; Called from DispatchMessageA/SendMessageA for WAT-native windows (wndproc >= 0xFFFF0000)
   ;; Dispatches to the correct WAT wndproc based on the ID encoded in the low bits
   (func $wat_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $wp i32)
+    (local $wp i32) (local $ret i32)
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     ;; 0xFFFF0002 = built-in control wndproc
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_CTRL_NATIVE))
-      (then (return (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+      (then
+        (local.set $ret (call $control_wndproc_dispatch (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+        ;; WM_SETCURSOR: zero means the control did not claim the cursor, which
+        ;; in Win32 is the caller's cue to fall through to DefWindowProc. Only
+        ;; the edit control's HTCLIENT branch sets one, so without this its
+        ;; I-beam stayed on out over its own HTVSCROLL/HTHSCROLL strips.
+        (if (i32.and (i32.eq (local.get $msg) (i32.const 0x0020)) (i32.eqz (local.get $ret)))
+          (then (return (call $defwndproc_do_setcursor (local.get $hwnd)
+                          (i32.and (local.get $lParam) (i32.const 0xFFFF))))))
+        (return (local.get $ret))))
     ;; 0xFFFF0004 = dialog box. DefDlgProc owns the whole message set including
     ;; the non-client chrome, so route before the default NCPAINT/NCCALCSIZE.
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_DIALOG))
