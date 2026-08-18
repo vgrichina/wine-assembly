@@ -217,6 +217,82 @@ async function run() {
     }
   }
 
+  // 4b — WASM atomics, which are NOT the same question as row 4.
+  //
+  // Row 4 proves JS `Atomics` work on a SharedArrayBuffer. It says nothing about
+  // whether this engine accepts the 0xFE-prefixed instructions lib/compile-wat.js
+  // now emits — a different proposal, validated by a different part of the
+  // engine. This project has already shipped a compatibility lowering for one
+  // proposal Safari lacked (`return_call`, see supportsTailCalls above), so
+  // "atomics are surely fine" is not a claim this page should leave unmeasured.
+  //
+  // The emulator itself uses exactly four of them: i32.atomic.load / .store /
+  // .rmw.add / .rmw.cmpxchg. It deliberately uses no wait or notify, because a
+  // browser main thread may not park — so those are probed separately and a
+  // failure there costs nothing.
+  const ATOMICS_WAT = `(module
+  (import "host" "memory" (memory 1 1 shared))
+  (func (export "cas") (param $a i32) (param $exp i32) (param $new i32) (result i32)
+    (i32.atomic.rmw.cmpxchg (local.get $a) (local.get $exp) (local.get $new)))
+  (func (export "add") (param $a i32) (param $v i32) (result i32)
+    (i32.atomic.rmw.add (local.get $a) (local.get $v)))
+  (func (export "ld") (param $a i32) (result i32) (i32.atomic.load (local.get $a)))
+  (func (export "st") (param $a i32) (param $v i32) (i32.atomic.store (local.get $a) (local.get $v)))
+)`;
+  const WAIT_WAT = `(module
+  (import "host" "memory" (memory 1 1 shared))
+  (func (export "wait") (param $a i32) (param $exp i32) (result i32)
+    (memory.atomic.wait32 (local.get $a) (local.get $exp) (i64.const 0)))
+  (func (export "notify") (param $a i32) (result i32)
+    (memory.atomic.notify (local.get $a) (i32.const 1)))
+  (func (export "fence") (atomic.fence))
+)`;
+  const r4b = row('WASM atomics from lib/compile-wat.js (the 4 the emulator uses)');
+  if (typeof compileWatSnapshot !== 'function') {
+    r4b.set('fail', 'compileWatSnapshot unavailable');
+  } else {
+    let probeMem = null;
+    try {
+      probeMem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+      const bytes = await compileWatSnapshot(() => ATOMICS_WAT,
+        { files: ['atomics-probe.wat'], cacheKey: 'probe-atomics' });
+      const { instance } = await WebAssembly.instantiate(bytes, { host: { memory: probeMem } });
+      const ex = instance.exports;
+      const at = 2048;
+      ex.st(at, 41);
+      const loaded = ex.ld(at);
+      const oldAdd = ex.add(at, 1);                       // must return the OLD value
+      const missed = ex.cas(at, 999, 7);                  // must not store
+      const took = ex.cas(at, 42, 7);                     // must store
+      const ok = loaded === 41 && oldAdd === 41 && missed === 42 && took === 42 && ex.ld(at) === 7;
+      r4b.set(ok ? 'pass' : 'fail',
+        ok ? 'load/store/rmw.add/cmpxchg all validate and behave'
+           : `wrong results: load=${loaded} add=${oldAdd} cas_miss=${missed} cas_hit=${took} now=${ex.ld(at)}`);
+    } catch (err) {
+      // A LinkError or CompileError here is the answer: this engine does not
+      // accept our atomic encodings, and threading cannot be enabled on it.
+      r4b.set('fail', String(err && err.message || err));
+    }
+
+    // wait/notify/fence: what is being probed here is that they COMPILE, not
+    // that wait32 runs. Executing it on the main thread is illegal in every
+    // engine — the first version of this row called it and reported the engine's
+    // correct refusal as a failure. notify and fence are legal here, so they are
+    // executed; wait32 is deliberately not, and the emulator never emits it.
+    const r4c = row('WASM atomic wait32/notify/fence compile (wait32 not run: main thread)');
+    try {
+      const bytes = await compileWatSnapshot(() => WAIT_WAT,
+        { files: ['wait-probe.wat'], cacheKey: 'probe-wait' });
+      const { instance } = await WebAssembly.instantiate(bytes, { host: { memory: probeMem } });
+      instance.exports.fence();
+      const woke = instance.exports.notify(2048);
+      r4c.set('pass', `all three validate; notify woke ${woke}, fence ran, `
+        + 'wait32 left uncalled (parking the main thread is illegal)');
+    } catch (err) {
+      r4c.set('fail', String(err && err.message || err));
+    }
+  }
+
   // 5 — prebuilt artifact: compile here, instantiate there
   const tailCalls = supportsTailCalls();
   const artifact = tailCalls ? 'build/wine-assembly.wasm' : 'build/wine-assembly.compat.wasm';
