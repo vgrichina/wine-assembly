@@ -1,25 +1,37 @@
   ;; ============================================================
   ;; REGISTER ACCESS
   ;; ============================================================
+  ;; br_table, not a chain of seven compares. These two are called several times
+  ;; per memory-form instruction — a single `cmp [ebp+8], esi` used to walk this
+  ;; chain three times — so the average three data-dependent branches per call
+  ;; were a real share of the interpreter's work. A br_table is one indexed
+  ;; jump. The default arm covers r=7 and anything out of range, exactly as the
+  ;; fall-through did.
   (func $get_reg (param $r i32) (result i32)
-    (if (i32.eq (local.get $r) (i32.const 0)) (then (return (global.get $eax))))
-    (if (i32.eq (local.get $r) (i32.const 1)) (then (return (global.get $ecx))))
-    (if (i32.eq (local.get $r) (i32.const 2)) (then (return (global.get $edx))))
-    (if (i32.eq (local.get $r) (i32.const 3)) (then (return (global.get $ebx))))
-    (if (i32.eq (local.get $r) (i32.const 4)) (then (return (global.get $esp))))
-    (if (i32.eq (local.get $r) (i32.const 5)) (then (return (global.get $ebp))))
-    (if (i32.eq (local.get $r) (i32.const 6)) (then (return (global.get $esi))))
+    (block $edi (block $esi (block $ebp (block $esp
+      (block $ebx (block $edx (block $ecx (block $eax
+        (br_table $eax $ecx $edx $ebx $esp $ebp $esi $edi (local.get $r)))
+        (return (global.get $eax)))
+        (return (global.get $ecx)))
+        (return (global.get $edx)))
+        (return (global.get $ebx)))
+        (return (global.get $esp)))
+        (return (global.get $ebp)))
+        (return (global.get $esi)))
     (global.get $edi)
   )
 
   (func $set_reg (param $r i32) (param $v i32)
-    (if (i32.eq (local.get $r) (i32.const 0)) (then (global.set $eax (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 1)) (then (global.set $ecx (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 2)) (then (global.set $edx (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 3)) (then (global.set $ebx (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 4)) (then (global.set $esp (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 5)) (then (global.set $ebp (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 6)) (then (global.set $esi (local.get $v)) (return)))
+    (block $edi (block $esi (block $ebp (block $esp
+      (block $ebx (block $edx (block $ecx (block $eax
+        (br_table $eax $ecx $edx $ebx $esp $ebp $esi $edi (local.get $r)))
+        (global.set $eax (local.get $v)) (return))
+        (global.set $ecx (local.get $v)) (return))
+        (global.set $edx (local.get $v)) (return))
+        (global.set $ebx (local.get $v)) (return))
+        (global.set $esp (local.get $v)) (return))
+        (global.set $ebp (local.get $v)) (return))
+        (global.set $esi (local.get $v)) (return))
     (global.set $edi (local.get $v))
   )
 

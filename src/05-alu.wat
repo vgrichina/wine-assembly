@@ -2,63 +2,63 @@
   ;; ALU HELPER — performs operation by index
   ;; ============================================================
   ;; op: 0=ADD,1=OR,2=ADC,3=SBB,4=AND,5=SUB,6=XOR,7=CMP
+  ;; br_table rather than eight compares in a row. Every memory-form ALU
+  ;; instruction routes through here (the register forms are specialized per
+  ;; opcode), and the ops the chain tested last — SUB, XOR, CMP — are among the
+  ;; most common instructions there are, so the average walk was long.
   (func $do_alu32 (param $op i32) (param $a i32) (param $b i32) (result i32)
     (local $r i32) (local $cf_in i32) (local $b_eff i32)
-    (if (i32.eq (local.get $op) (i32.const 0)) ;; ADD
-      (then
+    (block $cmp (block $xor (block $sub (block $and
+      (block $sbb (block $adc (block $or (block $add
+        (br_table $add $or $adc $sbb $and $sub $xor $cmp (local.get $op)))
+        ;; 0 = ADD
         (local.set $r (i32.add (local.get $a) (local.get $b)))
         (call $set_flags_add (local.get $a) (local.get $b) (local.get $r))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 1)) ;; OR
-      (then
+        (return (local.get $r)))
+        ;; 1 = OR
         (local.set $r (i32.or (local.get $a) (local.get $b)))
         (call $set_flags_logic (local.get $r))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 2)) ;; ADC: r = a + b + cf_in
-      (then
+        (return (local.get $r)))
+        ;; 2 = ADC: r = a + b + cf_in
         (local.set $cf_in (call $get_cf))
         (local.set $b_eff (i32.add (local.get $b) (local.get $cf_in)))
         (local.set $r (i32.add (local.get $a) (local.get $b_eff)))
-        ;; Set flags as ADD(a, b_eff) for OF/ZF/SF
+        ;; Flags as ADD(a, b_eff) for OF/ZF/SF
         (call $set_flags_add (local.get $a) (local.get $b_eff) (local.get $r))
-        ;; Fix CF: if b+cf_in wrapped (b_eff < b), carry is always 1
-        ;; Use raw mode to avoid clobbering flag_res (which holds ZF/SF)
+        ;; Fix CF: if b+cf_in wrapped (b_eff < b), carry is always 1.
+        ;; Raw mode, so flag_res (which holds ZF/SF) is not clobbered.
         (if (i32.lt_u (local.get $b_eff) (local.get $b))
           (then (global.set $flag_op (i32.const 8))
                 (global.set $flag_a (i32.const 1))
                 (global.set $flag_b (i32.const 0))))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 3)) ;; SBB: r = a - b - cf_in
-      (then
+        (return (local.get $r)))
+        ;; 3 = SBB: r = a - b - cf_in
         (local.set $cf_in (call $get_cf))
         (local.set $b_eff (i32.add (local.get $b) (local.get $cf_in)))
         (local.set $r (i32.sub (local.get $a) (local.get $b_eff)))
-        ;; Set flags as SUB(a, b_eff) for OF/ZF/SF
         (call $set_flags_sub (local.get $a) (local.get $b_eff) (local.get $r))
         ;; Fix CF: if b+cf_in wrapped, borrow is always 1
         (if (i32.lt_u (local.get $b_eff) (local.get $b))
           (then (global.set $flag_a (i32.const 0))
                 (global.set $flag_b (i32.const 1))))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 4)) ;; AND
-      (then
+        (return (local.get $r)))
+        ;; 4 = AND
         (local.set $r (i32.and (local.get $a) (local.get $b)))
         (call $set_flags_logic (local.get $r))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 5)) ;; SUB
-      (then
+        (return (local.get $r)))
+        ;; 5 = SUB
         (local.set $r (i32.sub (local.get $a) (local.get $b)))
         (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r))
-        (return (local.get $r))))
-    (if (i32.eq (local.get $op) (i32.const 6)) ;; XOR
-      (then
+        (return (local.get $r)))
+        ;; 6 = XOR
         (local.set $r (i32.xor (local.get $a) (local.get $b)))
         (call $set_flags_logic (local.get $r))
-        (return (local.get $r))))
-    ;; 7 = CMP (same as SUB but don't return result to be stored)
+        (return (local.get $r)))
+    ;; 7 = CMP — SUB without storing the result. Also the br_table default,
+    ;; matching the old fall-through.
     (local.set $r (i32.sub (local.get $a) (local.get $b)))
     (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r))
-    (local.get $a) ;; return original (CMP doesn't modify dst)
+    (local.get $a) ;; CMP does not modify dst
   )
 
   ;; Shift/rotate helper
