@@ -39,10 +39,9 @@ parking the guest. It has been dropped from the map, because leaving it there
 made worker mode look like it had two async yields left to port when it had one.
 
 Not done: cross-thread `SendMessage` still runs the target's wndproc on the
-calling thread rather than blocking the sender on the owner's queue, and the thunk
-allocator's cursor is still a per-instance global reconciled at slice boundaries
-rather than a shared one (§3.1b). Off by default, behind the Threads switch and
-cross-origin isolation.
+calling thread rather than blocking the sender on the owner's queue, and the
+window/class/timer tables are unlocked on a single-owner argument nothing enforces
+(§3.1b). Off by default, behind the Threads switch and cross-origin isolation.
 
 ### What the implementation actually looks like
 
@@ -345,16 +344,18 @@ wrapper) and `$vsock_next_port` (two threads pick the same ephemeral port, and
 `$vsock_port_taken` then rejects the second bind — a connect that fails for no
 visible reason).
 
-❌ **The thunk cursor is still per-instance.** `$num_thunks` is both the count and
-the next free index, so an instance running with a stale one hands out a thunk
-address another instance already used, and the guest calls a thunk whose api id
-belongs to a different function. Today it is reconciled at slice boundaries
-through the main instance (`ThreadManager.workerSyncState` /
-`publishWorkerThunkState`), exactly as the cooperative backend does — which leaves
-two instances that both allocate a thunk *inside the same slice* able to collide.
-The real fix is a process cursor in shared memory like the heap's; it needs the
-~30 `global.set $num_thunks (+1)` sites reworked to reserve an index first, which
-is a mechanical change worth doing on its own.
+✅ **The thunk cursor.** `$num_thunks` is both the count and the next free index,
+and it was per-instance — two threads in `GetProcAddress` read the same value and
+were handed the same thunk address for two different functions. The three sites
+that can run on any thread (GetProcAddress and the DLL loader's two import-patching
+paths) now take their index from `$thunk_reserve`, an atomic bump of a cell in
+shared memory. The PE loader's ~30 sites keep bumping the local global: they run
+once, before any thread exists, and reach the shared cursor through
+`$update_thunk_end` — which now **adopts** the process-wide count as well as
+publishing to it, because a thunk another instance allocated sits inside the zone
+but past a local count, and `$run` bounds-checks EIP against `$thunk_guest_end`
+before dispatching it. The slice-boundary reconciliation through the main instance
+stays, but correctness no longer rests on it.
 
 ❌ **`WND_RECORDS`, `CLASS_RECORDS`, `TIMER_TABLE` are unlocked**, on the §3.3
 argument that windows belong to the thread that created them. Nothing enforces
