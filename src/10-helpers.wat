@@ -2993,6 +2993,15 @@
           (i32.ne (global.get $clipboard_binary_format) (i32.const 0))
           (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))
       (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+    ;; A data object left by OleSetClipboard is clipboard content too. Real GDI
+    ;; publishes that object's formats on the clipboard with delayed rendering,
+    ;; so they count; we do not enumerate its FORMATETCs, and one is enough for
+    ;; what this number is asked for — every caller so far uses it as "is the
+    ;; clipboard empty". WordPad gates both Paste and Paste Special on it, and
+    ;; RichEdit's Copy publishes nothing else, so returning zero here disabled
+    ;; pasting into the app that had just copied.
+    (if (i32.ne (global.get $clipboard_ole_data_object) (i32.const 0))
+      (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
     (local.get $n))
 
   (func $clipboard_is_format_available (param $fmt i32) (result i32)

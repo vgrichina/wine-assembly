@@ -4567,7 +4567,10 @@
           (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
         (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
           (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))))
-    (if (i32.and (local.get $arg1) (local.get $arg2))
+    ;; Each extent is tested on its own — see $handle_SetWindowExtEx. A raw
+    ;; `i32.and` here is a bit mask, and rejected (1, 2) as if it were zero.
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                 (i32.ne (local.get $arg2) (i32.const 0)))
       (then
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64) (local.get $arg1) (i32.const 1)))
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68) (local.get $arg2) (i32.const 1)))
@@ -10011,6 +10014,7 @@
   ;; 589: ScaleWindowExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
   (func $handle_ScaleWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $old_x i32) (local $old_y i32) (local $lp_size i32)
+    (local $new_x i32) (local $new_y i32)
     (local.set $old_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
     (local.set $old_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))
     (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -10018,15 +10022,30 @@
       (then
         (call $gs32 (local.get $lp_size) (local.get $old_x))
         (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
-    (if (i32.and (local.get $arg2) (local.get $arg4))
+    ;; Each denominator is tested on its own: a raw `i32.and` of the two is a
+    ;; bit mask, and would take (2, 4) for zero.
+    (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+                 (i32.ne (local.get $arg4) (i32.const 0)))
       (then
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 48)
+        (local.set $new_x
           (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_x))
-            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))) (i32.const 1)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 52)
+            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))))
+        (local.set $new_y
           (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_y))
-            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))) (i32.const 1)))
-        (global.set $eax (i32.const 1)))
+            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))))
+        ;; A zero extent is not a legal DC state — SetWindowExtEx refuses one —
+        ;; and this integer division is the only way to arrive at one by
+        ;; accident: WordPad scales a 1x1 window extent by 96/300 when it builds
+        ;; the CF_METAFILEPICT for Copy, which truncates to 0 and made every
+        ;; later logical-to-device mapping divide by zero. Leave the extents
+        ;; alone and fail, the way an out-of-range SetWindowExtEx does.
+        (if (i32.and (i32.ne (local.get $new_x) (i32.const 0))
+                     (i32.ne (local.get $new_y) (i32.const 0)))
+          (then
+            (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 48) (local.get $new_x) (i32.const 1)))
+            (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 52) (local.get $new_y) (i32.const 1)))
+            (global.set $eax (i32.const 1)))
+          (else (global.set $eax (i32.const 0)))))
       (else
         (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
@@ -10035,6 +10054,7 @@
   ;; 590: ScaleViewportExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
   (func $handle_ScaleViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $old_x i32) (local $old_y i32) (local $lp_size i32)
+    (local $new_x i32) (local $new_y i32)
     (local.set $old_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
     (local.set $old_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))
     (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
@@ -10042,15 +10062,24 @@
       (then
         (call $gs32 (local.get $lp_size) (local.get $old_x))
         (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
-    (if (i32.and (local.get $arg2) (local.get $arg4))
+    ;; Same two rules as $handle_ScaleWindowExtEx: test each denominator on its
+    ;; own, and refuse a scale that would truncate an extent to zero.
+    (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
+                 (i32.ne (local.get $arg4) (i32.const 0)))
       (then
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64)
+        (local.set $new_x
           (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_x))
-            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))) (i32.const 1)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68)
+            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))))
+        (local.set $new_y
           (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_y))
-            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))) (i32.const 1)))
-        (global.set $eax (i32.const 1)))
+            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))))
+        (if (i32.and (i32.ne (local.get $new_x) (i32.const 0))
+                     (i32.ne (local.get $new_y) (i32.const 0)))
+          (then
+            (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64) (local.get $new_x) (i32.const 1)))
+            (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68) (local.get $new_y) (i32.const 1)))
+            (global.set $eax (i32.const 1)))
+          (else (global.set $eax (i32.const 0)))))
       (else
         (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))

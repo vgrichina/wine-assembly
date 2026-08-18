@@ -381,7 +381,8 @@
     "name": "CountClipboardFormats",
     "nargs": 0,
     "convention": "stdcall",
-    "hash": 4151589062
+    "hash": 4151589062,
+    "ret": "int"
   },
   {
     "id": 51,

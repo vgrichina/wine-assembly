@@ -741,7 +741,11 @@
           (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
         (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
           (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))))
-    (if (i32.and (local.get $arg1) (local.get $arg2))
+    ;; Both extents have to be non-zero, and each is tested on its own: a raw
+    ;; `i32.and` of the two is a bit mask, so SetWindowExtEx(hdc, 1, 2) — or any
+    ;; other pair with no bit in common — used to be rejected as if it were zero.
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                 (i32.ne (local.get $arg2) (i32.const 0)))
       (then
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 48) (local.get $arg1) (i32.const 1)))
         (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 52) (local.get $arg2) (i32.const 1)))
