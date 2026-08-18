@@ -2106,10 +2106,20 @@
 
   ;; Disabled-by-default stack-packet compiler prototype. Toggling clears the
   ;; decoded-block cache so already-decoded generic/packet blocks do not linger.
-  (func (export "set_stack_packet_enabled") (param $flag i32) (param $addr i32)
+  ;; $variant selects which packet handler the armed address compiles to.
+  ;; Passing 0 (or omitting the argument, which the JS API zero-fills) keeps the
+  ;; historical address->variant mapping so existing callers behave the same;
+  ;; the mapping lives here, in the prototype's own switch, rather than inside
+  ;; $decode_block where every app pays to read it.
+  (func (export "set_stack_packet_enabled") (param $flag i32) (param $addr i32) (param $variant i32)
     (global.set $stack_packet_enabled (local.get $flag))
     (if (local.get $addr)
       (then (global.set $stack_packet_addr (local.get $addr))))
+    (if (local.get $variant)
+      (then (global.set $stack_packet_variant (local.get $variant)))
+      (else (global.set $stack_packet_variant
+        (select (i32.const 2) (i32.const 1)
+          (i32.eq (global.get $stack_packet_addr) (i32.const 0x0049DD20))))))
     (call $clear_cache))
   (func (export "set_stack_packet_count_enabled") (param $flag i32)
     (global.set $stack_packet_count_enabled (local.get $flag)))

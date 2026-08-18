@@ -1632,6 +1632,10 @@
   ;; $th_stack_packet.
   (global $stack_packet_enabled (mut i32) (i32.const 0))
   (global $stack_packet_addr (mut i32) (i32.const 0x0049D9D1))
+  ;; Which packet handler the address above compiles to (1 or 2). Set from JS
+  ;; together with the address, so $decode_block carries no binary's function
+  ;; addresses — see set_stack_packet_enabled in 13-exports.wat.
+  (global $stack_packet_variant (mut i32) (i32.const 1))
   (global $stack_packet_count_enabled (mut i32) (i32.const 1))
   (global $stack_packet_entries (mut i32) (i32.const 0))
   (global $stack_packet_0049d9d1_entries (mut i32) (i32.const 0))

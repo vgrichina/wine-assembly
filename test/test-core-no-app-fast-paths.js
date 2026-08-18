@@ -33,6 +33,14 @@ for (const marker of ['0xDEC0DE19', '0xDEC0B10C', '0x01009604', '0x010095f0', '0
   assert(!decoderWat.includes(marker), `decoder should not contain stale app debug marker ${marker}`);
 }
 
+// $decode_block runs for every block of every app, so a guest function address
+// from one build of one game does not belong in it. The stack-packet prototype
+// is armed from JS with an address and a variant; the decoder reads globals.
+for (const eip of ['0x0049D9D1', '0x0049DD20']) {
+  assert(!decoderWat.includes(eip),
+    `decoder should not test literal guest EIP ${eip} — pass it in via set_stack_packet_enabled`);
+}
+
 assert(handlersWat.includes('(call $gdi_rgn_alloc_polygon'),
   'CreatePolygonRgn must route geometry into WAT');
 assert(!hostImports.includes('gdi_create_polygon_rgn:'),
