@@ -1382,12 +1382,46 @@
 
   ;; 72: UpdateWindow
   (func $handle_UpdateWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Queue the update and let the normal WAT-owned message pump deliver
-    ;; WM_PAINT. Some Win98 apps call UpdateWindow during fragile startup
-    ;; sequences; synchronous re-entry here can run dialog/control procs
-    ;; before their surrounding initialization has unwound.
+    (local $wp i32)
     (call $paint_flag_set_inv (local.get $arg0))
     (call $defwndproc_do_ncpaint (local.get $arg0))
+    ;; UpdateWindow does not return until WM_PAINT has been handled, and
+    ;; BeginPaint runs the window's pending WM_ERASEBKGND on the way in.
+    ;; Apps depend on that ordering: Taipei paints its splash screen through
+    ;; a GetDC handle on the line after UpdateWindow, so an erase and paint
+    ;; left queued for the pump land on top of the splash and wipe it.
+    ;;
+    ;; Restricted to a visible top-level window with a real x86 wndproc, and
+    ;; never while another synchronous send is already unwinding. That is the
+    ;; hazard this call used to defer around: a dialog or control procedure
+    ;; re-entered before its own initialization has finished.
+    (local.set $wp (call $wnd_table_get (local.get $arg0)))
+    (if (i32.and
+          (i32.and
+            (i32.eqz (global.get $sync_msg_depth))
+            (i32.eqz (global.get $code16)))
+          (i32.and
+            (i32.and
+              (i32.ne (local.get $wp) (i32.const 0))
+              (i32.lt_u (local.get $wp) (i32.const 0xFFFE0000)))
+            (i32.and
+              (call $wnd_is_effectively_visible (local.get $arg0))
+              (i32.eqz (call $ctrl_table_get_class (local.get $arg0))))))
+      (then
+        ;; Erase first — this is BeginPaint's half of the sequence, and the
+        ;; queued NC_FLAGS bit is where the pump would otherwise have found it.
+        (if (i32.and (call $nc_flags_test (local.get $arg0)) (i32.const 2))
+          (then
+            (call $nc_flags_clear (local.get $arg0) (i32.const 2))
+            (drop (call $wnd_send_message
+              (local.get $arg0) (i32.const 0x0014)
+              (i32.add (local.get $arg0) (i32.const 0x40000)) (i32.const 0)))))
+        (call $paint_flag_clear_hwnd (local.get $arg0))
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 0))))
+        (drop (call $paint_seed_child_paints (local.get $arg0)))
+        (drop (call $wnd_send_message
+          (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
