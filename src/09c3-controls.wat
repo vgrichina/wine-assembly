@@ -14176,6 +14176,20 @@
   ;; pos      — scroll position in [0, range]
   ;; range    — max scrollable units (0 = no thumb, arrows only)
   ;; pressed  — 0=none, 1=up arrow held, 2=down arrow held
+  ;; One scrollbar thumb: light-gray face with a raised edge. Both the shared
+  ;; strip painter and the standalone SCROLLBAR control draw through this, so
+  ;; they cannot disagree about it again — the control used to inset the thumb
+  ;; 2px on the cross axis while the strip painter drew it full width, which is
+  ;; visible whenever both appear on screen. Win98 draws the thumb the full
+  ;; width of the strip.
+  (func $paint_sb_thumb (param $hdc i32) (param $l i32) (param $t i32) (param $r i32) (param $b i32)
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $l) (local.get $t) (local.get $r) (local.get $b)
+            (i32.const 0x30011)))   ;; LTGRAY_BRUSH
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (local.get $l) (local.get $t) (local.get $r) (local.get $b)
+            (i32.const 0x05) (i32.const 0x0F))))  ;; BDR_RAISED, BF_RECT
+
   (func $paint_vscrollbar_rect
         (param $hdc i32) (param $bx i32) (param $by i32)
         (param $bw i32) (param $bh i32)
@@ -14212,16 +14226,10 @@
               (i32.add (local.get $by)
                 (call $scrollbar_thumb_pos
                   (local.get $bh) (local.get $pos) (i32.const 0) (local.get $range))))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (local.get $bx) (local.get $thumb_pos)
-                    (i32.add (local.get $bx) (local.get $bw))
-                    (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                    (i32.const 0x30011))) ;; LTGRAY_BRUSH
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
-                    (local.get $bx) (local.get $thumb_pos)
-                    (i32.add (local.get $bx) (local.get $bw))
-                    (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                    (i32.const 0x05) (i32.const 0x0F))))))) ;; BDR_RAISED, BF_RECT
+            (call $paint_sb_thumb (local.get $hdc)
+              (local.get $bx) (local.get $thumb_pos)
+              (i32.add (local.get $bx) (local.get $bw))
+              (i32.add (local.get $thumb_pos) (local.get $thumb_size)))))))
   )
 
   ;; Track-click classifier for a WS_VSCROLL listbox strip. Computes the
@@ -14709,28 +14717,16 @@
                 ;; Draw thumb
                 (if (local.get $is_vert)
                   (then
-                    ;; Vertical: thumb fills width, moves in Y
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
-                            (i32.const 2) (local.get $thumb_pos)
-                            (i32.sub (local.get $w) (i32.const 2))
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.const 0x30011))) ;; LTGRAY_BRUSH
-                    (drop (call $host_gdi_draw_edge (local.get $hdc)
-                            (i32.const 2) (local.get $thumb_pos)
-                            (i32.sub (local.get $w) (i32.const 2))
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.const 0x05) (i32.const 0x0F)))) ;; BDR_RAISED, BF_RECT
+                    ;; Vertical: thumb fills the strip width, moves in Y
+                    (call $paint_sb_thumb (local.get $hdc)
+                      (i32.const 0) (local.get $thumb_pos)
+                      (local.get $w)
+                      (i32.add (local.get $thumb_pos) (local.get $thumb_size))))
                   (else
-                    ;; Horizontal: thumb fills height, moves in X
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
-                            (local.get $thumb_pos) (i32.const 2)
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.sub (local.get $h) (i32.const 2))
-                            (i32.const 0x30011))) ;; LTGRAY_BRUSH
-                    (drop (call $host_gdi_draw_edge (local.get $hdc)
-                            (local.get $thumb_pos) (i32.const 2)
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.sub (local.get $h) (i32.const 2))
-                            (i32.const 0x05) (i32.const 0x0F))))))))) ;; BDR_RAISED, BF_RECT
+                    ;; Horizontal: thumb fills the strip height, moves in X
+                    (call $paint_sb_thumb (local.get $hdc)
+                      (local.get $thumb_pos) (i32.const 0)
+                      (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                      (local.get $h))))))))
         (return (i32.const 0))))
     (i32.const 0))

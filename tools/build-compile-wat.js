@@ -16,6 +16,25 @@ const COMPAT_OUT = path.join(ROOT, 'build', 'wine-assembly.compat.wasm');
     (file) => fs.promises.readFile(path.join(SRC, file), 'utf8'),
     { tailCalls: false }
   );
+  // compileWat emits bytes without validating operand stacks, so a WAT edit
+  // that leaves a function's result value unproduced — one paren too few, and
+  // an (if) that should yield i32 yields nothing — used to "build" fine and
+  // then fail at WebAssembly.instantiate in whatever test ran next, reported as
+  // a function *index*. WebAssembly.Module does the real validation and needs
+  // no imports, so do it here and name the function.
+  for (const [label, buf] of [['wine-assembly.wasm', bytes], ['wine-assembly.compat.wasm', compatBytes]]) {
+    try {
+      new WebAssembly.Module(buf);
+    } catch (err) {
+      const m = /function #(\d+)/.exec(err.message || '');
+      console.error(`Validation failed for ${label}: ${err.message}`);
+      if (m) {
+        console.error(`  Name that function with: node tools/wasm-func-name.js ${m[1]}`);
+      }
+      process.exit(1);
+    }
+  }
+
   await fs.promises.mkdir(path.dirname(OUT), { recursive: true });
   await fs.promises.writeFile(OUT, Buffer.from(bytes));
   await fs.promises.writeFile(COMPAT_OUT, Buffer.from(compatBytes));
