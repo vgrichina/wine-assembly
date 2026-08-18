@@ -115,7 +115,11 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `09b-dispatch.wat` | Manual dispatch helpers |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
 | `09c-help.wat` | Window table, class table, WAT-native help system |
-| `10-helpers.wat` | String/memory helpers, heap allocator, resource walker |
+| `10-helpers.wat` | String/memory helpers, heap allocator, resource walker, window/paint/clipboard helpers |
+| `10d-gdi-region-path.wat` | GDI regions (allocator + polygon scan-converter), path engine (record/flatten/widen/stroke), DC clipping, object allocator |
+| `10e-gdi-metafile.wat` | GDI palettes, WMF/EMF recorder and player, bitmap objects |
+| `10f-gdi-dc.wat` | GDI device-context state: save/restore, selected objects, surface descriptors, text metrics, the `$host_gdi_*` entry points |
+| `10g-gdi-raster.wat` | GDI software rasterizer: span fill, clip bands, brush sampling, shape primitives, region combine |
 | `11-seh.wat` | Win32 Structured Exception Handling |
 | `12-wsprintf.wat` | wsprintf/sprintf implementation |
 | `13-exports.wat` | WASM exports (run, get_eip, register accessors, etc.) |
