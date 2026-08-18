@@ -2980,3 +2980,359 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  ;; ============================================================
+  ;; MENU API HANDLERS
+  ;; The 35 $handle_* entry points for the menu APIs, moved here from
+  ;; 09a-handlers.wat where they were scattered across a dozen places. This file
+  ;; already held the 75 menu_* helpers they call and had no entry points of its
+  ;; own.
+  ;; ============================================================
+
+  ;; 84: DestroyMenu(hMenu) — 1 arg stdcall, return TRUE
+  (func $handle_DestroyMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $dynamic_menu_destroy (local.get $arg0))
+      (then (global.set $eax (i32.const 1)))
+      (else (global.set $eax (call $host_menu_destroy (local.get $arg0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 87: GetMenu(hwnd) — return the attached menu's stable resource key.
+  (func $handle_GetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Named class menus use a guest string pointer rather than a low-word
+    ;; resource ID. Preserve that identity so SetMenu can reattach the menu
+    ;; after an app temporarily removes it (Pinball fullscreen). menu_set's
+    ;; legacy host blobs have no source key, so retain the old fake fallback.
+    (global.set $eax (call $menu_source_get (local.get $arg0)))
+    (if (i32.and
+          (i32.eqz (global.get $eax))
+          (i32.gt_s (call $menu_bar_count (local.get $arg0)) (i32.const 0)))
+      (then (global.set $eax (i32.const 0x80001))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 88: GetSubMenu(hMenu, nPos) → HMENU
+  ;; Returns submenu handle at position nPos. Encode as hMenu | (pos << 16).
+  (func $handle_GetSubMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.or
+      (i32.and (local.get $arg0) (i32.const 0xFFFF))
+      (i32.shl (i32.add (local.get $arg1) (i32.const 1)) (i32.const 16))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; 314: GetSystemMenu(hwnd, bRevert) — stdcall(2)
+  (func $handle_GetSystemMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x40003))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
+  )
+
+  ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable).
+  ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable). MF_BYPOSITION is 0x400 and
+  ;; has to be honoured: it is how MFC addresses items while walking a popup,
+  ;; and treating a position as a command id put the state on the wrong item.
+  (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
+        (then (call $menu_enable_position_global
+          (local.get $arg0) (local.get $arg1)
+          (i32.ne (i32.and (local.get $arg2) (i32.const 3)) (i32.const 0))))
+        (else (call $menu_enable_item_global
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 121: CheckMenuRadioItem(hMenu, idFirst, idLast, idCheck, uFlags)
+  ;; Unchecks items [idFirst..idLast], checks idCheck with radio bullet. Returns TRUE.
+  ;; Menu item state is tracked in the renderer's menu model when available.
+  (func $handle_CheckMenuRadioItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_check_radio_global
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) → previous state
+  ;; We don't track HMENU-to-window mapping directly, so walk every
+  ;; window with a menu blob and toggle the first matching command id.
+  ;; uCheck combines MF_BYCOMMAND/MF_BYPOSITION with MF_CHECKED (8) or
+  ;; MF_UNCHECKED (0); MF_BYPOSITION isn't supported here — in practice
+  ;; callers use MF_BYCOMMAND, which is what our id-based walk matches.
+  (func $handle_CheckMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (local.get $arg2) (i32.const 0x400))
+      (then (global.set $eax (call $menu_check_position_global
+        (local.get $arg0) (local.get $arg1)
+        (i32.and (local.get $arg2) (i32.const 8)))))
+      (else (global.set $eax (call $menu_check_item_global
+        (local.get $arg1)
+        (i32.and (local.get $arg2) (i32.const 8))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
+  ;; Return menu resource ID as handle (host renderer resolves by ID)
+  (func $handle_LoadMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; If lpMenuName < 0x10000, it's MAKEINTRESOURCE (resource ID)
+    (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
+      (then
+        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+        (global.set $last_load_menu_hinst (local.get $arg0))
+        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
+      (else (global.set $eax (i32.const 0x00BE0001))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 138: TrackPopupMenuEx(hMenu, uFlags, x, y, hWnd, lptpm)
+  (func $handle_TrackPopupMenuEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_track_popup_open
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+  )
+
+  ;; 292: LoadMenuW — return fake handle — STUB: unimplemented
+  (func $handle_LoadMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; LoadMenuW — same as LoadMenuA
+    (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
+      (then
+        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
+        (global.set $last_load_menu_hinst (local.get $arg0))
+        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
+      (else (global.set $eax (i32.const 0x00BE0001))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.
+  ;; AppendMenuA/InsertMenuA are no-ops in this build (the menu bar is parsed
+  ;; from the PE resource), so RemoveMenu has nothing real to remove either.
+  (func $handle_RemoveMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; IsMenu(hMenu) → BOOL.
+  (func $handle_IsMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_handle_is_valid (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; 619: TrackPopupMenu(hMenu, uFlags, x, y, nReserved, hWnd, prcRect)
+  (func $handle_TrackPopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa_esp i32) (local $hwnd i32)
+    (local.set $wa_esp (call $g2w (global.get $esp)))
+    (local.set $hwnd (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (global.set $eax (call $menu_track_popup_open
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $hwnd)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+  )
+
+  ;; 620: GetMenuItemID — STUB: unimplemented
+  ;; GetMenuItemID(hMenu, nPos) — 0 for a separator or a submenu, which is
+  ;; what Windows answers and what MFC's update loop expects to skip on.
+  (func $handle_GetMenuItemID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_handle_item_id (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
+  )
+
+  ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; menu subsystem
+  ;; is a stub. flip2d calls this during window setup but doesn't depend on it.
+  (func $handle_SetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
+  )
+
+  ;; GetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; zero the struct
+  ;; past its dwSize (caller-provided at +0) so callers don't see garbage.
+  (func $handle_GetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
+  )
+
+  ;; 621: GetMenuItemCount(hMenu) — the menu subsystem is a stub that doesn't
+  ;; track items, so report 0 (empty menu) rather than crashing. DX samples
+  ;; like flip2d call this during window setup but don't care about the count.
+  ;; GetMenuItemCount(hMenu). Returning 0 here is what kept every MFC menu
+  ;; stale: CFrameWnd::OnInitMenuPopup walks the popup by index to run its
+  ;; ON_UPDATE_COMMAND_UI handlers, and a count of zero means it walks nothing
+  ;; and never enables or greys anything. Paint offered File > Send... in black
+  ;; on a machine with no mail subsystem because of this.
+  (func $handle_GetMenuItemCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_handle_item_count (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
+  )
+
+  ;; 650: DrawMenuBar — STUB: unimplemented
+  (func $handle_DrawMenuBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; DrawMenuBar(hwnd) → BOOL. Redraws menu bar — host renderer handles menus, just return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
+  )
+
+  ;; 655: AppendMenuW(hMenu, uFlags, uIDNewItem, lpNewItem)
+  (func $handle_AppendMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dyn i32)
+    (local.set $dyn
+      (call $dynamic_menu_append
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (global.set $eax (local.get $dyn)))
+      (else
+        (global.set $eax (call $host_menu_append
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; AppendMenuA(hMenu, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  (func $handle_AppendMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dyn i32)
+    (local.set $dyn
+      (call $dynamic_menu_append
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (global.set $eax (local.get $dyn)))
+      (else
+        (global.set $eax (call $host_menu_append
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
+  ;; MF_BYPOSITION is 0x400; without it uPosition names the item to insert
+  ;; before by command id. Resource-backed menu blobs are not mutable yet, so
+  ;; those handles keep reporting success as they always have.
+  (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dyn i32)
+    (local.set $dyn
+      (call $dynamic_menu_insert
+        (local.get $arg0)
+        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1)
+          (i32.and (local.get $arg2) (i32.const 0x400)))
+        (local.get $arg2) (local.get $arg3) (local.get $arg4)
+        ;; MF_POPUP: uIDNewItem is the submenu handle, not a command id.
+        (if (result i32) (i32.and (local.get $arg2) (i32.const 0x10))
+          (then (local.get $arg3))
+          (else (i32.const 0)))))
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
+        (then (i32.const 1))
+        (else (local.get $dyn))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; InsertMenuItemA/W(hMenu, uItem, fByPosition, lpmii)
+  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dyn i32) (local $flags i32)
+    (local.set $flags (call $menu_item_info_decode (local.get $arg3)))
+    (local.set $dyn
+      (call $dynamic_menu_insert
+        (local.get $arg0)
+        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1) (local.get $arg2))
+        (local.get $flags) (global.get $mii_out_id) (global.get $mii_out_data)
+        (global.get $mii_out_submenu)))
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
+        (then (i32.const 1))
+        (else (local.get $dyn))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  (func $handle_InsertMenuItemW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_InsertMenuItemA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+  )
+
+  ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
+  (func $handle_ModifyMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; 656: DeleteMenu — STUB: unimplemented
+  (func $handle_DeleteMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; DeleteMenu(hMenu, uPosition, uFlags) — return TRUE
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; 672: SetMenuItemBitmaps — STUB: unimplemented
+  (func $handle_SetMenuItemBitmaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; 673: ModifyMenuW — STUB: unimplemented
+  (func $handle_ModifyMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; 674: GetMenuState — STUB: unimplemented
+  ;; GetMenuState(hMenu, uId, uFlags) → MF_* state, or -1 when the item is not
+  ;; there. MF_BYPOSITION is 0x400; without it uId is a command id.
+  (func $handle_GetMenuState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
+        (then (call $menu_handle_item_state (local.get $arg0) (local.get $arg1)))
+        (else (call $menu_handle_state_by_id (local.get $arg0) (local.get $arg1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args
+  )
+
+  ;; 735: GetMenuItemRect(hWnd, hMenu, uItem, lprcItem) -> BOOL
+  (func $handle_GetMenuItemRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rect_wasm i32)
+    ;; arg0=hWnd, arg1=hMenu, arg2=uItem, arg3=lprcItem
+    (local.set $rect_wasm (call $g2w (local.get $arg3)))
+    ;; Fill RECT with reasonable defaults per menu item
+    (i32.store (local.get $rect_wasm)
+      (i32.mul (local.get $arg2) (i32.const 100))) ;; left
+    (i32.store (i32.add (local.get $rect_wasm) (i32.const 4))
+      (i32.const 0)) ;; top
+    (i32.store (i32.add (local.get $rect_wasm) (i32.const 8))
+      (i32.add (i32.mul (local.get $arg2) (i32.const 100)) (i32.const 100))) ;; right
+    (i32.store (i32.add (local.get $rect_wasm) (i32.const 12))
+      (i32.const 20)) ;; bottom
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; stdcall 4 params + ret
+  )
+
+  ;; 675: GetMenuCheckMarkDimensions — STUB: unimplemented
+  (func $handle_GetMenuCheckMarkDimensions (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; 682: InsertMenuW(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
+  ;; Resource-menu mutation is not represented yet; match InsertMenuA and
+  ;; report success so applications can continue constructing optional items.
+  (func $handle_InsertMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; GetMenuStringA(hMenu, uIDItem, lpString, cchMax, uFlag) → chars copied.
+  ;; MFC reads every label back while walking a popup, so this sits directly
+  ;; behind the WM_INITMENUPOPUP path -- it was not registered at all, and the
+  ;; unimplemented-API crash was the first thing Paint hit once its update loop
+  ;; started running. MF_BYPOSITION is 0x400.
+  (func $handle_GetMenuStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_handle_copy_label
+      (local.get $arg0) (local.get $arg1)
+      (i32.and (local.get $arg4) (i32.const 0x400))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
+  )
+
+  ;; 683: GetMenuStringW — STUB: unimplemented
+  (func $handle_GetMenuStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crash_unimplemented (local.get $name_ptr))
+  )
+
+  ;; 687: CreateMenu() — allocate opaque HMENU. No backing state: AppendMenu/InsertMenu
+  ;; are already no-ops, menu bars render from PE RT_MENU resources, and DestroyMenu is
+  ;; a return-TRUE no-op. The handle just needs to be non-zero and distinguishable so
+  ;; downstream APIs that validate it won't trip.
+  (func $handle_CreateMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_menu_create))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; CreatePopupMenu() — WAT-owned dynamic popup menu state.
+  (func $handle_CreatePopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $dynamic_menu_create))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )

@@ -25,12 +25,17 @@ const FROM = arg('from');
 const TO = arg('to');
 const FIRST = arg('first');
 const LAST = arg('last');
+// --names=a,b,c moves a *set* of functions rather than a contiguous range.
+// Scattered families (09a's menu handlers sit in a dozen places) cannot be
+// expressed as first/last, and moving them one call at a time would rewrite the
+// file a dozen times.
+const NAMES = (arg('names', '') || '').split(',').map(x => x.trim()).filter(Boolean);
 const HEADER = arg('header', '');
 const DRY = args.includes('--dry-run');
 
-if (!FROM || !TO || !FIRST || !LAST) {
-  console.error('usage: wat-split.js --from=A.wat --to=B.wat --first=funcName --last=funcName ' +
-    '[--header="TEXT"] [--dry-run]');
+if (!FROM || !TO || (!NAMES.length && (!FIRST || !LAST))) {
+  console.error('usage: wat-split.js --from=A.wat --to=B.wat ' +
+    '(--first=funcName --last=funcName | --names=a,b,c) [--header="TEXT"] [--dry-run]');
   process.exit(2);
 }
 
@@ -66,6 +71,47 @@ function topLevelForms(text) {
 }
 
 const forms = topLevelForms(src);
+
+// A form plus the comment block directly above it, as a [start, end) slice.
+function sliceOf(form) {
+  const linesAll = src.split('\n');
+  const lineOfOff = off => src.slice(0, off).split('\n').length;
+  let startLine = lineOfOff(form.start);
+  while (startLine > 1 && /^\s*;;/.test(linesAll[startLine - 2])) startLine--;
+  const start = linesAll.slice(0, startLine - 1).join('\n').length + (startLine > 1 ? 1 : 0);
+  let end = form.end;
+  while (end < src.length && (src[end] === '\n' || src[end] === ' ')) end++;
+  return { start, end, startLine, endLine: lineOfOff(form.end) };
+}
+
+if (NAMES.length) {
+  const picked = [];
+  for (const n of NAMES) {
+    const f = forms.find(x => x.name === n);
+    if (!f) { console.error(`no top-level form named $${n} in ${FROM}`); process.exit(1); }
+    picked.push({ name: n, ...sliceOf(f) });
+  }
+  picked.sort((a, b) => a.start - b.start);
+  const movedText = picked.map(p => src.slice(p.start, p.end).replace(/\s+$/, '')).join('\n\n');
+  console.log(`${FROM} -> ${TO}`);
+  console.log(`  ${picked.length} named forms, ${movedText.split('\n').length} lines`);
+  for (const p of picked) console.log(`    $${p.name}  (lines ${p.startLine}-${p.endLine})`);
+  if (DRY) process.exit(0);
+
+  // Cut from the end so earlier offsets stay valid.
+  let out = src;
+  for (const p of [...picked].reverse()) out = out.slice(0, p.start) + out.slice(p.end);
+  const hdr = HEADER ? `  ;; ============================================================\n` +
+    HEADER.split('\n').map(l => `  ;; ${l}`).join('\n') +
+    `\n  ;; ============================================================\n\n` : '';
+  const existing = fs.existsSync(TO) ? fs.readFileSync(TO, 'utf8').replace(/\s+$/, '') + '\n\n' : '';
+  fs.writeFileSync(TO, existing + hdr + movedText + '\n');
+  fs.writeFileSync(FROM, out);
+  console.log(`  appended to ${TO}, ${FROM} is now ${out.split('\n').length} lines`);
+  console.log('  remember: add the new file to WAT_FILES in lib/compile-wat.js');
+  process.exit(0);
+}
+
 const firstIdx = forms.findIndex(f => f.name === FIRST);
 const lastIdx = forms.findIndex(f => f.name === LAST);
 if (firstIdx < 0) { console.error(`no top-level form named $${FIRST} in ${FROM}`); process.exit(1); }
