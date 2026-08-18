@@ -23,6 +23,8 @@
 //
 // Usage:
 //   node tools/menu-sweep.js <exe> [--json=out.json] [--settle=N] [--gap=N]
+//   node tools/menu-sweep.js <exe> --seed-text=Hello   # type before sweeping
+//   node tools/menu-sweep.js <exe> --no-build          # reuse the last build
 //   node tools/menu-sweep.js <exe> --verbose        # keep run.js output
 //   node tools/menu-sweep.js <exe> --list           # just print the menu tree
 //   node tools/menu-sweep.js <exe> --no-confirm     # first pass only, fast
@@ -67,6 +69,22 @@ const GAP = parseInt(opt('gap', '800'), 10);
 const VERBOSE = flag('verbose');
 const CONFIRM = !flag('no-confirm');
 const TIMEOUT = parseInt(opt('timeout', '300'), 10) * 1000;
+// Every item the confirm pass re-checks is its own run.js process, and each of
+// those recompiles the whole WAT. On a thirty-item menu that is minutes of
+// compiling the same bytes. --no-build passes through to run.js so the sweep
+// reuses build/wine-assembly.wasm: run `bash tools/build.sh` first, and never
+// use it to check whether an edit worked.
+const NO_BUILD = flag('no-build');
+// Text to type into the app before the sweep starts. An editor judges half its
+// own menu by what the document contains: WordPad's Find and Replace ask the
+// rich edit control for its text length and return without a dialog when it is
+// zero, which is correct behaviour that reads as two broken dialogs. Typing
+// first is the difference between sweeping the app and sweeping its empty
+// state. Off by default -- in an app that is not an editor, keystrokes are
+// commands.
+const SEED_TEXT = opt('seed-text', '');
+const SEED_GAP = 25;                                  // batches between chars
+const SEED_SPAN = SEED_TEXT ? SEED_GAP * (SEED_TEXT.length + 2) : 0;
 
 // Command ids the sweep must not send. 0xF000+ is the system-command range
 // (SC_CLOSE and friends); 57665 is the MFC/AppWizard id for File > Exit, which
@@ -162,9 +180,17 @@ const ERRBOX = /^\[MessageBox\] "([^"]*)": "([^"]*)" type=0x([0-9a-f]+)/;
 // to the topmost dialog, then IDOK for a message box that has no Cancel, then
 // Escape for anything that only listens for the key.
 function drive(list) {
-  const spec = [`${SETTLE}:dump-windows:baseline`];
+  // Seed text lands after the app has settled and before the baseline snapshot,
+  // so a window it puts up (an editor's caret, a modified-document title) is
+  // part of the baseline rather than something the first menu item did.
+  const spec = [];
+  for (let c = 0; c < SEED_TEXT.length; c++) {
+    spec.push(`${SETTLE + SEED_GAP * (c + 1)}:keypress:${SEED_TEXT.charCodeAt(c)}`);
+  }
+  const start = SETTLE + SEED_SPAN;
+  spec.push(`${start}:dump-windows:baseline`);
   list.forEach((it, i) => {
-    const at = SETTLE + GAP * (i + 1);
+    const at = start + GAP * (i + 1);
     spec.push(`${at}:post-cmd:${it.id}`);
     // Sample late. A dialog is not up the instant the command is posted -- the
     // app has to run to it, and a common dialog builds a window tree first.
@@ -175,7 +201,7 @@ function drive(list) {
     spec.push(`${at + Math.floor(GAP * 0.94)}:keydown:27`);
     spec.push(`${at + Math.floor(GAP * 0.97)}:keyup:27`);
   });
-  const lastBatch = SETTLE + GAP * (list.length + 1);
+  const lastBatch = start + GAP * (list.length + 1);
   spec.push(`${lastBatch}:dump-windows:final`);
   spec.push(`${lastBatch + 50}:stop`);
 
@@ -186,6 +212,7 @@ function drive(list) {
       RUN, `--exe=${exe}`, '--no-close', `--input=${spec.join(',')}`,
       `--max-batches=${lastBatch + 100}`, '--batch-size=100',
       '--quiet-api', '--quiet-blocks',
+      ...(NO_BUILD ? ['--no-build'] : []),
     ], {
       cwd: ROOT, encoding: 'utf-8', timeout: TIMEOUT,
       stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024,
