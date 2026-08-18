@@ -193,7 +193,11 @@ const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw 
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
 
-// NO_BUILD kept for compat but ignored — always compiles from WAT
+// Default is to compile from src/*.wat on every launch, so an edit is always
+// picked up. --no-build is honored (see main()): it loads WASM_PATH as-is, and
+// that file is whatever the last build left behind — so a --no-build run after
+// editing WAT silently measures the OLD module. Use it to pin one build across
+// several runs, never to check whether an edit worked.
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 

@@ -186,6 +186,8 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 
 **SendMessageA** (`$handle_SendMessageA`) dispatches synchronously: pushes wndproc args on the guest stack, sets EIP to the target wndproc, and uses a CACA0005 continuation thunk to resume the caller when the wndproc returns.
 
+**UpdateWindow** finishes the paint before it returns, via `$wnd_send_message` (WM_ERASEBKGND from the NC_FLAGS bit, then WM_PAINT) — real `UpdateWindow` does not return until the app has painted, and anything the app draws on the next line otherwise gets covered by its own deferred background erase (Taipei's splash screen). Scoped to a visible top-level window with a real x86 wndproc (`< 0xFFFE0000`), `ctrl_class == 0`, not `$code16`, and `$sync_msg_depth == 0`; everything else still queues for the pump.
+
 **Input injection (test harness):** `test/run.js` supports `--input=BATCH:ACTION:ARGS,...` for keydown/keyup/keypress/click/dblclick/post-cmd/png and more. The renderer's `inputQueue` feeds into `check_input()`. See lines 82-159 in run.js for the full list.
 
 ## Key Concepts
