@@ -226,6 +226,8 @@ class WineAssembly {
       // so it is handed the same wire rather than opening one of its own.
       vlanWire: opts.vlanWire || self.vlanWire || null,
       get availableDllFiles() { return opts.availableDllFiles || self._availableDllFiles || null; },
+      // Live guest thread count, for HKEY_DYN_DATA\PerfStats KERNEL\Threads.
+      get threadManager() { return self.threadManager; },
       sharedGdi: opts.sharedGdi || null,
       sharedAudio,
       sharedMixer,

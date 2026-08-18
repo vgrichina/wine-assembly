@@ -134,6 +134,29 @@ function main() {
   check('the Item list is populated', inkFraction(pickShot, 185, 138, 310, 185) > 0.02,
     'Item list looks empty');
 
+  // --- 5. The counters that carry real numbers ---------------------------
+  // Charting one proves the whole path end to end: the catalogue named it, the
+  // dialog offered it, and StatData answered with a live reading rather than
+  // the seeded zero. "Allocated memory" is the guest heap, which is a bump
+  // allocator, so it is non-zero the moment anything has been allocated.
+  //
+  // Clicks: Memory Manager in Category, then cUsedMemory in Item (the list is
+  // ordered by counter key, so it is the sixth row), then OK.
+  const chartShot = path.join(OUT, 'allocated-memory.png');
+  const charted = execFileSync('node', [
+    path.join(ROOT, 'test', 'run.js'), `--exe=${EXE}`, '--max-batches=2200',
+    '--no-close', '--trace-reg',
+    `--input=700:post-cmd:${CMD_ADD_ITEM},1005:click:60:177,1100:click:200:220,`
+      + `1200:click:336:137,1600:png:${chartShot}`,
+  ], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
+
+  const used = [...charted.matchAll(/StatData\\VMM\\cUsedMemory -> (\d+)/g)]
+    .map(m => Number(m[1]));
+  check('the guest heap is charted at all', used.length > 0,
+    'no cUsedMemory reads -- the item was never added');
+  check('it reports a live heap size, not the seeded zero',
+    used.some(v => v > 0), `values: ${used.slice(0, 5).join(',')}`);
+
   console.log(`\n${pass} checks passed`);
 }
 

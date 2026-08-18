@@ -104,6 +104,7 @@ const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
+const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
@@ -1128,6 +1129,9 @@ async function main() {
     renderer,
     processId: 1000,
     apiTable,
+    // Live guest thread count, for HKEY_DYN_DATA\PerfStats KERNEL\Threads.
+    // A getter because the manager is built long after ctx is.
+    get threadManager() { return threadManager; },
     verbose: VERBOSE,
     _debugReadFile: TRACE_API,
     _debugFindFile: TRACE_API,
@@ -5703,6 +5707,11 @@ if (VERBOSE) {
         prevApiCount = apiCount;
         prevRegFp = regFp;
         stuckCount = 0;
+      } else if (ex.win16_pump_parked && ex.win16_pump_parked()) {
+        // A 16-bit modal dialog or message box with no message to handle waits
+        // on a continuation slot with every register unchanged. That is the
+        // defined behaviour of those addresses, not a hang.
+        stuckCount = 0;
       } else if (scheduledInput.length) {
         // Scripted UI tests often wait inside a stable message-loop thunk
         // until the next scheduled click/capture. Do not let that idle time
@@ -5808,6 +5817,19 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+
+  // --gdi-stats: how much software rasterization the run actually did. Span
+  // counts and pixel counts answer different questions — a repaint storm shows
+  // up as pixels per batch, a clip/ROP fallback as slow-path share.
+  if (GDI_STATS && instance.exports.test_gdi_fast_count) {
+    const c = i => instance.exports.test_gdi_fast_count(i) >>> 0;
+    const fastPx = c(4), slowPx = c(5);
+    const px = fastPx + slowPx;
+    console.log(`\nGDI raster: ${c(0)} fast spans (${fastPx} px), ${c(3)} slow spans (${slowPx} px)`);
+    console.log(`            ${c(1)} fast bitblts, ${c(2)} fast stretches`);
+    console.log(`            ${(px / MAX_BATCHES).toFixed(0)} px/batch, slow-path share ${px ? (100 * slowPx / px).toFixed(1) : '0.0'}%`);
+    console.log(`            slow spans by cause: ${c(6)} clip/bounds, ${c(7)} surface-or-ROP`);
+  }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
     console.log('\nThreads (final state):');
