@@ -2097,9 +2097,26 @@
   ;; keeps going, and the yield flag left raised so the host still gets its
   ;; turn to deliver input between batches.
   (func $win16_GetMessage
-    (local $dst i32) (local $tmp i32) (local $waited i32)
+    (local $dst i32) (local $tmp i32) (local $waited i32) (local $ask i32)
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    ;; A DDEML server owes its application an XTYP_CONNECT before it agrees to
+    ;; a conversation, and the message pump is where that can be asked: the
+    ;; task is between things here and the stack is its own, which is not true
+    ;; inside the wire drain. The callback is entered with a far return onto
+    ;; $WIN16_DDE_CB, which acts on the answer and then finishes this very call
+    ;; with an idle message so the task's loop never notices the detour.
+    (local.set $ask (call $win16_dde_ask_next))
+    (if (i32.ge_s (local.get $ask) (i32.const 0))
+      (then
+        (global.set $win16_dde_cb_msg (local.get $dst))
+        (global.set $win16_dde_cb_ret
+          (i32.or (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2)))
+                           (i32.const 16))
+                  (call $gl16 (global.get $esp))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 14)))
+        (call $win16_dde_ask_enter (local.get $ask))
+        (return)))
     (local.set $tmp (global.get $GUEST_STACK))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_GetMessageA (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0)
@@ -4295,6 +4312,23 @@
     ;; The modal pump. EIP is parked here, not called here, so there is no
     ;; frame to unwind — the API's own frame went when it parked, and the far
     ;; return it saved is what the completed box goes back to.
+    ;; The application has answered an XTYP_CONNECT. Act on it, then finish the
+    ;; GetMessage this was taken out of: fill its MSG with the idle message and
+    ;; return TRUE, so the task's loop dispatches a harmless WM_NULL and calls
+    ;; the pump again. It never learns that its callback ran mid-call.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDE_CB))
+      (then
+        (call $win16_dde_ask_finish
+          (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $zero_memory (call $g2w (global.get $win16_dde_cb_msg)) (i32.const 16))
+        (global.set $eax (i32.const 1))
+        (call $win16_set_sreg (i32.const 1)
+          (i32.shr_u (global.get $win16_dde_cb_ret) (i32.const 16)))
+        (global.set $eip (i32.add (global.get $seg_base_cs)
+          (i32.and (global.get $win16_dde_cb_ret) (i32.const 0xFFFF))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
     ;; A DdeConnect waiting on the room. Each pass drains the wire; when the
     ;; room answers, or has been given enough chances not to, the result is
     ;; already in AX/DX and the far call it was taken out of is spliced back.

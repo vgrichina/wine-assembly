@@ -370,17 +370,38 @@ sets the global instead.
   a Win98 install ships with. It belongs in the emulator as a table, not as an
   `if (this is Hearts)`.
 
-  **Then the rest, in the order Hearts needs it:** `XTYP_CONNECT` is not
-  offered to the server's own callback, so a connect is accepted on the service
-  name alone and an app that would refuse cannot; `DdeClientTransaction` still
-  fails, so no `XTYP_REQUEST`/`XTYP_POKE` crosses (Hearts' first item is
-  `Join`); and `DdePostAdvise` has no advise loops to feed, which is how it
-  actually distributes play. The callback is the next piece and the shape is
-  known — the far pointer is already stored by `DdeInitialize`, and calling
-  into 16-bit guest code asynchronously is what `$win16_dlg_send` already does
-  for a dialog. Note it cannot be called from the drain: `$vsock_pump` runs
-  inside arbitrary API handlers, and redirecting EIP from there would return
-  into the wrong frame. Deliver from the task's own message pump instead.
+  ~~**`XTYP_CONNECT` is not offered to the server's own callback.**~~ DONE.
+  A DDEML server is not a table of names, it is an application with a callback,
+  and that is where it says yes or no. The drain now QUEUES the question and
+  the task's own message pump asks it — the callback cannot be run from the
+  drain, because `$vsock_pump` is called from inside arbitrary API handlers and
+  redirecting EIP there returns into the wrong frame. The callback is entered
+  with a far return onto `$WIN16_DDE_CB`, which acts on the answer and then
+  finishes the interrupted `GetMessage` with an idle message, so the task's
+  loop never notices the detour. A conversation stays in state 2, offered, until
+  the application accepts; a refusal is silence, which is what `DdeConnect`
+  against a server returning FALSE sees.
+  `test/test-win16-dde-connect-callback.js` pins both answers: two instances on
+  a loopback segment, both running a real 16-bit message loop, with the
+  server's callback a hand-written stub whose answer the test chooses.
+
+  **Still to do, in the order Hearts needs it:** `DdeClientTransaction` fails,
+  so no `XTYP_REQUEST`/`XTYP_POKE` crosses (Hearts' first item is `Join`), and
+  `DdePostAdvise` has no advise loops to feed, which is how it actually
+  distributes play. Both follow the pattern `XTYP_CONNECT` now establishes —
+  queue the question in the drain, ask it from the pump, act on the answer at
+  the continuation slot — with the extra step that a reply carries data back
+  over the wire and the client's parked transaction turns it into an HDDEDATA.
+
+  **On testing any of this:** use the in-process harness. Two instances on a
+  `LoopbackSegment`, each with a real NE loaded so selectors and a message loop
+  exist, is deterministic and runs in seconds. The two-process
+  `test-win16-hearts-join.js` is the end-to-end shape but it is timing-bound
+  and this machine is regularly at load 80–200, where the dealer needs three
+  minutes merely to register; it is not in `run-all.sh` for that reason.
+  Minesweeper is the host of choice for the in-process tests: Hearts needs
+  CARDS.DLL staged before it runs at all, and nothing in these tests is about
+  the app.
 - ~~**Named resources returned 0.**~~ FIXED. A NAMEINFO id with bit 15 clear
   is not an id: it is an offset from the start of the resource table to a
   Pascal string, and the walker matched integer ids only, so every `Load*`

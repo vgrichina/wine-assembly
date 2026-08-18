@@ -37,8 +37,37 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { LoopbackSegment } = require('../lib/vlan-wire');
 const { compile, makeNode } = require('./vlan-node');
+
+// A server answers a connect from its own XTYP_CONNECT callback, so it needs
+// to be a real 16-bit task: real selectors to hold the callback, and a real
+// message loop to ask it from. Minesweeper is the smallest thing that is one
+// (Hearts needs CARDS.DLL staged before it will run at all). Nothing here is
+// about the app — the DDE state is installed directly.
+// test-win16-dde-connect-callback.js is where the asking itself is pinned
+// down; here the stub always accepts, so these stay about routing.
+const EXE = path.join(__dirname, '..', 'test', 'binaries', 'win98-16bit', 'WINMINE.EXE');
+const ACCEPT_STUB = [0xb8, 0x01, 0x00, 0xca, 0x1c, 0x00];  // mov ax,1 / retf 28
+const STUB_OFF = 0xF000;
+const SEL = (1 << 3) | 7;
+
+function boot(node, bytes) {
+  const mem = new Uint8Array(node.memory.buffer);
+  const staging = node.wat.get_staging();
+  mem.fill(0, staging, staging + Math.max(bytes.length, 0x10000));
+  mem.set(bytes, staging);
+  assert(node.wat.load_pe(bytes.length) >= 0, 'load_pe failed');
+  for (let i = 0; i < 400; i++) node.wat.run(64);
+}
+
+function acceptEverything(node) {
+  const base = node.wat.win16_seg_base(1) >>> 0;
+  ACCEPT_STUB.forEach((b, i) => node.wat.guest_write8(base + STUB_OFF + i, b));
+  node.wat.test_dde_set_callback(1, ((SEL << 16) | STUB_OFF) >>> 0);
+}
 
 const DEALER_IP = '10.77.0.1';
 const PLAYER_IP = '10.77.0.2';
@@ -62,15 +91,26 @@ function intern(node, text) {
 // Let the room settle: each side drains what the other put on the wire.
 // Two passes, because the answer is only emitted once the request has been
 // seen — one pass would test nothing but the request.
+// The server answers out of its own message loop, so settling means running
+// that loop as well as moving the wire: drain, let the server pump, drain
+// again to carry the answer back.
 function settle(...nodes) {
+  for (let i = 0; i < 4; i++) for (const n of nodes) n.pump();
+  for (let i = 0; i < 200; i++) nodes[0].wat.run(64);
   for (let i = 0; i < 4; i++) for (const n of nodes) n.pump();
 }
 
 (async () => {
+  if (!fs.existsSync(EXE)) { console.log('SKIP  WINMINE.EXE not found'); return; }
   const wasm = await compile();
   const segment = new LoopbackSegment();
   const dealer = await makeNode(wasm, segment.attach(), DEALER_IP);
   const player = await makeNode(wasm, segment.attach(), PLAYER_IP);
+
+  const exeBytes = fs.readFileSync(EXE);
+  boot(dealer, exeBytes);
+  boot(player, exeBytes);
+  acceptEverything(dealer);
 
   // Both sides have a live DDEML instance; the dealer registers the service.
   // Instance ids are 1-based, as DdeInitialize hands them out.

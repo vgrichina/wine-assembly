@@ -2532,6 +2532,19 @@
     (call $win16_dde_hsz_intern (local.get $ga)))
   (func (export "test_dde_instance") (param $i i32) (param $used i32)
     (i32.store (call $win16_dde_inst (local.get $i)) (local.get $used)))
+  ;; Point an instance's DDE callback at a far proc. A real task sets this
+  ;; through DdeInitialize; a test needs it to aim the callback at a stub it
+  ;; can predict the answer of, which is the only way to exercise the
+  ;; XTYP_CONNECT path without driving an app all the way to a live server.
+  (func (export "test_dde_set_callback") (param $inst i32) (param $proc i32)
+    (i32.store offset=4 (call $win16_dde_inst
+      (i32.sub (local.get $inst) (i32.const 1))) (local.get $proc)))
+  (func (export "test_dde_ask_pending") (result i32)
+    (i32.ge_s (call $win16_dde_ask_next) (i32.const 0)))
+  ;; 0 free, 1 established, 2 offered to the application and not yet answered.
+  (func (export "test_dde_conv_state") (param $conv i32) (result i32)
+    (i32.load (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))))
+
   (func (export "test_dde_register") (param $inst i32) (param $hsz i32)
     (i32.store (call $win16_dde_service_slot
                  (i32.sub (local.get $inst) (i32.const 1))) (local.get $hsz)))

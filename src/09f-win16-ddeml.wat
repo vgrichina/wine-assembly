@@ -84,6 +84,145 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; ---- Asking the server whether it wants the conversation ----
+  ;;
+  ;; A DDEML server is not a table of names: it is an application with a
+  ;; callback, and XTYP_CONNECT is where that application says yes or no.
+  ;; Accepting on the registered name alone works right up until an app has a
+  ;; reason to refuse — Hearts refuses once its table is full — and then the
+  ;; emulator has agreed to something the app did not.
+  ;;
+  ;; The callback is guest code, so it cannot be run from the drain:
+  ;; $vsock_pump is called from inside arbitrary API handlers, and redirecting
+  ;; EIP there would return into the wrong frame. Instead the drain QUEUES the
+  ;; question, and the task's own message pump asks it — the one place a 16-bit
+  ;; task is by definition between things and its stack is its own.
+  ;;
+  ;; 4 pending questions of {used, type, inst, conv, hsz1, hsz2}.
+  (func $win16_dde_ask_slot (param $i i32) (result i32)
+    (i32.add (call $win16_dde_base)
+             (i32.add (i32.const 0xD200) (i32.mul (local.get $i) (i32.const 24)))))
+
+  (global $WIN16_DDE_CB i32 (i32.const 0xFF80))
+  (global $win16_dde_cb_ret (mut i32) (i32.const 0))    ;; far return of the pump call
+  (global $win16_dde_cb_msg (mut i32) (i32.const 0))    ;; the MSG it was filling
+  (global $win16_dde_cb_item (mut i32) (i32.const -1))  ;; question being asked
+
+  ;; DDEML transaction types, as the callback is entitled to see them.
+  (global $XTYP_CONNECT i32 (i32.const 0x1062))
+
+  (func $win16_dde_ask_push (param $type i32) (param $inst i32) (param $conv i32)
+                            (param $hsz1 i32) (param $hsz2 i32) (result i32)
+    (local $i i32) (local $slot i32)
+    ;; Three separate things can go wrong between a frame arriving and an
+    ;; application answering it, and from outside they look identical: the
+    ;; question was never queued, it was queued for an instance with no
+    ;; callback to ask, or the task never reached a pump to be asked from.
+    ;; --trace-win16 prints the offer and the answer so they can be told apart.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9E9))
+        (call $host_log_i32 (local.get $type))
+        (call $host_log_i32 (local.get $inst))
+        (call $host_log_i32 (local.get $conv))
+        (call $host_log_i32 (local.get $hsz1))
+        (call $host_log_i32 (local.get $hsz2))
+        (call $host_log_i32 (i32.load offset=4 (call $win16_dde_inst
+          (i32.sub (local.get $inst) (i32.const 1)))))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (local.set $slot (call $win16_dde_ask_slot (local.get $i)))
+      (if (i32.eqz (i32.load (local.get $slot)))
+        (then
+          (i32.store (local.get $slot) (i32.const 1))
+          (i32.store offset=4  (local.get $slot) (local.get $type))
+          (i32.store offset=8  (local.get $slot) (local.get $inst))
+          (i32.store offset=12 (local.get $slot) (local.get $conv))
+          (i32.store offset=16 (local.get $slot) (local.get $hsz1))
+          (i32.store offset=20 (local.get $slot) (local.get $hsz2))
+          (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; The oldest unanswered question whose instance has a callback to ask, or -1.
+  (func $win16_dde_ask_next (result i32)
+    (local $i i32) (local $slot i32) (local $inst i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (local.set $slot (call $win16_dde_ask_slot (local.get $i)))
+      (if (i32.load (local.get $slot))
+        (then
+          (local.set $inst (i32.load offset=8 (local.get $slot)))
+          (if (i32.and (i32.gt_u (local.get $inst) (i32.const 0))
+                       (i32.le_u (local.get $inst) (i32.const 8)))
+            (then
+              ;; A far callback's selector is never zero; without one there is
+              ;; nobody to ask and the question would sit here forever.
+              (if (i32.shr_u (i32.load offset=4 (call $win16_dde_inst
+                    (i32.sub (local.get $inst) (i32.const 1)))) (i32.const 16))
+                (then (return (local.get $i))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; Hand one question to the task's callback. The caller must already have
+  ;; dropped its own frame and saved where it was going: this pushes the eight
+  ;; DDEML arguments and a far return onto $WIN16_DDE_CB, then enters the
+  ;; callback. Pascal order, so wType is pushed first and ends up deepest.
+  (func $win16_dde_ask_enter (param $item i32)
+    (local $slot i32) (local $proc i32)
+    (local.set $slot (call $win16_dde_ask_slot (local.get $item)))
+    (local.set $proc (i32.load offset=4 (call $win16_dde_inst
+      (i32.sub (i32.load offset=8 (local.get $slot)) (i32.const 1)))))
+    (global.set $win16_dde_cb_item (local.get $item))
+    (call $win16_push16 (i32.load offset=4 (local.get $slot)))       ;; wType
+    (call $win16_push16 (i32.const 0))                               ;; wFmt
+    (call $win16_push16 (i32.const 0))                               ;; hConv hi
+    (call $win16_push16 (i32.load offset=12 (local.get $slot)))      ;; hConv lo
+    (call $win16_push16 (i32.const 0))                               ;; hsz1 hi
+    (call $win16_push16 (i32.load offset=16 (local.get $slot)))      ;; hsz1 lo
+    (call $win16_push16 (i32.const 0))                               ;; hsz2 hi
+    (call $win16_push16 (i32.load offset=20 (local.get $slot)))      ;; hsz2 lo
+    (call $win16_push16 (i32.const 0)) (call $win16_push16 (i32.const 0))  ;; hData
+    (call $win16_push16 (i32.const 0)) (call $win16_push16 (i32.const 0))  ;; dwData1
+    (call $win16_push16 (i32.const 0)) (call $win16_push16 (i32.const 0))  ;; dwData2
+    (call $win16_push16 (global.get $WIN16_THUNK_SEL))
+    (call $win16_push16 (global.get $WIN16_DDE_CB))
+    (call $win16_set_sreg (i32.const 1) (i32.shr_u (local.get $proc) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (local.get $proc) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
+  ;; The callback has answered. Act on it, then let the pump call it was taken
+  ;; out of return an idle message, so the task's loop carries on undisturbed.
+  (func $win16_dde_ask_finish (param $result i32)
+    (local $slot i32) (local $conv i32)
+    (if (i32.lt_s (global.get $win16_dde_cb_item) (i32.const 0)) (then (return)))
+    (local.set $slot (call $win16_dde_ask_slot (global.get $win16_dde_cb_item)))
+    (local.set $conv (i32.load offset=12 (local.get $slot)))
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9E8))
+        (call $host_log_i32 (local.get $result))
+        (call $host_log_i32 (local.get $conv))))
+    (i32.store (local.get $slot) (i32.const 0))
+    (global.set $win16_dde_cb_item (i32.const -1))
+    (if (local.get $result)
+      (then
+        ;; Accepted: the tentative conversation becomes a real one and the
+        ;; client is told which handle answered it.
+        (i32.store (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))
+                   (i32.const 1))
+        (drop (call $win16_dde_emit (i32.const 2) (local.get $conv)
+          (i32.load offset=12 (call $win16_dde_conv_slot
+            (i32.sub (local.get $conv) (i32.const 1)))) (i32.const 0))))
+      (else
+        ;; Refused. Say nothing: a client that is not answered times out, which
+        ;; is what DdeConnect does against a server that returns FALSE.
+        (i32.store (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))
+                   (i32.const 0)))))
+
   ;; ---- The DDE wire ----
   ;;
   ;; Two instances in one room reach each other over the same broadcast frame
@@ -133,6 +272,28 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
     (i32.add (i32.add (local.get $off) (local.get $i)) (i32.const 1)))
+
+  ;; Intern a name that arrived off the wire. $win16_dde_hsz_intern reads its
+  ;; source through $gl8 because every other caller hands it a guest pointer;
+  ;; a frame payload is a WASM address, and putting it through g2w would name
+  ;; a different place entirely.
+  (func $win16_dde_hsz_intern_wa (param $wa i32) (result i32)
+    (local $i i32) (local $c i32) (local $tmp i32)
+    ;; Copy into the scratch frame buffer, which IS guest-addressable, and
+    ;; intern from there rather than duplicating the interning itself.
+    (local.set $tmp (call $heap_alloc (i32.const 72)))
+    (if (i32.eqz (local.get $tmp)) (then (return (i32.const 0))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 68)))
+      (local.set $c (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
+      (call $gs8 (i32.add (local.get $tmp) (local.get $i)) (local.get $c))
+      (br_if $done (i32.eqz (local.get $c)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $tmp) (i32.const 68)) (i32.const 0))
+    (local.set $c (call $win16_dde_hsz_intern (local.get $tmp)))
+    (call $heap_free (local.get $tmp))
+    (local.get $c))
 
   ;; Does an interned handle hold exactly this text? Comparing the payload
   ;; against our own registration is how a server recognises a request for
@@ -279,8 +440,26 @@
                     (i32.sub (local.get $conv) (i32.const 1))))
                   (i32.store offset=8  (local.get $slot) (local.get $tag))
                   (i32.store offset=12 (local.get $slot) (local.get $src_conv))
-                  (drop (call $win16_dde_emit (i32.const 2)
-                    (local.get $conv) (local.get $src_conv) (i32.const 0)))))
+                  ;; Tentative until the application says yes: 2 marks the slot
+                  ;; taken so nothing else claims it, without it counting as a
+                  ;; conversation anyone may use.
+                  (i32.store (local.get $slot) (i32.const 2))
+                  ;; The server sees ITS OWN handles for these names, so the
+                  ;; text off the wire is interned here rather than passed
+                  ;; through. hsz1 is the topic and hsz2 the service, the way
+                  ;; XTYP_CONNECT is documented.
+                  (if (i32.eqz (call $win16_dde_ask_push (global.get $XTYP_CONNECT)
+                        (i32.add (local.get $i) (i32.const 1)) (local.get $conv)
+                        (call $win16_dde_hsz_intern_wa
+                          (i32.add (i32.add (local.get $wa) (global.get $DDE_HDR))
+                            (i32.add (call $win16_dde_str_len
+                              (i32.add (local.get $wa) (global.get $DDE_HDR)))
+                              (i32.const 1))))
+                        (call $win16_dde_hsz_intern_wa
+                          (i32.add (local.get $wa) (global.get $DDE_HDR)))))
+                    ;; No room to hold the question. Drop the tentative
+                    ;; conversation rather than leave one nobody will resolve.
+                    (then (i32.store (local.get $slot) (i32.const 0))))))
               (br $answered)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $scan)))

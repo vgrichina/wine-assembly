@@ -1655,13 +1655,27 @@ async function main() {
     // wParam, lParam, and the dialog the pump belongs to.
     if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
     if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 6, words: [], ddeAsk: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
-      const { call: isCall, ret: isRet, route: isRoute, posted: isPosted, resolved, words } = pendingWin16;
+      const { call: isCall, ret: isRet, route: isRoute, posted: isPosted,
+              ddeAsk: isDdeAsk, ddeAns: isDdeAns, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isDdeAsk) {
+        const [type, inst, conv, hsz1, hsz2, cb] = words;
+        logs.push(`[win16] dde offer type=${hex(type)} inst=${inst} conv=${conv}` +
+          ` topic=${hsz1} service=${hsz2} callback=${hex(cb)}` +
+          `${cb >>> 16 ? '' : ' NO CALLBACK -- nobody to ask'}`);
+        return;
+      }
+      if (isDdeAns) {
+        logs.push(`[win16] dde answer ${words[0] ? 'ACCEPT' : 'REFUSE'} conv=${words[1]}`);
+        return;
+      }
       if (isPosted) {
         const [hwnd, msg, wp, lp, depth] = words;
         logs.push(`[win16] post -> hwnd=${hex(hwnd)} msg=${hex(msg)}` +
