@@ -288,21 +288,33 @@ sets the global instead.
     loop yields; across the bridge that address is the scratch frame's zero.
 
   Hearts now deals: `test/test-win16-hearts-startup.js` drives name, dealer, OK
-  and New Game and checks a green table with cards on it. Its menu commands
-  (Options, Score, Quote) are still untested — the sweep runs them before a game
-  exists. It gets all
-  the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
-  and puts up "Unable to connect with dealer. Hearts will end." What it should
-  do first is show its startup dialog: the resources contain "What is your
-  name?", "I want to be &dealer." and "&Computer player names", so the dealer
-  path fills the empty seats with computer players and is a complete
-  single-player game. `DialogBox` (USER.87) and `DialogBoxIndirect` (USER.218)
-  are imported and reached through one MFC `DoModal` at `seg 1:0xaf20`, and
-  neither is ever called in a run, so something upstream of the dialog decided
-  client mode. Start by finding what picks between the DDE server wrapper near
-  `seg 1:0x79ec` (which calls `DdeNameService`) and the client one near
-  `seg 1:0x7a80` (which calls `DdeConnect`) — only the second ever runs. Use
-  `tools/ne-disasm.js`.
+  and New Game and checks a green table with cards on it.
+
+  **Its menu commands are covered now too** —
+  `test/test-win16-hearts-menus.js`, 18 checks, every command on both menus.
+  The sweep never reached them because it drives a freshly launched app, and
+  Hearts at that moment is inside its modal startup dialog; answering the
+  dialog first is what makes the menu bar live. Two commands were broken and
+  neither fault was Hearts-specific:
+
+  - **`ClientToScreen` and `ScreenToClient` (USER.28/29) did not exist.** MFC
+    centres every dialog with GetParent/GetClientRect/ClientToScreen, so this
+    was on the path of any 16-bit MFC dialog. Game > Score died there.
+  - **A dialog was never seeded its own first paint.** `$win16_dlg_run` marked
+    every *control* dirty and never the dialog window, which no dialog built
+    only from controls can notice. Template 502 (the Score Sheet) holds one OK
+    button and the task draws the whole score grid from WM_PAINT, so the sheet
+    came up as an empty grey box. Painting it then wanted `GDI.56 CreateFont`,
+    also missing.
+
+  **CORRECTION to what this file used to say here:** it claimed the DDE server
+  wrapper near `seg 1:0x79ec` is never reached and "only the client one ever
+  runs", so something upstream had already chosen client mode. That is no
+  longer true, and it stopped being true when the startup dialog started
+  working. Choosing "I want to be dealer" now takes the server path: a traced
+  dealer run calls `DdeInitialize`, eight `DdeCreateStringHandle`,
+  `DdeNameService` and three `DdePostAdvise`, and **never** `DdeConnect`. There
+  is nothing left to find upstream of the dialog.
 - **DDEML has no conversations.** `src/09f-win16-ddeml.wat` implements the
   twelve entry points Hearts imports, with real interning string handles and
   real data handles, but `DdeConnect` always finds nobody because nothing
@@ -310,6 +322,18 @@ sets the global instead.
   room is the same shape of problem the virtual LAN in `09d-winsock.wat`
   already solves for Winsock, and worth doing that way when there is a second
   player to test against.
+
+  To be clear about what is and is not broken here, because "Hearts is a
+  network game and the network is missing" reads worse than it is: the *server*
+  half is exercised and works — the dealer registers its service name and posts
+  advises, and single-player Hearts against three computer players is complete.
+  The client half returns NULL with `DMLERR_NO_CONV_ESTABLISHED`, which is
+  precisely what Windows answers when no server is in the room, and it is that
+  answer which sends Hearts to its own table rather than to an error box. So
+  this is an unbuilt feature behind a truthful stub, not a stub papering over a
+  fault. Building it means a second emulator process and a DDE wire, in the
+  shape `vlan-wire.js` already has — and a pairing harness to test against,
+  which is most of the work.
 - Known execution-core gaps, all of which trap loudly and none of which the
   four apps reach: INT (including the INT 3Fh moveable-segment thunks), 16↔32
   thunking, named resources (`LoadIcon` with a string name returns 0 —

@@ -164,6 +164,14 @@
     ;; paint while an ancestor still owes an erase, which is the only thing
     ;; keeping the controls from being drawn and then wiped by it.
     (call $nc_flags_set (local.get $hwnd) (i32.const 3))
+    ;; The dialog's own client area is owed a WM_PAINT too, and seeding only
+    ;; the controls hid that for a long time: a dialog whose entire content is
+    ;; controls looks perfectly correct without it. Hearts' Score Sheet is the
+    ;; one that does not — its template holds an OK button and nothing else,
+    ;; and the whole score grid is drawn by the task from WM_PAINT. Never
+    ;; marking the dialog dirty meant the message was never queued for it, so
+    ;; the sheet came up as an empty grey box.
+    (call $paint_flag_set_inv (local.get $hwnd))
     ;; Every control wants its first WM_PAINT; the pump delivers them once the
     ;; dialog is up. Walk the child slots rather than assuming the hwnds are
     ;; contiguous — a combobox allocates auxiliary windows of its own.

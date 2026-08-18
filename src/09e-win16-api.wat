@@ -1245,6 +1245,14 @@
       (then (call $win16_SetTimer) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 12))
       (then (call $win16_KillTimer) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 28))
+      (then (call $win16_map_point (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 30))
+      (then (call $win16_window_from_point (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 191))
+      (then (call $win16_window_from_point (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 29))
+      (then (call $win16_map_point (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 32))
       (then (call $win16_get_rect (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 33))
@@ -2353,6 +2361,84 @@
               (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
     (call $win16_rect_narrow (local.get $dst) (local.get $tmp))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 6)))
+
+  ;; USER.30 WindowFromPoint(POINT pt) and USER.191 ChildWindowFromPoint(hWnd,
+  ;; POINT pt).
+  ;;
+  ;; Both take their POINT BY VALUE, which is the trap: one doubleword is
+  ;; pushed, so x sits at the LOWER address and comes back as word 0 — the
+  ;; opposite order from every API in this file that takes a separate x and y.
+  ;; Reading them the other way round asks "is (y, x) in this window", which is
+  ;; false almost everywhere and shows up as a mouse that never finds anything.
+  ;; PtInRect had exactly this bug and it cost 16-bit Solitaire its card drag.
+  ;;
+  ;; The screen-wide part of WindowFromPoint is as good as the 32-bit handler's
+  ;; answer and no better: z-order over top-level windows is the renderer's,
+  ;; not ours, so that handler names the main window. What WAT does own is the
+  ;; HWND tree below it, so the answer is refined by descending — which is the
+  ;; part a 16-bit app actually asks about, since it is looking for its own
+  ;; child under the cursor.
+  (func $win16_window_from_point (param $is_child i32)
+    (local $parent i32) (local $x i32) (local $y i32) (local $hit i32)
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (if (local.get $is_child)
+      (then
+        ;; ChildWindowFromPoint's point is in the parent's CLIENT space.
+        (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+        (local.set $x (i32.add (local.get $x)
+          (call $wnd_client_screen_x (local.get $parent))))
+        (local.set $y (i32.add (local.get $y)
+          (call $wnd_client_screen_y (local.get $parent)))))
+      (else
+        (call $win16_call32_begin (i32.const 2))
+        (call $handle_WindowFromPoint (local.get $x) (local.get $y)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (local.set $parent (global.get $eax))))
+    (local.set $hit (call $wnd_child_from_point_deep
+      (local.get $parent) (local.get $x) (local.get $y)))
+    ;; Neither call reports "nothing here" by way of the parent: Win16
+    ;; ChildWindowFromPoint answers with the parent when no child owns the
+    ;; point, and WindowFromPoint with the window it was already given.
+    (global.set $eax (call $win16_h16
+      (select (local.get $hit) (local.get $parent) (local.get $hit))))
+    (call $win16_api_return (select (i32.const 6) (i32.const 4)
+                                    (local.get $is_child))))
+
+  ;; USER.28 ClientToScreen / USER.29 ScreenToClient(hWnd, lpPoint).
+  ;;
+  ;; The POINT here is behind a far pointer, not passed by value the way
+  ;; PtInRect and WindowFromPoint take theirs — so the arguments read in the
+  ;; ordinary order and only the struct needs widening. Two ints in, two LONGs
+  ;; through the 32-bit handler, two ints back; the coordinates are signed and
+  ;; a client point above or left of its window is legitimately negative, so
+  ;; the way in goes through $win16_coord to sign-extend.
+  ;;
+  ;; MFC centres every dialog with GetParent/GetClientRect/ClientToScreen, so
+  ;; this is on the path of any 16-bit MFC dialog, not just Hearts' scoreboard.
+  (func $win16_map_point (param $to_screen i32)
+    (local $hwnd i32) (local $dst i32) (local $tmp i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (call $gs32 (local.get $tmp)
+      (call $win16_coord (call $gl16 (local.get $dst))))
+    (call $gs32 (i32.add (local.get $tmp) (i32.const 4))
+      (call $win16_coord (call $gl16 (i32.add (local.get $dst) (i32.const 2)))))
+    (call $win16_call32_begin (i32.const 2))
+    (if (local.get $to_screen)
+      (then (call $handle_ClientToScreen (local.get $hwnd) (local.get $tmp)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_ScreenToClient (local.get $hwnd) (local.get $tmp)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (call $win16_call32_end)
+    (call $gs16 (local.get $dst) (call $gl32 (local.get $tmp)))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 2))
+      (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 6)))
 
@@ -3491,6 +3577,71 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; GDI.56 CreateFont(nHeight, nWidth, nEscapement, nOrientation, nWeight,
+  ;; bItalic, bUnderline, cStrikeOut, nCharSet, nOutPrecision, nClipPrecision,
+  ;; nQuality, nPitchAndFamily, lpszFace) — fourteen arguments, thirteen of
+  ;; them words and the last a far pointer, so thirty bytes come off the stack.
+  ;;
+  ;; Counting from the top: the face pointer was pushed last and occupies
+  ;; words 0 and 1, then the arguments run backwards from there, which puts
+  ;; nHeight at word 14. Height is signed and normally negative — it is a
+  ;; character height rather than a cell height when it is — so it goes
+  ;; through $win16_coord rather than being taken as a bare word.
+  ;;
+  ;; The 32-bit handler reads its later arguments straight off the stack at
+  ;; esp+4n, so the frame is filled in the same shape rather than only through
+  ;; the five declared parameters.
+  ;; Every argument is hoisted into a local first. $win16_arg16 is ESP-relative
+  ;; and $win16_call32_begin moves ESP onto the scratch stack, so a read after
+  ;; it comes off the frame being built rather than the task's — the guard in
+  ;; $win16_arg16 traps on exactly that mistake.
+  (func $win16_CreateFont
+    (local $face i32) (local $sel i32) (local $off i32) (local $h i32)
+    (local $w i32) (local $esc i32) (local $ori i32) (local $weight i32)
+    (local $italic i32) (local $under i32) (local $strike i32) (local $charset i32)
+    (local $outp i32) (local $clip i32) (local $qual i32) (local $pitch i32)
+    (local.set $off     (call $win16_arg16 (i32.const 0)))
+    (local.set $sel     (call $win16_arg16 (i32.const 1)))
+    (local.set $pitch   (call $win16_arg16 (i32.const 2)))
+    (local.set $qual    (call $win16_arg16 (i32.const 3)))
+    (local.set $clip    (call $win16_arg16 (i32.const 4)))
+    (local.set $outp    (call $win16_arg16 (i32.const 5)))
+    (local.set $charset (call $win16_arg16 (i32.const 6)))
+    (local.set $strike  (call $win16_arg16 (i32.const 7)))
+    (local.set $under   (call $win16_arg16 (i32.const 8)))
+    (local.set $italic  (call $win16_arg16 (i32.const 9)))
+    (local.set $weight  (call $win16_arg16 (i32.const 10)))
+    (local.set $ori     (call $win16_coord (call $win16_arg16 (i32.const 11))))
+    (local.set $esc     (call $win16_coord (call $win16_arg16 (i32.const 12))))
+    (local.set $w       (call $win16_coord (call $win16_arg16 (i32.const 13))))
+    (local.set $h       (call $win16_coord (call $win16_arg16 (i32.const 14))))
+    ;; A NULL face name means "any face of this family", and it has to stay
+    ;; NULL: $win16_far_to_guest would otherwise hand the handler the base of
+    ;; the task's own data segment to read a name out of.
+    (if (i32.or (local.get $sel) (local.get $off))
+      (then (local.set $face
+              (call $win16_far_to_guest (local.get $sel) (local.get $off)))))
+    (call $win16_call32_begin (i32.const 14))
+    (call $win16_call32_arg (i32.const 0)  (local.get $h))
+    (call $win16_call32_arg (i32.const 1)  (local.get $w))
+    (call $win16_call32_arg (i32.const 2)  (local.get $esc))
+    (call $win16_call32_arg (i32.const 3)  (local.get $ori))
+    (call $win16_call32_arg (i32.const 4)  (local.get $weight))
+    (call $win16_call32_arg (i32.const 5)  (local.get $italic))
+    (call $win16_call32_arg (i32.const 6)  (local.get $under))
+    (call $win16_call32_arg (i32.const 7)  (local.get $strike))
+    (call $win16_call32_arg (i32.const 8)  (local.get $charset))
+    (call $win16_call32_arg (i32.const 9)  (local.get $outp))
+    (call $win16_call32_arg (i32.const 10) (local.get $clip))
+    (call $win16_call32_arg (i32.const 11) (local.get $qual))
+    (call $win16_call32_arg (i32.const 12) (local.get $pitch))
+    (call $win16_call32_arg (i32.const 13) (local.get $face))
+    (call $handle_CreateFontA (local.get $h)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 30)))
+
   ;; GDI.93 GetTextMetrics(hDC, lpMetrics).
   ;;
   ;; The 16-bit TEXTMETRIC is the 32-bit one with the first eleven fields
@@ -3799,6 +3950,8 @@
       (then (call $win16_GetDCOrg) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 103))
       (then (call $win16_PtVisible) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 56))
+      (then (call $win16_CreateFont) (return (i32.const 1))))
     ;; UnrealizeObject asks a brush or palette to be re-mapped on next select.
     ;; With no palette realisation here there is nothing to invalidate, and
     ;; success is the truthful answer rather than a placeholder.
@@ -4241,6 +4394,22 @@
     (call $host_log_i32 (call $win16_api_key (local.get $module) (local.get $ordinal)))
     (call $host_log_i32 (local.get $ret_lin))
     (unreachable))
+
+  ;; Is the task parked on one of the continuation slots a modal pump waits at?
+  ;;
+  ;; A MessageBox or a modal dialog with nothing to do sits at its slot with
+  ;; every register unchanged, which is indistinguishable from a hang by the
+  ;; only test a harness can apply from outside — and test/run.js called it one,
+  ;; so a perfectly healthy dialog left waiting for the next click reported
+  ;; STUCK and exited non-zero. Waiting here is the defined behaviour of these
+  ;; two addresses, so say so rather than have the harness guess from EIP.
+  (func (export "win16_pump_parked") (result i32)
+    (local $off i32)
+    (if (i32.lt_u (global.get $eip) (global.get $seg_base_cs))
+      (then (return (i32.const 0))))
+    (local.set $off (i32.sub (global.get $eip) (global.get $seg_base_cs)))
+    (i32.or (i32.eq (local.get $off) (global.get $WIN16_MODAL_PUMP))
+            (i32.eq (local.get $off) (global.get $WIN16_DLG_PUMP))))
 
   (func (export "set_win16_trace") (param $on i32) (global.set $win16_trace (local.get $on)))
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))
