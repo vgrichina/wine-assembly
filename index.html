@@ -94,6 +94,20 @@
       color: #404040;
       font-variant-numeric: tabular-nums;
     }
+    /* The guest canvas is sized from the space the toolbar leaves, so a status
+       string that grows the toolbar shrinks the emulated screen: filling this
+       span moved the canvas from 760x704 to 760x698 and the guest desktop with
+       it. Reserve the line whether or not there is text, and never let a longer
+       message wrap. */
+    #threads-status {
+      min-width: 96px;
+      line-height: 14px;
+      height: 14px;
+      max-width: 220px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
     #content {
       flex: 1;
       display: flex;
