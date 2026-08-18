@@ -192,6 +192,13 @@ const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra c
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
+const WORKER_THREADS = hasFlag('threads'); // --threads: run each guest thread in a real OS thread (node worker_threads) instead of the cooperative scheduler
+const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE * --thread-slices, min 20000)
+const THREADS_SERIAL = hasFlag('threads-serial'); // --threads-serial: with --threads, never run two guest threads at once (splits "race" from "wrong per-thread state")
+// Module scope so every exit path can terminate the threads: a live worker keeps
+// node alive, so a run that ends — cleanly or by throwing — would otherwise hang
+// instead of reporting.
+let workerThreadHost = null;
 
 // NO_BUILD kept for compat but ignored — always compiles from WAT
 
@@ -419,7 +426,24 @@ function describeSchedule(instance, threadManager) {
   if (threadManager && threadManager.threads) {
     for (const [, t] of threadManager.threads) {
       const e = t.instance ? t.instance.exports : null;
-      if (!e) continue;
+      if (!e) {
+        // Worker-backed (--threads): the registers are in another OS thread, so
+        // the state comes from what its last slice reported. Skipping these would
+        // make a threaded hang look like a system with no threads in it.
+        if (!t.link) continue;
+        const yr = t.lastYield | 0;
+        const st = t.state !== 'active' ? t.state
+          : t.suspendCount > 0 ? 'susp'
+          : yr === 1 ? 'wait'
+          : yr === 2 ? 'exited'
+          : yr === 7 ? 'msgwait'
+          : yr === 8 ? 'netwait'
+          : (t.sleepUntil && Date.now() < t.sleepUntil) ? 'sleep'
+          : t.inFlight ? 'run' : 'idle';
+        parts.push(`T${t.tid}:${st}@${hex(t.lastEip || 0)}`);
+        sig.push(`T${t.tid}:${st}`);
+        continue;
+      }
       const st = stateOf(e, t);
       parts.push(`T${t.tid}:${st}@${hex(e.get_eip())}`);
       sig.push(`T${t.tid}:${st}`);
@@ -2225,7 +2249,43 @@ async function main() {
     return { host: wh };
   };
 
+  // --threads: each guest thread gets a real OS thread (node worker_threads over
+  // this same shared memory) instead of a slice of this one. The guest's main
+  // thread stays in-process — 237 sites here call instance.exports directly, and
+  // moving them behind an async proxy is a different change — so this is not the
+  // browser's shape, where slot 0 is a Worker too. What it does cover, headlessly
+  // and on every run: the WAT's shared-memory locks and publish ordering under
+  // genuine parallelism, the per-thread RPC blocks, the worker scheduler in
+  // lib/thread-manager.js, and the wait-completion path whose absence made worker
+  // mode quietly wrong for a whole phase with every test still green.
+  let guestThreadHost = null;
+  // Computed here, not at parse time: the debug flags above rewrite BATCH_SIZE.
+  const THREAD_BATCH_SIZE = THREAD_BATCH_SIZE_ARG || Math.max(BATCH_SIZE * THREAD_SLICES, 20000);
+  if (WORKER_THREADS) {
+    const { GuestThreadHost } = require('../lib/guest-thread-host');
+    const sigs = JSON.parse(fs.readFileSync(
+      path.join(ROOT, 'lib', 'host-import-sigs.generated.json'), 'utf8')).sigs;
+    guestThreadHost = new GuestThreadHost({
+      memory,
+      module: wasmModule,
+      sigs,
+      // One import table per thread, built by the same factory the cooperative
+      // backend uses — so a worker's API trace still says which tid it came from.
+      hostImportsForSlot: (slot, tid) => makeWorkerImports(tid).host,
+      workerUrl: path.join(ROOT, 'lib', 'guest-worker.js'),
+      localMainExports: () => instance.exports,
+      clockIntervalMs: 0,          // the CLI clock is the batch counter, published by hand
+      tickMs: () => tickState.batch * 200,
+      log: msg => console.log(msg),
+    });
+    await guestThreadHost.start();
+    workerThreadHost = guestThreadHost;
+    console.log('[threads] guest threads will run in node worker_threads (--threads)');
+  }
+
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
+    workerBackend: guestThreadHost,
+    serialSlices: THREADS_SERIAL,
     traceThread: TRACE_THREAD,
     traceYield: TRACE_YIELD,
     breakThreadFilter: breakThreadFilter,
@@ -5662,7 +5722,58 @@ async function main() {
     if (threadManager._pendingThreads.length) {
       await threadManager.spawnPending();
     }
-    if (threadManager.hasActiveThreads()) {
+    if (WORKER_THREADS && threadManager.hasActiveThreads()) {
+      // Real threads: every runnable one gets a slice at the same time, and they
+      // run on other CPUs while this thread carries on. There is no quantum to
+      // hand out and no round-robin to be fair about — those exist because one JS
+      // thread has to be shared, which is the constraint this backend removes.
+      //
+      // The clock and the input-queue depth are published, not asked for: a
+      // worker reads them out of its control block without a round trip, and this
+      // is the only thread that knows them.
+      guestThreadHost.broker.publish({
+        tickMs: tickState.batch * 200,
+        inputPending: (inputQueue ? inputQueue.length : 0)
+          + (renderer && renderer.inputQueue ? renderer.inputQueue.length : 0),
+      });
+      const workerStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
+      // Same THREAD_SLICES structure as the cooperative branch below, and for a
+      // reason that is not cosmetic: what a producer thread gets out of a batch is
+      // counted in WAKEUPS, not in steps. Winamp's decoder does one buffer's worth
+      // of work and parks on its event again, so its slice ends on the yield no
+      // matter how large the slice was. One round of slices per batch gave it a
+      // quarter of the wakeups the cooperative backend gives it, and the captured
+      // PCM came out 4x behind — real samples, arriving too late to be the audio
+      // the run was measuring. Main runs between rounds for the same reason it does
+      // below, which is what keeps --max-batches meaning the same thing on both
+      // backends.
+      //
+      // Slice size is NOT BATCH_SIZE, though. A worker's slice size is only the
+      // granularity of its round trip back to this thread — nothing here is blocked
+      // while it runs — whereas BATCH_SIZE is tuned for the opposite constraint and
+      // apps run it as low as 100 steps.
+      let ran = 0;
+      for (let s = 0; s < THREAD_SLICES; s++) {
+        const workerSlices = threadManager.runWorkerSlices(THREAD_BATCH_SIZE);
+        // --threads-serial means nothing runs beside a guest thread, main
+        // included, or the switch would not answer the question it exists for.
+        if (THREADS_SERIAL) await workerSlices;
+        else if (s < THREAD_SLICES - 1 && !stopped) {
+          // Main keeps running WHILE they do — the CLI's version of host.js
+          // awaiting the main slice and the thread slices together.
+          try { instance.exports.run(BATCH_SIZE); } catch (e) { /* reported below */ }
+        }
+        ran = await workerSlices;
+        if (!ran || stopped || !threadManager.hasActiveThreads()) break;
+      }
+      if (TRACE_BATCH_TIMING) {
+        console.log(`[batch-timing] batch=${batch} threads=${ran} worker=${Date.now() - workerStartMs}ms`);
+      }
+      if (threadManager.netWaitPending) {
+        threadManager.netWaitPending = false;
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    } else if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
       const slices = installingFiles ? 1000 : THREAD_SLICES;
       // The run=/paint= line above covers only the main instance. In a threaded
@@ -5906,6 +6017,16 @@ if (VERBOSE) {
   if (threadManager && threadManager.threads && threadManager.threads.size) {
     console.log('\nThreads (final state):');
     for (const [handle, t] of threadManager.threads) {
+      // A worker-backed thread's registers live in another OS thread's instance,
+      // and reading them would mean a round trip to a worker that may already be
+      // gone. Report what the scheduler itself knows instead of a dump error.
+      if (!t.instance && t.link) {
+        console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} slot=${t.link.slot} `
+          + `slices=${t.link.sliceStats.slices} guestMs=${t.link.sliceStats.guestMs.toFixed(1)} `
+          + `rpc=${t.link.sliceStats.rpcSync}sync/${t.link.sliceStats.rpcAsync}async/${t.link.sliceStats.rpcLocal}local `
+          + `sleepCount=${t.sleepCount || 0} waitPolls=${t.waitPolls || 0}`);
+        continue;
+      }
       try {
         const e = t.instance.exports;
         const eip = e.get_eip ? e.get_eip() : 0;
@@ -6327,6 +6448,13 @@ if (VERBOSE) {
     fs.writeFileSync(path.join(DUMP_SDB, 'calls.log'), ctx.dumpSdb.log.join('\n') + '\n');
     console.log(`Dumped ${imgCount} StretchDIBits source DIBs and ${ctx.dumpSdb.log.length} call records to ${DUMP_SDB}/`);
   }
+
+  if (workerThreadHost) workerThreadHost.stop();
 }
 
-main().catch(e => console.error(e));
+main().catch(e => {
+  console.error(e);
+  // Exit code deliberately unchanged; the threads have to be stopped either way
+  // or node waits on them forever and the error above never gets read.
+  if (workerThreadHost) workerThreadHost.stop();
+});

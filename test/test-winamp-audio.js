@@ -49,6 +49,13 @@ const cmd = [
   '--input="10:273:2,20:wait-title:Winamp:1000,300:click:66:129"',
   `--audio-out="${PCM}"`,
   `--audio-exit-bytes=${MIN_PCM_BYTES}`,
+  // Pass `--threads` to this test to check the same playback against the
+  // real-OS-thread backend: the decode thread, the buffer thread and the UI
+  // thread each get their own OS thread instead of a slice of this one. Audio
+  // either comes out or it does not, which makes this the strictest check of
+  // that backend we have — it was worth 0 bytes until worker slices stopped
+  // being sized like main-thread batches.
+  ...process.argv.slice(2).filter(arg => arg === '--threads'),
 ].join(' ');
 console.log('$', cmd);
 

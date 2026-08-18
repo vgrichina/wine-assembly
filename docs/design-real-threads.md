@@ -717,10 +717,61 @@ Three things the split had to get right, each learned from a failure:
   `_isAudioHot`/`_hasOpenMenu` priority hacks all still earn their keep in the
   single-threaded fallback, which remains the CLI default and the Safari-private
   path. This is the one place where "delete the hack" does not apply.
-- `test/run.js` stays single-threaded by default; add `--threads` to opt in so
-  the threaded path gets CLI coverage too (Node has `worker_threads` and
-  supports shared memory without any isolation ceremony — a cheap way to test
-  the threaded scheduler deterministically-ish before trusting a browser).
+- ~~`test/run.js` stays single-threaded by default; add `--threads` to opt in.~~
+  **Done.** `node test/run.js --exe=… --threads` gives every guest thread a node
+  `worker_thread` over the one shared `WebAssembly.Memory`. `--threads-serial`
+  runs them one at a time (the CLI twin of `?threads-serial`), and
+  `--thread-batch-size=N` sets the steps per worker slice.
+
+  **What it covers, and what it deliberately does not.** The guest's *main*
+  thread stays in-process: 237 sites in `run.js` call `instance.exports` directly,
+  and putting them behind an async proxy is a different change. So this is not the
+  browser's shape, where slot 0 is a Worker too. What it does buy, on every run and
+  headlessly: the WAT's shared-memory locks and publish ordering under genuine
+  parallelism, the per-thread RPC blocks, the worker scheduler, and the
+  wait-completion path — plus one thing the browser cannot check, that no WAT lock
+  is ever held across a host import, because here the main thread both runs guest
+  code and serves the workers' RPC (get that wrong and the run hangs instead of
+  failing, which is what the test's timeout is for).
+
+  `test/test-cli-worker-threads.js` runs WordPad on both backends and compares:
+  13 checks, including that the same thread lifecycle happened, that an event
+  signalled in one OS thread woke a wait parked in another in both directions, and
+  that both backends did the same amount of guest-visible work (11958 API calls
+  each, exactly). `test-wordpad-thread-startup.js` and `test-winamp-audio.js` now
+  accept `--threads` and run their own assertions against either backend.
+
+  **Two sizing traps, both found by this, both about wakeups rather than steps.**
+  A worker's slice size is only the granularity of its round trip — nothing on the
+  host is blocked while it runs — so it must not be `BATCH_SIZE`, which apps set as
+  low as 100. But the number of *rounds* per batch matters more: Winamp's decoder
+  does one buffer's worth of work and parks on its event again, so its slice ends on
+  the yield however large the slice was. One round per batch gave it a quarter of the
+  cooperative backend's wakeups and the captured PCM came out 4x behind. The worker
+  branch therefore mirrors the cooperative one: `THREAD_SLICES` rounds per batch,
+  main running between them.
+
+- **Open, found by the above: Winamp's audio is not yet correct in worker mode.**
+  `node test/test-winamp-audio.js --threads` fails its last check, and only that
+  one — the run completes, nothing traps, no import is missing, three real OS
+  threads do the work, and PCM of the right size arrives. The samples are there and
+  start at nearly the same offset as a good run (byte 2518 vs 4350), but the peak
+  amplitude in the first 11520 bytes is 40 against the cooperative backend's 17469.
+
+  Measured, so the next session does not have to re-derive it: more concurrency
+  makes it *better*, not worse — `--threads-serial` drops the peak to 3, and
+  serialising with cooperative-sized slices (`--thread-batch-size=100
+  --threads-serial`) drops it to 3 as well, while parallel fine-grained slices give
+  40. That rules out a data race as the cause and points at the decode thread simply
+  not getting enough done before the output thread writes the buffer: T3 wakes ~940
+  times but accumulates 10ms of guest time, re-parking on its event almost
+  immediately each time. Worth noting while looking at it that
+  `EnterCriticalSection` in `src/09a-handlers.wat` provides no mutual exclusion at
+  all — it bumps the counters and writes `OwningThread = 1` — which is survivable
+  under a cooperative scheduler and is not a defensible basis for real threads. A
+  correct implementation cannot simply spin, either: the main thread spinning on a
+  section held by a worker that needs a host import served is a deadlock, so it has
+  to yield to the scheduler the way `WaitForSingleObject` does.
 
 ---
 
