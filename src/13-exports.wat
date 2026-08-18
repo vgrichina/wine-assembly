@@ -2520,6 +2520,68 @@
   ;; Drain the wire without going through a guest API call, so a host that
   ;; has just delivered frames can settle them before resuming the guest.
   (func (export "vlan_pump") (call $vsock_pump))
+
+  ;; ---- DDEML conversations, for test/test-win16-dde-room.js ----
+  ;;
+  ;; A DDE conversation needs two instances with separate memories on one
+  ;; wire, which is exactly what test/vlan-node.js already builds for Winsock.
+  ;; These reach the tables directly rather than through a 16-bit stack frame,
+  ;; so a test can register a service on one node and connect from the other
+  ;; without driving a guest binary to the point where it would.
+  (func (export "test_dde_intern") (param $ga i32) (result i32)
+    (call $win16_dde_hsz_intern (local.get $ga)))
+  (func (export "test_dde_instance") (param $i i32) (param $used i32)
+    (i32.store (call $win16_dde_inst (local.get $i)) (local.get $used)))
+  (func (export "test_dde_register") (param $inst i32) (param $hsz i32)
+    (i32.store (call $win16_dde_service_slot
+                 (i32.sub (local.get $inst) (i32.const 1))) (local.get $hsz)))
+  (func (export "test_dde_connect_begin") (param $inst i32)
+        (param $svc i32) (param $topic i32) (result i32)
+    (local $pend i32) (local $conv i32) (local $wa i32) (local $len i32)
+    (local.set $pend (call $win16_dde_pending_slot))
+    (local.set $conv (call $win16_dde_conv_alloc (local.get $inst) (i32.const 0)))
+    (if (i32.eqz (local.get $conv)) (then (return (i32.const 0))))
+    (i32.store (local.get $pend) (i32.const 1))
+    (i32.store offset=4  (local.get $pend) (i32.const 0))
+    (i32.store offset=8  (local.get $pend) (local.get $conv))
+    (i32.store offset=12 (local.get $pend) (i32.const 0))
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    (local.set $len (call $win16_dde_put_hsz
+      (local.get $wa) (global.get $DDE_HDR) (local.get $svc)))
+    (local.set $len (call $win16_dde_put_hsz
+      (local.get $wa) (local.get $len) (local.get $topic)))
+    (drop (call $win16_dde_emit (i32.const 1) (local.get $conv) (i32.const 0)
+      (i32.sub (local.get $len) (global.get $DDE_HDR))))
+    (local.get $conv))
+  ;; 0 while still waiting, else the established conversation handle.
+  (func (export "test_dde_connect_done") (result i32)
+    (local $pend i32)
+    (local.set $pend (call $win16_dde_pending_slot))
+    (if (i32.eqz (i32.load offset=12 (local.get $pend))) (then (return (i32.const 0))))
+    (i32.load offset=8 (local.get $pend)))
+  ;; How many conversations this instance is holding open.
+  (func (export "test_dde_conv_count") (result i32)
+    (local $i i32) (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (if (i32.load (call $win16_dde_conv_slot (local.get $i)))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+  (func (export "test_dde_conv_peer") (param $conv i32) (result i32)
+    (i32.load offset=8 (call $win16_dde_conv_slot
+      (i32.sub (local.get $conv) (i32.const 1)))))
+  (func (export "test_dde_disconnect") (param $conv i32)
+    (local $slot i32)
+    (local.set $slot (call $win16_dde_conv_slot
+      (i32.sub (local.get $conv) (i32.const 1))))
+    (if (i32.load (local.get $slot))
+      (then
+        (drop (call $win16_dde_emit (i32.const 3) (local.get $conv)
+          (i32.load offset=12 (local.get $slot)) (i32.const 0)))
+        (i32.store (local.get $slot) (i32.const 0)))))
   (func (export "test_call_socket") (param $af i32) (param $ty i32) (param $proto i32) (result i32)
     (local $sp i32) (local.set $sp (global.get $esp))
     (call $handle_socket (local.get $af) (local.get $ty) (local.get $proto)

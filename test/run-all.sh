@@ -160,6 +160,7 @@ E2E=(
   test/test-win16-hearts-startup.js
   test/test-win16-solitaire-play.js
   test/test-win16-hearts-menus.js
+  test/test-win16-dde-room.js
   test/test-sysmon-perfstats.js
   test/test-local-candidates-playability.js
   test/test-dxball-candidate.js

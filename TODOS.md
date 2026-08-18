@@ -315,25 +315,42 @@ sets the global instead.
   dealer run calls `DdeInitialize`, eight `DdeCreateStringHandle`,
   `DdeNameService` and three `DdePostAdvise`, and **never** `DdeConnect`. There
   is nothing left to find upstream of the dialog.
-- **DDEML has no conversations.** `src/09f-win16-ddeml.wat` implements the
-  twelve entry points Hearts imports, with real interning string handles and
-  real data handles, but `DdeConnect` always finds nobody because nothing
-  carries a conversation between two emulator instances. Two players in one
-  room is the same shape of problem the virtual LAN in `09d-winsock.wat`
-  already solves for Winsock, and worth doing that way when there is a second
-  player to test against.
+- **DDEML conversations: established, but not yet carrying transactions.**
+  `src/09f-win16-ddeml.wat` now joins two instances in one room. A registered
+  service name is *kept* (it never was — a registration nobody recorded is a
+  server no client can find), `DdeConnect` puts a CONNECT on the wire and
+  waits, the instance holding that service answers, and both sides record who
+  they are talking to. `DdeDisconnect` tells the peer rather than forgetting
+  it locally, since a conversation the other side still believes in is a
+  server holding a seat for a player who has gone.
+  `test/test-win16-dde-room.js` is the gate: two instances, separate memories,
+  separate DDE tables, on one loopback segment — 14 checks including that
+  nobody answers for a service that was never registered.
 
-  To be clear about what is and is not broken here, because "Hearts is a
-  network game and the network is missing" reads worse than it is: the *server*
-  half is exercised and works — the dealer registers its service name and posts
-  advises, and single-player Hearts against three computer players is complete.
-  The client half returns NULL with `DMLERR_NO_CONV_ESTABLISHED`, which is
-  precisely what Windows answers when no server is in the room, and it is that
-  answer which sends Hearts to its own table rather than to an error box. So
-  this is an unbuilt feature behind a truthful stub, not a stub papering over a
-  fault. Building it means a second emulator process and a DDE wire, in the
-  shape `vlan-wire.js` already has — and a pairing harness to test against,
-  which is most of the work.
+  Two things worth knowing before extending it:
+
+  - **The room is one queue with one reader.** `$vsock_pump` owns it and used
+    to *discard* any frame whose magic it did not recognise, so a DDE frame was
+    eaten before DDEML saw it. It now hands `DDE1` frames to
+    `$win16_dde_deliver`. Leaving them queued is not an option either: nothing
+    else drains, so the socket stream would stall behind them. Any third
+    protocol on this wire has to be demultiplexed in the same place.
+  - **`DdeConnect` parks by not returning.** A Win16 API is entered with its
+    arguments still on the task's stack and nothing popped until
+    `$win16_api_return`, so declining to return re-enters the same call with
+    the same arguments next pass. No continuation slot, nothing to unwind.
+    This is why it is native rather than bridged — across the Win16 bridge the
+    frame it would park on belongs to a scratch stack about to be discarded,
+    which is the same reason `PeekMessage` cannot be bridged.
+
+  **What is still missing**, in the order Hearts needs it: `XTYP_CONNECT` is
+  not offered to the server's own callback, so a connect is accepted on the
+  service name alone and an app that would refuse cannot; `DdeClientTransaction`
+  still fails, so no `XTYP_REQUEST`/`XTYP_POKE` crosses; and `DdePostAdvise`
+  has no advise loops to feed, which is how Hearts actually distributes play.
+  The callback is the next piece and the shape is known — the far pointer is
+  already stored by `DdeInitialize`, and calling into 16-bit guest code
+  asynchronously is what `$win16_dlg_send` already does for a dialog.
 - ~~**Named resources returned 0.**~~ FIXED. A NAMEINFO id with bit 15 clear
   is not an id: it is an offset from the start of the resource table to a
   Pascal string, and the walker matched integer ids only, so every `Load*`

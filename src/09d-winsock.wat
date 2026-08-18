@@ -626,6 +626,18 @@
       (local.set $n (call $host_net_frame_peek (local.get $wa)
         (i32.add (global.get $VLN_HDR) (global.get $VLN_MAX_PAYLOAD))))
       (br_if $done (i32.eqz (local.get $n)))
+      ;; This is the room's only reader, so a frame under someone else's magic
+      ;; has to be handed over rather than dropped — DDEML shares the wire, and
+      ;; discarding what we did not recognise silently ate every conversation.
+      ;; Leaving it on the queue instead is not an option either: nothing else
+      ;; drains, so the socket stream would stall behind it.
+      (if (i32.and
+            (i32.ge_u (local.get $n) (global.get $DDE_HDR))
+            (i32.eq (i32.load (local.get $wa)) (global.get $DDE_MAGIC)))
+        (then
+          (call $win16_dde_deliver (local.get $wa) (local.get $n))
+          (call $host_net_frame_commit)
+          (br $next)))
       ;; Fail closed on anything that is not a well-formed vln/1 frame:
       ;; too short, too long for the buffer, or wrong magic.
       (if (i32.or
