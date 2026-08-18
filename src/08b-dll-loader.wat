@@ -241,21 +241,21 @@
   ;; the comctl32 entry papers over a genuine Win98-vs-XP version gap.
   (func $native_override_export_api_id (param $name_wa i32) (result i32)
     (if (call $str_eq (local.get $name_wa) (i32.const 0x300))
-      (then (return (call $lookup_api_id (i32.const 0x300)))))
+      (then (return (call $lookup_api_id (i32.const 0x300))))) ;; ceil
     (if (call $str_eq (local.get $name_wa) (i32.const 0x305))
-      (then (return (call $lookup_api_id (i32.const 0x305)))))
+      (then (return (call $lookup_api_id (i32.const 0x305))))) ;; sqrt
     (if (call $str_eq (local.get $name_wa) (i32.const 0x30A))
-      (then (return (call $lookup_api_id (i32.const 0x30A)))))
+      (then (return (call $lookup_api_id (i32.const 0x30A))))) ;; sin
     (if (call $str_eq (local.get $name_wa) (i32.const 0x30E))
-      (then (return (call $lookup_api_id (i32.const 0x30E)))))
+      (then (return (call $lookup_api_id (i32.const 0x30E))))) ;; pow
     (if (call $str_eq (local.get $name_wa) (i32.const 0x312))
-      (then (return (call $lookup_api_id (i32.const 0x312)))))
+      (then (return (call $lookup_api_id (i32.const 0x312))))) ;; _CIpow
     ;; Win98's comctl32 rejects every ICC_* bit in 0x7fff8000, so an XP-era
     ;; caller asking for ICC_LINK_CLASS (0x8000) gets FALSE and quits. The
     ;; classes themselves are registered from the DLL's DllMain, so answering
     ;; natively costs nothing and matches how a newer comctl32 would behave.
     (if (call $str_eq (local.get $name_wa) (i32.const 0x11E30))
-      (then (return (call $lookup_api_id (i32.const 0x11E30)))))
+      (then (return (call $lookup_api_id (i32.const 0x11E30))))) ;; InitCommonControlsEx
     (i32.const -1))
 
   ;; WinSock 1.1 commonly imports WSOCK32 by ordinal. Resolve ordinals for

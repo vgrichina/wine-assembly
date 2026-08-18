@@ -8,7 +8,11 @@ x86 Windows 98 PE interpreter in raw WebAssembly Text (WAT). Runs real Win32 exe
 bash tools/build.sh
 ```
 
-Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wat`, then compiles with `wat2wasm` to `build/wine-assembly.wasm`. The alphabetical order of filenames IS the source order — file numbering (01-, 02-, etc.) controls concatenation.
+Compiles the parts listed in `WAT_FILES` (`lib/compile-wat.js`) with the project's own pure-JS WAT compiler (`tools/build-compile-wat.js`) into `build/wine-assembly.wasm` — **`wat2wasm` is not used**. `build/combined.wat` is written from the same list for grep/`check-parens`/`func-index` and is not itself compiled.
+
+**`WAT_FILES` is the build.** A new `src/*.wat` that isn't listed there lands in `combined.wat` and is silently absent from the shipped wasm; `tools/check-wat-manifest.js` (run first in the build) now fails on that. File numbering still controls order — `WAT_FILES` must stay in the same sorted order as the filenames.
+
+Build gates, in order: manifest ↔ glob equality, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP epilogues.
 
 **Important:** When adding new handler opcodes to `02-thread-table.wat`, increase `(table $handlers N funcref)` to match the total entry count (0-based index + 1).
 
@@ -190,7 +194,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - **Lazy flags:** Flags (ZF, SF, CF, OF) are not computed after every instruction. Instead, `flag_op`, `flag_a`, `flag_b`, `flag_res` are stored, and flags are computed on demand by `$get_zf`, `$get_cf`, etc. `flag_sign_shift` is 31 for 32-bit ops, 15 for 16-bit, 7 for 8-bit.
 - **g2w / w2g:** Convert between guest (x86) addresses and WASM linear memory addresses. `g2w(guest) = guest - image_base + GUEST_BASE`.
 - **API thunks:** Imported Win32 functions are replaced with thunk addresses. When EIP enters the thunk zone, `$win32_dispatch` handles the call.
-- **Dispatch handlers:** Each Win32 API has a `$handle_{Name}` function in `09a-handlers.wat` with signature `(param $arg0-4 i32) (param $name_ptr i32)`. The generated `09b2-dispatch-table.generated.wat` contains the br_table that calls these. To add a new API: add it to `api_table.json`, write `$handle_{Name}` in `09a-handlers.wat`, run `node tools/gen_dispatch.js`.
+- **Dispatch handlers:** Each Win32 API has a `$handle_{Name}` function in `09a-handlers.wat` with signature `(param $arg0-4 i32) (param $name_ptr i32)`. The generated `09b2-dispatch-table.generated.wat` contains the br_table that calls these. To add a new API: **append** it to the end of `api_table.json` (ids are array positions and are baked into the compiled hash table — a mid-array insert renumbers everything and `tools/check-api-table.js` fails the build), write `$handle_{Name}` in `09a-handlers.wat`, then run **both** `node tools/gen_dispatch.js` and `node tools/gen_api_table.js` — the second regenerates the name→id hash table, and skipping it leaves the new API unfindable at runtime with no crash to point at it.
 - **Fail-fast stubs:** Unimplemented API handlers call `$crash_unimplemented` which traps with `unreachable`. Do NOT replace these with silent stubs that return 0 — silent stubs hide bugs and make them much harder to debug. When an app hits an unimplemented API, the crash log tells you exactly what to implement next. Implement the real behavior or leave the crash.
 - **WAT logical operands:** Normalize raw pointers, handles, counts, and other arbitrary integers before combining them with logical `i32.and`: use `(i32.ne value (i32.const 0))` or `i32.eqz`. A raw even value AND a `0/1` predicate has a clear low bit and silently evaluates false. Raw operands are appropriate only when `i32.and` intentionally performs a bit mask; boolean operands should each be explicitly `0/1`.
 - **Yield mechanism:** For async operations (DLL loading, help file fetching), WASM sets `$yield_reason` and returns control to JS. The JS event loop handles the async work, clears the yield, and resumes WASM. Yield reasons: 1=waiting, 2=exited, 3=com_load_dll, 4=help_load.
@@ -252,7 +256,12 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/pe-sections.js` — PE section header dumper
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.js` — WAT parenthesis balance checker (auto-diffs vs git HEAD)
-- `tools/build.sh` — Build script (concat + wat2wasm)
+- `tools/build.sh` — Build script (gates + concat + `lib/compile-wat.js`)
+- `tools/check-wat-manifest.js` — asserts `WAT_FILES` == `src/*.wat` as a set and as an order
+- `tools/concat-wat.js` — writes `build/combined.wat` from `WAT_FILES` (not a shell glob)
+- `tools/check-api-table.js` — asserts `api_table.json` ids are array positions and the array is append-only vs `HEAD`
+- `tools/check-data-strings.js` — asserts every `(i32.const 0xADDR) ;; Name` string-address annotation still names the string at that address
+- `tools/gen_dispatch.js --check` — fails if the generated dispatch table is stale rather than regenerating it
 - `tools/deploy-berrry.js` — Deploy to berrry.app. `--update` updates an existing app and by default fetches the server's sha256 manifest, then uploads only files whose hash differs (so a no-op redeploy ships zero files). `--full` forces a complete reupload. `--files=a,b,c` uploads an explicit comma-separated list of repo-relative paths and skips diffing. Note: by default `--update` *will* push uncommitted working-tree changes, since the diff is against the live server, not git.
 
 ## Test Binaries
