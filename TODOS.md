@@ -343,14 +343,44 @@ sets the global instead.
     frame it would park on belongs to a scratch stack about to be discarded,
     which is the same reason `PeekMessage` cannot be bridged.
 
-  **What is still missing**, in the order Hearts needs it: `XTYP_CONNECT` is
-  not offered to the server's own callback, so a connect is accepted on the
-  service name alone and an app that would refuse cannot; `DdeClientTransaction`
-  still fails, so no `XTYP_REQUEST`/`XTYP_POKE` crosses; and `DdePostAdvise`
-  has no advise loops to feed, which is how Hearts actually distributes play.
-  The callback is the next piece and the shape is known — the far pointer is
-  already stored by `DdeInitialize`, and calling into 16-bit guest code
-  asynchronously is what `$win16_dlg_send` already does for a dialog.
+  **Hearts will still not join, and it is NOT a name-matching bug.** Both
+  sides were traced and their interned strings dumped out of the handle table
+  at guest `0x8F9200` (that address is `WIN16_ARENA + 127*0x10000 + 0x9200`;
+  `--dump` reads it directly):
+
+  | | service | topic |
+  |---|---|---|
+  | dealer registers | `MSHearts` | `Hearts` |
+  | client asks for | `\\DEAL\NDDE$` | `Hearts$` |
+
+  That is NetDDE working exactly as designed. The client does not connect to
+  the dealer's application at all — it connects to the **NetDDE agent** on the
+  named machine (`\\COMPUTER\NDDE$`) and names a **DDE share** as the topic;
+  the trailing `$` is the share marker. The agent on the far side looks that
+  share up in the machine's share database, which maps `Hearts$` onto the
+  local pair (`MSHearts`, `Hearts`), and makes the real connection locally on
+  the client's behalf. No string the client sends will ever equal a name the
+  dealer registered.
+
+  Hearts does not create the share itself: it imports no NDDEAPI entry
+  statically and only `LoadLibrary`s it for `NDdeGetWindow`. On a real Win98
+  box the share is part of the *machine*, put there at install time. So the
+  piece to write is a **DDE share table** — share name to (service, topic) —
+  consulted when a CONNECT names `\\host\NDDE$`, modelling the share database
+  a Win98 install ships with. It belongs in the emulator as a table, not as an
+  `if (this is Hearts)`.
+
+  **Then the rest, in the order Hearts needs it:** `XTYP_CONNECT` is not
+  offered to the server's own callback, so a connect is accepted on the service
+  name alone and an app that would refuse cannot; `DdeClientTransaction` still
+  fails, so no `XTYP_REQUEST`/`XTYP_POKE` crosses (Hearts' first item is
+  `Join`); and `DdePostAdvise` has no advise loops to feed, which is how it
+  actually distributes play. The callback is the next piece and the shape is
+  known — the far pointer is already stored by `DdeInitialize`, and calling
+  into 16-bit guest code asynchronously is what `$win16_dlg_send` already does
+  for a dialog. Note it cannot be called from the drain: `$vsock_pump` runs
+  inside arbitrary API handlers, and redirecting EIP from there would return
+  into the wrong frame. Deliver from the task's own message pump instead.
 - ~~**Named resources returned 0.**~~ FIXED. A NAMEINFO id with bit 15 clear
   is not an id: it is an offset from the start of the resource table to a
   Pascal string, and the walker matched integer ids only, so every `Load*`

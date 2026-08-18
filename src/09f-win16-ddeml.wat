@@ -59,9 +59,10 @@
     (i32.add (call $win16_dde_base)
              (i32.add (i32.const 0xD000) (i32.mul (local.get $i) (i32.const 20)))))
 
-  ;; The one connect this instance is waiting on: {active, tries, conv}.
-  ;; DdeConnect is synchronous to its caller and a task has exactly one such
-  ;; call outstanding, so one slot is the whole of it.
+  ;; The one connect this instance is waiting on:
+  ;; {active, started_ticks, conv, answered}. DdeConnect is synchronous to its
+  ;; caller and a task has exactly one such call outstanding, so one slot is
+  ;; the whole of it.
   (func $win16_dde_pending_slot (result i32)
     (i32.add (call $win16_dde_base) (i32.const 0xD100)))
 
@@ -413,7 +414,14 @@
   ;; When nobody answers, the tries run out and the answer is NULL with
   ;; DMLERR_NO_CONV_ESTABLISHED — which is what Windows says when no server is
   ;; in the room, and what sends Hearts to its own table.
-  (global $DDE_CONNECT_TRIES i32 (i32.const 64))
+  ;; How long to wait is measured in milliseconds, not in passes. A count of
+  ;; passes looks like a timeout and is not one: a parked task runs nothing, so
+  ;; sixty-four passes is sixty-four batch boundaries and can be under a
+  ;; millisecond of wall clock — long enough for another instance sharing this
+  ;; process's run loop to answer, and nowhere near long enough for one in
+  ;; another OS process, whose reply has to cross child IPC. DDEML's own
+  ;; DdeConnect is bounded by time for the same reason.
+  (global $DDE_CONNECT_TIMEOUT_MS i32 (i32.const 3000))
 
   (func $win16_DdeConnect
     (local $inst i32) (local $svc i32) (local $topic i32)
@@ -433,7 +441,7 @@
             (call $win16_api_return (i32.const 16))
             (return)))
         (i32.store (local.get $pend) (i32.const 1))
-        (i32.store offset=4  (local.get $pend) (i32.const 0))
+        (i32.store offset=4  (local.get $pend) (call $host_get_ticks))
         (i32.store offset=8  (local.get $pend) (local.get $conv))
         (i32.store offset=12 (local.get $pend) (i32.const 0))
         (local.set $svc   (call $win16_arg32 (i32.const 4)))
@@ -461,14 +469,22 @@
         (call $win16_api_return (i32.const 16))
         (return)))
 
-    ;; Still waiting. Give the room another pass unless it has had enough.
-    (i32.store offset=4 (local.get $pend)
-      (i32.add (i32.load offset=4 (local.get $pend)) (i32.const 1)))
-    (if (i32.lt_u (i32.load offset=4 (local.get $pend)) (global.get $DDE_CONNECT_TRIES))
+    ;; Still waiting. Give the room another pass until the time is up.
+    (if (i32.lt_u (i32.sub (call $host_get_ticks) (i32.load offset=4 (local.get $pend)))
+                  (global.get $DDE_CONNECT_TIMEOUT_MS))
       (then
         ;; End the batch without returning, so the host runs everyone else —
         ;; including the instance that has to answer — and re-enters here.
-        (global.set $yield_reason (i32.const 1))
+        ;;
+        ;; $yield_flag ONLY. Raising $yield_reason as well says "a blocking API
+        ;; is waiting", and the host answers that by resuming the 32-bit way:
+        ;; it pops a stdcall frame and takes a linear return address off the
+        ;; task's own stack. For a 16-bit task there is no such frame, so EIP
+        ;; came back as two words of whatever was there — out of the selector
+        ;; arena, which is the trap $run raises as 0xCA165E21. It is the same
+        ;; hazard that stops GetMessage being bridged; the difference is that
+        ;; nothing here needs the host's help to resume, only its permission to
+        ;; end the batch.
         (global.set $yield_flag (i32.const 1))
         (return)))
 
