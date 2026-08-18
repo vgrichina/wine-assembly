@@ -4,6 +4,7 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
+const dllRegistry = require('../lib/dll-registry');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -2353,24 +2354,8 @@ async function main() {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
     const required = requiredDlls;
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
-    const LOADABLE_DLLS = new Set(['msvcrt20.dll', 'mfc30.dll', 'msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
-      'msvcp60.dll', 'msvcp50.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll',
-      'd3drm.dll', 'kvdd.dll', 'sdl.dll',
-      // Win98 accessories that ship their engine beside the .exe rather than
-      // linking it: HyperTerminal's protocol engine and the Kodak Imaging
-      // common/display/admin libraries. Without these the apps die on their
-      // first import from one — InitInstance, ?UpdateVersion@@YGJH@Z, and a
-      // pile of ordinals respectively.
-      'hypertrm.dll', 'imgcmn.dll', 'sti.dll', 'shell32.dll', 'shlwapi.dll',
-      // Explorer is the Win98 shell: its window, desktop and taskbar all live
-      // in SHELL32 (entered through ordinal 244) and SHDOCVW.
-      'shdocvw.dll',
-      // The Kodak Imaging suite splits itself across ten OI*400 libraries and
-      // they import each other, so the whole set has to be loadable or the
-      // first cross-DLL ordinal fails.
-      'oiadm400.dll', 'oicom400.dll', 'oidis400.dll', 'oifil400.dll',
-      'oigfs400.dll', 'oiprt400.dll', 'oislb400.dll', 'oissq400.dll',
-      'oitwa400.dll', 'oiui400.dll']);
+    // The one list, shared with the browser (lib/dll-registry.js).
+    const LOADABLE_DLLS = dllRegistry.LOADABLE_DLLS;
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,

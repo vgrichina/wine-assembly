@@ -661,6 +661,7 @@ Resource-aware Win98 emulator
   <script src="lib/resources-icon.js?v=168"></script>
   <script src="lib/renderer-input.js?v=188"></script>
   <script src="lib/renderer.js?v=178"></script>
+  <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/dll-loader.js?v=168"></script>
   <script src="lib/storage.js?v=169"></script>
   <script src="lib/filesystem.js?v=169"></script>
@@ -2480,23 +2481,13 @@ Resource-aware Win98 emulator
           }
         }
         const dllsToLoad = app.dlls ? [...app.dlls] : [];
-        const availableDlls = {
-          'comctl32.dll': 'binaries/dlls/comctl32.dll',
-          'msvcrt20.dll': 'binaries/dlls/msvcrt20.dll',
-          'mfc30.dll': 'binaries/dlls/mfc30.dll',
-          'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
-          'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
-          'mfc42.dll': 'binaries/dlls/mfc42.dll',
-          'msvcp60.dll': 'binaries/dlls/msvcp60.dll',
-          'oleaut32.dll': 'binaries/dlls/oleaut32.dll',
-          // WordPad loads RichEdit dynamically after its MFC frame/toolbars
-          // exist. Advertising these lets LoadLibraryA yield to the browser
-          // loader instead of returning the synthetic system-DLL handle.
-          'riched20.dll': 'binaries/dlls/riched20.dll',
-          'usp10.dll': 'binaries/dlls/usp10.dll',
-          'd3drm.dll': 'binaries/dlls/d3drm.dll',
-          'cards.dll': 'binaries/entertainment-pack/cards.dll',
-        };
+        // One list, shared with the CLI (lib/dll-registry.js). It used to be a
+        // 14-entry map here and a ~30-name set in test/run.js, so an app whose
+        // imports needed SHELL32, HYPERTRM or the Kodak OI*400 set loaded
+        // headless and failed in the browser.
+        const availableDlls = { ...window.dllRegistry.DLL_PATHS };
+        // App-local DLLs ship beside their exe; the app's own `files` list
+        // already fetches those, and listing them here would 404.
         wine._availableDllFiles = new Set(Object.keys(availableDlls));
         if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
           const required = DllLoader.detectRequiredDlls(wine._exeBytes);
