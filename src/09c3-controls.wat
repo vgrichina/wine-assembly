@@ -197,6 +197,16 @@
     (i32.or (i32.load16_u offset=4 (local.get $a))
             (i32.shl (i32.load16_u offset=6 (local.get $a)) (i32.const 16))))
 
+  ;; The width and height halves of $ctrl_get_wh_packed. Nearly every control
+  ;; wndproc starts by unpacking that word into two locals with the same two
+  ;; shifts and masks, ~30 times across this file; a caller that only wants one
+  ;; dimension had to write both. Named accessors so the packing is stated once.
+  (func $ctrl_get_w (param $hwnd i32) (result i32)
+    (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))
+
+  (func $ctrl_get_h (param $hwnd i32) (result i32)
+    (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+
   ;; ---- Control table helpers (legacy CONTROL_TABLE) ----
 
   ;; Mark a registered native status-bar window without classifying it as a
@@ -6055,7 +6065,7 @@
     (local.set $selected (i32.load offset=32 (local.get $sw)))
     (if (i32.gt_s (local.get $selected) (local.get $idx))
       (then (i32.store offset=32 (local.get $sw) (i32.sub (local.get $selected) (i32.const 1)))))
-    (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+    (local.set $h (call $ctrl_get_h (local.get $hwnd)))
     (drop (call $lv_scroll_to_for_h (local.get $sw) (local.get $h) (i32.load offset=36 (local.get $sw))))
     (call $paint_flag_set_inv (local.get $hwnd))
     (i32.const 1))
@@ -6536,7 +6546,7 @@
           (then (i32.store offset=32 (local.get $sw) (i32.const -1))))
         (drop (call $lv_scroll_to_for_h
           (local.get $sw)
-          (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16))
+          (call $ctrl_get_h (local.get $hwnd))
           (i32.load offset=36 (local.get $sw))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
@@ -6776,7 +6786,7 @@
           (else
             (local.set $x (i32.const 0))
             (local.set $y (i32.const 0))
-            (local.set $width (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))))
+            (local.set $width (call $ctrl_get_w (local.get $hwnd)))))
         (local.set $dst (call $g2w (local.get $dst)))
         (i32.store          (local.get $dst) (local.get $hwnd))
         (i32.store offset=4 (local.get $dst) (i32.const 0))
@@ -7136,7 +7146,7 @@
       (then
         (return (call $lv_visible_rows_for_h
           (local.get $sw)
-          (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16))))))
+          (call $ctrl_get_h (local.get $hwnd))))))
     (if (i32.eq (local.get $msg) (i32.const 0x1013))
       (then
         (local.set $idx (local.get $wParam))
@@ -7229,7 +7239,7 @@
         (if (i32.or (i32.eq (local.get $code) (i32.const 2))
                     (i32.eq (local.get $code) (i32.const 3)))
           (then
-            (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+            (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (local.set $delta (call $lv_visible_rows_for_h (local.get $sw) (local.get $h)))
             (if (i32.eq (local.get $code) (i32.const 2))
               (then (local.set $delta (i32.sub (i32.const 0) (local.get $delta)))))
@@ -7237,7 +7247,7 @@
         (if (i32.or (i32.eq (local.get $code) (i32.const 4))
                     (i32.eq (local.get $code) (i32.const 5)))
           (then
-            (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+            (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (drop (call $lv_scroll_to_for_h
               (local.get $sw) (local.get $h)
               (i32.shr_s (local.get $wParam) (i32.const 16))))
@@ -7246,7 +7256,7 @@
           (then (drop (call $lv_scroll_by (local.get $hwnd) (i32.sub (i32.const 0) (i32.load offset=36 (local.get $sw)))))))
         (if (i32.eq (local.get $code) (i32.const 7))
           (then
-            (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+            (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (drop (call $lv_scroll_by
               (local.get $hwnd)
               (i32.sub (call $lv_max_scroll_for_h (local.get $sw) (local.get $h)) (i32.load offset=36 (local.get $sw)))))))
