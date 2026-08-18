@@ -2,95 +2,6 @@
   ;; SUB-DISPATCHERS & MISC LATE-ADDED HANDLERS
   ;; ============================================================
 
-  ;; ============================================================
-  ;; SUB-DISPATCHERS (Local*, Global*, lstr*, Reg*)
-  ;; ============================================================
-(func $dispatch_local (param $name i32) (param $a0 i32) (param $a1 i32) (param $a2 i32)
-    (local $ch i32)
-    (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 5))))
-    (if (i32.eq (local.get $ch) (i32.const 0x41)) ;; LocalAlloc
-      (then (global.set $eax (call $heap_alloc (local.get $a1)))
-            (if (i32.and (local.get $a0) (i32.const 0x40)) ;; LMEM_ZEROINIT
-              (then (if (global.get $eax) (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $a1))))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x46)) ;; LocalFree
-      (then (call $heap_free (local.get $a0))
-            (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x4C)) ;; LocalLock
-      (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x55)) ;; LocalUnlock
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x52)) ;; LocalReAlloc(hMem, uBytes, uFlags)
-      (then
-        (global.set $eax (call $heap_realloc (local.get $a0) (local.get $a1) (local.get $a2)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (call $crash_unimplemented (local.get $name)))
-
-  (func $dispatch_global (param $name i32) (param $a0 i32) (param $a1 i32) (param $a2 i32)
-    (local $ch i32)
-    (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 6))))
-    (if (i32.eq (local.get $ch) (i32.const 0x41)) ;; GlobalAlloc
-      (then (global.set $eax (call $heap_alloc (local.get $a1)))
-            (if (i32.and (local.get $a0) (i32.const 0x40)) ;; GMEM_ZEROINIT
-              (then (if (global.get $eax) (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $a1))))))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x46)) ;; GlobalFree
-      (then (call $heap_free (local.get $a0))
-            (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x4C)) ;; GlobalLock
-      (then (global.set $eax (local.get $a0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x55)) ;; GlobalUnlock
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x53)) ;; GlobalSize
-      (then (global.set $eax (i32.sub (call $gl32 (i32.sub (local.get $a0) (i32.const 4))) (i32.const 4)))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x52)) ;; GlobalReAlloc(hMem, uBytes, uFlags)
-      (then
-        (global.set $eax (call $heap_realloc (local.get $a0) (local.get $a1) (local.get $a2)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x43)) ;; GlobalCompact
-      (then (global.set $eax (i32.const 0x100000)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (call $crash_unimplemented (local.get $name)))
-
-  (func $dispatch_lstr (param $name i32) (param $a0 i32) (param $a1 i32) (param $a2 i32)
-    (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 4))))
-    ;; lstrlenA(1) — 'l' at pos 4
-    (if (i32.eq (local.get $ch) (i32.const 0x6C)) ;; lstrlenA
-      (then
-        (global.set $eax (call $guest_strlen (local.get $a0)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; lstrcpyA(2) — 'c' at pos 4, 'p' at pos 5, 'y' at pos 6
-    (if (i32.eq (local.get $ch) (i32.const 0x63)) ;; lstrc...
-      (then
-        ;; lstrcpyA vs lstrcpynA vs lstrcmpA vs lstrcmpiA vs lstrcatA
-        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 5))) (i32.const 0x61)) ;; lstrcatA(2)
-          (then
-            ;; Append a1 to a0
-            (call $guest_strcpy
-              (i32.add (local.get $a0) (call $guest_strlen (local.get $a0)))
-              (local.get $a1))
-            (global.set $eax (local.get $a0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 5))) (i32.const 0x70)) ;; lstrcpy/lstrcpyn
-          (then
-            (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 7))) (i32.const 0x6E)) ;; lstrcpynA(3)
-              (then
-                ;; Copy up to a2-1 chars
-                (call $guest_strncpy (local.get $a0) (local.get $a1) (local.get $a2))
-                (global.set $eax (local.get $a0))
-                (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-            ;; lstrcpyA(2)
-            (call $guest_strcpy (local.get $a0) (local.get $a1))
-            (global.set $eax (local.get $a0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-        ;; lstrcmpA(2) vs lstrcmpiA(2): name[7]='i' → case-insensitive
-        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 7))) (i32.const 0x69)) ;; 'i'
-          (then (global.set $eax (call $guest_stricmp (local.get $a0) (local.get $a1))))
-          (else (global.set $eax (call $guest_strcmp (local.get $a0) (local.get $a1)))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
-    ;; fallback
-    (call $crash_unimplemented (local.get $name)))
-
   ;; 702: SetRectEmpty — zeroes out RECT
   (func $handle_SetRectEmpty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Zero out RECT at arg0: left, top, right, bottom = 0
@@ -123,26 +34,6 @@
     (global.set $eax (call $clipboard_register_format_a (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param
   )
-
-  (func $dispatch_reg (param $name i32)
-    (local $ch i32) (local.set $ch (i32.load8_u (i32.add (local.get $name) (i32.const 3))))
-    (if (i32.eq (local.get $ch) (i32.const 0x4F)) ;; RegOpenKeyA (3 args) / RegOpenKeyExA (5 args)
-      (then (global.set $eax (i32.const 2))
-            ;; Check for "Ex" variant by looking at char after "RegOpenKey"
-            (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 10))) (i32.const 0x45)) ;; RegOpenKeyExA
-              (then (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x43)) ;; RegCloseKey(1) / RegCreateKeyA(3)
-      (then
-        (if (i32.eq (i32.load8_u (i32.add (local.get $name) (i32.const 4))) (i32.const 0x6C)) ;; RegCloseKey(1)
-          (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-        ;; RegCreateKeyA(3)
-        (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x51)) ;; RegQueryValueExA(6)
-      (then (global.set $eax (i32.const 2)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
-    (if (i32.eq (local.get $ch) (i32.const 0x53)) ;; RegSetValueExA(6)
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 28))) (return)))
-    (call $crash_unimplemented (local.get $name)))
 
   ;; 707: AboutWEP(hwnd, hInstance, szCaption, nUnused)
   ;; Entertainment Pack about dialog — same shape as ShellAboutA but the
@@ -3022,17 +2913,6 @@
       (call $gl32 (i32.add (local.get $root) (i32.const 16))))
     (call $gs32 (i32.add (local.get $root) (i32.const 16)) (local.get $new_entry))
     (local.get $entry))
-
-  (func $ole_bindctx_bound_find (param $root i32) (param $iface i32) (result i32)
-    (local $node i32)
-    (local.set $node (call $gl32 (i32.add (local.get $root) (i32.const 12))))
-    (block $done (loop $scan
-      (br_if $done (i32.eqz (local.get $node)))
-      (if (i32.eq (call $gl32 (local.get $node)) (local.get $iface))
-        (then (return (local.get $node))))
-      (local.set $node (call $gl32 (i32.add (local.get $node) (i32.const 4))))
-      (br $scan)))
-    (i32.const 0))
 
   (func $ole_bindctx_ref_addable (param $iface i32) (result i32)
     (if (i32.eqz (local.get $iface)) (then (return (i32.const 0))))

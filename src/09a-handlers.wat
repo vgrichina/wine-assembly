@@ -161,22 +161,6 @@
     (i32.const 0)
   )
 
-  ;; Post queue dequeue — reads one i32 at a time from queue at 0x400
-  ;; Call 4 times to get hwnd, msg, wParam, lParam; auto-shifts on 4th read
-  (func $post_queue_dequeue (result i32)
-    (local $val i32)
-    (local.set $val (i32.load (i32.add (i32.const 0x400) (global.get $pq_read_off))))
-    (global.set $pq_read_off (i32.add (global.get $pq_read_off) (i32.const 4)))
-    (if (i32.ge_u (global.get $pq_read_off) (i32.const 16))
-      (then
-        (global.set $pq_read_off (i32.const 0))
-        (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
-        (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-          (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
-            (i32.mul (global.get $post_queue_count) (i32.const 16)))))))
-    (local.get $val)
-  )
-
   ;; Shared cross-instance posted-message queue.
   ;; Worker threads run in separate WASM instances, so globals such as
   ;; $post_queue_count are private. Win98 USER queues are shared by the window
@@ -3429,7 +3413,9 @@
               (then
                 (global.set $paint_pending (i32.const 1))
                 (call $update_invalidate_full (local.get $arg0))
-                (call $host_invalidate (local.get $arg0)))
+                ;; SWP_SHOWWINDOW: the frame itself is appearing, so the
+                ;; non-client area needs painting, not just a composite.
+                (call $host_invalidate_frame (local.get $arg0)))
               (else (call $paint_flag_set_inv (local.get $arg0))))))))
     (if (i32.and (local.get $uFlags) (i32.const 0x0080)) ;; SWP_HIDEWINDOW
       (then
@@ -4066,29 +4052,46 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; 218-222, 250: the lstr* family. These used to call $dispatch_lstr, which
+  ;; re-read the API *name* one character at a time to decide which of them it
+  ;; was — after the generated br_table had already resolved that name to this
+  ;; exact function. The name-sniffing layer is gone; each handler is its own
+  ;; body, which is also what lets the Win16 bridge (09e) call them directly:
+  ;; it has an ordinal, not a name, and so used to reimplement them instead.
+
   ;; 218: lstrlenA
   (func $handle_lstrlenA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $guest_strlen (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 219: lstrcpyA
   (func $handle_lstrcpyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $guest_strcpy (local.get $arg0) (local.get $arg1))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 220: lstrcatA
   (func $handle_lstrcatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $guest_strcpy
+      (i32.add (local.get $arg0) (call $guest_strlen (local.get $arg0)))
+      (local.get $arg1))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 221: lstrcpynA
+  ;; 221: lstrcpynA(dst, src, count) — copies at most count-1 chars.
   (func $handle_lstrcpynA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $guest_strncpy (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 222: lstrcmpA
   (func $handle_lstrcmpA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $guest_strcmp (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 223: RegCloseKey(hKey) — 1 arg stdcall
@@ -4206,29 +4209,42 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 227: LocalAlloc
+  ;; 227-231: the Local* family, formerly routed through $dispatch_local, which
+  ;; picked the operation from name[5]. Local and Global memory are the same
+  ;; heap here, so the pairs are deliberately identical bodies.
+
+  ;; 227: LocalAlloc(uFlags, uBytes)
   (func $handle_LocalAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_alloc (local.get $arg1)))
+    (if (i32.and (local.get $arg0) (i32.const 0x40)) ;; LMEM_ZEROINIT
+      (then (if (global.get $eax)
+              (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 228: LocalFree
   (func $handle_LocalFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $heap_free (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 229: LocalLock
+  ;; 229: LocalLock — handles are pointers here, so locking is the identity.
   (func $handle_LocalLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 230: LocalUnlock
+  ;; 230: LocalUnlock — returns FALSE, meaning the lock count reached zero.
   (func $handle_LocalUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 231: LocalReAlloc
+  ;; 231: LocalReAlloc(hMem, uBytes, uFlags)
   (func $handle_LocalReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_realloc (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; LocalSize(hMem) — LocalAlloc returns a fixed guest pointer whose aligned
@@ -4244,34 +4260,51 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 232: GlobalAlloc
+  ;; 232-237: the Global* family, formerly routed through $dispatch_global,
+  ;; which picked the operation from name[6]. That byte aliased
+  ;; GlobalAddAtomA with GlobalAlloc and GlobalFindAtomA/GlobalFlags with
+  ;; GlobalFree — safe only because those happened to have their own handlers.
+
+  ;; 232: GlobalAlloc(uFlags, dwBytes)
   (func $handle_GlobalAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_alloc (local.get $arg1)))
+    (if (i32.and (local.get $arg0) (i32.const 0x40)) ;; GMEM_ZEROINIT
+      (then (if (global.get $eax)
+              (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 233: GlobalFree
   (func $handle_GlobalFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $heap_free (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 234: GlobalLock
   (func $handle_GlobalLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 235: GlobalUnlock
   (func $handle_GlobalUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 236: GlobalReAlloc
+  ;; 236: GlobalReAlloc(hMem, dwBytes, uFlags)
   (func $handle_GlobalReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_realloc (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 237: GlobalSize
+  ;; 237: GlobalSize — usable bytes, from the four-byte heap header before the
+  ;; block. Same rule as $handle_LocalSize.
   (func $handle_GlobalSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax
+      (i32.sub (call $gl32 (i32.sub (local.get $arg0) (i32.const 4))) (i32.const 4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 238: GlobalCompact — STUB: unimplemented
@@ -4545,7 +4578,8 @@
 
   ;; 250: lstrcmpiA
   (func $handle_lstrcmpiA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $guest_stricmp (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 251: FreeEnvironmentStringsA — no-op (we don't really alloc env strings)

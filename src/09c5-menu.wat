@@ -780,28 +780,6 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=4 (local.get $it)))
 
-  (func $menu_subchild_shortcut_ptr
-        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (param $sidx i32) (result i32)
-    (local $blob i32) (local $it i32) (local $off i32)
-    (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
-    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
-    (local.set $it (call $submenu_item_w
-                     (local.get $blob) (local.get $tidx) (local.get $cidx) (local.get $sidx)))
-    (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
-    (local.set $off (i32.load offset=8 (local.get $it)))
-    (if (i32.eqz (local.get $off)) (then (return (i32.const 0))))
-    (i32.add (local.get $blob) (local.get $off)))
-
-  (func $menu_subchild_shortcut_len
-        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (param $sidx i32) (result i32)
-    (local $blob i32) (local $it i32)
-    (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
-    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
-    (local.set $it (call $submenu_item_w
-                     (local.get $blob) (local.get $tidx) (local.get $cidx) (local.get $sidx)))
-    (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
-    (i32.load offset=12 (local.get $it)))
-
   ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every item in
   ;; one child header, recursing into cascading submenus. Returns the first
   ;; matched item's previous state (MF_CHECKED=8 or MF_UNCHECKED=0), or -1
@@ -2234,23 +2212,6 @@
   (func $menu_track_child_count (result i32)
     (if (i32.eqz (global.get $menu_open_hwnd)) (then (return (i32.const 0))))
     (call $menu_child_count (global.get $menu_open_hwnd) (global.get $menu_open_top)))
-
-  ;; Returns the first non-separator non-grayed child idx in the open
-  ;; dropdown, or -1 (e.g. when nothing is selectable).
-  (func $menu_first_selectable (result i32)
-    (local $n i32) (local $i i32) (local $f i32)
-    (local.set $n (call $menu_track_child_count))
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $f (call $menu_child_flags
-                     (global.get $menu_open_hwnd)
-                     (global.get $menu_open_top)
-                     (local.get $i)))
-      (if (i32.eqz (i32.and (local.get $f) (i32.const 0x03)))
-        (then (return (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (i32.const -1))
 
   (func $menu_sub_track_child_count (result i32)
     (if (i32.eqz (global.get $menu_open_hwnd)) (then (return (i32.const 0))))

@@ -1686,40 +1686,6 @@
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
     (i32.const 0))
 
-  ;; Build a minimal stub dialog with title + "Not implemented yet" static
-  ;; + OK / Cancel. Used by the four common-dialog API handlers below.
-  (func $create_stub_dialog (param $dlg i32) (param $owner i32) (param $title_wa i32)
-    (call $host_register_dialog_frame
-      (local.get $dlg) (local.get $owner)
-      (local.get $title_wa)
-      (i32.const 260) (i32.const 140)
-      (i32.const 1))   ;; isAboutDialog modal flag
-    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
-    (call $title_table_set (local.get $dlg) (local.get $title_wa)
-      (call $strlen (local.get $title_wa)))
-    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
-    (call $defwndproc_do_nccalcsize (local.get $dlg))
-    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
-      (i32.const 13) (i32.const 0))
-    (call $nc_flags_set (local.get $dlg) (i32.const 3))
-    (call $dlg_fill_bkgnd (local.get $dlg))
-    ;; "Not implemented yet" static
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
-            (i32.const 12) (i32.const 20) (i32.const 236) (i32.const 20)
-            (i32.const 0x50000001)  ;; SS_CENTER
-            (call $wat_str_to_heap (i32.const 0x22D) (i32.const 19))))
-    ;; OK button
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
-            (i32.const 40) (i32.const 68) (i32.const 72) (i32.const 24)
-            (i32.const 0x50010001)
-            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
-    ;; Cancel button
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
-            (i32.const 148) (i32.const 68) (i32.const 72) (i32.const 24)
-            (i32.const 0x50010000)
-            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
-
   (func $create_print_dialog (param $dlg i32) (param $owner i32)
     (call $host_register_dialog_frame (local.get $dlg) (local.get $owner)
       (i32.const 0x24C) (i32.const 330) (i32.const 235) (i32.const 1))
@@ -12004,28 +11970,6 @@
       (local.set $prev_w (local.get $w))
       (br $scan)))
     (i32.add (local.get $line_start) (local.get $line_len)))
-
-  ;; Count wrapped visual rows for multiline edit controls that paint through
-  ;; DrawText(DT_WORDBREAK), such as RichEdit license viewers.
-  (func $edit_wrapped_line_count
-        (param $state_w i32) (param $hdc i32) (param $text_len i32) (param $text_w i32) (result i32)
-    (local $buf i32) (local $height i32)
-    (local.set $buf (i32.load (local.get $state_w)))
-    (if (i32.eqz (local.get $buf)) (then (return (i32.const 1))))
-    (if (i32.lt_s (local.get $text_w) (i32.const 8))
-      (then (local.set $text_w (i32.const 8))))
-    (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
-    (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 4))
-    (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $text_w) (i32.const 4)))
-    (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 4))
-    (local.set $height (call $host_gdi_draw_text (local.get $hdc)
-      (call $g2w (local.get $buf))
-      (local.get $text_len)
-      (global.get $PAINT_SCRATCH)
-      (i32.const 0x410) (i32.const 0))) ;; DT_CALCRECT | DT_WORDBREAK
-    (local.set $height (i32.div_u (i32.add (local.get $height) (i32.const 15)) (i32.const 16)))
-    (if (i32.eqz (local.get $height)) (then (return (i32.const 1))))
-    (local.get $height))
 
   ;; Word-boundary classification: 1 if $ch is part of a word (alnum/underscore),
   ;; else 0. Matches Win32 default word break for ASCII.

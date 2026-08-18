@@ -1334,29 +1334,6 @@
     (i32.const 0)
   )
 
-  ;; Navigate through canonical WAT topics (0 retains the legacy Contents
-  ;; button convention; positive values are one-based canonical indexes).
-  (func $help_navigate (param $index i32)
-    (local $accepted i32) (local $topic_index i32) (local $record i32)
-    (if (i32.eqz (local.get $index))
-      (then
-        (local.set $accepted (call $help_dispatch_loaded
-          (global.get $help_session_owner)
-          (global.get $HELP_COMMAND_CONTENTS) (i32.const 0)))
-        (call $help_present_dispatch
-          (local.get $accepted) (global.get $HELP_COMMAND_CONTENTS))
-        (return)))
-    (local.set $topic_index (i32.sub (local.get $index) (i32.const 1)))
-    (if (i32.ge_u (local.get $topic_index) (global.get $help_doc_topic_count))
-      (then (return)))
-    (local.set $record (i32.add (global.get $help_doc_topics_wa)
-      (i32.mul (local.get $topic_index) (global.get $HELP_TOPIC_SIZE))))
-    (local.set $accepted (call $help_session_commit_topic
-      (global.get $help_session_owner) (i32.const 0)
-      (i32.load (local.get $record)) (i32.const 1)))
-    (call $help_present_dispatch (local.get $accepted) (i32.const 0))
-  )
-
   ;; Go back in navigation history
   (func $help_go_back
     (local $prev i32) (local $stack_ptr i32) (local $record i32)
