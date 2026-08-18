@@ -110,11 +110,14 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `09a4-handlers-gdi.wat` | GDI API handlers (SelectObject, pens, brushes, BitBlt, text) |
 | `09a5-handlers-window.wat` | Window creation & message dispatch (CreateWindowExA, GetMessage, etc.) |
 | `09a6-handlers-crt.wat` | C runtime/string handlers (strlen, strcmp, _mbschr, etc.) |
-| `09a7-handlers-dispatch.wat` | Sub-dispatchers (Local*, Global*, lstr*, Reg*) + misc handlers |
+| `09a7-handlers-dispatch.wat` | Late-added misc handlers (shell, version, file, key/prop, atoms, setupapi) |
+| `09a7b-ole.wat` | OLE/COM: ROT, monikers, bind contexts, IFont, structured storage, IDataObject/clipboard, IOleObject/IOleCache/IViewObject |
+| `09a7c-mixer.wat` | WINMM mixer handlers (mixerOpen/GetLineInfo/GetControlDetails and A/W pairs) |
 | `09d-winsock.wat` | Virtual LAN Winsock core — socket table, in-process switch, and the `vln/1` frame wire that joins two emulator processes into one room |
 | `09b-dispatch.wat` | Manual dispatch helpers |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
-| `09c-help.wat` | Window table, class table, WAT-native help system |
+| `09c-help.wat` | WAT-native help system |
+| `09c0-window-table.wat` | WND_RECORDS + accessors, per-slot parallel tables, GWL/cbWndExtra, dialog state, class table, `$wat_wndproc_dispatch`, focus |
 | `10-helpers.wat` | String/memory helpers, heap allocator, resource walker, window/paint/clipboard helpers |
 | `10d-gdi-region-path.wat` | GDI regions (allocator + polygon scan-converter), path engine (record/flatten/widen/stroke), DC clipping, object allocator |
 | `10e-gdi-metafile.wat` | GDI palettes, WMF/EMF recorder and player, bitmap objects |
