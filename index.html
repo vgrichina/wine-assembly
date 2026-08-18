@@ -706,6 +706,22 @@ Resource-aware Win98 emulator
       }
     }
 
+    // One segment for every instance in this tab that chose "both players
+    // here". It is the same wire the RTC lobby hands back, minus the network:
+    // LoopbackSegment broadcasts each frame to every other endpoint, and the
+    // room switch in WAT does the addressing exactly as it does over WebRTC.
+    // Sequential addresses are safe because this segment reaches nobody else.
+    let pageSegment = null;
+    let nextLocalHost = 1;
+    function joinPageSegment() {
+      if (!pageSegment) pageSegment = new VlanWire.LoopbackSegment();
+      return {
+        wire: pageSegment.attach(),
+        address: `10.77.0.${nextLocalHost++}`,
+        local: true,
+      };
+    }
+
     function unregisterRunningApp(wine) {
       const index = runningApps.findIndex(running => running && running.wine === wine);
       if (index >= 0) runningApps.splice(index, 1);
@@ -744,6 +760,7 @@ Resource-aware Win98 emulator
       ['mspaint98',   'Paint',       '\u{1F3A8}'],
       ['freecell',    'FreeCell',    '\u{1F0CF}'],
       ['sol',         'Solitaire',   '\u{2660}'],
+      ['mshearts16',  'Hearts',      '\u{2665}'],
       ['cruel',       'Cruel',       '\u{1F0A1}'],
       ['golf',        'Golf',        '\u{26F3}'],
       ['pegged',      'Pegged',      '\u{1F3AF}'],
@@ -1444,7 +1461,20 @@ Resource-aware Win98 emulator
       winmine16:  { exe: 'binaries/win98-16bit/WINMINE.EXE' },
       freecell16: { exe: 'binaries/win98-16bit/FREECELL.EXE' },
       sol16:      { exe: 'binaries/win98-16bit/SOL.EXE' },
-      mshearts16: { exe: 'binaries/win98-16bit/MSHEARTS.EXE' },
+      mshearts16: {
+        exe: 'binaries/win98-16bit/MSHEARTS.EXE',
+        // Hearts is a NetDDE game: one player deals, the others join the
+        // table. It never names a machine on the wire — the conversation is
+        // opened by broadcast on the segment — so unlike Liquid War there is
+        // no address for anyone to type in.
+        lan: {
+          exe: 'MSHEARTS.EXE',
+          label: 'Hearts',
+          local: true,
+          hint: 'One of you picks “I want to be the dealer”, the other picks '
+            + '“I want to connect to another game” and types any name.',
+        },
+      },
       mspaint98: { exe: 'binaries/mspaint.exe', files: helpFiles('mspaint') },
       notepad98: { exe: 'binaries/win98-apps/notepad98.exe', files: helpFiles('notepad') },
       wordpad:   {
@@ -2388,27 +2418,22 @@ Resource-aware Win98 emulator
         if (!DEBUG_MODE) sharedRenderer.transparentDesktop = true;
       }
 
-      // The CLI harness creates a fresh renderer for every run. The browser
-      // intentionally shares one renderer so multiple apps can coexist, but
-      // relaunching the same app must not leave stale back-canvases or old
-      // wasm bindings around; those make the web view disagree with CLI PNGs.
-      for (let i = runningApps.length - 1; i >= 0; i--) {
-        const running = runningApps[i];
-        if (!running || running.name !== sel) continue;
-        stopRunningApp(running, false);
-      }
-      sharedRenderer.repaint();
-
       // A LAN-capable app asks who else is out there before it boots. The
       // wire and the room address have to be in place before init(), because
       // host imports capture them at instantiate time and the guest may bind
       // a socket on its first slice.
+      //
+      // This runs before the same-app cleanup below because its answer decides
+      // whether that cleanup should happen at all: "both players here" is a
+      // second copy of the very app being relaunched.
       let lanLink = null;
       if (app.lan && window.VlanLobby) {
         try {
           lanLink = await VlanLobby.showLobby({
             exe: app.lan.exe || sel,
             label: app.lan.label || sel,
+            localPlay: app.lan.local !== false,
+            hint: app.lan.hint,
           });
         } catch (e) {
           console.error('[lan] lobby failed:', e);
@@ -2417,11 +2442,29 @@ Resource-aware Win98 emulator
           log.textContent += `Launch of ${sel} cancelled.\n`;
           return;
         }
+        if (lanLink && lanLink.local) lanLink = joinPageSegment();
         if (lanLink && lanLink.wire) {
-          log.textContent += `LAN: connected to ${lanLink.peer && lanLink.peer.name}`
-            + ` — you are ${lanLink.address}\n`;
+          const who = lanLink.peer && lanLink.peer.name
+            ? `connected to ${lanLink.peer.name}`
+            : 'on this tab’s own segment';
+          log.textContent += `LAN: ${who} — you are ${lanLink.address}\n`;
         }
       }
+
+      // The CLI harness creates a fresh renderer for every run. The browser
+      // intentionally shares one renderer so multiple apps can coexist, but
+      // relaunching the same app must not leave stale back-canvases or old
+      // wasm bindings around; those make the web view disagree with CLI PNGs.
+      // A local LAN launch is the one case where two copies of one app are
+      // the point, so it keeps whatever is already running.
+      if (!(lanLink && lanLink.local)) {
+        for (let i = runningApps.length - 1; i >= 0; i--) {
+          const running = runningApps[i];
+          if (!running || running.name !== sel) continue;
+          stopRunningApp(running, false);
+        }
+      }
+      sharedRenderer.repaint();
 
       wine = new WineAssembly();
       wine.onStopped = unregisterRunningApp;
