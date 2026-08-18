@@ -182,6 +182,7 @@ E2E=(
   test/test-win16-solitaire-play.js
   test/test-win16-minesweeper-smiley.js
   test/test-win16-hearts-menus.js
+  test/test-win16-hearts-vlan.js
   test/test-win16-dde-room.js
   test/test-win16-dde-connect-callback.js
   test/test-sysmon-perfstats.js

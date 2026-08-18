@@ -118,6 +118,10 @@ const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileS
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (NE) API call and its result
+// --trace-win16=dde: only the DDEML offers and answers. The full trace is
+// large enough to change the timing of anything involving two processes, so a
+// race between two emulators in one room needs the quiet version.
+const TRACE_WIN16_DDE = (getArg('trace-win16', '') || '').split(',').includes('dde');
 const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
 // --vlan-ip=10.77.0.2: this process's room address (host of the room keeps
 // 10.77.0.1). --vlan-wire joins the segment offered by the parent process
@@ -127,7 +131,20 @@ const VLAN_WIRE = hasFlag('vlan-wire');
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
+// Released by { t: 'go' } from the parent process; `B:wait-go` in --input holds
+// every later scheduled event until one arrives. The IPC channel is the one the
+// vlan wire already uses, and ProcessWire ignores anything that is not a frame,
+// so the two listeners do not collide.
+//
+// Counted rather than latched, and each wait consumes one: a run with two
+// `wait-go` points is asking to be released twice, and a latch would let the
+// first signal fall through both of them.
+let goPending = 0;
+if (process.send) {
+  process.on('message', (msg) => { if (msg && msg.t === 'go') goPending++; });
+}
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
+const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
 const CLOCK_ORIGIN = Date.now();
 // --trace-sched[=N]: one compact line whenever what the threads are doing
 // changes, plus a heartbeat every N batches (default 5000) so a stall shows up
@@ -537,6 +554,7 @@ async function main() {
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:wait-focus-length:MIN_LENGTH[:LIMIT] — delay until focused text reaches MIN_LENGTH
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
+  //   B:wait-go[:LIMIT] — hold later events until the parent sends {t:'go'} over IPC (LIMIT in batches; default none)
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
   //   B:read-dword:ADDR[:LABEL] — log a guest dword value
   const scheduledInput = [];
@@ -776,6 +794,30 @@ async function main() {
           action: 'wait-focus-length',
           minLength: parseInt(parts[2]) || 1,
           limit: parseInt(parts[3]) || 2000,
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-go') {
+        // B:wait-go[:LIMIT] — hold this event and every later one until the
+        // parent process sends { t: 'go' } over the child IPC channel.
+        //
+        // Batch numbers are a per-process clock, and two emulator processes do
+        // not keep the same time: in the Hearts room the dealer covered 65000
+        // batches while the client covered 18000, so "deal at batch 40000" fired
+        // twenty seconds before the player it was meant to wait for had joined.
+        // Anything where one side must act only after something has happened on
+        // the other needs a signal rather than an estimate.
+        // No limit unless one is asked for, and this is the one default that
+        // must NOT be a batch count. The signal arrives on the wall clock,
+        // from another process; batches are not time, and an idle Win16 app
+        // burns two hundred thousand of them in under three seconds. A
+        // "generous" ceiling here silently released the wait and let a Hearts
+        // dealer deal before its player had finished joining -- which then
+        // looks exactly like a protocol fault on the other side. --max-batches
+        // still bounds the run.
+        scheduledInput.push({
+          batch,
+          action: 'wait-go',
+          limit: parts[2] !== undefined ? parseInt(parts[2]) || 0 : 0,
           startBatch: batch,
         });
       } else if (kind === 'open-dlg-pick') {
@@ -1678,7 +1720,10 @@ async function main() {
         return;
       }
       if (isDdeAns) {
-        logs.push(`[win16] dde answer ${words[0] ? 'ACCEPT' : 'REFUSE'} conv=${words[1]}`);
+        // The value, not just yes/no: DDE_FBUSY ("ask me again") and DDE_FACK
+        // are both non-zero and mean opposite things to whoever is waiting.
+        logs.push(`[win16] dde answer ${words[0] ? 'ACCEPT' : 'REFUSE'}`
+          + `${(words[0] & 0x4000) ? ' BUSY' : ''} ret=${hex(words[0])} conv=${words[1]}`);
         return;
       }
       if (isPosted) {
@@ -1922,7 +1967,16 @@ async function main() {
   const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
   const tickState = { batch: 0, callsInBatch: 0 };
   ctx.sharedAudio.audioClockMs = () => tickState.batch * 200;
-  h.get_ticks = () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
+  // --real-ticks hands the guest the wall clock instead. Two emulator
+  // processes in one room CANNOT share a batch-driven clock: a batch is not a
+  // unit of time and each process runs them at its own rate, so an idle Hearts
+  // dealer at fourteen thousand batches a second believes about forty-five
+  // minutes pass every real second, while the client working through a dialog
+  // believes far less. Anything either of them decides by elapsed time is then
+  // decided against a clock the other does not share.
+  h.get_ticks = REAL_TICKS
+    ? () => ((((Date.now() - CLOCK_ORIGIN) * TIME_SCALE) | 0) & 0x7FFFFFFF)
+    : () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -2847,6 +2901,9 @@ async function main() {
   // zero cost in the hot path.
   if (TRACE_CALLSTACK && instance.exports.set_callstack_enabled) {
     instance.exports.set_callstack_enabled(1);
+  }
+  if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
+    instance.exports.set_win16_dde_trace(1);
   }
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
@@ -4803,6 +4860,15 @@ async function main() {
           deferScheduledWait(ev, batch);
         } else {
           logs.push(`[input] wait-focus-length: TIMEOUT len=${len} min=${ev.minLength} at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-go') {
+        if (goPending > 0) {
+          goPending--;
+          logs.push(`[input] wait-go: released at batch ${batch}`);
+        } else if (!ev.limit || batch - (ev.startBatch || batch) < ev.limit) {
+          deferScheduledWait(ev, batch);
+        } else {
+          logs.push(`[input] wait-go: TIMEOUT at batch ${batch}`);
         }
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.

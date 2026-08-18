@@ -4640,6 +4640,13 @@
   (func (export "win16_api_count") (result i32) (global.get $win16_api_calls))
 
   (func (export "set_win16_trace") (param $on i32) (global.set $win16_trace (local.get $on)))
+  ;; The DDE offers and answers on their own, without the API call/return and
+  ;; message-pump lines around them. Those are hundreds of megabytes on a run
+  ;; of any length, and they are also SLOW ENOUGH TO CHANGE THE ANSWER: two
+  ;; emulators in one room race each other, and a race that only appears when
+  ;; the trace is off cannot be read with the trace on.
+  (func (export "set_win16_dde_trace") (param $on i32)
+    (global.set $win16_dde_trace (local.get $on)))
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))
   (func (export "win16_last_ordinal") (result i32) (global.get $win16_last_ordinal))
   (func (export "win16_last_is_name") (result i32) (global.get $win16_last_is_name))
