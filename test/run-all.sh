@@ -3,7 +3,8 @@
 # them sequentially, printing a summary at the end.
 #
 # Usage:
-#   test/run-all.sh            # everything
+#   test/run-all.sh            # everything, CPU-count tests at a time
+#   test/run-all.sh quick -j4  # cap the parallelism (JOBS=4 works too)
 #   test/run-all.sh unit       # only unit (in-process WASM, fast)
 #   test/run-all.sh e2e        # only e2e (spawns test/run.js per case)
 #   test/run-all.sh smoke      # only smoke matrix (all-exes, dialogs)
@@ -16,7 +17,22 @@
 set -u
 cd "$(dirname "$0")/.."
 
-TIER="${1:-all}"
+# Args in any order: the tier name, plus -jN / --jobs=N / --heap=MB.
+TIER=all
+for a in "$@"; do
+  case "$a" in
+    -j*)        JOBS="${a#-j}" ;;
+    --jobs=*)   JOBS="${a#--jobs=}" ;;
+    --heap=*)   TEST_HEAP_MB="${a#--heap=}" ;;
+    -h|--help)
+      echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB]"
+      echo "  -jN / --jobs=N   tests to run at once (default: CPU count; env JOBS also works)"
+      echo "  --heap=MB        per-child JS heap cap (default 2048; env TEST_HEAP_MB)"
+      exit 0 ;;
+    -*)         echo "unknown option: $a" >&2; exit 2 ;;
+    *)          TIER="$a" ;;
+  esac
+done
 
 UNIT=(
   test/test-x86-ops.js
@@ -225,6 +241,22 @@ SMOKE=(
 LOG_ROOT=test/output/run-all
 mkdir -p "$LOG_ROOT"
 
+# Each test is its own node process with its own 128MB WASM memory, so the tier
+# is embarrassingly parallel and was running one at a time on an 8-core box.
+#   -jN / --jobs=N or JOBS=N     how many at once (default: CPU count)
+#   --heap=MB or TEST_HEAP_MB    per-child JS heap cap (default 2048). The
+#                 guest's 128MB WASM memory lives outside this cap, so it is
+#                 about keeping N children from collectively swapping, not
+#                 about how much memory the emulated app can have.
+if [ -z "${JOBS:-}" ]; then
+  if command -v sysctl >/dev/null 2>&1; then JOBS=$(sysctl -n hw.ncpu 2>/dev/null)
+  elif command -v nproc >/dev/null 2>&1; then JOBS=$(nproc)
+  fi
+  JOBS=${JOBS:-4}
+fi
+TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
+
+# bash 3.2 (what macOS ships) has no `wait -n`, so slots are polled.
 run_tier() {
   local tier_name="$1"; shift
   local files=("$@")
@@ -232,22 +264,61 @@ run_tier() {
   mkdir -p "$log_dir"
   local passed=0 failed=0
   local fail_list=()
-  echo "=== $tier_name (${#files[@]} files) ==="
+  echo "=== $tier_name (${#files[@]} files, ${JOBS} at a time) ==="
   local start_tier=$SECONDS
-  for f in "${files[@]}"; do
-    local name
-    name=$(basename "$f" .js)
-    local log="$log_dir/$name.log"
-    local start=$SECONDS
-    if node "$f" >"$log" 2>&1; then
-      printf "PASS  %-40s  %3ds\n" "$name" "$((SECONDS - start))"
-      passed=$((passed + 1))
-    else
-      printf "FAIL  %-40s  %3ds  %s\n" "$name" "$((SECONDS - start))" "$log"
-      failed=$((failed + 1))
-      fail_list+=("$name")
-    fi
+
+  local slot_pid=() slot_name=() slot_log=() slot_start=()
+  local i=0
+  while [ $i -lt "$JOBS" ]; do slot_pid[$i]=""; i=$((i + 1)); done
+
+  # Never leave children behind if the runner is interrupted.
+  trap 'for p in "${slot_pid[@]}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done; exit 130' INT TERM
+
+  local next=0 running=0
+  local total=${#files[@]}
+  while [ $next -lt "$total" ] || [ $running -gt 0 ]; do
+    # Fill free slots.
+    i=0
+    while [ $i -lt "$JOBS" ] && [ $next -lt "$total" ]; do
+      if [ -z "${slot_pid[$i]}" ]; then
+        local f="${files[$next]}"
+        local name; name=$(basename "$f" .js)
+        slot_name[$i]="$name"
+        slot_log[$i]="$log_dir/$name.log"
+        slot_start[$i]=$SECONDS
+        NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$TEST_HEAP_MB" \
+          node "$f" >"${slot_log[$i]}" 2>&1 &
+        slot_pid[$i]=$!
+        running=$((running + 1))
+        next=$((next + 1))
+      fi
+      i=$((i + 1))
+    done
+    # Reap whatever finished.
+    local reaped=0
+    i=0
+    while [ $i -lt "$JOBS" ]; do
+      local pid="${slot_pid[$i]}"
+      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        local status=0
+        wait "$pid" || status=$?
+        if [ $status -eq 0 ]; then
+          printf "PASS  %-40s  %3ds\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))"
+          passed=$((passed + 1))
+        else
+          printf "FAIL  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))" "${slot_log[$i]}"
+          failed=$((failed + 1))
+          fail_list+=("${slot_name[$i]}")
+        fi
+        slot_pid[$i]=""
+        running=$((running - 1))
+        reaped=1
+      fi
+      i=$((i + 1))
+    done
+    [ $reaped -eq 0 ] && [ $running -gt 0 ] && sleep 0.2
   done
+  trap - INT TERM
   echo "--- $tier_name: $passed passed, $failed failed in $((SECONDS - start_tier))s"
   if [ ${#fail_list[@]} -gt 0 ]; then
     TOTAL_FAILS+=("${fail_list[@]}")
