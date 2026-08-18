@@ -2545,6 +2545,49 @@
   (func (export "test_dde_conv_state") (param $conv i32) (result i32)
     (i32.load (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))))
 
+  ;; A data handle holding known bytes, so a server's callback has something
+  ;; real to answer a request with and the test can check what crossed.
+  (func (export "test_dde_make_data") (param $ga i32) (param $len i32) (result i32)
+    (call $win16_dde_data_take (call $g2w (local.get $ga)) (local.get $len)))
+  (func (export "test_dde_data_len") (param $h i32) (result i32)
+    (if (i32.ge_u (i32.sub (local.get $h) (i32.const 0x100)) (i32.const 16))
+      (then (return (i32.const -1))))
+    (i32.load offset=4 (call $win16_dde_data_slot
+      (i32.sub (local.get $h) (i32.const 0x100)))))
+  (func (export "test_dde_data_byte") (param $h i32) (param $i i32) (result i32)
+    (i32.load8_u (i32.add (i32.add (call $win16_dde_data_slot
+      (i32.sub (local.get $h) (i32.const 0x100))) (i32.const 8)) (local.get $i))))
+
+  ;; The client half of DdeClientTransaction(XTYP_REQUEST) without the park,
+  ;; so a test can drive both machines by hand. The parking itself is the same
+  ;; $win16_dde_park the connect test already covers.
+  (func (export "test_dde_xact_begin") (param $conv i32) (param $item i32) (result i32)
+    (local $pend i32) (local $wa i32) (local $len i32)
+    (if (i32.ne (i32.load (call $win16_dde_conv_slot
+          (i32.sub (local.get $conv) (i32.const 1)))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (local.set $pend (call $win16_dde_pending_slot))
+    (i32.store (local.get $pend) (i32.const 1))
+    (i32.store offset=4  (local.get $pend) (i32.const 0))
+    (i32.store offset=8  (local.get $pend) (local.get $conv))
+    (i32.store offset=12 (local.get $pend) (i32.const 0))
+    (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
+    (i32.store offset=20 (local.get $pend) (i32.const 0))
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    (local.set $len (call $win16_dde_put_hsz
+      (local.get $wa) (global.get $DDE_HDR) (local.get $item)))
+    (call $win16_dde_emit (i32.const 4) (local.get $conv)
+      (i32.load offset=12 (call $win16_dde_conv_slot
+        (i32.sub (local.get $conv) (i32.const 1))))
+      (i32.sub (local.get $len) (global.get $DDE_HDR))))
+  ;; 0 while still waiting, else the handle the far application answered with.
+  (func (export "test_dde_xact_done") (result i32)
+    (local $pend i32)
+    (local.set $pend (call $win16_dde_pending_slot))
+    (if (i32.eqz (i32.load offset=12 (local.get $pend))) (then (return (i32.const 0))))
+    (i32.load offset=20 (local.get $pend)))
+
   (func (export "test_dde_register") (param $inst i32) (param $hsz i32)
     (i32.store (call $win16_dde_service_slot
                  (i32.sub (local.get $inst) (i32.const 1))) (local.get $hsz)))

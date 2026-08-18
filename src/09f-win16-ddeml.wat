@@ -54,15 +54,18 @@
     (i32.add (call $win16_dde_base)
              (i32.add (i32.const 0x9140) (i32.mul (local.get $i) (i32.const 4)))))
 
-  ;; 8 conversations of {used, inst, peer_tag, peer_conv, is_server}.
+  ;; 8 conversations of {used, inst, peer_tag, peer_conv, is_server, topic}.
+  ;; The topic is kept because a later transaction on this conversation has to
+  ;; tell the application which one it is about: XTYP_REQUEST hands the callback
+  ;; the topic and the item, and only the conversation remembers the topic.
   (func $win16_dde_conv_slot (param $i i32) (result i32)
     (i32.add (call $win16_dde_base)
-             (i32.add (i32.const 0xD000) (i32.mul (local.get $i) (i32.const 20)))))
+             (i32.add (i32.const 0xD000) (i32.mul (local.get $i) (i32.const 24)))))
 
-  ;; The one connect this instance is waiting on:
-  ;; {active, started_ticks, conv, answered}. DdeConnect is synchronous to its
-  ;; caller and a task has exactly one such call outstanding, so one slot is
-  ;; the whole of it.
+  ;; The one call this instance is waiting on:
+  ;; {active, started_ms, conv, answered, kind, result}. DdeConnect and
+  ;; DdeClientTransaction are both synchronous to their caller and a task has
+  ;; exactly one such call outstanding, so one slot is the whole of it.
   (func $win16_dde_pending_slot (result i32)
     (i32.add (call $win16_dde_base) (i32.const 0xD100)))
 
@@ -78,11 +81,46 @@
           (i32.store offset=8 (local.get $slot) (i32.const 0))
           (i32.store offset=12 (local.get $slot) (i32.const 0))
           (i32.store offset=16 (local.get $slot) (local.get $is_server))
+          (i32.store offset=20 (local.get $slot) (i32.const 0))
           ;; Handles are 1-based: zero is "no conversation" to every caller.
           (return (i32.add (local.get $i) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  ;; Which of our conversations is the far end (tag, their handle) talking to?
+  (func $win16_dde_conv_find (param $tag i32) (param $peer_conv i32) (result i32)
+    (local $i i32) (local $slot i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (local.set $slot (call $win16_dde_conv_slot (local.get $i)))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $slot)) (i32.const 1))
+            (i32.and (i32.eq (i32.load offset=8 (local.get $slot)) (local.get $tag))
+                     (i32.eq (i32.load offset=12 (local.get $slot))
+                             (local.get $peer_conv))))
+        (then (return (i32.add (local.get $i) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Take bytes off the wire into a data handle, the shape DdeGetData reads.
+  (func $win16_dde_data_take (param $wa i32) (param $len i32) (result i32)
+    (local $i i32) (local $slot i32)
+    (if (i32.gt_u (local.get $len) (i32.const 512))
+      (then (local.set $len (i32.const 512))))
+    (block $found (loop $scan
+      (br_if $found (i32.ge_u (local.get $i) (i32.const 16)))
+      (br_if $found (i32.eqz (i32.load (call $win16_dde_data_slot (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.ge_u (local.get $i) (i32.const 16)) (then (return (i32.const 0))))
+    (local.set $slot (call $win16_dde_data_slot (local.get $i)))
+    (i32.store (local.get $slot) (i32.const 1))
+    (i32.store offset=4 (local.get $slot) (local.get $len))
+    (memory.copy (i32.add (local.get $slot) (i32.const 8))
+                 (local.get $wa) (local.get $len))
+    (i32.add (local.get $i) (i32.const 0x100)))
 
   ;; ---- Asking the server whether it wants the conversation ----
   ;;
@@ -110,6 +148,13 @@
 
   ;; DDEML transaction types, as the callback is entitled to see them.
   (global $XTYP_CONNECT i32 (i32.const 0x1062))
+  (global $XTYP_REQUEST i32 (i32.const 0x20B0))
+
+  ;; What the one outstanding wait is for. A task has at most one synchronous
+  ;; DDEML call in flight, so connect and transaction share the slot and this
+  ;; says which is parked on it.
+  (global $DDE_WAIT_CONNECT i32 (i32.const 1))
+  (global $DDE_WAIT_XACT i32 (i32.const 2))
 
   (func $win16_dde_ask_push (param $type i32) (param $inst i32) (param $conv i32)
                             (param $hsz1 i32) (param $hsz2 i32) (result i32)
@@ -197,10 +242,36 @@
   ;; The callback has answered. Act on it, then let the pump call it was taken
   ;; out of return an idle message, so the task's loop carries on undisturbed.
   (func $win16_dde_ask_finish (param $result i32)
-    (local $slot i32) (local $conv i32)
+    (local $slot i32) (local $conv i32) (local $type i32) (local $data i32)
     (if (i32.lt_s (global.get $win16_dde_cb_item) (i32.const 0)) (then (return)))
     (local.set $slot (call $win16_dde_ask_slot (global.get $win16_dde_cb_item)))
     (local.set $conv (i32.load offset=12 (local.get $slot)))
+    (local.set $type (i32.load offset=4 (local.get $slot)))
+
+    ;; A request is answered with data rather than with yes or no: the callback
+    ;; hands back an HDDEDATA, and its bytes are what goes on the wire. A zero
+    ;; handle means the application declined this item, and the client's
+    ;; transaction is left to time out — the same thing an unanswered request
+    ;; does on Windows.
+    (if (i32.eq (local.get $type) (global.get $XTYP_REQUEST))
+      (then
+        (i32.store (local.get $slot) (i32.const 0))
+        (global.set $win16_dde_cb_item (i32.const -1))
+        (if (global.get $win16_trace)
+          (then
+            (call $host_log_i32 (i32.const 0xCA16A9E8))
+            (call $host_log_i32 (local.get $result))
+            (call $host_log_i32 (local.get $conv))))
+        (if (i32.eqz (local.get $result)) (then (return)))
+        (local.set $data (i32.sub (local.get $result) (i32.const 0x100)))
+        (if (i32.ge_u (local.get $data) (i32.const 16)) (then (return)))
+        (local.set $data (call $win16_dde_data_slot (local.get $data)))
+        (drop (call $win16_dde_emit_bytes (i32.const 5) (local.get $conv)
+          (i32.load offset=12 (call $win16_dde_conv_slot
+            (i32.sub (local.get $conv) (i32.const 1))))
+          (i32.add (local.get $data) (i32.const 8))
+          (i32.load offset=4 (local.get $data))))
+        (return)))
     (if (global.get $win16_trace)
       (then
         (call $host_log_i32 (i32.const 0xCA16A9E8))
@@ -210,10 +281,13 @@
     (global.set $win16_dde_cb_item (i32.const -1))
     (if (local.get $result)
       (then
-        ;; Accepted: the tentative conversation becomes a real one and the
-        ;; client is told which handle answered it.
+        ;; Accepted: the tentative conversation becomes a real one, remembers
+        ;; the topic it is about, and the client is told which handle answered.
         (i32.store (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))
                    (i32.const 1))
+        (i32.store offset=20 (call $win16_dde_conv_slot
+          (i32.sub (local.get $conv) (i32.const 1)))
+          (i32.load offset=16 (local.get $slot)))
         (drop (call $win16_dde_emit (i32.const 2) (local.get $conv)
           (i32.load offset=12 (call $win16_dde_conv_slot
             (i32.sub (local.get $conv) (i32.const 1)))) (i32.const 0))))
@@ -234,7 +308,8 @@
   ;;   +20 payload length
   ;;
   ;; Types: 1 CONNECT (payload is service\0topic\0), 2 CONNECT_ACK,
-  ;;        3 DISCONNECT.
+  ;;        3 DISCONNECT, 4 REQUEST (payload is the item name),
+  ;;        5 DATA (payload is the bytes the server answered with).
   ;;
   ;; `src_tag` names the instance, and comes from the same room address the
   ;; virtual LAN uses — so anything hosting two instances has to give them
@@ -379,6 +454,21 @@
       (br $next)))
     (i32.const 0))
 
+  ;; Emit with a payload copied from somewhere else in WASM memory, for the
+  ;; cases where the bytes are not already sitting in the frame buffer.
+  (func $win16_dde_emit_bytes (param $type i32) (param $src_conv i32)
+                              (param $dst_conv i32) (param $src i32) (param $len i32)
+                              (result i32)
+    (local $wa i32)
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $len) (global.get $DDE_MAX_PAYLOAD))
+      (then (local.set $len (global.get $DDE_MAX_PAYLOAD))))
+    (memory.copy (i32.add (local.get $wa) (global.get $DDE_HDR))
+                 (local.get $src) (local.get $len))
+    (call $win16_dde_emit (local.get $type) (local.get $src_conv)
+      (local.get $dst_conv) (local.get $len)))
+
   (func $win16_dde_emit (param $type i32) (param $src_conv i32) (param $dst_conv i32)
                         (param $len i32) (result i32)
     (local $wa i32)
@@ -480,6 +570,40 @@
         ;; DdeConnect finish on its next entry.
         (i32.store (i32.add (call $win16_dde_pending_slot) (i32.const 12))
                    (i32.const 1))
+        (return)))
+
+    ;; A client is asking this conversation for an item. Only the application
+    ;; knows the answer, so this is queued for the pump exactly as a connect is.
+    (if (i32.eq (local.get $type) (i32.const 4))
+      (then
+        (local.set $conv (call $win16_dde_conv_find
+          (local.get $tag) (local.get $src_conv)))
+        (if (i32.eqz (local.get $conv)) (then (return)))
+        (local.set $slot (call $win16_dde_conv_slot
+          (i32.sub (local.get $conv) (i32.const 1))))
+        ;; hsz1 is the topic and hsz2 the item, which is the order
+        ;; XTYP_REQUEST hands them to the callback.
+        (drop (call $win16_dde_ask_push (global.get $XTYP_REQUEST)
+          (i32.load offset=4 (local.get $slot)) (local.get $conv)
+          (i32.load offset=20 (local.get $slot))
+          (call $win16_dde_hsz_intern_wa
+            (i32.add (local.get $wa) (global.get $DDE_HDR)))))
+        (return)))
+
+    ;; The server has answered the transaction this task is parked on.
+    (if (i32.eq (local.get $type) (i32.const 5))
+      (then
+        (local.set $slot (call $win16_dde_pending_slot))
+        (if (i32.eqz (i32.load (local.get $slot))) (then (return)))
+        (if (i32.ne (i32.load offset=16 (local.get $slot))
+                    (global.get $DDE_WAIT_XACT)) (then (return)))
+        (if (i32.ne (local.get $dst_conv) (i32.load offset=8 (local.get $slot)))
+          (then (return)))
+        (i32.store offset=20 (local.get $slot)
+          (call $win16_dde_data_take
+            (i32.add (local.get $wa) (global.get $DDE_HDR))
+            (i32.load offset=20 (local.get $wa))))
+        (i32.store offset=12 (local.get $slot) (i32.const 1))
         (return)))
 
     ;; The peer has gone. Close whichever conversation names it.
@@ -712,6 +836,8 @@
     (i32.store offset=4  (local.get $pend) (call $host_real_time_ms))
     (i32.store offset=8  (local.get $pend) (local.get $conv))
     (i32.store offset=12 (local.get $pend) (i32.const 0))
+    (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_CONNECT))
+    (i32.store offset=20 (local.get $pend) (i32.const 0))
 
     ;; Put the request on the wire before parking, so the room has something
     ;; to answer on the very first pass.
@@ -727,22 +853,28 @@
         (drop (call $win16_dde_emit (i32.const 1) (local.get $conv) (i32.const 0)
           (i32.sub (local.get $len) (global.get $DDE_HDR))))))
 
-    ;; Take the call apart the way the modal message box does: remember the far
-    ;; return, drop the whole frame, and park EIP on a slot the run loop will
-    ;; re-enter. Every pass then belongs to $win16_dde_pump_step, which splices
-    ;; the call back together once the room has answered.
-    ;;
-    ;; It must be done this way round. A Win16 thunk call is dispatched from
-    ;; $win16_far_transfer with EIP ALREADY past the call, so an API that
-    ;; simply declines to return does not get re-entered — it falls through to
-    ;; its caller with the arguments still on the stack. Hearts calls
-    ;; DdeConnect from a retry loop, so that leaked twenty bytes per attempt
-    ;; and the trace showed ESP walking down while nothing waited at all.
+    (call $win16_dde_park (i32.const 16)))
+
+  ;; Take the call apart the way the modal message box does: remember the far
+  ;; return, drop the whole frame, and park EIP on a slot the run loop will
+  ;; re-enter. Every pass then belongs to $win16_dde_pump_step, which splices
+  ;; the call back together once the room has answered. `argbytes` is what the
+  ;; caller pushed, so the frame to drop is that plus the saved CS:IP.
+  ;;
+  ;; It must be done this way round. A Win16 thunk call is dispatched from
+  ;; $win16_far_transfer with EIP ALREADY past the call, so an API that simply
+  ;; declines to return does not get re-entered — it falls through to its
+  ;; caller with the arguments still on the stack. Hearts calls DdeConnect from
+  ;; a retry loop, so that leaked twenty bytes per attempt and the trace showed
+  ;; ESP walking down while nothing waited at all.
+  (func $win16_dde_park (param $argbytes i32)
+    (local $ip i32) (local $sel i32)
     (local.set $ip  (call $gl16 (global.get $esp)))
     (local.set $sel (call $gl16 (i32.add (global.get $esp) (i32.const 2))))
     (global.set $win16_dde_ret (i32.or (i32.shl (local.get $sel) (i32.const 16))
                                        (local.get $ip)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (global.set $esp (i32.add (global.get $esp)
+                              (i32.add (i32.const 4) (local.get $argbytes))))
     ;; CS first, EIP second, and in that order: the slot offset is meaningless
     ;; on its own, and $seg_base_cs is read AFTER the selector load. Parking
     ;; without switching selector put EIP at offset 0xFF70 of whatever segment
@@ -777,7 +909,12 @@
         (i32.store (local.get $pend) (i32.const 0))
         (call $win16_dde_set_error (i32.const 0))
         (global.set $edx (i32.const 0))
-        (global.set $eax (local.get $conv))
+        ;; A connect answers with its conversation, a transaction with the data
+        ;; handle the far application produced.
+        (global.set $eax
+          (select (i32.load offset=20 (local.get $pend)) (local.get $conv)
+                  (i32.eq (i32.load offset=16 (local.get $pend))
+                          (global.get $DDE_WAIT_XACT))))
         (return (i32.const 0))))
     (if (i32.lt_u (i32.sub (call $host_real_time_ms)
                            (i32.load offset=4 (local.get $pend)))
@@ -786,8 +923,20 @@
         (global.set $yield_reason (i32.const 8))
         (global.set $yield_flag (i32.const 1))
         (return (i32.const 1))))
-    ;; Nobody is there. That is the honest answer for a room of one, and it is
-    ;; what sends Hearts to its own table rather than to an error box.
+
+    ;; Nobody answered in time.
+    (if (i32.eq (i32.load offset=16 (local.get $pend)) (global.get $DDE_WAIT_XACT))
+      (then
+        ;; The conversation is still good; it is this transaction that went
+        ;; unanswered, which is what DMLERR_DATAACKTIMEOUT means. Tearing the
+        ;; conversation down here would lose a session over one slow item.
+        (i32.store (local.get $pend) (i32.const 0))
+        (call $win16_dde_set_error (i32.const 0x4002))   ;; DMLERR_DATAACKTIMEOUT
+        (global.set $edx (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (return (i32.const 0))))
+    ;; A connect that nobody answered. That is the honest reply for a room of
+    ;; one, and it is what sends Hearts to its own table rather than an error.
     (i32.store (local.get $pend) (i32.const 0))
     (i32.store (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))
                (i32.const 0))
@@ -836,21 +985,55 @@
   ;; transaction produces on Windows; only a handle naming no conversation
   ;; gets the other error.
   (func $win16_DdeClientTransaction
-    (local $result i32) (local $conv i32) (local $live i32)
+    (local $result i32) (local $conv i32) (local $live i32) (local $wtype i32)
+    (local $item i32) (local $pend i32) (local $wa i32) (local $len i32)
     (local.set $result (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (local.set $conv (call $win16_arg32 (i32.const 8)))
+    (local.set $wtype (call $win16_arg16 (i32.const 4)))
+    (local.set $item (call $win16_arg32 (i32.const 6)))
     (if (i32.and (i32.gt_u (local.get $conv) (i32.const 0))
                  (i32.le_u (local.get $conv) (i32.const 8)))
-      (then (local.set $live (i32.load (call $win16_dde_conv_slot
-              (i32.sub (local.get $conv) (i32.const 1)))))))
+      (then (local.set $live (i32.eq (i32.load (call $win16_dde_conv_slot
+              (i32.sub (local.get $conv) (i32.const 1)))) (i32.const 1)))))
     (if (call $win16_arg16 (i32.const 1))
       (then (call $gs32 (local.get $result) (i32.const 0))))
-    (call $win16_dde_set_error
-      (select (i32.const 0x4009) (i32.const 0x400A) (local.get $live)))
-    (global.set $edx (i32.const 0))
-    (global.set $eax (i32.const 0))
-    (call $win16_api_return (i32.const 28)))
+
+    ;; A request is the one transaction that crosses. POKE and EXECUTE are not
+    ;; built, and they say so rather than pretending: DMLERR_NOTPROCESSED is
+    ;; what a server that ignores a transaction produces, and a handle naming
+    ;; no live conversation gets DMLERR_NO_CONV_ESTABLISHED.
+    (if (i32.or (i32.eqz (local.get $live))
+                (i32.ne (local.get $wtype) (global.get $XTYP_REQUEST)))
+      (then
+        (call $win16_dde_set_error
+          (select (i32.const 0x4009) (i32.const 0x400A) (local.get $live)))
+        (global.set $edx (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 28))
+        (return)))
+
+    ;; Ask, then park on the same slot DdeConnect uses. Only the far end's
+    ;; application can answer this, so the wait is the same shape: the room
+    ;; gets a turn of the host's event loop between passes, and the answer
+    ;; arrives as a DATA frame that the drain turns into a data handle.
+    (local.set $pend (call $win16_dde_pending_slot))
+    (i32.store (local.get $pend) (i32.const 1))
+    (i32.store offset=4  (local.get $pend) (call $host_real_time_ms))
+    (i32.store offset=8  (local.get $pend) (local.get $conv))
+    (i32.store offset=12 (local.get $pend) (i32.const 0))
+    (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
+    (i32.store offset=20 (local.get $pend) (i32.const 0))
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (local.get $wa)
+      (then
+        (local.set $len (call $win16_dde_put_hsz
+          (local.get $wa) (global.get $DDE_HDR) (local.get $item)))
+        (drop (call $win16_dde_emit (i32.const 4) (local.get $conv)
+          (i32.load offset=12 (call $win16_dde_conv_slot
+            (i32.sub (local.get $conv) (i32.const 1))))
+          (i32.sub (local.get $len) (global.get $DDE_HDR))))))
+    (call $win16_dde_park (i32.const 28)))
 
   ;; DDEML.13 DdePostAdvise(DWORD idInst, HSZ hszTopic, HSZ hszItem) -> BOOL.
   ;; Nothing has an advise loop open on this item, so there is nothing to send

@@ -385,13 +385,25 @@ sets the global instead.
   a loopback segment, both running a real 16-bit message loop, with the
   server's callback a hand-written stub whose answer the test chooses.
 
-  **Still to do, in the order Hearts needs it:** `DdeClientTransaction` fails,
-  so no `XTYP_REQUEST`/`XTYP_POKE` crosses (Hearts' first item is `Join`), and
-  `DdePostAdvise` has no advise loops to feed, which is how it actually
-  distributes play. Both follow the pattern `XTYP_CONNECT` now establishes —
-  queue the question in the drain, ask it from the pump, act on the answer at
-  the continuation slot — with the extra step that a reply carries data back
-  over the wire and the client's parked transaction turns it into an HDDEDATA.
+  ~~**`DdeClientTransaction` fails, so nothing crosses.**~~ DONE for
+  `XTYP_REQUEST`, which is the one Hearts opens with (`Join`). It follows the
+  same three steps: the drain queues the question against the conversation it
+  arrived on, the pump asks the application, and the handle the callback
+  returns is emitted as a DATA frame. The client parks on the shared
+  `$win16_dde_park` and the drain turns the reply into a data handle, so
+  `DdeGetData` reads it like any other. A transaction nobody answers in time
+  fails with `DMLERR_DATAACKTIMEOUT` and **leaves the conversation up** —
+  tearing a session down over one slow item would be wrong.
+
+  A conversation now remembers its topic, because `XTYP_REQUEST` hands the
+  callback the topic and the item and only the conversation knows the former.
+
+  **Still to do:** `XTYP_POKE` and `XTYP_EXECUTE` (both return
+  `DMLERR_NOTPROCESSED` today, which is what a server that ignores a
+  transaction produces, so nothing is being told a falsehood), and
+  `DdePostAdvise` has no advise loops to feed — which is how Hearts actually
+  distributes play once a game is running. Advise is the bigger one and it is
+  the same pattern again, with the server pushing rather than answering.
 
   **On testing any of this:** use the in-process harness. Two instances on a
   `LoopbackSegment`, each with a real NE loaded so selectors and a message loop

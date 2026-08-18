@@ -163,6 +163,57 @@ function settle(a, b, pumpNode, batches = 200) {
     }
   }
 
+  // --- a transaction across the wire ---------------------------------------
+  // XTYP_REQUEST is the same shape as XTYP_CONNECT and answered the same way,
+  // except the application replies with data rather than with yes or no. Only
+  // it knows what the item holds, so the request is queued by the drain, asked
+  // from the pump, and the handle the callback returns is what goes back over
+  // the wire. Hearts' first item is "Join".
+  {
+    const segment = new LoopbackSegment();
+    const server = await makeNode(wasm, segment.attach(), '10.77.0.1');
+    const client = await makeNode(wasm, segment.attach(), '10.77.0.2');
+    boot(server, bytes, 400);
+    boot(client, bytes, 50);
+    server.wat.test_dde_instance(0, 1);
+    client.wat.test_dde_instance(0, 1);
+    server.wat.test_dde_register(1, intern(server, SERVICE));
+
+    // The answer the server's application will give: real bytes in a real
+    // data handle, which the stub returns for whatever it is asked.
+    const payload = Buffer.from('JOINED', 'latin1');
+    const ga = server.buf(payload);
+    const handle = server.wat.test_dde_make_data(ga, payload.length) | 0;
+    assert(handle, 'no data handle');
+    // mov ax,<handle> / xor dx,dx / retf 28 -- non-zero, so it also accepts
+    // the connect that has to happen first.
+    const base = server.wat.win16_seg_base(CODE_SEG) >>> 0;
+    [0xb8, handle & 0xff, (handle >> 8) & 0xff, 0x31, 0xd2, 0xca, 0x1c, 0x00]
+      .forEach((b, i) => server.wat.guest_write8(base + STUB_OFF + i, b));
+    server.wat.test_dde_set_callback(1, ((SEL << 16) | STUB_OFF) >>> 0);
+
+    const conv = client.wat.test_dde_connect_begin(
+      1, intern(client, SERVICE), intern(client, TOPIC)) | 0;
+    settle(server, client, server);
+    check('the transaction test got its conversation first',
+      (client.wat.test_dde_connect_done() | 0) === conv);
+
+    assert(client.wat.test_dde_xact_begin(conv, intern(client, 'Join')) | 0,
+      'the request was not sent');
+    check('a request is not answered before the server pumps',
+      (client.wat.test_dde_xact_done() | 0) === 0);
+
+    settle(server, client, server);
+    const got = client.wat.test_dde_xact_done() | 0;
+    check('the request came back with a data handle', got !== 0,
+      'the server never answered XTYP_REQUEST');
+    check(`the data crossed intact (${payload.length} bytes)`,
+      (client.wat.test_dde_data_len(got) | 0) === payload.length);
+    const text = Array.from({ length: payload.length },
+      (_, i) => String.fromCharCode(client.wat.test_dde_data_byte(got, i) | 0)).join('');
+    check(`and says what the application said ("${text}")`, text === 'JOINED');
+  }
+
   console.log(`\n${passed} passed, 0 failed`);
 })().catch(error => {
   console.error(error.stack || error);
