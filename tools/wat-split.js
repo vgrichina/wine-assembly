@@ -38,30 +38,29 @@ const src = fs.readFileSync(FROM, 'utf8');
 const lines = src.split('\n');
 
 // Index every top-level form: its start offset, end offset, and name.
+//
+// Depth-from-zero does not work here: a part may close forms opened by an
+// earlier part, so the running depth goes negative partway through several
+// files. What is reliable is the layout every part follows — a top-level form
+// starts at column 2 — so anchor on that and paren-match from there.
 function topLevelForms(text) {
   const forms = [];
-  let depth = 0, start = -1;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === '"') { while (++i < text.length && text[i] !== '"') if (text[i] === '\\') i++; continue; }
-    if (c === ';' && text[i + 1] === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
-    if (c === '(') {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (c === ')') {
-      depth--;
-      if (depth === 0 && start >= 0) {
-        const head = text.slice(start, Math.min(start + 200, i + 1));
-        const m = /^\(\s*(\w[\w.]*)\s+(\$[A-Za-z0-9_$]+)?/.exec(head);
-        forms.push({ start, end: i + 1, kind: m ? m[1] : '?', name: m && m[2] ? m[2].slice(1) : null });
-        start = -1;
-      }
+  const re = /^  \((func|global|data|elem|table|memory|type|import|export|start)\b/gm;
+  let m;
+  while ((m = re.exec(text))) {
+    const start = m.index + 2;
+    let depth = 0, end = -1;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (c === '"') { while (++i < text.length && text[i] !== '"') if (text[i] === '\\') i++; continue; }
+      if (c === ';' && text[i + 1] === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
+      if (c === '(') depth++;
+      else if (c === ')') { depth--; if (depth === 0) { end = i + 1; break; } }
     }
-  }
-  if (depth !== 0) {
-    // A part may legitimately close a form opened by an earlier part (01-header
-    // opens the module). Only bail if we are *inside* a form at the cut points.
-    console.error(`note: ${FROM} ends at paren depth ${depth} (normal for a module part)`);
+    if (end < 0) continue;
+    const head = text.slice(start, Math.min(start + 200, end));
+    const nm = /^\(\s*(\w[\w.]*)\s+(\$[A-Za-z0-9_$]+)?/.exec(head);
+    forms.push({ start, end, kind: m[1], name: nm && nm[2] ? nm[2].slice(1) : null });
   }
   return forms;
 }
