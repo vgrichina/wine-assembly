@@ -122,6 +122,77 @@ async function launch(browser, port, app, { threaded }) {
   return { state, problems };
 }
 
+// Phase 2: the guest's OWN threads, each in its own Worker, all running at once.
+//
+// Winamp is the probe because it is the corpus app that genuinely threads: press
+// Play and it creates a decode thread, an output thread and a visualizer helper.
+// Nothing else here reaches CreateThread at all — notepad and calc never call it,
+// so the parity checks above cannot see this code path.
+//
+// What this catches, and did: worker mode handled a parked WaitForSingleObject by
+// clearing the yield. $run has already popped the return address by then, so that
+// left the stdcall arguments on the guest stack — 12 bytes leaked per wait, and
+// Winamp died at EIP=0xffffffff about six seconds into playback. It was invisible
+// until guest threads ran, because until then nothing ever satisfied a wait.
+async function guestThreadsProbe(browser, port) {
+  const problems = [];
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1100, height: 820 });
+  page.on('pageerror', e => problems.push(String(e)));
+  page.on('console', m => {
+    const t = m.text();
+    if (/RuntimeError|LinkError|trapped|worker spawn .* failed/i.test(t)) problems.push(t);
+  });
+  await page.evaluateOnNewDocument(() => localStorage.setItem('wine-assembly.threads', '1'));
+  await page.goto(`http://127.0.0.1:${port}/index.html?debug`, { waitUntil: 'load', timeout: 60000 });
+  await page.waitForFunction('typeof launchApp === "function"', { timeout: 30000 });
+  await page.evaluate(() => { document.getElementById('app-select').value = 'winamp'; launchApp(); });
+  await wait(10000);
+
+  // Same sequence as the CLI audio test: dismiss the survey, then click the real
+  // Play button at (66,129) in the main window.
+  await page.keyboard.press('Enter');
+  await wait(1500);
+  await page.keyboard.press('Escape');
+  await wait(1500);
+  const box = await page.evaluate(() => {
+    const c = document.querySelector('canvas');
+    const r = c.getBoundingClientRect();
+    return { x: r.x, y: r.y, w: r.width, h: r.height, cw: c.width, ch: c.height };
+  });
+  await page.mouse.click(box.x + 66 * (box.w / box.cw), box.y + 129 * (box.h / box.ch));
+
+  // Sampled while playback is live: by the end of the clip every thread has
+  // exited and a snapshot taken then cannot tell "ran and finished" from "never
+  // started".
+  let peak = { workers: 0, spawned: 0, active: 0, backend: null };
+  for (let i = 0; i < 12; i++) {
+    await wait(1000);
+    const s = await page.evaluate(() => {
+      const wine = (typeof runningApps !== 'undefined' && runningApps[0]) ? runningApps[0].wine : null;
+      const tm = wine && wine.threadManager;
+      const gw = wine && wine.guestWorker;
+      return {
+        backend: tm ? tm.backend : null,
+        spawned: tm ? tm._spawnedCount : 0,
+        workers: gw && gw.threadLinks ? gw.threadLinks.size : 0,
+        active: tm ? [...tm.threads.values()].filter(t => t.state === 'active').length : 0,
+        slices: tm ? [...tm.threads.values()].reduce(
+          (n, t) => n + (t.link && t.link.sliceStats ? t.link.sliceStats.slices : 0), 0) : 0,
+        alive: typeof runningApps !== 'undefined' ? runningApps.length : 0,
+      };
+    });
+    if (s.spawned > peak.spawned) peak = Object.assign({}, s);
+    if (s.slices > (peak.slices || 0)) peak.slices = s.slices;
+    peak.alive = s.alive;
+    peak.backend = s.backend || peak.backend;
+  }
+  fs.mkdirSync(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'winamp-guest-threads.png') });
+  await page.close();
+  return { peak, problems };
+}
+
 // Launch notepad in worker mode, then exercise the comLoadDll round trip on the
 // live worker. msvcrt is the probe DLL: notepad does not load it, so the count
 // has to move, and the emulator already runs its DllMain for MFC apps — so a
@@ -202,6 +273,25 @@ async function comLoadDllProbe(browser, port) {
         `worker=${JSON.stringify(worker.state.titles)} single=${JSON.stringify(single.state.titles)}`);
       check(worker.problems.length === 0, `${app}: no errors in worker mode`,
         worker.problems.slice(0, 2).join(' | '));
+    }
+
+    // Phase 2. Skipped rather than failed without the binary, like the CLI audio
+    // test: winamp.exe and demo.mp3 are not in every checkout.
+    if (fs.existsSync(path.join(ROOT, 'binaries', 'winamp.exe'))
+        || fs.existsSync(path.join(ROOT, 'test', 'binaries', 'winamp.exe'))) {
+      const t = await guestThreadsProbe(browser, port);
+      check(t.peak.backend === 'worker', 'guest threads use the worker scheduler',
+        `backend=${t.peak.backend}`);
+      check(t.peak.spawned >= 2, 'playback spawned real guest threads',
+        `spawned=${t.peak.spawned} workers=${t.peak.workers}`);
+      check(t.peak.workers >= 2, 'each one got its own Worker', `workers=${t.peak.workers}`);
+      check((t.peak.slices || 0) > 10, 'and they executed slices', `slices=${t.peak.slices || 0}`);
+      check(t.peak.alive === 1, 'the app is still running after playback ends',
+        `runningApps=${t.peak.alive}`);
+      check(t.problems.length === 0, 'no traps or failed spawns with guest threads live',
+        t.problems.slice(0, 2).join(' | '));
+    } else {
+      console.log('SKIP  winamp.exe not found — guest-thread probe needs a threading app');
     }
 
     // The COM server load (yield reason 3) has no corpus app that reaches it —

@@ -844,6 +844,11 @@ Resource-aware Win98 emulator
     // rather than a promise.
     const THREADS_KEY = 'wine-assembly.threads';
     window.WINE_THREADS = false;
+    // ?threads-serial runs the guest threads one slice at a time instead of all
+    // at once. It exists to tell a race in shared emulator state apart from a bug
+    // in the worker plumbing — the first symptom of the difference is a trap that
+    // only ever happens with two threads live.
+    window.WINE_THREADS_SERIAL = /[?&]threads-serial\b/.test(location.search);
 
     function threadsIsolated() {
       return typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
@@ -856,6 +861,18 @@ Resource-aware Win98 emulator
       const wanted = localStorage.getItem(THREADS_KEY) === '1';
       box.checked = wanted;
       if (!wanted) { el.textContent = ''; return; }
+      // The thread count below changes while an app runs, so a label refreshed
+      // only on launch would go stale — which is the exact failure this readout
+      // replaced. One timer, alive only while something is running.
+      if (!window.__threadsStatusTimer && runningApps.length) {
+        window.__threadsStatusTimer = setInterval(() => {
+          if (!runningApps.length) {
+            clearInterval(window.__threadsStatusTimer);
+            window.__threadsStatusTimer = null;
+          }
+          updateThreadsStatus();
+        }, 1000);
+      }
       if (!threadsIsolated()) {
         el.textContent = 'not isolated';
         el.title = 'No COOP/COEP in effect. Toggle again to install the service worker and reload.';
@@ -876,12 +893,19 @@ Resource-aware Win98 emulator
           + 'failed and fell back to single-threaded. See the debug log for the reason.';
         return;
       }
-      el.textContent = workers === runningApps.length
-        ? 'guest in worker'
-        : `guest in worker (${workers}/${runningApps.length})`;
-      el.title = 'The guest\'s main thread runs in a Worker, off the UI thread. '
-        + 'The guest\'s own CreateThread threads are still cooperative slices on this '
-        + 'thread (docs/design-real-threads.md phase 2).';
+      // Count the guest's OWN threads too — each is its own Worker now, and a
+      // count is the only way to tell a threading app from a single-threaded one
+      // at a glance. It moves as the app creates and exits threads.
+      const guestThreads = runningApps.reduce((n, r) => n
+        + ((r && r.wine && r.wine.guestWorker && r.wine.guestWorker.threadLinks)
+          ? r.wine.guestWorker.threadLinks.size : 0), 0);
+      const suffix = workers === runningApps.length ? '' : ` (${workers}/${runningApps.length})`;
+      el.textContent = guestThreads
+        ? `${1 + guestThreads} threads in workers${suffix}`
+        : `guest in worker${suffix}`;
+      el.title = 'The guest\'s main thread runs in a Worker, off the UI thread, and each '
+        + 'thread it creates gets its own. Cross-thread SendMessage still runs the wndproc '
+        + 'on the calling thread (docs/design-real-threads.md phase 2).';
     }
 
     async function setThreads(on) {

@@ -561,7 +561,13 @@ class WineAssembly {
     h.wait_single = (handle, t) => {
       if (!self.threadManager) return 0;
       const e = ctx.exports;
-      const nestedSyncMessage = !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
+      // The cooperative variant exists to run OTHER guest threads from inside a
+      // nested synchronous callback, on this thread. With the worker backend
+      // there is nothing to run here — the other threads are already running,
+      // somewhere else — and its runSlice would walk thread records that have a
+      // Worker where it expects an instance.
+      const nestedSyncMessage = self.threadManager.backend !== 'worker'
+        && !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
       return nestedSyncMessage
         ? self.threadManager.waitSingleCooperative(handle, t)
         : self.threadManager.waitSingle(handle, t);
@@ -790,8 +796,11 @@ class WineAssembly {
       return wi;
     };
     this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports, {
-      // Opt-in from the debug toolbar. It does not switch schedulers yet —
-      // ThreadManager reports which backend it really used.
+      // Opt-in from the debug toolbar. Passing the guest-worker host is what
+      // actually switches schedulers: with it, each CreateThread becomes a real
+      // Worker; without it (no isolation, CLI, Safari private) ThreadManager runs
+      // the cooperative one and says so.
+      workerBackend: this.guestWorker || null,
       threadsRequested: !!(typeof window !== 'undefined' && window.WINE_THREADS),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
@@ -1685,8 +1694,38 @@ class WineAssembly {
             inputPending: q,
           });
         }
-        const r = await self.guestWorker.slice(Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice));
+        const steps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        // The guest's main thread and every thread it created run AT THE SAME
+        // TIME — that is the whole of phase 2. Awaiting them together rather
+        // than in sequence is what makes it true: each slice() is a message to a
+        // different Worker, and none of them needs this thread except to be
+        // served a host import.
+        const runThreads = () => (self.threadManager && self.threadManager.backend === 'worker'
+          ? self.threadManager.runWorkerSlices(steps)
+          : 0);
+        // The guest's main thread takes part in the same rendezvous its threads
+        // do: in worker mode it is not the main INSTANCE, so its thunk
+        // allocations are invisible to everyone else unless they are published.
+        const sync = self.threadManager ? self.threadManager.workerSyncState() : null;
+        let r, threadsRun;
+        if (typeof window !== 'undefined' && window.WINE_THREADS_SERIAL) {
+          // Diagnostic only: the same slices, one at a time. A bug that appears
+          // in parallel and not here is a race in shared emulator state, which is
+          // a different investigation from a bug in the worker plumbing.
+          r = await self.guestWorker.slice(steps, sync);
+          threadsRun = await runThreads();
+        } else {
+          [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, sync), runThreads()]);
+        }
+        if (self.threadManager) self.threadManager.publishWorkerThunkState(r);
         if (!self.running) return;
+        if (self.threadManager && self.threadManager.netWaitPending) {
+          // A thread parked in a blocking socket call. Frames arrive on this
+          // thread's event loop, so it has to get a turn before the next slice.
+          self.threadManager.netWaitPending = false;
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        self._workerThreadsRun = threadsRun | 0;
         if (perf) {
           perf.countSteps(stepsPerSlice);
           // Off-thread time is reported as thread time, not main time: it did
@@ -1695,7 +1734,11 @@ class WineAssembly {
           perf.mark('workers', r.ms || 0);
         }
         if (r.trapped) {
-          self.logToUI(`[threads] guest trapped in worker: ${r.trapped} @ EIP=0x${(r.eip >>> 0).toString(16)}`);
+          const g = r.regs || {};
+          const hex = v => '0x' + ((v || 0) >>> 0).toString(16);
+          self.logToUI(`[threads] guest trapped in worker: ${r.trapped} @ EIP=${hex(r.eip)} `
+            + `prev_eip=${hex(g.prevEip)} esp=${hex(g.esp)} eax=${hex(g.eax)} ebx=${hex(g.ebx)} `
+            + `ecx=${hex(g.ecx)} edx=${hex(g.edx)} esi=${hex(g.esi)} edi=${hex(g.edi)} ebp=${hex(g.ebp)}`);
           self.stop({ repaint: false });
           return;
         }
@@ -1714,10 +1757,23 @@ class WineAssembly {
         // named in thread-manager.js's map but is never set by any WAT or JS
         // path, so there is nothing to port for it. The fallback below stays as
         // a guard for anything added later.
-        if (r.yield === 1 || r.yield === 7) {
-          // Message-wait resume runs inside the worker before each slice; this
-          // clears a wait it could not satisfy so the guest re-polls.
-          await self.guestWorker.callExport('clear_yield');
+        if (r.yield === 1) {
+          // A parked WaitForSingleObject/WaitForMultipleObjects. This used to
+          // just clear the yield and let the guest re-poll, which is wrong in a
+          // way that only shows up once a wait can actually be satisfied: $run
+          // has already popped the return address, so the guest is past the call
+          // with its stdcall arguments still on the stack. Only completing the
+          // wait drops them. Clearing instead leaked 12 bytes of guest stack per
+          // wait, and Winamp died minutes later at EIP=0xffffffff — which is why
+          // nothing caught it before guest threads ran in this mode.
+          const done = self.threadManager ? self.threadManager.resolveMainWorkerWait(r) : null;
+          if (done) await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
+          // Unsatisfied: leave the yield set. The next slice re-polls, and the
+          // worker's run() returns immediately while parked.
+        } else if (r.yield === 7) {
+          // The message-wait resume runs inside the worker at the top of each
+          // slice, where the instance is. Nothing to do here — and specifically
+          // not clear_yield, for the same reason as above.
         } else if (r.yield === 3) {
           await self._handleComDllLoadThreaded();
         } else if (r.yield === 5) {

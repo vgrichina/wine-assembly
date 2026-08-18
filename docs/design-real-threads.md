@@ -1,12 +1,35 @@
 # Design: real OS threads for guest threads
 
-**Status:** phase 0 answered, **phase 1 partially implemented and working** on
-branch `worktree-real-threads`. Written 2026-08-16, updated 2026-08-17.
+**Status:** phase 0 answered, phase 1 working, **phase 2 implemented** on branch
+`worktree-real-threads`. Written 2026-08-16, updated 2026-08-17.
 
 Notepad, Calculator and Paint boot and render with the guest's main thread
-executing inside a Web Worker and all 178 host imports running on the main
+executing inside a Web Worker and all 179 host imports running on the main
 thread. `test/test-worker-guest.js` asserts window-count and window-title parity
-against single-threaded runs, plus the COM server-load round trip (21/21 checks).
+against single-threaded runs, plus the COM server-load round trip.
+
+**Phase 2: each guest `CreateThread` is its own Worker, and they all run at the
+same time.** Winamp presses Play, spawns its decode thread, output thread and
+visualizer helper as three Workers over the one shared memory, plays audio, and
+shuts all three down cleanly — with the UI thread doing nothing but serving host
+imports and compositing. `ThreadManager.backend` reads `'worker'`; without
+isolation it reads `'cooperative'` and the round-robin scheduler runs instead,
+permanently (§3.6).
+
+Two bugs that phase 2 uncovered, both older than phase 2:
+
+- **A parked wait had to be COMPLETED, not cleared.** Worker mode answered yield 1
+  with `clear_yield()`. `$run` pops the saved return address whenever a handler
+  leaves EIP alone, so by then the guest is already past the call with its stdcall
+  arguments still on the stack; only completing the wait drops them. It leaked 12
+  bytes of guest stack per wait and killed Winamp at `EIP=0xffffffff` six seconds
+  into playback. Invisible until guest threads ran, because until then nothing
+  ever satisfied a wait.
+- **The RPC control block was inside the DIB arena.** `lib/guest-rpc.js` used
+  `0x1F000000`, 48MB into the `CreateDIBSection` pool. A big enough DIB would have
+  overwritten a worker's status word and parked it forever. The blocks now live in
+  `$THREAD_RPC` at the top of memory, declared in the WAT, one 256-byte block per
+  thread — which is what N threads needed anyway.
 
 **Every yield the WAT actually raises is now handled in worker mode** — 1 wait,
 2 exit, 3 com_load_dll, 5 load_library, 6 modal_dialog, 7 message_wait, 8
@@ -15,22 +38,27 @@ nothing in the codebase; the help engine fetches through host imports rather tha
 parking the guest. It has been dropped from the map, because leaving it there
 made worker mode look like it had two async yields left to port when it had one.
 
-Not done: guest threads beyond the main one, and the locking the shared emulator
-tables will need once two guest threads run at once (§3.1b). Off by default,
-behind the Threads switch and cross-origin isolation.
+Not done: cross-thread `SendMessage` still runs the target's wndproc on the
+calling thread rather than blocking the sender on the owner's queue, and the thunk
+allocator's cursor is still a per-instance global reconciled at slice boundaries
+rather than a shared one (§3.1b). Off by default, behind the Threads switch and
+cross-origin isolation.
 
 ### What the implementation actually looks like
 
 ```
-  MAIN THREAD                                WORKER
-  ─────────────────────────────────────      ──────────────────────────────
-  createHostImports()  ← unchanged           instance with brokered imports
-  broker.serveRpc()  ←──── Atomics.wait ──── host call (value-returning)
-  broker.serveCall() ←──── postMessage ───── host call (void, allowlisted)
-  publish(tick, inputPending) ──── shared ──▶ read locally, no round trip
-  resolve DLL bytes ─────────────────────▶   loadDll + DllMain (guest work)
-  drive slices ──────────────────────────▶   run(steps), yields handled here
-  composite, input, audio, registry          decoded-code cache, CPU state
+  MAIN THREAD                          WORKER slot 0        WORKER slot 1..N
+  ───────────────────────────────      ─────────────────    ─────────────────
+  createHostImports()  ← unchanged     guest main thread    one per CreateThread
+  broker.serveRpc(slot) ←── Atomics.wait ── host call ───── host call
+  broker.serveCall()    ←── postMessage ─── void call ───── void call
+  publish(tick, inputPending) ── shared ──▶ read locally ─▶ read locally
+  resolve DLL bytes ──────────────────▶ loadDll + DllMain
+  drive slices ───────────────────────▶ run(steps) ────────▶ run(steps)
+        └─ Promise.all: slot 0 and every thread run AT THE SAME TIME
+  resolve waits vs the sync table ────▶ completeWait ──────▶ completeWait
+  composite, input, audio, registry     own code cache       own code cache
+        └──────────── one shared WebAssembly.Memory ────────────┘
 ```
 
 Four rules fell out of getting it to work, and each came from a failure:
@@ -49,6 +77,11 @@ Four rules fell out of getting it to work, and each came from a failure:
 4. **Void does not mean fire-and-forget.** A void import taking a pointer is read
    after the guest has run on, by which time the buffer may be reused —
    `log(ptr, len)` exactly. Only value-argument void calls may skip the trip.
+5. **A parked yield is not idle state — the guest has already moved.** `$run`
+   pops the return address whenever a handler leaves EIP alone, so answering a
+   wait yield with `clear_yield()` resumes the guest past the call with the
+   stdcall arguments still on its stack. Twelve bytes a wait, and the app dies
+   later, somewhere else, at `EIP=0xffffffff`.
 
 **Goal:** each guest thread runs on its own Web Worker, executing at the same
 time as the others, with the UI thread doing nothing but input and compositing.
@@ -271,18 +304,64 @@ and `$heap_low_watermark`, which operate on the shared cursor.
 shared memory and no marshalling at all — the phase-2 shape, testable today
 without a browser or a worker.
 
-### 3.1b Still open before two instances run at once
+### 3.1b What phase 2 had to fix first, and what is still open
 
-- **Atomic opcodes do not exist in our toolchain yet.** `lib/compile-wat.js` has
-  no `0xFE`-prefix instructions, and `tools/build.sh` uses it rather than
-  `wat2wasm`. Every lock below needs them added first.
-- `VIRTUAL_MAP_STATE` / `VIRTUAL_MAP_TABLE`: `$virtual_map_commit` does an
-  unlocked scan-then-append, and `$g2w` reads the table on every guest access
-  that misses the direct window — millions of times a second. This one must not
-  take a lock; make the table append-only and publish `count` last.
-- `DX_OBJECTS`, the socket table: coarse locks, cold enough not to care.
-- Pad each lock word to its own 64-byte line. Two unrelated locks sharing a line
-  ping-pong it between cores on every acquire, which costs more than the atomic.
+✅ **Atomic opcodes.** `lib/compile-wat.js` now emits all 67 atomic mnemonics.
+This was not a missing feature so much as a trap: `tools/build.sh` compiles with
+that file rather than `wat2wasm`, and `emitOp` answers an unknown mnemonic with a
+`console.warn` and a `0x00` (unreachable) byte. A mutex written in instructions
+the compiler did not know would have compiled, instantiated, and trapped the first
+time it was taken. Each op's required alignment is carried in the table because
+atomic memargs must declare EXACTLY natural alignment, and the obvious substring
+heuristic reads `i64.atomic.rmw32.add_u` as a 64-bit access.
+`test/test-wat-atomics.js` runs two OS threads through `cmpxchg`.
+
+✅ **`VIRTUAL_MAP_STATE` / `VIRTUAL_MAP_TABLE`.** Writers take
+`$LOCK_VIRTUAL_MAP`; readers never do. `$virtual_map_commit` fills the record and
+zeroes its backing, then publishes the count — or the extended size — with
+`i32.atomic.store` LAST, so `$g2w` either sees the new entry or behaves as it did
+a microsecond earlier. `$g2w` stays lock-free, which is the point: it runs on
+every guest access that misses the direct window.
+
+✅ **`DX_OBJECTS` and the socket table.** `$dx_alloc`,
+`$dx_get_wrapper_for_vtbl`, `$vsock_alloc` and `$vsock_alloc_port` were all
+scan-then-claim. They are serialised now, and `$vsock_alloc` claims its record
+*before* releasing the lock rather than leaving it free until the caller sets a
+state.
+
+✅ **Locks get their own 64-byte line** (`$LOCK_TABLE`, one per line), and two
+rules that fell out of building them:
+
+1. **Never hold one across a host import.** A worker blocks in `Atomics.wait` for
+   the main thread to serve an import; if the main thread is spinning for the lock
+   that worker holds, neither ever moves. So the critical sections are pure table
+   arithmetic — slot allocation — and nothing else. This is also why the mutex
+   spins instead of parking: a browser main thread may not `Atomics.wait`.
+2. **Never take two at once**, so there is no order to get wrong.
+
+✅ **Two more replicated globals moved into shared memory**, both the same bug
+shape as `$heap_ptr`: `$com_aux_next` (two threads hand out the same aux COM
+wrapper) and `$vsock_next_port` (two threads pick the same ephemeral port, and
+`$vsock_port_taken` then rejects the second bind — a connect that fails for no
+visible reason).
+
+❌ **The thunk cursor is still per-instance.** `$num_thunks` is both the count and
+the next free index, so an instance running with a stale one hands out a thunk
+address another instance already used, and the guest calls a thunk whose api id
+belongs to a different function. Today it is reconciled at slice boundaries
+through the main instance (`ThreadManager.workerSyncState` /
+`publishWorkerThunkState`), exactly as the cooperative backend does — which leaves
+two instances that both allocate a thunk *inside the same slice* able to collide.
+The real fix is a process cursor in shared memory like the heap's; it needs the
+~30 `global.set $num_thunks (+1)` sites reworked to reserve an index first, which
+is a mechanical change worth doing on its own.
+
+❌ **`WND_RECORDS`, `CLASS_RECORDS`, `TIMER_TABLE` are unlocked**, on the §3.3
+argument that windows belong to the thread that created them. Nothing enforces
+it: a guest thread that creates a window touches those tables concurrently with
+the UI thread. It has not bitten in the corpus — Winamp's three threads do not
+create windows — and enforcing it properly means the coarse USER/GDI lock real
+Win9x had, which cannot be a spinlock under rule 1 above.
 
 ### 3.2 Host imports are the surface that must be brokered
 
@@ -552,7 +631,7 @@ because the *proof* is the second one.
   Safari, service worker         ✅         6/6 PASS   2026-08-17 by hand
   Safari, THE APP isolated       ✅         runs       2026-08-17 by hand
     (index.html + emulator under COEP require-corp: no subresource breakage,
-     debug toolbar reports "isolated · cooperative sched")
+     debug toolbar now reports "N threads in workers")
   ──────────────────────────────────────────────────────────────────────
   first visit, pre-reload        ✗ (as designed)       confirmed
   Safari private browsing        ✗ expected — no SW    NOT YET RUN
@@ -594,16 +673,42 @@ because the *proof* is the second one.
   `page fps` unchanged while `GAME fps` is unaffected by continuous mouse
   movement — the exact measurement that caught `b7b4d4e`.
 
-### Phase 2 — N workers actually running at once
-- **Add atomic opcodes to `lib/compile-wat.js` first.** Nothing else in this
-  phase can be made correct without them (§3.1b).
-- `CreateThread` spawns a Worker instead of an in-process instance.
-- Lock the coarse shared tables (DX/COM, sockets, GDI objects); make
-  `VIRTUAL_MAP_TABLE` append-only instead, since `$g2w` reads it per access.
-- Cross-thread `SendMessage` over `Atomics.wait`.
-- **Exit criterion:** a two-thread app shows >1.0× aggregate steps/sec versus
-  phase 1 on a multi-core box, and Winamp's decoder thread stops underrunning
-  under UI load.
+### Phase 2 — N workers actually running at once  ✅ implemented
+- ✅ **Atomic opcodes in `lib/compile-wat.js`** (§3.1b). Nothing else in this
+  phase could be made correct without them.
+- ✅ `CreateThread` spawns a Worker instead of an in-process instance.
+  `ThreadManager` keeps both backends: the cooperative one is unchanged and stays
+  the CLI default, and the worker one reuses all of its bookkeeping. Handles, the
+  sync table, exit codes and suspend counts live in JS or shared memory, so
+  `waitSingle`/`waitMultiple` needed no changes at all — a worker-backed thread is
+  a record in the same map. What differs is only where the instructions run.
+- ✅ Coarse locks on the shared tables; `VIRTUAL_MAP_TABLE` publish-ordered
+  instead of locked, since `$g2w` reads it per access.
+- ❌ Cross-thread `SendMessage` over `Atomics.wait`. Still runs the target's
+  wndproc on the calling thread, as it did in the cooperative backend. Doing it
+  properly means a per-thread message queue and blocking the sender until the
+  owner's pump dispatches it — the authentic behaviour, and its own piece of work.
+
+Three things the split had to get right, each learned from a failure:
+
+- **PE metadata comes from the guest's main thread, not `this.mainInstance`.** In
+  worker mode the main-thread instance never loaded the image, so its
+  `$image_base`, `$code_start` and thunk globals answer with plausible-looking
+  zeros.
+- **The stack, TIB and TLS block are allocated inside the new worker**, not on the
+  main thread, for the same reason: `g2w` is image-base relative, so addresses
+  computed against the idle instance point nowhere. The shared heap cursor means
+  the allocation is safe from either side; the *translation* is not.
+- **`ExitThread` takes no handle.** The cooperative backend knows who called it
+  because it just called `run()` on that instance. The worker backend has to be
+  told, so the RPC slot of the thread currently inside a host import is published
+  while it is served.
+
+- **Exit criterion, partially met:** a three-thread app (Winamp playing an MP3)
+  runs with every thread in its own Worker and the UI thread only brokering —
+  asserted in `test/test-worker-guest.js`. The *throughput* half is unmeasured:
+  fps and steps/sec must come from a real browser on an unloaded box, never from
+  headless Chrome, and this box has been at load 20-70 all session.
 
 ### Phase 3 — cleanup
 - Delete the scheduling heuristics **from the threaded path only**: the
