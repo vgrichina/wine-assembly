@@ -1988,11 +1988,28 @@ async function main() {
     const y = (pos >>> 16) & 0xFFFF;
     logs.push(`[mouse-state] ${reason} x=${x} y=${y} buttons=${hex(buttons)}`);
   };
-  const baseGetWindowRect = h.get_window_rect;
-  let lastWindowRectTrace = '';
-  h.get_window_rect = (hwnd, rectPtr) => {
-    baseGetWindowRect(hwnd, rectPtr);
-    if (TRACE_MOUSE_STATE) {
+  // Games poll these three every frame, so the tracing versions are installed
+  // only when --trace-mouse-state asked for them. The plain versions below are
+  // what a normal run gets: no closure per call, no DataView per call, no
+  // per-call flag test — the same flag-gated installation the wrap()/waveWrap()
+  // helpers already use.
+  h.get_mouse_position = () =>
+    (renderer && renderer.getMousePosition ? renderer.getMousePosition() : 0);
+  h.set_mouse_position = (x, y) => {
+    if (renderer && renderer.setMousePosition) renderer.setMousePosition(x, y);
+  };
+  h.get_mouse_buttons = () =>
+    (renderer && renderer.getMouseButtons ? renderer.getMouseButtons() : 0);
+  // GetAsyncKeyState backing — delegate to renderer's stateful key map
+  h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
+  h.get_key_down_state = (vKey) =>
+    (renderer && renderer.peekAsyncKeyState ? renderer.peekAsyncKeyState(vKey) : 0);
+
+  if (TRACE_MOUSE_STATE) {
+    const baseGetWindowRect = h.get_window_rect;
+    let lastWindowRectTrace = '';
+    h.get_window_rect = (hwnd, rectPtr) => {
+      baseGetWindowRect(hwnd, rectPtr);
       const mem = new DataView(ctx.getMemory());
       const l = mem.getInt32(rectPtr, true);
       const t = mem.getInt32(rectPtr + 4, true);
@@ -2003,40 +2020,44 @@ async function main() {
         lastWindowRectTrace = line;
         logs.push(`[mouse-state] GetWindowRect ${line}`);
       }
-    }
-  };
-  h.get_mouse_position = () => {
-    traceMouseSnapshot('get_mouse_position', false);
-    return renderer && renderer.getMousePosition ? renderer.getMousePosition() : 0;
-  };
-  h.set_mouse_position = (x, y) => {
-    if (renderer && renderer.setMousePosition) renderer.setMousePosition(x, y);
-    traceMouseSnapshot(`set_mouse_position ${x | 0},${y | 0}`, true);
-  };
-  h.get_mouse_buttons = () => {
-    traceMouseSnapshot('get_mouse_buttons', false);
-    return renderer && renderer.getMouseButtons ? renderer.getMouseButtons() : 0;
-  };
-  // GetAsyncKeyState backing — delegate to renderer's stateful key map
-  h.get_async_key_state = (vKey) => {
-    const value = renderer ? renderer.getAsyncKeyState(vKey) : 0;
-    const key = vKey & 0xFF;
-    if (TRACE_MOUSE_STATE && (key === 0x01 || key === 0x02) && lastAsyncMouseTrace[key] !== value) {
-      lastAsyncMouseTrace[key] = value;
-      traceMouseSnapshot(`GetAsyncKeyState(${hex(key)})=${hex(value)}`, true);
-    }
-    return value;
-  };
-  const lastKeyDownMouseTrace = Object.create(null);
-  h.get_key_down_state = (vKey) => {
-    const value = renderer && renderer.peekAsyncKeyState ? renderer.peekAsyncKeyState(vKey) : 0;
-    const key = vKey & 0xFF;
-    if (TRACE_MOUSE_STATE && (key === 0x01 || key === 0x02) && lastKeyDownMouseTrace[key] !== value) {
-      lastKeyDownMouseTrace[key] = value;
-      traceMouseSnapshot(`GetKeyDownState(${hex(key)})=${hex(value)}`, true);
-    }
-    return value;
-  };
+    };
+    const plainMousePos = h.get_mouse_position;
+    h.get_mouse_position = () => {
+      traceMouseSnapshot('get_mouse_position', false);
+      return plainMousePos();
+    };
+    const plainSetMousePos = h.set_mouse_position;
+    h.set_mouse_position = (x, y) => {
+      plainSetMousePos(x, y);
+      traceMouseSnapshot(`set_mouse_position ${x | 0},${y | 0}`, true);
+    };
+    const plainMouseButtons = h.get_mouse_buttons;
+    h.get_mouse_buttons = () => {
+      traceMouseSnapshot('get_mouse_buttons', false);
+      return plainMouseButtons();
+    };
+    const plainAsyncKey = h.get_async_key_state;
+    h.get_async_key_state = (vKey) => {
+      const value = plainAsyncKey(vKey);
+      const key = vKey & 0xFF;
+      if ((key === 0x01 || key === 0x02) && lastAsyncMouseTrace[key] !== value) {
+        lastAsyncMouseTrace[key] = value;
+        traceMouseSnapshot(`GetAsyncKeyState(${hex(key)})=${hex(value)}`, true);
+      }
+      return value;
+    };
+    const lastKeyDownMouseTrace = Object.create(null);
+    const plainKeyDown = h.get_key_down_state;
+    h.get_key_down_state = (vKey) => {
+      const value = plainKeyDown(vKey);
+      const key = vKey & 0xFF;
+      if ((key === 0x01 || key === 0x02) && lastKeyDownMouseTrace[key] !== value) {
+        lastKeyDownMouseTrace[key] = value;
+        traceMouseSnapshot(`GetKeyDownState(${hex(key)})=${hex(value)}`, true);
+      }
+      return value;
+    };
+  }
 
   // Create shared memory externally (WASM module imports it)
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
