@@ -100,7 +100,8 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `04-cache.wat` | Block cache (decoded x86 → threaded code) |
 | `05-alu.wat` | ALU operations (32/16/8-bit), shifts, bit ops, MUL/DIV, SETcc |
 | `05b-string-ops.wat` | String operations (movsb/movsd/stosb/stosd/cmps/scas + REP) |
-| `06-fpu.wat` | x87 FPU, 16-bit memory ALU handlers |
+| `06-fpu.wat` | x87 FPU |
+| `06b-core-handlers.wat` | Non-FPU threaded handlers: flag ops, LEAVE/BSWAP/XCHG/IMUL, 16-bit ALU/MOV, and every memory-form (`_ro`) handler |
 | `07-decoder.wat` | x86 instruction decoder → threaded code emitter |
 | `08-pe-loader.wat` | PE executable loader, import table processing |
 | `08b-dll-loader.wat` | DLL loader with relocations, export resolution |
