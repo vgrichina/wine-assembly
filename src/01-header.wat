@@ -21,6 +21,10 @@
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
   (import "host" "read_file" (func $host_read_file (param i32 i32 i32) (result i32)))
   (import "host" "get_ticks" (func $host_get_ticks (result i32)))
+  ;; Wall clock, as against the guest clock above, which a harness may
+  ;; synthesise — test/run.js derives get_ticks from the batch counter. Use
+  ;; this only to bound a wait on something outside this instance.
+  (import "host" "real_time_ms" (func $host_real_time_ms (result i32)))
   (import "host" "yield" (func $host_yield (param i32)))
   (import "host" "resolve_ordinal" (func $host_resolve_ordinal (param i32 i32) (result i32)))
   ;; resolve_ordinal(dll_name_ptr, ordinal) → api_id (-1 if unknown)

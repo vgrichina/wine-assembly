@@ -503,15 +503,17 @@
   ;;
   ;; Stay well under test/run.js's own VLAN_MAX_WAITS (20000 consecutive net
   ;; waits), which is the point at which it decides the wire has stalled.
-  ;; This is generous on purpose, and it is a weakness worth naming: a pass
-  ;; count is not load-proof. Each pass costs only an event-loop turn — tens of
-  ;; microseconds — so the whole budget can burn in under a second, while the
-  ;; peer that has to answer is another emulator that may not get scheduled
-  ;; that soon. Measured on a loaded box: the request crossed in 32ms and the
-  ;; client still gave up 505ms later, before the dealer had drained it. A
-  ;; wall clock would be the honest bound, but the only clock WAT can see here
-  ;; is $host_get_ticks, which test/run.js synthesises from the batch counter.
-  (global $DDE_CONNECT_TRIES i32 (i32.const 120000))
+  ;; How long to wait for the room to answer, in real milliseconds.
+  ;;
+  ;; It has to be real time. Counting passes is not load-proof: a pass costs
+  ;; only an event-loop turn, tens of microseconds, so the whole budget burns
+  ;; in under a second while the peer that has to answer is another emulator
+  ;; that may not have been scheduled yet. Measured: the request crossed in
+  ;; 32ms and a pass-counted client still gave up 505ms later, before the
+  ;; dealer had drained it. And it cannot be $host_get_ticks either — that is
+  ;; the guest clock, which test/run.js synthesises as batch*200, so "3000 ms"
+  ;; of it was fifteen batches.
+  (global $DDE_CONNECT_TIMEOUT_MS i32 (i32.const 10000))
 
   (func $win16_DdeConnect
     (local $inst i32) (local $svc i32) (local $topic i32)
@@ -528,7 +530,7 @@
         (call $win16_api_return (i32.const 16))
         (return)))
     (i32.store (local.get $pend) (i32.const 1))
-    (i32.store offset=4  (local.get $pend) (i32.const 0))
+    (i32.store offset=4  (local.get $pend) (call $host_real_time_ms))
     (i32.store offset=8  (local.get $pend) (local.get $conv))
     (i32.store offset=12 (local.get $pend) (i32.const 0))
 
@@ -598,10 +600,9 @@
         (global.set $edx (i32.const 0))
         (global.set $eax (local.get $conv))
         (return (i32.const 0))))
-    (i32.store offset=4 (local.get $pend)
-      (i32.add (i32.load offset=4 (local.get $pend)) (i32.const 1)))
-    (if (i32.lt_u (i32.load offset=4 (local.get $pend))
-                  (global.get $DDE_CONNECT_TRIES))
+    (if (i32.lt_u (i32.sub (call $host_real_time_ms)
+                           (i32.load offset=4 (local.get $pend)))
+                  (global.get $DDE_CONNECT_TIMEOUT_MS))
       (then
         (global.set $yield_reason (i32.const 8))
         (global.set $yield_flag (i32.const 1))

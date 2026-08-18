@@ -5535,7 +5535,15 @@ async function main() {
     // frames actually arrive: on a ProcessWire they come in over IPC, and
     // nothing is delivered while this synchronous loop holds the thread.
     if (instance.exports.get_yield_reason() === 8) {
-      netWaits++;
+      // This cap is here to notice a wire that has stalled, and it counts
+      // waits because a blocking socket call makes one per attempt. A 16-bit
+      // task parked on a continuation slot is a different shape: it is bounded
+      // by its own wall-clock timeout and can legitimately spend hundreds of
+      // thousands of turns inside it, so counting those trips the cap on a
+      // wait that is working exactly as designed.
+      if (!(instance.exports.win16_pump_parked && instance.exports.win16_pump_parked())) {
+        netWaits++;
+      }
       if (netWaits > VLAN_MAX_WAITS) {
         console.log(`[net] no progress after ${VLAN_MAX_WAITS} blocking waits; stopping`);
         stopped = true;
