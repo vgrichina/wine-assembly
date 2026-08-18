@@ -3,6 +3,7 @@
 // Usage: node tools/parse-rsrc.js <exe> [--out=file.json]
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const path = require('path');
 
 const args = process.argv.slice(2);
@@ -10,24 +11,15 @@ const exePath = args.find(a => !a.startsWith('--')) || 'test/binaries/notepad.ex
 const outArg = args.find(a => a.startsWith('--out='));
 const outPath = outArg ? outArg.split('=')[1] : null;
 
-const pe = fs.readFileSync(exePath);
-const pe_off = pe.readUInt32LE(0x3c);
-const num_sec = pe.readUInt16LE(pe_off + 6);
-const opt_size = pe.readUInt16LE(pe_off + 20);
-const image_base = pe.readUInt32LE(pe_off + 52);
+const peInfo = readPE(exePath);
+const pe = peInfo.buf;
+const image_base = peInfo.imageBase;
 
 // Find .rsrc section
-let rsrc_rva = 0, rsrc_off = 0, rsrc_size = 0;
-let sec = pe_off + 24 + opt_size;
-for (let i = 0; i < num_sec; i++) {
-  const name = pe.toString('ascii', sec, sec + 8).replace(/\0/g, '');
-  if (name === '.rsrc') {
-    rsrc_rva = pe.readUInt32LE(sec + 12);
-    rsrc_off = pe.readUInt32LE(sec + 20);
-    rsrc_size = pe.readUInt32LE(sec + 16);
-  }
-  sec += 40;
-}
+const rsrcSec = peInfo.sections.find(s => s.name === '.rsrc');
+const rsrc_rva = rsrcSec ? rsrcSec.rva : 0;
+const rsrc_off = rsrcSec ? rsrcSec.rawOff : 0;
+const rsrc_size = rsrcSec ? rsrcSec.rawSize : 0;
 
 if (!rsrc_rva) {
   console.error('No .rsrc section found');

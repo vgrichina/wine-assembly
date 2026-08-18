@@ -10,6 +10,8 @@
 // Exits 1 if no matches are found.
 
 const fs = require('fs');
+const path = require('path');
+const { readPE } = require(path.join(__dirname, '..', 'lib', 'pe.js'));
 const args = process.argv.slice(2);
 const positional = args.filter(a => !a.startsWith('--'));
 const file = positional[0];
@@ -23,30 +25,13 @@ if (!file || literal === undefined) {
 }
 
 const buf = fs.readFileSync(file);
-const peOff = buf.readUInt32LE(0x3C);
-const numSect = buf.readUInt16LE(peOff + 6);
-const optSize = buf.readUInt16LE(peOff + 20);
-const imageBase = buf.readUInt32LE(peOff + 52);
-const sectOff = peOff + 24 + optSize;
-
-const sections = [];
-for (let i = 0; i < numSect; i++) {
-  const s = sectOff + i * 40;
-  let name = '';
-  for (let j = 0; j < 8 && buf[s + j]; j++) name += String.fromCharCode(buf[s + j]);
-  sections.push({
-    name,
-    vaddr: buf.readUInt32LE(s + 12),
-    vsize: buf.readUInt32LE(s + 8),
-    rawOff: buf.readUInt32LE(s + 20),
-    rawSize: buf.readUInt32LE(s + 16),
-  });
-}
+const pe = readPE(buf);
+const { imageBase, sections } = pe;
 
 function fileToVa(fo) {
   for (const s of sections) {
     if (fo >= s.rawOff && fo < s.rawOff + s.rawSize) {
-      return { va: imageBase + s.vaddr + (fo - s.rawOff), section: s.name };
+      return { va: imageBase + s.rva + (fo - s.rawOff), section: s.name };
     }
   }
   return null;

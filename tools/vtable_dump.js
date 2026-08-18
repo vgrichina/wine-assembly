@@ -11,6 +11,7 @@
 // Stops early if a slot value is 0 or points outside any section.
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const { disasmAt } = require('./disasm');
 
 const file = process.argv[2];
@@ -23,26 +24,12 @@ if (!file || !vtArg) {
 }
 const vt = parseInt(vtArg, 16);
 
-const buf = fs.readFileSync(file);
-const peOff = buf.readUInt32LE(0x3C);
-const numSect = buf.readUInt16LE(peOff + 6);
-const optSize = buf.readUInt16LE(peOff + 20);
-const imageBase = buf.readUInt32LE(peOff + 52);
-const sectOff = peOff + 24 + optSize;
-
-const sections = [];
-for (let i = 0; i < numSect; i++) {
-  const s = sectOff + i * 40;
-  let name = '';
-  for (let j = 0; j < 8 && buf[s + j]; j++) name += String.fromCharCode(buf[s + j]);
-  sections.push({
-    name,
-    vaddr: buf.readUInt32LE(s + 12),
-    vsize: buf.readUInt32LE(s + 8),
-    rawOff: buf.readUInt32LE(s + 20),
-    rawSize: buf.readUInt32LE(s + 16),
-  });
-}
+const pe = readPE(file);
+const buf = pe.buf;
+const imageBase = pe.imageBase;
+const sections = pe.sections.map(s => ({
+  name: s.name, vaddr: s.rva, vsize: s.vsize, rawOff: s.rawOff, rawSize: s.rawSize,
+}));
 
 function va2off(va) {
   const rva = va - imageBase;

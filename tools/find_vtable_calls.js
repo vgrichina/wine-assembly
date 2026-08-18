@@ -16,6 +16,7 @@
 //   node tools/find_vtable_calls.js ROCKROLL.SCR --slots
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 
 const args = process.argv.slice(2);
 const file = args[0];
@@ -43,27 +44,14 @@ const regFilter = regArg ? new Set(regArg.slice(6).split(',')) : null;
 const countOnly = args.includes('--count');
 const regs32 = ['eax','ecx','edx','ebx','esp','ebp','esi','edi'];
 
-const buf = fs.readFileSync(file);
-const peOff = buf.readUInt32LE(0x3C);
-const numSect = buf.readUInt16LE(peOff + 6);
-const optSize = buf.readUInt16LE(peOff + 20);
-const imageBase = buf.readUInt32LE(peOff + 52);
-const sectOff = peOff + 24 + optSize;
-
-const sections = [];
-for (let i = 0; i < numSect; i++) {
-  const s = sectOff + i * 40;
-  let name = '';
-  for (let j = 0; j < 8 && buf[s + j]; j++) name += String.fromCharCode(buf[s + j]);
-  const vsize = buf.readUInt32LE(s + 8);
-  const va = buf.readUInt32LE(s + 12) + imageBase;
-  const rsize = buf.readUInt32LE(s + 16);
-  const raw = buf.readUInt32LE(s + 20);
-  const chars = buf.readUInt32LE(s + 36);
-  const isCode = (chars & 0x20) !== 0 || /text|code/i.test(name);
-  if (!isCode) continue;
-  sections.push({ name, va, raw, size: Math.min(vsize, rsize) });
-}
+const pe = readPE(file);
+const buf = pe.buf;
+const imageBase = pe.imageBase;
+// Code sections only. lib/pe.js's isCode already carries the Borland rule this
+// tool used to spell out (a section named CodeSeg but flagged as data).
+const sections = pe.sections.filter(s => s.isCode).map(s => ({
+  name: s.name, va: s.va, raw: s.rawOff, size: Math.min(s.vsize, s.rawSize),
+}));
 
 // Scan for FF /2 (call indirect mem) with disp8 or disp32.
 function scanSection(sec) {
