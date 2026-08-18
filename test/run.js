@@ -2768,7 +2768,7 @@ async function main() {
     return lines.join('\n');
   };
 
-  let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0;
+  let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0, prevWin16Calls = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
@@ -5766,7 +5766,16 @@ if (VERBOSE) {
     } else {
       const ex = instance.exports;
       const regFp = ((ex.get_eax() ^ ex.get_ecx() ^ ex.get_edx() ^ ex.get_ebx() ^ ex.get_esi() ^ ex.get_edi() ^ ex.get_ebp() ^ ex.get_esp()) | 0);
-      if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount || regFp !== prevRegFp) {
+      // A 16-bit task makes none of the calls `apiCount` counts -- that is the
+      // 32-bit dispatch path, which is why every Win16 run reports "0 API
+      // calls" -- so its only evidence of life was EIP and the registers, and
+      // both can read identical at two batch boundaries of a healthy message
+      // loop. An idle Minesweeper was therefore reported STUCK. Its own call
+      // counter is the signal that actually distinguishes working from wedged.
+      const win16Calls = ex.win16_api_count ? ex.win16_api_count() | 0 : 0;
+      if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount
+          || regFp !== prevRegFp || win16Calls !== prevWin16Calls) {
+        prevWin16Calls = win16Calls;
         if (!QUIET_BLOCKS && eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
         prevApiCount = apiCount;

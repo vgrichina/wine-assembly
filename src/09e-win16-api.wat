@@ -4256,6 +4256,7 @@
 
   (func $win16_dispatch (export "win16_dispatch") (param $thunk_off i32) (param $ret_lin i32)
     (local $module i32) (local $ordinal i32) (local $target i32)
+    (global.set $win16_api_calls (i32.add (global.get $win16_api_calls) (i32.const 1)))
     (local.set $module  (call $win16_thunk_module  (local.get $thunk_off)))
     (local.set $ordinal (call $win16_thunk_ordinal (local.get $thunk_off)))
     (global.set $win16_last_module (local.get $module))
@@ -4463,6 +4464,16 @@
     (i32.or (i32.eq (local.get $off) (global.get $WIN16_DDE_PUMP))
       (i32.or (i32.eq (local.get $off) (global.get $WIN16_MODAL_PUMP))
               (i32.eq (local.get $off) (global.get $WIN16_DLG_PUMP)))))
+
+  ;; How many Win16 API calls this task has made. It is a liveness signal, not
+  ;; a statistic: a harness watching a 16-bit task has only EIP and the
+  ;; registers to judge progress by, and both can read identical at two batch
+  ;; boundaries of a perfectly healthy message loop. test/run.js's own API
+  ;; counter never moves for these tasks — it counts the 32-bit dispatch path,
+  ;; which is why every Win16 run reports "0 API calls" — so an idle
+  ;; Minesweeper was indistinguishable from a wedged one and got reported STUCK.
+  (global $win16_api_calls (mut i32) (i32.const 0))
+  (func (export "win16_api_count") (result i32) (global.get $win16_api_calls))
 
   (func (export "set_win16_trace") (param $on i32) (global.set $win16_trace (local.get $on)))
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))
