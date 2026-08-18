@@ -1725,7 +1725,11 @@ class WineAssembly {
           self.threadManager.netWaitPending = false;
           await new Promise(resolve => setTimeout(resolve, 0));
         }
-        self._workerThreadsRun = threadsRun | 0;
+        // How many guest threads got a slice this step. Nothing consumes it yet;
+        // it is here because "the threads are live but none of them ran" and "no
+        // threads exist" look identical from the outside, and that is the first
+        // thing worth knowing when a threaded app goes quiet.
+        self.workerThreadsRun = threadsRun | 0;
         if (perf) {
           perf.countSteps(stepsPerSlice);
           // Off-thread time is reported as thread time, not main time: it did
