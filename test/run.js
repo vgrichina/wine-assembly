@@ -105,6 +105,7 @@ const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: inc
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
+const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
@@ -1243,6 +1244,40 @@ async function main() {
     } catch (_) { return null; }
   };
   const h = base.host;
+  // --latency-stats: how long an injected event takes to reach pixels. The
+  // blit is the moment GDI hands a dirty rect to the presentation surface,
+  // so wrap that import and close out whatever input is still outstanding.
+  // Batches are the deterministic half of the answer (one batch is one
+  // message-loop turn, and one browser step); the wall clock is reported but
+  // never asserted on, because this box runs at load 4-40 and that noise is
+  // larger than the thing being measured.
+  const latency = { pending: null, samples: [] };
+  if (LATENCY_STATS && typeof h.ctrl_paint_trace === 'function') {
+    // Wait for the control to actually repaint before accepting a blit as
+    // this event's blit — otherwise any of the ~20 unrelated uploads a batch
+    // already makes would stop the clock immediately and measure nothing.
+    const rawPaint = h.ctrl_paint_trace;
+    h.ctrl_paint_trace = (...args) => {
+      if (latency.pending) latency.pending.painted = true;
+      return rawPaint(...args);
+    };
+  }
+  if (LATENCY_STATS && typeof h.gdi_surface_upload === 'function') {
+    const rawUpload = h.gdi_surface_upload;
+    h.gdi_surface_upload = (...args) => {
+      const result = rawUpload(...args);
+      if (latency.pending && latency.pending.painted) {
+        latency.samples.push({
+          kind: latency.pending.kind,
+          batches: tickStateRef.batch - latency.pending.batch,
+          ms: Number(process.hrtime.bigint() - latency.pending.at) / 1e6,
+        });
+        latency.pending = null;
+      }
+      return result;
+    };
+  }
+  const tickStateRef = { batch: 0 };
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
   if (!h.add_font_resource) h.add_font_resource = () => 0;
@@ -2964,6 +2999,7 @@ async function main() {
       }
     }
     tickState.batch = batch;
+    tickStateRef.batch = batch;
     tickState.callsInBatch = 0;
     if (ctx.pumpAudioCompletions) ctx.pumpAudioCompletions();
     let injectedInputThisBatch = false;
@@ -2971,6 +3007,11 @@ async function main() {
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
       const ev = scheduledInput.shift();
       injectedInputThisBatch = true;
+      // Start the input->blit clock on events a user would perform. The
+      // wrapped gdi_surface_upload stops it at the first blit that follows.
+      if (LATENCY_STATS && /^(keypress|keydown|keyup|click|dblclick)$/.test(ev.action)) {
+        latency.pending = { kind: ev.action, batch, at: process.hrtime.bigint(), painted: false };
+      }
       // UI-level events go through renderer handlers (mouse/keyboard pump),
       // raw events go directly into inputQueue.
       if (ev.action === 'focus-find' && renderer) {
@@ -5830,6 +5871,22 @@ if (VERBOSE) {
     console.log(`            ${(px / MAX_BATCHES).toFixed(0)} px/batch, slow-path share ${px ? (100 * slowPx / px).toFixed(1) : '0.0'}%`);
     console.log(`            ${c(8)} band-walked spans (multi-rect clip, still fast)`);
     console.log(`            slow spans by cause: ${c(6)} clip/bounds, ${c(7)} surface-or-ROP`);
+  }
+
+  if (LATENCY_STATS) {
+    const s = latency.samples;
+    if (!s.length) {
+      console.log('\nInput->blit: no samples (no input injected, or nothing ever blitted)');
+    } else {
+      const pick = (key, q) => {
+        const v = s.map(x => x[key]).sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(q * v.length))];
+      };
+      console.log(`\nInput->blit: ${s.length} events` +
+        (latency.pending ? ` (1 never blitted)` : ''));
+      console.log(`             batches p50 ${pick('batches', 0.5)}, p95 ${pick('batches', 0.95)}, max ${pick('batches', 1)}`);
+      console.log(`             ms      p50 ${pick('ms', 0.5).toFixed(2)}, p95 ${pick('ms', 0.95).toFixed(2)}, max ${pick('ms', 1).toFixed(2)}`);
+    }
   }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
