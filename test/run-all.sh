@@ -133,6 +133,7 @@ E2E=(
   test/test-notepad-find.js
   test/test-notepad-menu.js
   test/test-notepad-menu-items.js
+  test/test-notepad-typing-latency.js
   test/test-find-typing.js
   test/test-notepad-find-next-positive.js
   test/test-notepad-find-not-found-msgbox.js
@@ -159,6 +160,11 @@ E2E=(
   test/test-worker-guest.js
   test/test-win16-dialog.js
   test/test-win16-menus.js
+  test/test-win16-hearts-startup.js
+  test/test-win16-solitaire-play.js
+  test/test-win16-hearts-menus.js
+  test/test-win16-dde-room.js
+  test/test-sysmon-perfstats.js
   test/test-local-candidates-playability.js
   test/test-dxball-candidate.js
   test/test-blobby-volley.js

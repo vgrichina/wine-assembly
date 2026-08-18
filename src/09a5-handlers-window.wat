@@ -2282,14 +2282,21 @@
     (local $tmp i32)
     ;; Renderer-wide top-level windows can belong to another WASM instance.
     ;; The host places those messages in the shared owning-app input queue.
-    (if (i32.and
-          (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
-          (call $host_post_window_message
-            (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    ;;
+    ;; The two tests are nested rather than i32.and-ed, and that is the whole
+    ;; point: i32.and evaluates both operands, so the host call ran for windows
+    ;; of our own too — it queues the message on the owning instance and then
+    ;; this function queued it again. Every app posting to itself got the
+    ;; message twice. Hearts posts itself one command at startup and put its
+    ;; startup dialog up twice, the second on top of the first's modal loop.
+    (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
       (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
+        (if (call $host_post_window_message
+              (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+          (then
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
     (if (i32.ne (global.get $current_thread_id) (i32.const 1))
       (then
         (drop (call $shared_post_queue_enqueue
@@ -2297,16 +2304,10 @@
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Queue if room (max 64 messages, 16 bytes each, at WASM addr 0x400)
-    (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
-    (then
-    (local.set $tmp (i32.add (i32.const 0x400)
-    (i32.mul (global.get $post_queue_count) (i32.const 16))))
-    (i32.store (local.get $tmp) (local.get $arg0))                         ;; hwnd
-    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1)) ;; msg
-    (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2)) ;; wParam
-    (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3));; lParam
-    (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
+    ;; One funnel for the queue, so every posted message is visible to
+    ;; --trace-win16 and there is one place that knows the layout.
+    (drop (call $post_queue_push
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )

@@ -30,11 +30,12 @@
 // Verdicts per item:
 //   CRASH    an unimplemented API, a WASM trap, or a stuck emulator followed
 //   NODLG    label promises a dialog ("...") and no window appeared
+//   ERRBOX   a window opened, but it is an error/warning box: the app refused
 //   dialog   a new window appeared
 //   ok       command accepted, nothing new on screen (Copy, Paste, a toggle)
 //   skipped  Exit/Close and other ids that end the app or the sweep
 //
-// Exit code is nonzero when any item is CRASH or NODLG.
+// Exit code is nonzero when any item is CRASH, NODLG or ERRBOX.
 
 const fs = require('fs');
 const os = require('os');
@@ -61,7 +62,7 @@ if (!fs.existsSync(exe)) {
   process.exit(2);
 }
 
-const SETTLE = parseInt(opt('settle', '1200'), 10);
+let SETTLE = parseInt(opt('settle', '1200'), 10);
 const GAP = parseInt(opt('gap', '800'), 10);
 const VERBOSE = flag('verbose');
 const CONFIRM = !flag('no-confirm');
@@ -147,6 +148,8 @@ const live = items.filter(it => !isTerminal(it));
 const skipped = items.filter(it => isTerminal(it));
 
 const BAD = /UNIMPLEMENTED API|RuntimeError|LinkError|CRASH|STUCK|unreachable/i;
+// [MessageBox] "caption": "text" type=0xNN -- see test/run.js h.message_box.
+const ERRBOX = /^\[MessageBox\] "([^"]*)": "([^"]*)" type=0x([0-9a-f]+)/;
 
 // Drive a list of menu commands through one freshly launched app and say what
 // each one did. Each item gets: post the command, let it run, photograph the
@@ -235,7 +238,7 @@ function drive(list) {
   // Either way the commands go to a window whose wndproc has never heard of
   // them, and "nothing opened" is the honest outcome, not a defect. Say so
   // instead of blaming the menu.
-  const noMenuBar = !menuBarAt.has('baseline');
+  const noMenuBar = menuBarAt.size === 0;
   const results = [];
   let prevLine = 0;
   // Compare each item against the snapshot before it, not against the
@@ -256,7 +259,18 @@ function drive(list) {
       continue;
     }
     const here = lineOfLabel.get(label);
-    const bad = BAD.exec(lines.slice(prevLine, here).join('\n'));
+    const slice = lines.slice(prevLine, here);
+    const bad = BAD.exec(slice.join('\n'));
+    // The last error/warning box this command put up, if any. run.js logs every
+    // message_box with its uType; the icon bits are what separate a refusal
+    // from an ordinary informational box (About, "3 mines left").
+    let errbox = null;
+    for (const line of slice) {
+      const m = ERRBOX.exec(line);
+      if (!m) continue;
+      const icon = parseInt(m[3], 16) & 0xF0;
+      if (icon === 0x10 || icon === 0x30) errbox = `${m[1]}: ${m[2]}`;
+    }
     prevLine = here;
     const opened = [...snap.keys()].filter(h => !prevSnap.has(h));
     const openedTitles = opened.map(h => snap.get(h)).filter(Boolean);
@@ -269,8 +283,20 @@ function drive(list) {
       // A dialog left over from an earlier item is modal and swallows this
       // command, so "nothing happened" says nothing about this item.
       results.push({ ...it, verdict: 'blocked', detail: `${leftover.join(', ')} still open` });
+    } else if (!menuBarAt.has(label)) {
+      // The app was not showing a menu bar when this command was posted, so
+      // its wndproc had no reason to know the command and "nothing opened"
+      // says nothing about it. Pinball spends its first few thousand batches
+      // on a splash and only then creates the window that carries the menu.
+      results.push({ ...it, verdict: 'nomenu', detail: 'no menu bar on screen yet' });
     } else if (wantsDialog && !opened.length) {
       results.push({ ...it, verdict: 'NODLG', detail: 'label promises a dialog, no window appeared' });
+    } else if (opened.length && errbox) {
+      // A window did open, but it is the app saying no. Scoring that as a
+      // working command is how kodakimg reported 97 of 98 commands as opening
+      // a dialog while every one of them was the same "The Image Admin control
+      // cannot be found" box -- a total failure that read as a clean app.
+      results.push({ ...it, verdict: 'ERRBOX', detail: errbox });
     } else if (opened.length) {
       results.push({ ...it, verdict: 'dialog',
         detail: openedTitles.length ? openedTitles.join(', ') : `${opened.length} new window(s)` });
@@ -285,7 +311,18 @@ function drive(list) {
   return { results, status, leaked, noMenuBar };
 }
 
-const pass1 = drive(live);
+let pass1 = drive(live);
+
+// Some apps are simply slow to get their menu up. Pinball spends the first
+// couple of thousand batches on a splash and its sound engine, and only then
+// creates the window that carries the menu bar -- so a short settle sees no
+// menu, and every command posted before that goes to a window whose wndproc
+// has never heard of it. Give it one longer run before concluding the app has
+// no menu at all.
+if (pass1.noMenuBar) {
+  SETTLE = SETTLE * 3;
+  pass1 = drive(live);
+}
 
 // Established before any verdict is trusted, because it invalidates all of
 // them at once rather than item by item.
@@ -308,7 +345,8 @@ let confirmed = 0;
 if (CONFIRM) {
   const unresolved = () => live.filter(it => {
     const v = byId.get(it.id).verdict;
-    return v === 'CRASH' || v === 'NODLG' || v === 'blocked';
+    return v === 'CRASH' || v === 'NODLG' || v === 'ERRBOX' ||
+           v === 'blocked' || v === 'nomenu';
   });
   const first = new Map(pass1.results.map(r => [r.id, r.verdict]));
   const note = (r) => {
@@ -337,7 +375,8 @@ if (CONFIRM) {
 
 const results = live.map(it => byId.get(it.id))
   .concat(skipped.map(it => ({ ...it, verdict: 'skipped', detail: 'terminates the app' })));
-const bad = results.filter(r => r.verdict === 'CRASH' || r.verdict === 'NODLG');
+const bad = results.filter(r => r.verdict === 'CRASH' || r.verdict === 'NODLG' ||
+                               r.verdict === 'ERRBOX');
 const tally = results.reduce((a, r) => (a[r.verdict] = (a[r.verdict] || 0) + 1, a), {});
 
 console.log(`${name}  ${items.length} menu commands  ` +

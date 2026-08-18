@@ -2347,6 +2347,46 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; SetWindowWord(hWnd, nIndex, wNewWord) → WORD (previous value)
+  ;;
+  ;; Win16's window-word API, still exported by USER32 and still used: Win98's
+  ;; System Monitor calls it for View > Hide Title Bar, and with no entry point
+  ;; registered that menu item was a hard fail-fast crash.
+  ;;
+  ;; A negative index names the same field as SetWindowLong -- GWL_WNDPROC -4,
+  ;; GWL_ID -12, GWL_STYLE -16 and friends -- so hand those to the 32-bit
+  ;; handler and narrow the result, rather than keeping a second copy of that
+  ;; logic. Both are stdcall(3), so it pops the frame correctly for us too.
+  ;;
+  ;; A non-negative index is a byte offset into the window's extra bytes, and
+  ;; the whole point of this call is that it touches exactly two of them:
+  ;; widening it to a dword store would silently clobber the neighbouring word.
+  (func $handle_SetWindowWord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $p i32) (local $old i32)
+    (if (i32.lt_s (local.get $arg1) (i32.const 0))
+      (then
+        (call $handle_SetWindowLongA
+          (local.get $arg0) (local.get $arg1)
+          (i32.and (local.get $arg2) (i32.const 0xFFFF))
+          (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (return)))
+    (local.set $slot (call $wnd_table_find (local.get $arg0)))
+    ;; 16 bytes of extra storage per window; a word needs both of its bytes
+    ;; inside it.
+    (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
+                (i32.gt_u (local.get $arg1) (i32.const 14)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $p (call $wnd_extra_addr (local.get $slot) (local.get $arg1)))
+    (local.set $old (i32.load16_u (local.get $p)))
+    (i32.store16 (local.get $p) (i32.and (local.get $arg2) (i32.const 0xFFFF)))
+    (global.set $eax (local.get $old))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; 102: SetWindowTextA
   (func $handle_SetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $len i32)
@@ -2758,9 +2798,17 @@
   )
 
   ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable).
+  ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable). MF_BYPOSITION is 0x400 and
+  ;; has to be honoured: it is how MFC addresses items while walking a popup,
+  ;; and treating a position as a command id put the state on the wrong item.
   (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_enable_item_global
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
+        (then (call $menu_enable_position_global
+          (local.get $arg0) (local.get $arg1)
+          (i32.ne (i32.and (local.get $arg2) (i32.const 3)) (i32.const 0))))
+        (else (call $menu_enable_item_global
+          (local.get $arg0) (local.get $arg1) (local.get $arg2)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -3395,9 +3443,15 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
+    ;; Repaint a moved WAT-native control immediately, but only if it is
+    ;; actually on screen. Its own WS_VISIBLE bit is not enough: a control
+    ;; inside a hidden dialog page keeps that bit set, and painting it writes
+    ;; onto the top-level back-canvas at a position the page is about to leave,
+    ;; where nothing will erase it. $handle_DeferWindowPos already tests it
+    ;; this way.
     (if (i32.and
           (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
-          (i32.ne (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000)) (i32.const 0)))
+          (call $wnd_is_effectively_visible (local.get $arg0)))
       (then
         (drop (call $control_wndproc_dispatch
           (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
@@ -4457,6 +4511,21 @@
     (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
+  ;; GetSaveFileNameW(lpOFN) — the W twin of the above, exactly as
+  ;; GetOpenFileNameW is to GetOpenFileNameA. It was simply missing, so
+  ;; the XP Sound Recorder (a Unicode app) trapped on File > Save and
+  ;; File > Save As instead of showing a dialog.
+  (func $handle_GetSaveFileNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $owner i32)
+    (call $modal_capture_nonvolatile)
+    (global.set $opendlg_wide (i32.const 1))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (call $create_open_dialog (local.get $dlg) (local.get $owner) (i32.const 1) (local.get $arg0))
+    (call $modal_begin (local.get $dlg) (i32.const 8))
+  )
+
   ;; 249: SetViewportExtEx(hdc, x, y, lpSize) → BOOL
   (func $handle_SetViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg3)
@@ -5102,10 +5171,59 @@
   ;; message-specific buffers. Reuse the synchronous subclass/default-proc
   ;; path so Unicode applications can drive common controls (Media Player 32
   ;; uses TB_ADDBUTTONSW through an app-installed toolbar subclass).
+  ;; True for the messages whose lParam is a caller-supplied string. The W
+  ;; forms carry UTF-16 there; WAT-native controls store bytes, so the text has
+  ;; to be narrowed before it reaches one.
+  (func $msg_lparam_is_text (param $msg i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $msg) (i32.const 0x000C))   ;; WM_SETTEXT
+        (i32.eq (local.get $msg) (i32.const 0x00C2)))  ;; EM_REPLACESEL
+      (i32.or
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0143))    ;; CB_ADDSTRING
+                  (i32.eq (local.get $msg) (i32.const 0x014A)))   ;; CB_INSERTSTRING
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x014C))    ;; CB_FINDSTRING
+                  (i32.eq (local.get $msg) (i32.const 0x014D))))  ;; CB_SELECTSTRING
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0158))    ;; CB_FINDSTRINGEXACT
+                  (i32.eq (local.get $msg) (i32.const 0x0180)))   ;; LB_ADDSTRING
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0181))  ;; LB_INSERTSTRING
+                    (i32.eq (local.get $msg) (i32.const 0x018C))) ;; LB_SELECTSTRING
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x018F))  ;; LB_FINDSTRING
+                    (i32.eq (local.get $msg) (i32.const 0x01A2)))))))) ;; LB_FINDSTRINGEXACT
+
+  ;; Narrow a W message's string lParam for a WAT-native target, or return 0
+  ;; when nothing needs converting. Only WAT-native controls are converted: a
+  ;; guest window that was sent a W message wants its UTF-16 pointer intact,
+  ;; and for those SendMessage may redirect EIP and read the string long after
+  ;; this returns, so a temporary buffer would be freed out from under it.
+  (func $msg_narrow_text_lparam (param $hwnd i32) (param $msg i32) (param $lParam i32)
+        (result i32)
+    (local $n i32) (local $buf i32)
+    (if (i32.eqz (call $msg_lparam_is_text (local.get $msg))) (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $lParam) (i32.const 0x10000)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd))) (then (return (i32.const 0))))
+    (local.set $n (i32.add (call $guest_wcslen (local.get $lParam)) (i32.const 1)))
+    (local.set $buf (call $heap_alloc (local.get $n)))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (drop (call $wide_to_ansi (local.get $lParam) (local.get $buf) (local.get $n)))
+    (local.get $buf))
+
+  ;; SendMessageW — the A path owns dispatch. Only the text-bearing messages
+  ;; differ, and only when the target is one of our own controls: XP Sound
+  ;; Recorder fills its format combo with CB_ADDSTRING of LoadStringW text, and
+  ;; reading that UTF-16 as bytes left every row showing just its first letter.
   (func $handle_SendMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $narrow i32)
+    (local.set $narrow
+      (call $msg_narrow_text_lparam (local.get $arg0) (local.get $arg1) (local.get $arg3)))
     (call $handle_SendMessageA
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (select (local.get $narrow) (local.get $arg3) (local.get $narrow))
+      (local.get $arg4) (local.get $name_ptr))
+    (if (local.get $narrow) (then (call $heap_free (local.get $narrow))))
   )
 
   ;; 297: PostMessageW — same as PostMessageA
@@ -6741,8 +6859,15 @@
   )
 
   ;; 393: wvsprintfW — STUB: unimplemented
+  ;; wvsprintfW(lpOut, lpFmt, arglist) — the W twin of wvsprintfA, using the
+  ;; same wide implementation wsprintfW already goes through. The only
+  ;; difference from wsprintfW is where the arguments come from: an explicit
+  ;; va_list pointer rather than the caller's stack. NT Paint formats its
+  ;; Stretch/Skew dialog through this, and trapped here.
   (func $handle_wvsprintfW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $wsprintf_impl_w
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 121: DrawFocusRect(hdc, lprc)
@@ -8005,7 +8130,52 @@
   )
 
   ;; 466: ShellAboutW — return 1, 4 args stdcall
+  ;; OleUIAddVerbMenuA(lpOleObj, lpszShortType, hMenu, uPos, uIDVerbMin,
+  ;;                   uIDVerbMax, bAddConvert, idConvert, lphMenu) → BOOL
+  ;;
+  ;; MFC builds the "<<OLE VERBS GO HERE>>" entry of an Edit menu through this,
+  ;; from its WM_INITMENUPOPUP handler. It was not registered, so
+  ;; GetProcAddress("OleUIAddVerbMenuA") returned 0 and MFC put up "This
+  ;; program is linked to the missing export ... in OLEDLG.DLL" -- which only
+  ;; became visible once WM_INITMENUPOPUP started being delivered at all.
+  ;;
+  ;; With no object selected there are no verbs to add, and FALSE with
+  ;; *lphMenu = NULL is the documented answer, not a placeholder. An actual
+  ;; embedded object would need IOleObject::EnumVerbs, so that case still
+  ;; fails loudly rather than silently doing nothing.
+  (func $handle_OleUIAddVerbMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $lphMenu i32)
+    (if (local.get $arg0)
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (local.set $lphMenu (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
+    (if (local.get $lphMenu)
+      (then (call $gs32 (local.get $lphMenu) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))  ;; 9 args
+  )
+
+  ;; ShellAboutW(hwnd, szApp, szOtherStuff, hIcon) — the W twin of
+  ;; ShellAboutA, which builds the whole dialog in WAT. This returned TRUE
+  ;; without drawing anything, so XP Minesweeper's Help > About Minesweeper...
+  ;; reported success and showed nothing.
+  ;;
+  ;; The narrowed copies are deliberately not freed: $create_about_dialog hands
+  ;; the body string straight to a STATIC that keeps the pointer, and these
+  ;; heap copies outlive the call in a way the caller's own stack buffers
+  ;; (0x080ffc94 in Minesweeper's case) would not.
   (func $handle_ShellAboutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $app i32) (local $other i32)
+    (local.set $app (call $atom_narrow_w (local.get $arg1)))
+    (if (local.get $arg2)
+      (then (local.set $other (call $atom_narrow_w (local.get $arg2)))))
+    (if (local.get $app)
+      (then
+        (local.set $dlg (global.get $next_hwnd))
+        (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+        (drop (call $host_shell_about
+          (local.get $dlg) (local.get $arg0) (call $g2w (local.get $app))))
+        (call $create_about_dialog
+          (local.get $dlg) (local.get $arg0) (local.get $app) (local.get $other))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -8030,10 +8200,43 @@
   ;; --- Additional Shell32 APIs ---
 
   ;; ShellExecuteW — same as A version, return >32 for success, 6 args
+  ;; ShellExecuteW(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShow)
+  ;; Narrow the four strings and take the same host path as the A form. This
+  ;; returned 33 ("succeeded") without looking at a single argument, so a
+  ;; Unicode app's shell request vanished with no log and no failure code --
+  ;; XP Sound Recorder's Edit > Audio Properties asks for
+  ;; RUNDLL32.EXE MMSYS.CPL,ShowAudioPropertySheet here and appeared to do
+  ;; nothing at all. Routing it through $host_shell_execute at least makes the
+  ;; request observable; what the host does with rundll32 is its business.
   (func $handle_ShellExecuteW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 33))
+    (local $op i32) (local $file i32) (local $params i32) (local $dir i32)
+    (local.set $op    (call $shellexec_narrow_w (local.get $arg1)))
+    (local.set $file  (call $shellexec_narrow_w (local.get $arg2)))
+    (local.set $params (call $shellexec_narrow_w (local.get $arg3)))
+    (local.set $dir   (call $shellexec_narrow_w (local.get $arg4)))
+    (global.set $eax (call $host_shell_execute
+      (local.get $arg0)
+      (if (result i32) (local.get $op)    (then (call $g2w (local.get $op)))    (else (i32.const 0)))
+      (if (result i32) (local.get $file)  (then (call $g2w (local.get $file)))  (else (i32.const 0)))
+      (if (result i32) (local.get $params) (then (call $g2w (local.get $params))) (else (i32.const 0)))
+      (if (result i32) (local.get $dir)   (then (call $g2w (local.get $dir)))   (else (i32.const 0)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))  ;; nShowCmd
+    (if (local.get $op)     (then (call $heap_free (local.get $op))))
+    (if (local.get $file)   (then (call $heap_free (local.get $file))))
+    (if (local.get $params) (then (call $heap_free (local.get $params))))
+    (if (local.get $dir)    (then (call $heap_free (local.get $dir))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
+
+  ;; UTF-16 → a fresh guest ANSI buffer, or 0 for a NULL argument. Caller frees.
+  (func $shellexec_narrow_w (param $ws i32) (result i32)
+    (local $n i32) (local $buf i32)
+    (if (i32.eqz (local.get $ws)) (then (return (i32.const 0))))
+    (local.set $n (i32.add (call $guest_wcslen (local.get $ws)) (i32.const 1)))
+    (local.set $buf (call $heap_alloc (local.get $n)))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (drop (call $wide_to_ansi (local.get $ws) (local.get $buf) (local.get $n)))
+    (local.get $buf))
 
   ;; ShellExecuteExA(lpExecInfo) — 1 arg, return TRUE
   (func $handle_ShellExecuteExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -10383,8 +10586,11 @@
   )
 
   ;; 620: GetMenuItemID — STUB: unimplemented
+  ;; GetMenuItemID(hMenu, nPos) — 0 for a separator or a submenu, which is
+  ;; what Windows answers and what MFC's update loop expects to skip on.
   (func $handle_GetMenuItemID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (call $menu_handle_item_id (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
   )
 
   ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; menu subsystem
@@ -10404,8 +10610,13 @@
   ;; 621: GetMenuItemCount(hMenu) — the menu subsystem is a stub that doesn't
   ;; track items, so report 0 (empty menu) rather than crashing. DX samples
   ;; like flip2d call this during window setup but don't care about the count.
+  ;; GetMenuItemCount(hMenu). Returning 0 here is what kept every MFC menu
+  ;; stale: CFrameWnd::OnInitMenuPopup walks the popup by index to run its
+  ;; ON_UPDATE_COMMAND_UI handlers, and a count of zero means it walks nothing
+  ;; and never enables or greys anything. Paint offered File > Send... in black
+  ;; on a machine with no mail subsystem because of this.
   (func $handle_GetMenuItemCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $menu_handle_item_count (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
   )
 
@@ -11517,9 +11728,26 @@
   )
 
   ;; 668: SetDlgItemTextW — return 1, 3 args stdcall
+  ;; SetDlgItemTextW(hDlg, nIDDlgItem, lpString) — narrow and hand to the A
+  ;; path, which owns the window-text table and the WM_SETTEXT dispatch.
+  ;;
+  ;; This used to return TRUE without storing anything. Every field a Unicode
+  ;; app filled in was then blank with no diagnostic: XP Sound Recorder's
+  ;; File > Properties sets its name, copyright, length, data size and audio
+  ;; format this way, and the whole sheet rendered empty.
   (func $handle_SetDlgItemTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (local $narrow i32) (local $n i32)
+    (if (i32.ge_u (local.get $arg2) (i32.const 0x10000))
+      (then
+        (local.set $n (i32.add (call $guest_wcslen (local.get $arg2)) (i32.const 1)))
+        (local.set $narrow (call $heap_alloc (local.get $n)))
+        (if (local.get $narrow)
+          (then (drop (call $wide_to_ansi
+                  (local.get $arg2) (local.get $narrow) (local.get $n)))))))
+    (call $handle_SetDlgItemTextA
+      (local.get $arg0) (local.get $arg1) (local.get $narrow)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (local.get $narrow) (then (call $heap_free (local.get $narrow))))
   )
 
   ;; 669: IsDlgButtonChecked — BST_UNCHECKED(0) or BST_CHECKED(1)
@@ -11622,8 +11850,14 @@
   )
 
   ;; 674: GetMenuState — STUB: unimplemented
+  ;; GetMenuState(hMenu, uId, uFlags) → MF_* state, or -1 when the item is not
+  ;; there. MF_BYPOSITION is 0x400; without it uId is a command id.
   (func $handle_GetMenuState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
+        (then (call $menu_handle_item_state (local.get $arg0) (local.get $arg1)))
+        (else (call $menu_handle_state_by_id (local.get $arg0) (local.get $arg1)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args
   )
 
   ;; 735: GetMenuItemRect(hWnd, hMenu, uItem, lprcItem) -> BOOL
@@ -11711,6 +11945,20 @@
   (func $handle_InsertMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; GetMenuStringA(hMenu, uIDItem, lpString, cchMax, uFlag) → chars copied.
+  ;; MFC reads every label back while walking a popup, so this sits directly
+  ;; behind the WM_INITMENUPOPUP path -- it was not registered at all, and the
+  ;; unimplemented-API crash was the first thing Paint hit once its update loop
+  ;; started running. MF_BYPOSITION is 0x400.
+  (func $handle_GetMenuStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $menu_handle_copy_label
+      (local.get $arg0) (local.get $arg1)
+      (i32.and (local.get $arg4) (i32.const 0x400))
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
+      (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
   )
 
   ;; 683: GetMenuStringW — STUB: unimplemented
@@ -13201,6 +13449,67 @@
     (call $create_print_dialog (local.get $dlg) (local.get $owner))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
 
+  ;; PrintDlgW(lppd) — the wide twin of PrintDlgA.
+  ;;
+  ;; NT Paint delay-loads this, so a failed GetProcAddress does not return an
+  ;; error to the app: the delay-load helper raises 0xC06D007F, nothing handles
+  ;; it, and the process exits. File > Print, Page Setup and Print Preview all
+  ;; killed Paint outright rather than doing nothing.
+  ;;
+  ;; PRINTDLG itself has the same layout in both flavours; DEVMODE does not.
+  ;; DEVMODEW's dmDeviceName is 32 WCHARs rather than 32 chars, so every field
+  ;; after it sits 32 bytes further along and the struct is 220 bytes, not 156.
+  ;; DEVNAMES offsets are counted in characters, so those move too.
+  (func $handle_PrintDlgW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $owner i32) (local $flags i32)
+    (local $devmode i32) (local $devnames i32) (local $dn_w i32)
+    (call $modal_capture_nonvolatile)
+    (local.set $flags (call $gl32 (i32.add (local.get $arg0) (i32.const 20))))
+    (local.set $devmode (call $heap_alloc (i32.const 220)))
+    (memory.fill (call $g2w (local.get $devmode)) (i32.const 0) (i32.const 220))
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 68)) (i32.const 220)) ;; dmSize
+    (call $gs32 (i32.add (local.get $devmode) (i32.const 72)) (i32.const 0x00000F03)) ;; dmFields
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 76)) (i32.const 1))    ;; portrait
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 78)) (i32.const 1))    ;; Letter
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 80)) (i32.const 2794)) ;; 11in in 0.1mm
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 82)) (i32.const 2159)) ;; 8.5in
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 86)) (i32.const 1))    ;; copies
+    (call $gs16 (i32.add (local.get $devmode) (i32.const 90)) (i32.const 300))  ;; quality
+    ;; DEVNAMES: 8-byte header, then the strings. The offsets are in
+    ;; characters, so byte 8 is character 4 here rather than character 8.
+    (local.set $devnames (call $heap_alloc (i32.const 64)))
+    (local.set $dn_w (call $g2w (local.get $devnames)))
+    (memory.fill (local.get $dn_w) (i32.const 0) (i32.const 64))
+    (call $gs16 (local.get $devnames) (i32.const 4))                              ;; wDriverOffset
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 13))     ;; wDeviceOffset
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 4)) (i32.const 25))     ;; wOutputOffset
+    (call $gs16 (i32.add (local.get $devnames) (i32.const 6)) (i32.const 0))      ;; wDefault
+    (call $memcpy (i32.add (local.get $dn_w) (i32.const 8)) (i32.const 0x11220) (i32.const 8))
+    (call $acm_widen_in_place (i32.add (local.get $devnames) (i32.const 8)) (i32.const 8))
+    (call $memcpy (i32.add (local.get $dn_w) (i32.const 26)) (i32.const 0x11229) (i32.const 11))
+    (call $acm_widen_in_place (i32.add (local.get $devnames) (i32.const 26)) (i32.const 11))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (local.get $devmode))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (local.get $devnames))
+    (global.set $printer_hdc (call $gdi_printer_dc_alloc))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 16)) (global.get $printer_hdc))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 24)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 26)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 28)) (i32.const 1))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 30)) (i32.const 9999))
+    (call $gs16 (i32.add (local.get $arg0) (i32.const 32)) (i32.const 1))
+    (if (i32.and (local.get $flags) (i32.const 0x00000400))   ;; PD_RETURNDEFAULT
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (global.set $common_dialog_kind (i32.const 2))
+    (global.set $common_dialog_struct (local.get $arg0))
+    (call $create_print_dialog (local.get $dlg) (local.get $owner))
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
+
   ;; 954: CoFreeUnusedLibraries() — no args, no-op
   (func $handle_CoFreeUnusedLibraries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -13410,6 +13719,23 @@
     (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (call $create_color_dialog (local.get $dlg) (local.get $owner) (local.get $arg0))
     (call $modal_begin (local.get $dlg) (i32.const 8)))
+
+  ;; ChooseColorW / PageSetupDlgW — CHOOSECOLOR and PAGESETUPDLG have the same
+  ;; layout in both flavours, and the only members that differ are the template
+  ;; name pointers, which neither implementation reads. So these are the same
+  ;; call, not a reimplementation.
+  ;;
+  ;; They are worth registering rather than leaving absent because NT Paint
+  ;; delay-loads them: a failed GetProcAddress does not come back as an error,
+  ;; it raises 0xC06D007F and takes the process down. Options > Edit Colors...
+  ;; and File > Page Setup... each killed Paint outright.
+  (func $handle_ChooseColorW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_ChooseColorA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_PageSetupDlgW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_PageSetupDlgA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; === VERSION.DLL APIs ===
 

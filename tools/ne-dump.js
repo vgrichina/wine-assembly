@@ -290,6 +290,7 @@ function main() {
   const want = k => all || args.includes('--' + k);
   const relocArg = args.find(a => a.startsWith('--relocs='));
   const menuJsonArg = args.find(a => a.startsWith('--menus-json='));
+  const segBytesArg = args.find(a => a.startsWith('--seg-bytes='));
 
   let b, h;
   try {
@@ -341,6 +342,26 @@ function main() {
       };
       for (const id of Object.keys(m)) { console.log(`  menu ${id}:`); walk(m[id], 1); }
       if (!Object.keys(m).length) console.log('  (none)');
+    }
+  }
+
+  if (segBytesArg) {
+    // A Win16 app's string literals live at fixed offsets in DGROUP, and the
+    // disassembly names them that way -- `push 0x1e8` is a pointer to one.
+    // hexdump.js and dump_va.js both translate a PE VA and answer "not found
+    // in any section" here, so this is the only way to read one.
+    const [nStr, offStr, lenStr] = segBytesArg.split('=').slice(1).join('=').split(':');
+    const seg = h.segments.find(s => s.index === parseInt(nStr, 10));
+    if (!seg) { console.error(`no segment ${nStr}`); process.exit(1); }
+    const off = offStr ? parseInt(offStr, 16 | 0) || Number(offStr) : 0;
+    const len = lenStr ? Number(lenStr) : 64;
+    const start = seg.filePos + off;
+    console.log(`\nSegment ${seg.index} +0x${off.toString(16)} (file 0x${start.toString(16)}):`);
+    for (let p = 0; p < len && start + p < b.length; p += 16) {
+      const row = b.subarray(start + p, Math.min(start + p + 16, b.length));
+      const hex = [...row].map(v => v.toString(16).padStart(2, '0')).join(' ');
+      const asc = [...row].map(v => (v >= 0x20 && v < 0x7f) ? String.fromCharCode(v) : '.').join('');
+      console.log(`  +0x${(off + p).toString(16).padStart(4, '0')}  ${hex.padEnd(47)}  ${asc}`);
     }
   }
 

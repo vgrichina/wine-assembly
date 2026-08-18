@@ -518,6 +518,14 @@
   ;; JS formats and logs iff --trace-dx is set. kind: 1=Lock 2=Unlock 3=Blt 4=SetEntries 5=Present 6=Flip
   (import "host" "dx_trace" (func $host_dx_trace (param i32 i32 i32 i32 i32)))
 
+  ;; WAT-native control paint tracing hook — every WAT-owned control wndproc
+  ;; paint, with the window-local rect it is about to draw into. GDI primitives
+  ;; are rasterized inside WAT now, so --trace-gdi sees only surface binds and
+  ;; can no longer answer "who drew these pixels". JS formats and logs iff
+  ;; --trace-ctrl is set.
+  (import "host" "ctrl_paint_trace"
+    (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32)))
+
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0
@@ -831,7 +839,7 @@
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00")
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -2206,6 +2214,16 @@
   ;; either dispatches one and comes back here when the procedure returns, or
   ;; finds nothing to do and yields. See $win16_DialogBox in 09e2.
   (global $WIN16_DLG_PUMP i32 (i32.const 0xFF40))
+  ;; Where a dialog resumes after its WH_CALLWNDPROC filter has seen the
+  ;; WM_NCCREATE that creating it sends — see $win16_dlg_cwp_resume.
+  (global $WIN16_DLG_CWP i32 (i32.const 0xFF50))
+  ;; NDDEAPI.NDdeGetWindow. A module this emulator implements has no export
+  ;; table for GetProcAddress to read, so its one entry point is reached
+  ;; through a fixed thunk-segment slot, the same way the pumps above are.
+  (global $WIN16_NDDE_GETWINDOW i32 (i32.const 0xFF60))
+  ;; The window that answers for network DDE in this emulator — see
+  ;; $win16_ndde_window.
+  (global $win16_ndde_hwnd (mut i32) (i32.const 0))
   ;; EndDialog's two words. A dialog procedure calls it and then returns, and
   ;; the pump acts on it at that return, so an inner dialog has always consumed
   ;; these before an outer one can look — nesting needs nothing more.
@@ -2226,6 +2244,9 @@
   ;; an address one of its own selectors covers. Four, not one, because a
   ;; dialog redraws several owner-draw controls before any of them returns.
   (global $WIN16_MSG_SCRATCH_SIZE i32 (i32.const 128))
+  ;; Raised while the 32-bit bridge frame is open, so $win16_arg16 can refuse
+  ;; to read an argument off the scratch stack instead of the task's.
+  (global $win16_in_call32 (mut i32) (i32.const 0))
   (global $win16_msg_scratch (mut i32) (i32.const 0))
   (global $win16_msg_slot (mut i32) (i32.const 0))
   (global $win16_lheap_base (mut i32) (i32.const 0))
@@ -2251,6 +2272,8 @@
   (global $WIN16_NAME_DDEML    i32 (i32.const 0x11EAC))
   ;; Not a module — the one SHELL export reached by name rather than ordinal.
   (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
+  (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
+  (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)

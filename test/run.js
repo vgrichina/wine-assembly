@@ -104,6 +104,9 @@ const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
+const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
+const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
+const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
@@ -655,6 +658,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'dump-children', hwnd: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-windows') {
         scheduledInput.push({ batch, action: 'dump-windows', label: parts[2] || '' });
+      } else if (kind === 'dump-msgq') {
+        scheduledInput.push({ batch, action: 'dump-msgq', label: parts[2] || '' });
       } else if (kind === 'dump-tree') {
         scheduledInput.push({ batch, action: 'dump-tree', label: parts[2] || '' });
       } else if (kind === 'dump-listbox') {
@@ -1104,6 +1109,7 @@ async function main() {
 
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
+  if (TRACE_CTRL) traceCategories.add('ctrl');
   if (TRACE_RGN) traceCategories.add('rgn');
   if (TRACE_DC) traceCategories.add('dc');
   if (TRACE_CLIP) traceCategories.add('clip');
@@ -1124,6 +1130,9 @@ async function main() {
     renderer,
     processId: 1000,
     apiTable,
+    // Live guest thread count, for HKEY_DYN_DATA\PerfStats KERNEL\Threads.
+    // A getter because the manager is built long after ctx is.
+    get threadManager() { return threadManager; },
     verbose: VERBOSE,
     _debugReadFile: TRACE_API,
     _debugFindFile: TRACE_API,
@@ -1235,6 +1244,40 @@ async function main() {
     } catch (_) { return null; }
   };
   const h = base.host;
+  // --latency-stats: how long an injected event takes to reach pixels. The
+  // blit is the moment GDI hands a dirty rect to the presentation surface,
+  // so wrap that import and close out whatever input is still outstanding.
+  // Batches are the deterministic half of the answer (one batch is one
+  // message-loop turn, and one browser step); the wall clock is reported but
+  // never asserted on, because this box runs at load 4-40 and that noise is
+  // larger than the thing being measured.
+  const latency = { pending: null, samples: [] };
+  if (LATENCY_STATS && typeof h.ctrl_paint_trace === 'function') {
+    // Wait for the control to actually repaint before accepting a blit as
+    // this event's blit — otherwise any of the ~20 unrelated uploads a batch
+    // already makes would stop the clock immediately and measure nothing.
+    const rawPaint = h.ctrl_paint_trace;
+    h.ctrl_paint_trace = (...args) => {
+      if (latency.pending) latency.pending.painted = true;
+      return rawPaint(...args);
+    };
+  }
+  if (LATENCY_STATS && typeof h.gdi_surface_upload === 'function') {
+    const rawUpload = h.gdi_surface_upload;
+    h.gdi_surface_upload = (...args) => {
+      const result = rawUpload(...args);
+      if (latency.pending && latency.pending.painted) {
+        latency.samples.push({
+          kind: latency.pending.kind,
+          batches: tickStateRef.batch - latency.pending.batch,
+          ms: Number(process.hrtime.bigint() - latency.pending.at) / 1e6,
+        });
+        latency.pending = null;
+      }
+      return result;
+    };
+  }
+  const tickStateRef = { batch: 0 };
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
   if (!h.add_font_resource) h.add_font_resource = () => 0;
@@ -1608,13 +1651,31 @@ async function main() {
     // A by-name call into a loaded DLL that resolved: same three words as the
     // unresolved marker, but it is a call rather than a stop.
     if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
+    // The Win16 modal dialog pump handing one message on: hwnd, message,
+    // wParam, lParam, and the dialog the pump belongs to.
+    if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
-      const { call: isCall, ret: isRet, resolved, words } = pendingWin16;
+      const { call: isCall, ret: isRet, route: isRoute, posted: isPosted, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isPosted) {
+        const [hwnd, msg, wp, lp, depth] = words;
+        logs.push(`[win16] post -> hwnd=${hex(hwnd)} msg=${hex(msg)}` +
+          `${WIN16_MSG_NAMES[msg] ? ` (${WIN16_MSG_NAMES[msg]})` : ''}` +
+          ` wp=${hex(wp)} lp=${hex(lp)} depth=${depth}`);
+        return;
+      }
+      if (isRoute) {
+        const [hwnd, msg, wp, lp, dlg, queued] = words;
+        logs.push(`[win16] ${dlg ? `dlg-pump ${hex(dlg)}` : 'task-loop'} -> hwnd=${hex(hwnd)} msg=${hex(msg)}` +
+          `${WIN16_MSG_NAMES[msg] ? ` (${WIN16_MSG_NAMES[msg]})` : ''}` +
+          ` wp=${hex(wp)} lp=${hex(lp)} queued=${queued}`);
+        return;
+      }
       if (isRet) {
         logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])} esp=${hex(words[3])}`);
         return;
@@ -2943,6 +3004,7 @@ async function main() {
       }
     }
     tickState.batch = batch;
+    tickStateRef.batch = batch;
     tickState.callsInBatch = 0;
     if (ctx.pumpAudioCompletions) ctx.pumpAudioCompletions();
     let injectedInputThisBatch = false;
@@ -2950,6 +3012,11 @@ async function main() {
     while (scheduledInput.length && scheduledInput[0].batch <= batch) {
       const ev = scheduledInput.shift();
       injectedInputThisBatch = true;
+      // Start the input->blit clock on events a user would perform. The
+      // wrapped gdi_surface_upload stops it at the first blit that follows.
+      if (LATENCY_STATS && /^(keypress|keydown|keyup|click|dblclick)$/.test(ev.action)) {
+        latency.pending = { kind: ev.action, batch, at: process.hrtime.bigint(), painted: false };
+      }
       // UI-level events go through renderer handlers (mouse/keyboard pump),
       // raw events go directly into inputQueue.
       if (ev.action === 'focus-find' && renderer) {
@@ -4207,6 +4274,19 @@ async function main() {
         } catch (e) {
           logs.push(`[input] dlg-png FAILED ${ev.path}: ${e.message} at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-msgq') {
+        // What is actually waiting in the posted-message queue. The queue is
+        // WAT-private memory below GUEST_BASE, so --dump cannot show it.
+        const we = instance.exports;
+        const label = ev.label ? ':' + ev.label : '';
+        const depth = we.post_queue_depth ? (we.post_queue_depth() | 0) : -1;
+        const rows = [];
+        for (let i = 0; i < depth; i++) {
+          const f = n => (we.post_queue_peek(i, n) >>> 0);
+          rows.push(`[${i}] hwnd=0x${f(0).toString(16)} msg=0x${f(1).toString(16)}` +
+            ` wp=0x${f(2).toString(16)} lp=0x${f(3).toString(16)}`);
+        }
+        logs.push(`[input] dump-msgq${label}: depth=${depth} ${rows.join(' | ')} at batch ${batch}`);
       } else if (ev.action === 'dump-windows' && renderer) {
         const label = ev.label ? ':' + ev.label : '';
         const we = instance.exports;
@@ -5012,7 +5092,21 @@ async function main() {
         logs.push(`[input] winamp-start at batch ${batch}`);
       } else if (ev.action === 'post-cmd') {
         const we = instance.exports;
-        const mainHwnd = we.get_main_hwnd();
+        // A menu command belongs to the window showing the menu, which is not
+        // always get_main_hwnd(). Pinball's menu bar is on its second
+        // top-level window (0x10002); posting to the first sent every command
+        // to a window whose wndproc had never heard of it, and the sweep read
+        // that as two broken dialogs. Prefer a visible window with a menu bar,
+        // and fall back to the main hwnd when nothing has one.
+        let mainHwnd = we.get_main_hwnd();
+        if (renderer && renderer.windows && renderer._hasMenuBar) {
+          for (const [hs, win] of Object.entries(renderer.windows)) {
+            if (!win || !win.visible || win.isChild) continue;
+            let hasMenu = false;
+            try { hasMenu = !!renderer._hasMenuBar(win); } catch (_) {}
+            if (hasMenu) { mainHwnd = parseInt(hs, 10) || mainHwnd; break; }
+          }
+        }
         const postCount = we.get_post_queue_count ? we.get_post_queue_count() : 0;
         if (postCount < 8) {
           const dv = new DataView(memory.buffer);
@@ -5659,6 +5753,11 @@ if (VERBOSE) {
         prevApiCount = apiCount;
         prevRegFp = regFp;
         stuckCount = 0;
+      } else if (ex.win16_pump_parked && ex.win16_pump_parked()) {
+        // A 16-bit modal dialog or message box with no message to handle waits
+        // on a continuation slot with every register unchanged. That is the
+        // defined behaviour of those addresses, not a hang.
+        stuckCount = 0;
       } else if (scheduledInput.length) {
         // Scripted UI tests often wait inside a stable message-loop thunk
         // until the next scheduled click/capture. Do not let that idle time
@@ -5771,6 +5870,36 @@ if (VERBOSE) {
     console.log(`\n[host-census] final: ${total} host calls total`);
     for (const [n, c] of top) {
       console.log(`  ${String(c).padStart(9)}  ${n}`);
+    }
+  }
+
+  // --gdi-stats: how much software rasterization the run actually did. Span
+  // counts and pixel counts answer different questions — a repaint storm shows
+  // up as pixels per batch, a clip/ROP fallback as slow-path share.
+  if (GDI_STATS && instance.exports.test_gdi_fast_count) {
+    const c = i => instance.exports.test_gdi_fast_count(i) >>> 0;
+    const fastPx = c(4), slowPx = c(5);
+    const px = fastPx + slowPx;
+    console.log(`\nGDI raster: ${c(0)} fast spans (${fastPx} px), ${c(3)} slow spans (${slowPx} px)`);
+    console.log(`            ${c(1)} fast bitblts, ${c(2)} fast stretches`);
+    console.log(`            ${(px / MAX_BATCHES).toFixed(0)} px/batch, slow-path share ${px ? (100 * slowPx / px).toFixed(1) : '0.0'}%`);
+    console.log(`            ${c(8)} band-walked spans (multi-rect clip, still fast)`);
+    console.log(`            slow spans by cause: ${c(6)} clip/bounds, ${c(7)} surface-or-ROP`);
+  }
+
+  if (LATENCY_STATS) {
+    const s = latency.samples;
+    if (!s.length) {
+      console.log('\nInput->blit: no samples (no input injected, or nothing ever blitted)');
+    } else {
+      const pick = (key, q) => {
+        const v = s.map(x => x[key]).sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(q * v.length))];
+      };
+      console.log(`\nInput->blit: ${s.length} events` +
+        (latency.pending ? ` (1 never blitted)` : ''));
+      console.log(`             batches p50 ${pick('batches', 0.5)}, p95 ${pick('batches', 0.95)}, max ${pick('batches', 1)}`);
+      console.log(`             ms      p50 ${pick('ms', 0.5).toFixed(2)}, p95 ${pick('ms', 0.95).toFixed(2)}, max ${pick('ms', 1).toFixed(2)}`);
     }
   }
 

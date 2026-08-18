@@ -5780,7 +5780,33 @@
     "name": "ShellExecuteA",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 185595327
+    "hash": 185595327,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "op",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "file",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "params",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "dir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "show",
+        "type": "int"
+      }
+    ]
   },
   {
     "id": 673,
@@ -7313,7 +7339,33 @@
     "name": "ShellExecuteW",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 420481993
+    "hash": 420481993,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "op",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "file",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "params",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "dir",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "show",
+        "type": "int"
+      }
+    ]
   },
   {
     "id": 865,
@@ -19194,5 +19246,69 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 2455,
+    "name": "GetMenuStringA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 821380304
+  },
+  {
+    "id": 2456,
+    "name": "GetSaveFileNameW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2760246904
+  },
+  {
+    "id": 2457,
+    "name": "OleUIAddVerbMenuA",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 765069751
+  },
+  {
+    "id": 2458,
+    "name": "PrintDlgW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1957666990
+  },
+  {
+    "id": 2459,
+    "name": "ChooseColorW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2333816448
+  },
+  {
+    "id": 2460,
+    "name": "PageSetupDlgW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 440087721
+  },
+  {
+    "id": 2461,
+    "name": "SetWindowWord",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 995338151,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "index",
+        "type": "int"
+      },
+      {
+        "name": "value",
+        "type": "int"
+      }
+    ],
+    "ret": "int"
   }
 ]

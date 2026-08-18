@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 178,
+  "count": 179,
   "sigs": {
     "log": {
       "params": [
@@ -544,6 +544,17 @@
     },
     "dx_trace": {
       "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "ctrl_paint_trace": {
+      "params": [
+        "i32",
         "i32",
         "i32",
         "i32",

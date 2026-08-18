@@ -1435,7 +1435,10 @@
             (i32.or (i32.lt_s (local.get $y) (i32.const 0))
               (i32.ge_s (local.get $y) (i32.load offset=8 (local.get $desc))))))
       (then (return (i32.const 0))))
-    (if (i32.eqz (call $gdi_raster_clip_visible
+    ;; Same answer as $gdi_raster_clip_visible, resolved once per row rather
+    ;; than per glyph pixel — see $gdi_clip_row_resolve. Text entry points
+    ;; reset the memo, and nothing mutates a clip while a glyph is blitting.
+    (if (i32.eqz (call $gdi_raster_clip_visible_row
           (local.get $hdc) (local.get $desc) (local.get $x) (local.get $y)))
       (then (return (i32.const 0))))
     (call $gdi_raster_write (local.get $desc) (local.get $x) (local.get $y) (local.get $color)))
@@ -2071,6 +2074,7 @@
     (local $dirty_right i32) (local $dirty_bottom i32)
     (local $path_open i32) (local $path_entry i32) (local $path_points i64)
     (local $path_origin_x i32) (local $path_origin_y i32)
+    (call $gdi_clip_row_reset)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.eqz (local.get $strike)) (then (return (i32.const -1))))
     (if (i32.or (i32.lt_s (local.get $count) (i32.const 0))
@@ -2408,6 +2412,7 @@
     (local $original_text i32) (local $original_wide i32)
     (local $prepared i32) (local $tab_width i32) (local $shortened i32)
     (local $visible_lines i32) (local $vertical_ellipsis i32)
+    (call $gdi_clip_row_reset)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.eqz (local.get $strike))
       (then (local.set $scalable (i32.const 1))))
