@@ -2154,9 +2154,25 @@
         (call $gl32 (i32.add (local.get $tmp) (i32.const 12)))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 10))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0))
+    (call $win16_msg_pt_narrow (local.get $dst) (local.get $tmp))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
+
+  ;; MSG.pt, which is not decoration. It is the cursor in *screen* space at the
+  ;; moment the message was posted, and a tracking loop is what reads it:
+  ;; Minesweeper's smiley captures the mouse, peeks for the button-up itself,
+  ;; and asks PtInRect whether msg.pt is still inside the face — a rectangle it
+  ;; put into screen space with ClientToScreen for exactly this comparison.
+  ;; Written as a zero, that point is the top-left corner of the screen, which
+  ;; is inside nothing: the button-up was read, the capture released, and the
+  ;; game never reset. The 32-bit side already works the position out from the
+  ;; message's own lParam and the window's origin, so this only has to stop
+  ;; discarding it. Two words, x then y, where the 32-bit MSG has two longs.
+  (func $win16_msg_pt_narrow (param $dst i32) (param $src i32)
+    (call $gs16 (i32.add (local.get $dst) (i32.const 14))
+      (call $gl32 (i32.add (local.get $src) (i32.const 20))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 16))
+      (call $gl32 (i32.add (local.get $src) (i32.const 24)))))
 
   ;; Narrowing a MSG is not always a truncation: when wParam carries a handle it
   ;; has to go through the handle map, because a 32-bit handle's low word means
@@ -3380,7 +3396,7 @@
           (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 10))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
-        (call $gs32 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0))))
+        (call $win16_msg_pt_narrow (local.get $dst) (local.get $tmp))))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 12)))
 
