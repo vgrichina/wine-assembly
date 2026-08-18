@@ -65,10 +65,23 @@ done
 # enough cores free that the emulator inside each run still gets scheduled
 # (the numbers stop meaning anything if the runs starve each other).
 JOBS="${MENU_SWEEP_JOBS:-3}"
+# MENU_SWEEP_RESUME=1 skips any app that already has a non-empty log in OUT.
+# A corpus run is most of an hour, so an interrupted one used to mean either
+# starting over or hand-assembling the remainder; both waste the part that
+# already succeeded, and the second is how a sweep ends up reported over two
+# different builds. The summary is regenerated over the whole directory either
+# way, so a resumed run still reports the complete corpus.
+RESUME="${MENU_SWEEP_RESUME:-0}"
 list=$(mktemp)
 for exe in "${APPS[@]}"; do
-  [ -f "$exe" ] && echo "$exe" >> "$list"
+  [ -f "$exe" ] || continue
+  if [ "$RESUME" = "1" ]; then
+    done_log="$OUT/$(basename "$(dirname "$exe")")-$(basename "$exe" .exe).log"
+    [ -s "$done_log" ] && continue
+  fi
+  echo "$exe" >> "$list"
 done
+echo "sweeping $(wc -l < "$list" | tr -d ' ') app(s) into $OUT (resume=$RESUME, jobs=$JOBS)"
 
 export OUT
 sweep_one() {
