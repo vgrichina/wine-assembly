@@ -29,6 +29,40 @@
 
   ;; Add or update hwnd→wndproc mapping. Allocates a fresh slot for a new
   ;; hwnd, or updates the existing slot's wndproc field.
+
+  ;; Clear every per-slot table for a recycled WND_RECORDS slot.
+  ;;
+  ;; This was a hand-written list of 13 calls inlined in $wnd_table_set, and a
+  ;; per-slot table that was not on it left stale state on the next window to
+  ;; land in that slot — silent and timing-dependent, since it only shows up
+  ;; after enough windows have been created and destroyed to recycle. Four
+  ;; tables were in fact missing when this was collected here: the scroll
+  ;; record and its aux fields, the flash bit, the maximized bit, and the
+  ;; update rect. A new window inherited the previous occupant's scroll range,
+  ;; and could start life flashing or believing it was maximized.
+  ;;
+  ;; Anything keyed by WND_RECORDS slot belongs in this one function.
+  (func $wnd_slot_reset (param $slot i32)
+    (call $wnd_bg_brush_reset_slot (local.get $slot))
+    (call $nc_flags_reset_slot (local.get $slot))
+    (call $title_table_reset_slot (local.get $slot))
+    (call $client_rect_reset_slot (local.get $slot))
+    (call $wnd_region_reset_slot (local.get $slot))
+    (call $paint_flag_reset_slot (local.get $slot))
+    (call $ctrl_table_reset_slot (local.get $slot))
+    (call $richedit_format_reset_slot (local.get $slot))
+    (call $wnd_owner_reset_slot (local.get $slot))
+    (call $menu_data_reset_slot (local.get $slot))
+    (call $dialog_state_reset_slot (local.get $slot))
+    (call $wnd_unicode_reset_slot (local.get $slot))
+    (call $wnd_extra_reset_slot (local.get $slot))
+    ;; Added with this registry — see the note above.
+    (call $scroll_reset_slot (local.get $slot))
+    (i32.store8 (i32.add (global.get $FLASH_TABLE) (local.get $slot)) (i32.const 0))
+    (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $slot)) (i32.const 0))
+    (call $zero_memory (call $update_rect_addr_for_slot (local.get $slot)) (i32.const 16))
+    (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
+
   (func $wnd_table_set (param $hwnd i32) (param $wndproc i32)
     (local $i i32) (local $ptr i32) (local $empty i32)
     (local.set $empty (i32.const -1))
@@ -54,20 +88,7 @@
         (i32.store offset=12 (local.get $ptr) (i32.const 0))
         (i32.store offset=16 (local.get $ptr) (i32.const 0))
         (i32.store offset=20 (local.get $ptr) (i32.const 0))
-        ;; Clear parallel-table state for the recycled slot.
-        (call $wnd_bg_brush_reset_slot (local.get $empty))
-        (call $nc_flags_reset_slot (local.get $empty))
-        (call $title_table_reset_slot (local.get $empty))
-        (call $client_rect_reset_slot (local.get $empty))
-        (call $wnd_region_reset_slot (local.get $empty))
-        (call $paint_flag_reset_slot (local.get $empty))
-        (call $ctrl_table_reset_slot (local.get $empty))
-        (call $richedit_format_reset_slot (local.get $empty))
-        (call $wnd_owner_reset_slot (local.get $empty))
-        (call $menu_data_reset_slot (local.get $empty))
-        (call $dialog_state_reset_slot (local.get $empty))
-        (call $wnd_unicode_reset_slot (local.get $empty))
-        (call $wnd_extra_reset_slot (local.get $empty))))
+        (call $wnd_slot_reset (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
