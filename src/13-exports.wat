@@ -4226,6 +4226,40 @@
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
 
+  ;; GDI table occupancy. Both the DC-state and object tables are fixed 256-slot
+  ;; arrays, and running one dry does not announce itself: GetDC starts
+  ;; returning NULL and the app converts that into whatever its own error path
+  ;; is (MFC throws CResourceException, which lands as an unhandled C++ throw
+  ;; several thousand instructions away from the leak). These are pure reads of
+  ;; the same words the allocators scan, so a census costs nothing but a walk.
+  (func (export "gdi_dc_state_used") (result i32)
+    (local $i i32) (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_STATE_COUNT)))
+      (if (i32.load (i32.add (global.get $GDI_DC_STATE_TABLE)
+            (i32.mul (local.get $i) (global.get $GDI_DC_STATE_STRIDE))))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  (func (export "gdi_object_used") (result i32)
+    (local $i i32) (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
+      (if (i32.load (i32.add (global.get $GDI_OBJECT_TABLE)
+            (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  ;; slot 0 = clip table, 1 = system clip table, 2 = DC state table.
+  (func (export "gdi_table_mark") (param $slot i32) (result i32)
+    (if (i32.ge_u (local.get $slot) (i32.const 4)) (then (return (i32.const -1))))
+    (i32.load (i32.add (global.get $GDI_TABLE_MARKS)
+      (i32.shl (local.get $slot) (i32.const 2)))))
+
   (func (export "static_get_image_ordinal") (param $hwnd i32) (result i32)
     (local $state i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))

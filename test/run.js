@@ -5901,6 +5901,10 @@ if (VERBOSE) {
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
+    if (instance.exports.gdi_dc_state_used) {
+      console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
+        instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
+    }
   }
 
   if (DUMP_VIRTUAL_MAPS) {

@@ -7229,6 +7229,7 @@
   ;; 23/24/25: ROT Register/Revoke/GetObject guest ownership;
   ;; 26: file-moniker BindToObject guest QueryInterface/bind ownership.
   ;; 27/28: file-moniker Save/Load through DLL-private IStream callbacks.
+  ;; 29: OLE clipboard ownership of a DLL-private IDataObject.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -7590,6 +7591,22 @@
             (local.set $hr (i32.const 0x80004002))))
         (call $ole_moniker_load_state_free (local.get $p1))
         (call $ole_guest_callback_finish (local.get $ctx) (local.get $hr))
+        (return)))
+    ;; Clipboard ownership over a DLL-private IDataObject. Stage 1 is the
+    ;; incoming owner's AddRef in OleSetClipboard, which is followed by the
+    ;; outgoing owner's Release (root); stage 0 is terminal and is also what
+    ;; OleGetClipboard's single AddRef returns to. Both report S_OK: the
+    ;; clipboard operation itself already succeeded before the refcount work.
+    (if (i32.eq (local.get $operation) (i32.const 29))
+      (then
+        (if (i32.eq (local.get $stage) (i32.const 1))
+          (then
+            (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 0))
+            (if (local.get $root)
+              (then (if (call $ole_guest_callback_invoke1
+                          (local.get $ctx) (local.get $root) (i32.const 2))
+                      (then (return)))))))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))
       (then
@@ -9511,6 +9528,12 @@
       (i32.ne (local.get $obj) (i32.const 0))
       (i32.eq (call $gl32 (local.get $obj)) (global.get $DX_VTBL_OLE_DATAOBJECT))))
 
+  ;; Dropping the clipboard from somewhere that is not an OLE entry point —
+  ;; EmptyClipboard, a window closing — cannot run guest code, so a DLL-private
+  ;; owner keeps the reference OleSetClipboard took for it. That leaks one
+  ;; reference and keeps a dead clipboard's object alive; it does not leave a
+  ;; pointer to freed memory behind, which is the failure that matters. The
+  ;; owner-replacing path in OleSetClipboard does release properly.
   (func $ole_clipboard_release_owner
     (if (call $ole_clipboard_owner_is_local (global.get $clipboard_ole_data_object))
       (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))
@@ -9653,34 +9676,89 @@
     (global.set $clipboard_binary_len (i32.wrap_i64 (local.get $size64)))
     (local.get $dst_g))
 
+  ;; A DLL-private IDataObject on the clipboard is a real COM object with a real
+  ;; refcount, and these two entry points are where Windows takes and hands out
+  ;; references to it. Both used to skip the AddRef for anything that was not one
+  ;; of our own objects, on the theory that the publishing control keeps its
+  ;; object alive for an in-process clipboard. It does not: RichEdit hands its
+  ;; only reference to OleSetClipboard, so when WordPad's Paste released the
+  ;; pointer OleGetClipboard had returned, the count reached zero, msvcrt freed
+  ;; the block, a later GetProcAddress name string was allocated over it, and the
+  ;; next QueryInterface read "Obje" out of "CoLockObjectExternal" as a vtable and
+  ;; called through address zero. AddRef through the object's own vtable instead,
+  ;; which means suspending the handler on the standard OLE continuation.
   (func $handle_OleSetClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $ole_clipboard_release_owner)
+    (local $old i32) (local $new_guest i32) (local $ctx i32)
+    (local.set $old (global.get $clipboard_ole_data_object))
+    ;; Our own objects have no guest code to run, so their half stays inline.
+    (if (call $ole_clipboard_owner_is_local (local.get $old))
+      (then
+        (drop (call $ole_obj_release (local.get $old)))
+        (local.set $old (i32.const 0))))
     (call $clipboard_clear_binary_data)
     (global.set $clipboard_ole_data_object (local.get $arg0))
     (if (call $ole_clipboard_owner_is_local (local.get $arg0))
       (then (drop (call $ole_obj_addref (local.get $arg0))))
       (else
+        (local.set $new_guest (local.get $arg0))
         ;; Paint currently publishes a DLL-private delayed-render object, so
         ;; materialize its newest bitmap eagerly. Applying that heuristic to
         ;; WordPad text IDataObjects invents CF_DIB and routes paste as an
         ;; image, losing the emulator's saved text/paragraph formatting.
         (if (call $ole_clipboard_is_mspaint)
           (then (drop (call $clipboard_snapshot_latest_bitmap))))))
+    (if (i32.or (i32.ne (local.get $old) (i32.const 0))
+                (i32.ne (local.get $new_guest) (i32.const 0)))
+      (then
+        ;; AddRef the incoming owner before releasing the outgoing one: an app
+        ;; may publish the same object twice, and an object whose only reference
+        ;; is the clipboard's must not reach zero in between.
+        (local.set $ctx (call $ole_guest_callback_context
+          (i32.const 29) (i32.const 1) (call $gl32 (global.get $esp))
+          (i32.add (global.get $esp) (i32.const 8))
+          (local.get $old) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (if (local.get $new_guest)
+          (then (if (call $ole_guest_callback_invoke1
+                      (local.get $ctx) (local.get $new_guest) (i32.const 1))
+                  (then (return)))))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (i32.const 0))
+        (if (local.get $old)
+          (then (if (call $ole_guest_callback_invoke1
+                      (local.get $ctx) (local.get $old) (i32.const 2))
+                  (then (return)))))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_OleGetClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $ctx i32)
     (if (i32.eqz (local.get $arg0))
-      (then (global.set $eax (i32.const 0x80004003)))
-      (else
-        (call $gs32 (local.get $arg0) (global.get $clipboard_ole_data_object))
-        (if (global.get $clipboard_ole_data_object)
-          (then
-            (if (call $ole_clipboard_owner_is_local (global.get $clipboard_ole_data_object))
-              (then (drop (call $ole_obj_addref (global.get $clipboard_ole_data_object)))))
-            (global.set $eax (i32.const 0)))
-          (else (global.set $eax (i32.const 0x800401D0))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $obj (global.get $clipboard_ole_data_object))
+    (call $gs32 (local.get $arg0) (local.get $obj))
+    (if (i32.eqz (local.get $obj))
+      (then
+        (global.set $eax (i32.const 0x800401D0)) ;; CLIPBRD_E_CANT_OPEN
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (call $ole_clipboard_owner_is_local (local.get $obj))
+      (then
+        (drop (call $ole_obj_addref (local.get $obj)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; The caller owns the reference it is handed, and will release it.
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 29) (i32.const 0) (call $gl32 (global.get $esp))
+      (i32.add (global.get $esp) (i32.const 8))
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (call $ole_guest_callback_invoke1 (local.get $ctx) (local.get $obj) (i32.const 1))
+      (then (return)))
+    (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0)))
 
   (func $handle_OleFlushClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $owner i32) (local $hr i32) (local $state i32) (local $ctx i32)
