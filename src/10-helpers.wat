@@ -1049,13 +1049,54 @@
     (local.get $required))
 
   ;; ---- WAT-owned explicit HDC clipping -------------------------------
+  ;; Every DC-keyed table below is a 256-entry linear scan, and raster asks
+  ;; for the same DC once per span, so a fill walks 256 slots per row for an
+  ;; answer that did not change. Each keeps an MRU slot hint, and every hint
+  ;; is re-verified against the table word it points at: a slot still holding
+  ;; this key IS the entry the scan would have found (keys are unique), and a
+  ;; slot that was cleared or handed to another key simply misses and falls
+  ;; through to the scan. No invalidation to get wrong.
+  ;; A hint answers a lookup that hits. A lookup that misses — asking a memory
+  ;; DC for a system clip it never had — still walked all 256 slots, and that
+  ;; is the common case, so bound the walk by how far the table has ever been
+  ;; filled (GDI_TABLE_MARKS, in shared memory because worker threads are
+  ;; separate instances). Slots are allocated lowest-empty-first, so the first
+  ;; free slot is either a hole below the mark or the mark itself: scanning one
+  ;; past it sees every occupied slot and every reusable hole.
+  (func $gdi_table_mark_bump (param $slot i32) (param $used i32)
+    (if (i32.gt_u (local.get $used)
+          (i32.load (i32.add (global.get $GDI_TABLE_MARKS)
+            (i32.shl (local.get $slot) (i32.const 2)))))
+      (then (i32.store (i32.add (global.get $GDI_TABLE_MARKS)
+        (i32.shl (local.get $slot) (i32.const 2))) (local.get $used)))))
+
+  (func $gdi_table_mark_limit (param $slot i32) (param $count i32) (result i32)
+    (local $limit i32)
+    (local.set $limit (i32.add
+      (i32.load (i32.add (global.get $GDI_TABLE_MARKS)
+        (i32.shl (local.get $slot) (i32.const 2))))
+      (i32.const 1)))
+    (if (i32.gt_u (local.get $limit) (local.get $count))
+      (then (local.set $limit (local.get $count))))
+    (local.get $limit))
+
+  (global $gdi_dc_clip_hint (mut i32) (i32.const 0))
   (func $gdi_dc_clip_entry (param $hdc i32) (param $create i32) (result i32)
-    (local $i i32) (local $p i32) (local $empty i32)
+    (local $i i32) (local $p i32) (local $empty i32) (local $limit i32)
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (local.set $p (global.get $gdi_dc_clip_hint))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load (local.get $p)) (local.get $hdc)))
+      (then (return (local.get $p))))
+    (local.set $limit (call $gdi_table_mark_limit
+      (i32.const 0) (global.get $GDI_DC_CLIP_COUNT)))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_CLIP_COUNT)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $p (i32.add (global.get $GDI_DC_CLIP_TABLE) (i32.shl (local.get $i) (i32.const 3))))
-      (if (i32.eq (i32.load (local.get $p)) (local.get $hdc)) (then (return (local.get $p))))
+      (if (i32.eq (i32.load (local.get $p)) (local.get $hdc))
+        (then
+          (global.set $gdi_dc_clip_hint (local.get $p))
+          (return (local.get $p))))
       (if (i32.and (i32.eqz (local.get $empty)) (i32.eqz (i32.load (local.get $p))))
         (then (local.set $empty (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1065,6 +1106,10 @@
       (then
         (i32.store (local.get $empty) (local.get $hdc))
         (i32.store offset=4 (local.get $empty) (i32.const 0))
+        (global.set $gdi_dc_clip_hint (local.get $empty))
+        (call $gdi_table_mark_bump (i32.const 0) (i32.add (i32.shr_u
+          (i32.sub (local.get $empty) (global.get $GDI_DC_CLIP_TABLE)) (i32.const 3))
+          (i32.const 1)))
         (return (local.get $empty))))
     (i32.const 0))
 
@@ -1098,15 +1143,24 @@
   ;; USER's visible region is derived from window hierarchy/style state. Keep
   ;; it independent from the application-selected clip so GetClipRgn and
   ;; SaveDC continue to expose only application state.
+  (global $gdi_dc_system_clip_hint (mut i32) (i32.const 0))
   (func $gdi_dc_system_clip_entry (param $hdc i32) (param $create i32) (result i32)
-    (local $i i32) (local $entry i32) (local $empty i32)
+    (local $i i32) (local $entry i32) (local $empty i32) (local $limit i32)
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (local.set $entry (global.get $gdi_dc_system_clip_hint))
+    (if (i32.and (i32.ne (local.get $entry) (i32.const 0))
+          (i32.eq (i32.load (local.get $entry)) (local.get $hdc)))
+      (then (return (local.get $entry))))
+    (local.set $limit (call $gdi_table_mark_limit
+      (i32.const 1) (global.get $GDI_DC_SYSTEM_CLIP_COUNT)))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_SYSTEM_CLIP_COUNT)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $entry (i32.add (global.get $GDI_DC_SYSTEM_CLIP_TABLE)
         (i32.shl (local.get $i) (i32.const 3))))
       (if (i32.eq (i32.load (local.get $entry)) (local.get $hdc))
-        (then (return (local.get $entry))))
+        (then
+          (global.set $gdi_dc_system_clip_hint (local.get $entry))
+          (return (local.get $entry))))
       (if (i32.and (i32.eqz (local.get $empty))
             (i32.eqz (i32.load (local.get $entry))))
         (then (local.set $empty (local.get $entry))))
@@ -1117,6 +1171,10 @@
       (then
         (i32.store (local.get $empty) (local.get $hdc))
         (i32.store offset=4 (local.get $empty) (i32.const 0))
+        (global.set $gdi_dc_system_clip_hint (local.get $empty))
+        (call $gdi_table_mark_bump (i32.const 1) (i32.add (i32.shr_u
+          (i32.sub (local.get $empty) (global.get $GDI_DC_SYSTEM_CLIP_TABLE)) (i32.const 3))
+          (i32.const 1)))
         (return (local.get $empty))))
     (i32.const 0))
 
@@ -3518,15 +3576,23 @@
   ;; bitsWa@24, stride@28, paletteWa@32, paletteCount@36, surfaceId@40.
   ;; Palette fields are count@8, capacity@12, version@16, flags@20,
   ;; PALETTEENTRY storage WA@24. Palette storage is always WAT-owned.
+  (global $gdi_object_hint (mut i32) (i32.const 0))
   (func $gdi_object_record (param $handle i32) (result i32)
     (local $i i32) (local $p i32)
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (local.set $p (global.get $gdi_object_hint))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load (local.get $p)) (local.get $handle)))
+      (then (return (local.get $p))))
+    (local.set $p (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
       (local.set $p (i32.add (global.get $GDI_OBJECT_TABLE)
         (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
       (if (i32.eq (i32.load (local.get $p)) (local.get $handle))
-        (then (return (local.get $p))))
+        (then
+          (global.set $gdi_object_hint (local.get $p))
+          (return (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -6180,15 +6246,25 @@
   ;; DC record offsets: hdc, pen, brush, pos x/y, text/bk colors, bk mode,
   ;; text align, map mode, window origin/extents, viewport origin/extents,
   ;; ROP2, polygon fill mode, stretch mode, bitmap, font, reserved.
+  (global $gdi_dc_state_hint (mut i32) (i32.const 0))
   (func $gdi_dc_state_entry (param $hdc i32) (param $create i32) (result i32)
-    (local $i i32) (local $p i32) (local $empty i32)
+    (local $i i32) (local $p i32) (local $empty i32) (local $limit i32)
     (local $hwnd i32) (local $binding i32)
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (local.set $p (global.get $gdi_dc_state_hint))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load (local.get $p)) (local.get $hdc)))
+      (then (return (local.get $p))))
+    (local.set $limit (call $gdi_table_mark_limit
+      (i32.const 2) (global.get $GDI_DC_STATE_COUNT)))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_STATE_COUNT)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $p (i32.add (global.get $GDI_DC_STATE_TABLE)
         (i32.mul (local.get $i) (global.get $GDI_DC_STATE_STRIDE))))
-      (if (i32.eq (i32.load (local.get $p)) (local.get $hdc)) (then (return (local.get $p))))
+      (if (i32.eq (i32.load (local.get $p)) (local.get $hdc))
+        (then
+          (global.set $gdi_dc_state_hint (local.get $p))
+          (return (local.get $p))))
       (if (i32.and (i32.eqz (local.get $empty)) (i32.eqz (i32.load (local.get $p))))
         (then (local.set $empty (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -6236,6 +6312,10 @@
         ;; so ordinary allocated DC/object namespaces cannot be misclassified.
         (if (local.get $binding)
           (then (i32.store offset=92 (local.get $empty) (local.get $binding))))
+        (global.set $gdi_dc_state_hint (local.get $empty))
+        (call $gdi_table_mark_bump (i32.const 2) (i32.add (i32.div_u
+          (i32.sub (local.get $empty) (global.get $GDI_DC_STATE_TABLE))
+          (global.get $GDI_DC_STATE_STRIDE)) (i32.const 1)))
         (return (local.get $empty))))
     (i32.const 0))
 
@@ -7141,14 +7221,26 @@
 
   ;; Persistent canonical backing for the top-level window composition target.
   ;; Record: owner hwnd, surface id, width, height, bitsWa, stride, reserved.
+  ;; owner 0 is not hinted: the scan answers it with the first empty slot, and
+  ;; a hint would name whichever slot went empty most recently instead.
+  (global $gdi_window_surface_hint (mut i32) (i32.const 0))
   (func $gdi_window_surface_record (param $owner i32) (param $create i32) (result i32)
     (local $i i32) (local $p i32) (local $empty i32)
+    (local.set $p (global.get $gdi_window_surface_hint))
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
+          (i32.and (i32.ne (local.get $p) (i32.const 0))
+            (i32.eq (i32.load (local.get $p)) (local.get $owner))))
+      (then (return (local.get $p))))
+    (local.set $p (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_WINDOW_SURFACE_COUNT)))
       (local.set $p (i32.add (global.get $GDI_WINDOW_SURFACE_TABLE)
         (i32.mul (local.get $i) (global.get $GDI_WINDOW_SURFACE_STRIDE))))
       (if (i32.eq (i32.load (local.get $p)) (local.get $owner))
-        (then (return (local.get $p))))
+        (then
+          (if (local.get $owner)
+            (then (global.set $gdi_window_surface_hint (local.get $p))))
+          (return (local.get $p))))
       (if (i32.and (i32.eqz (local.get $empty)) (i32.eqz (i32.load (local.get $p))))
         (then (local.set $empty (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))

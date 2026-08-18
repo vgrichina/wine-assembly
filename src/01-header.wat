@@ -1050,6 +1050,7 @@
   ;; 0x07F0A600 192B     GDI_BITMAP_FONT_LRU (last-use stamp per strike slot)
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
+  ;; 0x07F0C800 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1274,6 +1275,13 @@
   (global $GDI_DC_SYSTEM_CLIP_TABLE i32 (i32.const 0x07F0C000))
   (global $GDI_DC_SYSTEM_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
   (global $GDI_DC_SYSTEM_CLIP_COUNT i32 (i32.const 256))
+  ;; How far each DC-keyed table has ever been filled, so a lookup that misses
+  ;; can stop instead of walking all 256 slots. These must be memory, not
+  ;; globals: worker threads are separate WASM instances sharing this memory,
+  ;; so a slot allocated on one thread has to bound the scan on every other.
+  ;;   +0 GDI_DC_CLIP_TABLE  +4 GDI_DC_SYSTEM_CLIP_TABLE  +8 GDI_DC_STATE_TABLE
+  (global $GDI_TABLE_MARKS i32 (i32.const 0x07F0C800))
+  (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
