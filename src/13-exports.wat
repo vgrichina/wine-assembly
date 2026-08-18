@@ -19,6 +19,15 @@
         (then
           (global.set $thread_alloc (global.get $THREAD_BASE))
           (call $clear_cache)))
+      ;; Yield flag — host needs control (e.g. after WM_TIMER delivery)
+      (if (global.get $yield_flag)
+        (then
+          (global.set $yield_flag (i32.const 0))
+          (br $halt)))
+      ;; Everything below to the end of this block is a debug facility, and all
+      ;; of them are off in a normal run. $dbg_any is the OR of the six arming
+      ;; flags, so the common case pays one test instead of six.
+      (if (global.get $dbg_any) (then
       ;; Watchpoint: break when watched region (1/2/4 bytes) changes
       (if (global.get $watch_addr)
         (then
@@ -26,11 +35,6 @@
             (then
               (global.set $watch_val (call $watch_load (global.get $watch_addr)))
               (br $halt)))))
-      ;; Yield flag — host needs control (e.g. after WM_TIMER delivery)
-      (if (global.get $yield_flag)
-        (then
-          (global.set $yield_flag (i32.const 0))
-          (br $halt)))
       ;; EIP breakpoint. On halt we set $bp_skip_once so re-entry (same $eip)
       ;; dispatches the block once before the bp can fire again — without this,
       ;; JS-driven re-arm (e.g. --trace-at) spins halting at the same address.
@@ -61,6 +65,7 @@
             (local.set $hc_i (i32.add (local.get $hc_i) (i32.const 1)))
             (br $hc_loop))))
         )
+      ))
       ;; Catch a 16-bit task leaving the selector arena here, before
       ;; $dbg_prev_eip is advanced — at this point it still names the block
       ;; that just ran and produced the bad EIP, which is the only thing that
@@ -135,6 +140,7 @@
       ;; the value being overwritten is kept one step longer.
       (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
       (global.set $dbg_prev_eip (global.get $eip))
+      (if (global.get $dbg_any) (then
       ;; --trace-esp: emit (eip, esp) at block entry for in-range EIPs.
       (if (global.get $trace_esp_flag)
         (then
@@ -153,8 +159,14 @@
             (then (call $host_log_eip (global.get $eip))))))
       (if (global.get $handler_hist_enabled)
         (then (call $hot_block_hist_record (global.get $eip))))
-      (if (call $fast_msvc_sbh_scan)
-        (then (br $main)))
+      ))
+      ;; Two compares against addresses the decoder recognized, instead of the
+      ;; 17-load byte-signature scan this used to run ahead of every block.
+      (if (i32.or (i32.eq (global.get $eip) (global.get $sbh_eip_a))
+                  (i32.eq (global.get $eip) (global.get $sbh_eip_b)))
+        (then
+          (if (call $fast_msvc_sbh_scan)
+            (then (br $main)))))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -2041,9 +2053,22 @@
   (func (export "set_hwnd_base") (param i32) (global.set $next_hwnd (local.get 0)))
   (func (export "get_hwnd_base") (result i32) (global.get $next_hwnd))
 
+  ;; The run loop tests $dbg_any once instead of testing all six arming flags.
+  ;; Every setter below that can arm or disarm one of them ends by calling this.
+  ;; Missing a call here does not corrupt anything — it makes one debug flag
+  ;; silently do nothing, which is why they are all in one place.
+  (func $dbg_recompute
+    (global.set $dbg_any
+      (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
+        (i32.or (i32.ne (global.get $bp_addr) (i32.const 0))
+          (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
+            (i32.or (i32.ne (global.get $trace_esp_flag) (i32.const 0))
+              (i32.or (i32.ne (global.get $trace_eip_flag) (i32.const 0))
+                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0)))))))))
+
   ;; Watchpoint exports
-  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)))
-  (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
+  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
+  (func (export "clear_bp") (global.set $bp_addr (i32.const 0)) (call $dbg_recompute))
   (func (export "get_bp_addr") (result i32) (global.get $bp_addr))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
@@ -2052,13 +2077,15 @@
   (func (export "set_trace_esp") (param $flag i32) (param $lo i32) (param $hi i32)
     (global.set $trace_esp_flag (local.get $flag))
     (global.set $trace_esp_lo (local.get $lo))
-    (global.set $trace_esp_hi (local.get $hi)))
+    (global.set $trace_esp_hi (local.get $hi))
+    (call $dbg_recompute))
 
   ;; --trace-eip-range wiring. Pass hi=0 to leave upper bound open.
   (func (export "set_trace_eip_range") (param $flag i32) (param $lo i32) (param $hi i32)
     (global.set $trace_eip_flag (local.get $flag))
     (global.set $trace_eip_lo (local.get $lo))
-    (global.set $trace_eip_hi (local.get $hi)))
+    (global.set $trace_eip_hi (local.get $hi))
+    (call $dbg_recompute))
 
   ;; Hit counters: set_count writes addr into slot N and zeros its count,
   ;; bumping $hit_count_n so the run loop includes this slot. Caller passes
@@ -2070,11 +2097,12 @@
     (i32.store          (local.get $base) (local.get $addr))
     (i32.store offset=4 (local.get $base) (i32.const 0))
     (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
-      (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1))))))
+      (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1)))))
+    (call $dbg_recompute))
   (func (export "get_count") (param $slot i32) (result i32)
     (i32.load offset=4 (i32.add (global.get $HIT_COUNT_BASE)
                                 (i32.shl (local.get $slot) (i32.const 3)))))
-  (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)))
+  (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)) (call $dbg_recompute))
 
   ;; Disabled-by-default stack-packet compiler prototype. Toggling clears the
   ;; decoded-block cache so already-decoded generic/packet blocks do not linger.
@@ -2120,7 +2148,8 @@
     (global.set $handler_hist_enabled (local.get $flag))
     (global.set $branch_hist_kind (i32.const 0))
     (if (local.get $flag)
-      (then (global.set $handler_hist_last (i32.const -1)))))
+      (then (global.set $handler_hist_last (i32.const -1))))
+    (call $dbg_recompute))
   (func (export "reset_handler_hist")
     (local $ptr i32) (local $end i32)
     (local.set $ptr (global.get $HANDLER_HIST_COUNTS))
@@ -2202,7 +2231,8 @@
     (global.set $watch_addr (local.get $addr))
     (if (local.get $addr)
       (then (global.set $watch_val (call $watch_load (local.get $addr))))
-      (else (global.set $watch_val (i32.const 0)))))
+      (else (global.set $watch_val (i32.const 0))))
+    (call $dbg_recompute))
   (func (export "set_watchpoint_size") (param $size i32)
     (global.set $watch_size (local.get $size))
     ;; re-read current value with new size so caller sees consistent baseline

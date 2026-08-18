@@ -160,12 +160,18 @@
   ;; This recognizes the exact byte pattern with either ESI or EDI as the scan
   ;; register, skips failing descriptors in WAT, and resumes at the normal x86
   ;; allocation path or loop exit.
-  (func $fast_msvc_sbh_scan (result i32)
-    (local $wa i32) (local $scan i32) (local $page i32)
-    (local $first i32) (local $mode i32) (local $match i32)
-    (local.set $wa (call $g2w (global.get $eip)))
-    (local.set $mode (i32.const 0))
-
+  ;; Which variant of the loop begins at $wa: 0 = none, 1 = ESI scans / EDI
+  ;; pages, 2 = the register-swapped twin.
+  ;;
+  ;; This used to run inline in the run loop, ahead of every single block
+  ;; dispatch, for every app — 17 loads and 16 compares with no early-out, tens
+  ;; of millions of times a second, to recognize one CRT loop that most
+  ;; binaries do not even contain. The bytes are static code, so the question
+  ;; only has to be asked when a block is decoded: $decode_block calls
+  ;; $sbh_note_candidate below, and the run loop compares EIP against the one
+  ;; or two addresses that answered yes.
+  (func $sbh_match_mode (param $wa i32) (result i32)
+    (local $match i32)
     ;; ESI scan / EDI page variant.
     (local.set $match (i32.const 1))
     (if (i32.ne (i32.load16_u (local.get $wa)) (i32.const 0x068B)) (then (local.set $match (i32.const 0))))
@@ -176,14 +182,10 @@
     (if (i32.ne (i32.load16_u offset=9 (local.get $wa)) (i32.const 0x1676)) (then (local.set $match (i32.const 0))))
     (if (i32.ne (i32.load16_u offset=0x21 (local.get $wa)) (i32.const 0xC683)) (then (local.set $match (i32.const 0))))
     (if (i32.ne (i32.load16_u offset=0x2C (local.get $wa)) (i32.const 0xD272)) (then (local.set $match (i32.const 0))))
-    (if (local.get $match)
-      (then
-        (local.set $mode (i32.const 1))
-        (local.set $scan (global.get $esi))
-        (local.set $page (global.get $edi))))
+    (if (local.get $match) (then (return (i32.const 1))))
 
     ;; EDI scan / ESI page variant.
-    (local.set $match (i32.eqz (local.get $mode)))
+    (local.set $match (i32.const 1))
     (if (i32.ne (i32.load16_u (local.get $wa)) (i32.const 0x078B)) (then (local.set $match (i32.const 0))))
     (if (i32.ne (i32.load16_u offset=2 (local.get $wa)) (i32.const 0xC33B)) (then (local.set $match (i32.const 0))))
     (if (i32.ne (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x1B7C)) (then (local.set $match (i32.const 0))))
@@ -192,9 +194,34 @@
     (if (i32.ne (i32.load16_u offset=9 (local.get $wa)) (i32.const 0x1676)) (then (local.set $match (i32.const 0))))
     (if (i32.ne (i32.load16_u offset=0x21 (local.get $wa)) (i32.const 0xC783)) (then (local.set $match (i32.const 0))))
     (if (i32.ne (i32.load16_u offset=0x2C (local.get $wa)) (i32.const 0xD272)) (then (local.set $match (i32.const 0))))
-    (if (local.get $match)
+    (if (local.get $match) (then (return (i32.const 2))))
+    (i32.const 0))
+
+  ;; Called once per decoded block. Two slots is not a limit anyone will hit —
+  ;; the pattern is one CRT allocator loop, and its two register variants
+  ;; cannot both be the same address — but a third match is simply not
+  ;; accelerated rather than mis-accelerated.
+  (func $sbh_note_candidate (param $eip i32)
+    (if (i32.or (i32.eq (global.get $sbh_eip_a) (local.get $eip))
+                (i32.eq (global.get $sbh_eip_b) (local.get $eip)))
+      (then (return)))
+    (if (i32.eqz (call $sbh_match_mode (call $g2w (local.get $eip)))) (then (return)))
+    (if (i32.eqz (global.get $sbh_eip_a))
+      (then (global.set $sbh_eip_a (local.get $eip)) (return)))
+    (if (i32.eqz (global.get $sbh_eip_b))
+      (then (global.set $sbh_eip_b (local.get $eip)))))
+
+  (func $fast_msvc_sbh_scan (result i32)
+    (local $wa i32) (local $scan i32) (local $page i32)
+    (local $first i32) (local $mode i32) (local $match i32)
+    (local.set $wa (call $g2w (global.get $eip)))
+    (local.set $mode (call $sbh_match_mode (local.get $wa)))
+    (if (i32.eq (local.get $mode) (i32.const 1))
       (then
-        (local.set $mode (i32.const 2))
+        (local.set $scan (global.get $esi))
+        (local.set $page (global.get $edi))))
+    (if (i32.eq (local.get $mode) (i32.const 2))
+      (then
         (local.set $scan (global.get $edi))
         (local.set $page (global.get $esi))))
 

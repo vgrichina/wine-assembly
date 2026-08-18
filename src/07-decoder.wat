@@ -765,6 +765,9 @@
         (if (call $thread_arena_flush_if_safe)
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))))
     (local.set $tstart (global.get $thread_alloc))
+    ;; Ask once, here, whether this block entry is the MSVC small-block-heap
+    ;; scan loop. The run loop then only has to compare EIP with the answer.
+    (call $sbh_note_candidate (local.get $start_eip))
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
 

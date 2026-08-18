@@ -45,7 +45,13 @@
   (import "host" "set_window_text" (func $host_set_window_text (param i32 i32)))
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
-  ;; invalidate(hwnd)
+  ;; invalidate(hwnd) — client-area damage: schedule a composite, nothing more.
+  ;; The window's own non-client chrome is already dirtied by whoever changed it
+  ;; ($nc_flags_set on create/show/move/text/menu), so an InvalidateRect on an
+  ;; edit control must not drag a title bar + border redraw along with it.
+  (import "host" "invalidate_frame" (func $host_invalidate_frame (param i32)))
+  ;; invalidate_frame(hwnd) — the caller changed something the non-client area
+  ;; draws (caption flash state, a frame becoming visible). Posts WM_NCPAINT.
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
   (import "host" "sync_window_client" (func $host_sync_window_client (param i32 i32 i32 i32 i32)))
   ;; move_window(hwnd, x, y, w, h, flags)  flags: SWP_NOSIZE=1, SWP_NOMOVE=2
@@ -1607,6 +1613,17 @@
   (global $ip    (mut i32) (i32.const 0))
   (global $steps (mut i32) (i32.const 0))
   (global $handler_hist_enabled (mut i32) (i32.const 0))
+  ;; Nonzero when ANY of the run loop's debug facilities is armed: watchpoint,
+  ;; breakpoint, --count hit counters, --trace-esp, --trace-eip-range, or the
+  ;; handler histogram. All six are off in every normal run, so the loop tests
+  ;; this one global instead of six. Maintained by $dbg_recompute, which every
+  ;; setter that arms one of them calls.
+  (global $dbg_any (mut i32) (i32.const 0))
+  ;; Block entries recognized as the MSVC small-block-heap scan loop (see
+  ;; $sbh_note_candidate). Per instance on purpose: each thread decodes its own
+  ;; blocks, so a worker just re-recognizes the same address for itself.
+  (global $sbh_eip_a (mut i32) (i32.const 0))
+  (global $sbh_eip_b (mut i32) (i32.const 0))
   (global $handler_hist_last (mut i32) (i32.const -1))
   (global $branch_hist_kind (mut i32) (i32.const 0))
   (global $branch_hist_operand (mut i32) (i32.const 0))
