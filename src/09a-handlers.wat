@@ -10850,7 +10850,14 @@
         (if (i32.or
               (i32.ne (local.get $arg3) (i32.const 0))
               (i32.ne (local.get $new_style) (local.get $style)))
-          (then (call $defwndproc_do_ncpaint (local.get $arg0))))
+          (then
+            (call $defwndproc_do_ncpaint (local.get $arg0))
+            ;; ...and leave the non-client area marked dirty. Children share
+            ;; their parent's back-canvas, so the client paint the app performs
+            ;; right after this call can cover the bar we just drew; the pump's
+            ;; NC drain puts it back. USER gets this for free from the window's
+            ;; non-client update region.
+            (call $nc_flags_set (local.get $arg0) (i32.const 1))))
         (global.set $eax (i32.load (local.get $base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
