@@ -1037,6 +1037,7 @@
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0C800 64B      HEAP_SHARED (low-heap chunk cursor, heap_base)
+  ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1070,7 +1071,8 @@
   ;; 0x07992200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
   ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
   ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
-  ;; 0x1C000000  64MB    Page-aligned CreateDIBSection pixel arena
+  ;; 0x1C000000  63MB    Page-aligned CreateDIBSection pixel arena
+  ;; 0x1FF00000   1MB    THREAD_RPC (per-thread host-import control blocks)
   ;; Total: 8192 pages = 512MB
 
   ;; Memory region bases. Fixed regions with a companion *_SIZE global are
@@ -1515,6 +1517,36 @@
   ;;   +4  heap_base — immutable after load, published for worker instances
   (global $HEAP_SHARED i32 (i32.const 0x07F0C800))
   (global $HEAP_SHARED_SIZE i32 (i32.const 0x40))
+  ;; Cross-instance locks (docs/design-real-threads.md §3.1b). Every guest
+  ;; thread is a separate WASM instance over this one memory, so the tables they
+  ;; share need a mutex that lives in memory rather than in a global.
+  ;;
+  ;;   +0  owner: $current_thread_id of the holder, 0 = free (atomic)
+  ;;   +4  recursion depth, written only by the owner
+  ;;
+  ;; Each lock gets its own 64-byte line. Two locks sharing a line ping-pong it
+  ;; between cores on every acquire, which costs more than the atomic does.
+  ;;
+  ;; TWO RULES, both load-bearing:
+  ;;   1. Never hold one across a host import. A worker blocks in Atomics.wait
+  ;;      for the main thread to serve an import; if the main thread is spinning
+  ;;      for the lock that worker holds, neither ever moves. So these wrap pure
+  ;;      table arithmetic — slot allocation — and nothing else.
+  ;;   2. Never take two at once, so there is no order to get wrong.
+  (global $LOCK_TABLE i32 (i32.const 0x07F0C840))
+  (global $LOCK_TABLE_SIZE i32 (i32.const 0x00000200))
+  (global $LOCK_VIRTUAL_MAP i32 (i32.const 0x07F0C840))
+  (global $LOCK_DX i32 (i32.const 0x07F0C880))
+  (global $LOCK_SOCKET i32 (i32.const 0x07F0C8C0))
+  ;; The COM aux-wrapper bump cursor. It was a mutable global, which means a
+  ;; private copy per instance handing out the same aux slot twice — the same
+  ;; shape of bug $heap_ptr had. Under $LOCK_DX, so plain loads are fine.
+  (global $COM_AUX_NEXT_SHARED i32 (i32.const 0x07F0C900))
+  ;; The ephemeral-port cursor, for the same reason. Two instances each starting
+  ;; at 49152 hand the same port to two sockets; $vsock_port_taken then rejects
+  ;; the second bind, so the symptom is a connect that fails rather than a
+  ;; crossed wire — still wrong, and invisible. 0 means "not seeded yet".
+  (global $VSOCK_NEXT_PORT_SHARED i32 (i32.const 0x07F0C940))
   ;; Where the heap starts when no PE was ever loaded — unit-test harnesses call
   ;; the WAT exports directly and still expect HeapAlloc to work. This was the
   ;; old initial value of the $heap_ptr global.
@@ -1526,9 +1558,21 @@
   ;; One occupancy byte per 4KB page is 0=free, 1=allocated. The run table
   ;; stores the allocation length only at each allocation's first page.
   (global $DIB_GUEST_BASE i32 (i32.const 0x50000000))
-  (global $DIB_GUEST_CAPACITY i32 (i32.const 0x04000000))
+  ;; 63MB, not 64: the last megabyte of linear memory is THREAD_RPC. The DIB pool
+  ;; used to run to the very top of memory, which put lib/guest-rpc.js's control
+  ;; block (0x1F000000 at the time) 48MB inside it — a guest that allocated that
+  ;; much DIB would have overwritten a worker's RPC slots and stalled it forever.
+  ;; Guest capacity and backing size must move together or a high DIB address
+  ;; translates past its own backing.
+  (global $DIB_GUEST_CAPACITY i32 (i32.const 0x03F00000))
   (global $DIB_BACKING_BASE i32 (i32.const 0x1C000000))
-  (global $DIB_BACKING_BASE_SIZE i32 (i32.const 0x04000000))
+  (global $DIB_BACKING_BASE_SIZE i32 (i32.const 0x03F00000))
+  ;; Host-import RPC control blocks, one per guest thread, at the very top of
+  ;; linear memory. Declared here rather than only in JS so
+  ;; test/test-wat-memory-map.js proves nothing else claims the range —
+  ;; test/test-wat-rpc-region.js pins the JS constants to these numbers.
+  (global $THREAD_RPC i32 (i32.const 0x1FF00000))
+  (global $THREAD_RPC_SIZE i32 (i32.const 0x00100000))
   (global $DIB_PAGE_USED i32 (i32.const 0x07E10000))
   (global $DIB_PAGE_USED_SIZE i32 (i32.const 0x00004000))
   (global $DIB_PAGE_RUNS i32 (i32.const 0x07E14000))

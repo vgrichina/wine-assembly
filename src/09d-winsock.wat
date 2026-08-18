@@ -52,7 +52,8 @@
   ;; created by this process binds there until multi-process rooms assign
   ;; per-member addresses.
   (global $vsock_local_ip (mut i32) (i32.const 0x0A4D0001))  ;; 10.77.0.1
-  (global $vsock_next_port (mut i32) (i32.const 49152))
+  ;; The ephemeral-port cursor is at $VSOCK_NEXT_PORT_SHARED — process-wide, not
+  ;; per instance. See $vsock_alloc_port.
   (global $wsa_last_error (mut i32) (i32.const 0))
   (global $wsa_started (mut i32) (i32.const 0))
   (global $vsock_ntoa_buf (mut i32) (i32.const 0))
@@ -89,7 +90,22 @@
 
   ;; Allocate a zeroed record. Returns the index, or -1 when the table is
   ;; full (WSAEMFILE).
+  ;; Serialised on $LOCK_SOCKET. Liquid War opens its connection from a worker
+  ;; thread while the UI thread is still in the menu, so "two threads in socket()
+  ;; at once" is the normal case here rather than a corner one — and the scan
+  ;; below claims a record only after finding it free.
+  ;;
+  ;; Only the claim is locked, never a send or a receive: those call host imports,
+  ;; and a worker parked in Atomics.wait while holding a lock the main thread is
+  ;; spinning for deadlocks both (see $lock_acquire).
   (func $vsock_alloc (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_SOCKET))
+    (local.set $r (call $vsock_alloc_locked))
+    (call $lock_release (global.get $LOCK_SOCKET))
+    (local.get $r))
+
+  (func $vsock_alloc_locked (result i32)
     (local $i i32) (local $rec i32) (local $j i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -104,6 +120,12 @@
             (local.set $j (i32.add (local.get $j) (i32.const 4)))
             (br $zero)))
           (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
+          ;; Claim the record before releasing the lock. Every caller overwrites
+          ;; this state a few instructions later, but "free until the caller gets
+          ;; around to it" is exactly the window in which a second thread picks
+          ;; the same record. 1 = created-but-unbound, the least surprising state
+          ;; to be caught in.
+          (i32.store (local.get $rec) (i32.const 1))
           (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -204,15 +226,28 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; The cursor is process-wide (shared memory) and the pick-then-test is under
+  ;; the socket lock, so two threads calling connect() at the same moment get
+  ;; different ephemeral ports instead of racing for one.
   (func $vsock_alloc_port (result i32)
-    (local $tries i32) (local $port i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_SOCKET))
+    (local.set $r (call $vsock_alloc_port_locked))
+    (call $lock_release (global.get $LOCK_SOCKET))
+    (local.get $r))
+
+  (func $vsock_alloc_port_locked (result i32)
+    (local $tries i32) (local $port i32) (local $next i32)
     (local.set $tries (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $tries) (i32.const 16384)))
-      (local.set $port (global.get $vsock_next_port))
-      (global.set $vsock_next_port (i32.add (local.get $port) (i32.const 1)))
-      (if (i32.gt_u (global.get $vsock_next_port) (i32.const 65535))
-        (then (global.set $vsock_next_port (i32.const 49152))))
+      (local.set $port (i32.load (global.get $VSOCK_NEXT_PORT_SHARED)))
+      (if (i32.lt_u (local.get $port) (i32.const 49152))
+        (then (local.set $port (i32.const 49152))))
+      (local.set $next (i32.add (local.get $port) (i32.const 1)))
+      (if (i32.gt_u (local.get $next) (i32.const 65535))
+        (then (local.set $next (i32.const 49152))))
+      (i32.store (global.get $VSOCK_NEXT_PORT_SHARED) (local.get $next))
       (if (i32.eqz (call $vsock_port_taken (global.get $vsock_local_ip) (local.get $port)))
         (then (return (local.get $port))))
       (local.set $tries (i32.add (local.get $tries) (i32.const 1)))

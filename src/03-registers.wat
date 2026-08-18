@@ -81,13 +81,18 @@
     ;; Sparse VirtualAlloc mappings live outside the direct image-relative
     ;; window. Scan only after direct translation failed, keeping normal guest
     ;; memory accesses on the cheap arithmetic path.
-    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    ;; The count and each record's size are the two fields $virtual_map_commit
+    ;; publishes LAST, after the memory they describe is mapped and zeroed. Read
+    ;; them atomically so this scan cannot be reordered ahead of the record it is
+    ;; about to trust. Everything else here is read-only, so no lock: the writer
+    ;; holds $LOCK_VIRTUAL_MAP, the readers never do — see $virtual_map_commit.
+    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $i (i32.const 0))
     (block $mapped_done (loop $mapped_scan
       (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $i) (i32.const 4))))
       (local.set $base (i32.load (local.get $rec)))
-      (local.set $size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+      (local.set $size (i32.atomic.load (i32.add (local.get $rec) (i32.const 4))))
       (if (i32.and
             (i32.ge_u (local.get $ga) (local.get $base))
             (i32.lt_u (local.get $ga) (i32.add (local.get $base) (local.get $size))))

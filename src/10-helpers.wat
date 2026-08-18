@@ -234,43 +234,123 @@
       (br $scan_loop)))
     (i32.const 1))
 
+  ;; ---- Cross-instance mutex -------------------------------------------------
+  ;; Spin, never park. `memory.atomic.wait32` is illegal on a browser main
+  ;; thread, and the main thread does take these — so a lock that parks would
+  ;; either trap there or need two implementations. Spinning is affordable only
+  ;; because every critical section here is pure table arithmetic a few hundred
+  ;; instructions long, and it is the reason for rule 1 in the header comment:
+  ;; a section that called a host import could be parked in Atomics.wait waiting
+  ;; for the very thread that is spinning for its lock.
+  ;;
+  ;; Recursive by owner id, so a critical section that reaches another function
+  ;; taking the same lock deadlocks nothing. That is defence rather than a
+  ;; feature: nothing here nests deliberately.
+  (func $lock_acquire (param $lock i32)
+    (local $me i32) (local $spins i32)
+    (local.set $me (global.get $current_thread_id))
+    (if (i32.eq (i32.atomic.load (local.get $lock)) (local.get $me))
+      (then
+        (i32.store (i32.add (local.get $lock) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $lock) (i32.const 4))) (i32.const 1)))
+        (return)))
+    (block $held (loop $spin
+      (br_if $held
+        (i32.eqz
+          (i32.atomic.rmw.cmpxchg (local.get $lock) (i32.const 0) (local.get $me))))
+      (local.set $spins (i32.add (local.get $spins) (i32.const 1)))
+      ;; A holder that never releases is a bug we would otherwise experience as
+      ;; a silent hang with no stack. Name it once, then keep spinning: the
+      ;; alternative — breaking the lock — corrupts the table it protects.
+      (if (i32.eq (local.get $spins) (i32.const 10000000))
+        (then
+          (call $host_log_i32 (i32.const 0xDEAD10CC))
+          (call $host_log_i32 (local.get $lock))
+          (call $host_log_i32 (i32.atomic.load (local.get $lock)))))
+      (br $spin)))
+    (i32.store (i32.add (local.get $lock) (i32.const 4)) (i32.const 1)))
+
+  (func $lock_release (param $lock i32)
+    (local $depth i32)
+    (local.set $depth
+      (i32.sub (i32.load (i32.add (local.get $lock) (i32.const 4))) (i32.const 1)))
+    (i32.store (i32.add (local.get $lock) (i32.const 4)) (local.get $depth))
+    (if (i32.le_s (local.get $depth) (i32.const 0))
+      (then
+        (i32.store (i32.add (local.get $lock) (i32.const 4)) (i32.const 0))
+        ;; The atomic store is the release: every plain write in the critical
+        ;; section is ordered before it, so the next holder sees a whole table.
+        (i32.atomic.store (local.get $lock) (i32.const 0)))))
+
   ;; The high guest-address allocator is process-wide. Mutable WAT globals are
   ;; per instance, so a worker can otherwise reserve from a stale top and
   ;; overlap a range already owned by the main instance. Keep the authoritative
   ;; downward cursor in shared memory at VIRTUAL_MAP_STATE+8.
+  ;; Lower the shared top to $guest if it is below it. A compare-and-swap loop
+  ;; rather than a lock: the whole operation is one word, so there is nothing for
+  ;; a lock to protect that the CAS does not, and no way to forget to release it.
   (func $virtual_shared_top_observe (param $guest i32)
-    (local $top i32)
-    (local.set $top
-      (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))))
-    (if (i32.or (i32.eqz (local.get $top))
-                (i32.lt_u (local.get $guest) (local.get $top)))
-      (then
-        (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))
-          (local.get $guest)))))
+    (local $cell i32) (local $top i32)
+    (local.set $cell (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8)))
+    (block $done (loop $retry
+      (local.set $top (i32.atomic.load (local.get $cell)))
+      (br_if $done
+        (i32.and (i32.ne (local.get $top) (i32.const 0))
+                 (i32.le_u (local.get $top) (local.get $guest))))
+      (br_if $done
+        (i32.eq (local.get $top)
+          (i32.atomic.rmw.cmpxchg (local.get $cell) (local.get $top) (local.get $guest))))
+      (br $retry))))
 
   (func $virtual_reserve_down (param $size i32) (result i32)
-    (local $top i32) (local $new_top i32)
-    (local.set $top
-      (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))))
-    (if (i32.eqz (local.get $top))
-      (then
-        (local.set $top (global.get $virtual_alloc_top))
-        (if (i32.eqz (local.get $top))
-          (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))))
-    (local.set $new_top
-      (i32.and (i32.sub (local.get $top) (local.get $size))
-        (i32.const 0xFFFF0000)))
-    (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
-      (then (return (i32.const 0))))
-    (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8))
-      (local.get $new_top))
+    (local $cell i32) (local $top i32) (local $new_top i32) (local $seen i32)
+    (local.set $cell (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 8)))
+    ;; Reserve by CAS, and re-derive the new top from whatever the winner left
+    ;; behind. Reading the cursor, subtracting and storing would let two
+    ;; instances carve the same 64KB range out of one gap.
+    (block $done (loop $retry
+      (local.set $top (i32.atomic.load (local.get $cell)))
+      (if (i32.eqz (local.get $top))
+        (then
+          (local.set $top (global.get $virtual_alloc_top))
+          (if (i32.eqz (local.get $top))
+            (then (local.set $top (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+          (local.set $seen (i32.const 0)))
+        (else (local.set $seen (local.get $top))))
+      (local.set $new_top
+        (i32.and (i32.sub (local.get $top) (local.get $size))
+          (i32.const 0xFFFF0000)))
+      (if (i32.lt_u (local.get $new_top) (global.get $VIRTUAL_ALLOC_MIN))
+        (then (return (i32.const 0))))
+      (br_if $done
+        (i32.eq (local.get $seen)
+          (i32.atomic.rmw.cmpxchg (local.get $cell) (local.get $seen) (local.get $new_top))))
+      (br $retry)))
     (global.set $virtual_alloc_top (local.get $new_top))
     (local.get $new_top))
 
   ;; Back a high guest VirtualAlloc commit with real WASM memory. Entries are
   ;; coalesced when the guest commits adjacent 64KB chunks in order, which keeps
   ;; g2w's sparse-map scan short for CRT small-block heap arenas.
+  ;; Writers serialise; readers do not, and must not — $g2w consults this table
+  ;; on every guest access that misses the direct window, millions of times a
+  ;; second, so a reader-side lock would be the most expensive instruction in
+  ;; the emulator. What makes the lock-free read safe is the publish order:
+  ;;
+  ;;   append:  fill the record → zero its backing → ATOMIC store count+1
+  ;;   extend:  zero the new tail → ATOMIC store the larger size
+  ;;
+  ;; In both cases the count or size a reader can observe only ever names memory
+  ;; that is already there. A reader that misses a just-published entry simply
+  ;; behaves as it did a microsecond earlier.
   (func $virtual_map_commit (param $guest i32) (param $size i32) (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (local.set $r (call $virtual_map_commit_locked (local.get $guest) (local.get $size)))
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (local.get $r))
+
+  (func $virtual_map_commit_locked (param $guest i32) (param $size i32) (result i32)
     (local $count i32) (local $backing_ptr i32) (local $guest_end i32)
     (local $i i32) (local $rec i32) (local $base i32) (local $map_size i32)
     (local $backing i32) (local $map_end i32) (local $backing_end i32)
@@ -302,7 +382,9 @@
                 (i32.add (global.get $VIRTUAL_BACKING_BASE) (global.get $VIRTUAL_BACKING_BASE_SIZE)))
             (then (return (i32.const 0))))
           (call $zero_memory (local.get $backing_ptr) (local.get $size))
-          (i32.store (i32.add (local.get $rec) (i32.const 4))
+          ;; Published last, atomically: a reader that sees the larger size is
+          ;; guaranteed the backing behind it exists and is zeroed.
+          (i32.atomic.store (i32.add (local.get $rec) (i32.const 4))
             (i32.add (local.get $map_size) (local.get $size)))
           (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
             (i32.add (local.get $backing_ptr) (local.get $size)))
@@ -322,7 +404,10 @@
     (i32.store (i32.add (local.get $rec) (i32.const 8)) (local.get $backing_ptr))
     (i32.store (i32.add (local.get $rec) (i32.const 12)) (i32.const 0))
     (call $zero_memory (local.get $backing_ptr) (local.get $size))
-    (i32.store (global.get $VIRTUAL_MAP_STATE) (i32.add (local.get $count) (i32.const 1)))
+    ;; The record is complete and its backing zeroed before the count that makes
+    ;; it visible. Reversing these two lines is the whole bug this ordering
+    ;; avoids: $g2w would map a guest address onto a record still being filled.
+    (i32.atomic.store (global.get $VIRTUAL_MAP_STATE) (i32.add (local.get $count) (i32.const 1)))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
       (i32.add (local.get $backing_ptr) (local.get $size)))
     (call $virtual_shared_top_observe (local.get $guest))
@@ -343,15 +428,26 @@
   ;; heap has not been touched yet. The DLL loader needs this to place an image
   ;; clear of every arena; $heap_ptr would only tell it about one instance.
   (func $heap_low_watermark (result i32)
-    (i32.load (global.get $HEAP_SHARED)))
+    (i32.atomic.load (global.get $HEAP_SHARED)))
 
   ;; Declare that the low heap must not hand out anything below $addr — a DLL
   ;; image now occupies that range. Only moves the cursor forward, so a DLL
   ;; loaded below the watermark (fixed preferred base) costs nothing.
   (func $heap_reserve_below (param $addr i32)
-    (if (i32.gt_u (local.get $addr) (i32.load (global.get $HEAP_SHARED)))
+    (local $cursor i32) (local $moved i32)
+    ;; Raise the cursor by CAS. A plain compare-then-store loses a concurrent
+    ;; reservation: two instances loading the same cursor both write their own
+    ;; value, and the loser's arena is handed out again by the winner.
+    (block $done (loop $retry
+      (local.set $cursor (i32.atomic.load (global.get $HEAP_SHARED)))
+      (br_if $done (i32.le_u (local.get $addr) (local.get $cursor)))
+      (if (i32.eq (local.get $cursor)
+            (i32.atomic.rmw.cmpxchg (global.get $HEAP_SHARED)
+              (local.get $cursor) (local.get $addr)))
+        (then (local.set $moved (i32.const 1)) (br $done)))
+      (br $retry)))
+    (if (local.get $moved)
       (then
-        (i32.store (global.get $HEAP_SHARED) (local.get $addr))
         (i32.store (i32.add (global.get $HEAP_SHARED) (i32.const 4)) (local.get $addr))
         (global.set $heap_base (local.get $addr))
         ;; This instance's arena ended at the old cursor, so it cannot reach into
@@ -363,42 +459,52 @@
   ;; The cursor is shared; the arena handed back is exclusively ours, so the
   ;; per-allocation fast path in $heap_alloc needs no synchronization at all.
   ;;
-  ;; The read-modify-write here is plain, not atomic — correct while instances
-  ;; interleave only at slice boundaries, which is how the cooperative scheduler
-  ;; runs them today. Genuine parallelism needs a lock, and that needs atomic
-  ;; opcodes in lib/compile-wat.js, which it does not have yet.
+  ;; The reservation is a compare-and-swap loop, so two instances allocating at
+  ;; the same instant get different chunks rather than the same one. No lock: one
+  ;; word, one CAS, and nothing to release on the early-return paths below.
   (func $heap_low_reserve (param $need i32) (result i32)
-    (local $state i32) (local $cursor i32) (local $chunk i32)
+    (local $state i32) (local $cursor i32) (local $chunk i32) (local $seed i32)
     (local.set $state (global.get $HEAP_SHARED))
-    (local.set $cursor (i32.load (local.get $state)))
-    ;; Seed the process cursor on first use. $heap_init does this at PE load;
-    ;; harnesses that drive the exports without an image never get there, so fall
-    ;; back to the default heap base rather than failing every allocation.
-    (if (i32.eqz (local.get $cursor))
-      (then
-        (local.set $cursor
-          (select (global.get $heap_base) (global.get $HEAP_DEFAULT_BASE)
-            (i32.ne (global.get $heap_base) (i32.const 0))))
-        (i32.store (local.get $state) (local.get $cursor))
-        (i32.store (i32.add (local.get $state) (i32.const 4)) (local.get $cursor))
-        (if (i32.eqz (global.get $heap_base))
-          (then (global.set $heap_base (local.get $cursor))))))
-    ;; One chunk must satisfy this allocation outright, so an oversized request
-    ;; takes an oversized chunk rather than failing against a 1MB granule.
-    (local.set $chunk (global.get $HEAP_ARENA_CHUNK))
-    (if (i32.gt_u (local.get $need) (local.get $chunk))
-      (then (local.set $chunk
-        (i32.and (i32.add (local.get $need) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))))
-    ;; Overflow, and the boundary where low guest memory would run into the
-    ;; emulator's own decoded-code cache — either way the caller spills to the
-    ;; sparse high arena instead.
-    (if (i32.lt_u (i32.add (local.get $cursor) (local.get $chunk)) (local.get $cursor))
-      (then (return (i32.const 0))))
-    (if (i32.gt_u
-          (call $g2w (i32.add (local.get $cursor) (local.get $chunk)))
-          (global.get $THREAD_CACHE_BASE))
-      (then (return (i32.const 0))))
-    (i32.store (local.get $state) (i32.add (local.get $cursor) (local.get $chunk)))
+    (block $reserved (loop $retry
+      (local.set $cursor (i32.atomic.load (local.get $state)))
+      ;; Seed the process cursor on first use. $heap_init does this at PE load;
+      ;; harnesses that drive the exports without an image never get there, so
+      ;; fall back to the default heap base rather than failing every allocation.
+      ;; Seeding by CAS means the loser adopts the winner's base instead of
+      ;; overwriting it — two instances can disagree about what "no image" means.
+      (if (i32.eqz (local.get $cursor))
+        (then
+          (local.set $seed
+            (select (global.get $heap_base) (global.get $HEAP_DEFAULT_BASE)
+              (i32.ne (global.get $heap_base) (i32.const 0))))
+          (if (i32.eqz
+                (i32.atomic.rmw.cmpxchg (local.get $state) (i32.const 0) (local.get $seed)))
+            (then (i32.store (i32.add (local.get $state) (i32.const 4)) (local.get $seed))))
+          (if (i32.eqz (global.get $heap_base))
+            (then (global.set $heap_base
+              (i32.load (i32.add (local.get $state) (i32.const 4))))))
+          (br $retry)))
+      ;; One chunk must satisfy this allocation outright, so an oversized request
+      ;; takes an oversized chunk rather than failing against a 1MB granule.
+      (local.set $chunk (global.get $HEAP_ARENA_CHUNK))
+      (if (i32.gt_u (local.get $need) (local.get $chunk))
+        (then (local.set $chunk
+          (i32.and (i32.add (local.get $need) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))))
+      ;; Overflow, and the boundary where low guest memory would run into the
+      ;; emulator's own decoded-code cache — either way the caller spills to the
+      ;; sparse high arena instead.
+      (if (i32.lt_u (i32.add (local.get $cursor) (local.get $chunk)) (local.get $cursor))
+        (then (return (i32.const 0))))
+      (if (i32.gt_u
+            (call $g2w (i32.add (local.get $cursor) (local.get $chunk)))
+            (global.get $THREAD_CACHE_BASE))
+        (then (return (i32.const 0))))
+      ;; Claim it, or lose the race and recompute against the winner's cursor.
+      (br_if $reserved
+        (i32.eq (local.get $cursor)
+          (i32.atomic.rmw.cmpxchg (local.get $state) (local.get $cursor)
+            (i32.add (local.get $cursor) (local.get $chunk)))))
+      (br $retry)))
     (global.set $heap_ptr (local.get $cursor))
     (global.set $heap_end (i32.add (local.get $cursor) (local.get $chunk)))
     (local.get $cursor))

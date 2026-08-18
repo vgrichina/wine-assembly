@@ -35,7 +35,11 @@
   (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
   (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00004000))
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
-  (global $com_aux_next (mut i32) (i32.const 0))
+  ;; The aux-wrapper cursor lives at $COM_AUX_NEXT_SHARED, not in a global: a
+  ;; mutable global is per-instance, and every guest thread is its own instance
+  ;; over this one memory, so two threads would hand out the same aux slot. Same
+  ;; shape of bug $heap_ptr had (docs/design-real-threads.md §3.1a). Read and
+  ;; written only under $LOCK_DX.
 
   ;; Shared registry for COM vtable guest addresses. The vtable globals below
   ;; are per-WASM-instance, while threads use separate instances over one
@@ -266,7 +270,19 @@
 
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
+  ;; Serialised: the scan below finds a free slot and only then claims it, so two
+  ;; threads creating COM objects at the same instant would both take the same
+  ;; one and the second would silently inherit the first's object. The critical
+  ;; section is pure table arithmetic with no host import in it, which is what
+  ;; makes a spinlock safe here — see the rules on $lock_acquire.
   (func $dx_alloc (param $type i32) (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $r (call $dx_alloc_locked (local.get $type)))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $r))
+
+  (func $dx_alloc_locked (param $type i32) (result i32)
     (local $i i32) (local $ptr i32) (local $wrapper_wa i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -326,6 +342,17 @@
   ;; Never mutates the primary wrapper's vtbl (callers may hold cached copies
   ;; of the primary wrapper pointer and expect its vtbl to be stable).
   (func $dx_get_wrapper_for_vtbl (param $slot i32) (param $vtbl_guest i32) (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $r (call $dx_get_wrapper_for_vtbl_locked
+      (local.get $slot) (local.get $vtbl_guest)))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $r))
+
+  ;; Scan-then-append over the aux pool: held under $LOCK_DX so two threads
+  ;; querying the same interface get one shared wrapper instead of two racing
+  ;; appends into the same slot.
+  (func $dx_get_wrapper_for_vtbl_locked (param $slot i32) (param $vtbl_guest i32) (result i32)
     (local $primary_wa i32) (local $aux_wa i32) (local $i i32) (local $n i32)
     (local.set $primary_wa (i32.add (global.get $COM_WRAPPERS)
       (i32.mul (local.get $slot) (i32.const 8))))
@@ -334,7 +361,7 @@
       (return (i32.add (i32.sub (local.get $primary_wa) (global.get $GUEST_BASE))
                        (global.get $image_base)))))
     ;; Scan aux pool for (vtbl, slot) match.
-    (local.set $n (global.get $com_aux_next))
+    (local.set $n (i32.load (global.get $COM_AUX_NEXT_SHARED)))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
@@ -357,7 +384,7 @@
       (i32.mul (local.get $n) (i32.const 8))))
     (i32.store (local.get $aux_wa) (local.get $vtbl_guest))
     (i32.store (i32.add (local.get $aux_wa) (i32.const 4)) (local.get $slot))
-    (global.set $com_aux_next (i32.add (local.get $n) (i32.const 1)))
+    (i32.store (global.get $COM_AUX_NEXT_SHARED) (i32.add (local.get $n) (i32.const 1)))
     (i32.add (i32.sub (local.get $aux_wa) (global.get $GUEST_BASE))
              (global.get $image_base)))
 

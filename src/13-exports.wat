@@ -337,6 +337,75 @@
   (func (export "wnd_region_get_export") (param $hwnd i32) (result i32)
     (call $wnd_region_get (local.get $hwnd)))
 
+  ;; Cross-instance locking probes (docs/design-real-threads.md §3.1b). Two
+  ;; guest threads are two WASM instances over one memory, so the tables they
+  ;; share can only be tested by driving them from two real OS threads at once —
+  ;; which is what test/test-wat-locks.js does with these.
+  (func (export "test_lock_addr") (param $which i32) (result i32)
+    (if (i32.eq (local.get $which) (i32.const 1))
+      (then (return (global.get $LOCK_DX))))
+    (if (i32.eq (local.get $which) (i32.const 2))
+      (then (return (global.get $LOCK_SOCKET))))
+    (global.get $LOCK_VIRTUAL_MAP))
+  ;; A read-modify-write with a deliberate gap between the read and the write.
+  ;; Unlocked, two instances lose updates; locked, they must not. The gap is what
+  ;; makes the test fail reliably instead of once in a million runs.
+  (func (export "test_lock_bump") (param $lock i32) (param $cell i32) (param $iters i32)
+    (local $i i32) (local $v i32) (local $spin i32)
+    (block $done (loop $again
+      (br_if $done (i32.ge_u (local.get $i) (local.get $iters)))
+      (call $lock_acquire (local.get $lock))
+      (local.set $v (i32.load (local.get $cell)))
+      (local.set $spin (i32.const 0))
+      (block $paused (loop $pause
+        (br_if $paused (i32.ge_u (local.get $spin) (i32.const 40)))
+        (local.set $spin (i32.add (local.get $spin) (i32.const 1)))
+        (br $pause)))
+      (i32.store (local.get $cell) (i32.add (local.get $v) (i32.const 1)))
+      (call $lock_release (local.get $lock))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $again))))
+  ;; The same loop with no lock at all. It exists so the locked test above has a
+  ;; negative control that lives in the tree rather than in someone's memory of
+  ;; having tried it once: if this one ever stops losing updates, the platform
+  ;; stopped running the two instances concurrently and every other check in
+  ;; test/test-wat-locks.js has quietly become vacuous.
+  (func (export "test_bump_unlocked") (param $cell i32) (param $iters i32)
+    (local $i i32) (local $v i32) (local $spin i32)
+    (block $done (loop $again
+      (br_if $done (i32.ge_u (local.get $i) (local.get $iters)))
+      (local.set $v (i32.load (local.get $cell)))
+      (local.set $spin (i32.const 0))
+      (block $paused (loop $pause
+        (br_if $paused (i32.ge_u (local.get $spin) (i32.const 40)))
+        (local.set $spin (i32.add (local.get $spin) (i32.const 1)))
+        (br $pause)))
+      (i32.store (local.get $cell) (i32.add (local.get $v) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $again))))
+  ;; Recursion must not deadlock: a critical section that reaches a function
+  ;; taking the same lock is a bug we would rather survive than hang on.
+  (func (export "test_lock_reentrant") (param $lock i32) (result i32)
+    (call $lock_acquire (local.get $lock))
+    (call $lock_acquire (local.get $lock))
+    (call $lock_release (local.get $lock))
+    ;; Still held by us after the inner release, or the nesting is not counted.
+    (if (i32.ne (i32.atomic.load (local.get $lock)) (global.get $current_thread_id))
+      (then (call $lock_release (local.get $lock)) (return (i32.const 0))))
+    (call $lock_release (local.get $lock))
+    ;; Released means "not ours any more", not "zero": another thread may have
+    ;; taken it between the release and this load, and asserting zero here made
+    ;; the check fail for whichever thread happened to lose that footrace.
+    (i32.ne (i32.atomic.load (local.get $lock)) (global.get $current_thread_id)))
+  (func (export "test_dx_alloc") (param $type i32) (result i32)
+    (call $dx_alloc (local.get $type)))
+  (func (export "test_vsock_alloc") (result i32) (call $vsock_alloc))
+  (func (export "test_vsock_alloc_port") (result i32) (call $vsock_alloc_port))
+  (func (export "test_virtual_map_commit") (param $guest i32) (param $size i32) (result i32)
+    (call $virtual_map_commit (local.get $guest) (local.get $size)))
+  (func (export "test_virtual_reserve_down") (param $size i32) (result i32)
+    (call $virtual_reserve_down (local.get $size)))
+
   ;; Software-GDI migration probes. Production API handlers call the same
   ;; WAT-owned region registry; these exports keep its ownership testable
   ;; without driving the x86 stdcall dispatcher.
@@ -2523,7 +2592,10 @@
     (global.set $wsa_started (i32.const 0))
     (global.set $vsock_sel_waiting (i32.const 0))
     (global.set $vsock_local_ip (i32.const 0x0A4D0001))
-    (global.set $vsock_next_port (i32.const 49152)))
+    ;; The cursor moved into shared memory (one per process, not one per
+    ;; instance), so the reset has to clear it there or a fresh test inherits the
+    ;; previous one's port.
+    (i32.store (global.get $VSOCK_NEXT_PORT_SHARED) (i32.const 49152)))
 
   ;; Room address of this process. The host of the room keeps 10.77.0.1;
   ;; every other member is assigned its own address before the guest runs.
