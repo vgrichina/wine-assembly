@@ -1782,6 +1782,19 @@ class WineAssembly {
           await self._handleComDllLoadThreaded();
         } else if (r.yield === 5) {
           await self._handleLoadLibraryThreaded();
+        } else if (r.yield === 9) {
+          // cs_wait: EnterCriticalSection found the section held by another guest
+          // thread. Clearing re-enters the same call, and the holder gets its
+          // slice in this same round — which is why the WAT must not spin there:
+          // the holder may be parked in Atomics.wait for an import only this
+          // thread serves.
+          //
+          // The guest's MAIN thread does not currently park (see
+          // $handle_EnterCriticalSection — it nests interpreter runs that cannot
+          // be unwound), so this is a safety net rather than a live path. It is
+          // kept because the alternative is the catch-all below, which stops the
+          // app outright, and that is how this was found.
+          await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');
           try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
@@ -1922,6 +1935,15 @@ class WineAssembly {
         }
         if (yieldReason === 5) {
           await self.handleLoadLibrary();
+          if (self.running) { setTimeout(step, 0); }
+          return;
+        }
+        if (yieldReason === 9) {
+          // cs_wait: EnterCriticalSection found the section held by another guest
+          // thread. Same shape as net_wait — EIP is still on the thunk, so
+          // clearing re-enters the same call — and rescheduling rather than
+          // spinning is again the point: the holder only runs when this returns.
+          self.instance.exports.clear_yield();
           if (self.running) { setTimeout(step, 0); }
           return;
         }

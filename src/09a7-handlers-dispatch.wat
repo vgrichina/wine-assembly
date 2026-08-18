@@ -11401,7 +11401,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 787: ReinitializeCriticalSection(ptr) — no-op (single-threaded)
+  ;; 787: ReinitializeCriticalSection(ptr) — no-op. Deliberately still a no-op
+  ;; now that sections really exclude: resetting the lock word here would release
+  ;; a section its owner is inside, and nothing has been seen to need it.
   (func $handle_ReinitializeCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

@@ -59,8 +59,9 @@ const run = (label, extra) => {
     const m = output.match(/Stats: (\d+) API calls/);
     return m ? parseInt(m[1], 10) : -1;
   })();
+  const exitReason = (events.find(e => e.type === 'exit') || {}).reason || 'none';
   console.log(`  ${label}: exit=${result.status} ${Date.now() - started}ms `
-    + `events=${events.map(e => e.type).join(',')} api=${apiCalls}`);
+    + `events=${events.map(e => e.type).join(',')} api=${apiCalls} thread-end=${exitReason}`);
   return { result, output, events, apiCalls };
 };
 
@@ -86,11 +87,21 @@ const checks = [
     !!spawnEvent && spawnEvent.backend === 'worker'],
   ['the thread started at its own entry point, not the main thread\'s',
     !!spawnEvent && spawnEvent.eip === spawnEvent.startAddr && spawnEvent.esp > 0],
-  // ExitThread takes no handle. In worker mode the caller is not even on this
-  // thread, so attributing it depends on the RPC hooks naming the slot being
-  // served; getting that wrong exits the wrong thread, or none.
-  ['ExitThread was attributed to the thread that called it',
-    !!exitEvent && exitEvent.reason === 'ExitThread' && exitEvent.tid === 1],
+  // The thread that ended must be the one that ended, with its own exit code.
+  // In worker mode that is not free: ExitThread takes no handle and its caller
+  // is not even on this thread, so attribution depends on the RPC hooks naming
+  // the slot being served — get it wrong and the wrong thread exits, or none.
+  //
+  // The ROUTE is not asserted, only reported. WordPad ends this thread by
+  // calling ExitThread cooperatively and by returning to the null return address
+  // under real threads: both are legitimate Win32 endings, and which one a guest
+  // takes depends on where it was when the section it wanted came free.
+  ['the exit was attributed to the thread that ended',
+    !!exitEvent && exitEvent.tid === 1 && exitEvent.exitCode === 0],
+  // Asserted on the cooperative run, so a regression in ExitThread itself still
+  // has somewhere to show up.
+  ['ExitThread still ends the thread on the cooperative backend',
+    (coop.events.find(e => e.type === 'exit') || {}).reason === 'ExitThread'],
   // Both directions of cross-thread synchronisation, each parked in a different
   // OS thread and woken by the other.
   ['a wait parked on the main thread was woken by the worker\'s SetEvent',

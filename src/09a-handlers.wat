@@ -5899,37 +5899,173 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 331: EnterCriticalSection(lpCriticalSection) — single-threaded: always succeeds
+  ;; Park an EnterCriticalSection that cannot be satisfied yet (reason 9).
+  ;;
+  ;; It CANNOT spin. The holder is another guest thread that will release the
+  ;; section when it next runs, and on the browser's main thread — or the CLI's,
+  ;; which both runs guest code and serves the workers' host imports — spinning
+  ;; is the deadlock: the holder is parked in Atomics.wait for an import this
+  ;; thread would have served. So the whole API call parks the same way a
+  ;; blocking socket call does: EIP is still on the thunk, and clearing the yield
+  ;; re-enters this handler with the same argument once someone else has had a
+  ;; turn.
+  ;;
+  ;; ESP is deliberately NOT touched: this is called before the handler pops its
+  ;; stdcall frame, so the return address and the argument are already where a
+  ;; re-entry needs them. (The winsock equivalent subtracts, because those
+  ;; handlers pop on entry and have to put it back — the invariant is the same,
+  ;; the arithmetic is not. Subtracting here dropped ESP by 8 per park and
+  ;; WordPad's thread trapped after three of them.)
+  (func $cs_block
+    (global.set $cs_waits (i32.add (global.get $cs_waits) (i32.const 1)))
+    ;; Opt out of $run's thunk-zone auto-pop. It fires whenever a handler leaves
+    ;; EIP alone, yield or no yield, and sets EIP = [ESP] — which splices the call
+    ;; out entirely: the guest resumes after it without the section, with the
+    ;; argument still on the stack. Four bytes leak per park, and the thread dies
+    ;; later at a garbage EIP (0x113, in the browser). Every other re-entering
+    ;; thunk raises this for the same reason; see the CACA000x continuations.
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $yield_reason (i32.const 9))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; 331: EnterCriticalSection(lpCriticalSection)
+  ;;
+  ;; Real mutual exclusion, because there are real threads now. The old version
+  ;; bumped the counters and wrote OwningThread = 1 unconditionally, which is
+  ;; survivable when exactly one instance runs at a time and is not a defensible
+  ;; basis for anything else: two threads inside one section corrupt whatever it
+  ;; was protecting, and the symptom shows up far away as bad data.
+  ;;
+  ;; OwningThread is the lock word, claimed with a CAS. It holds
+  ;; $current_thread_id, which is exactly what GetCurrentThreadId returns —
+  ;; guest CRT and MFC lock code reads this field and compares it against that,
+  ;; so it has to be the same number and not a private one. 0 means free, and no
+  ;; thread id is ever 0 (main is 1, a spawned thread is tid+1).
   (func $handle_EnterCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $me i32) (local $prev i32) (local $spin i32)
     (local.set $cs (call $g2w (local.get $arg0)))
-    ;; LockCount: -1 -> 0 (first acquire) or increment (recursive)
+    (local.set $me (global.get $current_thread_id))
+    (if (call $cs_owner_aligned (local.get $cs))
+      (then
+        ;; Spin briefly before considering a park. The holder is a guest thread
+        ;; on another OS thread and is running RIGHT NOW, so most contention
+        ;; clears in microseconds — which is exactly what CRITICAL_SECTION's
+        ;; SpinCount is for on a multiprocessor. Parking instead costs a whole
+        ;; scheduler round per attempt, and that is not a small constant:
+        ;; measured on Winamp in worker mode, each of its three threads parked
+        ;; ~2000 times and the decoded audio barely started before the run ended.
+        ;;
+        ;; The spin is BOUNDED and always ends — in a park for a spawned thread,
+        ;; or in taking the section for the guest's main thread (see below) — so
+        ;; unlike the WAT's own locks it cannot deadlock the thread that serves
+        ;; the holder's host imports. A few thousand atomic ops is tens of
+        ;; microseconds; a wait would be unbounded, and that is the difference.
+        (local.set $spin (i32.const 0))
+        (block $done
+          (loop $again
+            (local.set $prev (i32.atomic.rmw.cmpxchg offset=12
+              (local.get $cs) (i32.const 0) (local.get $me)))
+            (br_if $done (i32.eqz (local.get $prev)))
+            (br_if $done (i32.eq (local.get $prev) (local.get $me)))
+            (local.set $spin (i32.add (local.get $spin) (i32.const 1)))
+            (br_if $again (i32.lt_u (local.get $spin) (i32.const 2000))))))
+      (else
+        ;; A misaligned CRITICAL_SECTION would TRAP the atomic — WASM requires
+        ;; natural alignment where `lock cmpxchg` does not. Compilers align the
+        ;; struct, so this is the rare path, and being no better than the old
+        ;; racy version there beats killing the app.
+        (local.set $prev (i32.load offset=12 (local.get $cs)))
+        (if (i32.eqz (local.get $prev))
+          (then (i32.store offset=12 (local.get $cs) (local.get $me))))))
+    ;; Held by somebody else: park and retry. Both operands are 0/1 predicates.
+    (if (i32.and (i32.ne (local.get $prev) (i32.const 0))
+                 (i32.ne (local.get $prev) (local.get $me)))
+      (then
+        (global.set $cs_wait_spins (i32.add (global.get $cs_wait_spins) (i32.const 1)))
+        ;; Two reasons to take a section that is not free, both counted.
+        ;;
+        ;; $sync_msg_depth: a synchronous wndproc is running nested inside a
+        ;; handler. Parking sets $steps = 0 and unwinds run(), and the nested
+        ;; call's frame cannot survive that — the same hazard
+        ;; waitSingleCooperative exists for. Yielding from here trapped the guest
+        ;; at a garbage EIP (0x113 — a message id executed as code) some distance
+        ;; later, resembling its cause not at all. An exclusion honoured only at
+        ;; the top level still covers the whole of the common case; $cs_barges
+        ;; says how often it was not.
+        ;;
+        ;; 2000 fruitless rounds: a section can be lost rather than held. A
+        ;; thread that trapped or exited inside one never releases it, and
+        ;; waiting forever on that is a hang with no output. $cs_steals turns it
+        ;; into a reportable degradation instead.
+        ;; The guest's MAIN thread never parks here either, and this one is a
+        ;; measured limit rather than a design: it is the thread that runs
+        ;; wndprocs, dialogs and JS-driven message sends, and several of those
+        ;; nest an interpreter run without raising $sync_msg_depth. Parking out
+        ;; of one of those unwinds a frame nobody can rebuild, and the browser's
+        ;; Winamp died at EIP=0x113 every time it happened. Spawned threads own
+        ;; their stack from the first instruction and park safely — which is
+        ;; where the exclusion was needed anyway: it is what took worker-mode
+        ;; audio from near-silence to full scale.
+        (if (i32.or (i32.eq (global.get $current_thread_id) (i32.const 1))
+              (i32.or (i32.ne (global.get $sync_msg_depth) (i32.const 0))
+                      (i32.ge_u (global.get $cs_wait_spins) (i32.const 2000))))
+          (then
+            (if (i32.lt_u (global.get $cs_wait_spins) (i32.const 2000))
+              (then (global.set $cs_barges (i32.add (global.get $cs_barges) (i32.const 1))))
+              (else (global.set $cs_steals (i32.add (global.get $cs_steals) (i32.const 1)))))
+            (if (call $cs_owner_aligned (local.get $cs))
+              (then (i32.atomic.store offset=12 (local.get $cs) (local.get $me)))
+              (else (i32.store offset=12 (local.get $cs) (local.get $me))))
+            (i32.store offset=8 (local.get $cs) (i32.const 0))
+            (i32.store offset=4 (local.get $cs) (i32.const -1)))
+          (else
+            (call $cs_block)
+            (return)))))
+    (global.set $cs_wait_spins (i32.const 0))
+    ;; Ours now, or already ours — recursive entry is allowed and only counted.
+    ;; LockCount: -1 -> 0 on the first acquire, then up with each recursion.
     (i32.store offset=4 (local.get $cs)
       (i32.add (i32.load offset=4 (local.get $cs)) (i32.const 1)))
-    ;; RecursionCount++
     (i32.store offset=8 (local.get $cs)
       (i32.add (i32.load offset=8 (local.get $cs)) (i32.const 1)))
-    ;; OwningThread = 1 (our single thread ID)
-    (i32.store offset=12 (local.get $cs) (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+
+  ;; Is this section's OwningThread word 4-byte aligned, i.e. can it be the
+  ;; target of an atomic? Its address is guest-derived and GUEST_BASE is aligned,
+  ;; so this follows the guest's own alignment.
+  (func $cs_owner_aligned (param $cs i32) (result i32)
+    (i32.eqz (i32.and (i32.add (local.get $cs) (i32.const 12)) (i32.const 3))))
 
   ;; 332: LeaveCriticalSection(lpCriticalSection)
   (func $handle_LeaveCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cs i32)
     (local.set $cs (call $g2w (local.get $arg0)))
+    ;; A Leave from a thread that does not own the section still releases it,
+    ;; and is counted rather than refused. Refusing is what NT would do and it
+    ;; is the wrong trade here: this emulator still runs some guest callbacks on
+    ;; the calling thread rather than the owning one (cross-thread SendMessage is
+    ;; not implemented), so an Enter here and a Leave there is reachable through
+    ;; no fault of the guest — and a section that is never released is a hang,
+    ;; where releasing one early is the race we already had. Win9x did not check
+    ;; either. $cs_bad_leaves is exported so this stops being invisible.
+    (if (i32.ne (i32.load offset=12 (local.get $cs)) (global.get $current_thread_id))
+      (then (global.set $cs_bad_leaves (i32.add (global.get $cs_bad_leaves) (i32.const 1)))))
     ;; RecursionCount--
     (i32.store offset=8 (local.get $cs)
       (i32.sub (i32.load offset=8 (local.get $cs)) (i32.const 1)))
-    ;; If RecursionCount == 0, clear OwningThread
-    (if (i32.eqz (i32.load offset=8 (local.get $cs)))
-      (then
-        (i32.store offset=12 (local.get $cs) (i32.const 0))
-      )
-    )
     ;; LockCount--
     (i32.store offset=4 (local.get $cs)
       (i32.sub (i32.load offset=4 (local.get $cs)) (i32.const 1)))
+    ;; Release LAST, and atomically: the counters have to be settled before
+    ;; another thread can see the section free and start writing them, which is
+    ;; the same publish-last ordering the WAT's own locks use.
+    (if (i32.eqz (i32.load offset=8 (local.get $cs)))
+      (then
+        (if (call $cs_owner_aligned (local.get $cs))
+          (then (i32.atomic.store offset=12 (local.get $cs) (i32.const 0)))
+          (else (i32.store offset=12 (local.get $cs) (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

@@ -5897,6 +5897,19 @@ if (VERBOSE) {
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
   }
+  // Critical-section contention, printed only when there was some. A steal means
+  // a section was taken from a holder that never released it — a real bug that
+  // was worked around to avoid hanging, so it should never pass unnoticed.
+  if (instance.exports.get_cs_waits) {
+    const waits = instance.exports.get_cs_waits() >>> 0;
+    const steals = instance.exports.get_cs_steals ? instance.exports.get_cs_steals() >>> 0 : 0;
+    const badLeaves = instance.exports.get_cs_bad_leaves ? instance.exports.get_cs_bad_leaves() >>> 0 : 0;
+    const barges = instance.exports.get_cs_barges ? instance.exports.get_cs_barges() >>> 0 : 0;
+    if (waits || steals || badLeaves || barges) {
+      console.log(`critical sections: main parked ${waits}x, stole ${steals}, `
+        + `barged ${barges} (nested wndproc), released ${badLeaves} it did not own`);
+    }
+  }
 
   if (DUMP_VIRTUAL_MAPS) {
     const dv = new DataView(memory.buffer);
@@ -6024,7 +6037,8 @@ if (VERBOSE) {
         console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} slot=${t.link.slot} `
           + `slices=${t.link.sliceStats.slices} guestMs=${t.link.sliceStats.guestMs.toFixed(1)} `
           + `rpc=${t.link.sliceStats.rpcSync}sync/${t.link.sliceStats.rpcAsync}async/${t.link.sliceStats.rpcLocal}local `
-          + `sleepCount=${t.sleepCount || 0} waitPolls=${t.waitPolls || 0}`);
+          + `sleepCount=${t.sleepCount || 0} waitPolls=${t.waitPolls || 0} `
+          + `csPark/steal=${t.csWaits || 0}/${t.csSteals || 0}`);
         continue;
       }
       try {
@@ -6034,7 +6048,8 @@ if (VERBOSE) {
         const ebp = e.get_ebp ? e.get_ebp() : 0;
         const yr = e.get_yield_reason ? e.get_yield_reason() : -1;
         const wh = e.get_wait_handle ? e.get_wait_handle() : 0;
-        console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} eip=0x${eip.toString(16)} esp=0x${esp.toString(16)} ebp=0x${ebp.toString(16)} yield=${yr} waitH=0x${wh.toString(16)} sleepCount=${t.sleepCount||0}`);
+        const cs = e.get_cs_waits ? `${e.get_cs_waits() >>> 0}/${e.get_cs_steals ? e.get_cs_steals() >>> 0 : 0}` : '-';
+        console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} eip=0x${eip.toString(16)} esp=0x${esp.toString(16)} ebp=0x${ebp.toString(16)} yield=${yr} waitH=0x${wh.toString(16)} sleepCount=${t.sleepCount||0} csPark/steal=${cs}`);
       } catch (ex) { console.log(`  T${t.tid} dump error: ${ex.message}`); }
     }
   }

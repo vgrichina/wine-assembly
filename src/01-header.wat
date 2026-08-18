@@ -1949,7 +1949,16 @@
   (global $clip_cursor_t (mut i32) (i32.const 0))
   (global $clip_cursor_r (mut i32) (i32.const 0))
   (global $clip_cursor_b (mut i32) (i32.const 0))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait
+  ;; Consecutive fruitless EnterCriticalSection rounds on THIS thread, and how
+  ;; many sections were taken from a holder that never released one (see
+  ;; $handle_EnterCriticalSection). Per-instance on purpose: the count is about
+  ;; this thread's own progress.
+  (global $cs_wait_spins (mut i32) (i32.const 0))
+  (global $cs_steals (mut i32) (i32.const 0))
+  (global $cs_waits (mut i32) (i32.const 0))
+  (global $cs_bad_leaves (mut i32) (i32.const 0))
+  (global $cs_barges (mut i32) (i32.const 0))
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait (EnterCriticalSection held by another thread; clear to re-enter the same call)
   ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
   ;; WsControl's view of the virtual adapter (src/09d-winsock.wat): subnet mask
   ;; and default gateway, both host byte order.

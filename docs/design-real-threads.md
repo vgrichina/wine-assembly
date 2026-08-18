@@ -751,27 +751,94 @@ Three things the split had to get right, each learned from a failure:
   branch therefore mirrors the cooperative one: `THREAD_SLICES` rounds per batch,
   main running between them.
 
-- **Open, found by the above: Winamp's audio is not yet correct in worker mode.**
-  `node test/test-winamp-audio.js --threads` fails its last check, and only that
-  one — the run completes, nothing traps, no import is missing, three real OS
-  threads do the work, and PCM of the right size arrives. The samples are there and
-  start at nearly the same offset as a good run (byte 2518 vs 4350), but the peak
-  amplitude in the first 11520 bytes is 40 against the cooperative backend's 17469.
+### Critical sections that actually exclude
 
-  Measured, so the next session does not have to re-derive it: more concurrency
-  makes it *better*, not worse — `--threads-serial` drops the peak to 3, and
-  serialising with cooperative-sized slices (`--thread-batch-size=100
-  --threads-serial`) drops it to 3 as well, while parallel fine-grained slices give
-  40. That rules out a data race as the cause and points at the decode thread simply
-  not getting enough done before the output thread writes the buffer: T3 wakes ~940
-  times but accumulates 10ms of guest time, re-parking on its event almost
-  immediately each time. Worth noting while looking at it that
-  `EnterCriticalSection` in `src/09a-handlers.wat` provides no mutual exclusion at
-  all — it bumps the counters and writes `OwningThread = 1` — which is survivable
-  under a cooperative scheduler and is not a defensible basis for real threads. A
-  correct implementation cannot simply spin, either: the main thread spinning on a
-  section held by a worker that needs a host import served is a deadlock, so it has
-  to yield to the scheduler the way `WaitForSingleObject` does.
+`EnterCriticalSection` used to bump the counters and write `OwningThread = 1`,
+excluding nobody. That is survivable when one instance runs at a time and is not
+a basis for real threads: two threads inside one section corrupt whatever it was
+protecting, and the damage surfaces far away as bad data. It is what Winamp's
+worker-mode audio was — samples decoded at 1/500 amplitude, or none.
+
+`OwningThread` is now the lock word, claimed with `i32.atomic.rmw.cmpxchg`. It
+holds `$current_thread_id`, which is exactly what `GetCurrentThreadId` returns,
+because guest CRT and MFC lock code reads this field and compares it against that
+— it has to be the same number, not a private one. 0 is free, and no thread id is
+ever 0 (main is 1, a spawned thread is tid+1).
+
+Four things this had to get right:
+
+- **It cannot spin.** The holder is another guest thread, and on the browser's
+  main thread — or the CLI's, which both runs guest code and serves the workers'
+  host imports — spinning is the deadlock: the holder is parked in `Atomics.wait`
+  for an import that only the spinning thread would have served. So a contended
+  Enter parks the whole API call with a new yield reason (9), the way a blocking
+  socket call does: EIP stays on the thunk and clearing the yield re-enters the
+  same call. All four schedulers clear it — cooperative threads, worker threads,
+  `checkMainYield`, and host.js.
+- **`$cs_block` must not touch ESP.** The winsock equivalent subtracts, because
+  those handlers pop their frame on entry and have to put it back; this one parks
+  before popping. Subtracting dropped ESP by 8 per park, and WordPad's thread
+  trapped after three of them.
+- **A section can be lost rather than held.** A thread that traps or exits inside
+  one never releases it, so waiting forever turns a bug into a hang with no
+  output. After 2000 fruitless rounds the section is taken, and `$cs_steals`
+  counts it so the run can say so.
+- **Only spawned threads park; the guest's main thread barges.** This is a
+  measured limit, not a preference. The main thread is the one that runs
+  wndprocs, dialogs and JS-driven message sends, and several of those nest an
+  interpreter run *without* raising `$sync_msg_depth` — parking out of one
+  unwinds a frame nobody can rebuild, and browser Winamp died at `EIP=0x113` (a
+  message id executed as code) every time it happened. A spawned thread owns its
+  stack from its first instruction and parks safely, which is where the exclusion
+  was needed anyway: worker threads excluding each other is what took worker-mode
+  audio from near-silence to full scale. `$cs_barges` counts every entry that
+  therefore was not excluded, including the `$sync_msg_depth` cases on any thread.
+- **A non-owner `Leave` still releases.** NT would refuse, and refusing is the
+  wrong trade here: this emulator still runs some guest callbacks on the calling
+  thread rather than the owning one (cross-thread `SendMessage` is not
+  implemented), so Enter-here-Leave-there is reachable through no fault of the
+  guest. A section never released is a hang; one released early is the race we
+  already had. Win9x did not check either. `$cs_bad_leaves` counts it.
+
+One more trap, worth recording because it is not specific to this handler:
+`$run`'s thunk-zone auto-pop fires whenever a handler leaves EIP alone — yield or
+no yield — and sets `EIP = [ESP]`, splicing the call out entirely. A parking
+handler must raise `$handler_set_eip`, the way every `CACA000x` continuation
+does. Without it the guest resumed past the call without the section and with its
+argument still on the stack: four bytes per park, and a dead thread later at a
+garbage EIP. **`$vsock_block` in `src/09d-winsock.wat` does not raise it either**,
+so a parked blocking socket call has the same defect — untouched here because it
+is a networking change and needs the vlan tests, but it should not stay.
+
+`$cs_waits` / `$cs_steals` / `$cs_barges` / `$cs_bad_leaves` are exported, printed by
+`test/run.js` when nonzero, and carried per-thread in the worker slice reply, so
+contention is reportable instead of inferred. Cooperative runs show 0/0/0 — one
+instance at a time never contends — which is also why this change is invisible to
+the single-threaded path.
+
+Contended Enter also spins before it parks — a few thousand CAS attempts, which
+is what `SpinCount` is for on a multiprocessor, since the holder is on another OS
+thread and running right now. **It did not help Winamp at all** (parks per thread
+stayed at ~1900-2300), and that is the useful measurement: its contention is not
+brief. One thread sits inside a section across thousands of blocking host imports,
+every other thread parks ~2000 times and then takes it by force. Something holds a
+section while waiting for a thread that is waiting for the section — which is
+where the next session should start, with `csPark/steal` per thread as the meter.
+
+**Where this leaves worker mode.** Better and not yet right, and the state is
+worth being exact about:
+
+| | before | with real sections |
+|---|---|---|
+| cooperative (default, everywhere) | works | **unchanged** — 0 parks, 0 barges, 0 steals; one instance at a time never contends |
+| CLI `--threads` audio | peak 40 of 32768 | full scale when the decoder gets there, but arrival varies from byte 2304 to never inside the captured window |
+| browser worker (`?threads`) | `test-worker-guest.js` green | 20 of 21 checks; a guest thread traps at `EIP=0xc18b84` after running 5x further than it used to (85451 slices vs 16854) |
+
+The browser trap is the open regression. It is at a real code address rather than a
+garbage one, on a thread that now reaches code it never used to reach, so it reads
+as something genuinely unimplemented rather than as stack damage — but it is not
+diagnosed, and worker mode is experimental and off by default, which is the only
+reason this is written down instead of blocking.
 
 ---
 

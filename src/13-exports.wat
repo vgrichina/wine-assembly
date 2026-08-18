@@ -184,6 +184,18 @@
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "set_fs_base") (param i32) (global.set $fs_base (local.get 0)))
   (func (export "get_current_thread_id") (result i32) (global.get $current_thread_id))
+  ;; Sections this thread took from a holder that never released one. Nonzero
+  ;; means a real bug happened and was worked around, so runs report it.
+  (func (export "get_cs_steals") (result i32) (global.get $cs_steals))
+  ;; How many times this thread parked on a held section. Cheap contention
+  ;; meter: a run whose thread count went up and whose throughput went down
+  ;; should be read here first.
+  (func (export "get_cs_waits") (result i32) (global.get $cs_waits))
+  ;; LeaveCriticalSection calls from a thread that did not own the section.
+  (func (export "get_cs_bad_leaves") (result i32) (global.get $cs_bad_leaves))
+  ;; Sections entered while already held, because a nested synchronous wndproc
+  ;; was running and could not be parked. Exclusion was not honoured for these.
+  (func (export "get_cs_barges") (result i32) (global.get $cs_barges))
   (func (export "get_process_id") (result i32) (call $current_process_id))
   (func (export "set_process_id") (param $pid i32)
     ;; PID zero is reserved by Win32 and means "use the compatibility default"
