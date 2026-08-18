@@ -161,13 +161,23 @@ const TEST_CASES = [
     ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
   // Explorer runs its real startup against the vendored SHELL32/SHLWAPI/
-  // SHDOCVW in explorer98/dlls, then calls a SHELL32 ordinal whose body is a
-  // QT_Thunk stub in the INSTDATA section. ThunkConnect32 fills that block by
-  // binding to the 16-bit SHELL.DLL, which needs an NE loader, so the block is
-  // still zeros and execution walks into them. Same blocker as the four 16-bit
-  // games below.
+  // SHDOCVW in explorer98/dlls, then does GetProcAddress(shell32, ordinal 181)
+  // and calls it. That export (RVA 0x22ab1) is a flat-thunk stub — `mov cl,0xc`,
+  // two `push word`, `call [0x7fcd2b68]`, `cwde` — and the pointer it calls
+  // through is filled in by ThunkConnect32 from the SL01/LS01/"Smag" block in
+  // INSTDATA (orig 0x7fd38000, runtime 0x583000). $handle_ThunkConnect32
+  // returns TRUE without writing anything, so the block is still the 0xCC
+  // padding the linker left, execution marches through it into the zeros at
+  // 0x583548 and the decoder's zero-page guard traps.
+  //
+  // The NE loader exists now, so the note this replaces is out of date, but
+  // that is not what is missing: binding these thunks needs the 16-bit
+  // SHELL.DLL those ordinals live in, and that file is not in the tree (only
+  // CARDS/FREECELL/MSHEARTS/SOL/WINMINE are, under win98-16bit). Until it is,
+  // the only alternative is implementing each thunked ordinal natively and
+  // having ThunkConnect32 patch the block to reach it.
   { exe: 'test/binaries/explorer98/explorer.exe', name: 'Explorer (98)',
-    expectedCrash: 'SHELL32 QT_Thunk lands in an unbound INSTDATA block (needs the 16-bit loader)' },
+    expectedCrash: 'SHELL32 ordinal 181 is a flat thunk ThunkConnect32 never bound (no 16-bit SHELL.DLL in the tree)' },
   { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
   { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
   // On a first run Welcome registers itself as Run\Welcome = "welcome.exe /R"
