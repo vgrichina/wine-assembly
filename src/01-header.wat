@@ -528,7 +528,7 @@
   ;; can no longer answer "who drew these pixels". JS formats and logs iff
   ;; --trace-ctrl is set.
   (import "host" "ctrl_paint_trace"
-    (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32)))
+    (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32 i32)))
 
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))

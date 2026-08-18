@@ -662,6 +662,30 @@
     (i32.const 0)
   )
 
+  ;; Mark every child control of $parent_hwnd as needing repaint.
+  ;;
+  ;; Erasing a parent's client area paints over whatever its children have
+  ;; already put there, and a control that painted before the erase has
+  ;; already cleared its own update flag -- nothing will ask it to paint
+  ;; again, so its pixels are gone for the life of the window. sndvol32's
+  ;; Properties dialog hits this: CheckRadioButton in WM_INITDIALOG drives
+  ;; BM_SETCHECK, which repaints the three radios immediately, and the
+  ;; dialog's first WM_ERASEBKGND then wipes them.
+  (func $invalidate_child_controls (param $parent_hwnd i32)
+    (local $i i32) (local $hwnd i32)
+    (local.set $i (i32.const 0))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+        (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+        (if (i32.and
+              (i32.ne (local.get $hwnd) (i32.const 0))
+              (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent_hwnd)))
+          (then (call $invalidate_hwnd (local.get $hwnd))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)))
+  )
+
   ;; Fill a freshly-registered dialog's client area on its back-canvas with
   ;; COLOR_BTNFACE. Called right after $host_register_dialog_frame so the
   ;; dialog face shows in gaps between child controls. Equivalent to the
@@ -689,7 +713,36 @@
           (call $wnd_window_screen_y (local.get $hwnd))
           (i32.and (local.get $wh) (i32.const 0xFFFF))
           (i32.or (i32.shl (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1))
-                  (call $wnd_is_effectively_visible (local.get $hwnd))))))
+                  (call $wnd_is_effectively_visible (local.get $hwnd)))
+          ;; Paint order alone cannot say which surface a control lands on --
+          ;; that is decided by its top-level ancestor. A child whose parent is
+          ;; not the window it appears over paints onto the wrong back-canvas
+          ;; and vanishes under whatever is stacked above. surf=0 is the other
+          ;; way to leave no pixels: every GDI primitive below silently returns
+          ;; 0 when the control's hwnd+0x40000 DC resolves to no surface yet,
+          ;; and the paint path clears the update flag anyway, so the control
+          ;; is never asked to paint again.
+          (i32.or
+            (i32.or (call $wnd_get_parent (local.get $hwnd))
+                    (i32.shl (i32.ne (call $gdi_surface_descriptor
+                                       (i32.add (local.get $hwnd) (i32.const 0x40000))
+                                       (global.get $GDI_LINE_DESC))
+                                     (i32.const 0))
+                             (i32.const 24)))
+                  ;; state=0 is the third way to paint nothing: most control
+                  ;; wndprocs bail out of WM_PAINT before their first primitive
+                  ;; when the hwnd has no state record.
+                  (i32.or
+                    (i32.shl (i32.ne (call $wnd_get_state_ptr (local.get $hwnd))
+                                     (i32.const 0))
+                             (i32.const 25))
+                    ;; Low style nibble. Every class that composes its face from
+                    ;; primitives dispatches on it, and a value no branch claims
+                    ;; draws nothing at all -- indistinguishable, from the
+                    ;; outside, from a control that never got asked to paint.
+                    (i32.shl (i32.and (call $wnd_get_style (local.get $hwnd))
+                                      (i32.const 0x0F))
+                             (i32.const 26)))))))
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))

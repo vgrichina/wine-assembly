@@ -8850,6 +8850,11 @@
           (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
           (local.get $brush)))))
     (drop (call $host_release_dc (local.get $hdc)))
+    ;; The fill just covered every child that had already painted into this
+    ;; window's surface, and a control clears its own update flag as it
+    ;; paints -- so without this, anything painted before the erase is gone
+    ;; for good. See $invalidate_child_controls for the case that found it.
+    (call $invalidate_child_controls (local.get $hwnd))
     (i32.const 1))
 
   (func $gdi_frame_rect_desc (param $hdc i32) (param $desc i32)
