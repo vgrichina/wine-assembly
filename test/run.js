@@ -1819,7 +1819,10 @@ async function main() {
 
   // --- Override message_box to log ---
   h.message_box = (h2, t, c, u) => {
-    logs.push(`[MessageBox] "${readStr(c)}": "${readStr(t)}"`);
+    // Log uType too. The icon bits are the only thing separating "the app told
+    // you something" from "the app refused" -- a sweep that only sees a new
+    // window on screen scores an error box as a command that worked.
+    logs.push(`[MessageBox] "${readStr(c)}": "${readStr(t)}" type=0x${(u >>> 0).toString(16)}`);
     return 1;
   };
 
@@ -5547,6 +5550,19 @@ async function main() {
       if (instance.exports.vlan_pump) instance.exports.vlan_pump();
     } else {
       netWaits = 0;
+      // A process on the wire that is not blocking on it still has to let its
+      // transport deliver. On a ProcessWire frames arrive over child IPC, and
+      // nothing is delivered while this synchronous loop holds the thread —
+      // so a peer that never blocks can never receive an unsolicited frame at
+      // all. That is not a corner case: a Hearts dealer sits in an ordinary
+      // message loop waiting to be connected to, and read its client's
+      // request only after its own run had ended. A WSAAsyncSelect server
+      // would starve the same way, which is the host-side half of the problem
+      // $vsock_pump's call in GetMessageA solves on the guest side.
+      if (ctx.vlanWire && (batch & 0x3F) === 0) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (instance.exports.vlan_pump) instance.exports.vlan_pump();
+      }
     }
 
     // Handle LoadLibraryA yield (yield_reason=5)

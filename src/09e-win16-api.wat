@@ -4294,6 +4294,20 @@
     ;; The modal pump. EIP is parked here, not called here, so there is no
     ;; frame to unwind — the API's own frame went when it parked, and the far
     ;; return it saved is what the completed box goes back to.
+    ;; A DdeConnect waiting on the room. Each pass drains the wire; when the
+    ;; room answers, or has been given enough chances not to, the result is
+    ;; already in AX/DX and the far call it was taken out of is spliced back.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDE_PUMP))
+      (then
+        (if (call $win16_dde_pump_step) (then (return)))
+        (global.set $yield_reason (i32.const 0))
+        (call $win16_set_sreg (i32.const 1)
+          (i32.shr_u (global.get $win16_dde_ret) (i32.const 16)))
+        (global.set $eip (i32.add (global.get $seg_base_cs)
+          (i32.and (global.get $win16_dde_ret) (i32.const 0xFFFF))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_MODAL_PUMP))
       (then
         (if (call $modal_pump_step
@@ -4446,8 +4460,9 @@
     (if (i32.lt_u (global.get $eip) (global.get $seg_base_cs))
       (then (return (i32.const 0))))
     (local.set $off (i32.sub (global.get $eip) (global.get $seg_base_cs)))
-    (i32.or (i32.eq (local.get $off) (global.get $WIN16_MODAL_PUMP))
-            (i32.eq (local.get $off) (global.get $WIN16_DLG_PUMP))))
+    (i32.or (i32.eq (local.get $off) (global.get $WIN16_DDE_PUMP))
+      (i32.or (i32.eq (local.get $off) (global.get $WIN16_MODAL_PUMP))
+              (i32.eq (local.get $off) (global.get $WIN16_DLG_PUMP)))))
 
   (func (export "set_win16_trace") (param $on i32) (global.set $win16_trace (local.get $on)))
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))

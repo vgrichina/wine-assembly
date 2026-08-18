@@ -153,6 +153,71 @@
       (br $cmp)))
     (i32.const 1))
 
+  ;; ---- NetDDE shares ----
+  ;;
+  ;; A client on another machine does not name the server's application. It
+  ;; connects to the NetDDE *agent* on the machine — service `\\HOST\NDDE$` —
+  ;; and gives a DDE *share* as the topic, the trailing `$` being the share
+  ;; marker. The agent resolves the share against the machine's share database
+  ;; and makes the real connection locally. Hearts is exactly this: the dealer
+  ;; registers ("MSHearts", "Hearts") and the client asks for
+  ;; (`\\DEAL\NDDE$`, `Hearts$`), which is why no amount of string matching
+  ;; between the two would ever have joined them.
+  (func $win16_dde_str_len (param $wa i32) (result i32)
+    (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $n) (i32.const 128)))
+      (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $wa) (local.get $n)))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  (func $win16_dde_bytes_eq (param $a i32) (param $b i32) (result i32)
+    (local $i i32) (local $ca i32)
+    (block $done (loop $cmp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 128)))
+      (local.set $ca (i32.load8_u (i32.add (local.get $a) (local.get $i))))
+      (if (i32.ne (local.get $ca) (i32.load8_u (i32.add (local.get $b) (local.get $i))))
+        (then (return (i32.const 0))))
+      (br_if $done (i32.eqz (local.get $ca)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cmp)))
+    (i32.const 1))
+
+  ;; Is this service name the NetDDE agent rather than an application? Every
+  ;; such name ends in `\NDDE$`, whatever machine it names.
+  (func $win16_dde_is_agent (param $wa i32) (result i32)
+    (local $n i32)
+    (local.set $n (call $win16_dde_str_len (local.get $wa)))
+    (if (i32.lt_u (local.get $n) (i32.const 6)) (then (return (i32.const 0))))
+    (local.set $wa (i32.add (local.get $wa) (i32.sub (local.get $n) (i32.const 6))))
+    (i32.and
+      (i32.and (i32.eq (i32.load8_u (local.get $wa)) (i32.const 0x5C))         ;; \
+               (i32.eq (i32.load8_u offset=1 (local.get $wa)) (i32.const 0x4E)))  ;; N
+      (i32.and
+        (i32.and (i32.eq (i32.load8_u offset=2 (local.get $wa)) (i32.const 0x44))  ;; D
+                 (i32.eq (i32.load8_u offset=3 (local.get $wa)) (i32.const 0x44))) ;; D
+        (i32.and (i32.eq (i32.load8_u offset=4 (local.get $wa)) (i32.const 0x45))  ;; E
+                 (i32.eq (i32.load8_u offset=5 (local.get $wa)) (i32.const 0x24)))))) ;; $
+
+  ;; Resolve a share name to the local application that serves it, or 0.
+  (func $win16_dde_share_app (param $share_wa i32) (result i32)
+    (local $p i32) (local $app i32)
+    (local.set $p (global.get $WIN16_DDE_SHARES))
+    (block $done (loop $next
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
+      (local.set $app (i32.add (i32.add (local.get $p)
+        (call $win16_dde_str_len (local.get $p))) (i32.const 1)))
+      (if (call $win16_dde_bytes_eq (local.get $p) (local.get $share_wa))
+        (then (return (local.get $app))))
+      ;; Past the application and its topic to the next record.
+      (local.set $p (i32.add (i32.add (local.get $app)
+        (call $win16_dde_str_len (local.get $app))) (i32.const 1)))
+      (local.set $p (i32.add (i32.add (local.get $p)
+        (call $win16_dde_str_len (local.get $p))) (i32.const 1)))
+      (br $next)))
+    (i32.const 0))
+
   (func $win16_dde_emit (param $type i32) (param $src_conv i32) (param $dst_conv i32)
                         (param $len i32) (result i32)
     (local $wa i32)
@@ -174,6 +239,7 @@
     (local $type i32)
     (local $tag i32) (local $src_conv i32) (local $dst_conv i32)
     (local $i i32) (local $slot i32) (local $conv i32) (local $svc i32)
+    (local $want i32)
     (if (i32.lt_u (local.get $n) (global.get $DDE_HDR)) (then (return)))
     (local.set $type     (i32.load offset=4  (local.get $wa)))
     (local.set $tag      (i32.load offset=8  (local.get $wa)))
@@ -184,16 +250,26 @@
     (if (i32.eq (local.get $tag) (call $win16_dde_tag)) (then (return)))
 
     ;; A client is looking for a service. Answer only if some instance here
-    ;; has registered exactly that name.
+    ;; has registered exactly that name — or, when the client is asking the
+    ;; NetDDE agent, the name the requested share resolves to.
     (if (i32.eq (local.get $type) (i32.const 1))
       (then
+        (local.set $want (i32.add (local.get $wa) (global.get $DDE_HDR)))
+        (if (call $win16_dde_is_agent (local.get $want))
+          (then
+            ;; The topic follows the service in the payload, and it is the
+            ;; share name. An unknown share is answered by nobody, which is
+            ;; what a machine without that share in its database does.
+            (local.set $want (call $win16_dde_share_app
+              (i32.add (i32.add (local.get $want)
+                (call $win16_dde_str_len (local.get $want))) (i32.const 1))))
+            (if (i32.eqz (local.get $want)) (then (return)))))
         (block $answered (loop $scan
           (br_if $answered (i32.ge_u (local.get $i) (i32.const 8)))
           (local.set $svc (i32.load (call $win16_dde_service_slot (local.get $i))))
           (if (i32.and
                 (i32.ne (i32.load (call $win16_dde_inst (local.get $i))) (i32.const 0))
-                (call $win16_dde_hsz_is (local.get $svc)
-                  (i32.add (local.get $wa) (global.get $DDE_HDR))))
+                (call $win16_dde_hsz_is (local.get $svc) (local.get $want)))
             (then
               (local.set $conv (call $win16_dde_conv_alloc
                 (i32.add (local.get $i) (i32.const 1)) (i32.const 1)))
@@ -414,87 +490,131 @@
   ;; When nobody answers, the tries run out and the answer is NULL with
   ;; DMLERR_NO_CONV_ESTABLISHED — which is what Windows says when no server is
   ;; in the room, and what sends Hearts to its own table.
-  ;; How long to wait is measured in milliseconds, not in passes. A count of
-  ;; passes looks like a timeout and is not one: a parked task runs nothing, so
-  ;; sixty-four passes is sixty-four batch boundaries and can be under a
-  ;; millisecond of wall clock — long enough for another instance sharing this
-  ;; process's run loop to answer, and nowhere near long enough for one in
-  ;; another OS process, whose reply has to cross child IPC. DDEML's own
-  ;; DdeConnect is bounded by time for the same reason.
-  (global $DDE_CONNECT_TIMEOUT_MS i32 (i32.const 3000))
+  ;; The wait is bounded by how many CHANCES the room has had to answer, not
+  ;; by a clock, and each retry below is exactly one such chance: yielding
+  ;; under reason 8 makes the host turn its event loop and pump the wire
+  ;; before re-entering, so a retry is a guaranteed opportunity for a frame to
+  ;; arrive rather than a free spin.
+  ;;
+  ;; A clock was tried first and is wrong here. $host_get_ticks is not wall
+  ;; time under the CLI harness — test/run.js synthesises it as
+  ;; `batch * 200 + calls`, so "3000 ms" was fifteen batches and a real dealer,
+  ;; alive and registered, was given 36 milliseconds to reply.
+  ;;
+  ;; Stay well under test/run.js's own VLAN_MAX_WAITS (20000 consecutive net
+  ;; waits), which is the point at which it decides the wire has stalled.
+  ;; This is generous on purpose, and it is a weakness worth naming: a pass
+  ;; count is not load-proof. Each pass costs only an event-loop turn — tens of
+  ;; microseconds — so the whole budget can burn in under a second, while the
+  ;; peer that has to answer is another emulator that may not get scheduled
+  ;; that soon. Measured on a loaded box: the request crossed in 32ms and the
+  ;; client still gave up 505ms later, before the dealer had drained it. A
+  ;; wall clock would be the honest bound, but the only clock WAT can see here
+  ;; is $host_get_ticks, which test/run.js synthesises from the batch counter.
+  (global $DDE_CONNECT_TRIES i32 (i32.const 120000))
 
   (func $win16_DdeConnect
     (local $inst i32) (local $svc i32) (local $topic i32)
     (local $pend i32) (local $conv i32) (local $wa i32) (local $len i32)
+    (local $ip i32) (local $sel i32)
     (local.set $pend (call $win16_dde_pending_slot))
     (local.set $inst (call $win16_arg32 (i32.const 6)))
-
-    ;; First entry: take a conversation slot and put the request on the wire.
-    (if (i32.eqz (i32.load (local.get $pend)))
+    (local.set $conv (call $win16_dde_conv_alloc (local.get $inst) (i32.const 0)))
+    (if (i32.eqz (local.get $conv))
       (then
-        (local.set $conv (call $win16_dde_conv_alloc (local.get $inst) (i32.const 0)))
-        (if (i32.eqz (local.get $conv))
-          (then
-            (call $win16_dde_set_error (i32.const 0x4001))   ;; DMLERR_LOW_MEMORY
-            (global.set $edx (i32.const 0))
-            (global.set $eax (i32.const 0))
-            (call $win16_api_return (i32.const 16))
-            (return)))
-        (i32.store (local.get $pend) (i32.const 1))
-        (i32.store offset=4  (local.get $pend) (call $host_get_ticks))
-        (i32.store offset=8  (local.get $pend) (local.get $conv))
-        (i32.store offset=12 (local.get $pend) (i32.const 0))
-        (local.set $svc   (call $win16_arg32 (i32.const 4)))
-        (local.set $topic (call $win16_arg32 (i32.const 2)))
-        (local.set $wa (call $win16_dde_frame_wa))
-        (if (local.get $wa)
-          (then
-            (local.set $len (call $win16_dde_put_hsz
-              (local.get $wa) (global.get $DDE_HDR) (local.get $svc)))
-            (local.set $len (call $win16_dde_put_hsz
-              (local.get $wa) (local.get $len) (local.get $topic)))
-            (drop (call $win16_dde_emit (i32.const 1) (local.get $conv) (i32.const 0)
-              (i32.sub (local.get $len) (global.get $DDE_HDR))))))))
+        (call $win16_dde_set_error (i32.const 0x4001))   ;; DMLERR_LOW_MEMORY
+        (global.set $edx (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 16))
+        (return)))
+    (i32.store (local.get $pend) (i32.const 1))
+    (i32.store offset=4  (local.get $pend) (i32.const 0))
+    (i32.store offset=8  (local.get $pend) (local.get $conv))
+    (i32.store offset=12 (local.get $pend) (i32.const 0))
 
+    ;; Put the request on the wire before parking, so the room has something
+    ;; to answer on the very first pass.
+    (local.set $svc   (call $win16_arg32 (i32.const 4)))
+    (local.set $topic (call $win16_arg32 (i32.const 2)))
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (local.get $wa)
+      (then
+        (local.set $len (call $win16_dde_put_hsz
+          (local.get $wa) (global.get $DDE_HDR) (local.get $svc)))
+        (local.set $len (call $win16_dde_put_hsz
+          (local.get $wa) (local.get $len) (local.get $topic)))
+        (drop (call $win16_dde_emit (i32.const 1) (local.get $conv) (i32.const 0)
+          (i32.sub (local.get $len) (global.get $DDE_HDR))))))
+
+    ;; Take the call apart the way the modal message box does: remember the far
+    ;; return, drop the whole frame, and park EIP on a slot the run loop will
+    ;; re-enter. Every pass then belongs to $win16_dde_pump_step, which splices
+    ;; the call back together once the room has answered.
+    ;;
+    ;; It must be done this way round. A Win16 thunk call is dispatched from
+    ;; $win16_far_transfer with EIP ALREADY past the call, so an API that
+    ;; simply declines to return does not get re-entered — it falls through to
+    ;; its caller with the arguments still on the stack. Hearts calls
+    ;; DdeConnect from a retry loop, so that leaked twenty bytes per attempt
+    ;; and the trace showed ESP walking down while nothing waited at all.
+    (local.set $ip  (call $gl16 (global.get $esp)))
+    (local.set $sel (call $gl16 (i32.add (global.get $esp) (i32.const 2))))
+    (global.set $win16_dde_ret (i32.or (i32.shl (local.get $sel) (i32.const 16))
+                                       (local.get $ip)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ;; CS first, EIP second, and in that order: the slot offset is meaningless
+    ;; on its own, and $seg_base_cs is read AFTER the selector load. Parking
+    ;; without switching selector put EIP at offset 0xFF70 of whatever segment
+    ;; the caller happened to be in — real memory holding no code, which the
+    ;; decoder walked into and trapped on.
+    (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (global.get $WIN16_DDE_PUMP)))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $yield_reason (i32.const 8))
+    (global.set $steps (i32.const 0)))
+
+  ;; One pass of a parked DdeConnect. Returns 1 while it is still waiting.
+  ;;
+  ;; Reason 8 is net_wait, and it is this contract already: the host clears the
+  ;; yield, turns its event loop, and pumps the wire before re-entering. That
+  ;; turn is the point — when the peer is in another OS process its frames
+  ;; arrive over child IPC, and nothing is delivered while a synchronous batch
+  ;; loop holds the thread. A real dealer, alive and registered, read its
+  ;; client's request only after its own run had ended without it.
+  ;;
+  ;; The wait is bounded by passes rather than by a clock, and each pass is one
+  ;; real chance for an answer because of that turn. $host_get_ticks would be
+  ;; the wrong bound: test/run.js synthesises it as `batch * 200`, so a
+  ;; "3000 ms" timeout was fifteen batches.
+  (func $win16_dde_pump_step (result i32)
+    (local $pend i32) (local $conv i32)
+    (local.set $pend (call $win16_dde_pending_slot))
     (call $win16_dde_pump)
     (local.set $conv (i32.load offset=8 (local.get $pend)))
-
-    ;; Answered: the conversation is live and the handle is the caller's.
     (if (i32.load offset=12 (local.get $pend))
       (then
         (i32.store (local.get $pend) (i32.const 0))
         (call $win16_dde_set_error (i32.const 0))
         (global.set $edx (i32.const 0))
         (global.set $eax (local.get $conv))
-        (call $win16_api_return (i32.const 16))
-        (return)))
-
-    ;; Still waiting. Give the room another pass until the time is up.
-    (if (i32.lt_u (i32.sub (call $host_get_ticks) (i32.load offset=4 (local.get $pend)))
-                  (global.get $DDE_CONNECT_TIMEOUT_MS))
+        (return (i32.const 0))))
+    (i32.store offset=4 (local.get $pend)
+      (i32.add (i32.load offset=4 (local.get $pend)) (i32.const 1)))
+    (if (i32.lt_u (i32.load offset=4 (local.get $pend))
+                  (global.get $DDE_CONNECT_TRIES))
       (then
-        ;; End the batch without returning, so the host runs everyone else —
-        ;; including the instance that has to answer — and re-enters here.
-        ;;
-        ;; $yield_flag ONLY. Raising $yield_reason as well says "a blocking API
-        ;; is waiting", and the host answers that by resuming the 32-bit way:
-        ;; it pops a stdcall frame and takes a linear return address off the
-        ;; task's own stack. For a 16-bit task there is no such frame, so EIP
-        ;; came back as two words of whatever was there — out of the selector
-        ;; arena, which is the trap $run raises as 0xCA165E21. It is the same
-        ;; hazard that stops GetMessage being bridged; the difference is that
-        ;; nothing here needs the host's help to resume, only its permission to
-        ;; end the batch.
+        (global.set $yield_reason (i32.const 8))
         (global.set $yield_flag (i32.const 1))
-        (return)))
-
+        (return (i32.const 1))))
+    ;; Nobody is there. That is the honest answer for a room of one, and it is
+    ;; what sends Hearts to its own table rather than to an error box.
     (i32.store (local.get $pend) (i32.const 0))
     (i32.store (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))
                (i32.const 0))
     (call $win16_dde_set_error (i32.const 0x400A))       ;; DMLERR_NO_CONV_ESTABLISHED
     (global.set $edx (i32.const 0))
     (global.set $eax (i32.const 0))
-    (call $win16_api_return (i32.const 16)))
+    (i32.const 0))
 
   ;; Drain the wire on this instance's behalf. $vsock_pump owns the reader and
   ;; hands us anything under our magic, so this is the same call — draining it
@@ -525,15 +645,29 @@
   ;;   HSZ hszItem, UINT wFmt, UINT wType, DWORD dwTimeout, LPDWORD pdwResult)
   ;;   -> HDDEDATA in DX:AX.
   ;;
-  ;; There is no conversation to carry it, so it fails the way a transaction on
-  ;; a dead conversation fails.
+  ;; Nothing carries a transaction yet — that needs the server's own callback,
+  ;; since the data being asked for lives in the application and nowhere else.
+  ;;
+  ;; Which error it fails with is not a detail. Now that a conversation can
+  ;; really be established, answering DMLERR_NO_CONV_ESTABLISHED on a live
+  ;; conversation would be the emulator telling the app something untrue about
+  ;; its own state. A live conversation whose transaction nobody served is
+  ;; DMLERR_NOTPROCESSED, which is exactly what a server that ignores the
+  ;; transaction produces on Windows; only a handle naming no conversation
+  ;; gets the other error.
   (func $win16_DdeClientTransaction
-    (local $result i32)
+    (local $result i32) (local $conv i32) (local $live i32)
     (local.set $result (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $conv (call $win16_arg32 (i32.const 8)))
+    (if (i32.and (i32.gt_u (local.get $conv) (i32.const 0))
+                 (i32.le_u (local.get $conv) (i32.const 8)))
+      (then (local.set $live (i32.load (call $win16_dde_conv_slot
+              (i32.sub (local.get $conv) (i32.const 1)))))))
     (if (call $win16_arg16 (i32.const 1))
       (then (call $gs32 (local.get $result) (i32.const 0))))
-    (call $win16_dde_set_error (i32.const 0x400A))       ;; DMLERR_NO_CONV_ESTABLISHED
+    (call $win16_dde_set_error
+      (select (i32.const 0x4009) (i32.const 0x400A) (local.get $live)))
     (global.set $edx (i32.const 0))
     (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 28)))

@@ -840,6 +840,16 @@
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
   (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00")
+  ;; The machine's NetDDE share database. A DDE share maps a name that clients
+  ;; on other machines ask for onto the local application and topic that
+  ;; actually serves it, and on a real Win98 box it is written at install time
+  ;; and belongs to the MACHINE, not to the app — Hearts never creates its own
+  ;; (it imports no NDDEAPI entry and only LoadLibrarys it for NDdeGetWindow).
+  ;; So this is a table of what a Win98 install ships, not a special case: a
+  ;; remote Hearts asks for topic "Hearts$" on \\SOMEBODY\NDDE$, and that share
+  ;; is what says the local server is application "MSHearts" topic "Hearts".
+  ;; Records are share, application, topic; an empty share ends the table.
+  (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -2198,6 +2208,13 @@
   ;; table for GetProcAddress to read, so its one entry point is reached
   ;; through a fixed thunk-segment slot, the same way the pumps above are.
   (global $WIN16_NDDE_GETWINDOW i32 (i32.const 0xFF60))
+  ;; DdeConnect waits for a peer that is not in this process, so like a modal
+  ;; message box it cannot answer inside the call. It parks EIP here and the
+  ;; run loop re-enters this slot each pass until the room answers or the
+  ;; attempt runs out. The far return it has to splice back onto is kept
+  ;; beside it, exactly as the modal pump keeps $win16_modal_ret.
+  (global $WIN16_DDE_PUMP i32 (i32.const 0xFF70))
+  (global $win16_dde_ret (mut i32) (i32.const 0))
   ;; The window that answers for network DDE in this emulator — see
   ;; $win16_ndde_window.
   (global $win16_ndde_hwnd (mut i32) (i32.const 0))
@@ -2251,6 +2268,7 @@
   (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
   (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
   (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
+  (global $WIN16_DDE_SHARES i32 (i32.const 0x11EE0))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)

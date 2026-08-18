@@ -127,6 +127,48 @@ function settle(...nodes) {
     (dealer.wat.test_dde_conv_count() | 0) === 1);
   player.wat.test_dde_disconnect(missing);
 
+  // --- the NetDDE share path ---------------------------------------------
+  // This is how Hearts actually connects, and it is why matching names alone
+  // could never have joined two of them. A remote client does not name the
+  // server's application: it connects to the NetDDE *agent* on the machine,
+  // service `\\HOST\NDDE$`, and gives a DDE *share* as the topic — the
+  // trailing `$` is the share marker. The agent resolves that share against
+  // the machine's own share database, which is where "Hearts$ is served by
+  // application MSHearts, topic Hearts" is written.
+  //
+  // Traced off the real binaries: the dealer registers ("MSHearts",
+  // "Hearts") and the client asks for ("\\DEAL\NDDE$", "Hearts$").
+  dealer.wat.test_dde_register(1, intern(dealer, 'MSHearts'));
+  const remote = player.wat.test_dde_connect_begin(
+    1, intern(player, '\\\\DEAL\\NDDE$'), intern(player, 'Hearts$')) | 0;
+  check('a NetDDE agent connect takes a slot', remote !== 0);
+  settle(dealer, player);
+  check('the share resolved to the application actually serving it',
+    (player.wat.test_dde_connect_done() | 0) === remote,
+    'the dealer registered MSHearts and the client asked for \\\\DEAL\\NDDE$');
+  player.wat.test_dde_disconnect(remote);
+  settle(dealer, player);
+
+  // A share the machine does not have is answered by nobody, which is what a
+  // box without that entry in its database does.
+  const noShare = player.wat.test_dde_connect_begin(
+    1, intern(player, '\\\\DEAL\\NDDE$'), intern(player, 'Chess$')) | 0;
+  settle(dealer, player);
+  check('an unknown share is not answered',
+    (player.wat.test_dde_connect_done() | 0) === 0);
+  player.wat.test_dde_disconnect(noShare);
+  settle(dealer, player);
+
+  // Put the plain registration back for the disconnect check below.
+  dealer.wat.test_dde_register(1, intern(dealer, service));
+  const conv2 = player.wat.test_dde_connect_begin(
+    1, intern(player, service), intern(player, topic)) | 0;
+  settle(dealer, player);
+  check('a plain application connect still works beside the share path',
+    (player.wat.test_dde_connect_done() | 0) === conv2);
+  player.wat.test_dde_disconnect(conv2);
+  settle(dealer, player);
+
   // --- disconnect ---------------------------------------------------------
   // A conversation the other side still believes in is a server holding a
   // seat for a player who has gone, so the close has to cross the wire.
