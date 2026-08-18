@@ -52,11 +52,13 @@ const EXEMPT = new Set([
 // checked here. Skip them rather than emit 130 findings nobody can act on.
 const COM_METHOD = /^I[A-Z][A-Za-z0-9]*_[A-Za-z0-9_]+$/;
 
-const SRC = ['src/09a-handlers.wat', 'src/09a2-handlers-console.wat',
-  'src/09a3-handlers-audio.wat', 'src/09a4-handlers-gdi.wat',
-  'src/09a5-handlers-window.wat', 'src/09a6-handlers-crt.wat',
-  'src/09a7-handlers-dispatch.wat', 'src/09a8-handlers-directx.wat',
-  'src/09aa-handlers-d3dim.wat', 'src/09ab-handlers-d3dim-core.wat'];
+// Every part, not a hardcoded list. The list was a maintenance trap: moving a
+// handler into a new file (09a7b-ole, 09a7c-mixer, 09a9-comctl32 …) silently
+// dropped it out of this gate's coverage, and the gate still said OK.
+const SRC = fs.readdirSync(path.join(__dirname, '..', 'src'))
+  .filter(f => f.endsWith('.wat'))
+  .sort()
+  .map(f => `src/${f}`);
 
 // Remove string literals and `;;` comments so only structural parens remain.
 function stripNonCode(line) {
