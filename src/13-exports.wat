@@ -281,7 +281,37 @@
   (func (export "get_thunk_end") (result i32) (global.get $thunk_guest_end))
   (func (export "get_num_thunks") (result i32) (global.get $num_thunks))
   ;; Update thunk end to match current allocation count
+  ;; Raise the process-wide thunk cursor to at least this instance's count.
+  ;; Load-time allocation (the PE loader, before any thread exists) bumps the
+  ;; local global directly and reaches the shared cell only through here.
+  (func $thunk_publish
+    (local $cur i32)
+    (block $done (loop $retry
+      (local.set $cur (i32.atomic.load (global.get $THUNK_NEXT_SHARED)))
+      (br_if $done (i32.ge_u (local.get $cur) (global.get $num_thunks)))
+      (br_if $done (i32.eq (local.get $cur)
+        (i32.atomic.rmw.cmpxchg (global.get $THUNK_NEXT_SHARED)
+          (local.get $cur) (global.get $num_thunks))))
+      (br $retry))))
+
+  ;; Reserve one thunk index for this instance, exclusively. Callers set
+  ;; $num_thunks to the returned index, write the thunk at it, and then bump the
+  ;; local global as they always did — which lands back on the value the shared
+  ;; cursor already holds.
+  (func $thunk_reserve (result i32)
+    (call $thunk_publish)
+    (i32.atomic.rmw.add (global.get $THUNK_NEXT_SHARED) (i32.const 1)))
+
+  ;; Publish this instance's count, adopt the process-wide one, and derive the
+  ;; guest-visible end from it. Adopting matters as much as publishing: a thunk
+  ;; another instance allocated is inside the zone but PAST a local count, and
+  ;; $run bounds-checks EIP against $thunk_guest_end before dispatching it.
   (func $update_thunk_end (export "seal_thunks")
+    (local $shared i32)
+    (call $thunk_publish)
+    (local.set $shared (i32.atomic.load (global.get $THUNK_NEXT_SHARED)))
+    (if (i32.gt_u (local.get $shared) (global.get $num_thunks))
+      (then (global.set $num_thunks (local.get $shared))))
     (global.set $thunk_guest_end
       (i32.add (global.get $thunk_guest_base)
         (i32.mul (global.get $num_thunks) (i32.const 8)))))

@@ -1547,6 +1547,13 @@
   ;; the second bind, so the symptom is a connect that fails rather than a
   ;; crossed wire — still wrong, and invisible. 0 means "not seeded yet".
   (global $VSOCK_NEXT_PORT_SHARED i32 (i32.const 0x07F0C940))
+  ;; The next free thunk index, process-wide. $num_thunks is BOTH the count and
+  ;; the next free index, and it is a per-instance global — so two instances that
+  ;; both call GetProcAddress hand out the same thunk address, and the guest then
+  ;; calls a thunk whose api id belongs to a different function. That is a jump
+  ;; to nowhere with no bad pointer anywhere in the guest's own code.
+  ;; $thunk_reserve allocates from here; $update_thunk_end keeps the two in step.
+  (global $THUNK_NEXT_SHARED i32 (i32.const 0x07F0C980))
   ;; Where the heap starts when no PE was ever loaded — unit-test harnesses call
   ;; the WAT exports directly and still expect HeapAlloc to work. This was the
   ;; old initial value of the $heap_ptr global.

@@ -329,7 +329,12 @@
     (local.set $i (call $lookup_api_id (i32.add (call $g2w (local.get $v)) (i32.const 2))))
     (if (i32.eq (local.get $i) (i32.const 0xFFFF))
       (then (br $gpa))) ;; return 0 — function not found
-    ;; Create thunk: store RVA and api_id at THUNK_BASE + num_thunks*8
+    ;; Create thunk: store RVA and api_id at THUNK_BASE + num_thunks*8.
+    ;; The index is reserved from the process-wide cursor, not taken from this
+    ;; instance's count: GetProcAddress runs on whatever thread the guest calls
+    ;; it from, and two threads reading the same local count would be handed the
+    ;; same thunk address for two different functions.
+    (global.set $num_thunks (call $thunk_reserve))
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
     (i32.sub (local.get $v) (global.get $image_base)))
     ;; Store api_id

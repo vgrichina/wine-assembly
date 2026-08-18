@@ -364,7 +364,10 @@
                   (call $g2w (i32.add (local.get $load_addr) (i32.add (local.get $entry) (i32.const 2))))))))
             (i32.store (local.get $iat_ptr) (local.get $resolved_addr)))
           (else
-            ;; System DLL — create thunk
+            ;; System DLL — create thunk. LoadLibrary can run on any guest
+            ;; thread, so the index comes from the process-wide cursor rather
+            ;; than this instance's count (see $thunk_reserve).
+            (global.set $num_thunks (call $thunk_reserve))
             (local.set $thunk_addr (i32.add
               (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                        (global.get $GUEST_BASE))
@@ -492,6 +495,9 @@
                 (local.set $api_id (call $native_override_export_api_id (local.get $name_wa)))
                 (if (i32.ne (local.get $api_id) (i32.const -1))
                   (then
+                    ;; Same reservation as above: this patching path runs
+                    ;; whenever a DLL loads, on whichever thread loaded it.
+                    (global.set $num_thunks (call $thunk_reserve))
                     (local.set $thunk_addr (i32.add
                       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                                (global.get $GUEST_BASE))
