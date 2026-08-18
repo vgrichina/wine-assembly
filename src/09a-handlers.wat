@@ -6729,23 +6729,56 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 389: SystemParametersInfoW — return TRUE, 4 args stdcall
-  (func $handle_SystemParametersInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
+  ;; One LOGFONT{A,W} of system-font defaults at $buf. The two structs differ
+  ;; only in lfFaceName's element width — 28 bytes of fields, then 32 chars —
+  ;; so the whole NONCLIENTMETRICS layout below shifts with $wide and cannot be
+  ;; written with static offsets.
+  (func $spi_write_logfont (param $buf i32) (param $wide i32)
+    (local $i i32) (local $ch i32)
+    (i32.store offset=0  (local.get $buf) (i32.const -11))  ;; lfHeight
+    (i32.store offset=16 (local.get $buf) (i32.const 400))  ;; lfWeight
+    ;; lfFaceName at +28: "MS Sans Serif" from the shared constant at 0x270.
+    (local.set $i (i32.const 0))
+    (block $done (loop $copy
+      (local.set $ch (i32.load8_u (i32.add (i32.const 0x270) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (local.get $wide)
+        (then (i32.store16
+                (i32.add (i32.add (local.get $buf) (i32.const 28))
+                         (i32.shl (local.get $i) (i32.const 1)))
+                (local.get $ch)))
+        (else (i32.store8
+                (i32.add (i32.add (local.get $buf) (i32.const 28)) (local.get $i))
+                (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy))))
 
-  ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
-  (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; SystemParametersInfo{A,W}(uiAction, uiParam, pvParam, fWinIni) — one body,
+  ;; $wide selects the string encoding. The W entry point used to be a 6-line
+  ;; return-TRUE stub sitting directly above this implementation, so every W
+  ;; caller got a success code and an untouched buffer.
+  (func $spi_core (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $wide i32) (result i32)
     (local $buf i32) (local $i i32) (local $screen i32)
+    (local $lf i32) (local $narrow i32) (local $p i32)
+    ;; LOGFONTA is 60 bytes, LOGFONTW 92 — every offset past lfCaptionFont moves.
+    (local.set $lf (if (result i32) (local.get $wide) (then (i32.const 92)) (else (i32.const 60))))
     ;; SPI_SETDESKWALLPAPER = 0x14. The host loads the named VFS bitmap and
     ;; interprets uiParam=0/1 as centered/tiled for the Win98 Paint commands.
     (if (i32.eq (local.get $arg0) (i32.const 0x14))
       (then
-        (global.set $eax (call $host_set_wallpaper
-          (call $g2w (local.get $arg2)) (local.get $arg1)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
+        (if (i32.eqz (local.get $arg2)) (then (return (i32.const 0))))
+        ;; The host reads a NUL-terminated byte path, so a W caller's UTF-16
+        ;; name has to be narrowed before it is handed over.
+        (if (local.get $wide)
+          (then
+            (local.set $narrow (call $shellexec_narrow_w (local.get $arg2)))
+            (if (i32.eqz (local.get $narrow)) (then (return (i32.const 0))))
+            (local.set $i (call $host_set_wallpaper
+              (call $g2w (local.get $narrow)) (local.get $arg1)))
+            (call $heap_free (local.get $narrow))
+            (return (local.get $i))))
+        (return (call $host_set_wallpaper
+          (call $g2w (local.get $arg2)) (local.get $arg1)))))
     ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area.
     ;; We do not emulate taskbar reservation, so the work area is the screen.
     (if (i32.eq (local.get $arg0) (i32.const 0x30))
@@ -6758,9 +6791,7 @@
             (i32.store offset=4  (local.get $buf) (i32.const 0))
             (i32.store offset=8  (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))
             (i32.store offset=12 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
+        (return (i32.const 1))))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
     ;; arg0=0x29, arg1=cbSize, arg2=pvParam (struct ptr)
     (if (i32.eq (local.get $arg0) (i32.const 0x29))
@@ -6782,40 +6813,46 @@
             (i32.store offset=12 (local.get $buf) (i32.const 16))   ;; iScrollHeight
             (i32.store offset=16 (local.get $buf) (i32.const 18))   ;; iCaptionWidth
             (i32.store offset=20 (local.get $buf) (i32.const 18))   ;; iCaptionHeight
-            ;; lfCaptionFont (LOGFONT, 60 bytes) at offset 24
-            ;;   lfHeight (i32) = -11, then defaults; lfFaceName (32 bytes) = "MS Sans Serif"
-            (i32.store offset=24 (local.get $buf) (i32.const -11))  ;; lfHeight
-            (i32.store offset=40 (local.get $buf) (i32.const 400))  ;; lfWeight
-            ;; faceName at offset 24+28 = 52: "MS Sans Serif\0"
-            (i32.store8 offset=52 (local.get $buf) (i32.const 0x4D)) ;; M
-            (i32.store8 offset=53 (local.get $buf) (i32.const 0x53)) ;; S
-            (i32.store8 offset=54 (local.get $buf) (i32.const 0x20))
-            (i32.store8 offset=55 (local.get $buf) (i32.const 0x53)) ;; S
-            (i32.store8 offset=56 (local.get $buf) (i32.const 0x61))
-            (i32.store8 offset=57 (local.get $buf) (i32.const 0x6E))
-            (i32.store8 offset=58 (local.get $buf) (i32.const 0x73))
-            (i32.store8 offset=59 (local.get $buf) (i32.const 0x20))
-            (i32.store8 offset=60 (local.get $buf) (i32.const 0x53)) ;; S
-            (i32.store8 offset=61 (local.get $buf) (i32.const 0x65))
-            (i32.store8 offset=62 (local.get $buf) (i32.const 0x72))
-            (i32.store8 offset=63 (local.get $buf) (i32.const 0x69))
-            (i32.store8 offset=64 (local.get $buf) (i32.const 0x66))
-            ;; Repeat the LOGFONT defaults at the other 4 font offsets:
-            ;; lfSmCaptionFont @ +84+offset, lfMenuFont @ +148, lfStatusFont @ +212, lfMessageFont @ +276
-            ;; (Each LOGFONT is 60 bytes; use the same minimal pattern.)
-            (i32.store offset=84  (local.get $buf) (i32.const -11))
-            (i32.store offset=100 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=112 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=113 (local.get $buf) (i32.const 0x53))
-            (i32.store offset=148 (local.get $buf) (i32.const -11))
-            (i32.store offset=164 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=176 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=177 (local.get $buf) (i32.const 0x53))
-            (i32.store offset=212 (local.get $buf) (i32.const -11))
-            (i32.store offset=228 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=240 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=241 (local.get $buf) (i32.const 0x53))
-            (i32.store offset=276 (local.get $buf) (i32.const -11))
-            (i32.store offset=292 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=304 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=305 (local.get $buf) (i32.const 0x53))))))
-    (global.set $eax (i32.const 1))
+            ;; Five LOGFONTs at their real struct offsets. The A path used to
+            ;; place them at 84/148/212/276 — that spacing skips the two
+            ;; iSmCaption and two iMenu ints, so every font after the caption
+            ;; font landed inside the preceding one. Real layout:
+            ;;   lfCaptionFont   24
+            ;;   iSmCaptionWidth/Height  24+lf, +4
+            ;;   lfSmCaptionFont 32+lf
+            ;;   iMenuWidth/Height       32+2lf, +4
+            ;;   lfMenuFont      40+2lf
+            ;;   lfStatusFont    40+3lf
+            ;;   lfMessageFont   40+4lf
+            ;; cbSize is therefore 340 (A) / 500 (W).
+            (local.set $p (i32.add (local.get $buf) (i32.const 24)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (i32.store offset=0 (local.get $p) (i32.const 12))  ;; iSmCaptionWidth
+            (i32.store offset=4 (local.get $p) (i32.const 15))  ;; iSmCaptionHeight
+            (local.set $p (i32.add (local.get $p) (i32.const 8)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (i32.store offset=0 (local.get $p) (i32.const 18))  ;; iMenuWidth
+            (i32.store offset=4 (local.get $p) (i32.const 18))  ;; iMenuHeight
+            (local.set $p (i32.add (local.get $p) (i32.const 8)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))  ;; lfMenuFont
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))  ;; lfStatusFont
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide)))) ;; lfMessageFont
+        (return (i32.const 1))))
+    (i32.const 1))
+
+  ;; 389: SystemParametersInfoW — 4 args stdcall
+  (func $handle_SystemParametersInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $spi_core (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
+  (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $spi_core (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

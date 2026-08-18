@@ -4548,34 +4548,11 @@
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                     (i32.const 0x30011)))
-            (local.set $box_y (i32.div_u (i32.sub (local.get $h) (i32.const 12)) (i32.const 2)))
-            ;; White interior
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (local.get $box_y)
-                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))
-                    (i32.const 0x30010)))
-            ;; Sunken edge — EDGE_SUNKEN = 0x0A, BF_RECT = 0x0F
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
-                    (i32.const 0) (local.get $box_y)
-                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))
-                    (i32.const 0x0A) (i32.const 0x0F)))
-            ;; Check glyph if checked (flags bit 1)
-            (if (i32.and (local.get $flags) (i32.const 0x02))
-              (then
-                (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
-                (drop (call $host_gdi_move_to (local.get $hdc)
-                        (i32.const 3) (i32.add (local.get $box_y) (i32.const 5))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 5) (i32.add (local.get $box_y) (i32.const 8))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 9) (i32.add (local.get $box_y) (i32.const 3))))
-                ;; Second pass 1px down for thickness
-                (drop (call $host_gdi_move_to (local.get $hdc)
-                        (i32.const 3) (i32.add (local.get $box_y) (i32.const 6))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 5) (i32.add (local.get $box_y) (i32.const 9))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 9) (i32.add (local.get $box_y) (i32.const 4))))))
+            ;; One 13x13 check box, shared with the list-view state images.
+            (local.set $box_y (i32.div_u (i32.sub (local.get $h) (i32.const 13)) (i32.const 2)))
+            (call $paint_check_box (local.get $hdc)
+              (i32.const 0) (local.get $box_y)
+              (i32.and (local.get $flags) (i32.const 0x02)))  ;; flags bit 1 = checked
             (if (local.get $text_w)
               (then
                 (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
@@ -5865,11 +5842,16 @@
       (call $g2w (i32.load offset=8 (local.get $sw)))
       (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 36))))
 
-  ;; A Win98 list-view check box: 13x13 sunken well with a black tick. The
-  ;; app supplies these as a two-image LVSIL_STATE list, but the images are
-  ;; comctl32's own standard check boxes, so compose them the way the BUTTON
-  ;; painter does rather than trying to rasterize an image list.
-  (func $lv_paint_check_box (param $hdc i32) (param $x i32) (param $y i32) (param $checked i32)
+  ;; THE Win98 check box: a 13x13 sunken well with a black tick. Used by the
+  ;; BUTTON painter (BS_CHECKBOX/BS_AUTOCHECKBOX/BS_3STATE) and by list-view
+  ;; state images alike — an app supplies the latter as a two-image LVSIL_STATE
+  ;; list, but the images are comctl32's own standard check boxes.
+  ;;
+  ;; This used to be two implementations: this one, and a 12x12 pen-stroked
+  ;; copy inside $button_wndproc whose own comment promised to "compose them the
+  ;; way the BUTTON painter does". One pixel apart is a visible mismatch when a
+  ;; dialog puts a check box and a checked list-view row on the same line.
+  (func $paint_check_box (param $hdc i32) (param $x i32) (param $y i32) (param $checked i32)
     (local $i i32)
     (drop (call $host_gdi_fill_rect (local.get $hdc)
       (local.get $x) (local.get $y)
@@ -7605,7 +7587,7 @@
                                     (i32.const 0xF000))
                                   (i32.const 0)))
                       (then
-                        (call $lv_paint_check_box (local.get $hdc)
+                        (call $paint_check_box (local.get $hdc)
                           (i32.add (local.get $col_x) (i32.const 3))
                           (i32.add (local.get $y) (i32.const 1))
                           ;; Index 2 is the checked box, 1 the empty one.
@@ -12356,33 +12338,13 @@
         (local.set $state_w (call $g2w (local.get $state)))
         (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000004)))
           (then (return (i32.const 0))))
-        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
-        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
-        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
-          (then
-            (if (i32.gt_u (local.get $w) (i32.const 16))
-              (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
-        (local.set $visible_lines (i32.div_u
-          (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
-                  (i32.gt_u (local.get $h) (i32.const 8)))
-          (i32.const 16)))
-        (if (i32.eqz (local.get $visible_lines))
-          (then (local.set $visible_lines (i32.const 1))))
-        (if (i32.and
-              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
-              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
-          (then
-            (local.set $total_lines (call $edit_layout_build
-              (local.get $state_w) (local.get $hdc) (local.get $w))))
-          (else
-            (local.set $total_lines
-              (i32.add
-                (call $edit_line_from_char
-                  (local.get $state_w)
-                  (i32.load offset=4 (local.get $state_w)))
-                (i32.const 1)))))
+        ;; $edit_view_metrics is the one place that knows a WS_HSCROLL edit
+        ;; loses 16px of height to its own scrollbar. This site used to
+        ;; re-derive the viewport inline and omit exactly that, so a horizontal
+        ;; scrollbar bought the control one extra "visible" line it does not have.
+        (local.set $sz (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+        (local.set $total_lines (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $visible_lines (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
         (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
           (then (local.set $max_scroll (i32.const 0))))

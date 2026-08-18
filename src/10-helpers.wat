@@ -39,9 +39,9 @@
     (if (i32.and
           (i32.and
             (i32.eq (i32.load16_u (local.get $hint_name_wa)) (i32.const 446))
-            (call $str_eq (local.get $name_wa) (i32.const 0x330)))
-          (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x325)))
-      (then (return (call $lookup_api_id (i32.const 0x319)))))
+            (call $str_eq (local.get $name_wa) (i32.const 0x330))) ;; GetMessageA
+          (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x325))) ;; USER32.dll
+      (then (return (call $lookup_api_id (i32.const 0x319))))) ;; MessageBoxA
     (i32.const -1))
 
   ;; Apply segment override to an address. FS=5 adds fs_base. GS=6 traps
@@ -8639,27 +8639,6 @@
       (br $pixels)))
     (local.get $wrote))
 
-  (func $gdi_chrome_sys_color (param $idx i32) (result i32)
-    (if (i32.eq (local.get $idx) (i32.const 1)) (then (return (i32.const 0x00808000))))
-    (if (i32.eq (local.get $idx) (i32.const 2)) (then (return (i32.const 0x00800000))))
-    (if (i32.eq (local.get $idx) (i32.const 5)) (then (return (i32.const 0x00FFFFFF))))
-    (if (i32.or (i32.eq (local.get $idx) (i32.const 6))
-          (i32.or (i32.eq (local.get $idx) (i32.const 7))
-            (i32.or (i32.eq (local.get $idx) (i32.const 8))
-              (i32.or (i32.eq (local.get $idx) (i32.const 18))
-                (i32.eq (local.get $idx) (i32.const 19))))))
-      (then (return (i32.const 0))))
-    (if (i32.or (i32.eq (local.get $idx) (i32.const 12))
-          (i32.or (i32.eq (local.get $idx) (i32.const 16))
-            (i32.eq (local.get $idx) (i32.const 17))))
-      (then (return (i32.const 0x00808080))))
-    (if (i32.eq (local.get $idx) (i32.const 13)) (then (return (i32.const 0x00800000))))
-    (if (i32.or (i32.eq (local.get $idx) (i32.const 9))
-          (i32.or (i32.eq (local.get $idx) (i32.const 14))
-            (i32.eq (local.get $idx) (i32.const 20))))
-      (then (return (i32.const 0x00FFFFFF))))
-    (i32.const 0x00C0C0C0))
-
   ;; Validate brushes independently from sampling them. 0x30015 is the stock
   ;; NULL_BRUSH and therefore valid even though it never produces a pixel.
   (func $gdi_brush_valid (param $brush i32) (result i32)
@@ -8693,7 +8672,7 @@
     (local $color i32) (local $index i32) (local $logical_index i32)
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 1))
           (i32.le_u (local.get $brush) (i32.const 23)))
-      (then (return (call $gdi_chrome_sys_color
+      (then (return (call $win98_sys_color
         (i32.sub (local.get $brush) (i32.const 1))))))
     (if (i32.eq (local.get $brush) (i32.const 0x30015))
       (then (return (i32.const 0x01000001))))
@@ -10622,7 +10601,7 @@
     (local $record i32)
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 1))
           (i32.le_u (local.get $brush) (i32.const 23)))
-      (then (return (call $gdi_chrome_sys_color
+      (then (return (call $win98_sys_color
         (i32.sub (local.get $brush) (i32.const 1))))))
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 0x30010))
           (i32.le_u (local.get $brush) (i32.const 0x30014)))
@@ -14415,16 +14394,27 @@
         (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
           (then
             (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+            (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+              (then
+                ;; Dirty, but this drain only paints WAT-native controls, so a
+                ;; window whose CONTROL_TABLE class never got set is passed over
+                ;; in silence however often it is invalidated.
+                (call $ctrl_paint_trace_emit
+                  (local.get $hwnd) (i32.const 0) (i32.const 4))))
             (if (call $ctrl_table_get_class (local.get $hwnd))
               (then
                 (if (i32.or
                       (call $wnd_has_pending_ancestor_erase (local.get $hwnd))
                       (call $wnd_has_pending_ancestor_paint (local.get $hwnd)))
                   (then
+                    (call $ctrl_paint_trace_emit (local.get $hwnd)
+                      (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 1))
                     (local.set $i (i32.add (local.get $i) (i32.const 1)))
                     (br $scan)))
                 (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
                   (then
+                    (call $ctrl_paint_trace_emit (local.get $hwnd)
+                      (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 2))
                     (call $paint_flag_clear_hwnd (local.get $hwnd))
                     (call $update_clear_hwnd (local.get $hwnd))
                     (br $found)))
@@ -14444,6 +14434,8 @@
                     (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
                     (br $found))
                   (else
+                    (call $ctrl_paint_trace_emit (local.get $hwnd)
+                      (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 3))
                     (call $paint_flag_clear_hwnd (local.get $hwnd))))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $scan)))
