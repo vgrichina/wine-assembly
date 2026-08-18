@@ -714,6 +714,7 @@ Resource-aware Win98 emulator
       if (status) status.textContent = runningApps.length
         ? `Running ${runningApps.length} app(s)`
         : 'Ready';
+      updateThreadsStatus();
     }
 
     function stopRunningApp(running, repaint) {
@@ -816,13 +817,17 @@ Resource-aware Win98 emulator
     //      verifies the whole pipeline (isolation, memory transfer, module
     //      transfer including on-the-fly WAT compilation, worker rendering).
     //
-    //   2. THE SCHEDULER — guest threads actually running in Workers. NOT
-    //      BUILT. It needs a broker for every host import that touches the DOM,
-    //      audio, or localStorage (which does not exist in a worker at all).
-    //      See docs/design-real-threads.md phase 1.
+    //   2. THE SCHEDULER — guest code actually running off the UI thread. Phase
+    //      1 of this is DONE: the guest's MAIN thread runs in a Worker, with
+    //      every host import brokered back (lib/guest-worker.js). What is still
+    //      cooperative is the guest's OWN threads — CreateThread targets are
+    //      round-robin slices of ThreadManager on the UI thread (phase 2).
     //
-    // So the switch records the opt-in and reports the true state; it does not
-    // pretend the second half exists. ThreadManager logs which backend it ran.
+    // So the label reports which of those is actually in effect right now, and
+    // that cannot be inferred from isolation alone: the worker start can fail
+    // and fall back (host.js:_maybeStartGuestWorker), and nothing is started at
+    // all until an app launches. It asks the running app, so it is a readout
+    // rather than a promise.
     const THREADS_KEY = 'wine-assembly.threads';
     window.WINE_THREADS = false;
 
@@ -842,11 +847,27 @@ Resource-aware Win98 emulator
         el.title = 'No COOP/COEP in effect. Toggle again to install the service worker and reload.';
         return;
       }
-      // Honest wording: isolation is real, the worker scheduler is not.
-      el.textContent = 'isolated · cooperative sched';
-      el.title = 'Cross-origin isolation is active, so real threads are possible. '
-        + 'The Worker backend is not implemented yet (docs/design-real-threads.md phase 1), '
-        + 'so guest threads still share this thread.';
+      // Isolation is only the permission slip. What matters is whether the
+      // guest actually ended up in a Worker, which is per-launch state.
+      const workers = runningApps.filter(r => r && r.wine && r.wine.guestWorker).length;
+      if (!runningApps.length) {
+        el.textContent = 'isolated · ready';
+        el.title = 'Cross-origin isolation is active, so the guest can run in a Worker. '
+          + 'Launch an app to start one.';
+        return;
+      }
+      if (!workers) {
+        el.textContent = 'isolated · worker did not start';
+        el.title = 'Isolation is active but no running app has a guest Worker — the start '
+          + 'failed and fell back to single-threaded. See the debug log for the reason.';
+        return;
+      }
+      el.textContent = workers === runningApps.length
+        ? 'guest in worker'
+        : `guest in worker (${workers}/${runningApps.length})`;
+      el.title = 'The guest\'s main thread runs in a Worker, off the UI thread. '
+        + 'The guest\'s own CreateThread threads are still cooperative slices on this '
+        + 'thread (docs/design-real-threads.md phase 2).';
     }
 
     async function setThreads(on) {
@@ -860,8 +881,8 @@ Resource-aware Win98 emulator
       window.WINE_THREADS = true;
       if (threadsIsolated()) {
         updateThreadsStatus();
-        appendDebugLog('[threads] isolated. Worker scheduler is not implemented yet — '
-          + 'guest threads still run cooperatively on this thread (design-real-threads.md phase 1).');
+        appendDebugLog('[threads] isolated. The next app launched will run its guest main '
+          + 'thread in a Worker; the guest\'s own threads stay cooperative (phase 2).');
         return;
       }
       if (!navigator.serviceWorker) {
@@ -2523,6 +2544,9 @@ Resource-aware Win98 emulator
         log.textContent += 'DLLs ready\n';
         runningApps.push({ wine, name: sel, appIndex });
         document.getElementById('status').textContent = `Running ${runningApps.length} app(s)`;
+        // The threads label is a readout of per-launch state, so it only becomes
+        // true here — this is where we first know whether the worker started.
+        updateThreadsStatus();
         canvas.focus();
         const runSlice = selectedRunSlice(sel);
         log.textContent += `Starting run slice=${runSlice}\n`;
