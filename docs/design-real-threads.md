@@ -832,28 +832,58 @@ thread and running right now. **It did not help Winamp at all** (parks per threa
 stayed at ~1900-2300), and that is the useful measurement: its contention is not
 brief.
 
-### The next bug, already isolated: a section outlives its owner
+### Releasing what a thread still owns when it ends
 
-With stealing off, a 6000-batch worker-mode Winamp run ends like this:
+A section held by a thread that has ended is not held, it is **lost**, and every
+waiter parks on it forever. Windows has the same hazard and no answer; we do have
+one, because we know exactly when a guest thread ends — including when it ends by
+trapping, which no guest can clean up after.
+
+`InitializeCriticalSection` records the section in `CS_TABLE` (256 entries at
+0x07F0CA40), and `ThreadManager._markThreadExited` — the single funnel both
+backends already use — calls `release_cs_owned_by(tid + 1)` and logs whatever it
+frees. Two details that are load-bearing:
+
+- The table holds **WASM addresses, not guest ones**. The release runs from
+  whichever instance noticed the exit, and in worker mode that instance never
+  loaded the PE: its `$image_base` is 0, so `g2w` would answer nonsense.
+- The argument is `$current_thread_id` (main 1, spawned tid+1), not the tid,
+  because that is what the guest's `OwningThread` field holds — `GetCurrentThreadId`
+  returns the same number, which is the whole reason the field is that value.
+
+`DeleteCriticalSection` unregisters, so a stale entry cannot have a later thread's
+exit writing zeroes into whatever got that memory next.
+
+### The next bug, and it is now named rather than guessed at
+
+"A thread is blocked" is not a diagnosis. So a parked thread now records which
+section it parked on and who held it — `$cs_wait_addr` / `$cs_wait_owner`, carried
+in the worker slice reply and printed per thread. The first run with it says
+everything:
 
 ```
-T1 slices=21586 csPark/steal=21544/0     <- parked on the same section 21544 times
-T2 slices=30    csPark/steal=1/0  state=exited
-T3 slices=21703 waitPolls=21675 csPark/steal=1/0
+T1 exited  csPark=1      waitingOnCS=0x00ad8540 heldBy=T2
+T2 active  csPark=1      waitingOnCS=0x00d33b78 heldBy=T3   sleepCount=5402
+T3 active  csPark=21677  waitingOnCS=0x00d33b78 heldBy=T2
 ```
 
-T2 — in_mp3's decode thread — **exits after 30 slices while owning the section**,
-and T1 then parks on it forever. That is the whole of the remaining audio failure:
-not a race, not the scheduler, not throughput. Windows behaves the same way if a
-thread really does exit inside a section, so the question is whether the guest ever
-released it and we lost the release (the prime suspect is a `Leave` arriving on the
-wrong thread — cross-thread `SendMessage` still runs the wndproc on the caller) or
-whether the thread is being ended somewhere the guest did not intend.
+**T2 and T3 fight over one section** — WASM `0x00d33b78`, guest `0x1121B78`, which
+is out_wave's thread-parameter struct + 0xc, i.e. a `CRITICAL_SECTION` embedded at
+the head of the plugin's own state. T3 parks on it 21677 times while T2 holds it,
+and T2's own single park was on the same section while T3 held it. T2 is not busy
+while holding it either: `sleepCount=5402` out of 5503 slices, so it holds the
+section and *sleeps*, thousands of times.
 
-The principled fix is a registry of initialised sections (`InitializeCriticalSection`
-records them) and releasing whatever a thread still owns when it exits. That is
-strictly better than the steal it would replace: it happens at a moment when the
-owner is known to be gone, rather than guessing from a timeout.
+That is the shape of a producer waiting for room that only the consumer can make,
+with the consumer locked out of the section it needs to make it. On real Windows a
+decoder does not hold a section across a `Sleep` loop, so the next question is
+whether the guest's release is being lost (`--break-api=LeaveCriticalSection` plus
+this address is now a one-liner) or whether it never releases because the condition
+it is waiting for is one *we* never make true.
+
+Worth noting: guest `0x1121B78` is also where two threads trapped in the earlier
+steal experiment. Same word, and the steal wrote a thread id into it — which is
+consistent with the browser's `EIP=0x1` trap, main's id being 1.
 
 **Where this leaves worker mode.** Better and not yet right, and the state is
 worth being exact about:

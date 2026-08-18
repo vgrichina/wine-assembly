@@ -1038,6 +1038,7 @@
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0C800 64B      HEAP_SHARED (low-heap chunk cursor, heap_base)
   ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
+  ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1535,6 +1536,15 @@
   ;;   2. Never take two at once, so there is no order to get wrong.
   (global $LOCK_TABLE i32 (i32.const 0x07F0C840))
   (global $LOCK_TABLE_SIZE i32 (i32.const 0x00000200))
+  ;; Every CRITICAL_SECTION the guest has initialised, so that one owned by a
+  ;; thread that has ended can be found and released. WASM addresses, not guest
+  ;; ones: the release runs from whichever instance notices the exit, and in
+  ;; worker mode that instance never loaded the PE — its $image_base is 0 and g2w
+  ;; would answer nonsense. 256 is generous; msvcrt uses a dozen and an app a
+  ;; handful. Overflow just means that section is not tracked, i.e. today's
+  ;; behaviour.
+  (global $CS_TABLE i32 (i32.const 0x07F0CA40))
+  (global $CS_TABLE_ENTRIES i32 (i32.const 256))
   (global $LOCK_VIRTUAL_MAP i32 (i32.const 0x07F0C840))
   (global $LOCK_DX i32 (i32.const 0x07F0C880))
   (global $LOCK_SOCKET i32 (i32.const 0x07F0C8C0))
@@ -1958,6 +1968,9 @@
   (global $cs_waits (mut i32) (i32.const 0))
   (global $cs_bad_leaves (mut i32) (i32.const 0))
   (global $cs_barges (mut i32) (i32.const 0))
+  ;; The section this thread last parked on, and its owner at that moment.
+  (global $cs_wait_addr (mut i32) (i32.const 0))
+  (global $cs_wait_owner (mut i32) (i32.const 0))
   ;; Fruitless Enter rounds before a section is taken from its holder by force.
   ;;
   ;; Effectively never, and that default is a measurement rather than a

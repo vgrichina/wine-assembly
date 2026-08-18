@@ -5896,8 +5896,86 @@
     (i32.store offset=12 (local.get $cs) (i32.const 0))  ;; OwningThread
     (i32.store offset=16 (local.get $cs) (i32.const 0))  ;; LockSemaphore
     (i32.store offset=20 (local.get $cs) (i32.const 0))  ;; SpinCount
+    ;; The only place a section is legitimately born, so the only place worth
+    ;; recording it. See $cs_release_owned.
+    (call $cs_register (local.get $cs))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+
+  ;; ---- the section registry -------------------------------------------------
+  ;;
+  ;; A section held by a thread that has ended is not held, it is LOST, and every
+  ;; waiter then parks forever. Windows has the same hazard and no answer for it;
+  ;; we do have one, because we know exactly when a guest thread ends — including
+  ;; when it ends by trapping, which no guest can clean up after.
+  ;;
+  ;; This replaces taking a section by force after a timeout. That guessed from
+  ;; elapsed rounds and rewrote the counters under a live owner, which corrupted
+  ;; the very data the section protected. Releasing at exit fires when the owner
+  ;; is *known* to be gone.
+
+  ;; Slot address for index i.
+  (func $cs_slot (param $i i32) (result i32)
+    (i32.add (global.get $CS_TABLE) (i32.mul (local.get $i) (i32.const 4))))
+
+  ;; Remember this section (WASM address). Idempotent, and safe against two
+  ;; threads initialising sections at the same time — the slot is claimed with a
+  ;; CAS rather than a load-then-store.
+  (func $cs_register (param $cs i32)
+    (local $i i32) (local $slot i32) (local $cur i32)
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $CS_TABLE_ENTRIES)))
+        (local.set $slot (call $cs_slot (local.get $i)))
+        (local.set $cur (i32.atomic.load (local.get $slot)))
+        (br_if $done (i32.eq (local.get $cur) (local.get $cs)))   ;; already known
+        (if (i32.eqz (local.get $cur))
+          (then
+            ;; Won the slot? Done. Lost it to another thread? Keep scanning.
+            (br_if $done (i32.eqz (i32.atomic.rmw.cmpxchg
+              (local.get $slot) (i32.const 0) (local.get $cs))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan))))
+
+  (func $cs_unregister (param $cs i32)
+    (local $i i32) (local $slot i32)
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $CS_TABLE_ENTRIES)))
+        (local.set $slot (call $cs_slot (local.get $i)))
+        (if (i32.eq (i32.atomic.load (local.get $slot)) (local.get $cs))
+          (then
+            (i32.atomic.store (local.get $slot) (i32.const 0))
+            (br $done)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan))))
+
+  ;; Release every registered section owned by $owner ($current_thread_id of the
+  ;; thread that has ended — main is 1, a spawned thread is tid+1). Returns how
+  ;; many were released, which is never routine: a nonzero answer means a thread
+  ;; ended inside a section, and callers report it.
+  (func $cs_release_owned (param $owner i32) (result i32)
+    (local $i i32) (local $cs i32) (local $n i32)
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $CS_TABLE_ENTRIES)))
+        (local.set $cs (i32.atomic.load (call $cs_slot (local.get $i))))
+        (if (local.get $cs)
+          (then
+            (if (i32.eq (i32.load offset=12 (local.get $cs)) (local.get $owner))
+              (then
+                ;; Counters first, owner last — the same publish-last order the
+                ;; WAT's own locks use, so a thread that sees it free sees the
+                ;; counters already settled.
+                (i32.store offset=8 (local.get $cs) (i32.const 0))
+                (i32.store offset=4 (local.get $cs) (i32.const -1))
+                (if (call $cs_owner_aligned (local.get $cs))
+                  (then (i32.atomic.store offset=12 (local.get $cs) (i32.const 0)))
+                  (else (i32.store offset=12 (local.get $cs) (i32.const 0))))
+                (local.set $n (i32.add (local.get $n) (i32.const 1)))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+    (local.get $n))
 
   ;; Park an EnterCriticalSection that cannot be satisfied yet (reason 9).
   ;;
@@ -5916,8 +5994,13 @@
   ;; handlers pop on entry and have to put it back — the invariant is the same,
   ;; the arithmetic is not. Subtracting here dropped ESP by 8 per park and
   ;; WordPad's thread trapped after three of them.)
-  (func $cs_block
+  (func $cs_block (param $cs i32) (param $owner i32)
     (global.set $cs_waits (i32.add (global.get $cs_waits) (i32.const 1)))
+    ;; What this thread is parked on, and who had it. "Thread blocked" is not a
+    ;; diagnosis; "thread blocked on section X held by thread N" is, and it is the
+    ;; difference between guessing at a deadlock and reading it.
+    (global.set $cs_wait_addr (local.get $cs))
+    (global.set $cs_wait_owner (local.get $owner))
     ;; Opt out of $run's thunk-zone auto-pop. It fires whenever a handler leaves
     ;; EIP alone, yield or no yield, and sets EIP = [ESP] — which splices the call
     ;; out entirely: the guest resumes after it without the section, with the
@@ -6020,7 +6103,7 @@
             (i32.store offset=8 (local.get $cs) (i32.const 0))
             (i32.store offset=4 (local.get $cs) (i32.const -1)))
           (else
-            (call $cs_block)
+            (call $cs_block (local.get $cs) (local.get $prev))
             (return)))))
     (global.set $cs_wait_spins (i32.const 0))
     ;; Ours now, or already ours — recursive entry is allowed and only counted.
@@ -6079,6 +6162,9 @@
     (i32.store offset=12 (local.get $cs) (i32.const 0))
     (i32.store offset=16 (local.get $cs) (i32.const 0))
     (i32.store offset=20 (local.get $cs) (i32.const 0))
+    ;; Freed memory can be reallocated as something else, and a stale entry would
+    ;; have a later thread's exit writing zeroes into whatever now lives there.
+    (call $cs_unregister (local.get $cs))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

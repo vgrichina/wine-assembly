@@ -6043,7 +6043,8 @@ if (VERBOSE) {
           + `slices=${t.link.sliceStats.slices} guestMs=${t.link.sliceStats.guestMs.toFixed(1)} `
           + `rpc=${t.link.sliceStats.rpcSync}sync/${t.link.sliceStats.rpcAsync}async/${t.link.sliceStats.rpcLocal}local `
           + `sleepCount=${t.sleepCount || 0} waitPolls=${t.waitPolls || 0} `
-          + `csPark/steal=${t.csWaits || 0}/${t.csSteals || 0}`);
+          + `csPark/steal=${t.csWaits || 0}/${t.csSteals || 0}`
+          + (t.csWaitAddr ? ` waitingOnCS=${hex(t.csWaitAddr)} heldBy=T${(t.csWaitOwner || 0) - 1}` : ''));
         continue;
       }
       try {

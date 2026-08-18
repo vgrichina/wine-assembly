@@ -196,7 +196,16 @@
   ;; Sections entered while already held, because a nested synchronous wndproc
   ;; was running and could not be parked. Exclusion was not honoured for these.
   (func (export "get_cs_barges") (result i32) (global.get $cs_barges))
+  (func (export "get_cs_wait_addr") (result i32) (global.get $cs_wait_addr))
+  (func (export "get_cs_wait_owner") (result i32) (global.get $cs_wait_owner))
   (func (export "set_cs_steal_after") (param i32) (global.set $cs_steal_after (local.get 0)))
+  ;; Release every critical section still owned by a thread that has ended, and
+  ;; say how many. The argument is that thread's $current_thread_id (main is 1, a
+  ;; spawned thread is tid+1), NOT its tid — the guest field holds the former,
+  ;; because GetCurrentThreadId does. Safe to call from any instance: the registry
+  ;; holds WASM addresses, so no image-base translation is involved.
+  (func (export "release_cs_owned_by") (param i32) (result i32)
+    (call $cs_release_owned (local.get 0)))
   (func (export "get_process_id") (result i32) (call $current_process_id))
   (func (export "set_process_id") (param $pid i32)
     ;; PID zero is reserved by Win32 and means "use the compatibility default"
