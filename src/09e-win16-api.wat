@@ -1315,6 +1315,24 @@
       (then (global.set $win16_lheap_ptr (local.get $v)) (return)))
     (i32.store16 (i32.add (local.get $p) (i32.const 4)) (local.get $v)))
 
+  ;; Make room up to $need, growing the segment under the heap if that is what
+  ;; it takes. Windows reallocates DGROUP — or whichever segment the heap was
+  ;; laid into — when a block will not fit; every segment here owns a whole
+  ;; 64KB arena slot, so growing one is only a matter of raising its limit.
+  ;; Answers whether the heap now reaches $need.
+  (func $win16_lheap_room (param $need i32) (result i32)
+    (local $index i32)
+    (if (i32.le_u (local.get $need) (call $win16_lheap_get (i32.const 2)))
+      (then (return (i32.const 1))))
+    (if (i32.gt_u (local.get $need) (i32.const 0x10000)) (then (return (i32.const 0))))
+    (local.set $index (call $win16_sel_to_index (global.get $sreg_ds)))
+    (if (i32.gt_u (local.get $need) (call $win16_seg_limit (local.get $index)))
+      (then
+        (call $win16_gseg_store (local.get $index) (i32.const 4) (local.get $need))
+        (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $need))))
+    (call $win16_lheap_set_end (local.get $need))
+    (i32.const 1))
+
   ;; The heap's ceiling. A local heap grows: Windows reallocates the segment
   ;; under it when a block will not fit, whether that segment is the task's
   ;; DGROUP or one a task laid a second heap into with LocalInit.
@@ -1541,11 +1559,10 @@
         (global.set $eax (local.get $h))
         (call $win16_api_return (i32.const 6))
         (return)))
-    ;; The last block can simply take more of the heap.
+    ;; The last block can simply take more of the heap, growing it if needed.
     (if (i32.and (i32.eq (i32.add (local.get $h) (local.get $size))
                          (call $win16_lheap_get (i32.const 1)))
-                 (i32.le_u (i32.add (local.get $h) (local.get $bytes))
-                           (call $win16_lheap_get (i32.const 2))))
+                 (call $win16_lheap_room (i32.add (local.get $h) (local.get $bytes))))
       (then
         (call $zero_memory
           (call $g2w (i32.add (global.get $seg_base_ds)
@@ -1558,8 +1575,8 @@
         (return)))
     ;; Otherwise a fresh block at the top of the heap, and the old one back.
     (local.set $new (i32.add (call $win16_lheap_get (i32.const 1)) (i32.const 2)))
-    (if (i32.gt_u (i32.add (local.get $new) (local.get $bytes))
-                  (call $win16_lheap_get (i32.const 2)))
+    (if (i32.eqz (call $win16_lheap_room
+                   (i32.add (local.get $new) (local.get $bytes))))
       (then
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 6))
@@ -3390,6 +3407,16 @@
         (call $win16_call32_end)
         (global.set $eax (call $win16_h16 (global.get $eax)))
         (call $win16_api_return (i32.const 4))
+        (return (i32.const 1))))
+    ;; USER.236 GetCapture() -> the window holding the mouse, or NULL.
+    (if (i32.eq (local.get $ordinal) (i32.const 236))
+      (then
+        (call $win16_call32_begin (i32.const 0))
+        (call $handle_GetCapture (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $eax (call $win16_h16 (global.get $eax)))
+        (call $win16_api_return (i32.const 0))
         (return (i32.const 1))))
     ;; USER.58 GetClassName(hWnd, lpClassName, nMaxCount) -> its length. Tic
     ;; Tac Drop asks every window it made what class it is while wiring up its
@@ -6205,6 +6232,22 @@
     (call $win16_api_return (i32.const 4)))
 
   ;; GDI.61 CreatePen(nPenStyle, nWidth, crColor) -> HPEN.
+  ;; GDI.77 GetClipBox(hDC, lpRect) -> the clip region's bounding box and its
+  ;; complexity. The rectangle comes back narrowed like every other.
+  (func $win16_GetClipBox
+    (local $hdc i32) (local $dst i32) (local $tmp i32)
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetClipBox (local.get $hdc) (local.get $tmp)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (call $win16_rect_narrow (local.get $dst) (local.get $tmp))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 6)))
+
   ;; GDI.62 CreatePenIndirect(lpLogPen) — the same pen from a structure. The
   ;; 16-bit LOGPEN is a word of style, a POINT of two words and a colour;
   ;; only the width's x is used, as in Win32.
@@ -7821,6 +7864,8 @@
       (then (call $win16_CreatePen) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 62))
       (then (call $win16_CreatePenIndirect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 77))
+      (then (call $win16_GetClipBox) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 64))
       (then (call $win16_CreateRectRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 66))
