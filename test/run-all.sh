@@ -304,6 +304,7 @@ E2E=(
   test/test-minesweeper-smiley-reset.js
   test/test-pinball-controls-layout.js
   test/test-pinball-fullscreen-menu.js
+  test/test-pinball-select-players.js
   test/test-pinball-flipper.js
   test/test-pinball-web-render.js
   test/test-aoe-menu.js
@@ -413,8 +414,11 @@ QUARANTINE=(
   test/test-mspaint-image-edit.js       # 7/9: Invert Colors misses part of the image
   test/test-mspaint-statusbar.js        # status bar loses its MFC docked geometry
   test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
-  test/test-calc-view-switch.js         # 14/15: fixed dialogs oversized vertically
-  test/test-pinball-select-players.js   # 5/7: 2 Players submenu never painted
+  # Measured 2026-08-19: both views leave ~19px of dead face below the last
+  # button row, so the scientific dialog is 482x335 against a <=330 assertion.
+  # Standard (262x274) has the same overshoot and slips under the threshold.
+  # Not scientific-specific and not a paint bug -- it is dialog height.
+  test/test-calc-view-switch.js         # 14/15: sci dialog 335 tall vs <=330
   test/test-dx-vtable-worker-sync.js    # worker does not restore the first generated COM vtable
   test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
   test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog

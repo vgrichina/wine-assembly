@@ -1698,9 +1698,14 @@
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
-    (if (i32.lt_s (local.get $click_x) (i32.add (local.get $dx) (i32.const 2)))
+    ;; The box's own 2px border counts as inside. It used not to, and the left
+    ;; border is precisely the column the pointer crosses when it slides right
+    ;; out of the parent item: entering a cascade at its first two columns
+    ;; highlighted nothing, so "Select Players > 2 Players" needed the pointer
+    ;; to land two pixels deeper than the submenu appears to start.
+    (if (i32.lt_s (local.get $click_x) (local.get $dx))
       (then (return (i32.const -1))))
-    (if (i32.ge_s (local.get $click_x) (i32.add (local.get $dx) (i32.const 178)))
+    (if (i32.ge_s (local.get $click_x) (i32.add (local.get $dx) (i32.const 180)))
       (then (return (i32.const -1))))
     (if (i32.lt_s (local.get $click_y) (i32.add (local.get $dy) (i32.const 2)))
       (then (return (i32.const -1))))
@@ -2280,13 +2285,16 @@
   (func (export "menu_open_x")     (result i32) (global.get $menu_open_x))
   (func (export "menu_open_y")     (result i32) (global.get $menu_open_y))
 
-  (func $menu_dropdown_x (param $hwnd i32) (param $top i32) (result i32)
+  ;; Exported so a trace can say where the dropdown and its cascade are:
+  ;; "the submenu was never highlighted" and "the pointer was aimed left of
+  ;; the submenu" are the same subhover=-1 without them.
+  (func $menu_dropdown_x (export "menu_dropdown_x") (param $hwnd i32) (param $top i32) (result i32)
     (if (i32.ge_s (global.get $menu_open_x) (i32.const 0))
       (then (return (global.get $menu_open_x))))
     (i32.add (call $menu_bar_screen_x (local.get $hwnd))
              (call $menu_bar_item_x (local.get $hwnd) (local.get $top))))
 
-  (func $menu_dropdown_y (param $hwnd i32) (result i32)
+  (func $menu_dropdown_y (export "menu_dropdown_y") (param $hwnd i32) (result i32)
     (if (i32.ge_s (global.get $menu_open_y) (i32.const 0))
       (then (return (global.get $menu_open_y))))
     (i32.add (call $menu_bar_screen_y (local.get $hwnd)) (call $menu_bar_screen_h)))
