@@ -421,7 +421,10 @@ QUARANTINE=(
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
   # Paint / app-specific.
-  test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
+  # Measured 2026-08-19: the main back-canvas has 7 colours, so the skin is
+  # not being blitted at all. The duplicate-titlebar check fails as a
+  # consequence -- every row of a flat canvas matches every other row.
+  test/test-winamp.js                   # 13/15: main back-canvas has 7 colours
   # 24/27 since the click and schedule fixes. The three left are one symptom:
   # Winamp's Load-EQF path calls GetOpenFileNameA and that call never returns
   # -- it is the last API of the run, no OpenSave dialog reaches dlg-dump, and
@@ -429,8 +432,13 @@ QUARANTINE=(
   # (test-open-cancel, test-render-open-dlg, notepad-dialogs "open"), so it is
   # this call site, not the common dialog.
   test/test-winamp-eq-presets.js        # 24/27: GetOpenFileNameA never returns
-  test/test-winamp-installers.js        # license page: no word-wrapped DrawText, no PNG
-  test/test-winamp-visualization-web.js # wVis plug-in window should be visible
+  # Measured 2026-08-19: five checks, one cause -- the NSIS license page's
+  # RichEdit is never mapped to a native edit, so there is no word-wrapped
+  # DrawText, no PNG, no wizard buttons and nothing for the wheel to scroll.
+  test/test-winamp-installers.js        # license RichEdit not mapped to a native edit
+  # Measured 2026-08-19: no window titled "Winamp Equalizer" is visible at
+  # all, so the three skin-pixel checks after it never get to run.
+  test/test-winamp-visualization-web.js # no equalizer window in the browser run
 )
 
 # A test file missing from every array above does not fail, it just never runs.
