@@ -1279,6 +1279,16 @@
   ;; (data ...) segment in one file and a table in another share an address.
   (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x079C9000))
   (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
+  ;; file handles from zero and a C runtime indexes its own per-handle table
+  ;; with them, so a task that gets 0x136 back from OpenFile hands it to
+  ;; fstat, which finds it past the end of that table and answers -1 without
+  ;; ever asking DOS. Klotski compared the size it got with the size it
+  ;; expected and reported its score file unreadable. Entry i holds the
+  ;; 32-bit handle that 16-bit handle i names, 0 for a free slot; 0-4 stay
+  ;; reserved for the standard handles a DOS program assumes it starts with.
+  (global $WIN16_FILE_TABLE i32 (i32.const 0x079C9400))
+  (global $WIN16_FILE_MAX i32 (i32.const 256))
   ;; Which class record each window was created from, one byte per window slot
   ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
   ;; extra is shared by every window of the class — that is the whole point of

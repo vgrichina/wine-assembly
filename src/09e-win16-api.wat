@@ -623,7 +623,7 @@
             (call $handle__llseek (local.get $h) (global.get $win16_res_file_off)
               (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
             (call $win16_call32_end)
-            (global.set $eax (call $win16_h16 (local.get $h)))))))
+            (global.set $eax (call $win16_fh16 (local.get $h)))))))
     (global.set $win16_res_module_id (i32.const 0))
     ;; Two words: an instance handle and a resource handle. Popping six left
     ;; two bytes of the caller's frame behind, and Visual Basic's runtime
@@ -984,7 +984,7 @@
         (if (i32.eq (global.get $eax) (i32.const -1))
           (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 1)))  ;; file not found
           (else
-            (call $dos_set_ax (call $win16_h16 (global.get $eax)))
+            (call $dos_set_ax (call $win16_fh16 (global.get $eax)))
             (call $dos_cf (i32.const 0))))
         (return)))
 
@@ -1000,18 +1000,19 @@
         (if (i32.eq (global.get $eax) (i32.const -1))
           (then (call $dos_set_ax (i32.const 3)) (call $dos_cf (i32.const 1)))  ;; path not found
           (else
-            (call $dos_set_ax (call $win16_h16 (global.get $eax)))
+            (call $dos_set_ax (call $win16_fh16 (global.get $eax)))
             (call $dos_cf (i32.const 0))))
         (return)))
 
     ;; 3Eh close, BX = handle.
     (if (i32.eq (local.get $ah) (i32.const 0x3E))
       (then
-        (local.set $h (call $win16_h32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
+        (local.set $h (call $win16_fh32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
         (call $win16_call32_begin (i32.const 1))
         (call $handle__lclose (local.get $h) (i32.const 0) (i32.const 0)
           (i32.const 0) (i32.const 0) (i32.const 0))
         (call $win16_call32_end)
+        (call $win16_fh_forget (i32.and (global.get $ebx) (i32.const 0xFFFF)))
         (call $win16_h16_forget (local.get $h))
         (call $dos_cf (i32.const 0))
         (return)))
@@ -1020,7 +1021,7 @@
     (if (i32.or (i32.eq (local.get $ah) (i32.const 0x3F))
                 (i32.eq (local.get $ah) (i32.const 0x40)))
       (then
-        (local.set $h (call $win16_h32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
+        (local.set $h (call $win16_fh32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
         (local.set $n (i32.and (global.get $ecx) (i32.const 0xFFFF)))
         (call $win16_call32_begin (i32.const 3))
         (if (i32.eq (local.get $ah) (i32.const 0x3F))
@@ -1039,7 +1040,7 @@
     ;; 42h lseek, BX = handle, CX:DX = offset, AL = origin. DX:AX = new position.
     (if (i32.eq (local.get $ah) (i32.const 0x42))
       (then
-        (local.set $h (call $win16_h32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
+        (local.set $h (call $win16_fh32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
         (local.set $tmp (i32.or (i32.and (global.get $edx) (i32.const 0xFFFF))
           (i32.shl (i32.and (global.get $ecx) (i32.const 0xFFFF)) (i32.const 16))))
         (call $win16_call32_begin (i32.const 3))
@@ -1721,6 +1722,61 @@
     (global.set $eax (i32.and (local.get $free) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; ---- File handles ----
+  ;;
+  ;; Every other kind of handle goes through $win16_h16, which numbers from
+  ;; 0x100 because a small number could be confused with a real 32-bit handle.
+  ;; A file handle cannot afford that: DOS numbers files from zero, INT 21h
+  ;; takes one in BX, and a C runtime keeps a per-handle array of its own
+  ;; indexed by exactly that number. So files get their own map, small and
+  ;; dense, and 0-4 are left alone for stdin/stdout/stderr/aux/prn.
+  (func $win16_fh16 (param $h32 i32) (result i32)
+    (local $t i32) (local $i i32)
+    (if (i32.eq (local.get $h32) (i32.const -1)) (then (return (i32.const 0xFFFF))))
+    (local.set $t (global.get $WIN16_FILE_TABLE))
+    (local.set $i (i32.const 5))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_FILE_MAX)))
+      (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
+                  (local.get $h32))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $i (i32.const 5))
+    (block $free (loop $look
+      (br_if $free (i32.ge_u (local.get $i) (global.get $WIN16_FILE_MAX)))
+      (if (i32.eqz (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))))
+        (then
+          (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
+                     (local.get $h32))
+          (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $look)))
+    ;; Out of handles is what DOS itself answers when FILES= is exhausted, and
+    ;; a task that leaks them deserves to hear it rather than to be given one
+    ;; that names another task's file.
+    (i32.const 0xFFFF))
+
+  ;; The way back. A handle at or above the general base never came from here,
+  ;; so it goes through the general map — AccessResource used to hand those
+  ;; out and a task may still be holding one.
+  (func $win16_fh32 (param $h16 i32) (result i32)
+    (local.set $h16 (i32.and (local.get $h16) (i32.const 0xFFFF)))
+    (if (i32.eq (local.get $h16) (i32.const 0xFFFF)) (then (return (i32.const -1))))
+    (if (i32.ge_u (local.get $h16) (global.get $WIN16_FILE_MAX))
+      (then (return (call $win16_h32 (local.get $h16)))))
+    (if (i32.lt_u (local.get $h16) (i32.const 5)) (then (return (local.get $h16))))
+    (i32.load (i32.add (global.get $WIN16_FILE_TABLE)
+                       (i32.shl (local.get $h16) (i32.const 2)))))
+
+  (func $win16_fh_forget (param $h16 i32)
+    (local.set $h16 (i32.and (local.get $h16) (i32.const 0xFFFF)))
+    (if (i32.and (i32.ge_u (local.get $h16) (i32.const 5))
+                 (i32.lt_u (local.get $h16) (global.get $WIN16_FILE_MAX)))
+      (then (i32.store (i32.add (global.get $WIN16_FILE_TABLE)
+                                (i32.shl (local.get $h16) (i32.const 2)))
+              (i32.const 0)))))
+
   ;; ---- The file API ----
   ;;
   ;; _lopen and friends are the same calls as their Win32 spellings with
@@ -1739,21 +1795,23 @@
       (else (call $handle__lopen (local.get $path) (local.get $mode)
               (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
-    ;; Through the handle map, not masked to sixteen bits. A file handle here
+    ;; Through the file map, not masked to sixteen bits. A file handle here
     ;; is 0xF0000001 and masking hands the task a 1, which is some other file's
     ;; handle — Rattler Race read its own image through it, found bytes that
     ;; were not its own, and put up "a virus has been detected".
-    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (global.set $eax (call $win16_fh16 (global.get $eax)))
     (call $win16_api_return (i32.const 6)))
 
   (func $win16_lclose
-    (local $h i32)
-    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local $h i32) (local $h16 i32)
+    (local.set $h16 (call $win16_arg16 (i32.const 0)))
+    (local.set $h (call $win16_fh32 (local.get $h16)))
     (call $win16_call32_begin (i32.const 1))
     (call $handle__lclose (local.get $h) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     ;; The file is gone, so its place in the map is free.
+    (call $win16_fh_forget (local.get $h16))
     (call $win16_h16_forget (local.get $h))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
@@ -1763,7 +1821,7 @@
     (local.set $n (call $win16_arg16 (i32.const 0)))
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $h (call $win16_fh32 (call $win16_arg16 (i32.const 3))))
     (call $win16_call32_begin (i32.const 3))
     (if (local.get $write)
       (then (call $handle__lwrite (local.get $h) (local.get $buf) (local.get $n)
@@ -1779,7 +1837,7 @@
     (local $h i32) (local $off i32) (local $origin i32)
     (local.set $origin (call $win16_arg16 (i32.const 0)))
     (local.set $off (call $win16_arg32 (i32.const 1)))
-    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $h (call $win16_fh32 (call $win16_arg16 (i32.const 3))))
     (call $win16_call32_begin (i32.const 3))
     (call $handle__llseek (local.get $h) (local.get $off) (local.get $origin)
       (i32.const 0) (i32.const 0) (i32.const 0))
@@ -1802,7 +1860,11 @@
     (call $handle_OpenFile (local.get $name) (local.get $ofs) (local.get $style)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
+    ;; OF_EXIST and the other styles that only report answer 1 or -1 rather
+    ;; than opening anything, and neither belongs in the file map.
+    (if (i32.gt_u (global.get $eax) (i32.const 1))
+      (then (global.set $eax (call $win16_fh16 (global.get $eax))))
+      (else (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))))
     (call $win16_api_return (i32.const 10)))
 
   ;; KERNEL.134 GetWindowsDirectory / KERNEL.135 GetSystemDirectory
@@ -2712,9 +2774,23 @@
     (global.set $eax (call $win16_h16 (local.get $hdc)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; USER.68 ReleaseDC(hWnd, hDC) -> nonzero if it released one.
+  ;;
+  ;; The handle is checked against the DC table before anything happens to it,
+  ;; because a task may hand over something that is not a DC and Windows
+  ;; answers zero rather than acting. Klotski pushes its two arguments the
+  ;; other way round, so what arrives here is its window: releasing that did
+  ;; nothing, but forgetting it took the window's place in the handle map away
+  ;; and the next DC was given the same number. The task then showed and
+  ;; painted its DC instead of its window, and drew nothing at all.
   (func $win16_ReleaseDC
     (local $hdc i32)
     (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (if (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 4))
+        (return)))
     (drop (call $host_release_dc (local.get $hdc)))
     ;; The DC is gone, so its place in the handle map is free. A pump that gets
     ;; and releases a DC every iteration would otherwise fill the map.
