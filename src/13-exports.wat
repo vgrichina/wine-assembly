@@ -2606,6 +2606,16 @@
       (i32.sub (local.get $inst) (i32.const 1))) (local.get $proc)))
   (func (export "test_dde_ask_pending") (result i32)
     (i32.ge_s (call $win16_dde_ask_next) (i32.const 0)))
+  ;; The text behind a DDE string handle. Every DDE trace line names its topic
+  ;; and item by handle, and a handle is a per-instance number: the two sides
+  ;; of one conversation call the same string different things, so comparing
+  ;; the numbers across a pair of transcripts says nothing at all. This is what
+  ;; lets the trace print the name.
+  (func (export "win16_dde_hsz_text") (param $hsz i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $hsz)) (i32.gt_u (local.get $hsz) (i32.const 64)))
+      (then (return (i32.const 0))))
+    (i32.add (call $win16_dde_hsz_slot (i32.sub (local.get $hsz) (i32.const 1)))
+             (i32.const 4)))
   ;; 0 free, 1 established, 2 offered to the application and not yet answered.
   (func (export "test_dde_conv_state") (param $conv i32) (result i32)
     (i32.load (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))))
@@ -4003,8 +4013,8 @@
                      (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
     (local.get $tb))
 
-  (func (export "test_is_builtin_control_class") (param $class_name i32) (result i32)
-    (call $is_builtin_control_class (local.get $class_name)))
+  (func (export "test_class_name_to_ctrl_id") (param $class_name i32) (result i32)
+    (call $class_name_to_ctrl_id (local.get $class_name)))
 
   (func (export "test_richedit_class_version") (param $class_name i32) (result i32)
     (call $richedit_class_version (local.get $class_name)))

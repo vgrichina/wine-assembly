@@ -1256,6 +1256,16 @@ async function main() {
   // the arena is a direct WASM offset, so this needs no guest translation.
   const win16Linear = (sel, off) =>
     0x100000 + (((sel >> 3) - 1) * 0x10000) + (off & 0xFFFF);
+  // The DDE transaction types, which are the whole story of a DDE trace: a
+  // hex number here is one of a dozen things an application can be asked, and
+  // reading 0x4090 as "somebody poked me" takes a table lookup every time.
+  const WIN16_DDE_XTYP = {
+    0x0060: 'XTYP_REGISTER', 0x1030: 'XTYP_ADVSTART', 0x1062: 'XTYP_CONNECT',
+    0x2022: 'XTYP_ADVREQ', 0x20B0: 'XTYP_REQUEST', 0x20E2: 'XTYP_WILDCONNECT',
+    0x4010: 'XTYP_ADVDATA', 0x4050: 'XTYP_EXECUTE', 0x4090: 'XTYP_POKE',
+    0x8002: 'XTYP_ERROR', 0x8040: 'XTYP_ADVSTOP', 0x8072: 'XTYP_CONNECT_CONFIRM',
+    0x80A2: 'XTYP_DISCONNECT', 0x80C2: 'XTYP_REGISTER_NOTIFY',
+  };
   const WIN16_MSG_NAMES = {
     0x0000: 'WM_NULL', 0x0001: 'WM_CREATE', 0x0002: 'WM_DESTROY',
     0x0003: 'WM_MOVE', 0x0005: 'WM_SIZE', 0x0006: 'WM_ACTIVATE',
@@ -1702,7 +1712,7 @@ async function main() {
     // wParam, lParam, and the dialog the pump belongs to.
     if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
     if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
-    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 6, words: [], ddeAsk: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 8, words: [], ddeAsk: true }; return; }
     if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
@@ -1713,9 +1723,25 @@ async function main() {
               ddeAsk: isDdeAsk, ddeAns: isDdeAns, resolved, words } = pendingWin16;
       pendingWin16 = null;
       if (isDdeAsk) {
-        const [type, inst, conv, hsz1, hsz2, cb] = words;
-        logs.push(`[win16] dde offer type=${hex(type)} inst=${inst} conv=${conv}` +
-          ` topic=${hsz1} service=${hsz2} callback=${hex(cb)}` +
+        const [type, inst, conv, hsz1, hsz2, cb, fmt, hdata] = words;
+        // Named, not numbered. A string handle is per-instance, so the two
+        // sides of one conversation give the same name different numbers and
+        // comparing two transcripts by handle proves nothing -- which is how a
+        // poke that arrived under the right name still read as a mystery.
+        const hszText = (h) => {
+          if (!instance.exports.win16_dde_hsz_text) return String(h);
+          const wa = instance.exports.win16_dde_hsz_text(h | 0) >>> 0;
+          if (!wa) return String(h);
+          const bytes = new Uint8Array(memory.buffer);
+          let end = wa;
+          while (end < wa + 68 && bytes[end]) end++;
+          const text = Buffer.from(bytes.slice(wa, end)).toString('latin1');
+          return text ? `${h}:${JSON.stringify(text)}` : String(h);
+        };
+        logs.push(`[win16] dde offer ${WIN16_DDE_XTYP[type] || hex(type)}` +
+          ` inst=${inst} conv=${conv}` +
+          ` topic=${hszText(hsz1)} item=${hszText(hsz2)}` +
+          ` fmt=${fmt} data=${hex(hdata)} callback=${hex(cb)}` +
           `${cb >>> 16 ? '' : ' NO CALLBACK -- nobody to ask'}`);
         return;
       }

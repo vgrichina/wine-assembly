@@ -157,14 +157,28 @@ const DEALER_INPUT = [
   // is why it found both a crash (SetFocus on that button could not return
   // across the 16-bit bridge) and a paint bug (the baize went white the first
   // time anything invalidated the window).
+  // Held until the harness has both hands on screen. Passing is timed like
+  // everything else here -- from the other side's progress, never from a batch
+  // count -- because the two processes do not share a clock.
+  `${DEAL_AT + 61000}:wait-go`,
   ...CARDS.map((c, i) => `${DEAL_AT + 62000 + i * 2000}:click:${c}`),
-  // Twice, seconds apart. "Pass Left" is disabled until exactly three cards
-  // are up, and the two players are passing at the same time over the wire --
-  // a click that lands while the other side's pass is being taken hits a
-  // greyed button and is simply lost.
   `${DEAL_AT + 70000}:click:${PASS_BUTTON}`,
-  `${DEAL_AT + 90000}:click:${PASS_BUTTON}`,
-  `${DEAL_AT + 110000}:png:${shot('dealer-passed')}`,
+  // And held again until the client's pass has actually arrived here. The
+  // first version of this photographed the table before the other player had
+  // even clicked, and read the dealer's perfectly correct "Waiting for other
+  // players to pass" as a lost pass.
+  `${DEAL_AT + 71000}:wait-go`,
+  // Again, now that the exchange has settled. Hearts greys "Pass Left" while
+  // it is taking the other player's cards, and a click that lands in that
+  // window is simply lost -- the three cards stay selected and the game sits
+  // there looking like it refused the move.
+  // The same button becomes "OK" when the other players' cards arrive, so a
+  // few spaced clicks carry the seat through pass -> accept without the test
+  // having to know which of the two it is looking at.
+  `${DEAL_AT + 73000}:click:${PASS_BUTTON}`,
+  `${DEAL_AT + 78000}:click:${PASS_BUTTON}`,
+  `${DEAL_AT + 83000}:click:${PASS_BUTTON}`,
+  `${DEAL_AT + 88000}:png:${shot('dealer-passed')}`,
 ].join(',');
 
 const CLIENT_INPUT = [
@@ -184,9 +198,14 @@ const CLIENT_INPUT = [
   // photograph a deal that has not happened yet.
   '25001:wait-go',
   `85000:png:${shot('client-dealt')}`,
+  '85500:wait-go',
   ...CARDS.map((c, i) => `${87000 + i * 2000}:click:${c}`),
   `95000:click:${PASS_BUTTON}`,
-  `120000:png:${shot('client-passed')}`,
+  '96000:wait-go',
+  `97000:click:${PASS_BUTTON}`,
+  `102000:click:${PASS_BUTTON}`,
+  `107000:click:${PASS_BUTTON}`,
+  `112000:png:${shot('client-passed')}`,
 ].join(',');
 
 // Only a bounded tail of each transcript is kept: two processes at tens of
@@ -240,7 +259,7 @@ function spawn(label, ip, input, patterns) {
     '--vlan-max-waits=200000',
   ], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const state = { out: '', exited: false, label, seen: new Set(), carry: '', at: {},
-                  lastNet: 0, net: [] };
+                  lastNet: 0, net: [], pokes: 0 };
   // Streamed rather than kept: with --trace-win16 a side produces hundreds of
   // megabytes, and the interesting part is not always the tail.
   const sink = fs.createWriteStream(path.join(OUT, `${label}.log`));
@@ -254,6 +273,11 @@ function spawn(label, ip, input, patterns) {
         if (line.includes('[net] ') && state.net.length < 60) {
           state.net.push(`${String(Date.now() - T0).padStart(6)}ms ${line.trim()}`);
         }
+        // Counted, not flagged: a poke is how a player's move reaches the
+        // other side, and seating the joining player is one too -- so "a poke
+        // arrived" is true long before anybody plays a card. What the pass
+        // step waits on is one MORE than it had.
+        if (line.includes('.. arrived type6')) state.pokes++;
       }
     }
     const text = state.carry + chunk;
@@ -426,6 +450,37 @@ function table(file) {
 
   // 6: the first move of the hand, on both sides. Everything above is still
   // only setting the table -- this is the two applications playing.
+  //
+  // Both are released together: in Hearts everyone passes at once, and the
+  // button is only live while three cards are up, so a side held back until
+  // the other had finished would be clicking a greyed button.
+  const pokesBefore = dealer.pokes;
+  dealer.child.send({ t: 'go' });
+  await sleep(8000);
+  client.child.send({ t: 'go' });
+
+  // The move crossing the room, in one line: the client's three cards leave as
+  // a DDE poke and this is the dealer receiving it. Waiting for this rather
+  // than for a batch count is the whole difference between a test that reads
+  // "the pass never arrived" and one that had simply photographed the table
+  // before the other player clicked.
+  const crossed = await (async () => {
+    const limit = Math.min(Date.now() + MILESTONE_MS, DEADLINE);
+    while (Date.now() < limit) {
+      if (dealer.pokes > pokesBefore) return true;
+      if (dealer.exited || client.exited) return dealer.pokes > pokesBefore;
+      await sleep(200);
+    }
+    return false;
+  })();
+  check('the client\'s pass reached the dealer', crossed,
+    'no poke arrived after the cards were selected');
+
+  // Let both sides settle the exchange before photographing them: the poke is
+  // answered with an ack and the advise loops that redraw both tables.
+  await quiet(dealer, 2000);
+  dealer.child.send({ t: 'go' });
+  client.child.send({ t: 'go' });
   const passedShots = await Promise.all([
     waitForFile(shot('dealer-passed')), waitForFile(shot('client-passed')),
   ]);
@@ -442,17 +497,24 @@ function table(file) {
       `(${(t.green * 100).toFixed(0)}% baize, ${(t.white * 100).toFixed(0)}% cards)`,
       t.green > 0.4 && t.white > 0.1, JSON.stringify(t));
   }
-  // Hearts renames the button to "OK" when three cards arrive *for* you, which
-  // only happens once the round of passes has come round to that seat. The
-  // client's does; the dealer's does not, and its status bar still reads
-  // "Waiting for other players to pass" long after the client has passed --
-  // so a pass in one direction is not yet reaching the other side. That is a
-  // real gap and it is not this test's job to hide it, but it is downstream of
-  // everything above: both players are dealt, both play, neither crashes.
-  check('a pass completed a round trip and cards arrived', client.seen.has('passed'),
-    'no side was ever offered cards to accept');
+  // Hearts renames the button to "OK" when three cards arrive *for* you, so
+  // this is the round of passes having come all the way round to a seat: your
+  // three cards left, three others arrived, and the game is asking you to take
+  // them. It is the furthest into a hand this test goes.
+  check('the pass came round and cards were offered to a player',
+    dealer.seen.has('passed') || client.seen.has('passed'),
+    'neither side was ever offered cards to accept');
+  // Not a failure, and not hidden either. The dealer's own seat does not
+  // finish the round: it receives the client's "Pass" poke, reads it with
+  // DdeGetData, posts an advise and acknowledges with DDE_FACK -- and its
+  // status bar still reads "Waiting for other players to pass" while the
+  // client has moved on to play. Run with --linger=30 and look at the two
+  // final screenshots to see it. The next thing to look at is
+  // DdeClientTransaction's TIMEOUT_ASYNC: Hearts asks for asynchronous
+  // transactions and this DDEML does them synchronously and never sends the
+  // XTYP_XACT_COMPLETE that ends one.
   if (!dealer.seen.has('passed')) {
-    console.log('KNOWN GAP  the dealer is still waiting for the client\'s pass to reach it');
+    console.log('KNOWN GAP  the dealer\'s seat did not finish the passing round');
   }
 
   // Both transcripts are kept whatever happens: with two processes and a wire
@@ -469,6 +531,10 @@ function table(file) {
   }
   console.log(`Transcripts and screenshots: ${OUT}`);
 
+  // --linger=SECONDS keeps both games alive after the checks, which is how to
+  // watch what a seat does with more time than the test gives it.
+  const linger = arg('linger', 0) * 1000;
+  if (linger) { console.log(`lingering ${linger}ms`); await sleep(linger); }
   for (const s of [dealer, client]) { try { s.child.kill(); } catch (_) {} }
   await sleep(300);
 

@@ -248,10 +248,12 @@
   (func $win16_dde_ask_push (param $type i32) (param $inst i32) (param $conv i32)
                             (param $hsz1 i32) (param $hsz2 i32) (result i32)
     (call $win16_dde_ask_push_data (local.get $type) (local.get $inst)
-      (local.get $conv) (local.get $hsz1) (local.get $hsz2) (i32.const 0)))
+      (local.get $conv) (local.get $hsz1) (local.get $hsz2) (i32.const 0)
+      (i32.const 0)))
 
   (func $win16_dde_ask_push_data (param $type i32) (param $inst i32) (param $conv i32)
                                  (param $hsz1 i32) (param $hsz2 i32) (param $hdata i32)
+                                 (param $fmt i32)
                                  (result i32)
     (local $i i32) (local $slot i32)
     ;; Three separate things can go wrong between a frame arriving and an
@@ -268,7 +270,12 @@
         (call $host_log_i32 (local.get $hsz1))
         (call $host_log_i32 (local.get $hsz2))
         (call $host_log_i32 (i32.load offset=4 (call $win16_dde_inst
-          (i32.sub (local.get $inst) (i32.const 1)))))))
+          (i32.sub (local.get $inst) (i32.const 1)))))
+        ;; The format and the data handle, because "the application was asked"
+        ;; and "the application was asked something it could read" are different
+        ;; facts, and only the second one makes a game move.
+        (call $host_log_i32 (local.get $fmt))
+        (call $host_log_i32 (local.get $hdata))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
       (local.set $slot (call $win16_dde_ask_slot (local.get $i)))
@@ -281,6 +288,7 @@
           (i32.store offset=16 (local.get $slot) (local.get $hsz1))
           (i32.store offset=20 (local.get $slot) (local.get $hsz2))
           (i32.store offset=24 (local.get $slot) (local.get $hdata))
+          (i32.store offset=28 (local.get $slot) (local.get $fmt))
           (return (i32.const 1))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -318,7 +326,7 @@
       (i32.sub (i32.load offset=8 (local.get $slot)) (i32.const 1)))))
     (global.set $win16_dde_cb_item (local.get $item))
     (call $win16_push16 (i32.load offset=4 (local.get $slot)))       ;; wType
-    (call $win16_push16 (i32.const 0))                               ;; wFmt
+    (call $win16_push16 (i32.load offset=28 (local.get $slot)))      ;; wFmt
     (call $win16_push16 (i32.const 0))                               ;; hConv hi
     (call $win16_push16 (i32.load offset=12 (local.get $slot)))      ;; hConv lo
     (call $win16_push16 (i32.const 0))                               ;; hsz1 hi
@@ -493,7 +501,16 @@
   ;; virtual LAN uses — so anything hosting two instances has to give them
   ;; distinct addresses, which it already must do for Winsock.
   (global $DDE_MAGIC i32 (i32.const 0x31454444))
-  (global $DDE_HDR i32 (i32.const 24))
+  ;; +24 is the clipboard format the transaction's bytes are in, and it is not
+  ;; decoration: DDEML hands it to the callback as wFmt, and an application
+  ;; reads the data only if it is the format it asked for. Handing every
+  ;; callback a zero let a poke be acknowledged and then ignored -- Hearts'
+  ;; dealer accepted the other player's three cards with DDE_FACK and went on
+  ;; waiting for them forever.
+  (global $DDE_HDR i32 (i32.const 28))
+  ;; Set by whoever is about to emit; the emitter writes it into the frame and
+  ;; clears it, so a format can never leak onto an unrelated frame.
+  (global $win16_dde_out_fmt (mut i32) (i32.const 0))
   (global $DDE_MAX_PAYLOAD i32 (i32.const 256))
   (global $dde_frame_buf (mut i32) (i32.const 0))
 
@@ -658,6 +675,8 @@
     (i32.store offset=12 (local.get $wa) (local.get $src_conv))
     (i32.store offset=16 (local.get $wa) (local.get $dst_conv))
     (i32.store offset=20 (local.get $wa) (local.get $len))
+    (i32.store offset=24 (local.get $wa) (global.get $win16_dde_out_fmt))
+    (global.set $win16_dde_out_fmt (i32.const 0))
     (call $host_net_frame_send (local.get $wa)
       (i32.add (global.get $DDE_HDR) (local.get $len))))
 
@@ -834,7 +853,8 @@
               (i32.add (local.get $want) (local.get $i))
               (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i)))
             (i32.const 0)
-            (i32.eq (local.get $type) (i32.const 6)))))
+            (i32.eq (local.get $type) (i32.const 6)))
+          (i32.load offset=24 (local.get $wa))))
         (return)))
 
     ;; The far side has acknowledged a poke, execute or advise start.
@@ -883,7 +903,8 @@
           (call $win16_dde_hsz_intern_wa (local.get $want))
           (call $win16_dde_data_take
             (i32.add (local.get $want) (local.get $i))
-            (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i)))))
+            (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i)))
+          (i32.load offset=24 (local.get $wa))))
         (return)))
 
     ;; The peer has gone. Close whichever conversation names it.
@@ -1389,6 +1410,8 @@
       (select (call $win16_arg32 (i32.const 10)) (i32.const 0)
               (i32.eq (local.get $frame) (i32.const 6))))
     (i32.store offset=48 (local.get $pend) (call $host_real_time_ms))
+    ;; The caller's wFmt, kept with everything else needed to send this again.
+    (i32.store offset=52 (local.get $pend) (call $win16_arg16 (i32.const 5)))
     (call $win16_dde_send_xact (local.get $pend))
     (call $win16_dde_park (i32.const 28)))
 
@@ -1418,6 +1441,7 @@
               (call $g2w (i32.load offset=40 (local.get $pend)))
               (local.get $cb))
             (local.set $len (i32.add (local.get $len) (local.get $cb)))))
+        (global.set $win16_dde_out_fmt (i32.load offset=52 (local.get $pend)))
         (drop (call $win16_dde_emit (local.get $frame) (local.get $conv)
           (i32.load offset=12 (call $win16_dde_conv_slot
             (i32.sub (local.get $conv) (i32.const 1))))
