@@ -74,11 +74,14 @@ check('Find Next selected the first lowercase alpha', /len=17 sel=0\.\.5 .*text=
 check('Replace changed one match and advanced to the next case-insensitive match',
   /len=13 sel=2\.\.7 .*text="X ALPHA alpha"/.test(state('single')));
 check('single Replace notification carries both buffers',
-  /dump-fr: flags=0x10 findWhat="alpha" replaceWith="X"/.test(output));
+  /dump-fr: .*watFlags=0x10 findWhat="alpha" .*replaceWith="X"/.test(output));
+// watFlags, not the struct's Flags: MFC has already freed its FINDREPLACE by
+// the time the Replace lands, so what the dialog asked for only survives in
+// the notification we sent, not in the caller's recycled bytes.
 check('Match Case Replace All leaves uppercase ALPHA untouched',
   /len=9 sel=9\.\.9 .*text="X ALPHA X"/.test(state('all')));
 check('Replace All notification uses FR_REPLACEALL plus FR_MATCHCASE',
-  /dump-fr: flags=0x24 findWhat="alpha" replaceWith="X"/.test(output));
+  /dump-fr: .*watFlags=0x24 findWhat="alpha" .*replaceWith="X"/.test(output));
 check('Replace screenshot written', fs.existsSync(PNG) && fs.statSync(PNG).size > 0);
 check('no unimplemented API', !/UNIMPLEMENTED/.test(output));
 check('no crash', !/CRASH|RuntimeError|Unreachable code/.test(output));

@@ -2143,6 +2143,11 @@
   (global $findreplace_edit_hwnd (mut i32) (i32.const 0))
   (global $findreplace_replace_hwnd (mut i32) (i32.const 0))
   (global $findreplace_is_replace (mut i32) (i32.const 0))
+  ;; The Flags word of the notification we last sent. It is also written into
+  ;; the caller's FINDREPLACE, but only while that struct is still alive --
+  ;; MFC frees its own before the dialog closes -- so this is the copy that
+  ;; always says what the dialog actually asked for.
+  (global $findreplace_last_flags (mut i32) (i32.const 0))
   ;; Registered FINDMSGSTRING ("commdlg_FindReplace") message. Unlike a
   ;; process-local increment-only stub, repeated registrations of this system
   ;; string must return the same value so modeless Find notifications reach

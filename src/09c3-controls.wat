@@ -1224,16 +1224,18 @@
   ;; that point reads recycled heap.
   ;;
   ;; lStructSize is the one field commdlg itself requires the caller to set,
-  ;; so it doubles as a liveness bit: 32 means the block is still the
-  ;; FINDREPLACE it was, anything else means somebody else owns those bytes
-  ;; now and writing flags or search text into them corrupts them.
+  ;; so it doubles as a liveness bit: sizeof(FINDREPLACE) is 40 (ten dwords,
+  ;; the two length WORDs sharing one), and a block that still says 40 is
+  ;; still the FINDREPLACE it was. Anything else means somebody else owns
+  ;; those bytes now and writing flags or search text into them corrupts them.
   (func $findreplace_struct_live (param $fr_w i32) (result i32)
-    (i32.eq (i32.load (local.get $fr_w)) (i32.const 32)))
+    (i32.eq (i32.load (local.get $fr_w)) (i32.const 40)))
 
   ;; Flags back-fill, skipped once the struct is gone. The dialog's own state
   ;; (the WAT edits, the direction radios) is what the search runs off, so
   ;; losing the write costs the app nothing it can still read.
   (func $findreplace_store_flags (param $fr_w i32) (param $flags i32)
+    (global.set $findreplace_last_flags (local.get $flags))
     (if (call $findreplace_struct_live (local.get $fr_w))
       (then (i32.store offset=12 (local.get $fr_w) (local.get $flags)))))
 

@@ -3281,6 +3281,7 @@
   (func (export "get_findreplace_dlg")  (result i32) (global.get $findreplace_dlg_hwnd))
   (func (export "get_findreplace_edit") (result i32) (global.get $findreplace_edit_hwnd))
   (func (export "get_findreplace_replace_edit") (result i32) (global.get $findreplace_replace_hwnd))
+  (func (export "get_findreplace_last_flags") (result i32) (global.get $findreplace_last_flags))
   (func (export "wnd_get_userdata_export") (param $hwnd i32) (result i32)
     (call $wnd_get_userdata (local.get $hwnd)))
 

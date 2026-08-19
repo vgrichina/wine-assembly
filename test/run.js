@@ -5017,6 +5017,11 @@ async function main() {
           if (frG) {
             const dv = new DataView(memory.buffer);
             const wa = g2w(frG);
+            // lStructSize is the liveness bit: commdlg requires the caller to
+            // set it to sizeof(FINDREPLACE) = 40, so anything else means the
+            // caller freed the block
+            // and something else owns those bytes now.
+            const structSize = dv.getUint32(wa + 0x00, true);
             const flags = dv.getUint32(wa + 0x0C, true);
             const findBufG = dv.getUint32(wa + 0x10, true);
             const findBufLen = dv.getUint16(wa + 0x18, true);
@@ -5035,15 +5040,30 @@ async function main() {
                 replacement += String.fromCharCode(m8[replaceBufWa + i]);
               }
             }
-            if (!replacement && we.get_findreplace_replace_edit && we.get_edit_text && we.guest_alloc) {
-              const replaceEdit = we.get_findreplace_replace_edit() | 0;
-              if (replaceEdit) {
-                const scratchG = we.guest_alloc(512);
-                const n = we.get_edit_text(replaceEdit, scratchG, 511) | 0;
-                replacement = Buffer.from(new Uint8Array(memory.buffer, g2w(scratchG), Math.max(0, n))).toString('latin1');
-              }
+            // Once the caller has freed its FINDREPLACE (lStructSize no longer
+            // reads 40) every field in it is somebody else's data, so the
+            // dialog's own edits and the flags we last sent are the only
+            // honest answer to "what did the app ask for".
+            const structLive = structSize === 40;
+            const editText = (hwnd) => {
+              if (!hwnd || !we.get_edit_text || !we.guest_alloc) return '';
+              const scratchG = we.guest_alloc(512);
+              const n = we.get_edit_text(hwnd, scratchG, 511) | 0;
+              return Buffer.from(new Uint8Array(memory.buffer, g2w(scratchG), Math.max(0, n))).toString('latin1');
+            };
+            if ((!replacement || !structLive) && we.get_findreplace_replace_edit) {
+              const fromEdit = editText(we.get_findreplace_replace_edit() | 0);
+              if (fromEdit || !structLive) replacement = fromEdit;
             }
-            logs.push(`[input] dump-fr: flags=0x${flags.toString(16)} findWhat=${JSON.stringify(txt)} replaceWith=${JSON.stringify(replacement)} at batch ${batch}`);
+            if (!structLive && we.get_findreplace_edit) {
+              txt = editText(we.get_findreplace_edit() | 0);
+            }
+            const watFlags = we.get_findreplace_last_flags ? we.get_findreplace_last_flags() >>> 0 : 0;
+            // The two length words are part of the answer, not decoration: a
+            // zero wFindWhatLen makes findWhat read back empty no matter what
+            // the buffer holds, and telling that apart from "nothing was
+            // copied" is the whole question when a Find comes back blank.
+            logs.push(`[input] dump-fr: dlg=0x${dlg.toString(16)} fr=0x${frG.toString(16)} size=${structSize} flags=0x${flags.toString(16)} watFlags=0x${watFlags.toString(16)} findWhat=${JSON.stringify(txt)} findBuf=0x${findBufG.toString(16)} findLen=${findBufLen} replaceWith=${JSON.stringify(replacement)} replaceBuf=0x${replaceBufG.toString(16)} replaceLen=${replaceBufLen} at batch ${batch}`);
           } else {
             logs.push(`[input] dump-fr: no FR ptr at batch ${batch}`);
           }
