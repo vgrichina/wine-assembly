@@ -5,6 +5,7 @@
 const { execSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { createCanvas, loadImage } = require('../lib/canvas-compat');
 
 const ROOT = path.join(__dirname, '..');
@@ -463,6 +464,7 @@ function runExe(testCase, pngPath) {
     ...extraArgs,
   ];
 
+  const startedAt = Date.now();
   const result = spawnSync('node', args, {
     cwd: ROOT,
     timeout: testCase.timeoutMs || 15000,
@@ -470,6 +472,17 @@ function runExe(testCase, pngPath) {
     maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
   });
+  const elapsedMs = Date.now() - startedAt;
+
+  // A run killed by the timeout exits via a signal, so `result.status` is null,
+  // not a non-zero code. The crash test below reads `status !== null && !== 0`,
+  // which is false for a signal — so before this check a timed-out run fell
+  // straight through to the success path, and because it was killed before
+  // writing its --png, the blank-pixel gate was skipped too (it requires the
+  // file to exist). Net effect: a run that never finished was reported OK, and
+  // the *slower* the box, the more apps passed. That is the reported
+  // 105-vs-103 instability, and in the direction nobody expects.
+  const timedOut = result.error ? result.error.code === 'ETIMEDOUT' : Boolean(result.signal);
 
   const output = (result.stdout || '') + (result.stderr || '');
   const lines = output.split('\n');
@@ -498,6 +511,23 @@ function runExe(testCase, pngPath) {
     : true;
   const forbiddenVisibleTitle = (testCase.forbidVisibleTitles || [])
     .find(title => lines.some(l => l.includes('visible=true') && l.includes(`title="${title}"`))) || '';
+
+  // Report the timeout as itself. It is not a pass (the app never finished and
+  // never wrote its PNG, so nothing about its rendering was actually checked)
+  // and it is not a crash (the app was healthy, the wall clock ran out). The
+  // load average goes in the reason because that is nearly always the cause on
+  // this box, and without it the line reads like an app regression.
+  if (timedOut) {
+    return {
+      name: testCase.name,
+      status: 'TIMEOUT',
+      reason: `timed out after ${(elapsedMs / 1000).toFixed(1)}s ` +
+        `(limit ${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s, ` +
+        `load ${os.loadavg()[0].toFixed(1)}) — ${apiCalls.size} APIs, nothing verified`,
+      apiCount: apiCalls.size,
+      hasWindow,
+    };
+  }
 
   if ((result.status !== null && result.status !== 0) || unimplMatch) {
     // run.js prints "*** CRASH at batch N: <msg>" then "  EIP before batch: 0xXXXX"
@@ -583,6 +613,15 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     }
     const r = runExe(tc, pngPath);
 
+    // A case that asked for a PNG and did not get one was never pixel-checked,
+    // so calling it PASS claims a verification that did not happen. The gate
+    // below is guarded on the file existing, which silently converted every
+    // such case into a pass.
+    if (r.status === 'OK' && pngPath && !fs.existsSync(pngPath)) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — NO_PNG (run produced no frame to check)`;
+    }
+
     // Pixel-diversity gate: apparent PASS with a near-blank PNG is really a WARN.
     // Two-signal: few unique colors AND >95% of pixels in one color = blank.
     // Cartoon content (few colors but real shapes) passes the second check.
@@ -633,7 +672,8 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     }
     results.push(r);
 
-    const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP' : r.status === 'WARN' ? 'WARN' : 'FAIL';
+    const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP'
+      : r.status === 'WARN' ? 'WARN' : r.status === 'TIMEOUT' ? 'TMOUT' : 'FAIL';
     console.log(`${icon}  ${r.reason}`);
   }
 
@@ -642,7 +682,18 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
   const fail = results.filter(r => r.status === 'CRASH').length;
   const warn = results.filter(r => r.status === 'WARN').length;
   const skip = results.filter(r => r.status === 'SKIP').length;
-  console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}  Total: ${results.length}`);
+  const timeouts = results.filter(r => r.status === 'TIMEOUT');
+  console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}` +
+    `  TIMEOUT: ${timeouts.length}  Total: ${results.length}`);
+
+  // Loud, because a timeout used to be counted as a PASS: any number here means
+  // the PASS count above is measuring the box, not the emulator. Re-run on an
+  // idle machine before comparing it to anything.
+  if (timeouts.length > 0) {
+    console.log(`\nTimed out — NOT verified, do not read the PASS count as stable ` +
+      `(load now ${os.loadavg()[0].toFixed(1)}):`);
+    for (const r of timeouts) console.log(`  ${r.name}: ${r.reason}`);
+  }
 
   if (fail > 0) {
     console.log('\nCrashed EXEs:');
