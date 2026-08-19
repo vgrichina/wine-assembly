@@ -800,7 +800,9 @@
   (data (i32.const 0x2C5) "12\00")             ;; +0x125
   (data (i32.const 0x2C8) "14\00")             ;; +0x128
   (data (i32.const 0x2CB) "18\00")             ;; +0x12B
-  (data (i32.const 0x2CE) "24\00")             ;; +0x12E
+  ;; "24" does not fit before the 0x2D0 buffer -- its terminator would land on
+  ;; that buffer's first byte -- so it sits after <ord> instead.
+  (data (i32.const 0x2E6) "24\00")             ;; +0x146
   ;; Buffer for ordinal-import crash messages: "KERNEL32.#NNNNN\0" (max 16 bytes)
   (data (i32.const 0x2D0) "KERNEL32.#00000\00")  ;; +0x1D0, filled in by $win32_dispatch
   ;; Placeholder name for RESOLVED ordinal imports. thunk+0 holds the ordinal
@@ -969,7 +971,7 @@
   (data (i32.const 0x3141) "SysListView32\00")
   (data (i32.const 0x3150) "Slider1\00")
   (data (i32.const 0x3158) "msctls_trackbar32\00")
-  (data (i32.const 0x316B) "SysTreeView32\00")
+  (data (i32.const 0x316A) "SysTreeView32\00")
   (data (i32.const 0x3178) "SysLink\00")
   (data (i32.const 0x3180) "DirectAnimation.DAView\00")
   (data (i32.const 0x31A0) "DirectAnimation.DAStatics\00")
