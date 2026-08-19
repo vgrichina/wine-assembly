@@ -90,97 +90,13 @@ class WineAssembly {
     return str;
   }
 
-  _cleanupWinampVisualizerThread(info) {
-    const ex = this.instance && this.instance.exports;
-    if (!ex || !this.memory || !this.memory.buffer) return;
-    const imageBase = ex.get_image_base ? (ex.get_image_base() >>> 0) : 0;
-    const guestBase = ex.get_guest_base ? (ex.get_guest_base() >>> 0) : 0x12000;
-    if (!imageBase) return;
-    const dv = new DataView(this.memory.buffer);
-    const g2w = (ptr) => ((ptr >>> 0) - imageBase + guestBase) >>> 0;
-    const read32 = (ptr) => {
-      const wa = g2w(ptr);
-      return wa + 4 <= dv.byteLength ? (dv.getUint32(wa, true) >>> 0) : 0;
-    };
-    const write32 = (ptr, value) => {
-      const wa = g2w(ptr);
-      if (wa + 4 <= dv.byteLength) dv.setUint32(wa, value >>> 0, true);
-    };
-    const readStr = (ptr, max) => {
-      const wa = g2w(ptr);
-      if (wa >= dv.byteLength) return '';
-      let s = '';
-      for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
-        const c = dv.getUint8(wa + i);
-        if (!c) break;
-        s += String.fromCharCode(c);
-      }
-      return s;
-    };
-    const readLinearStr = (wa, max) => {
-      if (wa >= dv.byteLength) return '';
-      let s = '';
-      for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
-        const c = dv.getUint8(wa + i);
-        if (!c) break;
-        s += String.fromCharCode(c);
-      }
-      return s;
-    };
-    const findDllLoadAddr = (name) => {
-      if (!ex.get_dll_count || !ex.get_dll_table) return 0;
-      const target = String(name || '').toLowerCase();
-      const table = ex.get_dll_table() >>> 0;
-      const count = ex.get_dll_count() | 0;
-      for (let i = 0; i < count; i++) {
-        const entry = table + i * 32;
-        if (entry + 12 > dv.byteLength) break;
-        const loadAddr = dv.getUint32(entry, true) >>> 0;
-        const exportRva = dv.getUint32(entry + 8, true) >>> 0;
-        if (!loadAddr || !exportRva) continue;
-        const exportDir = g2w((loadAddr + exportRva) >>> 0);
-        if (exportDir + 16 > dv.byteLength) continue;
-        const nameRva = dv.getUint32(exportDir + 12, true) >>> 0;
-        if (!nameRva) continue;
-        const dllName = readLinearStr(g2w((loadAddr + nameRva) >>> 0), 96).toLowerCase();
-        if (dllName === target) return loadAddr;
-      }
-      return 0;
-    };
-    const resetWvisDllWindowCache = () => {
-      const loadAddr = findDllLoadAddr('vis_w.dll');
-      if (!loadAddr) return false;
-      const resetOffsets = [
-        0xc060, 0xc064,       // current surface size
-        0xca48, 0xca4c,       // last allocated surface size
-        0xde60, 0xde64, 0xde68, 0xde70,
-        0xde78, 0xde7c, 0xde80, 0xde84, // cached parent window rect
-      ];
-      for (const off of resetOffsets) write32((loadAddr + off) >>> 0, 0);
-      return true;
-    };
-
-    const handle = (info && info.handle) >>> 0;
-    if (((info && info.param) >>> 0) === 0x458060 && read32(0x458060) === 1) {
-      if (read32(0x45805c) === handle) write32(0x45805c, 0);
-      write32(0x458060, 0);
-      console.log(`[host] reset Winamp visualizer data helper stop flag after thread 0x${handle.toString(16)} exited`);
-      return;
-    }
-    if (!handle || read32(0x4595ac) !== handle) return;
-    const pluginPath = readStr(0x4595b8, 260).toLowerCase();
-    if (!pluginPath.includes('vis_w.dll') && !pluginPath.includes('plugins\\vis_')) return;
-    if (!read32(0x459584) && !read32(0x459810)) return;
-    if (read32(0x458c78) !== 0) return;
-
-    write32(0x4595a4, 0);
-    write32(0x4595ac, 0);
-    write32(0x459584, 0);
-    write32(0x459810, 0);
-    write32(0x458060, 1);
-    const resetDll = resetWvisDllWindowCache();
-    console.log(`[host] cleared stale Winamp visualizer thread handle 0x${handle.toString(16)}`);
-    if (resetDll) console.log('[host] reset wVis DLL cached window geometry');
+  // Per-app thread-exit fixups (Winamp's visualizer bookkeeping) live in
+  // lib/app-profiles.js, so the CLI harness runs the same ones.
+  _onThreadExit(info) {
+    const profiles = (typeof window !== 'undefined' && window.appProfiles) || null;
+    if (!profiles || !this.instance || !this.memory) return;
+    profiles.onThreadExit(
+      this._exeName, info, this.instance.exports, this.memory.buffer);
   }
 
   primeAudio() {
@@ -812,7 +728,7 @@ class WineAssembly {
       threadsRequested: !!(typeof window !== 'undefined' && window.WINE_THREADS),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
-      onThreadExit: (info) => self._cleanupWinampVisualizerThread(info),
+      onThreadExit: (info) => self._onThreadExit(info),
       profileThreadRun: (info) => {
         if (typeof window !== 'undefined' && typeof window.__waProfileThreadRun === 'function') {
           window.__waProfileThreadRun(info);

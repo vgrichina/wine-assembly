@@ -5,7 +5,10 @@ const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { resolveDllGraph, stageAndLoadPe, setExeName, setExtraCmdline } = require('../lib/process-boot');
-const { applyExeCompatibilityPatches: applyProfilePatches } = require('../lib/app-profiles');
+const {
+  applyExeCompatibilityPatches: applyProfilePatches,
+  onThreadExit: profileThreadExit,
+} = require('../lib/app-profiles');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -2335,6 +2338,12 @@ async function main() {
       (inputQueue && inputQueue.length) ||
       (renderer && renderer.inputQueue && renderer.inputQueue.length)
     ),
+    // The per-app thread-exit fixups the browser host has always run — Winamp's
+    // visualizer bookkeeping — now run headless too, so a browser-only symptom
+    // is reproducible from the CLI.
+    onThreadExit: (info) => profileThreadExit(
+      path.basename(EXE_PATH), info, instance.exports, memory.buffer,
+      { log: (m) => console.log(m) }),
   });
 
   const mem = new Uint8Array(memory.buffer);

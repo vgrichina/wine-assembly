@@ -2530,8 +2530,12 @@ Resource-aware Win98 emulator
         wine._availableDllFiles = new Set(Object.keys(availableDlls));
         // App-local DLLs ship beside their exe, so a dependency named by
         // another DLL is looked up in this app's own `files` list too.
+        // A files entry is either a URL or { url, vfsPath }.
         const appFileByName = new Map();
-        for (const f of (app.files || [])) appFileByName.set(f.split('/').pop().toLowerCase(), f);
+        for (const f of (app.files || [])) {
+          const url = typeof f === 'string' ? f : (f && f.url);
+          if (url) appFileByName.set(url.split('/').pop().toLowerCase(), url);
+        }
         const fetchDll = async (spec) => {
           const name = spec.split('/').pop();
           const url = spec.includes('/') ? spec
