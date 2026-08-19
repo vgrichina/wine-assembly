@@ -2609,6 +2609,14 @@ async function main() {
           ? item.vfsPaths
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
         for (const p of paths) addFile(p, hostPath, size);
+        // Same rule the page applies: a font the app ships is a font its
+        // installer had put in the font directory, so mount it there too --
+        // but never over a vendored substitute already sitting there.
+        const base = url.replace(/^.*[\\\/]/, '').toLowerCase();
+        if (/\.(ttf|ttc|fon)$/.test(base)) {
+          const installed = 'c:\\windows\\fonts\\' + base;
+          if (!ctx.vfs.files.has(installed)) addFile(installed, hostPath, size);
+        }
       }
       if (missing.length) {
         const msg = `--app=${APP_ID}: ${missing.length} file(s) not found: ${missing.slice(0, 5).join(', ')}` +
