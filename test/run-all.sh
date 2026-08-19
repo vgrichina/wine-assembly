@@ -422,7 +422,13 @@ QUARANTINE=(
   test/test-wordpad-ole-delete-roundtrip.js
   # Paint / app-specific.
   test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
-  test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog
+  # 24/27 since the click and schedule fixes. The three left are one symptom:
+  # Winamp's Load-EQF path calls GetOpenFileNameA and that call never returns
+  # -- it is the last API of the run, no OpenSave dialog reaches dlg-dump, and
+  # no later --input action is serviced. The same handler works for Notepad
+  # (test-open-cancel, test-render-open-dlg, notepad-dialogs "open"), so it is
+  # this call site, not the common dialog.
+  test/test-winamp-eq-presets.js        # 24/27: GetOpenFileNameA never returns
   test/test-winamp-installers.js        # license page: no word-wrapped DrawText, no PNG
   test/test-winamp-visualization-web.js # wVis plug-in window should be visible
 )
