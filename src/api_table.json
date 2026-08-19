@@ -415,7 +415,11 @@
     "name": "CreateCompatibleDC",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3510766298
+    "hash": 3510766298,
+    "args": [
+      { "name": "hdc", "type": "HDC" }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 54,
@@ -450,7 +454,16 @@
     "name": "CreateDIBSection",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 1775273563
+    "hash": 1775273563,
+    "args": [
+      { "name": "hdc", "type": "HDC" },
+      { "name": "bmi", "type": "LPBITMAPINFO" },
+      { "name": "usage", "type": "UINT" },
+      { "name": "bits", "type": "LPVOID", "out": true },
+      { "name": "section", "type": "HANDLE" },
+      { "name": "offset", "type": "DWORD" }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 59,
@@ -3026,7 +3039,11 @@
     "name": "GetWindowDC",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1339497294
+    "hash": 1339497294,
+    "args": [
+      { "name": "hwnd", "type": "HWND" }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 354,
