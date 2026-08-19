@@ -51,6 +51,43 @@
   ;; for freeing it AND any sub-allocations (text_buf_ptr) in WM_DESTROY,
   ;; then calling $wnd_set_state_ptr(hwnd, 0).
 
+  ;; ---- ButtonState accessors ----
+  ;;
+  ;; $sw is the *WASM* address of the struct — $g2w of WND_RECORDS.state_ptr.
+  ;; Only the layout above says what a bare `offset=8` means, and every class
+  ;; puts something different there (a listbox keeps its top index at +20, an
+  ;; edit its selection anchor), so a reader landing mid-file cannot tell a
+  ;; button's flags word from anything else. Naming the fields makes the class
+  ;; of the pointer part of the expression instead of something you have to
+  ;; carry in your head from the wndproc entry.
+  (func $btn_text_ptr (param $sw i32) (result i32)
+    (i32.load (local.get $sw)))
+  (func $btn_set_text_ptr (param $sw i32) (param $v i32)
+    (i32.store (local.get $sw) (local.get $v)))
+  (func $btn_text_len (param $sw i32) (result i32)
+    (i32.load offset=4 (local.get $sw)))
+  (func $btn_set_text_len (param $sw i32) (param $v i32)
+    (i32.store offset=4 (local.get $sw) (local.get $v)))
+  (func $btn_flags (param $sw i32) (result i32)
+    (i32.load offset=8 (local.get $sw)))
+  (func $btn_set_flags (param $sw i32) (param $v i32)
+    (i32.store offset=8 (local.get $sw) (local.get $v)))
+  (func $btn_ctrl_id (param $sw i32) (result i32)
+    (i32.load offset=12 (local.get $sw)))
+  (func $btn_set_ctrl_id (param $sw i32) (param $v i32)
+    (i32.store offset=12 (local.get $sw) (local.get $v)))
+  (func $btn_image_type (param $sw i32) (result i32)
+    (i32.load offset=64 (local.get $sw)))
+  (func $btn_image_handle (param $sw i32) (result i32)
+    (i32.load offset=68 (local.get $sw)))
+  (func $btn_set_image (param $sw i32) (param $type i32) (param $h i32)
+    (i32.store offset=64 (local.get $sw) (local.get $type))
+    (i32.store offset=68 (local.get $sw) (local.get $h)))
+  ;; The owner-draw DRAWITEMSTRUCT scratch lives inside the struct; the message
+  ;; carries its *guest* address, so both forms are named.
+  (func $btn_drawitem_guest (param $state i32) (result i32)
+    (i32.add (local.get $state) (i32.const 16)))
+
   ;; Dialog mouse capture for WAT-managed buttons. Browser mouseup coordinates
   ;; can drift from the mousedown point; deliver the release to the pressed
   ;; button so owner-draw controls always clear ODS_SELECTED.
@@ -601,7 +638,7 @@
     (if (local.get $state)
       (then
         (return (i32.and
-          (i32.shr_u (i32.load offset=8 (call $g2w (local.get $state))) (i32.const 1))
+          (i32.shr_u (call $btn_flags (call $g2w (local.get $state))) (i32.const 1))
           (i32.const 1)))))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
@@ -616,10 +653,10 @@
     (if (local.get $btn_state)
       (then
         (local.set $btn_state_w (call $g2w (local.get $btn_state)))
-        (local.set $flags (i32.and (i32.load offset=8 (local.get $btn_state_w)) (i32.const 0xFFFFFFFD)))
+        (local.set $flags (i32.and (call $btn_flags (local.get $btn_state_w)) (i32.const 0xFFFFFFFD)))
         (if (local.get $state)
           (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x02)))))
-        (i32.store offset=8 (local.get $btn_state_w) (local.get $flags))))
+        (call $btn_set_flags (local.get $btn_state_w) (local.get $flags))))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
@@ -3862,7 +3899,7 @@
     (local $s i32)
     (local.set $s (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
-    (i32.load offset=8 (call $g2w (local.get $s))))
+    (call $btn_flags (call $g2w (local.get $s))))
 
   ;; ---- Shared text-buffer helper for state structs ----
   ;;
@@ -3938,10 +3975,10 @@
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
-              (local.set $flags (i32.load offset=8 (local.get $stw)))
+              (local.set $flags (call $btn_flags (local.get $stw)))
               ;; Clear bit1 (checked) on every autoradio sibling — including
               ;; $hwnd itself; the caller will re-set it after this returns.
-              (i32.store offset=8 (local.get $stw)
+              (call $btn_set_flags (local.get $stw)
                 (i32.and (local.get $flags) (i32.const 0xFFFFFFFD)))
               (call $invalidate_hwnd (local.get $other))
               ;; The browser compositor does not always get another child
@@ -3980,10 +4017,10 @@
               (if (local.get $st)
                 (then
                   (local.set $stw (call $g2w (local.get $st)))
-                  (if (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0x04))
+                  (if (i32.and (call $btn_flags (local.get $stw)) (i32.const 0x04))
                     (then
-                      (i32.store offset=8 (local.get $stw)
-                        (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0xFFFFFFFB)))
+                      (call $btn_set_flags (local.get $stw)
+                        (i32.and (call $btn_flags (local.get $stw)) (i32.const 0xFFFFFFFB)))
                       (call $invalidate_hwnd (local.get $other))))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -4011,8 +4048,8 @@
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
-              (i32.store offset=8 (local.get $stw)
-                (i32.or (i32.load offset=8 (local.get $stw)) (i32.const 0x04)))
+              (call $btn_set_flags (local.get $stw)
+                (i32.or (call $btn_flags (local.get $stw)) (i32.const 0x04)))
               (call $invalidate_hwnd (local.get $other))
               (return)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -4037,7 +4074,7 @@
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-    (local.set $ctrl_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
+    (local.set $ctrl_id (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
     (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
     (local.set $state_bits
@@ -4141,24 +4178,24 @@
         ;; Allocate ButtonState
         (local.set $state (call $heap_alloc (i32.const 72)))
         (local.set $state_w (call $g2w (local.get $state)))
-        (i32.store        (local.get $state_w) (i32.const 0)) ;; text_buf_ptr
-        (i32.store offset=4  (local.get $state_w) (i32.const 0)) ;; text_len
+        (call $btn_set_text_ptr (local.get $state_w) (i32.const 0))
+        (call $btn_set_text_len (local.get $state_w) (i32.const 0))
         ;; flags: bit2=default if BS_DEFPUSHBUTTON (style&0xF == 1).
         ;; The control's style is already on the WND record via $dlg_load /
         ;; $ctrl_create_child, so $wnd_get_style returns the right value.
-        (i32.store offset=8  (local.get $state_w)
+        (call $btn_set_flags (local.get $state_w)
           (select (i32.const 0x04) (i32.const 0)
                   (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
                           (i32.const 1))))
-        (i32.store offset=12 (local.get $state_w) (local.get $hmenu)) ;; ctrl_id
-        (i32.store offset=64 (local.get $state_w) (i32.const 0)) ;; image_type = IMAGE_BITMAP
-        (i32.store offset=68 (local.get $state_w) (i32.const 0)) ;; image_handle
+        (call $btn_set_ctrl_id (local.get $state_w) (local.get $hmenu))
+        (call $btn_set_image (local.get $state_w) (i32.const 0) (i32.const 0))
         ;; Copy initial text from CREATESTRUCT.lpszName
         (if (local.get $name_ptr)
           (then
             (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
-            (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
-            (i32.store offset=4  (local.get $state_w) (local.get $text_len))))
+            (call $btn_set_text_ptr (local.get $state_w)
+              (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
+            (call $btn_set_text_len (local.get $state_w) (local.get $text_len))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -4168,7 +4205,7 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (call $heap_free (i32.load (local.get $state_w))) ;; free text buf
+            (call $heap_free (call $btn_text_ptr (local.get $state_w))) ;; free text buf
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
@@ -4184,8 +4221,8 @@
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             (call $btn_clear_sibling_default (local.get $hwnd) (local.get $hwnd))
-            (i32.store offset=8 (local.get $state_w)
-              (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x0C))) ;; focused | default
+            (call $btn_set_flags (local.get $state_w)
+              (i32.or (call $btn_flags (local.get $state_w)) (i32.const 0x0C))) ;; focused | default
             (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
 
@@ -4201,16 +4238,16 @@
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             ;; Always clear focused bit3.
-            (i32.store offset=8 (local.get $state_w)
-              (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0xFFFFFFF7)))
+            (call $btn_set_flags (local.get $state_w)
+              (i32.and (call $btn_flags (local.get $state_w)) (i32.const 0xFFFFFFF7)))
             ;; If we aren't the real default, drop bit2 and restore the
             ;; real default's border. wnd style&0xF == 1 means real
             ;; BS_DEFPUSHBUTTON.
             (if (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F))
                         (i32.const 1))
               (then
-                (i32.store offset=8 (local.get $state_w)
-                  (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0xFFFFFFFB)))
+                (call $btn_set_flags (local.get $state_w)
+                  (i32.and (call $btn_flags (local.get $state_w)) (i32.const 0xFFFFFFFB)))
                 (call $btn_restore_real_default (local.get $hwnd))))
             (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
@@ -4229,7 +4266,7 @@
                 (drop (call $post_queue_push
                   (call $wnd_get_parent (local.get $hwnd))
                   (i32.const 0x0111)
-                  (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF))
+                  (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
                   (local.get $hwnd)))))))
         (return (i32.const 0))))
 
@@ -4240,14 +4277,15 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (call $heap_free (i32.load (local.get $state_w)))
-            (i32.store        (local.get $state_w) (i32.const 0))
-            (i32.store offset=4 (local.get $state_w) (i32.const 0))
+            (call $heap_free (call $btn_text_ptr (local.get $state_w)))
+            (call $btn_set_text_ptr (local.get $state_w) (i32.const 0))
+            (call $btn_set_text_len (local.get $state_w) (i32.const 0))
             (if (local.get $lParam)
               (then
                 (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
-                (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
-                (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+                (call $btn_set_text_ptr (local.get $state_w)
+                  (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
+                (call $btn_set_text_len (local.get $state_w) (local.get $text_len))))
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))
               (then (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 1)))) ;; TRUE
@@ -4260,12 +4298,12 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $text_len (call $btn_text_len (local.get $state_w)))
         (if (i32.ge_u (local.get $text_len) (local.get $wParam))
           (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
-        (if (i32.load (local.get $state_w))
+        (if (call $btn_text_ptr (local.get $state_w))
           (then (call $memcpy (call $g2w (local.get $lParam))
-                              (call $g2w (i32.load (local.get $state_w)))
+                              (call $g2w (call $btn_text_ptr (local.get $state_w)))
                               (local.get $text_len))))
         (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
         (return (local.get $text_len))))
@@ -4280,7 +4318,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000E))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (return (i32.load offset=4 (call $g2w (local.get $state))))))
+        (return (call $btn_text_len (call $g2w (local.get $state))))))
 
     ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0201))
@@ -4289,8 +4327,8 @@
           (then
             (local.set $state_w (call $g2w (local.get $state)))
             (local.set $flags
-              (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x01))) ;; pressed
-            (i32.store offset=8 (local.get $state_w) (local.get $flags))
+              (i32.or (call $btn_flags (local.get $state_w)) (i32.const 0x01))) ;; pressed
+            (call $btn_set_flags (local.get $state_w) (local.get $flags))
             (global.set $capture_hwnd (local.get $hwnd))
             ;; BS_OWNERDRAW: ask parent to repaint via WM_DRAWITEM. Other
             ;; kinds rely on WM_PAINT → button_wndproc drawing the bevel.
@@ -4312,7 +4350,7 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (local.set $flags (i32.load offset=8 (local.get $state_w)))
+            (local.set $flags (call $btn_flags (local.get $state_w)))
             ;; clear pressed
             (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFE)))
             (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
@@ -4336,8 +4374,8 @@
                 ;; $autoradio_clear_siblings cleared $hwnd's bit too — set it
                 ;; back on. Use the freshly-cleared flags from the state struct.
                 (local.set $flags
-                  (i32.or (i32.load offset=8 (local.get $state_w)) (i32.const 0x02)))))
-            (i32.store offset=8 (local.get $state_w) (local.get $flags))
+                  (i32.or (call $btn_flags (local.get $state_w)) (i32.const 0x02)))))
+            (call $btn_set_flags (local.get $state_w) (local.get $flags))
             ;; BS_OWNERDRAW: dispatch WM_DRAWITEM to repaint the unpressed
             ;; face. Other kinds use button_wndproc's WM_PAINT.
             (if (i32.eq (local.get $w) (i32.const 0x0B))
@@ -4352,7 +4390,7 @@
             (if (i32.ne (local.get $w) (i32.const 7))
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-                (local.set $cmd_id (i32.and (i32.load offset=12 (local.get $state_w)) (i32.const 0xFFFF)))
+                (local.set $cmd_id (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
                 (global.set $dialog_last_proc_handled (i32.const 0))
                 (drop (call $wnd_send_message
                   (local.get $parent)
@@ -4387,7 +4425,7 @@
         (call $paint_flag_clear_hwnd (local.get $hwnd))
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $flags (i32.load offset=8 (local.get $state_w)))
+        (local.set $flags (call $btn_flags (local.get $state_w)))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         ;; Native controls paint with a fresh BeginPaint DC. Our synthetic
         ;; hwnd+0x40000 DC can retain a clip region from a previous draw,
@@ -4411,10 +4449,10 @@
               (local.get $hdc) (i32.const 0x00808080)))))
 
         ;; Resolve text pointer/length once (used by every kind that has a label).
-        (if (i32.load (local.get $state_w))
+        (if (call $btn_text_ptr (local.get $state_w))
           (then
-            (local.set $text_w (call $g2w (i32.load (local.get $state_w))))
-            (local.set $text_len (i32.load offset=4 (local.get $state_w)))))
+            (local.set $text_w (call $g2w (call $btn_text_ptr (local.get $state_w))))
+            (local.set $text_len (call $btn_text_len (local.get $state_w)))))
 
         ;; ---- Bitmap button (BS_BITMAP 0x80) ----
         ;; Funtris uses BM_SETIMAGE on BS_BITMAP|BS_AUTOCHECKBOX controls for
@@ -4422,7 +4460,7 @@
         ;; control before considering the low-nibble button kind.
         (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0080))
           (then
-            (local.set $img (i32.load offset=68 (local.get $state_w)))
+            (local.set $img (call $btn_image_handle (local.get $state_w)))
             (if (local.get $img)
               (then
                 (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -4652,10 +4690,10 @@
               (then (return (i32.const 0))))
             ;; Fill DRAWITEMSTRUCT at ButtonState+16
             ;; Reuse $edge_flags as WASM address of the struct
-            (local.set $edge_flags (call $g2w (i32.add (local.get $state) (i32.const 16))))
+            (local.set $edge_flags (call $g2w (call $btn_drawitem_guest (local.get $state))))
             (i32.store         (local.get $edge_flags) (i32.const 4))  ;; CtlType = ODT_BUTTON
             (i32.store offset=4  (local.get $edge_flags)
-              (i32.load offset=12 (local.get $state_w)))               ;; CtlID
+              (call $btn_ctrl_id (local.get $state_w)))                ;; CtlID
             (i32.store offset=8  (local.get $edge_flags) (i32.const 0)) ;; itemID
             (i32.store offset=12 (local.get $edge_flags) (i32.const 1)) ;; itemAction = ODA_DRAWENTIRE
             (i32.store offset=16 (local.get $edge_flags)
@@ -4678,8 +4716,8 @@
             (drop (call $wnd_send_message
               (call $wnd_get_parent (local.get $hwnd))
               (i32.const 0x002B)
-              (i32.load offset=12 (local.get $state_w))
-              (i32.add (local.get $state) (i32.const 16))))
+              (call $btn_ctrl_id (local.get $state_w))
+              (call $btn_drawitem_guest (local.get $state))))
             ;; This WM_PAINT was handled by delegating WM_DRAWITEM to the
             ;; owner. Keep validation in WAT so owner-draw buttons do not
             ;; re-enter the paint pump without a fresh invalidation.
@@ -4695,7 +4733,7 @@
       (then
         (if (local.get $state)
           (then (return (i32.and (i32.shr_u
-                                   (i32.load offset=8 (call $g2w (local.get $state)))
+                                   (call $btn_flags (call $g2w (local.get $state)))
                                    (i32.const 1))
                                  (i32.const 1)))))
         (return (call $ctrl_get_check_state (local.get $hwnd)))))
@@ -4715,11 +4753,11 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (local.set $flags (i32.load offset=8 (local.get $state_w)))
+            (local.set $flags (call $btn_flags (local.get $state_w)))
             (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFD))) ;; clear checked
             (if (local.get $wParam)
               (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x02)))))
-            (i32.store offset=8 (local.get $state_w) (local.get $flags))
+            (call $btn_set_flags (local.get $state_w) (local.get $flags))
             (call $invalidate_hwnd (local.get $hwnd))
             (drop (call $wnd_send_message
               (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
@@ -4734,11 +4772,10 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (local.set $img (i32.load offset=68 (local.get $state_w)))
+            (local.set $img (call $btn_image_handle (local.get $state_w)))
             (if (i32.eq (local.get $wParam) (i32.const 0))
               (then
-                (i32.store offset=64 (local.get $state_w) (local.get $wParam))
-                (i32.store offset=68 (local.get $state_w) (local.get $lParam))
+                (call $btn_set_image (local.get $state_w) (local.get $wParam) (local.get $lParam))
                 (call $invalidate_hwnd (local.get $hwnd))))
             (return (local.get $img))))
         (return (i32.const 0))))
@@ -4749,8 +4786,8 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (if (i32.eq (local.get $wParam) (i32.load offset=64 (local.get $state_w)))
-              (then (return (i32.load offset=68 (local.get $state_w)))))))
+            (if (i32.eq (local.get $wParam) (call $btn_image_type (local.get $state_w)))
+              (then (return (call $btn_image_handle (local.get $state_w)))))))
         (return (i32.const 0))))
 
     ;; Default: return 0

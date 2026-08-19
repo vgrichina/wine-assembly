@@ -3318,7 +3318,7 @@
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
-              (if (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0x04))
+              (if (i32.and (call $btn_flags (local.get $stw)) (i32.const 0x04))
                 (then (return (local.get $h))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -3768,8 +3768,8 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $src (i32.load (local.get $sw)))
-    (local.set $len (i32.load offset=4 (local.get $sw)))
+    (local.set $src (call $btn_text_ptr (local.get $sw)))
+    (local.set $len (call $btn_text_len (local.get $sw)))
     (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
     (if (i32.ge_u (local.get $len) (local.get $max))
       (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
@@ -3787,7 +3787,7 @@
     (local $state i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (i32.load offset=8 (call $g2w (local.get $state))))
+    (call $btn_flags (call $g2w (local.get $state))))
 
   ;; Wrapper around $wnd_destroy_tree for tests that need to tear down a
   ;; standalone dialog/control without going through find/about teardown.
