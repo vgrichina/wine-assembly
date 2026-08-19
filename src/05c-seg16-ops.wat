@@ -68,6 +68,24 @@
             (call $host_log_i32 (i32.const 0xCA165E11))  ;; unmapped data selector
             (call $host_log_i32 (local.get $sel))
             (call $host_log_i32 (global.get $eip))))))
+    ;; A NULL one gets its own line under --trace-win16. Loading it is legal
+    ;; and common; what is not is the dereference that usually follows a few
+    ;; instructions later, and by then the register says only that it is zero
+    ;; and nothing about where it came from. This is the line that says where.
+    ;;
+    ;; Both addresses, like the fatal case below: $eip is the enclosing basic
+    ;; block, not the instruction, so on its own it can point at a block whose
+    ;; disassembly contains no segment load at all.
+    (if (i32.and (i32.eqz (local.get $sel))
+                 (i32.or (i32.eq (local.get $id) (i32.const 0))
+                         (i32.eq (local.get $id) (i32.const 3))))
+      (then
+        (if (global.get $win16_trace)
+          (then
+            (call $host_log_i32 (i32.const 0xCA165E12))  ;; null ES/DS load
+            (call $host_log_i32 (local.get $id))
+            (call $host_log_i32 (global.get $eip))
+            (call $host_log_i32 (global.get $dbg_prev_eip))))))
     (if (i32.and (i32.eqz (local.get $base))
                  (i32.or (i32.eq (local.get $id) (i32.const 1))
                          (i32.eq (local.get $id) (i32.const 2))))
