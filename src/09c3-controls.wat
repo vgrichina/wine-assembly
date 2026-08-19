@@ -9964,6 +9964,33 @@
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
+    ;; ---------- WM_SETFOCUS (0x0007) / WM_KILLFOCUS (0x0008) ----------
+    ;; LBN_SETFOCUS(4) / LBN_KILLFOCUS(5) to the parent. A combobox's dropdown
+    ;; list is one of these, and its parent combo turns the pair back into
+    ;; CBN_SETFOCUS/CBN_KILLFOCUS — the notification WordPad's format bar
+    ;; applies the picked font on.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0007))
+                (i32.eq (local.get $msg) (i32.const 0x0008)))
+      (then
+        (if (i32.eq (local.get $msg) (i32.const 0x0007))
+          (then (global.set $focus_hwnd (local.get $hwnd)))
+          (else
+            (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+              (then (global.set $focus_hwnd (i32.const 0))))))
+        (if (local.get $state)
+          (then
+            (local.set $sw (call $g2w (local.get $state)))
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (if (local.get $parent)
+              (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+                      (i32.or (i32.and (call $lb_ctrl_id (local.get $sw)) (i32.const 0xFFFF))
+                              (i32.shl (select (i32.const 4) (i32.const 5)
+                                         (i32.eq (local.get $msg) (i32.const 0x0007)))
+                                       (i32.const 16)))
+                      (local.get $hwnd)))))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
+
     ;; ---------- WM_CREATE (0x0001) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
@@ -11778,7 +11805,18 @@
     ;; ---------- WM_COMMAND (0x0111) from inner listbox or edit ----------
     ;; Listbox: LBN_SELCHANGE/LBN_DBLCLK → sync_text + relay CBN_SELCHANGE.
     ;; Edit (variant=2 only): EN_CHANGE(0x0300) → CBN_EDITCHANGE(5);
-    ;;                        EN_UPDATE(0x0400) → CBN_EDITUPDATE(6).
+    ;;                        EN_UPDATE(0x0400) → CBN_EDITUPDATE(6);
+    ;;                        EN_SETFOCUS(0x0100) → CBN_SETFOCUS(3);
+    ;;                        EN_KILLFOCUS(0x0200) → CBN_KILLFOCUS(4).
+    ;; The focus pair matters as much as the selection ones: a CBS_DROPDOWN
+    ;; combo never holds the focus itself, its edit child does, so a combo
+    ;; that only fired CBN_SETFOCUS/CBN_KILLFOCUS from its own WM_SETFOCUS/
+    ;; WM_KILLFOCUS never fired them at all. WordPad's format bar applies the
+    ;; picked font on CBN_KILLFOCUS of the font-name combo (it has no
+    ;; CBN_SELCHANGE/CBN_SELENDOK handler), so picking a font from the toolbar
+    ;; changed the combo's own text and nothing else.
+    ;; Focus moving between the combo's own parts (field ↔ dropdown list) is
+    ;; not a focus loss for the combo, so it must not relay CBN_KILLFOCUS.
     (if (i32.eq (local.get $msg) (i32.const 0x0111))
       (then
         ;; Edit notification path
@@ -11792,18 +11830,70 @@
               (then (local.set $cmd (i32.const 5))))           ;; CBN_EDITCHANGE
             (if (i32.eq (local.get $notif) (i32.const 0x0400))  ;; EN_UPDATE
               (then (local.set $cmd (i32.const 6))))           ;; CBN_EDITUPDATE
+            (if (i32.eq (local.get $notif) (i32.const 0x0100))  ;; EN_SETFOCUS
+              (then (local.set $cmd (i32.const 3))))           ;; CBN_SETFOCUS
+            (if (i32.eq (local.get $notif) (i32.const 0x0200))  ;; EN_KILLFOCUS
+              (then
+                ;; $focus_hwnd already names the incoming window: SetFocus
+                ;; updates it before the outgoing WM_KILLFOCUS is delivered.
+                (if (i32.eqz (i32.or
+                      (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+                      (i32.or
+                        (i32.eq (global.get $focus_hwnd)
+                                (call $cb_edit_hwnd (local.get $state_w)))
+                        (i32.eq (global.get $focus_hwnd) (local.get $lb)))))
+                  (then (local.set $cmd (i32.const 4))))))    ;; CBN_KILLFOCUS
             (if (local.get $cmd)
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
                 (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
                 (if (local.get $parent)
-                  (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                          (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
-                          (local.get $hwnd)))))))
+                  (then
+                    ;; The focus pair is POSTED, like CBN_SELCHANGE below: it is
+                    ;; relayed from inside the edit child's own WM_KILLFOCUS
+                    ;; dispatch, and its handler runs guest code that expects to
+                    ;; own the pump (WordPad's applies a CHARFORMAT to the view).
+                    (if (i32.or (i32.eq (local.get $cmd) (i32.const 3))
+                                (i32.eq (local.get $cmd) (i32.const 4)))
+                      (then (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
+                              (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
+                              (local.get $hwnd))))
+                      (else (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
+                              (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
+                              (local.get $hwnd)))))))))
             (return (i32.const 0))))
         (if (i32.eq (local.get $lParam) (local.get $lb))
           (then
             (local.set $notif (i32.shr_u (local.get $wParam) (i32.const 16)))
+            ;; LBN_SETFOCUS(4)/LBN_KILLFOCUS(5) from the dropdown list are the
+            ;; combo's own focus changes: clicking the field focuses the list,
+            ;; and the app that then takes the focus back (WordPad's format bar
+            ;; puts it on the view) is what ends the combo's edit.
+            (if (i32.or (i32.eq (local.get $notif) (i32.const 4))
+                        (i32.eq (local.get $notif) (i32.const 5)))
+              (then
+                (local.set $cmd (i32.const 0))
+                (if (i32.eq (local.get $notif) (i32.const 4))
+                  (then (local.set $cmd (i32.const 3)))          ;; CBN_SETFOCUS
+                  (else
+                    ;; Focus moving inside the combo (list ↔ field) is not a
+                    ;; focus loss for the combo itself.
+                    (if (i32.eqz (i32.or
+                          (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+                          (i32.or
+                            (i32.eq (global.get $focus_hwnd)
+                                    (call $cb_edit_hwnd (local.get $state_w)))
+                            (i32.eq (global.get $focus_hwnd) (local.get $lb)))))
+                      (then (local.set $cmd (i32.const 4))))))   ;; CBN_KILLFOCUS
+                (if (local.get $cmd)
+                  (then
+                    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                    (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
+                    (if (local.get $parent)
+                      (then (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
+                              (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
+                              (local.get $hwnd)))))))
+                (return (i32.const 0))))
             ;; LBN_SELCHANGE(1) or LBN_DBLCLK(2) → sync text + relay CBN_SELCHANGE
             (if (i32.or (i32.eq (local.get $notif) (i32.const 1))
                         (i32.eq (local.get $notif) (i32.const 2)))
@@ -11928,6 +12018,8 @@
   ;;   +24  flags          bit0=multiline bit1=password bit2=readonly bit3=focused
   ;;                       bit4=dragging selection bit5=caret visible
   ;;   +28  max_length     0 = unlimited
+  ;;   +32  font           HFONT from WM_SETFONT (0 = default GUI font)
+  ;;   +36  scroll_x       horizontal scroll offset in pixels (WS_HSCROLL)
 
   ;; Keep the caret inside the viewport, which is what USER's EM_SCROLLCARET
   ;; does and what every EDIT operation that moves the caret ends with. Without
@@ -12262,6 +12354,55 @@
   ;; Uses $host_measure_text to binary-ish-search the column within a line.
   ;; y-based line pick clamps to last line; x-based col picks the half-char
   ;; the click falls into (standard Win32 caret behavior).
+  ;; Width in pixels of the widest line, which is what an unwrapped EDIT
+  ;; scrolls horizontally over. Measuring every line with $host_measure_text
+  ;; would mean one GDI text measurement per line on every paint, so the
+  ;; longest line is picked by character count first and only that one is
+  ;; measured. Notepad's default Fixedsys is fixed-pitch, where that is exact;
+  ;; with a proportional font it is an approximation of which line is widest.
+  (func $edit_doc_width (param $state_w i32) (param $hdc i32) (result i32)
+    (local $buf_g i32) (local $text_len i32) (local $pos i32) (local $len i32)
+    (local $best_start i32) (local $best_len i32) (local $w i32)
+    (local.set $buf_g (i32.load (local.get $state_w)))
+    (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
+    (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+    (local.set $pos (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $pos) (local.get $text_len)))
+      (local.set $len (call $edit_line_len (local.get $state_w) (local.get $pos)))
+      (if (i32.gt_u (local.get $len) (local.get $best_len))
+        (then
+          (local.set $best_len (local.get $len))
+          (local.set $best_start (local.get $pos))))
+      (local.set $pos (i32.add (i32.add (local.get $pos) (local.get $len)) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $best_len)) (then (return (i32.const 0))))
+    (local.set $w (call $host_measure_text (local.get $hdc)
+      (i32.add (call $g2w (local.get $buf_g)) (local.get $best_start))
+      (local.get $best_len) (i32.const 0)))
+    (if (i32.eqz (local.get $w))
+      (then (local.set $w (i32.mul (local.get $best_len) (i32.const 8)))))
+    (local.get $w))
+
+  ;; Largest horizontal scroll offset for an unwrapped edit whose content area
+  ;; is $view_w wide. The 8 covers the 4px text margin on each side.
+  (func $edit_max_hscroll (param $state_w i32) (param $hdc i32) (param $view_w i32) (result i32)
+    (local $max i32)
+    (local.set $max (i32.sub
+      (i32.add (call $edit_doc_width (local.get $state_w) (local.get $hdc)) (i32.const 8))
+      (local.get $view_w)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
+    (local.get $max))
+
+  ;; Clamp and store scroll_x. Returns 1 when the viewport actually moved.
+  (func $edit_hscroll_to (param $state_w i32) (param $x i32) (param $max i32) (result i32)
+    (if (i32.gt_s (local.get $x) (local.get $max)) (then (local.set $x (local.get $max))))
+    (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
+    (if (i32.eq (local.get $x) (i32.load offset=36 (local.get $state_w)))
+      (then (return (i32.const 0))))
+    (i32.store offset=36 (local.get $state_w) (local.get $x))
+    (i32.const 1))
+
   (func $edit_xy_to_offset (param $state_w i32) (param $hdc i32) (param $x i32) (param $y i32) (result i32)
     (local $line_num i32) (local $line_start i32) (local $line_len i32)
     (local $text_len i32) (local $buf_g i32) (local $line_w i32)
@@ -12270,8 +12411,11 @@
     (local.set $text_len (i32.load offset=4 (local.get $state_w)))
     (local.set $buf_g (i32.load (local.get $state_w)))
     (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
-    ;; Subtract 4px text margin, clamp x>=0, y>=0.
+    ;; Subtract 4px text margin, add the horizontal scroll offset so a click
+    ;; lands on the character under the cursor rather than the one that would
+    ;; be there if the view were scrolled home, clamp x>=0, y>=0.
     (local.set $x (i32.sub (local.get $x) (i32.const 4)))
+    (local.set $x (i32.add (local.get $x) (i32.load offset=36 (local.get $state_w))))
     (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
     (local.set $y (i32.sub (local.get $y) (i32.const 4)))
     (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
@@ -12532,6 +12676,8 @@
     (local $line_end i32) (local $pre_w i32) (local $sel_w i32)
     (local $line_y i32) (local $line_buf_w i32) (local $brush i32)
     (local $full_w i32) (local $total_lines i32) (local $visible_lines i32) (local $max_scroll i32)
+    (local $full_h i32) (local $tx i32) (local $max_hscroll i32)
+    (local $cx i32) (local $cy i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -12541,7 +12687,9 @@
         ;; EditState additionally keeps the font installed by WM_SETFONT at
         ;; +32.  Paint replaces this font whenever its floating Fonts palette
         ;; changes, and queries it back with WM_GETFONT for text metrics.
-        (local.set $state (call $heap_alloc (i32.const 36)))
+        ;; +36 is the horizontal scroll offset in pixels, used by unwrapped
+        ;; WS_HSCROLL edits (Notepad with Word Wrap off).
+        (local.set $state (call $heap_alloc (i32.const 40)))
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store         (local.get $state_w) (i32.const 0))
         (i32.store offset=4  (local.get $state_w) (i32.const 0))
@@ -12559,6 +12707,7 @@
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 24))
               (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 25)))))
         (i32.store offset=32 (local.get $state_w) (i32.const 0))
+        (i32.store offset=36 (local.get $state_w) (i32.const 0))
         ;; Copy initial text from CREATESTRUCT if provided (lParam may be 0
         ;; when WM_CREATE is delivered via pending_child_create from GetMessageA)
         (if (local.get $lParam)
@@ -12627,11 +12776,33 @@
         (return (i32.const 0))))
 
     ;; ---------- WM_SETCURSOR (0x0020) ----------
-    ;; Show the I-beam over the edit client area (HTCLIENT=1).
+    ;; Show the I-beam over the edit client area (HTCLIENT=1) — but not over
+    ;; the scrollbar strips. $defwndproc_do_nccalcsize does not carve those out
+    ;; of a WAT-native control's client rect (the control measures and paints
+    ;; them itself), so every pixel of the bar still hit-tests as HTCLIENT and
+    ;; would otherwise get the text cursor.
     (if (i32.eq (local.get $msg) (i32.const 0x0020))
       (then
         (if (i32.eq (i32.and (local.get $lParam) (i32.const 0xFFFF)) (i32.const 1))
           (then
+            (local.set $a (call $host_get_mouse_position))
+            (local.set $cx (i32.sub (i32.and (local.get $a) (i32.const 0xFFFF))
+                                   (call $wnd_client_screen_x (local.get $hwnd))))
+            (local.set $cy (i32.sub (i32.and (i32.shr_u (local.get $a) (i32.const 16)) (i32.const 0xFFFF))
+                                   (call $wnd_client_screen_y (local.get $hwnd))))
+            (local.set $b (call $ctrl_get_wh_packed (local.get $hwnd)))
+            (if (i32.or
+                  (i32.and
+                    (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
+                    (i32.ge_s (local.get $cx)
+                      (i32.sub (i32.and (local.get $b) (i32.const 0xFFFF)) (i32.const 16))))
+                  (i32.and
+                    (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000)) (i32.const 0))
+                    (i32.ge_s (local.get $cy)
+                      (i32.sub (i32.shr_u (local.get $b) (i32.const 16)) (i32.const 16)))))
+              (then
+                (drop (call $set_cursor_internal (i32.const 0x67F00))) ;; IDC_ARROW
+                (return (i32.const 1))))
             (drop (call $set_cursor_internal (i32.const 0x67F01))) ;; IDC_IBEAM
             (return (i32.const 1))))
         (return (i32.const 0))))
@@ -13069,11 +13240,73 @@
 	        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
 	        (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
 	        (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
+	        ;; Inside the horizontal strip. Checked before the vertical one and
+	        ;; before the text hit-test, since the bottom-right corner belongs
+	        ;; to neither scrollbar and a press in the strip is not a caret
+	        ;; placement. Parts: 3 = left arrow held, 4 = right arrow held,
+	        ;; 6 = thumb drag (the vertical thumb owns 5).
+	        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+	          (then
+	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+	            (local.set $full_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+	            (local.set $full_h (i32.shr_u (local.get $sz) (i32.const 16)))
+	            (local.set $line_buf_w (local.get $full_w))
+	            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+	              (then (local.set $line_buf_w (i32.sub (local.get $full_w) (i32.const 16)))))
+	            (if (i32.and
+	                  (i32.ge_s (local.get $h) (i32.sub (local.get $full_h) (i32.const 16)))
+	                  (i32.lt_s (local.get $w) (local.get $line_buf_w)))
+	              (then
+	                (local.set $max_hscroll (call $edit_max_hscroll
+	                  (local.get $state_w) (local.get $hdc) (local.get $line_buf_w)))
+	                (local.set $lo (i32.load offset=36 (local.get $state_w)))
+	                (local.set $b (call $sb_page_hit_part
+	                  (local.get $line_buf_w) (local.get $w) (local.get $lo)
+	                  (i32.const 0)
+	                  (i32.sub (i32.add (local.get $max_hscroll) (local.get $line_buf_w))
+	                           (i32.const 1))
+	                  (local.get $line_buf_w)))
+	                ;; One arrow click is one average character wide; a page is
+	                ;; the visible width, matching what USER does with a
+	                ;; proportional font.
+	                (if (i32.eq (local.get $b) (i32.const 1))
+	                  (then (drop (call $edit_hscroll_to (local.get $state_w)
+	                    (i32.sub (local.get $lo) (i32.const 8)) (local.get $max_hscroll)))
+	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
+	                    (global.set $sb_pressed_part (i32.const 3))))
+	                (if (i32.eq (local.get $b) (i32.const 2))
+	                  (then (drop (call $edit_hscroll_to (local.get $state_w)
+	                    (i32.add (local.get $lo) (i32.const 8)) (local.get $max_hscroll)))
+	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
+	                    (global.set $sb_pressed_part (i32.const 4))))
+	                (if (i32.eq (local.get $b) (i32.const 3))
+	                  (then (drop (call $edit_hscroll_to (local.get $state_w)
+	                    (i32.sub (local.get $lo) (local.get $line_buf_w))
+	                    (local.get $max_hscroll)))))
+	                (if (i32.eq (local.get $b) (i32.const 4))
+	                  (then (drop (call $edit_hscroll_to (local.get $state_w)
+	                    (i32.add (local.get $lo) (local.get $line_buf_w))
+	                    (local.get $max_hscroll)))))
+	                (if (i32.eq (local.get $b) (i32.const 5))
+	                  (then
+	                    (global.set $edit_sb_drag_anchor_y (local.get $w))
+	                    (global.set $edit_sb_drag_anchor_top (local.get $lo))
+	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
+	                    (global.set $sb_pressed_part (i32.const 6))))
+	                ;; Not the start of a text selection.
+	                (i32.store offset=24 (local.get $state_w)
+	                  (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))
+	                (call $invalidate_hwnd (local.get $hwnd))
+	                (return (i32.const 0))))))
 	        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
 	          (then
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $full_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
+	            ;; The vertical strip stops above the horizontal one, so its
+	            ;; track is that much shorter when both are present.
+	            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+	              (then (local.set $line_y (i32.sub (local.get $line_y) (i32.const 16)))))
 	            ;; Inside the vertical strip: classify with the same geometry
 	            ;; $defwndproc_paint_standard_scrollbar painted it with, so a
 	            ;; press on the thumb the user can see starts a drag rather than
@@ -13161,6 +13394,37 @@
       (then
 	        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
 	        (local.set $state_w (call $g2w (local.get $state)))
+	        ;; Horizontal thumb drag (part 6): same shared geometry as the
+	        ;; strip painter, in pixels rather than lines.
+	        (if (i32.and (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
+	                     (i32.eq (global.get $sb_pressed_part) (i32.const 6)))
+	          (then
+	            (if (i32.eqz (i32.and (local.get $wParam) (i32.const 0x0001)))
+	              (then
+	                (global.set $sb_pressed_hwnd (i32.const 0))
+	                (global.set $sb_pressed_part (i32.const 0))
+	                (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+	                  (then (global.set $capture_hwnd (i32.const 0))))
+	                (return (i32.const 0))))
+	            (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+	            (local.set $line_buf_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+	            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+	              (then (local.set $line_buf_w (i32.sub (local.get $line_buf_w) (i32.const 16)))))
+	            (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
+	            (local.set $max_hscroll (call $edit_max_hscroll
+	              (local.get $state_w) (local.get $hdc) (local.get $line_buf_w)))
+	            (drop (call $edit_hscroll_to (local.get $state_w)
+	              (call $sb_page_drag_pos
+	                (local.get $line_buf_w) (local.get $w)
+	                (global.get $edit_sb_drag_anchor_y) (global.get $edit_sb_drag_anchor_top)
+	                (i32.const 0)
+	                (i32.sub (i32.add (local.get $max_hscroll) (local.get $line_buf_w))
+	                         (i32.const 1))
+	                (local.get $line_buf_w))
+	              (local.get $max_hscroll)))
+	            (call $invalidate_hwnd (local.get $hwnd))
+	            (return (i32.const 0))))
 	        (if (i32.and (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))
 	                     (i32.eq (global.get $sb_pressed_part) (i32.const 5)))
 	          (then
@@ -13263,6 +13527,7 @@
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $full_w (local.get $w))
+        (local.set $full_h (local.get $h))
         ;; Reserve the right strip for multiline edits created with WS_VSCROLL.
         (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
           (then
@@ -13275,6 +13540,18 @@
           (then
             (if (i32.gt_u (local.get $h) (i32.const 16))
               (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
+        ;; Text origin: the 4px left margin, moved left by the horizontal
+        ;; scroll offset. A wrapped edit has nothing to scroll horizontally
+        ;; over, so its offset is forced home rather than left stale from
+        ;; before the app turned word wrap on.
+        (if (i32.and
+              (i32.ne
+                (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+                (i32.const 0))
+              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+          (then (i32.store offset=36 (local.get $state_w) (i32.const 0))))
+        (local.set $tx (i32.sub (i32.const 4)
+          (i32.load offset=36 (local.get $state_w))))
         ;; Use the font installed with WM_SETFONT, falling back to the default
         ;; GUI font. Paint relies on this when committing its text object into
         ;; the picture memory DC.
@@ -13431,12 +13708,12 @@
                             (i32.const 0x30014)))))))
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
               (then
-                (call $paint_vscrollbar_rect (local.get $hdc)
+                (call $defwndproc_paint_standard_scrollbar (local.get $hdc)
                   (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
-                  (i32.const 16) (local.get $h)
-                  (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
-                  (select (global.get $sb_pressed_part) (i32.const 0)
-                          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+                  (i32.const 16) (local.get $h) (i32.const 1)
+                  (i32.load offset=20 (local.get $state_w))
+                  (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+                  (local.get $visible_lines))))
             ;; Refresh non-client chrome after the edit reaches its final
             ;; size. Notepad does not send another WM_NCPAINT after sizing its
             ;; child, and client clipping intentionally excludes these strips.
@@ -13487,38 +13764,38 @@
                   ;; If sel extends past the \n (to the next line), pad to right edge.
                   (if (i32.gt_u (local.get $sel_hi) (local.get $line_end))
                     (then (local.set $sel_w (i32.sub (local.get $w)
-                            (i32.add (local.get $pre_w) (i32.const 4))))))
+                            (i32.add (local.get $pre_w) (local.get $tx))))))
                   (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
 	                  (drop (call $host_gdi_fill_rect (local.get $hdc)
-	                          (i32.add (local.get $pre_w) (i32.const 4))
+	                          (i32.add (local.get $pre_w) (local.get $tx))
 	                          (i32.sub (local.get $line_y) (i32.const 2))
-	                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+	                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (local.get $tx))
 	                          (i32.add (local.get $line_y) (i32.const 13))
 	                          (local.get $brush)))
                   (drop (call $host_gdi_delete_object (local.get $brush)))
                   ;; pre-sel text (black)
                   (if (local.get $a)
                     (then (drop (call $host_gdi_text_out (local.get $hdc)
-                                  (i32.const 4) (local.get $line_y)
+                                  (local.get $tx) (local.get $line_y)
                                   (local.get $line_buf_w) (local.get $a) (i32.const 0)))))
                   ;; selected text (white)
                   (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
                   (drop (call $host_gdi_text_out (local.get $hdc)
-                          (i32.add (local.get $pre_w) (i32.const 4)) (local.get $line_y)
+                          (i32.add (local.get $pre_w) (local.get $tx)) (local.get $line_y)
                           (i32.add (local.get $line_buf_w) (local.get $a))
                           (i32.sub (local.get $b) (local.get $a)) (i32.const 0)))
                   (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
                   ;; post-sel text (black)
                   (if (i32.lt_u (local.get $b) (local.get $hi))
                     (then (drop (call $host_gdi_text_out (local.get $hdc)
-                                  (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
+                                  (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (local.get $tx))
                                   (local.get $line_y)
                                   (i32.add (local.get $line_buf_w) (local.get $b))
                                   (i32.sub (local.get $hi) (local.get $b)) (i32.const 0))))))
                 (else
                   (if (local.get $hi)
                     (then (drop (call $host_gdi_text_out (local.get $hdc)
-                                  (i32.const 4) (local.get $line_y)
+                                  (local.get $tx) (local.get $line_y)
                                   (local.get $line_buf_w) (local.get $hi) (i32.const 0)))))))
               (local.set $lo (i32.add (local.get $line_end) (i32.const 1)))
               (local.set $line_y (i32.add (local.get $line_y) (i32.const 16)))
@@ -13551,9 +13828,9 @@
                   (i32.const 1))
               (then
             (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.add (local.get $px) (i32.const 4))
+                    (i32.add (local.get $px) (local.get $tx))
                     (i32.add (local.get $hi) (i32.const 2))
-                    (i32.add (local.get $px) (i32.const 6))
+                    (i32.add (i32.add (local.get $px) (local.get $tx)) (i32.const 2))
                     (i32.add (local.get $hi) (i32.const 17))
                     (i32.const 0x30014))))))) ;; BLACK_BRUSH
         ;; 5) Optional vertical scrollbar strip. Scrolling state is line-based.
@@ -13571,12 +13848,45 @@
             (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
             (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
               (then (local.set $max_scroll (i32.const 0))))
-            (call $paint_vscrollbar_rect (local.get $hdc)
+            ;; Through the SCROLLINFO painter, which is the same page model
+            ;; $sb_page_hit_part and $sb_page_drag_pos classify clicks with.
+            ;; Painting it with the older range model instead sized and placed
+            ;; the thumb differently from the geometry the drag code assumed,
+            ;; so dragging the thumb moved the text further than the pointer.
+            (call $defwndproc_paint_standard_scrollbar (local.get $hdc)
               (i32.sub (local.get $full_w) (i32.const 16)) (i32.const 0)
-              (i32.const 16) (local.get $h)
-              (i32.load offset=20 (local.get $state_w)) (local.get $max_scroll)
-              (select (global.get $sb_pressed_part) (i32.const 0)
-                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
+              (i32.const 16) (local.get $h) (i32.const 1)
+              (i32.load offset=20 (local.get $state_w))
+              (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+              (local.get $visible_lines))))
+        ;; 6) Optional horizontal scrollbar strip. Scrolling state is in
+        ;; pixels, since an unwrapped line is measured, not counted.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+          (then
+            (local.set $max_hscroll (call $edit_max_hscroll
+              (local.get $state_w) (local.get $hdc) (local.get $w)))
+            ;; Text shrinking (or the window growing) can leave the stored
+            ;; offset past the new end of the document.
+            (drop (call $edit_hscroll_to (local.get $state_w)
+              (i32.load offset=36 (local.get $state_w)) (local.get $max_hscroll)))
+            ;; Same page model as the vertical strip, with pixels for units:
+            ;; the document is max_hscroll + one visible width wide, and the
+            ;; page is that visible width.
+            (call $defwndproc_paint_standard_scrollbar (local.get $hdc)
+              (i32.const 0) (i32.sub (local.get $full_h) (i32.const 16))
+              (local.get $w) (i32.const 16) (i32.const 0)
+              (i32.load offset=36 (local.get $state_w))
+              (i32.const 0)
+              (i32.sub (i32.add (local.get $max_hscroll) (local.get $w)) (i32.const 1))
+              (local.get $w))
+            ;; The dead square where the two strips meet is scrollbar-grey,
+            ;; not white: it belongs to neither track.
+            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+              (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.sub (local.get $full_w) (i32.const 16))
+                (i32.sub (local.get $full_h) (i32.const 16))
+                (local.get $full_w) (local.get $full_h)
+                (i32.const 0x30011)))))))
         (if (i32.and
               (i32.eqz (local.get $wParam))
               (i32.ne
@@ -13854,39 +14164,18 @@
                          (i32.sub (i32.const 0)
                            (i32.shr_s (local.get $wParam) (i32.const 16)))
                          (i32.const 40)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
-        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
-        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
-        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
-          (then
-            (if (i32.gt_u (local.get $w) (i32.const 16))
-              (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
-        ;; visible_lines = max(1, (h - 8) / 16)
-        (local.set $a (i32.div_u (i32.sub (local.get $h) (i32.const 8)) (i32.const 16)))
-        (if (i32.eqz (local.get $a)) (then (local.set $a (i32.const 1))))
-        (if (i32.and
-              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
-              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
-          (then
-            (local.set $b (call $edit_layout_build
-              (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
-              (local.get $w))))
-          (else
-            ;; total_lines = edit_line_from_char(text_len) + 1
-            (local.set $b (i32.add (call $edit_line_from_char (local.get $state_w) (local.get $text_len))
-                                   (i32.const 1)))))
-        ;; max_scroll = max(0, total_lines - visible_lines)
-        (local.set $lo (i32.sub (local.get $b) (local.get $a)))
-        (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))
-        ;; new_scroll = clamp(scroll_top + lines_delta, 0, max_scroll)
-        (local.set $hi (i32.add (i32.load offset=20 (local.get $state_w)) (local.get $vk)))
-        (if (i32.lt_s (local.get $hi) (i32.const 0)) (then (local.set $hi (i32.const 0))))
-        (if (i32.gt_s (local.get $hi) (local.get $lo)) (then (local.set $hi (local.get $lo))))
-        (if (i32.ne (local.get $hi) (i32.load offset=20 (local.get $state_w)))
-          (then
-            (i32.store offset=20 (local.get $state_w) (local.get $hi))
-            (call $invalidate_hwnd (local.get $hwnd))))
+        ;; Through the shared viewport metrics. This used to be a private copy
+        ;; that measured visible lines against the full control height, so on
+        ;; an edit with a horizontal strip it believed one more line fitted
+        ;; than the painter drew -- and the wheel stopped one line short of the
+        ;; end of the document while the thumb still had track left.
+        (local.set $a (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+        (local.set $b (i32.and (local.get $a) (i32.const 0xFFFF)))      ;; total lines
+        (local.set $a (i32.shr_u (local.get $a) (i32.const 16)))        ;; visible lines
+        (if (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+              (i32.add (i32.load offset=20 (local.get $state_w)) (local.get $vk))
+              (local.get $b) (local.get $a))
+          (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
 
     ;; Default

@@ -236,6 +236,7 @@ E2E=(
   test/test-notepad-menu-items.js
   test/test-notepad-typing-latency.js
   test/test-notepad-typing-scroll.js
+  test/test-notepad-scrollbar-cursor.js
   test/test-find-typing.js
   test/test-notepad-find-next-positive.js
   test/test-notepad-find-not-found-msgbox.js
