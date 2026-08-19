@@ -193,6 +193,13 @@ const DEALER_INPUT = [
   // which makes a legal move the only move that changes the screen.
   `${DEAL_AT + 101000}:click:${LOWEST_CARD}`,
   `${DEAL_AT + 115000}:png:${shot('dealer-followed')}`,
+  // Then keep playing. Hearts refuses an illegal card, so clicking the
+  // leftmost one over and over is a legal move whenever it is this seat's turn
+  // and nothing at all when it is not -- which makes it a soak: several tricks
+  // of real traffic between two processes, with no timing to get right.
+  ...Array.from({ length: 12 }, (_, i) =>
+    `${DEAL_AT + 120000 + i * 8000}:click:${LOWEST_CARD}`),
+  `${DEAL_AT + 220000}:png:${shot('dealer-late')}`,
 ].join(',');
 
 const CLIENT_INPUT = [
@@ -228,6 +235,9 @@ const CLIENT_INPUT = [
   `114000:click:${PASS_BUTTON}`,
   `119000:click:${LOWEST_CARD}`,
   `130000:png:${shot('client-trick')}`,
+  ...Array.from({ length: 12 }, (_, i) =>
+    `${140000 + i * 8000}:click:${LOWEST_CARD}`),
+  `240000:png:${shot('client-late')}`,
 ].join(',');
 
 // Only a bounded tail of each transcript is kept: two processes at tens of
@@ -578,6 +588,20 @@ function table(file, x0 = 60, y0 = 30, x1 = 580, y1 = 440) {
     const t = table(shot('dealer-followed'), 250, 150, 400, 300);
     check(`the trick is still in front of it (${(t.white * 100).toFixed(0)}% of the middle)`,
       t.white > 0.05, JSON.stringify(t));
+  }
+  // 9: several tricks later. Both sides keep clicking their leftmost card,
+  // which Hearts accepts when it is that seat's turn and refuses otherwise, so
+  // this is a few minutes of a real game played between two processes rather
+  // than one carefully staged move.
+  const lateShots = await Promise.all([
+    waitForFile(shot('dealer-late')), waitForFile(shot('client-late')),
+  ]);
+  for (const [name, drawn] of [['dealer', lateShots[0]], ['client', lateShots[1]]]) {
+    if (!drawn) { check(`the ${name} was still drawing later in the hand`, false, 'no screenshot'); continue; }
+    const t = table(shot(`${name}-late`));
+    check(`the ${name} is still at a table of cards later in the hand ` +
+      `(${(t.green * 100).toFixed(0)}% baize, ${(t.white * 100).toFixed(0)}% cards)`,
+      t.green > 0.3 && t.white > 0.05, JSON.stringify(t));
   }
   for (const s of [dealer, client]) {
     check(`the ${s.label} was still running at the end of the hand`,
