@@ -872,6 +872,23 @@
   ;; later segment wins, so placing them together cost Kodak Imaging its
   ;; BSTR/VARIANT imports.
   (data (i32.const 0x3E00) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
+  ;; MMSYSTEM entry points asked for by name rather than imported. A module
+  ;; this emulator answers for has no export table to read, so GetProcAddress
+  ;; needs the name-to-ordinal mapping written down — see
+  ;; $win16_mmsystem_ordinal. Chip's Challenge asks for exactly these five
+  ;; before it will start.
+  ;;
+  ;; Each entry is a length byte, the name, and the ordinal as a word; a zero
+  ;; length ends the list. Upper case, because $win16_cstr_to_pstr folds the
+  ;; caller's name that way before any lookup — the same form the tables in
+  ;; src/win16-ordinals.generated.json use.
+  (data (i32.const 0x3E40)
+    "\0cSNDPLAYSOUND\02\00"
+    "\0eMCISENDCOMMAND\bd\02"
+    "\11MCIGETERRORSTRING\c2\02"
+    "\11MIDIOUTGETNUMDEVS\c9\00"
+    "\11WAVEOUTGETNUMDEVS\91\01"
+    "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just

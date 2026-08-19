@@ -1362,7 +1362,7 @@
     (call $win16_api_return (i32.const 6)))
 
   (func $win16_LocalAlloc
-    (local $bytes i32) (local $h i32) (local $p i32) (local $size i32)
+    (local $bytes i32) (local $h i32) (local $p i32) (local $size i32) (local $limit i32)
     (local.set $bytes (i32.and (i32.add (call $win16_arg16 (i32.const 0)) (i32.const 1))
                                (i32.const 0xFFFE)))
     ;; A zero-length block would make the walk below stand still.
@@ -1406,9 +1406,28 @@
     (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes))
                   (call $win16_lheap_get (i32.const 2)))
       (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 4))
-        (return)))
+        ;; The heap the header asked for is a starting size, not a ceiling:
+        ;; Windows grows the local heap upward into whatever DGROUP space the
+        ;; stack has not reached. Life Genesis declares a 1KB heap, allocates
+        ;; its cell grid out of it, and reported "out of memory" the moment
+        ;; that ran out. Growing is only safe for the task's own DGROUP, where
+        ;; SP says how far the stack has come down; a heap laid into some other
+        ;; segment by LocalInit keeps the bounds it was given.
+        (if (i32.and (i32.eq (call $win16_lheap_current) (i32.const -1))
+                     (i32.eq (global.get $sreg_ss) (global.get $sreg_ds)))
+          (then
+            (local.set $limit (i32.sub
+              (i32.and (i32.sub (global.get $esp) (global.get $seg_base_ss))
+                       (i32.const 0xFFFF))
+              (i32.const 512)))
+            (if (i32.gt_u (local.get $limit) (global.get $win16_lheap_end))
+              (then (global.set $win16_lheap_end (local.get $limit))))))
+        (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes))
+                      (call $win16_lheap_get (i32.const 2)))
+          (then
+            (global.set $eax (i32.const 0))
+            (call $win16_api_return (i32.const 4))
+            (return)))))
     (call $win16_lblock_set (call $win16_lheap_get (i32.const 1))
       (local.get $bytes) (i32.const 0))
     (call $win16_lheap_set_ptr (i32.add (local.get $h) (local.get $bytes)))
@@ -1998,8 +2017,8 @@
       (then (call $win16_GetProcAddress) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 95))
       (then (call $win16_LoadLibrary) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 96))   ;; FreeLibrary
-      (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 96))
+      (then (call $win16_FreeLibrary) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 3))
       (then (call $win16_GetVersion) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 30))
@@ -2110,6 +2129,32 @@
     (call $win16_local_identity (i32.const 4)
       (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id)))))
 
+  ;; KERNEL.96 FreeLibrary(hLibModule).
+  ;;
+  ;; It used to answer and do nothing, which costs an app-local module slot
+  ;; every time — and there are four. Stones loads each of its five stone-style
+  ;; DLLs, reads what it needs, and frees it again before the next; on the
+  ;; fifth it got the fourth one's handle back and reported its styles
+  ;; corrupted. Freeing marks the record unloaded and gives the name slot back,
+  ;; so the next LoadLibrary of a different module has somewhere to go.
+  ;;
+  ;; The module's segments stay in the arena. Real Windows discards them and
+  ;; reloads on demand; here they are simply no longer reachable by name, which
+  ;; costs arena slots and nothing else — and a module the app frees and loads
+  ;; again is staged and placed afresh.
+  (func $win16_FreeLibrary
+    (local $id i32)
+    (local.set $id (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
+      (then
+        (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
+        (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+          (then
+            (call $win16_dll_unload (local.get $id))
+            (call $win16_dynamic_module_release (local.get $id))))))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 2)))
+
   ;; KERNEL.47 GetModuleHandle(lpModuleName) -> the module's handle.
   ;;
   ;; A module this emulator has loaded gets the same 0x00D1-over-id handle
@@ -2168,9 +2213,14 @@
   ;;
   ;; lpszProcName is a far pointer to a name, unless its selector half is zero —
   ;; then the whole thing is an ordinal, and Hearts asks for CARDS.1, .2 and .4
-  ;; that way. Only a loaded NE has entry points to give; the modules this
-  ;; emulator implements itself are reached through the import thunks, not
-  ;; through an address, so asking one for a procedure address answers NULL.
+  ;; that way.
+  ;;
+  ;; A module this emulator implements itself has no export table to read, but
+  ;; it does have import thunks, and a thunk's address is exactly what a
+  ;; FARPROC is: the same far pointer a static import would have been fixed up
+  ;; to. So a name this side knows gets one. Chip's Challenge loads MMSYSTEM
+  ;; and asks for five entry points by name rather than importing them, and a
+  ;; NULL sent it calling through a null selector.
   (func $win16_GetProcAddress
     (local $sel i32) (local $off i32) (local $id i32) (local $ord i32) (local $target i32)
     (local.set $off (call $win16_arg16 (i32.const 0)))
@@ -2179,11 +2229,23 @@
     (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
-        ;; A module this emulator implements has no export table to read, so
-        ;; the few entry points that are asked for by address rather than
-        ;; called through an import thunk get a fixed thunk-segment slot each.
-        ;; NDDEAPI's one is the only one so far; anything else still answers
-        ;; NULL, which is what a caller checks for.
+        ;; MMSYSTEM: the name is looked up in the table this side keeps and
+        ;; answered with the import thunk for that ordinal, which is the same
+        ;; address a static import would have been fixed up to — so calling
+        ;; through it arrives at $win16_dispatch exactly as an import does.
+        (if (i32.and (i32.eq (local.get $id) (i32.const 7)) (local.get $sel))
+          (then
+            (call $win16_cstr_to_pstr
+              (call $win16_far_to_guest (local.get $sel) (local.get $off))
+              (call $win16_name_scratch) (i32.const 0))
+            (local.set $ord (call $win16_mmsystem_ordinal
+              (call $g2w (call $win16_name_scratch))))
+            (if (local.get $ord)
+              (then (local.set $target
+                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
+                        (call $win16_thunk_for (local.get $id) (local.get $ord)
+                                               (i32.const 0))))))))
+        ;; NDDEAPI's one entry point, matched the same way.
         (if (i32.and (i32.eq (local.get $id) (i32.const 11)) (local.get $sel))
           (then
             (call $win16_cstr_to_pstr
@@ -2595,6 +2657,13 @@
     (local.set $max (call $win16_arg16 (i32.const 0)))
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    ;; Which module's strings — the instance handle decides, exactly as it does
+    ;; for the Load* family. Stones keeps each stone style's name in that
+    ;; style's own DLL and asks for it with that DLL's handle; answering out of
+    ;; the task's own resources found nothing and it declared the styles
+    ;; corrupted.
+    (global.set $win16_res_module_id
+      (call $win16_res_module (call $win16_arg16 (i32.const 4))))
 
     (global.set $eax (i32.const 0))
     (local.set $p (call $win16_find_resource (i32.const 6)
@@ -2623,6 +2692,7 @@
           (local.set $p (i32.add (i32.add (local.get $p) (i32.const 1)) (local.get $len)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $walk)))))
+    (global.set $win16_res_module_id (i32.const 0))
     (call $win16_api_return (i32.const 10)))
 
   ;; USER.66 GetDC(hWnd) -> HDC, USER.68 ReleaseDC(hWnd, hDC).
@@ -6277,6 +6347,29 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; GDI.128 MulDiv(nNumber, nNumerator, nDenominator) -> (a*b)/c rounded, with
+  ;; the multiply done wide so it does not overflow sixteen bits on the way —
+  ;; which is the whole reason the call exists. -32768 signals a zero divisor.
+  (func $win16_MulDiv
+    (local $a i32) (local $b i32) (local $c i32) (local $r i32)
+    (local.set $c (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (local.set $b (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $a (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (if (i32.eqz (local.get $c))
+      (then
+        (global.set $eax (i32.const 0x8000))
+        (call $win16_api_return (i32.const 6))
+        (return)))
+    (local.set $r (i32.mul (local.get $a) (local.get $b)))
+    ;; Round to nearest, away from zero, the way GDI's own does.
+    (if (i32.eq (i32.lt_s (local.get $r) (i32.const 0))
+                (i32.lt_s (local.get $c) (i32.const 0)))
+      (then (local.set $r (i32.add (local.get $r) (i32.div_s (local.get $c) (i32.const 2)))))
+      (else (local.set $r (i32.sub (local.get $r) (i32.div_s (local.get $c) (i32.const 2))))))
+    (global.set $eax (i32.and (i32.div_s (local.get $r) (local.get $c))
+                              (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 6)))
+
   ;; GDI.99 LPtoDP / GDI.67 DPtoLP(hDC, lpPoints, nCount) — map an array of
   ;; points between logical and device space, in place. Points are two words
   ;; here and two longs there, so the array is widened into scratch, converted,
@@ -6888,6 +6981,10 @@
   (func $win16_gdi (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 3))
       (then (call $win16_SetMapMode) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 81))
+      (then (call $win16_GetMapMode) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 128))
+      (then (call $win16_MulDiv) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 11))
       (then (call $win16_dc_set_pair (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 12))
@@ -7187,7 +7284,51 @@
   ;; lpszSound, fuSound) -> BOOL. Hearts asks how many wave devices there are
   ;; before it will play anything, so answering it is what turns the sound on.
   (func $win16_mmsystem (param $ordinal i32) (result i32)
-    (local $name i32) (local $flags i32)
+    (local $name i32) (local $flags i32) (local $dev i32) (local $msg i32)
+    (local $p1 i32) (local $p2 i32)
+    ;; 201 midiOutGetNumDevs() — how many MIDI output devices there are. Chip's
+    ;; Challenge asks before it decides whether to play its music.
+    (if (i32.eq (local.get $ordinal) (i32.const 201))
+      (then
+        (call $win16_call32_begin (i32.const 0))
+        (call $handle_midiOutGetNumDevs (i32.const 0) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 0))
+        (return (i32.const 1))))
+    ;; 701 mciSendCommand(wDeviceID, wMessage, dwParam1, dwParam2). The two
+    ;; dwParams are the same dwords on both sides, and dwParam2 is usually a
+    ;; pointer to an MCI parameter block — a far pointer here, flat there.
+    (if (i32.eq (local.get $ordinal) (i32.const 701))
+      (then
+        (local.set $p2 (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+        (if (i32.eqz (call $win16_arg16 (i32.const 1))) (then (local.set $p2 (i32.const 0))))
+        (local.set $p1 (call $win16_arg32 (i32.const 2)))
+        (local.set $msg (call $win16_arg16 (i32.const 4)))
+        (local.set $dev (call $win16_arg16 (i32.const 5)))
+        (call $win16_call32_begin (i32.const 4))
+        (call $handle_mciSendCommandA (local.get $dev) (local.get $msg)
+          (local.get $p1) (local.get $p2) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 12))
+        (return (i32.const 1))))
+    ;; 706 mciGetErrorString(dwError, lpstrBuffer, wLength). Nothing here fails
+    ;; an MCI command in a way that has a message, so the buffer comes back
+    ;; empty and the call reports FALSE — which is what it reports for an error
+    ;; code it does not recognise.
+    (if (i32.eq (local.get $ordinal) (i32.const 706))
+      (then
+        (local.set $p2 (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+        (if (call $win16_arg16 (i32.const 2))
+          (then (call $gs8 (local.get $p2) (i32.const 0))))
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 10))
+        (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 401))
       (then
         (call $win16_call32_begin (i32.const 0))
@@ -7304,6 +7445,43 @@
 
   ;; A by-name import of a module this emulator implements. Returns 1 when the
   ;; call was made, 0 to leave it to the caller's trap.
+  ;; Name to ordinal for a module this emulator answers for itself. A real DLL
+  ;; has an export table GetProcAddress can read; an emulated one has only what
+  ;; is written down here — see the MMSYSTEM list in src/01-header.wat.
+  ;; Answers 0 for a name it does not know, which is what GetProcAddress
+  ;; reports when a module does not export something.
+  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E40))
+
+  (func $win16_mmsystem_ordinal (param $name i32) (result i32)
+    (local $p i32) (local $n i32) (local $i i32)
+    (local.set $p (global.get $WIN16_MMSYSTEM_NAMES))
+    (block $done (loop $entries
+      (local.set $n (i32.load8_u (local.get $p)))
+      (br_if $done (i32.eqz (local.get $n)))
+      (if (i32.eq (local.get $n) (i32.load8_u (local.get $name)))
+        (then
+          (local.set $i (i32.const 0))
+          ;; Two blocks, not one: running off the end of the name is the match,
+          ;; and a differing byte is not, so they cannot share an exit — a
+          ;; single block that both branches jump to lands past the answer and
+          ;; every name reads as unknown.
+          (block $mismatch
+            (block $matched
+              (loop $chars
+                (br_if $matched (i32.ge_u (local.get $i) (local.get $n)))
+                (br_if $mismatch (i32.ne
+                  (i32.load8_u (i32.add (i32.add (local.get $p) (i32.const 1))
+                                        (local.get $i)))
+                  (i32.load8_u (i32.add (i32.add (local.get $name) (i32.const 1))
+                                        (local.get $i)))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $chars)))
+            (return (i32.load16_u (i32.add (i32.add (local.get $p) (i32.const 1))
+                                           (local.get $n)))))))
+      (local.set $p (i32.add (i32.add (local.get $p) (i32.const 3)) (local.get $n)))
+      (br $entries)))
+    (i32.const 0))
+
   (func $win16_builtin_by_name (param $module i32) (param $name i32) (result i32)
     (if (i32.eq (local.get $module) (i32.const 6))
       (then

@@ -856,6 +856,12 @@
   (func $win16_dll_loaded (param $module_id i32) (result i32)
     (i32.load offset=12 (call $win16_dll_rec (local.get $module_id))))
 
+  ;; Forget a module: FreeLibrary's half of the above. The segments stay where
+  ;; they were placed — nothing here moves or discards them — but the id stops
+  ;; naming a loaded module, so the slot can describe a different one.
+  (func $win16_dll_unload (param $module_id i32)
+    (i32.store offset=12 (call $win16_dll_rec (local.get $module_id)) (i32.const 0)))
+
   ;; Which image owns the code currently running, as (ne_off, staging base).
   ;; Resource lookups follow this rather than the hInstance the caller passed:
   ;; a DLL asking for its own resources passes an instance handle this emulator
