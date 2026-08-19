@@ -7,7 +7,7 @@
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
-    (local $detected_class i32) (local $name_w i32) (local $wat_statusbar i32) (local $wat_tab i32)
+    (local $detected_class i32) (local $wat_statusbar i32) (local $wat_tab i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
     ;; treating the caller's stack frame as the source of truth.
@@ -335,102 +335,15 @@
     (if (local.get $tmp)
       (then (call $wnd_table_set (local.get $hwnd) (local.get $tmp)))
       (else
-        ;; USER's six built-in classes, resolved the way Windows resolves them:
-        ;; MAKEINTATOM(0x0080..0x0085) from a dialog template and the class name
-        ;; from source code are folded onto one atom first, so both spellings
-        ;; take the same path and cannot drift apart.
-        ;; ctrl class IDs (see $control_wndproc_dispatch):
-        ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7,
-        ;;   TreeView=8, ListView=18, TrackBar=19, Tooltip=20, Toolbar=21.
+        ;; Which control this class denotes, decided in one place for every
+        ;; caller ($class_name_to_ctrl_id, 09c0-window-table.wat). It folds
+        ;; MAKEINTATOM(0x0080..0x0085) from a dialog template and the class
+        ;; name from source code onto one answer, exactly as Windows does, so
+        ;; the two spellings cannot drift apart -- and it is the same answer
+        ;; GetClassInfo and the class-hash path give.
         ;; Registered status bars deliberately remain unclassified: MFC must
         ;; subclass and lay them out before the separate paint marker is used.
-        (local.set $detected_class (call $builtin_ctrl_class_id (local.get $arg1)))
-        ;; Everything below is a comctl32/riched class, which USER does not own
-        ;; and which therefore has no atom. String compare, case-insensitive via
-        ;; OR 0x20, on lowercase LE dwords.
-        (if (i32.and (i32.eqz (local.get $detected_class))
-                     (i32.ge_u (local.get $arg1) (i32.const 0x10000)))
-          (then
-            (local.set $name_w (call $g2w (local.get $arg1)))
-            ;; Keep RichEdit 1.0 and 2.0+ distinguishable while sharing the
-            ;; edit state/paint implementation. Class 24 is RICHEDIT;
-            ;; class 25 is RichEdit20A/W.
-            (local.set $v (call $richedit_class_version (local.get $arg1)))
-            (if (i32.eq (local.get $v) (i32.const 1))
-              (then (local.set $detected_class (i32.const 24))))
-            (if (i32.eq (local.get $v) (i32.const 2))
-              (then (local.set $detected_class (i32.const 25))))
-            ;; "SysTreeView*" → class 8 (TreeView)
-            ;; LE dwords: "syst"=0x74737973, "reev"=0x76656572
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x76656572)))
-              (then (local.set $detected_class (i32.const 8))))
-            ;; "SysListView*" → class 18 (ListView)
-            ;; LE dwords: "sysl"=0x6c737973, "istv"=0x76747369
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x76747369)))
-              (then (local.set $detected_class (i32.const 18))))
-            ;; "SysLink\0" → class 28 (SysLink)
-            ;; LE dwords: "sysl"=0x6c737973, "ink\0"=0x006b6e69. The trailing
-            ;; NUL keeps this from colliding with the SysListView32 test above.
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x00202020))
-                          (i32.const 0x006b6e69)))
-              (then (local.set $detected_class (i32.const 28))))
-            ;; "msctls_trackbar32" / "Slider1" -> class 19 (TrackBar).
-            ;; Prefix matching also accepts the Win9x A/W common-control aliases.
-            (if (i32.or
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x7463736d)) ;; "msct"
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x747f736c))) ;; "ls_t" after ASCII lowercase mask
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x64696c73)) ;; "slid"
-                    (i32.eq
-                      (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                      (i32.const 0x7265)))) ;; "er"
-              (then (local.set $detected_class (i32.const 19))))
-            ;; "tooltips_class32" → class 20 (Tooltip)
-            ;; LE dwords: "tool"=0x6c6f6f74, "tips"=0x73706974
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c6f6f74))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x73706974)))
-              (then (local.set $detected_class (i32.const 20))))
-            ;; "ToolbarWindow32" → class 21 (Toolbar)
-            ;; LE dwords: "tool"=0x6c6f6f74, "barw"=0x77726162, "indo"=0x6f646e69
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c6f6f74))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x77726162))
-                    (i32.eq (i32.or (i32.load offset=8 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x6f646e69))))
-              (then (local.set $detected_class (i32.const 21))))
-            ;; "ComboLBox\0" — popup-listbox class used by some apps
-            ;; LE dwords: "Comb" lower → "comb"=0x626d6f63, "oLBo" lower → "olbo"=0x6f626c6f, "x\0"
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x626d6f63))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x6f626c6f))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
-                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 4))))))
+        (local.set $detected_class (call $class_name_to_ctrl_id (local.get $arg1)))
         (if (local.get $detected_class)
           (then
             ;; System control class → WAT-native control. WM_CREATE is

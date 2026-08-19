@@ -789,6 +789,82 @@
     (if (i32.eq (local.get $atom) (i32.const 0x0085)) (then (return (i32.const 5))))   ;; ComboBox
     (i32.const 0))
 
+  ;; The classes comctl32 and riched register. Unlike USER's six these have no
+  ;; predefined atom -- an app can only name them -- so they are matched as
+  ;; strings, on the lowercased LE dwords the rest of this file uses.
+  ;;
+  ;; Matching is by prefix, deliberately and unchanged from when these lived
+  ;; inline in CreateWindowExA: the real class names carry a version suffix
+  ;; ("SysTreeView32", "SysListView32") and Win9x shipped A/W aliases of
+  ;; several. $wa is a WASM address, never an atom.
+  (func $comctl_class_ctrl_id (param $wa i32) (result i32)
+    (local $d0 i32) (local $d1 i32)
+    (local.set $d0 (i32.or (i32.load (local.get $wa)) (i32.const 0x20202020)))
+    (local.set $d1 (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x20202020)))
+    ;; "syst"+"reev" -> TreeView
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74737973))
+                 (i32.eq (local.get $d1) (i32.const 0x76656572)))
+      (then (return (i32.const 8))))
+    ;; "sysl"+"istv" -> ListView
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6c737973))
+                 (i32.eq (local.get $d1) (i32.const 0x76747369)))
+      (then (return (i32.const 18))))
+    ;; "sysl"+"ink\0" -> SysLink. The NUL in the mask is what keeps this from
+    ;; also matching SysListView32 above.
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6c737973))
+                 (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x00202020))
+                         (i32.const 0x006b6e69)))
+      (then (return (i32.const 28))))
+    ;; "tool"+"tips" -> Tooltip
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6c6f6f74))
+                 (i32.eq (local.get $d1) (i32.const 0x73706974)))
+      (then (return (i32.const 20))))
+    ;; "tool"+"barw"+"indo" -> Toolbar
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6c6f6f74))
+          (i32.and (i32.eq (local.get $d1) (i32.const 0x77726162))
+                   (i32.eq (i32.or (i32.load offset=8 (local.get $wa)) (i32.const 0x20202020))
+                           (i32.const 0x6f646e69))))
+      (then (return (i32.const 21))))
+    ;; "msct"+"ls_t" -> the trackbar, and "slid"+"er" -> its Win9x alias.
+    ;; 0x747f736c is "ls_t" after the same ASCII-lowercase OR, since '_' is not
+    ;; a letter and the mask moves it.
+    (if (i32.or
+          (i32.and (i32.eq (local.get $d0) (i32.const 0x7463736d))
+                   (i32.eq (local.get $d1) (i32.const 0x747f736c)))
+          (i32.and (i32.eq (local.get $d0) (i32.const 0x64696c73))
+                   (i32.eq (i32.or (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x2020))
+                           (i32.const 0x7265))))
+      (then (return (i32.const 19))))
+    ;; "comb"+"olbo"+"x\0" -> the popup list a combobox drops down, which some
+    ;; apps create directly. Same control as a ListBox.
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x626d6f63))
+          (i32.and (i32.eq (local.get $d1) (i32.const 0x6f626c6f))
+            (i32.and
+              (i32.eq (i32.or (i32.load8_u offset=8 (local.get $wa)) (i32.const 0x20))
+                      (i32.const 0x78))
+              (i32.eqz (i32.load8_u offset=9 (local.get $wa))))))
+      (then (return (i32.const 4))))
+    (i32.const 0))
+
+  ;; The one control-class resolver. Give it whatever an app passed as a class
+  ;; name -- an atom or a pointer -- and it answers with the
+  ;; $control_wndproc_dispatch id, or 0 if this is not a class we implement.
+  ;;
+  ;; The order matters in one place only: RichEdit is checked before the
+  ;; comctl32 names because $richedit_class_version distinguishes 1.0 from
+  ;; 2.0+, which a single prefix test cannot. Everything else is disjoint.
+  (func $class_name_to_ctrl_id (param $guest i32) (result i32)
+    (local $id i32)
+    (local.set $id (call $builtin_ctrl_class_id (local.get $guest)))
+    (if (local.get $id) (then (return (local.get $id))))
+    ;; Past here a class must have a name: nothing below has an atom.
+    (if (i32.lt_u (local.get $guest) (i32.const 0x10000))
+      (then (return (i32.const 0))))
+    (local.set $id (call $richedit_class_version (local.get $guest)))
+    (if (i32.eq (local.get $id) (i32.const 1)) (then (return (i32.const 24))))
+    (if (i32.eq (local.get $id) (i32.const 2)) (then (return (i32.const 25))))
+    (call $comctl_class_ctrl_id (call $g2w (local.get $guest))))
+
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
     (local $h i32) (local $ch i32)
