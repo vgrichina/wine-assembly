@@ -1022,7 +1022,7 @@
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
   ;; 0x00006A00  1KB     CLIPFORMAT_TABLE (128 entries × 8 bytes — RegisterClipboardFormat)
   ;; 0x00006E00  256B    PAINT_SCRATCH  (ring of 16 RECTs for painting wndprocs)
-  ;; 0x00006F00  256B    Free (rest of the former API dispatch hash table)
+  ;; 0x00006F00  256B    WND_CLASS_SLOT_TABLE (256 × 1 byte — class record per window slot)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -1047,11 +1047,12 @@
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
   ;; 0x00010B00  1KB     OWNER_TABLE   (256 entries × 4 bytes, ends 0x10F00)
-  ;; 0x00010F00  256B    Free
+  ;; 0x00010F00  256B    WND_CLASS_ICON_TABLE (64 × 4 bytes — WNDCLASS.hIcon per class slot)
   ;; 0x00011000  320B    WAT-owned system strings
   ;; 0x00011140  448B    DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
   ;; 0x00011300  220B    WSOCK32 ordinal-import names (ends 0x000113DC)
-  ;; 0x000113DC 396B     Free
+  ;; 0x000113DC  36B     Free
+  ;; 0x00011400 256B     CLASS_EXTRA_TABLE (64 × 4 bytes — cbClsExtra per class slot)
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
@@ -1247,8 +1248,11 @@
   ;; for the same reason: SetClassWord(GCW_HICON) changes what a window shows
   ;; for itself, and the class record it came from may be re-registered or its
   ;; slot reused before anyone reads it back.
+  ;; 64 classes x 4 bytes. The size said 0x400, which reaches 0x11300 and
+  ;; covers the WAT system strings and DX_PRESENT_BMI; only MAX_CLASSES
+  ;; entries are ever written, so nothing had corrupted them yet.
   (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x00010F00))
-  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000100))
   ;; Which class record each window was created from, one byte per window slot
   ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
   ;; extra is shared by every window of the class — that is the whole point of
@@ -1262,7 +1266,12 @@
   ;; font table's globals live in src/10b-gdi-font.wat, not here, so picking an
   ;; address by reading this file alone landed on top of it and corrupted every
   ;; loaded strike. Check every src/*.wat before taking an address.
-  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x00011300))
+  ;; And 0x11300 was no better: that is where the WSOCK32 ordinal-import name
+  ;; strings live, so one byte per window slot walked straight through them and
+  ;; a program that created 256 windows lost its socket imports. It is now in
+  ;; the page below WND_RECORDS, which is emulator-private and holds no data
+  ;; segment at all.
+  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x00006F00))
   (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000100))
   (global $CLASS_EXTRA_TABLE i32 (i32.const 0x00011400))
   (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000100))
