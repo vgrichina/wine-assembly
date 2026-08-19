@@ -3466,6 +3466,8 @@
     ;; USER.236 GetCapture() -> the window holding the mouse, or NULL.
     (if (i32.eq (local.get $ordinal) (i32.const 197))
       (then (call $win16_GetTabbedTextExtent) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 196))
+      (then (call $win16_TabbedTextOut) (return (i32.const 1))))
     ;; USER.35 IsWindowEnabled(hWnd).
     (if (i32.eq (local.get $ordinal) (i32.const 35))
       (then
@@ -3637,6 +3639,8 @@
       (then (call $win16_RegisterWindowMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 125))
       (then (call $win16_InvalidateRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 127))
+      (then (call $win16_ValidateRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 150))
       (then (call $win16_LoadMenu) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 158))
@@ -4983,6 +4987,24 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 8)))
+
+  ;; USER.127 ValidateRect(hWnd, lpRect) — the other half of InvalidateRect,
+  ;; and NULL means the whole client area here too, so it stays NULL.
+  (func $win16_ValidateRect
+    (local $hwnd i32) (local $src i32) (local $tmp i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (if (call $win16_arg16 (i32.const 1))
+      (then
+        (local.set $tmp (global.get $GUEST_STACK))
+        (call $win16_rect_widen (local.get $tmp) (local.get $src))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_ValidateRect (local.get $hwnd) (local.get $tmp)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 6)))
 
   ;; USER.81 FillRect(hDC, lpRect, hBrush).
   (func $win16_FillRect
@@ -6430,6 +6452,36 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 14)))
 
+  ;; USER.196 TabbedTextOut(hDC, X, Y, lpString, nCount, nTabPositions,
+  ;;   lpnTabStopPositions, nTabOrigin) -> the size as a DWORD in DX:AX.
+  ;;
+  ;; Ten words of arguments: two of the eight are far pointers. The 32-bit
+  ;; handler reads its last three off the frame at esp+24..32, so they are
+  ;; filled in by index rather than passed.
+  (func $win16_TabbedTextOut
+    (local $hdc i32) (local $x i32) (local $y i32) (local $str i32)
+    (local $count i32) (local $ntabs i32) (local $tabs i32) (local $origin i32)
+    (local.set $origin (call $win16_short (call $win16_arg16 (i32.const 0))))
+    (local.set $tabs (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $ntabs (call $win16_short (call $win16_arg16 (i32.const 3))))
+    (local.set $count (call $win16_short (call $win16_arg16 (i32.const 4))))
+    (local.set $str (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 7))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 8))))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 9))))
+    (call $win16_call32_begin (i32.const 8))
+    (call $win16_call32_arg (i32.const 5) (local.get $ntabs))
+    (call $win16_call32_arg (i32.const 6) (local.get $tabs))
+    (call $win16_call32_arg (i32.const 7) (local.get $origin))
+    (call $handle_TabbedTextOutA (local.get $hdc) (local.get $x) (local.get $y)
+      (local.get $str) (local.get $count) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 20)))
+
   ;; GDI.65 CreateRectRgnIndirect(lpRect) — the same region from a RECT.
   (func $win16_CreateRectRgnIndirect
     (local $src i32)
@@ -6580,6 +6632,18 @@
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
+
+  ;; GDI.85 GetROP2(hDC) -> word. The mode SetROP2 last stored; JigSawed reads
+  ;; it back before it draws its About box so it can put it where it found it.
+  (func $win16_GetROP2
+    (local $hdc i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetROP2 (local.get $hdc)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
 
   ;; GDI.56 CreateFont(nHeight, nWidth, nEscapement, nOrientation, nWeight,
   ;; bItalic, bUnderline, cStrikeOut, nCharSet, nOutPrecision, nClipPrecision,
@@ -7996,6 +8060,8 @@
       (then (call $win16_set_dc_mode (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 4))
       (then (call $win16_set_dc_mode (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 85))
+      (then (call $win16_GetROP2) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 9))
       (then (call $win16_set_dc_color (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 45))
