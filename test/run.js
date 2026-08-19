@@ -6072,7 +6072,8 @@ if (VERBOSE) {
           // A Leave this thread had no right to make is reported next to the park
           // count, because the two together read as one sentence: N threads are
           // waiting for a section that M misdirected releases already unlocked.
-          + (t.csBadLeaves ? ` csBadLeave=${t.csBadLeaves}` : '')
+          + (t.csBadLeaves ? ` csBadLeave=${t.csBadLeaves}@${hex(t.csBadLeaveAddr || 0)}`
+              + `(owner=${threadName(t.csBadLeaveOwner || 0)})` : '')
           + (t.csBarges ? ` csBarge=${t.csBarges}` : '')
           + (t.csWaitAddr ? ` waitingOnCS=${hex(t.csWaitAddr)} heldBy=${threadName(t.csWaitOwner || 0)}` : ''));
         continue;

@@ -1971,6 +1971,11 @@
   ;; The section this thread last parked on, and its owner at that moment.
   (global $cs_wait_addr (mut i32) (i32.const 0))
   (global $cs_wait_owner (mut i32) (i32.const 0))
+  ;; The last section this thread released without owning, and who did own it. A
+  ;; count says how often the emulator ran an Enter and its Leave on different
+  ;; threads; these say WHICH section, which is what points at the guest code.
+  (global $cs_bad_leave_addr (mut i32) (i32.const 0))
+  (global $cs_bad_leave_owner (mut i32) (i32.const 0))
   ;; Fruitless Enter rounds before a section is taken from its holder by force.
   ;;
   ;; Effectively never, and that default is a measurement rather than a

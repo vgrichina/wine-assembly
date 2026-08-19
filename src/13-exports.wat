@@ -196,6 +196,8 @@
   ;; Sections entered while already held, because a nested synchronous wndproc
   ;; was running and could not be parked. Exclusion was not honoured for these.
   (func (export "get_cs_barges") (result i32) (global.get $cs_barges))
+  (func (export "get_cs_bad_leave_addr") (result i32) (global.get $cs_bad_leave_addr))
+  (func (export "get_cs_bad_leave_owner") (result i32) (global.get $cs_bad_leave_owner))
   (func (export "get_cs_wait_addr") (result i32) (global.get $cs_wait_addr))
   (func (export "get_cs_wait_owner") (result i32) (global.get $cs_wait_owner))
   (func (export "set_cs_steal_after") (param i32) (global.set $cs_steal_after (local.get 0)))

@@ -6150,6 +6150,8 @@
     (if (i32.ne (i32.load offset=12 (local.get $cs)) (global.get $current_thread_id))
       (then
         (global.set $cs_bad_leaves (i32.add (global.get $cs_bad_leaves) (i32.const 1)))
+        (global.set $cs_bad_leave_addr (local.get $cs))
+        (global.set $cs_bad_leave_owner (i32.load offset=12 (local.get $cs)))
         (i32.store offset=8 (local.get $cs) (i32.const 0))
         (i32.store offset=4 (local.get $cs) (i32.const -1))
         (if (call $cs_owner_aligned (local.get $cs))
