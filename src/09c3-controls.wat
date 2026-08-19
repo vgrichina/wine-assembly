@@ -88,6 +88,116 @@
   (func $btn_drawitem_guest (param $state i32) (result i32)
     (i32.add (local.get $state) (i32.const 16)))
 
+  ;; ---- StaticState accessors ----
+  ;;
+  ;; Same rules as the button block above: $sw is the WASM address. SysLink
+  ;; allocates this same 16-byte layout (it is a static that paints part of its
+  ;; caption blue), so both wndprocs read through these; that shared shape is
+  ;; invisible when both files spell out `offset=8`.
+  ;;
+  ;; +12 is a union in practice: a static created from a dialog template with
+  ;; an *ordinal* caption keeps the resource ordinal there and paints an icon,
+  ;; while a string caption leaves it 0 and fills text_ptr instead. Naming it
+  ;; image_ord is what says the icon branch and the text branch are exclusive.
+  (func $static_text_ptr (param $sw i32) (result i32)
+    (i32.load (local.get $sw)))
+  (func $static_set_text_ptr (param $sw i32) (param $v i32)
+    (i32.store (local.get $sw) (local.get $v)))
+  (func $static_text_len (param $sw i32) (result i32)
+    (i32.load offset=4 (local.get $sw)))
+  (func $static_set_text_len (param $sw i32) (param $v i32)
+    (i32.store offset=4 (local.get $sw) (local.get $v)))
+  (func $static_style (param $sw i32) (result i32)
+    (i32.load offset=8 (local.get $sw)))
+  (func $static_set_style (param $sw i32) (param $v i32)
+    (i32.store offset=8 (local.get $sw) (local.get $v)))
+  (func $static_image_ord (param $sw i32) (result i32)
+    (i32.load offset=12 (local.get $sw)))
+  (func $static_set_image_ord (param $sw i32) (param $v i32)
+    (i32.store offset=12 (local.get $sw) (local.get $v)))
+
+  ;; ---- ProgressState accessors ----
+  ;;
+  ;; min/max/pos/step. The PBM_* handlers clamp pos into [min,max] on nearly
+  ;; every message, and getting the clamp arguments the wrong way round reads
+  ;; as a progress bar that never moves rather than as a crash, so the two
+  ;; bounds being named rather than offset=0 / offset=4 matters here.
+  (func $prog_min (param $sw i32) (result i32)
+    (i32.load (local.get $sw)))
+  (func $prog_set_min (param $sw i32) (param $v i32)
+    (i32.store (local.get $sw) (local.get $v)))
+  (func $prog_max (param $sw i32) (result i32)
+    (i32.load offset=4 (local.get $sw)))
+  (func $prog_set_max (param $sw i32) (param $v i32)
+    (i32.store offset=4 (local.get $sw) (local.get $v)))
+  (func $prog_pos (param $sw i32) (result i32)
+    (i32.load offset=8 (local.get $sw)))
+  (func $prog_set_pos (param $sw i32) (param $v i32)
+    (i32.store offset=8 (local.get $sw) (local.get $v)))
+  (func $prog_step (param $sw i32) (result i32)
+    (i32.load offset=12 (local.get $sw)))
+  (func $prog_set_step (param $sw i32) (param $v i32)
+    (i32.store offset=12 (local.get $sw) (local.get $v)))
+  ;; Fresh bar: 0..100, pos 0, step 10 — the comctl32 defaults.
+  (func $prog_state_init (param $sw i32)
+    (call $prog_set_min (local.get $sw) (i32.const 0))
+    (call $prog_set_max (local.get $sw) (i32.const 100))
+    (call $prog_set_pos (local.get $sw) (i32.const 0))
+    (call $prog_set_step (local.get $sw) (i32.const 10)))
+  ;; Clamp a candidate position into the bar's range.
+  (func $prog_clamp (param $sw i32) (param $pos i32) (result i32)
+    (if (i32.lt_s (local.get $pos) (call $prog_min (local.get $sw)))
+      (then (local.set $pos (call $prog_min (local.get $sw)))))
+    (if (i32.gt_s (local.get $pos) (call $prog_max (local.get $sw)))
+      (then (local.set $pos (call $prog_max (local.get $sw)))))
+    (local.get $pos))
+
+  ;; ---- TrackBarState accessors (24 bytes) ----
+  ;;
+  ;; min/max/pos land on the same three offsets as ProgressState, which is
+  ;; exactly why the raw form was worth removing: two different classes with
+  ;; the same first three words and different lengths read identically at the
+  ;; call site, so a copy-paste between the two wndprocs would have compiled.
+  ;; +12 line, +16 page, +20 thumb length.
+  (func $trk_min (param $sw i32) (result i32)
+    (i32.load (local.get $sw)))
+  (func $trk_set_min (param $sw i32) (param $v i32)
+    (i32.store (local.get $sw) (local.get $v)))
+  (func $trk_max (param $sw i32) (result i32)
+    (i32.load offset=4 (local.get $sw)))
+  (func $trk_set_max (param $sw i32) (param $v i32)
+    (i32.store offset=4 (local.get $sw) (local.get $v)))
+  (func $trk_pos (param $sw i32) (result i32)
+    (i32.load offset=8 (local.get $sw)))
+  (func $trk_set_pos (param $sw i32) (param $v i32)
+    (i32.store offset=8 (local.get $sw) (local.get $v)))
+  (func $trk_line (param $sw i32) (result i32)
+    (i32.load offset=12 (local.get $sw)))
+  (func $trk_set_line (param $sw i32) (param $v i32)
+    (i32.store offset=12 (local.get $sw) (local.get $v)))
+  (func $trk_page (param $sw i32) (result i32)
+    (i32.load offset=16 (local.get $sw)))
+  (func $trk_set_page (param $sw i32) (param $v i32)
+    (i32.store offset=16 (local.get $sw) (local.get $v)))
+  (func $trk_thumb_len (param $sw i32) (result i32)
+    (i32.load offset=20 (local.get $sw)))
+  (func $trk_set_thumb_len (param $sw i32) (param $v i32)
+    (i32.store offset=20 (local.get $sw) (local.get $v)))
+  ;; Fresh slider: 0..100 at 0, line 1, page 10, 16px thumb.
+  (func $trk_state_init (param $sw i32)
+    (call $trk_set_min (local.get $sw) (i32.const 0))
+    (call $trk_set_max (local.get $sw) (i32.const 100))
+    (call $trk_set_pos (local.get $sw) (i32.const 0))
+    (call $trk_set_line (local.get $sw) (i32.const 1))
+    (call $trk_set_page (local.get $sw) (i32.const 10))
+    (call $trk_set_thumb_len (local.get $sw) (i32.const 16)))
+  (func $trk_clamp (param $sw i32) (param $pos i32) (result i32)
+    (if (i32.lt_s (local.get $pos) (call $trk_min (local.get $sw)))
+      (then (local.set $pos (call $trk_min (local.get $sw)))))
+    (if (i32.gt_s (local.get $pos) (call $trk_max (local.get $sw)))
+      (then (local.set $pos (call $trk_max (local.get $sw)))))
+    (local.get $pos))
+
   ;; Dialog mouse capture for WAT-managed buttons. Browser mouseup coordinates
   ;; can drift from the mousedown point; deliver the release to the pressed
   ;; button so owner-draw controls always clear ODS_SELECTED.
@@ -1106,10 +1216,37 @@
   ;;   FR_REPLACE     = 0x0010
   ;;   FR_REPLACEALL  = 0x0020
   ;;   FR_DIALOGTERM  = 0x0040
+  ;; The FINDREPLACE belongs to the caller, and for a modeless dialog the
+  ;; caller can outlive its own struct. WordPad does: MFC's
+  ;; CFindReplaceDialog::Create attaches the returned HWND through the WH_CBT
+  ;; hook commdlg's own dialog fires, we do not fire it, so Create decides it
+  ;; failed and deletes the object while our dialog stays up. Everything past
+  ;; that point reads recycled heap.
+  ;;
+  ;; lStructSize is the one field commdlg itself requires the caller to set,
+  ;; so it doubles as a liveness bit: 32 means the block is still the
+  ;; FINDREPLACE it was, anything else means somebody else owns those bytes
+  ;; now and writing flags or search text into them corrupts them.
+  (func $findreplace_struct_live (param $fr_w i32) (result i32)
+    (i32.eq (i32.load (local.get $fr_w)) (i32.const 32)))
+
+  ;; Flags back-fill, skipped once the struct is gone. The dialog's own state
+  ;; (the WAT edits, the direction radios) is what the search runs off, so
+  ;; losing the write costs the app nothing it can still read.
+  (func $findreplace_store_flags (param $fr_w i32) (param $flags i32)
+    (if (call $findreplace_struct_live (local.get $fr_w))
+      (then (i32.store offset=12 (local.get $fr_w) (local.get $flags)))))
+
+  (func $findreplace_load_flags (param $fr_w i32) (result i32)
+    (if (call $findreplace_struct_live (local.get $fr_w))
+      (then (return (i32.load offset=12 (local.get $fr_w)))))
+    (i32.const 0))
+
   (func $findreplace_copy_edit_to_buffer
     (param $edit_h i32) (param $fr_w i32) (param $ptr_off i32) (param $len_off i32)
     (local $state i32) (local $state_w i32) (local $src_w i32)
     (local $buf_g i32) (local $buf_w i32) (local $text_len i32) (local $max_len i32)
+    (if (i32.eqz (call $findreplace_struct_live (local.get $fr_w))) (then (return)))
     (local.set $state (call $wnd_get_state_ptr (local.get $edit_h)))
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $state_w (call $g2w (local.get $state)))
@@ -1151,7 +1288,9 @@
       ;; the field then reads back as stale garbage, so believing it deleted
       ;; nothing at all: WordPad's Replace All with an empty replacement left
       ;; every match in place.
-      (else (local.set $replace_g (i32.load offset=20 (local.get $fr_w)))))
+      (else
+        (if (call $findreplace_struct_live (local.get $fr_w))
+          (then (local.set $replace_g (i32.load offset=20 (local.get $fr_w)))))))
     ;; Empty replacement is valid and means delete the selected match.
     (if (i32.eqz (local.get $replace_g))
       (then
@@ -1187,7 +1326,9 @@
     (if (local.get $find_state)
       (then (local.set $find_g (i32.load (call $g2w (local.get $find_state))))))
     (if (i32.eqz (local.get $find_g))
-      (then (local.set $find_g (i32.load offset=16 (local.get $fr_w)))))
+      (then
+        (if (call $findreplace_struct_live (local.get $fr_w))
+          (then (local.set $find_g (i32.load offset=16 (local.get $fr_w)))))))
     (if (i32.eqz (local.get $find_g)) (then (return (i32.const 0))))
     (local.set $range_g (call $heap_alloc (i32.const 20)))
     (if (i32.eqz (local.get $range_g)) (then (return (i32.const 0))))
@@ -1288,11 +1429,11 @@
     ;; ---- Cancel (id=2) ----
     (if (i32.eq (local.get $cmd) (i32.const 2))
       (then
-        (local.set $flags (i32.load offset=12 (local.get $fr_w)))
+        (local.set $flags (call $findreplace_load_flags (local.get $fr_w)))
         ;; clear FR_FINDNEXT(0x08), set FR_DIALOGTERM(0x40)
         (local.set $flags (i32.or (i32.and (local.get $flags) (i32.const 0xFFFFFFB7))
                                   (i32.const 0x40)))
-        (i32.store offset=12 (local.get $fr_w) (local.get $flags))
+        (call $findreplace_store_flags (local.get $fr_w) (local.get $flags))
         (drop (call $post_queue_push (local.get $owner)
                 (select (global.get $findreplace_message) (i32.const 0xC000)
                         (i32.ne (global.get $findreplace_message) (i32.const 0)))
@@ -1323,7 +1464,7 @@
                 (i32.and (call $button_get_flags_internal (local.get $mc_h)) (i32.const 0x02))
                 (i32.const 0)))
           (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04)))))
-        (i32.store offset=12 (local.get $fr_w) (local.get $flags))
+        (call $findreplace_store_flags (local.get $fr_w) (local.get $flags))
         (call $findreplace_copy_edit_to_buffer
           (global.get $findreplace_edit_hwnd) (local.get $fr_w) (i32.const 16) (i32.const 24))
         (call $findreplace_copy_edit_to_buffer
@@ -1395,10 +1536,12 @@
         ;; dialog Find Next always searches downward in this mode.
         (if (global.get $findreplace_is_replace)
           (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x01)))))
-        (i32.store offset=12 (local.get $fr_w) (local.get $flags))
+        (call $findreplace_store_flags (local.get $fr_w) (local.get $flags))
         ;; Copy edit text into FR.lpstrFindWhat (clamped to wFindWhatLen-1).
         (local.set $edit_h (global.get $findreplace_edit_hwnd))
         (local.set $edit_state (call $wnd_get_state_ptr (local.get $edit_h)))
+        (if (i32.eqz (call $findreplace_struct_live (local.get $fr_w)))
+          (then (local.set $edit_state (i32.const 0))))
         (if (local.get $edit_state)
           (then
             (local.set $edit_sw (call $g2w (local.get $edit_state)))
@@ -4847,19 +4990,20 @@
         (local.set $style    (i32.load offset=32 (local.get $cs_w)))
         (local.set $state (call $heap_alloc (i32.const 16)))
         (local.set $state_w (call $g2w (local.get $state)))
-        (i32.store        (local.get $state_w) (i32.const 0)) ;; text_buf_ptr
-        (i32.store offset=4  (local.get $state_w) (i32.const 0)) ;; text_len
-        (i32.store offset=8  (local.get $state_w) (local.get $style))
-        (i32.store offset=12 (local.get $state_w) (i32.const 0))
+        (call $static_set_text_ptr  (local.get $state_w) (i32.const 0))
+        (call $static_set_text_len  (local.get $state_w) (i32.const 0))
+        (call $static_set_style     (local.get $state_w) (local.get $style))
+        (call $static_set_image_ord (local.get $state_w) (i32.const 0))
         (if (local.get $name_ptr)
           (then
             (if (i32.lt_u (local.get $name_ptr) (i32.const 0x10000))
               (then
-                (i32.store offset=12 (local.get $state_w) (local.get $name_ptr)))
+                (call $static_set_image_ord (local.get $state_w) (local.get $name_ptr)))
               (else
                 (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
-                (i32.store        (local.get $state_w) (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
-                (i32.store offset=4 (local.get $state_w) (local.get $text_len))))))
+                (call $static_set_text_ptr (local.get $state_w)
+                  (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
+                (call $static_set_text_len (local.get $state_w) (local.get $text_len))))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -4869,7 +5013,7 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (call $heap_free (i32.load (local.get $state_w)))
+            (call $heap_free (call $static_text_ptr (local.get $state_w)))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
@@ -4880,14 +5024,15 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (call $heap_free (i32.load (local.get $state_w)))
-            (i32.store       (local.get $state_w) (i32.const 0))
-            (i32.store offset=4 (local.get $state_w) (i32.const 0))
+            (call $heap_free (call $static_text_ptr (local.get $state_w)))
+            (call $static_set_text_ptr (local.get $state_w) (i32.const 0))
+            (call $static_set_text_len (local.get $state_w) (i32.const 0))
             (if (local.get $lParam)
               (then
                 (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
-                (i32.store       (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
-                (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+                (call $static_set_text_ptr (local.get $state_w)
+                  (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
+                (call $static_set_text_len (local.get $state_w) (local.get $text_len))))
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))
               (then (call $invalidate_hwnd (local.get $hwnd))))
             (return (i32.const 1))))
@@ -4899,13 +5044,13 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $text_len (call $static_text_len (local.get $state_w)))
         (if (i32.ge_u (local.get $text_len) (local.get $wParam))
           (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
-        (if (i32.load (local.get $state_w))
+        (if (call $static_text_ptr (local.get $state_w))
           (then (if (local.get $text_len)
                   (then (call $memcpy (call $g2w (local.get $lParam))
-                                      (call $g2w (i32.load (local.get $state_w)))
+                                      (call $g2w (call $static_text_ptr (local.get $state_w)))
                                       (local.get $text_len))))))
         (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
         (return (local.get $text_len))))
@@ -4914,7 +5059,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000E))
       (then
         (if (local.get $state)
-          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+          (then (return (call $static_text_len (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT ----------
@@ -4933,7 +5078,7 @@
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (local.set $style (i32.and (i32.load offset=8 (local.get $state_w)) (i32.const 0x0F)))
+        (local.set $style (i32.and (call $static_style (local.get $state_w)) (i32.const 0x0F)))
         (local.set $ex (call $ctrl_get_ex_style (local.get $hwnd)))
         (local.set $ctrl_id (call $ctrl_table_get_id (local.get $hwnd)))
         ;; Default text rect = full client.
@@ -5026,7 +5171,7 @@
         ;; the canonical WAT raster path.
         (if (i32.and
               (i32.eq (local.get $style) (i32.const 3))
-              (i32.ne (i32.load offset=12 (local.get $state_w)) (i32.const 0)))
+              (i32.ne (call $static_image_ord (local.get $state_w)) (i32.const 0)))
           (then
             ;; Compact Win9x statics commonly clip a padded 32x32 icon DIB at
             ;; its origin; larger illustration controls use centered layout.
@@ -5035,7 +5180,7 @@
                        (i32.le_u (local.get $h) (i32.const 16))))
             (if (call $gdi_icon_draw_resource
                   (local.get $hdc)
-                  (i32.load offset=12 (local.get $state_w))
+                  (call $static_image_ord (local.get $state_w))
                   (local.get $w) (local.get $h)
                   (local.get $origin_clip))
               (then (return (i32.const 0))))))
@@ -5050,10 +5195,10 @@
                   (i32.and (i32.ge_u (local.get $h) (i32.const 10))
                            (i32.le_u (local.get $h) (i32.const 16)))
                   (i32.or
-                    (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 301))
-                    (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 302))))))
+                    (i32.eq (call $static_image_ord (local.get $state_w)) (i32.const 301))
+                    (i32.eq (call $static_image_ord (local.get $state_w)) (i32.const 302))))))
           (then
-            (if (i32.eq (i32.load offset=12 (local.get $state_w)) (i32.const 301))
+            (if (i32.eq (call $static_image_ord (local.get $state_w)) (i32.const 301))
               (then
                 ;; Left-facing speaker.
                 (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -5088,7 +5233,7 @@
               (i32.ne (local.get $style) (i32.const 3))
               (i32.ne (local.get $style) (i32.const 0x0E)))
           (then
-          (if (i32.load (local.get $state_w))
+          (if (call $static_text_ptr (local.get $state_w))
             (then
               ;; SS_LEFT(0)/SS_CENTER(1)/SS_RIGHT(2) use DT_WORDBREAK for multi-line.
               ;; Text statics also expand tabs; Paint's Attributes dialog uses
@@ -5116,8 +5261,8 @@
               (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $tx_r))
               (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $tx_b))
               (drop (call $host_gdi_draw_text (local.get $hdc)
-                      (call $g2w (i32.load (local.get $state_w)))
-                      (i32.load offset=4 (local.get $state_w))
+                      (call $g2w (call $static_text_ptr (local.get $state_w)))
+                      (call $static_text_len (local.get $state_w))
                       (global.get $PAINT_SCRATCH)
                       (local.get $fmt) (i32.const 0)))))))
         (return (i32.const 0))))
@@ -5156,17 +5301,18 @@
         (local.set $style    (i32.load offset=32 (local.get $cs_w)))
         (local.set $state (call $heap_alloc (i32.const 16)))
         (local.set $state_w (call $g2w (local.get $state)))
-        (i32.store           (local.get $state_w) (i32.const 0))
-        (i32.store offset=4  (local.get $state_w) (i32.const 0))
-        (i32.store offset=8  (local.get $state_w) (local.get $style))
-        (i32.store offset=12 (local.get $state_w) (i32.const 0))
+        (call $static_set_text_ptr  (local.get $state_w) (i32.const 0))
+        (call $static_set_text_len  (local.get $state_w) (i32.const 0))
+        (call $static_set_style     (local.get $state_w) (local.get $style))
+        (call $static_set_image_ord (local.get $state_w) (i32.const 0))
         ;; A SysLink caption is always a real string; ordinal captions are a
         ;; static-only convention and would be a template authoring error here.
         (if (i32.gt_u (local.get $name_ptr) (i32.const 0xFFFF))
           (then
             (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
-            (i32.store          (local.get $state_w) (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
-            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+            (call $static_set_text_ptr (local.get $state_w)
+              (call $ctrl_text_dup (local.get $name_ptr) (local.get $text_len)))
+            (call $static_set_text_len (local.get $state_w) (local.get $text_len))))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -5176,7 +5322,7 @@
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))
-            (call $heap_free (i32.load (local.get $state_w)))
+            (call $heap_free (call $static_text_ptr (local.get $state_w)))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
@@ -5186,14 +5332,15 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (call $heap_free (i32.load (local.get $state_w)))
-        (i32.store          (local.get $state_w) (i32.const 0))
-        (i32.store offset=4 (local.get $state_w) (i32.const 0))
+        (call $heap_free (call $static_text_ptr (local.get $state_w)))
+        (call $static_set_text_ptr (local.get $state_w) (i32.const 0))
+        (call $static_set_text_len (local.get $state_w) (i32.const 0))
         (if (local.get $lParam)
           (then
             (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
-            (i32.store          (local.get $state_w) (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
-            (i32.store offset=4 (local.get $state_w) (local.get $text_len))))
+            (call $static_set_text_ptr (local.get $state_w)
+              (call $ctrl_text_dup (local.get $lParam) (local.get $text_len)))
+            (call $static_set_text_len (local.get $state_w) (local.get $text_len))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -5201,7 +5348,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000E))
       (then
         (if (local.get $state)
-          (then (return (i32.load offset=4 (call $g2w (local.get $state))))))
+          (then (return (call $static_text_len (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_GETTEXT ----------
@@ -5210,12 +5357,16 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (if (i32.eqz (local.get $wParam)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $text_len (i32.load offset=4 (local.get $state_w)))
+        (local.set $text_len (call $static_text_len (local.get $state_w)))
         (if (i32.ge_u (local.get $text_len) (local.get $wParam))
           (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
-        (if (i32.and (i32.load (local.get $state_w)) (i32.ne (local.get $text_len) (i32.const 0)))
+        ;; Both operands have to be 0/1 here: the text pointer is a heap
+        ;; address, so ANDing it raw against a predicate cleared its low bit
+        ;; and every SysLink WM_GETTEXT answered with an untouched buffer.
+        (if (i32.and (i32.ne (call $static_text_ptr (local.get $state_w)) (i32.const 0))
+                     (i32.ne (local.get $text_len) (i32.const 0)))
           (then (call $memcpy (call $g2w (local.get $lParam))
-                              (call $g2w (i32.load (local.get $state_w)))
+                              (call $g2w (call $static_text_ptr (local.get $state_w)))
                               (local.get $text_len))))
         (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
         (return (local.get $text_len))))
@@ -5225,7 +5376,7 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (if (i32.eqz (i32.load (local.get $state_w))) (then (return (i32.const 0))))
+        (if (i32.eqz (call $static_text_ptr (local.get $state_w))) (then (return (i32.const 0))))
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -5238,8 +5389,8 @@
         (local.set $lh (i32.and (call $host_get_text_metrics (local.get $hdc)) (i32.const 0xFFFF)))
         (if (i32.eqz (local.get $lh)) (then (local.set $lh (i32.const 13))))
         (local.set $sp (call $host_measure_text (local.get $hdc) (i32.const 0x11E48) (i32.const 1) (i32.const 0)))
-        (local.set $tw (call $g2w (i32.load (local.get $state_w))))
-        (local.set $n (i32.load offset=4 (local.get $state_w)))
+        (local.set $tw (call $g2w (call $static_text_ptr (local.get $state_w))))
+        (local.set $n (call $static_text_len (local.get $state_w)))
         (local.set $i (i32.const 0))
         (local.set $x (i32.const 0))
         (local.set $y (i32.const 0))
@@ -5588,10 +5739,7 @@
       (then
         (local.set $state (call $heap_alloc (i32.const 16)))
         (local.set $sw (call $g2w (local.get $state)))
-        (i32.store        (local.get $sw) (i32.const 0))
-        (i32.store offset=4  (local.get $sw) (i32.const 100))
-        (i32.store offset=8  (local.get $sw) (i32.const 0))
-        (i32.store offset=12 (local.get $sw) (i32.const 10))
+        (call $prog_state_init (local.get $sw))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
     ;; WM_DESTROY
@@ -5609,10 +5757,7 @@
       (then
         (local.set $state (call $heap_alloc (i32.const 16)))
         (local.set $sw (call $g2w (local.get $state)))
-        (i32.store        (local.get $sw) (i32.const 0))
-        (i32.store offset=4  (local.get $sw) (i32.const 100))
-        (i32.store offset=8  (local.get $sw) (i32.const 0))
-        (i32.store offset=12 (local.get $sw) (i32.const 10))
+        (call $prog_state_init (local.get $sw))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
     (local.set $sw (call $g2w (local.get $state)))
     ;; PBM_SETRANGE(0x0401): lParam low=min, high=max.
@@ -5622,51 +5767,44 @@
         (local.set $max (i32.shr_s (local.get $lParam) (i32.const 16)))
         (if (i32.le_s (local.get $max) (local.get $min))
           (then (local.set $max (i32.add (local.get $min) (i32.const 1)))))
-        (i32.store        (local.get $sw) (local.get $min))
-        (i32.store offset=4  (local.get $sw) (local.get $max))
-        (local.set $pos (i32.load offset=8 (local.get $sw)))
-        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (i32.store offset=8 (local.get $sw) (local.get $min))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (i32.store offset=8 (local.get $sw) (local.get $max))))
+        (call $prog_set_min (local.get $sw) (local.get $min))
+        (call $prog_set_max (local.get $sw) (local.get $max))
+        (call $prog_set_pos (local.get $sw)
+          (call $prog_clamp (local.get $sw) (call $prog_pos (local.get $sw))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
     ;; PBM_SETPOS(0x0402): return previous position.
     (if (i32.eq (local.get $msg) (i32.const 0x0402))
       (then
-        (local.set $old (i32.load offset=8 (local.get $sw)))
-        (local.set $min (i32.load (local.get $sw)))
-        (local.set $max (i32.load offset=4 (local.get $sw)))
-        (local.set $pos (local.get $wParam))
-        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
-        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (local.set $old (call $prog_pos (local.get $sw)))
+        (call $prog_set_pos (local.get $sw)
+          (call $prog_clamp (local.get $sw) (local.get $wParam)))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $old))))
     ;; PBM_DELTAPOS(0x0403): return previous position.
     (if (i32.eq (local.get $msg) (i32.const 0x0403))
       (then
-        (local.set $old (i32.load offset=8 (local.get $sw)))
-        (local.set $min (i32.load (local.get $sw)))
-        (local.set $max (i32.load offset=4 (local.get $sw)))
-        (local.set $pos (i32.add (local.get $old) (local.get $wParam)))
-        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
-        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (local.set $old (call $prog_pos (local.get $sw)))
+        (call $prog_set_pos (local.get $sw)
+          (call $prog_clamp (local.get $sw)
+            (i32.add (local.get $old) (local.get $wParam))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $old))))
     ;; PBM_SETSTEP(0x0404), PBM_STEPIT(0x0405), PBM_SETRANGE32(0x0406).
     (if (i32.eq (local.get $msg) (i32.const 0x0404))
       (then
-        (local.set $old (i32.load offset=12 (local.get $sw)))
-        (i32.store offset=12 (local.get $sw) (local.get $wParam))
+        (local.set $old (call $prog_step (local.get $sw)))
+        (call $prog_set_step (local.get $sw) (local.get $wParam))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0405))
       (then
-        (local.set $old (i32.load offset=8 (local.get $sw)))
-        (local.set $min (i32.load (local.get $sw)))
-        (local.set $max (i32.load offset=4 (local.get $sw)))
-        (local.set $pos (i32.add (local.get $old) (i32.load offset=12 (local.get $sw))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $min))))
-        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        ;; STEPIT wraps rather than clamps: a stepped bar that runs off the end
+        ;; starts again at min, which is why this one does not use $prog_clamp.
+        (local.set $old (call $prog_pos (local.get $sw)))
+        (local.set $pos (i32.add (local.get $old) (call $prog_step (local.get $sw))))
+        (if (i32.gt_s (local.get $pos) (call $prog_max (local.get $sw)))
+          (then (local.set $pos (call $prog_min (local.get $sw)))))
+        (call $prog_set_pos (local.get $sw) (local.get $pos))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0406))
@@ -5675,11 +5813,10 @@
         (local.set $max (local.get $lParam))
         (if (i32.le_s (local.get $max) (local.get $min))
           (then (local.set $max (i32.add (local.get $min) (i32.const 1)))))
-        (i32.store        (local.get $sw) (local.get $min))
-        (i32.store offset=4  (local.get $sw) (local.get $max))
-        (local.set $pos (i32.load offset=8 (local.get $sw)))
-        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (i32.store offset=8 (local.get $sw) (local.get $min))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (i32.store offset=8 (local.get $sw) (local.get $max))))
+        (call $prog_set_min (local.get $sw) (local.get $min))
+        (call $prog_set_max (local.get $sw) (local.get $max))
+        (call $prog_set_pos (local.get $sw)
+          (call $prog_clamp (local.get $sw) (call $prog_pos (local.get $sw))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
     ;; WM_PAINT
@@ -5696,11 +5833,9 @@
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30010))) ;; WHITE_BRUSH
-            (local.set $min (i32.load (local.get $sw)))
-            (local.set $max (i32.load offset=4 (local.get $sw)))
-            (local.set $pos (i32.load offset=8 (local.get $sw)))
-            (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
-            (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
+            (local.set $min (call $prog_min (local.get $sw)))
+            (local.set $max (call $prog_max (local.get $sw)))
+            (local.set $pos (call $prog_clamp (local.get $sw) (call $prog_pos (local.get $sw))))
             (local.set $range (i32.sub (local.get $max) (local.get $min)))
             (local.set $inner_w (i32.sub (local.get $w) (i32.const 4)))
             (if (i32.and (i32.gt_s (local.get $range) (i32.const 0))
@@ -9299,12 +9434,7 @@
       (then
         (local.set $state (call $heap_alloc (i32.const 24)))
         (local.set $sw (call $g2w (local.get $state)))
-        (i32.store        (local.get $sw) (i32.const 0))
-        (i32.store offset=4  (local.get $sw) (i32.const 100))
-        (i32.store offset=8  (local.get $sw) (i32.const 0))
-        (i32.store offset=12 (local.get $sw) (i32.const 1))
-        (i32.store offset=16 (local.get $sw) (i32.const 10))
-        (i32.store offset=20 (local.get $sw) (i32.const 16))
+        (call $trk_state_init (local.get $sw))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))))
     (local.set $sw (call $g2w (local.get $state)))
 
@@ -9320,20 +9450,16 @@
 
     ;; TBM_GETPOS / TBM_GETRANGEMIN / TBM_GETRANGEMAX
     (if (i32.eq (local.get $msg) (i32.const 0x0400))
-      (then (return (i32.load offset=8 (local.get $sw)))))
+      (then (return (call $trk_pos (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0401))
-      (then (return (i32.load (local.get $sw)))))
+      (then (return (call $trk_min (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0402))
-      (then (return (i32.load offset=4 (local.get $sw)))))
+      (then (return (call $trk_max (local.get $sw)))))
     ;; TBM_SETPOS(fRedraw, pos)
     (if (i32.eq (local.get $msg) (i32.const 0x0405))
       (then
-        (local.set $min (i32.load (local.get $sw)))
-        (local.set $max (i32.load offset=4 (local.get $sw)))
-        (local.set $pos (local.get $lParam))
-        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (local.set $pos (local.get $min))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (local.set $pos (local.get $max))))
-        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (call $trk_set_pos (local.get $sw)
+          (call $trk_clamp (local.get $sw) (local.get $lParam)))
         (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
     ;; TBM_SETRANGE(fRedraw, MAKELONG(min,max))
@@ -9343,47 +9469,46 @@
         (local.set $max (i32.shr_s (local.get $lParam) (i32.const 16)))
         (if (i32.le_s (local.get $max) (local.get $min))
           (then (local.set $max (i32.add (local.get $min) (i32.const 1)))))
-        (i32.store        (local.get $sw) (local.get $min))
-        (i32.store offset=4  (local.get $sw) (local.get $max))
-        (local.set $pos (i32.load offset=8 (local.get $sw)))
-        (if (i32.lt_s (local.get $pos) (local.get $min)) (then (i32.store offset=8 (local.get $sw) (local.get $min))))
-        (if (i32.gt_s (local.get $pos) (local.get $max)) (then (i32.store offset=8 (local.get $sw) (local.get $max))))
+        (call $trk_set_min (local.get $sw) (local.get $min))
+        (call $trk_set_max (local.get $sw) (local.get $max))
+        (call $trk_set_pos (local.get $sw)
+          (call $trk_clamp (local.get $sw) (call $trk_pos (local.get $sw))))
         (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
     ;; TBM_SETRANGEMIN / TBM_SETRANGEMAX
     (if (i32.eq (local.get $msg) (i32.const 0x0407))
       (then
-        (i32.store (local.get $sw) (local.get $lParam))
+        (call $trk_set_min (local.get $sw) (local.get $lParam))
         (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x0408))
       (then
-        (i32.store offset=4 (local.get $sw) (local.get $lParam))
+        (call $trk_set_max (local.get $sw) (local.get $lParam))
         (if (local.get $wParam) (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 0))))
     ;; TBM_SETPAGESIZE / GETPAGESIZE / SETLINESIZE / GETLINESIZE
     (if (i32.eq (local.get $msg) (i32.const 0x0415))
       (then
-        (local.set $old (i32.load offset=16 (local.get $sw)))
-        (i32.store offset=16 (local.get $sw) (local.get $lParam))
+        (local.set $old (call $trk_page (local.get $sw)))
+        (call $trk_set_page (local.get $sw) (local.get $lParam))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0416))
-      (then (return (i32.load offset=16 (local.get $sw)))))
+      (then (return (call $trk_page (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0417))
       (then
-        (local.set $old (i32.load offset=12 (local.get $sw)))
-        (i32.store offset=12 (local.get $sw) (local.get $lParam))
+        (local.set $old (call $trk_line (local.get $sw)))
+        (call $trk_set_line (local.get $sw) (local.get $lParam))
         (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x0418))
-      (then (return (i32.load offset=12 (local.get $sw)))))
+      (then (return (call $trk_line (local.get $sw)))))
     ;; TBM_SETTHUMBLENGTH / GETTHUMBLENGTH
     (if (i32.eq (local.get $msg) (i32.const 0x041B))
       (then
-        (i32.store offset=20 (local.get $sw) (local.get $wParam))
+        (call $trk_set_thumb_len (local.get $sw) (local.get $wParam))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
     (if (i32.eq (local.get $msg) (i32.const 0x041C))
-      (then (return (i32.load offset=20 (local.get $sw)))))
+      (then (return (call $trk_thumb_len (local.get $sw)))))
 
     ;; Mouse tracking. Native trackbars capture the thumb and synchronously
     ;; notify their parent with WM_HSCROLL/WM_VSCROLL while it moves.
@@ -9403,7 +9528,7 @@
             (i32.shr_s (local.get $lParam) (i32.const 16))
             (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16))
             (local.get $vert)))
-        (local.set $thumb_len (i32.load offset=20 (local.get $sw)))
+        (local.set $thumb_len (call $trk_thumb_len (local.get $sw)))
         (if (i32.lt_s (local.get $thumb_len) (i32.const 8))
           (then (local.set $thumb_len (i32.const 8))))
         (local.set $track_len (i32.sub (local.get $long_dim) (local.get $thumb_len)))
@@ -9412,14 +9537,14 @@
         (local.set $coord (i32.sub (local.get $coord) (i32.div_s (local.get $thumb_len) (i32.const 2))))
         (if (i32.lt_s (local.get $coord) (i32.const 0)) (then (local.set $coord (i32.const 0))))
         (if (i32.gt_s (local.get $coord) (local.get $track_len)) (then (local.set $coord (local.get $track_len))))
-        (local.set $min (i32.load (local.get $sw)))
-        (local.set $max (i32.load offset=4 (local.get $sw)))
+        (local.set $min (call $trk_min (local.get $sw)))
+        (local.set $max (call $trk_max (local.get $sw)))
         (local.set $range (i32.sub (local.get $max) (local.get $min)))
         (if (i32.le_s (local.get $range) (i32.const 0)) (then (local.set $range (i32.const 1))))
         (local.set $pos
           (i32.add (local.get $min)
             (i32.div_s (i32.mul (local.get $coord) (local.get $range)) (local.get $track_len))))
-        (i32.store offset=8 (local.get $sw) (local.get $pos))
+        (call $trk_set_pos (local.get $sw) (local.get $pos))
         (if (i32.eq (local.get $msg) (i32.const 0x0201))
           (then (global.set $capture_hwnd (local.get $hwnd))))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -9436,7 +9561,7 @@
         (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
           (then
             (global.set $capture_hwnd (i32.const 0))
-            (local.set $pos (i32.load offset=8 (local.get $sw)))
+            (local.set $pos (call $trk_pos (local.get $sw)))
             (local.set $vert (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0002)))
             (local.set $scroll_msg (select (i32.const 0x0115) (i32.const 0x0114) (local.get $vert)))
             (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
@@ -9460,12 +9585,12 @@
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x30011))) ;; LTGRAY_BRUSH / COLOR_BTNFACE.
-        (local.set $min (i32.load (local.get $sw)))
-        (local.set $max (i32.load offset=4 (local.get $sw)))
-        (local.set $pos (i32.load offset=8 (local.get $sw)))
+        (local.set $min (call $trk_min (local.get $sw)))
+        (local.set $max (call $trk_max (local.get $sw)))
+        (local.set $pos (call $trk_pos (local.get $sw)))
         (local.set $range (i32.sub (local.get $max) (local.get $min)))
         (if (i32.le_s (local.get $range) (i32.const 0)) (then (local.set $range (i32.const 1))))
-        (local.set $thumb_len (i32.load offset=20 (local.get $sw)))
+        (local.set $thumb_len (call $trk_thumb_len (local.get $sw)))
         (if (i32.lt_s (local.get $thumb_len) (i32.const 8)) (then (local.set $thumb_len (i32.const 8))))
         (if (local.get $vert)
           (then
