@@ -4326,6 +4326,31 @@
       (br $scan)))
     (local.get $n))
 
+  ;; DIB backing arena occupancy. $kind: 0 = used pages, 1 = free pages,
+  ;; 2 = largest free contiguous run, 3 = total pages. A screen-sized overlay
+  ;; needs one contiguous run, so kind 1 >> kind 2 means fragmentation, not
+  ;; exhaustion.
+  (func (export "gdi_dib_arena_stat") (param $kind i32) (result i32)
+    (local $i i32) (local $used i32) (local $run i32) (local $best i32)
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (return (global.get $DIB_PAGE_COUNT))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DIB_PAGE_COUNT)))
+      (if (i32.load8_u (i32.add (global.get $DIB_PAGE_USED) (local.get $i)))
+        (then
+          (local.set $used (i32.add (local.get $used) (i32.const 1)))
+          (local.set $run (i32.const 0)))
+        (else
+          (local.set $run (i32.add (local.get $run) (i32.const 1)))
+          (if (i32.gt_u (local.get $run) (local.get $best))
+            (then (local.set $best (local.get $run))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $kind)) (then (return (local.get $used))))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then (return (i32.sub (global.get $DIB_PAGE_COUNT) (local.get $used)))))
+    (local.get $best))
+
   ;; slot 0 = clip table, 1 = system clip table, 2 = DC state table.
   (func (export "gdi_table_mark") (param $slot i32) (result i32)
     (if (i32.ge_u (local.get $slot) (i32.const 4)) (then (return (i32.const -1))))
