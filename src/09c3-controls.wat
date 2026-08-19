@@ -198,6 +198,67 @@
       (then (local.set $pos (call $trk_max (local.get $sw)))))
     (local.get $pos))
 
+  ;; ---- ListBoxState accessors (52 bytes) ----
+  ;;
+  ;; Three of the four buffers this struct owns are a pointer and a capacity
+  ;; that must be read together, and a fourth field — items_used — belongs to
+  ;; the first of them. Spelled as bare offsets, +4/+8 and +36/+40 and +44/+48
+  ;; look alike, and the one that is *not* a capacity (+12 count, which counts
+  ;; items while +4 counts bytes) sits right between them. See the layout
+  ;; comment above $listbox_wndproc.
+  (func $lb_items_ptr (param $sw i32) (result i32)
+    (i32.load (local.get $sw)))
+  (func $lb_set_items_ptr (param $sw i32) (param $v i32)
+    (i32.store (local.get $sw) (local.get $v)))
+  (func $lb_items_used (param $sw i32) (result i32)
+    (i32.load offset=4 (local.get $sw)))
+  (func $lb_set_items_used (param $sw i32) (param $v i32)
+    (i32.store offset=4 (local.get $sw) (local.get $v)))
+  (func $lb_items_cap (param $sw i32) (result i32)
+    (i32.load offset=8 (local.get $sw)))
+  (func $lb_set_items_cap (param $sw i32) (param $v i32)
+    (i32.store offset=8 (local.get $sw) (local.get $v)))
+  (func $lb_count (param $sw i32) (result i32)
+    (i32.load offset=12 (local.get $sw)))
+  (func $lb_set_count (param $sw i32) (param $v i32)
+    (i32.store offset=12 (local.get $sw) (local.get $v)))
+  (func $lb_cur_sel (param $sw i32) (result i32)
+    (i32.load offset=16 (local.get $sw)))
+  (func $lb_set_cur_sel (param $sw i32) (param $v i32)
+    (i32.store offset=16 (local.get $sw) (local.get $v)))
+  (func $lb_top_index (param $sw i32) (result i32)
+    (i32.load offset=20 (local.get $sw)))
+  (func $lb_set_top_index (param $sw i32) (param $v i32)
+    (i32.store offset=20 (local.get $sw) (local.get $v)))
+  (func $lb_ctrl_id (param $sw i32) (result i32)
+    (i32.load offset=24 (local.get $sw)))
+  (func $lb_set_ctrl_id (param $sw i32) (param $v i32)
+    (i32.store offset=24 (local.get $sw) (local.get $v)))
+  (func $lb_drag_anchor_y (param $sw i32) (result i32)
+    (i32.load offset=28 (local.get $sw)))
+  (func $lb_set_drag_anchor_y (param $sw i32) (param $v i32)
+    (i32.store offset=28 (local.get $sw) (local.get $v)))
+  (func $lb_drag_anchor_top (param $sw i32) (result i32)
+    (i32.load offset=32 (local.get $sw)))
+  (func $lb_set_drag_anchor_top (param $sw i32) (param $v i32)
+    (i32.store offset=32 (local.get $sw) (local.get $v)))
+  (func $lb_data_ptr (param $sw i32) (result i32)
+    (i32.load offset=36 (local.get $sw)))
+  (func $lb_set_data_ptr (param $sw i32) (param $v i32)
+    (i32.store offset=36 (local.get $sw) (local.get $v)))
+  (func $lb_data_cap (param $sw i32) (result i32)
+    (i32.load offset=40 (local.get $sw)))
+  (func $lb_set_data_cap (param $sw i32) (param $v i32)
+    (i32.store offset=40 (local.get $sw) (local.get $v)))
+  (func $lb_sel_ptr (param $sw i32) (result i32)
+    (i32.load offset=44 (local.get $sw)))
+  (func $lb_set_sel_ptr (param $sw i32) (param $v i32)
+    (i32.store offset=44 (local.get $sw) (local.get $v)))
+  (func $lb_sel_cap (param $sw i32) (result i32)
+    (i32.load offset=48 (local.get $sw)))
+  (func $lb_set_sel_cap (param $sw i32) (param $v i32)
+    (i32.store offset=48 (local.get $sw) (local.get $v)))
+
   ;; Dialog mouse capture for WAT-managed buttons. Browser mouseup coordinates
   ;; can drift from the mousedown point; deliver the release to the pressed
   ;; button so owner-draw controls always clear ODS_SELECTED.
@@ -9755,19 +9816,20 @@
         (local.set $cs_w (call $g2w (local.get $lParam)))
         (local.set $state (call $heap_alloc (i32.const 52)))
         (local.set $sw (call $g2w (local.get $state)))
-        (i32.store        (local.get $sw) (i32.const 0)) ;; items_buf_ptr
-        (i32.store offset=4  (local.get $sw) (i32.const 0)) ;; items_used
-        (i32.store offset=8  (local.get $sw) (i32.const 0)) ;; items_cap
-        (i32.store offset=12 (local.get $sw) (i32.const 0)) ;; count
-        (i32.store offset=16 (local.get $sw) (i32.const -1)) ;; cur_sel
-        (i32.store offset=20 (local.get $sw) (i32.const 0)) ;; top_index
-        (i32.store offset=24 (local.get $sw) (i32.load offset=8 (local.get $cs_w))) ;; ctrl_id from CREATESTRUCT.hMenu
-        (i32.store offset=28 (local.get $sw) (i32.const 0)) ;; drag_anchor_y (thumb drag)
-        (i32.store offset=32 (local.get $sw) (i32.const 0)) ;; drag_anchor_top
-        (i32.store offset=36 (local.get $sw) (i32.const 0)) ;; data_buf_ptr
-        (i32.store offset=40 (local.get $sw) (i32.const 0)) ;; data_cap
-        (i32.store offset=44 (local.get $sw) (i32.const 0)) ;; sel_buf_ptr
-        (i32.store offset=48 (local.get $sw) (i32.const 0)) ;; sel_cap
+        (call $lb_set_items_ptr (local.get $sw) (i32.const 0))
+        (call $lb_set_items_used (local.get $sw) (i32.const 0))
+        (call $lb_set_items_cap (local.get $sw) (i32.const 0))
+        (call $lb_set_count (local.get $sw) (i32.const 0))
+        (call $lb_set_cur_sel (local.get $sw) (i32.const -1))
+        (call $lb_set_top_index (local.get $sw) (i32.const 0))
+        ;; ctrl_id from CREATESTRUCT.hMenu
+        (call $lb_set_ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
+        (call $lb_set_drag_anchor_y (local.get $sw) (i32.const 0))
+        (call $lb_set_drag_anchor_top (local.get $sw) (i32.const 0))
+        (call $lb_set_data_ptr (local.get $sw) (i32.const 0))
+        (call $lb_set_data_cap (local.get $sw) (i32.const 0))
+        (call $lb_set_sel_ptr (local.get $sw) (i32.const 0))
+        (call $lb_set_sel_cap (local.get $sw) (i32.const 0))
         (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
         (return (i32.const 0))))
 
@@ -9777,9 +9839,9 @@
         (if (local.get $state)
           (then
             (local.set $sw (call $g2w (local.get $state)))
-            (call $heap_free (i32.load (local.get $sw)))
-            (call $heap_free (i32.load offset=36 (local.get $sw)))
-            (call $heap_free (i32.load offset=44 (local.get $sw)))
+            (call $heap_free (call $lb_items_ptr (local.get $sw)))
+            (call $heap_free (call $lb_data_ptr (local.get $sw)))
+            (call $heap_free (call $lb_sel_ptr (local.get $sw)))
             (call $heap_free (local.get $state))
             (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0))))
         (return (i32.const 0))))
@@ -9796,8 +9858,8 @@
         (if (i32.eqz (local.get $src_g)) (then (return (i32.const -1))))
         (local.set $src_w (call $g2w (local.get $src_g)))
         (local.set $slen (call $strlen (local.get $src_w)))
-        (local.set $used (i32.load offset=4 (local.get $sw)))
-        (local.set $cap  (i32.load offset=8 (local.get $sw)))
+        (local.set $used (call $lb_items_used (local.get $sw)))
+        (local.set $cap  (call $lb_items_cap (local.get $sw)))
         (local.set $need (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
         ;; Grow buffer if needed: alloc max(256, need*2), copy old, free old.
         (if (i32.gt_u (local.get $need) (local.get $cap))
@@ -9809,23 +9871,23 @@
             (local.set $new_w (call $g2w (local.get $new_buf)))
             (if (local.get $used)
               (then (call $memcpy (local.get $new_w)
-                                  (call $g2w (i32.load (local.get $sw)))
+                                  (call $g2w (call $lb_items_ptr (local.get $sw)))
                                   (local.get $used))))
-            (call $heap_free (i32.load (local.get $sw)))
-            (i32.store       (local.get $sw) (local.get $new_buf))
-            (i32.store offset=8 (local.get $sw) (local.get $cap))))
+            (call $heap_free (call $lb_items_ptr (local.get $sw)))
+            (call $lb_set_items_ptr (local.get $sw) (local.get $new_buf))
+            (call $lb_set_items_cap (local.get $sw) (local.get $cap))))
         ;; Append the new string + NUL at items[used].
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
         (call $memcpy (i32.add (local.get $items_w) (local.get $used))
                       (local.get $src_w) (local.get $slen))
         (i32.store8 (i32.add (i32.add (local.get $items_w) (local.get $used)) (local.get $slen))
                     (i32.const 0))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
-        (i32.store offset=4  (local.get $sw)
+        (local.set $count (call $lb_count (local.get $sw)))
+        (call $lb_set_items_used (local.get $sw)
           (i32.add (local.get $used) (i32.add (local.get $slen) (i32.const 1))))
-        (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
+        (call $lb_set_count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         ;; Grow parallel data array if needed; default new slot to 0.
-        (local.set $cap (i32.load offset=40 (local.get $sw)))
+        (local.set $cap (call $lb_data_cap (local.get $sw)))
         (if (i32.ge_u (local.get $count) (local.get $cap))
           (then
             (local.set $cap (i32.mul (i32.add (local.get $count) (i32.const 1)) (i32.const 2)))
@@ -9835,17 +9897,17 @@
             (local.set $new_w (call $g2w (local.get $new_buf)))
             (if (local.get $count)
               (then (call $memcpy (local.get $new_w)
-                                  (call $g2w (i32.load offset=36 (local.get $sw)))
+                                  (call $g2w (call $lb_data_ptr (local.get $sw)))
                                   (i32.mul (local.get $count) (i32.const 4)))))
-            (call $heap_free (i32.load offset=36 (local.get $sw)))
-            (i32.store offset=36 (local.get $sw) (local.get $new_buf))
-            (i32.store offset=40 (local.get $sw) (local.get $cap))))
+            (call $heap_free (call $lb_data_ptr (local.get $sw)))
+            (call $lb_set_data_ptr (local.get $sw) (local.get $new_buf))
+            (call $lb_set_data_cap (local.get $sw) (local.get $cap))))
         (i32.store
-          (i32.add (call $g2w (i32.load offset=36 (local.get $sw)))
+          (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
                    (i32.mul (local.get $count) (i32.const 4)))
           (i32.const 0))
         ;; Grow the byte-per-row multi-selection array in parallel.
-        (local.set $cap (i32.load offset=48 (local.get $sw)))
+        (local.set $cap (call $lb_sel_cap (local.get $sw)))
         (if (i32.ge_u (local.get $count) (local.get $cap))
           (then
             (local.set $cap (i32.mul (i32.add (local.get $count) (i32.const 1)) (i32.const 2)))
@@ -9855,13 +9917,13 @@
             (local.set $new_w (call $g2w (local.get $new_buf)))
             (if (local.get $count)
               (then (call $memcpy (local.get $new_w)
-                                  (call $g2w (i32.load offset=44 (local.get $sw)))
+                                  (call $g2w (call $lb_sel_ptr (local.get $sw)))
                                   (local.get $count))))
-            (call $heap_free (i32.load offset=44 (local.get $sw)))
-            (i32.store offset=44 (local.get $sw) (local.get $new_buf))
-            (i32.store offset=48 (local.get $sw) (local.get $cap))))
+            (call $heap_free (call $lb_sel_ptr (local.get $sw)))
+            (call $lb_set_sel_ptr (local.get $sw) (local.get $new_buf))
+            (call $lb_set_sel_cap (local.get $sw) (local.get $cap))))
         (i32.store8
-          (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $count))
+          (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $count))
           (i32.const 0))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $count))))  ;; index of newly inserted item
@@ -9869,14 +9931,14 @@
     ;; ---------- LB_RESETCONTENT (0x0184) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0184))
       (then
-        (i32.store offset=4  (local.get $sw) (i32.const 0))   ;; items_used
-        (i32.store offset=12 (local.get $sw) (i32.const 0))   ;; count
-        (i32.store offset=16 (local.get $sw) (i32.const -1))  ;; cur_sel
-        (i32.store offset=20 (local.get $sw) (i32.const 0))   ;; top_index
-        (local.set $p (call $g2w (i32.load offset=44 (local.get $sw))))
+        (call $lb_set_items_used (local.get $sw) (i32.const 0))
+        (call $lb_set_count (local.get $sw) (i32.const 0))
+        (call $lb_set_cur_sel (local.get $sw) (i32.const -1))
+        (call $lb_set_top_index (local.get $sw) (i32.const 0))
+        (local.set $p (call $g2w (call $lb_sel_ptr (local.get $sw))))
         (local.set $i (i32.const 0))
         (block $reset_sel_done (loop $reset_sel
-          (br_if $reset_sel_done (i32.ge_u (local.get $i) (i32.load offset=48 (local.get $sw))))
+          (br_if $reset_sel_done (i32.ge_u (local.get $i) (call $lb_sel_cap (local.get $sw))))
           (i32.store8 (i32.add (local.get $p) (local.get $i)) (i32.const 0))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $reset_sel)))
@@ -9928,24 +9990,24 @@
 
     ;; ---------- LB_GETCOUNT (0x018B) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x018B))
-      (then (return (i32.load offset=12 (local.get $sw)))))
+      (then (return (call $lb_count (local.get $sw)))))
 
     ;; ---------- LB_GETCURSEL (0x0188) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0188))
-      (then (return (i32.load offset=16 (local.get $sw)))))
+      (then (return (call $lb_cur_sel (local.get $sw)))))
 
     ;; ---------- LB_SETSEL (0x0185) / LB_GETSEL (0x0187) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0185))
       (then
         (local.set $idx (local.get $lParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.eq (local.get $idx) (i32.const -1))
           (then
             (local.set $i (i32.const 0))
             (block $set_all_done (loop $set_all
               (br_if $set_all_done (i32.ge_u (local.get $i) (local.get $count)))
               (i32.store8
-                (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i))
+                (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i))
                 (i32.ne (local.get $wParam) (i32.const 0)))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $set_all))))
@@ -9954,7 +10016,7 @@
                         (i32.ge_s (local.get $idx) (local.get $count)))
               (then (return (i32.const -1))))
             (i32.store8
-              (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $idx))
+              (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $idx))
               (i32.ne (local.get $wParam) (i32.const 0)))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
@@ -9962,20 +10024,20 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0187))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
           (then (return (i32.const -1))))
-        (if (i32.load offset=44 (local.get $sw))
+        (if (call $lb_sel_ptr (local.get $sw))
           (then (return (i32.load8_u
-            (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $idx))))))
-        (return (i32.eq (local.get $idx) (i32.load offset=16 (local.get $sw))))))
+            (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $idx))))))
+        (return (i32.eq (local.get $idx) (call $lb_cur_sel (local.get $sw))))))
 
     ;; ---------- LB_GETSELCOUNT (0x0190) / LB_GETSELITEMS (0x0191) ----------
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0190))
                 (i32.eq (local.get $msg) (i32.const 0x0191)))
       (then
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (local.set $i (i32.const 0))
         (local.set $sel (i32.const 0))
         (if (i32.eq (local.get $msg) (i32.const 0x0191))
@@ -9983,7 +10045,7 @@
         (block $get_sels_done (loop $get_sels
           (br_if $get_sels_done (i32.ge_u (local.get $i) (local.get $count)))
           (if (i32.load8_u
-                (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i)))
+                (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i)))
             (then
               (if (i32.eq (local.get $msg) (i32.const 0x0191))
                 (then
@@ -10006,14 +10068,14 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0186))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.ge_s (local.get $idx) (local.get $count))
           (then (local.set $idx (i32.const -1))))
-        (i32.store offset=16 (local.get $sw) (local.get $idx))
+        (call $lb_set_cur_sel (local.get $sw) (local.get $idx))
         (local.set $i (i32.const 0))
         (block $setcur_clear_done (loop $setcur_clear
           (br_if $setcur_clear_done (i32.ge_u (local.get $i) (local.get $count)))
-          (i32.store8 (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i))
+          (i32.store8 (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i))
             (i32.eq (local.get $i) (local.get $idx)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $setcur_clear)))
@@ -10026,12 +10088,12 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0189))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
           (then (return (i32.const -1))))
         ;; Walk NUL-separated buffer to item $idx.
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
         (local.set $p (local.get $items_w))
         (local.set $i (i32.const 0))
         (block $found (loop $skip
@@ -10050,11 +10112,11 @@
     (if (i32.eq (local.get $msg) (i32.const 0x018A))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
           (then (return (i32.const -1))))
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
         (local.set $p (local.get $items_w))
         (local.set $i (i32.const 0))
         (block $found2 (loop $skip2
@@ -10072,7 +10134,7 @@
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         ;; --- WS_VSCROLL strip hit-test (arrows only) ---
         ;; If the click lands in the right-edge 16px scrollbar strip, adjust
         ;; top_index and short-circuit before the row-select path.
@@ -10087,21 +10149,21 @@
               (then
                 ;; visible rows based on strip-reduced client
                 (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
-                (local.set $top (i32.load offset=20 (local.get $sw)))
+                (local.set $top (call $lb_top_index (local.get $sw)))
                 (local.set $max (i32.sub (local.get $count) (local.get $visible)))
                 (if (i32.lt_s (local.get $max) (i32.const 0))
                   (then (local.set $max (i32.const 0))))
                 (if (i32.lt_s (local.get $row_y) (i32.const 16))
                   (then ;; up arrow
                     (if (i32.gt_s (local.get $top) (i32.const 0))
-                      (then (i32.store offset=20 (local.get $sw)
+                      (then (call $lb_set_top_index (local.get $sw)
                               (i32.sub (local.get $top) (i32.const 1)))))
                     (global.set $sb_pressed_hwnd (local.get $hwnd))
                     (global.set $sb_pressed_part (i32.const 1)))
                   (else (if (i32.ge_s (local.get $row_y) (i32.sub (local.get $h) (i32.const 16)))
                     (then ;; down arrow
                       (if (i32.lt_s (local.get $top) (local.get $max))
-                        (then (i32.store offset=20 (local.get $sw)
+                        (then (call $lb_set_top_index (local.get $sw)
                                 (i32.add (local.get $top) (i32.const 1)))))
                       (global.set $sb_pressed_hwnd (local.get $hwnd))
                       (global.set $sb_pressed_part (i32.const 2)))
@@ -10131,7 +10193,7 @@
         ;; y from hi 16 bits of lParam
         (local.set $row (i32.shr_u (i32.and (local.get $lParam) (i32.const 0xFFFF0000)) (i32.const 16)))
         (local.set $row (i32.div_s (local.get $row) (i32.const 16)))
-        (local.set $row (i32.add (local.get $row) (i32.load offset=20 (local.get $sw))))
+        (local.set $row (i32.add (local.get $row) (call $lb_top_index (local.get $sw))))
         (if (i32.lt_s (local.get $row) (i32.const 0))
           (then (local.set $row (i32.const 0))))
         (if (i32.ge_s (local.get $row) (local.get $count))
@@ -10140,13 +10202,13 @@
           (then
             ;; LBS_EXTENDEDSEL: Ctrl toggles a row; Shift selects the range
             ;; from the previous caret; an unmodified click replaces all.
-            (local.set $sel (i32.load offset=16 (local.get $sw)))
+            (local.set $sel (call $lb_cur_sel (local.get $sw)))
             (if (i32.and (local.get $wParam) (i32.const 0x0008)) ;; MK_CONTROL
               (then
                 (i32.store8
-                  (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $row))
+                  (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $row))
                   (i32.eqz (i32.load8_u
-                    (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $row))))))
+                    (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $row))))))
               (else
                 (local.set $i (i32.const 0))
                 (block $click_sel_done (loop $click_sel
@@ -10154,7 +10216,7 @@
                   (if (i32.and (local.get $wParam) (i32.const 0x0004)) ;; MK_SHIFT
                     (then
                       (i32.store8
-                        (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i))
+                        (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i))
                         (i32.or
                           (i32.and (i32.ge_s (local.get $i) (local.get $sel))
                                    (i32.le_s (local.get $i) (local.get $row)))
@@ -10162,7 +10224,7 @@
                                    (i32.le_s (local.get $i) (local.get $sel))))))
                     (else
                       (i32.store8
-                        (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i))
+                        (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i))
                         (i32.eq (local.get $i) (local.get $row)))))
                   (local.set $i (i32.add (local.get $i) (i32.const 1)))
                   (br $click_sel))))))
@@ -10171,11 +10233,11 @@
             (block $click_single_done (loop $click_single
               (br_if $click_single_done (i32.ge_u (local.get $i) (local.get $count)))
               (i32.store8
-                (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i))
+                (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i))
                 (i32.eq (local.get $i) (local.get $row)))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $click_single)))))
-        (i32.store offset=16 (local.get $sw) (local.get $row))
+        (call $lb_set_cur_sel (local.get $sw) (local.get $row))
         ;; Post WM_COMMAND to parent: HIWORD = notification, LOWORD = ctrl_id.
         (local.set $notif (i32.const 1))  ;; LBN_SELCHANGE
         (if (i32.eq (local.get $msg) (i32.const 0x0203))
@@ -10184,7 +10246,7 @@
         (if (local.get $parent)
           (then
             (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                    (i32.or (i32.load offset=24 (local.get $sw))
+                    (i32.or (call $lb_ctrl_id (local.get $sw))
                             (i32.shl (local.get $notif) (i32.const 16)))
                     (local.get $hwnd)))))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -10216,7 +10278,7 @@
             (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
             (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
             (local.set $row_y (i32.shr_s (local.get $lParam) (i32.const 16)))
-            (local.set $count (i32.load offset=12 (local.get $sw)))
+            (local.set $count (call $lb_count (local.get $sw)))
             (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
             (local.set $max (i32.sub (local.get $count) (local.get $visible)))
             (if (i32.lt_s (local.get $max) (i32.const 0))
@@ -10234,9 +10296,9 @@
     ;; the inner listbox via keyboard.
     (if (i32.eq (local.get $msg) (i32.const 0x0100))
       (then
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
-        (local.set $sel (i32.load offset=16 (local.get $sw)))
+        (local.set $sel (call $lb_cur_sel (local.get $sw)))
         ;; Compute visible rows for PGUP/PGDN
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
@@ -10278,27 +10340,27 @@
                           (if (i32.ge_s (local.get $row) (local.get $count))
                             (then (local.set $row (i32.sub (local.get $count) (i32.const 1))))))))
                     (else (return (i32.const 0))))))))))))))
-        (i32.store offset=16 (local.get $sw) (local.get $row))
+        (call $lb_set_cur_sel (local.get $sw) (local.get $row))
         (local.set $i (i32.const 0))
         (block $key_sel_done (loop $key_sel
           (br_if $key_sel_done (i32.ge_u (local.get $i) (local.get $count)))
           (i32.store8
-            (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $i))
+            (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $i))
             (i32.eq (local.get $i) (local.get $row)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $key_sel)))
         ;; Adjust top_index so $row stays visible.
-        (local.set $top (i32.load offset=20 (local.get $sw)))
+        (local.set $top (call $lb_top_index (local.get $sw)))
         (if (i32.lt_s (local.get $row) (local.get $top))
-          (then (i32.store offset=20 (local.get $sw) (local.get $row)))
+          (then (call $lb_set_top_index (local.get $sw) (local.get $row)))
           (else
             (if (i32.ge_s (local.get $row) (i32.add (local.get $top) (local.get $visible)))
-              (then (i32.store offset=20 (local.get $sw)
+              (then (call $lb_set_top_index (local.get $sw)
                       (i32.add (i32.sub (local.get $row) (local.get $visible)) (i32.const 1)))))))
         (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
         (if (local.get $parent)
           (then (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                  (i32.or (i32.load offset=24 (local.get $sw))
+                  (i32.or (call $lb_ctrl_id (local.get $sw))
                           (i32.shl (i32.const 1) (i32.const 16)))  ;; LBN_SELCHANGE
                   (local.get $hwnd)))))
         (call $invalidate_hwnd (local.get $hwnd))
@@ -10317,7 +10379,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0181))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
           (then (return (call $listbox_wndproc (local.get $hwnd)
@@ -10326,8 +10388,8 @@
                         (i32.const 0x0180) (i32.const 0) (local.get $lParam))
                       (i32.const 0))
           (then (return (i32.const -1))))
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
-        (local.set $used (i32.load offset=4 (local.get $sw)))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
+        (local.set $used (call $lb_items_used (local.get $sw)))
         ;; Byte offset of item $idx, then of the item just appended.
         (local.set $p (local.get $items_w))
         (local.set $i (i32.const 0))
@@ -10363,9 +10425,9 @@
         (call $heap_free (local.get $tmp_g))
         ;; Rotate the parallel item-data array the same way. LB_ADDSTRING
         ;; zeroed the appended slot, so $idx ends up with a fresh 0.
-        (if (i32.load offset=36 (local.get $sw))
+        (if (call $lb_data_ptr (local.get $sw))
           (then
-            (local.set $dest_w (call $g2w (i32.load offset=36 (local.get $sw))))
+            (local.set $dest_w (call $g2w (call $lb_data_ptr (local.get $sw))))
             (local.set $sz (i32.load
               (i32.add (local.get $dest_w) (i32.mul (local.get $count) (i32.const 4)))))
             (memory.copy
@@ -10376,9 +10438,9 @@
             (i32.store (i32.add (local.get $dest_w) (i32.mul (local.get $idx) (i32.const 4)))
               (local.get $sz))))
         ;; And the byte-per-row multi-selection flags.
-        (if (i32.load offset=44 (local.get $sw))
+        (if (call $lb_sel_ptr (local.get $sw))
           (then
-            (local.set $dest_w (call $g2w (i32.load offset=44 (local.get $sw))))
+            (local.set $dest_w (call $g2w (call $lb_sel_ptr (local.get $sw))))
             (local.set $sz (i32.load8_u
               (i32.add (local.get $dest_w) (local.get $count))))
             (memory.copy
@@ -10387,9 +10449,9 @@
               (i32.sub (local.get $count) (local.get $idx)))
             (i32.store8 (i32.add (local.get $dest_w) (local.get $idx)) (local.get $sz))))
         ;; A selection at or after the insert point moves down a row.
-        (local.set $sel (i32.load offset=16 (local.get $sw)))
+        (local.set $sel (call $lb_cur_sel (local.get $sw)))
         (if (i32.ge_s (local.get $sel) (local.get $idx))
-          (then (i32.store offset=16 (local.get $sw)
+          (then (call $lb_set_cur_sel (local.get $sw)
                   (i32.add (local.get $sel) (i32.const 1)))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (local.get $idx))))
@@ -10399,11 +10461,11 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0182))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
           (then (return (i32.const -1))))
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
         (local.set $p (local.get $items_w))
         (local.set $i (i32.const 0))
         (block $delfound (loop $delskip
@@ -10414,18 +10476,18 @@
           (br $delskip)))
         (local.set $slen (i32.add (call $strlen (local.get $p)) (i32.const 1)))
         ;; Shift tail down by $slen bytes
-        (local.set $used (i32.load offset=4 (local.get $sw)))
+        (local.set $used (call $lb_items_used (local.get $sw)))
         (local.set $i (i32.sub (local.get $p) (local.get $items_w)))
         (call $memcpy (local.get $p)
                       (i32.add (local.get $p) (local.get $slen))
                       (i32.sub (local.get $used) (i32.add (local.get $i) (local.get $slen))))
-        (i32.store offset=4 (local.get $sw) (i32.sub (local.get $used) (local.get $slen)))
-        (i32.store offset=12 (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+        (call $lb_set_items_used (local.get $sw) (i32.sub (local.get $used) (local.get $slen)))
+        (call $lb_set_count (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
         ;; Shift parallel data array down by one slot at $idx.
-        (if (i32.load offset=36 (local.get $sw))
+        (if (call $lb_data_ptr (local.get $sw))
           (then
             (local.set $dest_w
-              (i32.add (call $g2w (i32.load offset=36 (local.get $sw)))
+              (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
                        (i32.mul (local.get $idx) (i32.const 4))))
             (call $memcpy (local.get $dest_w)
                           (i32.add (local.get $dest_w) (i32.const 4))
@@ -10433,23 +10495,23 @@
                                             (i32.const 1))
                                    (i32.const 4)))))
         ;; Shift parallel multi-selection flags down by one row.
-        (if (i32.load offset=44 (local.get $sw))
+        (if (call $lb_sel_ptr (local.get $sw))
           (then
             (local.set $dest_w
-              (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $idx)))
+              (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $idx)))
             (call $memcpy (local.get $dest_w)
                           (i32.add (local.get $dest_w) (i32.const 1))
                           (i32.sub (i32.sub (local.get $count) (local.get $idx)) (i32.const 1)))
             (i32.store8
-              (i32.add (call $g2w (i32.load offset=44 (local.get $sw)))
+              (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw)))
                        (i32.sub (local.get $count) (i32.const 1)))
               (i32.const 0))))
         ;; Adjust cur_sel if affected
-        (local.set $sel (i32.load offset=16 (local.get $sw)))
+        (local.set $sel (call $lb_cur_sel (local.get $sw)))
         (if (i32.eq (local.get $sel) (local.get $idx))
-          (then (i32.store offset=16 (local.get $sw) (i32.const -1)))
+          (then (call $lb_set_cur_sel (local.get $sw) (i32.const -1)))
           (else (if (i32.gt_s (local.get $sel) (local.get $idx))
-            (then (i32.store offset=16 (local.get $sw) (i32.sub (local.get $sel) (i32.const 1)))))))
+            (then (call $lb_set_cur_sel (local.get $sw) (i32.sub (local.get $sel) (i32.const 1)))))))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.sub (local.get $count) (i32.const 1)))))
 
@@ -10459,14 +10521,14 @@
                 (i32.eq (local.get $msg) (i32.const 0x019A)))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (local.get $count)))
           (then (return (i32.const -1))))
-        (if (i32.eqz (i32.load offset=36 (local.get $sw)))
+        (if (i32.eqz (call $lb_data_ptr (local.get $sw)))
           (then (return (i32.const 0))))
         (local.set $dest_w
-          (i32.add (call $g2w (i32.load offset=36 (local.get $sw)))
+          (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
                    (i32.mul (local.get $idx) (i32.const 4))))
         (if (i32.eq (local.get $msg) (i32.const 0x019A))
           (then
@@ -10483,7 +10545,7 @@
                 (i32.eq (local.get $msg) (i32.const 0x01A2)))
       (then
         (if (i32.eqz (local.get $lParam)) (then (return (i32.const -1))))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.eqz (local.get $count)) (then (return (i32.const -1))))
         (local.set $src_w (call $g2w (local.get $lParam)))
         (local.set $slen (call $strlen (local.get $src_w)))
@@ -10491,7 +10553,7 @@
         (local.set $idx (local.get $wParam))
         (if (i32.lt_s (local.get $idx) (i32.const 0))
           (then (local.set $idx (i32.sub (local.get $count) (i32.const 1)))))
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
         (local.set $i (i32.const 0))
         (block $fsdone (loop $fsloop
           (br_if $fsdone (i32.ge_s (local.get $i) (local.get $count)))
@@ -10534,16 +10596,16 @@
 
     ;; ---------- LB_GETTOPINDEX (0x018E) / LB_SETTOPINDEX (0x0197) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x018E))
-      (then (return (i32.load offset=20 (local.get $sw)))))
+      (then (return (call $lb_top_index (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0197))
       (then
         (local.set $idx (local.get $wParam))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
         (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (local.set $idx (i32.const 0))))
         (if (i32.ge_s (local.get $idx) (local.get $count))
           (then (local.set $idx (i32.sub (local.get $count) (i32.const 1)))))
         (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (local.set $idx (i32.const 0))))
-        (i32.store offset=20 (local.get $sw) (local.get $idx))
+        (call $lb_set_top_index (local.get $sw) (local.get $idx))
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 0))))
 
@@ -10577,13 +10639,13 @@
         (drop (call $host_gdi_draw_edge (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x0A) (i32.const 0x0F)))
-        (local.set $count (i32.load offset=12 (local.get $sw)))
-        (local.set $sel   (i32.load offset=16 (local.get $sw)))
-        (local.set $top   (i32.load offset=20 (local.get $sw)))
+        (local.set $count (call $lb_count (local.get $sw)))
+        (local.set $sel   (call $lb_cur_sel (local.get $sw)))
+        (local.set $top   (call $lb_top_index (local.get $sw)))
         (local.set $row_h (i32.const 16))
         (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (local.get $row_h)))
         ;; Walk to the first visible item.
-        (local.set $items_w (call $g2w (i32.load (local.get $sw))))
+        (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
         (local.set $p (local.get $items_w))
         (local.set $i (i32.const 0))
         (block $skip_done (loop $skip
@@ -10602,7 +10664,7 @@
           (local.set $row_y (i32.add (i32.const 2) (i32.mul (local.get $row) (local.get $row_h))))
           (local.set $slen (call $strlen (local.get $p)))
           (if (i32.load8_u
-                (i32.add (call $g2w (i32.load offset=44 (local.get $sw))) (local.get $idx)))
+                (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $idx)))
             (then
               ;; Highlight bar (system blue) + white text. We use a fresh
               ;; solid brush each time so we don't depend on COLOR_HIGHLIGHT
@@ -10637,7 +10699,7 @@
               (then (local.set $max (i32.const 0))))
             (call $paint_vscrollbar_rect (local.get $hdc)
               (local.get $w) (i32.const 0) (i32.const 16) (local.get $h)
-              (i32.load offset=20 (local.get $sw)) (local.get $max)
+              (call $lb_top_index (local.get $sw)) (local.get $max)
               (select (global.get $sb_pressed_part) (i32.const 0)
                       (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
         (return (i32.const 0))))
@@ -14762,19 +14824,19 @@
         (local.set $new_top (i32.sub (local.get $top) (local.get $visible)))
         (if (i32.lt_s (local.get $new_top) (i32.const 0))
           (then (local.set $new_top (i32.const 0))))
-        (i32.store offset=20 (local.get $sw) (local.get $new_top))
+        (call $lb_set_top_index (local.get $sw) (local.get $new_top))
         (return (i32.const 1))))
     (if (i32.eq (local.get $hit) (i32.const 4))
       (then
         (local.set $new_top (i32.add (local.get $top) (local.get $visible)))
         (if (i32.gt_s (local.get $new_top) (local.get $max))
           (then (local.set $new_top (local.get $max))))
-        (i32.store offset=20 (local.get $sw) (local.get $new_top))
+        (call $lb_set_top_index (local.get $sw) (local.get $new_top))
         (return (i32.const 2))))
     (if (i32.eq (local.get $hit) (i32.const 5))
       (then
-        (i32.store offset=28 (local.get $sw) (local.get $row_y))
-        (i32.store offset=32 (local.get $sw) (local.get $top))
+        (call $lb_set_drag_anchor_y (local.get $sw) (local.get $row_y))
+        (call $lb_set_drag_anchor_top (local.get $sw) (local.get $top))
         (return (i32.const 3))))
     (i32.const 0))
 
@@ -14786,11 +14848,11 @@
   (func $listbox_drag_to
         (param $hwnd i32) (param $sw i32)
         (param $row_y i32) (param $h i32) (param $max i32)
-    (i32.store offset=20 (local.get $sw)
+    (call $lb_set_top_index (local.get $sw)
       (call $scrollbar_drag_pos
         (local.get $h) (local.get $row_y)
-        (i32.load offset=28 (local.get $sw))
-        (i32.load offset=32 (local.get $sw))
+        (call $lb_drag_anchor_y (local.get $sw))
+        (call $lb_drag_anchor_top (local.get $sw))
         (i32.const 0) (local.get $max))))
 
   ;; ScrollBar control wndproc (class 7).
