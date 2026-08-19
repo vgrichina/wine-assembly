@@ -345,6 +345,7 @@ E2E=(
   test/test-mspaint-image-edit.js
   test/test-mspaint-statusbar.js
   test/test-mspaint-stretch-icons.js
+  test/test-notepad-editing.js
   test/test-notepad-file-menu.js
   test/test-notepad-find-radio-click.js
   test/test-notepad-find-tab.js
@@ -416,7 +417,6 @@ QUARANTINE=(
   test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
   # Edit/RichEdit gaps.
-  test/test-notepad-editing.js          # 7/10: type-over-selection, thumb drag, wheel scroll
   test/test-wordpad-ui-advanced.js      # 8/9: ruler drag adds no paragraph tab stop
   # OLE presentation data -- the known static-handler/IDataObject gap.
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
