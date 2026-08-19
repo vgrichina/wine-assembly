@@ -1752,15 +1752,27 @@ async function main() {
     if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 12, words: [], ddeAsk: true }; return; }
     if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
     if ((val >>> 0) === 0xCA16A9E7) { pendingWin16 = { want: 3, words: [], ddeData: true }; return; }
+    // What CreateWindow made of its class name: the window, the class-name
+    // far pointer once flattened, the procedure the window ended up with, and
+    // what the class table says that name resolves to. They disagree exactly
+    // when the class was not found, which is otherwise invisible.
+    if ((val >>> 0) === 0xCA16A9E6) { pendingWin16 = { want: 4, words: [], wndClass: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
-    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 5, words: [], ret: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 6, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
       const { call: isCall, ret: isRet, route: isRoute, posted: isPosted,
               ddeAsk: isDdeAsk, ddeAns: isDdeAns, ddeData: isDdeData,
-              resolved, words } = pendingWin16;
+              wndClass: isWndClass, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isWndClass) {
+        const [hwnd, cls, proc, found] = words;
+        const name = cls >= 0x10000 ? readStr(base.g2w(cls), 32) : `atom ${hex(cls)}`;
+        logs.push(`[win16] class hwnd=${hex(hwnd)} name=${hex(cls)} "${name}"` +
+          ` wndproc=${hex(proc)} class-table=${hex(found)}`);
+        return;
+      }
       if (isDdeData) {
         logs.push(`[win16] dde answered with ${words[0]} bytes:` +
           ` ${hex(words[1])},${hex(words[2])}`);
@@ -1815,7 +1827,7 @@ async function main() {
         // bytes the API removed. Comparing it against the API's real signature
         // is how a frame bug is found before it becomes a return into nothing.
         logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])}`
-          + ` esp=${hex(words[3])} popped=${words[4] | 0}`);
+          + ` esp=${hex(words[3])} popped=${words[4] | 0} ds=${hex(words[5])}`);
         return;
       }
       const [key, ret, nameAddr] = words;

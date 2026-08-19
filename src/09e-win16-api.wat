@@ -3796,6 +3796,19 @@
     ;; WM_NCCREATE shown to the hook below does carry a real one.
     (local.set $hwnd (global.get $eax))
     (local.set $redirected (call $win16_call32_end_redirected))
+    ;; Which class the window ended up with, and the procedure that came with
+    ;; it. A window that answers nothing and paints nothing is usually one
+    ;; whose class was not found — the name arrives as a far pointer and the
+    ;; class table is keyed on the bytes it points at, so the two can miss
+    ;; each other with nothing else to show for it.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16A9E6))
+        (call $host_log_i32 (local.get $hwnd))
+        (call $host_log_i32 (local.get $class))
+        (call $host_log_i32 (call $wnd_table_get (local.get $hwnd)))
+        (call $host_log_i32 (call $class_table_lookup
+          (call $class_name_key (local.get $class))))))
     ;; The API's own frame goes now, and everything still owed goes on the stack
     ;; in its place: the return address, the handle, and whether WM_CREATE is
     ;; still to be delivered. Anything CreateWindow does from here can create
@@ -5999,10 +6012,18 @@
         (call $gl32 (i32.add (local.get $tmp) (i32.shl (local.get $i) (i32.const 2)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $narrow)))
-    ;; ... and the eleven trailing bytes carry over unchanged.
+    ;; ... and the nine trailing bytes carry over unchanged: tmFirstChar,
+    ;; tmLastChar, tmDefaultChar, tmBreakChar, tmItalic, tmUnderlined,
+    ;; tmStruckOut, tmPitchAndFamily, tmCharSet. Nine, not eleven — the
+    ;; structure is 31 bytes and copying eleven wrote two past its end.
+    ;; Pipe Dream asks for its metrics into a local, and those two bytes were
+    ;; the DS its frame had saved: it came back holding a null data selector,
+    ;; pushed that as half of the class name it handed CreateWindow, got a
+    ;; window with no class and so no window procedure of its own, and never
+    ;; drew a thing.
     (call $memcpy (call $g2w (i32.add (local.get $dst) (i32.const 22)))
                   (call $g2w (i32.add (local.get $tmp) (i32.const 44)))
-                  (i32.const 11))
+                  (i32.const 9))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 6)))
 
@@ -7257,7 +7278,12 @@
         ;; return address: 4 + the Pascal argument bytes. Compare it against
         ;; the API's real signature — a wrong count here is a frame bug that
         ;; only shows up much later, as a return into nothing.
-        (call $host_log_i32 (i32.sub (global.get $esp) (global.get $win16_entry_esp))))))
+        (call $host_log_i32 (i32.sub (global.get $esp) (global.get $win16_entry_esp)))
+        ;; And the data selector the task is left holding. An API that returns
+        ;; with the wrong DS is invisible until the task pushes it as half of
+        ;; a far pointer: Pipe Dream handed CreateWindow a class name whose
+        ;; segment was zero and got a window with no class at all.
+        (call $host_log_i32 (global.get $sreg_ds)))))
 
   ;; Hooks.
   ;;
