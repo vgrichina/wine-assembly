@@ -776,11 +776,23 @@
         (local.set $bot (i32.add (local.get $bot) (i32.const 2)))))
     ;; Standard window scrollbars are non-client strips. USER removes their
     ;; 16px metrics from the usable client area whenever the style bit is set.
+    ;; Again not for WAT-native controls, and for the same reason as the edge
+    ;; above: every control wndproc that honours WS_VSCROLL/WS_HSCROLL measures
+    ;; the strip off its *window* rect ($ctrl_get_wh_packed minus 16) and paints
+    ;; it inside its own bounds. Taking the same 16px out of the client rect
+    ;; narrows the DC clip ($wnd_client_w_for_clip) under the control, so the
+    ;; strip it draws is clipped away. A combobox is the worst case: its
+    ;; WS_VSCROLL describes the dropdown list, not a scrollbar on the field, so
+    ;; the reservation is not even nominally right -- WordPad's font and size
+    ;; combos lost exactly the 16px their drop arrow is painted in (w-18), which
+    ;; is why they rendered as plain edit boxes with no arrow.
     (local.set $right (local.get $bw))
-    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
-      (then (local.set $right (i32.add (local.get $right) (i32.const 16)))))
-    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
-      (then (local.set $bot (i32.add (local.get $bot) (i32.const 16)))))
+    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+      (then
+        (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+          (then (local.set $right (i32.add (local.get $right) (i32.const 16)))))
+        (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+          (then (local.set $bot (i32.add (local.get $bot) (i32.const 16)))))))
     ;; Store window-local l/t/r/b.
     (call $client_rect_set (local.get $hwnd)
       (local.get $bw) (local.get $cy)
