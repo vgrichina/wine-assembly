@@ -396,10 +396,7 @@
         (local.set $v (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ne (local.get $v) (i32.const -1))
           (then
-            (i32.store
-              (i32.add (i32.add (global.get $CONTROL_TABLE)
-                                (i32.mul (local.get $v) (i32.const 16)))
-                       (i32.const 4))
+            (i32.store offset=4 (call $ctrl_slot_addr (local.get $v))
               (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
             ;; Record child geometry for ALL child classes (not just the
             ;; system Edit/Button/Static path above). Needed for

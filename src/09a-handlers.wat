@@ -2103,17 +2103,9 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 94: GetDlgCtrlID(hwnd) → control ID stored in CONTROL_TABLE[slot]+4
+  ;; 94: GetDlgCtrlID(hwnd) → the control id in this window's CONTROL_TABLE row
   (func $handle_GetDlgCtrlID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32)
-    (local.set $idx (call $wnd_table_find (local.get $arg0)))
-    (if (i32.eq (local.get $idx) (i32.const -1))
-      (then (global.set $eax (i32.const 0)))
-      (else
-        (global.set $eax (i32.load
-          (i32.add (i32.add (global.get $CONTROL_TABLE)
-                            (i32.mul (local.get $idx) (i32.const 16)))
-                   (i32.const 4))))))
+    (global.set $eax (call $ctrl_table_get_id (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 

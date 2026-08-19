@@ -517,14 +517,26 @@
       (br $tabs)))
     (i32.const 1))
 
+  ;; One CONTROL_TABLE row, parallel to the WND_RECORDS slot of the same index:
+  ;;
+  ;;   +0  class       one of the CTRL_CLASS_* ids, 0 for a non-control window
+  ;;   +4  ctrl_id     the child/menu id CreateWindow was given
+  ;;   +8  check_state legacy checkbox/radio state; ButtonState owns this when
+  ;;                   the window has one (see $ctrl_get_check_state)
+  ;;   +12 ex_style    per-control WS_EX_* written by $dlg_load
+  ;;
+  ;; Every reader of the row goes through this so the stride is stated once.
+  (func $ctrl_slot_addr (param $slot i32) (result i32)
+    (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+
   ;; Set control class and ID for a window table slot
   (func $ctrl_table_set (param $slot i32) (param $class i32) (param $ctrl_id i32)
     (local $addr i32)
-    (local.set $addr (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+    (local.set $addr (call $ctrl_slot_addr (local.get $slot)))
     (i32.store (local.get $addr) (local.get $class))
-    (i32.store (i32.add (local.get $addr) (i32.const 4)) (local.get $ctrl_id))
-    (i32.store (i32.add (local.get $addr) (i32.const 8)) (i32.const 0))  ;; check_state = 0
-    (i32.store (i32.add (local.get $addr) (i32.const 12)) (i32.const 0)) ;; ex_style
+    (i32.store offset=4 (local.get $addr) (local.get $ctrl_id))
+    (i32.store offset=8 (local.get $addr) (i32.const 0))  ;; check_state = 0
+    (i32.store offset=12 (local.get $addr) (i32.const 0)) ;; ex_style
   )
 
   ;; Clear per-slot WAT control metadata when WND_RECORDS reuses a slot.
@@ -533,7 +545,7 @@
     (call $tab_native_state_release (call $wnd_slot_hwnd (local.get $slot)))
     (call $statusbar_native_mark_slot (local.get $slot) (i32.const 0))
     (call $tab_native_mark_slot (local.get $slot) (i32.const 0))
-    (local.set $addr (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $slot) (i32.const 16))))
+    (local.set $addr (call $ctrl_slot_addr (local.get $slot)))
     (i64.store (local.get $addr) (i64.const 0))
     (i64.store offset=8 (local.get $addr) (i64.const 0))
     (local.set $addr (i32.add (global.get $CONTROL_GEOM) (i32.mul (local.get $slot) (i32.const 8))))
@@ -546,17 +558,12 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
-        (i32.store (i32.add (i32.add (global.get $CONTROL_TABLE)
-                              (i32.mul (local.get $idx) (i32.const 16)))
-                            (i32.const 12))
-          (local.get $ex)))))
+        (i32.store offset=12 (call $ctrl_slot_addr (local.get $idx)) (local.get $ex)))))
   (func $ctrl_get_ex_style (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.add (global.get $CONTROL_TABLE)
-                                  (i32.mul (local.get $idx) (i32.const 16)))
-                              (i32.const 12))))
+    (i32.load offset=12 (call $ctrl_slot_addr (local.get $idx))))
 
   ;; Get control class for a hwnd (returns 0 if not a control)
   (func $ctrl_table_get_class (param $hwnd i32) (result i32)
@@ -564,7 +571,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16))))
+    (i32.load (call $ctrl_slot_addr (local.get $idx)))
   )
 
   (func $ctrl_table_get_id (param $hwnd i32) (result i32)
@@ -572,8 +579,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load offset=4
-      (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16)))))
+    (i32.load offset=4 (call $ctrl_slot_addr (local.get $idx))))
 
   ;; Change a child window's control/menu ID and return its previous value.
   ;; MFC temporarily renames views while installing Print Preview, then finds
@@ -583,9 +589,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (local.set $addr
-      (i32.add (global.get $CONTROL_TABLE)
-        (i32.mul (local.get $idx) (i32.const 16))))
+    (local.set $addr (call $ctrl_slot_addr (local.get $idx)))
     (local.set $old (i32.load offset=4 (local.get $addr)))
     (i32.store offset=4 (local.get $addr) (local.get $ctrl_id))
     (local.get $old))
@@ -602,7 +606,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 8)))
+    (i32.load offset=8 (call $ctrl_slot_addr (local.get $idx)))
   )
 
   ;; Set check state for a control hwnd (legacy CONTROL_TABLE path)
@@ -619,8 +623,7 @@
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.ne (local.get $idx) (i32.const -1))
       (then
-        (i32.store (i32.add (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16))) (i32.const 8))
-          (local.get $state))))
+        (i32.store offset=8 (call $ctrl_slot_addr (local.get $idx)) (local.get $state))))
   )
 
   ;; Enumerate WAT-managed child windows of a parent. Caller starts with
@@ -662,10 +665,10 @@
         (local.set $hwnd (i32.load (local.get $addr)))
         (if (i32.ne (local.get $hwnd) (i32.const 0))
           (then
-            (local.set $ctrl_addr (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $i) (i32.const 16))))
+            (local.set $ctrl_addr (call $ctrl_slot_addr (local.get $i)))
             (if (i32.and
                   (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent_hwnd))
-                  (i32.eq (i32.load (i32.add (local.get $ctrl_addr) (i32.const 4))) (local.get $ctrl_id)))
+                  (i32.eq (i32.load offset=4 (local.get $ctrl_addr)) (local.get $ctrl_id)))
               (then (return (local.get $hwnd))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))

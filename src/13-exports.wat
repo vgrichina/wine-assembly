@@ -3757,11 +3757,7 @@
 
   ;; Control id from CONTROL_TABLE.
   (func (export "ctrl_get_id") (param $hwnd i32) (result i32)
-    (local $idx i32)
-    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
-    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (i32.load offset=4
-      (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16)))))
+    (call $ctrl_table_get_id (local.get $hwnd)))
 
   ;; Window style (also exposed for renderer drawing decisions).
   (func (export "wnd_get_style_export") (param $hwnd i32) (result i32)
