@@ -355,6 +355,7 @@ E2E=(
   test/test-pinball-select-table.js
   test/test-qbob-candidate.js
   test/test-solitaire-maximize-restore.js
+  test/test-winamp.js
   test/test-winamp-audio.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
@@ -421,10 +422,6 @@ QUARANTINE=(
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
   # Paint / app-specific.
-  # Measured 2026-08-19: the main back-canvas has 7 colours, so the skin is
-  # not being blitted at all. The duplicate-titlebar check fails as a
-  # consequence -- every row of a flat canvas matches every other row.
-  test/test-winamp.js                   # 13/15: main back-canvas has 7 colours
   # 24/27 since the click and schedule fixes. The three left are one symptom:
   # Winamp's Load-EQF path calls GetOpenFileNameA and that call never returns
   # -- it is the last API of the run, no OpenSave dialog reaches dlg-dump, and

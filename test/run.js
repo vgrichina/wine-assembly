@@ -765,16 +765,26 @@ async function main() {
           startBatch: batch,
         });
       } else if (kind === 'wait-title-windows-snapshot') {
-        // B:wait-title-windows-snapshot:TITLE:LIMIT:LABEL:PNG_PATH
+        // B:wait-title-windows-snapshot:TITLE:LIMIT:LABEL:PNG_PATH[:SETTLE]
         // Wait for a visible window title, dump renderer window rows, write
         // each back-canvas as PNG via pngjs pixels, then stop.
+        //
+        // A window becomes visible before the app has painted it: on Win98 a
+        // hidden window has no visible region, so everything drawn into its DC
+        // while hidden is discarded and the show is what *causes* the repaint.
+        // Winamp composes its whole skin while hidden, shows the player, and
+        // only then blits the composite again — capture at the instant the
+        // title appears and the back-canvas is still the COLOR_BTNFACE seed.
+        // SETTLE runs that many more batches after the match before capturing.
+        const settleTail = parts.length > 6 && /^\d+$/.test(parts[parts.length - 1]);
         scheduledInput.push({
           batch,
           action: 'wait-title-windows-snapshot',
           title: (parts[2] || '').replace(/_/g, ' '),
           limit: parseInt(parts[3]) || 2000,
           label: parts[4] || '',
-          path: parts.slice(5).join(':'),
+          path: (settleTail ? parts.slice(5, -1) : parts.slice(5)).join(':'),
+          settle: settleTail ? parseInt(parts[parts.length - 1]) : 0,
           startBatch: batch,
         });
       } else if (kind === 'wait-title-dump-stop') {
@@ -4811,8 +4821,17 @@ async function main() {
         const title = ev.title || '';
         const wins = renderer ? Object.values(renderer.windows || {}) : [];
         const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
-        if (found) {
-          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+        if (found && ev.settle && !ev.settleUntil) {
+          ev.settleUntil = batch + ev.settle;
+          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)}`
+            + ` at batch ${batch}, settling ${ev.settle} batches`);
+        }
+        if (found && ev.settleUntil && batch < ev.settleUntil) {
+          deferScheduledWait(ev, batch);
+        } else if (found) {
+          if (!ev.settleUntil) {
+            logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+          }
           const label = ev.label ? ':' + ev.label : '';
           const entries = Object.entries(renderer.windows || {})
             .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));

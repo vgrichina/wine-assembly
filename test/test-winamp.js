@@ -39,6 +39,13 @@ for (const p of [PNG, BACK]) if (fs.existsSync(p)) fs.unlinkSync(p);
 // input=10:273:2 dismisses the first-run survey via WM_COMMAND IDCANCEL.
 // The wait-title-windows-snapshot helper avoids the slow end-of-run full
 // canvas repaint path while still writing per-window back-canvas PNGs.
+//
+// The trailing :20 is a settle. Winamp composes the whole skin into a memory
+// DC and blits it to the player's window DC *while the player is still
+// hidden* — Win98 gives a hidden window no visible region, so that blit is
+// discarded, and the skin only reaches the window when Winamp repaints after
+// ShowWindow. The title appears at the show; the repaint is ~20 batches
+// later. Capturing on the title alone photographs the COLOR_BTNFACE seed.
 const cmd = [
   `node "${RUN}"`,
   `--exe="${EXE}"`,
@@ -49,7 +56,7 @@ const cmd = [
   '--buttons=1,1,1,1,1,1,1,1,1,1',
   '--no-close',
   '--stuck-after=5000',
-  `--input="10:273:2,11:wait-title-windows-snapshot:Winamp_2.91:1000:winamp:${PNG}"`,
+  `--input="10:273:2,11:wait-title-windows-snapshot:Winamp_2.91:1000:winamp:${PNG}:20"`,
 ].join(' ');
 console.log('$', cmd);
 

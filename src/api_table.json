@@ -88,7 +88,19 @@
     "name": "BitBlt",
     "nargs": 9,
     "convention": "stdcall",
-    "hash": 712574158
+    "hash": 712574158,
+    "args": [
+      { "name": "hdc", "type": "HANDLE" },
+      { "name": "x", "type": "INT" },
+      { "name": "y", "type": "INT" },
+      { "name": "w", "type": "INT" },
+      { "name": "h", "type": "INT" },
+      { "name": "srcDC", "type": "HANDLE" },
+      { "name": "sx", "type": "INT" },
+      { "name": "sy", "type": "INT" },
+      { "name": "rop", "type": "DWORD" }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 13,
