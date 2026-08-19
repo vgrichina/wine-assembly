@@ -599,6 +599,23 @@
               (i32.load offset=20 (local.get $system_clip))))
             (if (i32.lt_s (local.get $bound) (local.get $clip_bottom))
               (then (local.set $clip_bottom (local.get $bound))))))
+        ;; Surface bounds bind regardless of what the target reports -- the
+        ;; same clamp the band path below already applies. $gdi_dc_target_size
+        ;; is the window's CLIENT size, and a child DC's origin plus that size
+        ;; can run past the end of the top-level surface the child paints on.
+        ;; This path stores straight through a row pointer with no further
+        ;; check, so without the clamp those rows land in whatever the DIB
+        ;; page allocator handed out next: Volume Control's status bar erased
+        ;; its background over two loaded font strikes, and the next glyph
+        ;; lookup read 0xC0C0C0 as a glyph table and trapped.
+        (if (i32.lt_s (local.get $clip_left) (i32.const 0))
+          (then (local.set $clip_left (i32.const 0))))
+        (if (i32.lt_s (local.get $clip_top) (i32.const 0))
+          (then (local.set $clip_top (i32.const 0))))
+        (if (i32.gt_s (local.get $clip_right) (i32.load offset=4 (local.get $desc)))
+          (then (local.set $clip_right (i32.load offset=4 (local.get $desc)))))
+        (if (i32.gt_s (local.get $clip_bottom) (i32.load offset=8 (local.get $desc)))
+          (then (local.set $clip_bottom (i32.load offset=8 (local.get $desc)))))
         (if (i32.or (i32.lt_s (local.get $y) (local.get $clip_top))
               (i32.ge_s (local.get $y) (local.get $clip_bottom)))
           (then (return (i32.const 0))))

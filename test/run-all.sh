@@ -323,6 +323,7 @@ E2E=(
   # Recovered 2026-08-18 (see the UNIT note). Several of these only pass now
   # because their spawn budgets were raised off the 5-15s they were written
   # with -- that is under the emulator's own CPU cost on a loaded box.
+  test/test-calc-arith.js
   test/test-calc-button-pressed.js
   test/test-cli-candidate-corpus.js
   test/test-cwordzap-gameplay.js
@@ -424,7 +425,6 @@ QUARANTINE=(
   # was written -- window metrics, not the status bar. The pixel-ink checks
   # further down encode the old geometry too and will need moving with it.
   test/test-mspaint-statusbar.js        # docked at 0,327 263x23 vs 0,332 269x23
-  test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
   # Measured 2026-08-19: both views leave ~19px of dead face below the last
   # button row, so the scientific dialog is 482x335 against a <=330 assertion.
   # Standard (262x274) has the same overshoot and slips under the threshold.

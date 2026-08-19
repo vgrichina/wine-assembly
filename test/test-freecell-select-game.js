@@ -36,7 +36,10 @@ const inputSpec = [
   '120:keypress:49',                      // "1" replaces selected default text
   '130:keypress:50',                      // "2"
   `140:png:${typedPng}`,
-  '160:click:150:200',                    // real mouse click on OK
+  // Real mouse click on OK. The button is x 123..183, y 176..198 -- this
+  // used to be 150,200, which stopped landing on it when the dialog DLU
+  // height was corrected from 7/4 to 13/8 and everything moved up ~13px.
+  '160:click:153:187',
   `280:png:${afterPng}`,
   '300:slot-count:after',
   '320:stop',
