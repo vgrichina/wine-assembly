@@ -2478,6 +2478,10 @@
       (local.set $y (call $wnd_window_screen_y (local.get $ch)))
       (local.set $w (call $wnd_screen_w (local.get $ch)))
       (local.set $h (call $wnd_screen_h (local.get $ch)))
+      ;; A closed combobox claims its field, not the whole dropped-height
+      ;; window it was created with; see $combobox_hit_h.
+      (if (i32.eq (local.get $cls) (i32.const 5))
+        (then (local.set $h (call $combobox_hit_h (local.get $ch) (local.get $h)))))
       (if (i32.and
             (i32.and (i32.ge_s (local.get $sx) (local.get $x))
                      (i32.lt_s (local.get $sx) (i32.add (local.get $x) (local.get $w))))

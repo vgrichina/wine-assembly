@@ -71,6 +71,15 @@ const after = (picked.match(/dump-control-state picked: .*text="([^"]*)"/) || []
 check('clicking a row selects that font', !!after && after !== before,
   `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
 
+// The combo's window is created at its full dropped height (110x200), so its
+// rect sits under the menu popup. Once comboboxes became hit-testable outside
+// dialogs that rect swallowed menu clicks -- File > Open stopped opening, in
+// WordPad only, because Calc has no combobox. A closed combobox must claim its
+// field and nothing more.
+const menu = run('250:click:20:34,300:click:40:62,380:dump-windows,400:stop');
+check('a menu item over the combo still reaches the menu',
+  menu.includes('ctrlClass=12'), 'File > Open did not open its dialog');
+
 for (const l of picked.split('\n')) {
   if (/dump-control-state|CRASH|UNIMPLEMENTED/.test(l)) console.log('  ' + l.trim().slice(0, 150));
 }

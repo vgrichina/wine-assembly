@@ -7952,6 +7952,71 @@
       (br $sum)))
     (local.get $rows))
 
+  ;; Re-lay-out a combobox's own children after the control itself is resized.
+  ;; MFC creates a toolbar combo at its template width -- WordPad's is 288 --
+  ;; and the toolbar then moves it to the button rect, 110 wide. Nothing
+  ;; resized the inner edit and listbox, so a 268-wide edit stayed sitting
+  ;; across the 110-wide control: it covered the drop arrow (which is why the
+  ;; box appeared to have none) and it swallowed clicks meant for the field.
+  ;; The geometry is the same arithmetic WM_CREATE uses.
+  ;; How much of a combobox's window rect may claim a click.
+  ;;
+  ;; Our combobox is created at its full dropped height -- WordPad's font box is
+  ;; 110x200 -- with the list as an inner child that is shown and hidden. So its
+  ;; window rect covers a large part of the frame even while the list is closed,
+  ;; and anything that hit-tests by window rect swallows clicks belonging to
+  ;; whatever is drawn over that area. A menu popup is drawn over exactly that
+  ;; area: WordPad's File menu drops at 7,40 180x284 and the font combo occupies
+  ;; 6,74 110x200 underneath it, so making comboboxes hit-testable outside
+  ;; dialogs stopped every menu item from responding. Closed, a combobox owns
+  ;; its field and nothing more.
+  (func $combobox_hit_h (param $hwnd i32) (param $full_h i32) (result i32)
+    (local $state_g i32)
+    (if (i32.eq (global.get $combo_open_hwnd) (local.get $hwnd))
+      (then (return (local.get $full_h))))
+    (local.set $state_g (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (local.get $state_g)
+      (then
+        (if (i32.load offset=32 (call $g2w (local.get $state_g)))
+          (then (return (local.get $full_h))))))
+    (if (i32.gt_s (local.get $full_h) (i32.const 21))
+      (then (return (i32.const 21))))
+    (local.get $full_h))
+
+  (func $combobox_relayout_children (param $hwnd i32)
+    (local $state_g i32) (local $state_w i32) (local $w i32) (local $h i32)
+    (local $field_h i32) (local $edit i32) (local $lb i32)
+    (local.set $state_g (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state_g)) (then (return)))
+    (local.set $state_w (call $g2w (local.get $state_g)))
+    (local.set $field_h (i32.const 21))
+    (local.set $w (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+    (if (i32.le_s (local.get $w) (i32.const 24)) (then (return)))
+    (local.set $edit (i32.load offset=28 (local.get $state_w)))
+    (if (local.get $edit)
+      (then
+        (call $host_move_window (local.get $edit) (i32.const 2) (i32.const 2)
+          (i32.sub (local.get $w) (i32.const 20))
+          (i32.sub (local.get $field_h) (i32.const 4)) (i32.const 0))
+        (call $ctrl_geom_sync (local.get $edit) (i32.const 2) (i32.const 2)
+          (i32.sub (local.get $w) (i32.const 20))
+          (i32.sub (local.get $field_h) (i32.const 4)) (i32.const 0))))
+    (local.set $lb (i32.load offset=20 (local.get $state_w)))
+    (if (local.get $lb)
+      (then
+        (local.set $h (i32.sub (local.get $h) (local.get $field_h)))
+        (if (i32.lt_s (local.get $h) (i32.const 32)) (then (local.set $h (i32.const 64))))
+        (call $host_move_window (local.get $lb) (i32.const 0) (local.get $field_h)
+          (local.get $w) (local.get $h) (i32.const 0))
+        (call $ctrl_geom_sync (local.get $lb) (i32.const 0) (local.get $field_h)
+          (local.get $w) (local.get $h) (i32.const 0))))
+    ;; The field was painted at the old width -- the drop arrow sits at
+    ;; w - 18, so a resize leaves it drawn off in the wrong place, or off the
+    ;; control entirely. Ask for a repaint at the new size.
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (if (local.get $edit) (then (call $paint_flag_set_inv (local.get $edit)))))
+
   (func $toolbar_sync_child_combos (param $sw i32)
     (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $child_id i32)
     (local $i i32) (local $count i32) (local $rec i32)
@@ -7997,6 +8062,7 @@
                   (i32.const 200)
                   (i32.const 0))
                 (call $defwndproc_do_nccalcsize (local.get $ch))
+                (call $combobox_relayout_children (local.get $ch))
                 (br $matched)))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
             (br $buttons)))))
@@ -13753,6 +13819,8 @@
       (local.set $cy (i32.shr_s (local.get $xy) (i32.const 16)))
       (local.set $cw (i32.and (local.get $wh) (i32.const 0xFFFF)))
       (local.set $chh (i32.shr_u (local.get $wh) (i32.const 16)))
+      (if (i32.eq (local.get $cls) (i32.const 5))
+        (then (local.set $chh (call $combobox_hit_h (local.get $ch) (local.get $chh)))))
       (local.set $hit (i32.and
         (i32.and (i32.ge_s (local.get $px) (local.get $cx))
                  (i32.lt_s (local.get $px) (i32.add (local.get $cx) (local.get $cw))))
