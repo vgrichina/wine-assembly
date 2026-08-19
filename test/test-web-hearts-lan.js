@@ -357,6 +357,16 @@ function savePng(name, dataUrl) {
     check('Hearts is reachable from the page (list and desktop)',
       reachable.option && reachable.icon, JSON.stringify(reachable));
 
+    // The desktop shows each app's own icon, read out of the executable. For a
+    // 16-bit NE that means the flat resource table -- until it was read, Hearts
+    // sat there as the fallback emoji.
+    const drawn = await until(page, 'the Hearts desktop icon stayed a fallback glyph', () => {
+      const img = document.querySelector('.desktop-icon[data-app="mshearts16"] .icon-img img');
+      return img && img.src.startsWith('data:image/png') ? img.src.length : null;
+    }, null, 20000);
+    check('the desktop shows Hearts\' own icon from the NE resources', !!drawn,
+      'still the emoji fallback');
+
     // ---- the dealer ------------------------------------------------------
     const dealer = await launchLocal(page, 'dealer');
     check('the dealer launched onto the tab segment', dealer !== null, 'no welcome dialog');

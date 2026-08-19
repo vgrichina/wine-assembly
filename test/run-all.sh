@@ -50,6 +50,7 @@ UNIT=(
   test/test-sscanf.js
   test/test-format-message-inserts.js
   test/test-wat-dib-rle.js
+  test/test-icon-extract.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
   test/test-midi-mci.js
