@@ -557,6 +557,7 @@
                set, and the Liquid War entries are local candidates. -->
           <option value="liquid_war">Liquid War</option>
           <option value="liquid_war_server">Liquid War server</option>
+          <option value="tetrinet">TetriNET</option>
         </optgroup>
         <optgroup label="Installers">
           <option value="winamp291_inst">Winamp 2.91 Installer</option>
@@ -788,6 +789,7 @@ Resource-aware Win98 emulator
     const LOCAL_CANDIDATE_APPS = [
       ['liquid_war',        'Liquid War',    '\u{1F4A7}'],
       ['liquid_war_server', 'LW Server',     '\u{1F5A7}'],
+      ['tetrinet',          'TetriNET',      '\u{1F9F1}'],
     ];
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
@@ -1479,6 +1481,24 @@ Resource-aware Win98 emulator
       'custom/music/colossus.mid',
     ].map(name => liquidWarRoot + name);
 
+    // TetriNET 1.13. One executable is both ends: its toolbar opens either the
+    // connect screen or the server screen, so a single entry covers a whole
+    // match. It looks for default.tnp, tetrinet.ini and tetrinet.ban beside
+    // itself at startup (--trace-fs), and pulls the block bitmap and the sounds
+    // out of DATA\ once a game begins — which the CLI gets for free from the
+    // exe's own directory and the browser has to be told about.
+    const tetrinetRoot = 'test/binaries/candidates/tetrinet/';
+    const tetrinetFiles = [
+      { url: tetrinetRoot + 'DEFAULT.TNP', vfsPath: 'c:\\default.tnp' },
+      ...['TNETBLKS.BMP', 'TETRINET.MID',
+        '1.WAV', '2.WAV', '3.WAV', '4.WAV', '5.WAV',
+        '6.WAV', '7.WAV', '8.WAV', '9.WAV', '10.WAV',
+      ].map(name => ({
+        url: tetrinetRoot + 'DATA/' + name,
+        vfsPath: 'c:\\data\\' + name.toLowerCase(),
+      })),
+    ];
+
     // A guest reaches its help file only through the VFS, and the CLI harness
     // has a fallback that silently resolves any name against binaries/help.
     // The browser has no such fallback, so each app must mount its own .hlp
@@ -1571,6 +1591,15 @@ Resource-aware Win98 emulator
         // The server shares the client's channel: it is the thing the other
         // player's client is looking for, so they have to be on one segment.
         lan: { exe: 'lwwin.exe', label: 'Liquid War server' },
+      },
+      // Client and server are the same program here, so both players launch
+      // this one entry and one of them drives its toolbar to the server screen.
+      // They share a channel for that reason — see scopeFor() in lib/vlan-rtc.js.
+      tetrinet: {
+        exe: tetrinetRoot + 'TETRINET.EXE',
+        files: tetrinetFiles,
+        requiredFiles: true,
+        lan: { exe: 'tetrinet.exe', label: 'TetriNET' },
       },
       winmine:  { exe: 'binaries/xp/winmine.exe' },
       sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
