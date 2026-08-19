@@ -114,8 +114,12 @@ function compareTextBand(beforePath, afterPath) {
     return { mismatch: true };
   }
 
-  const x0 = 0;
-  const y0 = 125;
+  // Inside the RichEdit's client area. The band used to start at 0,125,
+  // which caught the window's left frame columns and the editor's own top
+  // border -- constant ink on every row, so the ink height saturated at the
+  // full band in both shots and could never show a size change.
+  const x0 = 10;
+  const y0 = 136;
   const x1 = Math.min(220, before.width);
   const y1 = Math.min(225, before.height);
   let changedPixels = 0;
@@ -130,6 +134,8 @@ function compareTextBand(beforePath, afterPath) {
   let diffSum = 0;
 
   for (let y = y0; y < y1; y++) {
+    let rowInkBefore = 0;
+    let rowInkAfter = 0;
     for (let x = x0; x < x1; x++) {
       const i = (y * before.width + x) * 4;
       const dr = Math.abs(before.data[i] - after.data[i]);
@@ -147,14 +153,23 @@ function compareTextBand(beforePath, afterPath) {
       }
       if (before.data[i] < 160 && before.data[i + 1] < 160 && before.data[i + 2] < 160 && before.data[i + 3]) {
         inkBefore++;
-        if (y < inkBeforeMinY) inkBeforeMinY = y;
-        if (y > inkBeforeMaxY) inkBeforeMaxY = y;
+        rowInkBefore++;
       }
       if (after.data[i] < 160 && after.data[i + 1] < 160 && after.data[i + 2] < 160 && after.data[i + 3]) {
         inkAfter++;
-        if (y < inkAfterMinY) inkAfterMinY = y;
-        if (y > inkAfterMaxY) inkAfterMaxY = y;
+        rowInkAfter++;
       }
+    }
+    // A glyph row has several dark pixels across it; the caret is a single
+    // column and would otherwise stretch the measured height by its own
+    // height, which blinks between the two screenshots.
+    if (rowInkBefore >= 3) {
+      if (y < inkBeforeMinY) inkBeforeMinY = y;
+      if (y > inkBeforeMaxY) inkBeforeMaxY = y;
+    }
+    if (rowInkAfter >= 3) {
+      if (y < inkAfterMinY) inkAfterMinY = y;
+      if (y > inkAfterMaxY) inkAfterMaxY = y;
     }
   }
 
@@ -217,7 +232,9 @@ check('font dialog face/style changes visible text pixels',
 check('font dialog 24pt size visibly increases text height',
   visual &&
   !visual.mismatch &&
-  visual.inkHeightAfter >= 24 &&
+  // 24pt "font" measures 23 rows of ink (ascender to baseline, no descender
+  // in the word), against 9 for the default size.
+  visual.inkHeightAfter >= 20 &&
   visual.inkHeightAfter >= visual.inkHeightBefore + 12);
 check('no UNIMPLEMENTED API crash', !/UNIMPLEMENTED API:/.test(out));
 check('no runtime crash', !/CRASH|Unreachable code|EIP=0x00000000/.test(out));

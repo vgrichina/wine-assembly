@@ -84,7 +84,11 @@ function parseWindowByCtrlId(id) {
     `window:final hwnd=(\\d+) class=("[^"]*") ctrlClass=(-?\\d+) ctrlId=${id} ` +
     `parent=(0x[0-9a-f]+)(?: owner=0x[0-9a-f]+)?(?: wndProc=0x[0-9a-f]+)?(?: dialogProc=0x[0-9a-f]+)?(?: z=-?\\d+)? pos=(-?\\d+),(-?\\d+) size=(\\d+)x(\\d+) ` +
     `client=\\{"x":(-?\\d+),"y":(-?\\d+),"w":(-?\\d+),"h":(-?\\d+)\\} ` +
-    `visible=(true|false)(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false) hasBack=(true|false) title=("[^"]*")`,
+    // Every optional group here is a field that was added to the dump after
+    // this test was written; menuBar= is the one that broke it, and it sits
+    // between dialog= and hasBack=, so all thirteen toolbar checks failed on
+    // a null parse while the toolbars themselves were fine.
+    `visible=(true|false)(?: minimized=(?:true|false))?(?: enabled=(?:true|false))?(?: style=0x[0-9a-f]+)? dialog=(true|false)(?: menuBar=(?:true|false))? hasBack=(true|false) title=("[^"]*")`,
     'i');
   const line = out.split('\n').find(l => re.test(l)) || '';
   const m = line.match(re);

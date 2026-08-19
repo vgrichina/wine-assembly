@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
+const { mountBundledFonts } = require('./render-helper');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -34,6 +35,11 @@ async function main() {
     onExit: () => {},
   };
   const base = createHostImports(ctx);
+  // Wrapping is decided by $host_measure_text, and with no fonts in the VFS
+  // every string measures 0 -- nothing is ever too wide, so the layout comes
+  // back as one line no matter how narrow the control is. Must be after
+  // createHostImports, which is what creates ctx.vfs.
+  mountBundledFonts(ctx);
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread = () => 0;

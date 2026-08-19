@@ -4494,7 +4494,23 @@ async function main() {
           // the window out, so ask it rather than guessing from the style.
           let menuBar = false;
           try { if (renderer._hasMenuBar) menuBar = !!renderer._hasMenuBar(win); } catch (_) {}
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          // GetWindowText on a combobox returns its edit-field text, which for
+          // a dropdown is the current selection. The renderer's title mirror
+          // only carries what WM_SETTEXT put there, so a combobox filled by
+          // CB_ADDSTRING + CB_SETCURSEL -- WordPad's font name box -- reads as
+          // empty here while the control itself holds the right string.
+          let title = win.title;
+          try {
+            if (ctrlClass === 5 && we && we.combobox_get_text && we.guest_alloc) {
+              const buf = we.guest_alloc(256);
+              const len = we.combobox_get_text(hwnd, buf, 256) | 0;
+              if (len > 0) {
+                title = Buffer.from(
+                  new Uint8Array(memory.buffer, g2w(buf), len)).toString('latin1');
+              }
+            }
+          } catch (_) {}
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';

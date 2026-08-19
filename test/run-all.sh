@@ -172,6 +172,7 @@ UNIT=(
   test/test-gdi-transparent-blt.js
   test/test-gdi-scroll-window-rect.js
   test/test-listview.js
+  test/test-edit-wrap-resize.js
   test/test-isequalguid.js
   test/test-kernel32-last-error.js
   test/test-movewindow-child-size.js
@@ -379,8 +380,11 @@ E2E=(
   test/test-wordpad-richedit.js
   test/test-wordpad-save-as.js
   test/test-wordpad-selection-highlight.js
+  test/test-wordpad-toolbar.js
   test/test-wordpad-toolbar-color-menu.js
   test/test-wordpad-toolbar-format-buttons.js
+  test/test-wordpad-font-dialog.js
+  test/test-wordpad-paragraph-align.js
   # Green only once their budgets stopped being shorter than the work: the two
   # vlan ones spawn a second emulator and wait for it over the wire.
   test/test-find-mouse-click.js
@@ -409,15 +413,11 @@ QUARANTINE=(
   test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
   # Edit/RichEdit gaps.
-  test/test-edit-wrap-resize.js         # 4/7: narrow edit never wraps (lines=1, scroll max=0)
   test/test-notepad-editing.js          # 7/10: type-over-selection, thumb drag, wheel scroll
   test/test-wordpad-caret.js            # 11/13: caret off phase does not erase the stroke
   test/test-wordpad-replace.js          # 13/14: empty Replace All does not delete every match
   test/test-wordpad-undo-find.js        # 8/11: typed text does not reach the native RichEdit
-  test/test-wordpad-font-dialog.js      # 15/16: 24pt does not increase text height
-  test/test-wordpad-paragraph-align.js  # 16/17: center alignment does not shift text
   test/test-wordpad-ui-advanced.js      # 8/9: ruler drag adds no paragraph tab stop
-  test/test-wordpad-toolbar.js          # no WAT-native ToolbarWindow32 at all
   # OLE presentation data -- the known static-handler/IDataObject gap.
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
