@@ -26,6 +26,7 @@ const hostImportsJs = [
   fs.readFileSync(path.join(ROOT, 'lib', 'host-window.js'), 'utf8'),
   fs.readFileSync(path.join(ROOT, 'lib', 'host-audio.js'), 'utf8'),
 ].join('\n');
+const debugMidiJs = fs.readFileSync(path.join(ROOT, 'lib', 'debug-midi.js'), 'utf8');
 const rendererJs = fs.readFileSync(path.join(ROOT, 'lib', 'renderer.js'), 'utf8');
 const rendererInputJs = fs.readFileSync(path.join(ROOT, 'lib', 'renderer-input.js'), 'utf8');
 const recorderJs = fs.readFileSync(path.join(ROOT, 'lib', 'recorder.js'), 'utf8');
@@ -130,7 +131,12 @@ assert(!/\[\s*'blobby_volley'\s*,\s*'Blobby Volley'/.test(webApp),
 assert(!deployJs.includes('test/binaries/candidates/blobby-volley'),
   'public deploy should exclude the local Blobby Volley payload');
 assert(webApp.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
-assert(webApp.includes('createHostImports(ctx)'), 'debug MIDI playback should exercise host MCI imports');
+// The player itself moved out of the page template into lib/debug-midi.js on
+// 2026-08-19, so the page only has to wire the button; what it drives is
+// asserted where it now lives (and covered directly by test-debug-midi.js).
+assert(webApp.includes("lib/debug-midi.js"), 'page should load the debug MIDI player');
+assert(debugMidiJs.includes('makeImports(ctx)') && debugMidiJs.includes('mci_open('),
+  'debug MIDI playback should exercise host MCI imports');
 assert(webApp.includes('lib/vendor/webaudio-tinysynth.js'), 'web host should load the vendored TinySynth backend');
 assert(webApp.includes('id="start-record-item"'), 'Start menu should expose screen recording');
 assert(webApp.includes('id="record-btn" onclick="toggleRecording()"'), 'debug toolbar recorder should use default screen capture');

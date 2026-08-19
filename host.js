@@ -856,10 +856,8 @@ class WineAssembly {
     // Set EXE name from URL
     this._exeName = exeName;
     this._exeUrl = url;
-    if (this._helpCtx && this._helpCtx.vfs && this._helpCtx.vfs.files) {
-      const exeData = new Uint8Array(exeBytes);
-      this._helpCtx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
-      this._helpCtx.vfs.files.set('c:\\' + exeName.toLowerCase(), { data: exeData, attrs: 0x20 });
+    if (this._helpCtx && this._helpCtx.vfs) {
+      VfsSeed.seedExeImage(this._helpCtx.vfs, exeBytes, exeName);
     }
     ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
 
@@ -881,7 +879,7 @@ class WineAssembly {
     const dir = url.replace(/[^\\\/]*$/, '');
     const files = new Map();
     await Promise.all(_stageable().flatMap(name =>
-      [`${name}.DLL`, `${name}.dll`, `${name}.EXE`].map(async file => {
+      VfsSeed.win16FileCandidates(name).map(async file => {
         if (files.has(name)) return;
         try {
           const resp = await fetch(dir + file);

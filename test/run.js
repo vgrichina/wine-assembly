@@ -12,6 +12,7 @@ const {
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
 const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
+const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -2372,7 +2373,7 @@ async function main() {
   // went into, so this has to follow load_pe.
   loadWin16Dlls(instance.exports, memory, exeBytes, path.dirname(EXE_PATH),
     (dir, name) => {
-      for (const f of [`${name}.DLL`, `${name}.dll`, `${name}.EXE`]) {
+      for (const f of win16FileCandidates(name)) {
         const p = path.join(dir, f);
         if (fs.existsSync(p)) return fs.readFileSync(p);
       }
@@ -2498,14 +2499,9 @@ async function main() {
   // Resolve any module-relative address specs now that all module bases are known.
   deferredResolveAddrs();
 
-  // Pre-populate EXE in virtual filesystem so CreateFileA on itself works
-  // GetModuleFileNameA returns "C:\app.exe" — inject EXE bytes at that path
+  // Put the exe where a running image expects to find itself; see lib/vfs-seed.js.
   if (ctx.vfs) {
-    const exeData = new Uint8Array(exeBytes);
-    ctx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
-    // Also register under the real basename in case something uses it differently
-    const exeName = path.basename(EXE_PATH).toLowerCase();
-    ctx.vfs.files.set('c:\\' + exeName, { data: exeData, attrs: 0x20 });
+    const exeName = seedExeImage(ctx.vfs, exeBytes, path.basename(EXE_PATH)).base;
     // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
     // Recursively scan subdirectories too (e.g. Plugins/ for Winamp)
     const exeDir = path.dirname(EXE_PATH);
