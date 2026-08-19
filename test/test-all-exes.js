@@ -542,8 +542,9 @@ function runExe(testCase, pngPath) {
       name: testCase.name,
       status: 'TIMEOUT',
       reason: `timed out after ${(elapsedMs / 1000).toFixed(1)}s ` +
-        `(budget ${(budgetMs / 1000).toFixed(0)}s = declared ` +
-        `${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s x${LOAD_FACTOR.toFixed(1)}, ` +
+        `(budget ${(budgetMs / 1000).toFixed(0)}s = max(declared ` +
+        `${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s, floor ` +
+        `${(MIN_BACKSTOP_MS / 1000).toFixed(0)}s) x${LOAD_FACTOR.toFixed(1)}, ` +
         `load ${os.loadavg()[0].toFixed(1)}) — ${apiCalls.size} APIs, nothing verified`,
       apiCount: apiCalls.size,
       hasWindow,
@@ -631,8 +632,16 @@ const LOAD_FACTOR = (() => {
   const perCpu = os.loadavg()[0] / Math.max(1, os.cpus().length);
   return Math.min(8, Math.max(1, perCpu * 1.5));
 })();
+// Every run pays the same fixed startup before it emulates anything: node
+// boot, the wasm compile, the PE and its DLLs. Measured on this box, notepad.exe
+// at its default 80-batch budget takes 19.5s wall for 5.2s of CPU — so a 10s or
+// 15s declared backstop is below the floor no matter how little work the case
+// asks for, and Notepad and Calculator timed out at load 10 having logged
+// nothing. Since --max-batches is what actually bounds the work, the backstop
+// only has to be above that floor to still catch a wedge.
+const MIN_BACKSTOP_MS = 30000;
 function wallBudgetMs(testCase) {
-  return Math.round((testCase.timeoutMs || 15000) * LOAD_FACTOR);
+  return Math.round(Math.max(testCase.timeoutMs || 15000, MIN_BACKSTOP_MS) * LOAD_FACTOR);
 }
 
 // Run all tests
