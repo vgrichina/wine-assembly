@@ -991,6 +991,11 @@
   ;; no OLE applications installed -- Windows shows an empty list there too.
   (data (i32.const 0x3370) "(no object types registered)\00") ;; 0x3370 (no object types registered)
 
+  ;; ENV_DEFAULTS — the process environment a freshly booted Win98 hands an
+  ;; app, as one "NAME=VALUE\0"... run ending in a second NUL. Copied into the
+  ;; guest heap on first use; see $env_ensure.
+  (data (i32.const 0x3390) "COMSPEC=C:\\COMMAND.COM\00TEMP=C:\\WINDOWS\\TEMP\00TMP=C:\\WINDOWS\\TEMP\00windir=C:\\WINDOWS\00PATH=C:\\WINDOWS;C:\\WINDOWS\\COMMAND\00\00")
+
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================
@@ -999,6 +1004,7 @@
   ;; 0x00002000  4KB     UPDATE_RECT    (256 entries × 16 bytes — WAT-owned update bbox)
   ;; 0x00003000  256B    UPDATE_FLAGS   (1 byte per window slot, non-empty update state)
   ;; 0x00003100  128B    CLASS_NAME_STRINGS (built-in control class names)
+  ;; 0x00003390  ~370B   ENV_DEFAULTS (initial environment block template)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
   ;; 0x00003900  1KB     WND_CLASS_CURSOR_TABLE (256 × 4 bytes — class hCursor per hwnd)
   ;; 0x00003D00  ~768B   Free
@@ -1702,6 +1708,13 @@
 
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
+  ;; Process environment block: guest pointer to "NAME=VALUE\0"... "\0", and
+  ;; the byte capacity of that allocation. Filled from ENV_DEFAULTS on first
+  ;; use. One block serves every spelling — GetEnvironmentStringsA/W hand out
+  ;; encoded copies of it, GetEnvironmentVariable reads it, and
+  ;; SetEnvironmentVariable edits it in place.
+  (global $env_block (mut i32) (i32.const 0))
+  (global $env_cap   (mut i32) (i32.const 4096))
   (global $exe_name_wa (mut i32) (i32.const 0x120))   ;; WASM addr of exe name string
   (global $exe_name_len (mut i32) (i32.const 7))      ;; length of exe name
   ;; MSVCRT static data pointers (allocated on first use from heap)

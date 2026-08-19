@@ -652,13 +652,64 @@
           (else (i32.store8 (i32.add (local.get $dst) (local.get $o)) (i32.const 0))))))
     (local.get $o))
 
+  ;; Find the message this call names and expand it, as ANSI, into $dst — $max
+  ;; bytes, or a measuring pass that writes nothing when $dst is 0. Every
+  ;; decision FormatMessage makes is here, so both spellings make it the same
+  ;; way; all that differs between them is the encoding on either side.
+  ;;
+  ;; $fmt_wa is the FORMAT_MESSAGE_FROM_STRING template as a WASM address,
+  ;; already ANSI — FormatMessageW narrows the caller's UTF-16 copy before it
+  ;; gets here. $source is lpSource as passed, which for FROM_HMODULE names
+  ;; the module whose RT_MESSAGETABLE holds the text. Returns the length not
+  ;; counting the NUL, which is the true length even when the output was
+  ;; truncated to $max.
+  (func $format_message_ansi
+      (param $flags i32) (param $fmt_wa i32) (param $source i32) (param $msg_id i32)
+      (param $args_g i32) (param $dst i32) (param $max i32) (result i32)
+    (local $len i32) (local $o i32)
+    ;; FORMAT_MESSAGE_FROM_STRING: the caller supplied the template.
+    ;; RegEdit uses this for resource strings before CreateWindowEx.
+    (if (i32.and (local.get $flags) (i32.const 0x400))
+      (then
+        (return (call $format_message_expand
+          (local.get $fmt_wa) (local.get $dst) (local.get $max) (local.get $args_g)))))
+    ;; FORMAT_MESSAGE_FROM_HMODULE: the text lives in the module's
+    ;; RT_MESSAGETABLE. winipcfg keeps every label and caption there and asks
+    ;; for them one id at a time, so without this its whole UI reads "Error".
+    ;; A message-table entry carries inserts too, so it goes through the same
+    ;; expansion.
+    (if (i32.and (local.get $flags) (i32.const 0x800))
+      (then
+        (call $push_rsrc_ctx (local.get $source))
+        (local.set $len (call $message_table_lookup
+          (local.get $msg_id) (global.get $TEXT_SCRATCH)))
+        (call $pop_rsrc_ctx)
+        (if (i32.ne (local.get $len) (i32.const -1))
+          (then
+            (return (call $format_message_expand
+              (global.get $TEXT_SCRATCH) (local.get $dst) (local.get $max)
+              (local.get $args_g)))))))
+    ;; Nothing named a message we have: a generic one, written through the same
+    ;; bounds-checked put as everything else so a measuring pass stays a
+    ;; measuring pass.
+    (local.set $o (call $fmsg_put (local.get $dst) (i32.const 0) (local.get $max) (i32.const 69)))   ;; 'E'
+    (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 114))) ;; 'r'
+    (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 114))) ;; 'r'
+    (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 111))) ;; 'o'
+    (local.set $o (call $fmsg_put (local.get $dst) (local.get $o) (local.get $max) (i32.const 114))) ;; 'r'
+    (if (local.get $dst)
+      (then
+        (if (i32.and (i32.ne (local.get $max) (i32.const 0))
+                     (i32.ge_u (local.get $o) (local.get $max)))
+          (then (i32.store8 (i32.add (local.get $dst) (i32.sub (local.get $max) (i32.const 1))) (i32.const 0)))
+          (else (i32.store8 (i32.add (local.get $dst) (local.get $o)) (i32.const 0))))))
+    (local.get $o))
+
   ;; 754: FormatMessageA(dwFlags, lpSource, dwMessageId, dwLanguageId, lpBuffer, nSize, Arguments)
   (func $handle_FormatMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $buf_ga i32) (local $len i32) (local $nSize i32)
-    (local $args_g i32)
+    (local $args_g i32) (local $fmt_wa i32)
     ;; dwFlags=arg0, lpSource=arg1, dwMessageId=arg2, dwLangId=arg3, lpBuffer=arg4
-    ;; FORMAT_MESSAGE_FROM_STRING: copy lpSource into the caller's output.
-    ;; RegEdit uses this for resource strings before CreateWindowEx.
     (local.set $nSize (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     ;; Arguments is the 7th parameter. FORMAT_MESSAGE_IGNORE_INSERTS (0x200)
     ;; says to leave %1 and the escapes exactly as they are, and is expressed
@@ -669,72 +720,29 @@
     (local.set $args_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (if (i32.and (local.get $arg0) (i32.const 0x200))
       (then (local.set $args_g (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
     (if (i32.and (local.get $arg0) (i32.const 0x400))
       (then
+        ;; FROM_STRING with no string is the one call with nothing to say.
         (if (i32.eqz (local.get $arg1))
-          (then
-            (global.set $eax (i32.const 0))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-            (return)))
-        (local.set $len (call $format_message_expand
-          (call $g2w (local.get $arg1)) (i32.const 0) (i32.const 0) (local.get $args_g)))
-        (if (i32.and (local.get $arg0) (i32.const 0x100))
-          (then
-            (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-            (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
-            (local.set $wa (call $g2w (local.get $buf_ga)))
-            (local.set $nSize (i32.add (local.get $len) (i32.const 1))))
-          (else
-            (local.set $wa (call $g2w (local.get $arg4)))))
-        (drop (call $format_message_expand
-          (call $g2w (local.get $arg1)) (local.get $wa) (local.get $nSize) (local.get $args_g)))
-        (global.set $eax (local.get $len))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-        (return)))
-    ;; FORMAT_MESSAGE_FROM_HMODULE: the text lives in the module's
-    ;; RT_MESSAGETABLE. winipcfg keeps every label and caption there and asks
-    ;; for them one id at a time, so without this its whole UI reads "Error".
-    (if (i32.and (local.get $arg0) (i32.const 0x800))
-      (then
-        (call $push_rsrc_ctx (local.get $arg1))
-        (local.set $len (call $message_table_lookup
-          (local.get $arg2) (global.get $TEXT_SCRATCH)))
-        (call $pop_rsrc_ctx)
-        (if (i32.ne (local.get $len) (i32.const -1))
-          (then
-            ;; A message-table entry carries inserts too, so it goes through
-            ;; the same expansion — measured first, since ALLOCATE_BUFFER has
-            ;; to size the buffer before it writes into it.
-            (local.set $len (call $format_message_expand
-              (global.get $TEXT_SCRATCH) (i32.const 0) (i32.const 0) (local.get $args_g)))
-            (if (i32.and (local.get $arg0) (i32.const 0x100))
-              (then
-                (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
-                (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
-                (local.set $wa (call $g2w (local.get $buf_ga)))
-                (local.set $nSize (i32.add (local.get $len) (i32.const 1))))
-              (else
-                (local.set $wa (call $g2w (local.get $arg4)))))
-            (drop (call $format_message_expand
-              (global.get $TEXT_SCRATCH) (local.get $wa) (local.get $nSize) (local.get $args_g)))
-            (global.set $eax (local.get $len))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-            (return)))))
-    ;; If FORMAT_MESSAGE_ALLOCATE_BUFFER (0x100), allocate and store ptr
-    ;; Otherwise write to lpBuffer directly
+          (then (global.set $eax (i32.const 0)) (return)))
+        (local.set $fmt_wa (call $g2w (local.get $arg1)))))
+    ;; Measured first, since ALLOCATE_BUFFER has to size the buffer before it
+    ;; writes into it.
+    (local.set $len (call $format_message_ansi (local.get $arg0) (local.get $fmt_wa)
+      (local.get $arg1) (local.get $arg2) (local.get $args_g) (i32.const 0) (i32.const 0)))
     (if (i32.and (local.get $arg0) (i32.const 0x100))
       (then
-        ;; Allocate a small buffer and write its address to *lpBuffer
-        (local.set $buf_ga (call $heap_alloc (i32.const 64)))
+        (local.set $buf_ga (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
         (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
-        (local.set $wa (call $g2w (local.get $buf_ga))))
+        (local.set $wa (call $g2w (local.get $buf_ga)))
+        (local.set $nSize (i32.add (local.get $len) (i32.const 1))))
       (else
         (local.set $wa (call $g2w (local.get $arg4)))))
-    ;; Write a generic error message
-    (i32.store (local.get $wa) (i32.const 0x6F727245))          ;; "Erro"
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x00000072))  ;; "r\0"
-    (global.set $eax (i32.const 5))  ;; length of "Error"
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
+    (drop (call $format_message_ansi (local.get $arg0) (local.get $fmt_wa)
+      (local.get $arg1) (local.get $arg2) (local.get $args_g)
+      (local.get $wa) (local.get $nSize)))
+    (global.set $eax (local.get $len))
   )
 
   ;; 755: RegOpenKeyExW(hKey, lpSubKey, ulOptions, samDesired, phkResult) — wide string version
@@ -869,20 +877,10 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 769: GetVersionExW(lpVersionInfo) — fill OSVERSIONINFOW for Windows 98
+  ;; 769: GetVersionExW(lpVersionInfo) — the same OSVERSIONINFO the A spelling
+  ;; fills, read from $winver rather than hardcoded to Windows 98.
   (func $handle_GetVersionExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    ;; dwOSVersionInfoSize already set by caller at offset 0
-    ;; dwMajorVersion = 4 (Win98)
-    (i32.store offset=4 (local.get $wa) (i32.const 4))
-    ;; dwMinorVersion = 10 (Win98)
-    (i32.store offset=8 (local.get $wa) (i32.const 10))
-    ;; dwBuildNumber = 0x040A0004 (Win98 SE)
-    (i32.store offset=12 (local.get $wa) (i32.const 0x040A0004))
-    ;; dwPlatformId = 1 (VER_PLATFORM_WIN32_WINDOWS)
-    (i32.store offset=16 (local.get $wa) (i32.const 1))
-    ;; szCSDVersion — leave as zeroes
+    (call $version_info (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
@@ -1424,26 +1422,7 @@
   ;; ASCII letters/digits map cleanly; uppercase letters set the SHIFT bit (0x100).
   ;; Anything else returns -1 (0xFFFF), the documented "no translation" sentinel.
   (func $handle_VkKeyScanW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ch i32)
-    (local.set $ch (i32.and (local.get $arg0) (i32.const 0xFFFF)))
-    (block $done
-      ;; 'a'-'z' → vkey = uppercase, shift=0
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x7A)))
-        (then (global.set $eax (i32.sub (local.get $ch) (i32.const 0x20))) (br $done)))
-      ;; 'A'-'Z' → vkey = char, shift=1 (high byte = 0x01)
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x5A)))
-        (then (global.set $eax (i32.or (local.get $ch) (i32.const 0x0100))) (br $done)))
-      ;; '0'-'9' → vkey = char, shift=0
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30)) (i32.le_u (local.get $ch) (i32.const 0x39)))
-        (then (global.set $eax (local.get $ch)) (br $done)))
-      ;; Space, Tab, Enter, Escape, Backspace
-      (if (i32.eq (local.get $ch) (i32.const 0x20)) (then (global.set $eax (i32.const 0x20)) (br $done)))
-      (if (i32.eq (local.get $ch) (i32.const 0x09)) (then (global.set $eax (i32.const 0x09)) (br $done)))
-      (if (i32.eq (local.get $ch) (i32.const 0x0D)) (then (global.set $eax (i32.const 0x0D)) (br $done)))
-      (if (i32.eq (local.get $ch) (i32.const 0x1B)) (then (global.set $eax (i32.const 0x1B)) (br $done)))
-      (if (i32.eq (local.get $ch) (i32.const 0x08)) (then (global.set $eax (i32.const 0x08)) (br $done)))
-      ;; Default: no translation
-      (global.set $eax (i32.const 0xFFFF)))
+    (global.set $eax (call $vk_key_scan (i32.and (local.get $arg0) (i32.const 0xFFFF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))  ;; stdcall, 1 arg
 
   ;; VK->scancode lookup table for letters A..Z (vk 0x41..0x5A → table[vk-0x41]).

@@ -264,9 +264,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; DrawStatusTextW — 4 args, void (same but wide)
+  ;; DrawStatusTextW — 4 args, void. Same draw as the A spelling, with the
+  ;; text read as UTF-16; it used to skip the draw entirely, so a wide app's
+  ;; status bar stayed blank.
   (func $handle_DrawStatusTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Wide version — for now just skip the draw
+    (if (local.get $arg2)
+      (then
+        (drop (call $host_gdi_draw_text
+          (local.get $arg0)                              ;; hDC
+          (call $g2w (local.get $arg2))                  ;; text
+          (i32.const -1)                                 ;; nCount=-1 (null terminated)
+          (call $g2w (local.get $arg1))                  ;; lpRect
+          (i32.or (local.get $arg3) (i32.const 0x24))    ;; DT_SINGLELINE|DT_VCENTER
+          (i32.const 1)))))                              ;; wide
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 

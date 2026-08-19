@@ -2353,6 +2353,16 @@
   ;; test/test-format-message-inserts.js. All three addresses are guest
   ;; addresses; $dst_g == 0 is the measure-only mode the real handler uses to
   ;; size an ALLOCATE_BUFFER allocation before writing into it.
+  (func (export "test_format_message_ansi")
+      (param $flags i32) (param $fmt_g i32) (param $source i32) (param $msg_id i32)
+      (param $args_g i32) (param $dst_g i32) (param $max i32) (result i32)
+    (call $format_message_ansi
+      (local.get $flags)
+      (select (i32.const 0) (call $g2w (local.get $fmt_g)) (i32.eqz (local.get $fmt_g)))
+      (local.get $source) (local.get $msg_id) (local.get $args_g)
+      (select (i32.const 0) (call $g2w (local.get $dst_g)) (i32.eqz (local.get $dst_g)))
+      (local.get $max)))
+
   (func (export "test_format_message_expand")
       (param $src_g i32) (param $dst_g i32) (param $max i32) (param $args_g i32) (result i32)
     (call $format_message_expand

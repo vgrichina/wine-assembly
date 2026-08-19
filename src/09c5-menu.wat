@@ -3295,12 +3295,29 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 682: InsertMenuW(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
-  ;; Resource-menu mutation is not represented yet; match InsertMenuA and
-  ;; report success so applications can continue constructing optional items.
+  ;; 682: InsertMenuW(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem).
+  ;; This reported success and inserted nothing, so a wide app's menu was
+  ;; missing exactly the items it built at runtime. Narrow the label and let
+  ;; the A implementation do the insert.
+  ;;
+  ;; The narrowed copy is deliberately not freed: the menu record keeps the
+  ;; label pointer, so it has to outlive this call the same way the caller's
+  ;; own string does. MF_BITMAP (0x04) and MF_OWNERDRAW (0x100) make lpNewItem
+  ;; a handle rather than a string — those pass through untouched.
   (func $handle_InsertMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (local $len i32) (local $ansi i32)
+    (if (i32.and
+          (i32.ne (local.get $arg4) (i32.const 0))
+          (i32.eqz (i32.and (local.get $arg2) (i32.const 0x104))))
+      (then
+        (local.set $len (i32.add (call $guest_wcslen (local.get $arg4)) (i32.const 1)))
+        (local.set $ansi (call $heap_alloc (local.get $len)))
+        (if (local.get $ansi)
+          (then
+            (drop (call $wide_to_ansi (local.get $arg4) (local.get $ansi) (local.get $len)))
+            (local.set $arg4 (local.get $ansi))))))
+    (call $handle_InsertMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; GetMenuStringA(hMenu, uIDItem, lpString, cchMax, uFlag) → chars copied.
@@ -3317,9 +3334,32 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
   )
 
-  ;; 683: GetMenuStringW — STUB: unimplemented
+  ;; 683: GetMenuStringW(hMenu, uIDItem, lpString, cchMax, uFlag) → chars copied.
+  ;; The label lives as ANSI, so read it into a staging buffer of the caller's
+  ;; size and widen it into their buffer. A NULL buffer is a measuring call and
+  ;; needs no staging at all.
   (func $handle_GetMenuStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $tmp i32) (local $len i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
+    (if (i32.or (i32.eqz (local.get $arg2)) (i32.le_s (local.get $arg3) (i32.const 0)))
+      (then
+        (global.set $eax (call $menu_handle_copy_label
+          (local.get $arg0) (local.get $arg1)
+          (i32.and (local.get $arg4) (i32.const 0x400))
+          (i32.const 0) (local.get $arg3)))
+        (return)))
+    (local.set $tmp (call $heap_alloc (local.get $arg3)))
+    (if (i32.eqz (local.get $tmp))
+      (then (call $gs16 (local.get $arg2) (i32.const 0))
+            (global.set $eax (i32.const 0)) (return)))
+    (call $gs8 (local.get $tmp) (i32.const 0))
+    (local.set $len (call $menu_handle_copy_label
+      (local.get $arg0) (local.get $arg1)
+      (i32.and (local.get $arg4) (i32.const 0x400))
+      (call $g2w (local.get $tmp)) (local.get $arg3)))
+    (drop (call $ansi_to_wide (local.get $tmp) (local.get $arg2) (local.get $arg3)))
+    (call $heap_free (local.get $tmp))
+    (global.set $eax (local.get $len))
   )
 
   ;; 687: CreateMenu() — allocate opaque HMENU. No backing state: AppendMenu/InsertMenu

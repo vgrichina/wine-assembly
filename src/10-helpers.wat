@@ -1013,26 +1013,6 @@
       (br $search)))
     (i32.const 0))
 
-  ;; Find DLL by UTF-16 name (WASM ptr), return guest load_addr or 0.
-  (func $find_dll_by_wname (param $name_wa i32) (result i32)
-    (local $i i32) (local $tbl_ptr i32) (local $la i32) (local $exp_rva i32)
-    (local $exp_name_rva i32) (local $exp_name_wa i32)
-    (local.set $i (i32.const 0))
-    (block $notfound (loop $search
-      (br_if $notfound (i32.ge_u (local.get $i) (global.get $dll_count)))
-      (local.set $tbl_ptr (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-      (local.set $la (i32.load (local.get $tbl_ptr)))
-      (local.set $exp_rva (i32.load (i32.add (local.get $tbl_ptr) (i32.const 8))))
-      (if (i32.ne (local.get $exp_rva) (i32.const 0))
-        (then
-          (local.set $exp_name_rva (i32.load (i32.add (call $g2w (i32.add (local.get $la) (local.get $exp_rva))) (i32.const 12))))
-          (local.set $exp_name_wa (call $g2w (i32.add (local.get $la) (local.get $exp_name_rva))))
-          (if (call $wide_ascii_eq (local.get $name_wa) (local.get $exp_name_wa))
-            (then (return (local.get $la))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $search)))
-    (i32.const 0))
-
   ;; ASCII tolower: if A-Z, add 0x20
   (func $tolower (param $c i32) (result i32)
     (if (result i32) (i32.and (i32.ge_u (local.get $c) (i32.const 0x41)) (i32.le_u (local.get $c) (i32.const 0x5A)))
@@ -4505,3 +4485,169 @@
     (call $heap_free (local.get $cs))
     (call $dlg_seed_focus (local.get $dlg_hwnd))
     (return (local.get $ctrl_count)))
+
+  ;; ============================================================
+  ;; Process environment block
+  ;; ============================================================
+  ;; One ANSI block in guest memory, "NAME=VALUE\0"... terminated by a second
+  ;; NUL, exactly the layout GetEnvironmentStrings hands back. Every
+  ;; environment entry point reads or edits this one block, so the A and W
+  ;; spellings cannot disagree about what the environment contains: the wide
+  ;; ones widen on the way out and narrow on the way in.
+
+  (func $env_ensure
+    (local $i i32) (local $ch i32) (local $prev i32)
+    (if (global.get $env_block) (then (return)))
+    (global.set $env_block (call $heap_alloc (global.get $env_cap)))
+    (local.set $prev (i32.const 1))
+    (block $done (loop $copy
+      (local.set $ch (i32.load8_u (i32.add (i32.const 0x3390) (local.get $i))))
+      (call $gs8 (i32.add (global.get $env_block) (local.get $i)) (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.and (i32.eqz (local.get $ch)) (i32.eqz (local.get $prev))))
+      (local.set $prev (local.get $ch))
+      (br $copy))))
+
+  ;; Total bytes in the block, including both terminating NULs.
+  (func $env_size (result i32)
+    (local $i i32) (local $ch i32) (local $prev i32)
+    (call $env_ensure)
+    (local.set $prev (i32.const 1))
+    (block $done (loop $scan
+      (local.set $ch (call $gl8 (i32.add (global.get $env_block) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.and (i32.eqz (local.get $ch)) (i32.eqz (local.get $prev))))
+      (local.set $prev (local.get $ch))
+      (br $scan)))
+    (local.get $i))
+
+  ;; Guest address of the entry whose name matches, or 0. Names are compared
+  ;; case-insensitively, as Win32 does.
+  (func $env_find (param $name_g i32) (param $wide i32) (result i32)
+    (local $p i32) (local $i i32) (local $a i32) (local $b i32) (local $step i32)
+    (call $env_ensure)
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $p (global.get $env_block))
+    (block $miss (loop $entry
+      (br_if $miss (i32.eqz (call $gl8 (local.get $p))))
+      (local.set $i (i32.const 0))
+      (block $next (block $hit (loop $cmp
+        (local.set $a (call $tolower (call $gl8 (i32.add (local.get $p) (local.get $i)))))
+        (local.set $b (call $tolower (call $gl_char
+          (i32.add (local.get $name_g) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $wide))))
+        ;; End of the caller's name: a match needs '=' on our side.
+        (if (i32.eqz (local.get $b))
+          (then (br_if $hit (i32.eq (local.get $a) (i32.const 0x3D))) (br $next)))
+        (br_if $next (i32.ne (local.get $a) (local.get $b)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $cmp)))
+        (return (local.get $p)))
+      (local.set $p (i32.add (local.get $p)
+        (i32.add (call $guest_strlen (local.get $p)) (i32.const 1))))
+      (br $entry)))
+    (i32.const 0))
+
+  ;; GetEnvironmentVariable: characters written on success, or the buffer size
+  ;; the caller needs (including the NUL) when the buffer is too small, or 0
+  ;; when the variable does not exist.
+  (func $env_get (param $name_g i32) (param $buf_g i32) (param $size i32) (param $wide i32) (result i32)
+    (local $p i32) (local $len i32) (local $i i32) (local $step i32)
+    (local.set $p (call $env_find (local.get $name_g) (local.get $wide)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    ;; Skip past "NAME=".
+    (local.set $p (i32.add (local.get $p)
+      (i32.add (call $env_name_len (local.get $p)) (i32.const 1))))
+    (local.set $len (call $guest_strlen (local.get $p)))
+    (if (i32.or (i32.eqz (local.get $buf_g)) (i32.le_u (local.get $size) (local.get $len)))
+      (then (return (i32.add (local.get $len) (i32.const 1)))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (block $done (loop $copy
+      (br_if $done (i32.gt_u (local.get $i) (local.get $len)))
+      (call $store_char
+        (i32.add (local.get $buf_g) (i32.mul (local.get $i) (local.get $step)))
+        (call $gl8 (i32.add (local.get $p) (local.get $i))) (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $len))
+
+  ;; Length of the NAME part of an entry, i.e. the offset of its '='.
+  (func $env_name_len (param $p i32) (result i32)
+    (local $i i32) (local $ch i32)
+    (block $done (loop $scan
+      (local.set $ch (call $gl8 (i32.add (local.get $p) (local.get $i))))
+      (br_if $done (i32.or (i32.eqz (local.get $ch)) (i32.eq (local.get $ch) (i32.const 0x3D))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  ;; SetEnvironmentVariable: replaces or removes one entry. A NULL value
+  ;; deletes. Returns TRUE unless the block has no room left.
+  (func $env_set (param $name_g i32) (param $val_g i32) (param $wide i32) (result i32)
+    (local $p i32) (local $entry i32) (local $tail i32) (local $size i32)
+    (local $i i32) (local $step i32) (local $ch i32) (local $name_len i32) (local $val_len i32)
+    (if (i32.eqz (local.get $name_g)) (then (return (i32.const 0))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $size (call $env_size))
+    ;; Drop any existing entry by shifting the rest of the block over it.
+    (local.set $entry (call $env_find (local.get $name_g) (local.get $wide)))
+    (if (local.get $entry)
+      (then
+        (local.set $tail (i32.add (call $guest_strlen (local.get $entry)) (i32.const 1)))
+        (local.set $i (i32.sub (local.get $entry) (global.get $env_block)))
+        (block $moved (loop $shift
+          (br_if $moved (i32.ge_u (i32.add (local.get $i) (local.get $tail)) (local.get $size)))
+          (call $gs8 (i32.add (global.get $env_block) (local.get $i))
+            (call $gl8 (i32.add (global.get $env_block)
+              (i32.add (local.get $i) (local.get $tail)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $shift)))
+        (local.set $size (i32.sub (local.get $size) (local.get $tail)))))
+    (if (i32.eqz (local.get $val_g)) (then (return (i32.const 1))))
+    ;; Append "NAME=VALUE\0" over the block's final NUL.
+    (local.set $name_len (call $lstr_len (local.get $name_g) (local.get $wide)))
+    (local.set $val_len (call $lstr_len (local.get $val_g) (local.get $wide)))
+    (if (i32.gt_u (i32.add (local.get $size)
+                     (i32.add (local.get $name_len)
+                       (i32.add (local.get $val_len) (i32.const 2))))
+                  (global.get $env_cap))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (global.get $env_block) (i32.sub (local.get $size) (i32.const 1))))
+    (local.set $i (i32.const 0))
+    (block $names_done (loop $name
+      (br_if $names_done (i32.ge_u (local.get $i) (local.get $name_len)))
+      (call $gs8 (i32.add (local.get $p) (local.get $i))
+        (call $gl_char (i32.add (local.get $name_g) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $wide)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $name)))
+    (local.set $p (i32.add (local.get $p) (local.get $name_len)))
+    (call $gs8 (local.get $p) (i32.const 0x3D))
+    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $vals_done (loop $val
+      (br_if $vals_done (i32.ge_u (local.get $i) (local.get $val_len)))
+      (call $gs8 (i32.add (local.get $p) (local.get $i))
+        (call $gl_char (i32.add (local.get $val_g) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $wide)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $val)))
+    (local.set $p (i32.add (local.get $p) (local.get $val_len)))
+    (call $gs8 (local.get $p) (i32.const 0))                      ;; end of this entry
+    (call $gs8 (i32.add (local.get $p) (i32.const 1)) (i32.const 0))  ;; end of block
+    (i32.const 1))
+
+  ;; GetEnvironmentStrings: a fresh copy of the block in the caller's
+  ;; encoding, owned by the caller until FreeEnvironmentStrings.
+  (func $env_strings (param $wide i32) (result i32)
+    (local $size i32) (local $out i32) (local $i i32) (local $step i32)
+    (local.set $size (call $env_size))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $out (call $heap_alloc (i32.mul (local.get $size) (local.get $step))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+      (call $store_char (i32.add (local.get $out) (i32.mul (local.get $i) (local.get $step)))
+        (call $gl8 (i32.add (global.get $env_block) (local.get $i))) (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $out))
