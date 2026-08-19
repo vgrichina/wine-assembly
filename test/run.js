@@ -4,7 +4,8 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
-const { resolveDllGraph, stageAndLoadPe, setExeName, setExtraCmdline } = require('../lib/process-boot');
+const { resolveDllGraph, stageAndLoadPe, setExeName, setExtraCmdline,
+  handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
   onThreadExit: profileThreadExit,
@@ -435,6 +436,35 @@ async function main() {
     wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
   }
   const exeBytes = fs.readFileSync(EXE_PATH);
+
+  // Where a DLL the guest asks for at run time comes from: what the app mounted
+  // in the VFS first, then the directories this process can see. The browser
+  // answers the same question with fetch(); the yield pumps that ask it are
+  // shared (lib/process-boot.js). COM used to look only at the filesystem, so a
+  // plugin sitting in the VFS was "not found" for CoCreateInstance and present
+  // for LoadLibrary.
+  const findRuntimeDllBytes = (fileName, fullName) => {
+    if (ctx.vfs) {
+      for (const p of [
+        String(fullName).toLowerCase(),
+        'c:\\' + fileName,
+        'c:\\plugins\\' + fileName,
+        'c:\\windows\\system\\' + fileName,
+      ]) {
+        const entry = ctx.vfs.files.get(p);
+        if (entry && entry.data) return entry.data;
+      }
+    }
+    for (const sp of [
+      path.join(__dirname, 'binaries/dlls', fileName),
+      path.join(path.dirname(EXE_PATH), fileName),
+      path.join(path.dirname(EXE_PATH), 'dlls', fileName),
+      path.join(path.dirname(EXE_PATH), 'plugins', fileName),
+    ]) {
+      if (fs.existsSync(sp)) return new Uint8Array(fs.readFileSync(sp));
+    }
+    return null;
+  };
 
   const logs = [];
   let stopped = false;
@@ -5656,45 +5686,18 @@ async function main() {
       }
     }
 
-    // Handle COM DLL loading yield (synchronous in Node.js)
+    // Handle COM DLL loading yield (yield_reason=3). The pump itself is shared
+    // with the browser (lib/process-boot.js); only where the bytes come from
+    // is ours.
     if (instance.exports.get_yield_reason() === 3) {
-      const dllNameWA = instance.exports.get_com_dll_name();
-      if (dllNameWA) {
-        const mem8 = new Uint8Array(memory.buffer);
-        let dllPathStr = '';
-        for (let i = 0; i < 260; i++) {
-          const ch = mem8[dllNameWA + i];
-          if (!ch) break;
-          dllPathStr += String.fromCharCode(ch);
-        }
-        const fileName = dllPathStr.split('\\').pop().toLowerCase();
-        console.log(`[COM] Loading DLL: ${fileName}`);
-        // Try to find the DLL file
-        const searchPaths = [
-          path.join(__dirname, 'binaries/dlls', fileName),
-          path.join(path.dirname(EXE_PATH), fileName),
-          path.join(path.dirname(EXE_PATH), 'dlls', fileName),
-        ];
-        let loaded = false;
-        for (const sp of searchPaths) {
-          if (fs.existsSync(sp)) {
-            const dllBytes = new Uint8Array(fs.readFileSync(sp));
-            const { loadDll: ld, patchExeImports: pe, callDllMain: cdm } = require('../lib/dll-loader');
-            const result = ld(instance.exports, memory.buffer, dllBytes);
-            console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
-            pe(instance.exports, memory.buffer, new Uint8Array(fs.readFileSync(EXE_PATH)), [{ name: fileName, bytes: dllBytes }], console.log);
-            if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
-            loaded = true;
-            break;
-          }
-        }
-        if (!loaded) {
-          console.log(`[COM] DLL not found: ${fileName}`);
-          instance.exports.set_eax(0x80040154); // REGDB_E_CLASSNOTREG
-          instance.exports.set_esp(instance.exports.get_esp() + 24);
-        }
-      }
-      instance.exports.clear_yield();
+      await handleComDllYield({
+        exports: instance.exports,
+        memoryBuffer: memory.buffer,
+        exeBytes: new Uint8Array(exeBytes),
+        resourceHost: ctx,
+        log: console.log,
+        findDll: findRuntimeDllBytes,
+      });
     }
 
     // Handle the virtual LAN net_wait yield (yield_reason=8). The guest is
@@ -5748,63 +5751,17 @@ async function main() {
         console.log(`[yield] T0 reason=5 (load_library) eip=${hex(instance.exports.get_eip())} ` +
           `esp=${hex(instance.exports.get_esp())} syncDepth=${instance.exports.get_sync_msg_depth ? instance.exports.get_sync_msg_depth() : 0}`);
       }
-      const nameWA = instance.exports.get_loadlib_name();
-      const mem8 = new Uint8Array(memory.buffer);
-      let nameStr = '';
-      if (nameWA > 0 && nameWA < mem8.length - 260) {
-        for (let i = 0; i < 260; i++) {
-          const ch = mem8[nameWA + i];
-          if (!ch) break;
-          nameStr += String.fromCharCode(ch);
-        }
-      }
-      const fileName = nameStr.split('\\').pop().toLowerCase();
-      // Search VFS for the DLL file
-      let dllData = null;
-      if (ctx.vfs) {
-        // Try exact path first, then just filename in common locations
-        const tryPaths = [
-          nameStr.toLowerCase(),
-          'c:\\' + fileName,
-          'c:\\plugins\\' + fileName,
-          'c:\\windows\\system\\' + fileName,
-        ];
-        for (const p of tryPaths) {
-          const entry = ctx.vfs.files.get(p);
-          if (entry) { dllData = entry.data; break; }
-        }
-      }
-      // Also try host filesystem
-      if (!dllData) {
-        const searchPaths = [
-          path.join(__dirname, 'binaries/dlls', fileName),
-          path.join(path.dirname(EXE_PATH), fileName),
-          path.join(path.dirname(EXE_PATH), 'dlls', fileName),
-          path.join(path.dirname(EXE_PATH), 'plugins', fileName),
-        ];
-        for (const sp of searchPaths) {
-          if (fs.existsSync(sp)) {
-            dllData = new Uint8Array(fs.readFileSync(sp));
-            break;
-          }
-        }
-      }
-      if (dllData) {
-        const dllBytesArr = new Uint8Array(dllData);
-        const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm, resumeAfterLoadLibraryYield: rly } = require('../lib/dll-loader');
-        const result = ld(instance.exports, memory.buffer, dllBytesArr);
-        console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
-        try {
-          const { extractBitmapBytes } = require('../lib/dib');
-          const bitmapBytes = extractBitmapBytes(dllBytesArr);
-          const count = Object.keys(bitmapBytes).length;
-          if (count > 0) {
-            ctx.dllResources = ctx.dllResources || {};
-            ctx.dllResources[result.loadAddr] = { bitmapBytes };
-            console.log(`DLL resources: ${fileName} has ${count} bitmaps`);
-          }
-        } catch (_) {}
-        {
+      await handleLoadLibraryYield({
+        exports: instance.exports,
+        memoryBuffer: memory.buffer,
+        resourceHost: ctx,
+        log: console.log,
+        trace: TRACE_YIELD ? console.log : null,
+        findDll: findRuntimeDllBytes,
+        // CLI-only bookkeeping: `module+0xVA` probes need this module's base
+        // before the app can reach any code in it, so the breakpoint and
+        // counter slots are re-armed here rather than at the next batch.
+        onLoaded: ({ result, fileName, bytes: dllBytesArr }) => {
           const key = fileName.toLowerCase().replace(/\.[^.]+$/, '');
           const peOff2 = dllBytesArr[0x3C] | (dllBytesArr[0x3D] << 8) | (dllBytesArr[0x3E] << 16) | (dllBytesArr[0x3F] << 24);
           const dllOrigBase = dllBytesArr[peOff2 + 52] | (dllBytesArr[peOff2 + 53] << 8) | (dllBytesArr[peOff2 + 54] << 16) | (dllBytesArr[peOff2 + 55] << 24);
@@ -5822,28 +5779,8 @@ async function main() {
           if (traceEipOn && traceEipArmed && instance.exports.set_trace_eip_range) {
             instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
           }
-        }
-        // Patch the new DLL's imports against all previously loaded DLLs
-        pdi(instance.exports, memory.buffer,
-          [{ name: fileName, bytes: dllBytesArr }],
-          [result], console.log);
-        // Call DllMain(DLL_PROCESS_ATTACH). Some DLLs (e.g. d3dxof) initialize
-        // critical state here — the template registry. callDllMain saves/restores
-        // EIP/ESP so it's safe to invoke from the LoadLibrary yield handler.
-        instance.exports.clear_yield();
-        if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
-        instance.exports.set_eax(result.loadAddr);
-        if (rly) rly(instance.exports, memory.buffer, TRACE_YIELD ? console.log : null);
-      } else {
-        console.log(`[LoadLibrary] DLL not found: ${fileName}`);
-        instance.exports.set_eax(0);
-        try {
-          const { resumeAfterLoadLibraryYield: rly } = require('../lib/dll-loader');
-          if (rly) rly(instance.exports, memory.buffer, TRACE_YIELD ? console.log : null);
-        } catch (_) {}
-      }
-      // ESP and EIP already adjusted by WAT handler before yield
-      instance.exports.clear_yield();
+        },
+      });
     }
 
     // Thread management: spawn pending threads, run worker slices

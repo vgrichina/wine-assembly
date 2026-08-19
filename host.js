@@ -1063,189 +1063,66 @@ class WineAssembly {
     this.running = true;
   }
 
+  // Where a DLL the guest asks for at runtime comes from in the browser: the
+  // VFS the app mounted, whatever was already fetched for it, then the served
+  // directories. The CLI answers the same question against the filesystem —
+  // the yield pumps themselves are shared (lib/process-boot.js).
+  async _findDllBytes(fileName, fullName, { exeDir = false, vfsPaths = null } = {}) {
+    const ctx = this._helpCtx;
+    if (ctx && ctx.readFile) {
+      const fromVfs = ctx.readFile(fullName);
+      if (fromVfs) return fromVfs;
+    }
+    if (ctx && ctx.vfs && vfsPaths) {
+      for (const vp of vfsPaths) {
+        const entry = ctx.vfs.files.get(vp);
+        if (entry && entry.data) return entry.data;
+      }
+    }
+    if (this._loadedDllBytesByName && this._loadedDllBytesByName[fileName]) {
+      return this._loadedDllBytesByName[fileName];
+    }
+    const dir = exeDir && this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
+    const paths = [
+      dir ? dir + fileName : '',
+      `binaries/dlls/${fileName}`,
+      `binaries/plugins/${fileName}`,
+      `dlls/${fileName}`,
+    ].filter(Boolean);
+    for (const p of paths) {
+      try {
+        const resp = await fetch(p);
+        if (resp.ok) return new Uint8Array(await resp.arrayBuffer());
+      } catch (_) {}
+    }
+    return null;
+  }
+
   async handleComDllLoad() {
-    const exports = this.instance.exports;
-    // Read pending DLL name from COM yield state
-    const dllNameWA = exports.get_com_dll_name ? exports.get_com_dll_name() : 0;
-    if (!dllNameWA) {
-      console.error('COM yield but no pending DLL name');
-      exports.clear_yield();
-      return;
-    }
-    const mem = new Uint8Array(this.memory.buffer);
-    let dllName = '';
-    for (let i = 0; i < 260; i++) {
-      const ch = mem[dllNameWA + i];
-      if (!ch) break;
-      dllName += String.fromCharCode(ch);
-    }
-    // Extract just the filename
-    const fileName = dllName.split('\\').pop().toLowerCase();
-    console.log(`[COM] Loading DLL: ${fileName}`);
-
-    try {
-      // Try to fetch the DLL
-      const paths = [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`];
-      let dllBytes = null;
-      for (const p of paths) {
-        try {
-          const resp = await fetch(p);
-          if (resp.ok) {
-            dllBytes = new Uint8Array(await resp.arrayBuffer());
-            console.log(`[COM] Fetched ${p} (${dllBytes.length} bytes)`);
-            break;
-          }
-        } catch (_) {}
-      }
-      // Fallback: check VFS for the DLL bytes
-      if (!dllBytes && this._helpCtx && this._helpCtx.vfs) {
-        const vfs = this._helpCtx.vfs;
-        for (const vp of [dllName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName]) {
-          const entry = vfs.files.get(vp);
-          if (entry && entry.data) {
-            dllBytes = entry.data;
-            console.log(`[COM] Found ${fileName} in VFS (${dllBytes.length} bytes)`);
-            break;
-          }
-        }
-      }
-      if (!dllBytes) {
-        console.error(`[COM] Failed to fetch DLL: ${fileName}`);
-        // Clear yield and let CoCreateInstance fail with REGDB_E_CLASSNOTREG
-        exports.clear_yield();
-        // Set EAX to error, advance ESP past the 5 stdcall args
-        exports.set_eax(0x80040154);
-        exports.set_esp(exports.get_esp() + 24);
-        return;
-      }
-
-      // Load the DLL using existing infrastructure
-      const _loadDll = (typeof DllLoader !== 'undefined' && DllLoader.loadDll) || null;
-      if (_loadDll) {
-        const result = _loadDll(exports, this.memory.buffer, dllBytes);
-        console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
-        // Patch EXE imports if we have EXE bytes
-        if (this._exeBytes) {
-          const _patchExeImports = (typeof DllLoader !== 'undefined' && DllLoader.patchExeImports) || null;
-          if (_patchExeImports) {
-            _patchExeImports(exports, this.memory.buffer, this._exeBytes, console.log);
-          }
-        }
-        // Call DllMain if entry point exists
-        if (result.dllMain) {
-          const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
-          if (_callDllMain) {
-            _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
-          }
-        }
-      }
-
-      // Clear yield — run() will re-enter CoCreateInstance handler
-      // which will retry and find the DLL now loaded
-      exports.clear_yield();
-      // Don't advance ESP — the handler will be re-invoked by the dispatch
-    } catch (e) {
-      console.error('[COM] DLL load error:', e);
-      exports.clear_yield();
-      exports.set_eax(0x80004005); // E_FAIL
-      exports.set_esp(exports.get_esp() + 24);
-    }
+    await ProcessBoot.handleComDllYield({
+      exports: this.instance.exports,
+      memoryBuffer: this.memory.buffer,
+      exeBytes: this._exeBytes || null,
+      resourceHost: this,
+      log: console.log,
+      findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, {
+        vfsPaths: [fullName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName],
+      }),
+    });
   }
 
   _registerDllBitmapResources(name, bytes, loadAddr) {
-    const _extractBitmapBytes = (typeof extractBitmapBytes === 'function')
-      ? extractBitmapBytes
-      : (typeof dibLib !== 'undefined' && dibLib.extractBitmapBytes);
-    if (!_extractBitmapBytes) return;
-    try {
-      const bitmapBytes = _extractBitmapBytes(bytes);
-      const count = Object.keys(bitmapBytes).length;
-      if (count > 0) {
-        this.dllResources = this.dllResources || {};
-        this.dllResources[loadAddr] = { bitmapBytes };
-        console.log(`DLL resources: ${name} has ${count} bitmaps`);
-      }
-    } catch (_) {}
+    ProcessBoot.registerDllBitmaps(this, name, bytes, loadAddr, console.log);
   }
 
   async handleLoadLibrary() {
-    const exports = this.instance.exports;
-    const _resumeAfterLoadLibraryYield = (typeof DllLoader !== 'undefined' && DllLoader.resumeAfterLoadLibraryYield) || null;
-    const nameWA = exports.get_loadlib_name ? exports.get_loadlib_name() : 0;
-    if (!nameWA) {
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-      exports.clear_yield && exports.clear_yield();
-      return;
-    }
-    const mem = new Uint8Array(this.memory.buffer);
-    let dllName = '';
-    for (let i = 0; i < 260 && mem[nameWA + i]; i++) {
-      dllName += String.fromCharCode(mem[nameWA + i]);
-    }
-    const fileName = dllName.split('\\').pop().toLowerCase();
-    const ctx = this._helpCtx;
-    let dllBytes = ctx && ctx.readFile ? ctx.readFile(dllName) : null;
-    if (!dllBytes && this._loadedDllBytesByName) {
-      dllBytes = this._loadedDllBytesByName[fileName] || null;
-    }
-
-    if (!dllBytes) {
-      const exeDir = this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
-      const paths = [
-        exeDir ? exeDir + fileName : '',
-        `binaries/dlls/${fileName}`,
-        `binaries/plugins/${fileName}`,
-        `dlls/${fileName}`,
-      ].filter(Boolean);
-      for (const p of paths) {
-        try {
-          const resp = await fetch(p);
-          if (resp.ok) {
-            dllBytes = new Uint8Array(await resp.arrayBuffer());
-            break;
-          }
-        } catch (_) {}
-      }
-    }
-
-    if (!dllBytes) {
-      console.error(`[LoadLibrary] DLL not found: ${fileName}`);
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-      exports.clear_yield && exports.clear_yield();
-      return;
-    }
-
-    const _loadDll = (typeof DllLoader !== 'undefined' && DllLoader.loadDll) || null;
-    const _patchDllImports = (typeof DllLoader !== 'undefined' && DllLoader.patchDllImports) || null;
-    const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
-    if (!_loadDll) {
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-      exports.clear_yield && exports.clear_yield();
-      return;
-    }
-
-    try {
-      const result = _loadDll(exports, this.memory.buffer, dllBytes);
-      console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}`);
-      this._registerDllBitmapResources(fileName, dllBytes, result.loadAddr);
-      if (_patchDllImports) {
-        _patchDllImports(exports, this.memory.buffer, [{ name: fileName, bytes: dllBytes }], [result], console.log);
-      }
-      exports.clear_yield && exports.clear_yield();
-      if (result.dllMain && _callDllMain) {
-        _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
-      }
-      exports.set_eax && exports.set_eax(result.loadAddr);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-    } catch (e) {
-      console.error('[LoadLibrary] load error:', e);
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-    }
-    exports.clear_yield && exports.clear_yield();
+    await ProcessBoot.handleLoadLibraryYield({
+      exports: this.instance.exports,
+      memoryBuffer: this.memory.buffer,
+      resourceHost: this,
+      log: console.log,
+      findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, { exeDir: true }),
+    });
   }
 
   // Finish (or cancel) a deferred last-window teardown. Called once per run
