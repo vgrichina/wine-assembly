@@ -13771,9 +13771,17 @@
             (i32.shl
               (i32.and (i32.sub (local.get $py) (local.get $cy)) (i32.const 0xFFFF))
               (i32.const 16))))
-          (if (call $dialog_route_mouse
-                (local.get $ch) (local.get $msg) (local.get $wParam) (local.get $ch_lp))
-            (then (return (i32.const 1))))
+          ;; Descend into the hit child first -- except into a combobox. A
+          ;; combobox owns an edit field and a button, and its own wndproc is
+          ;; what opens the list and forwards clicks to its listbox. Recursing
+          ;; here hands the click to one of those parts instead, which is why
+          ;; WordPad's font combo opened when clicked near its middle (below the
+          ;; edit child) and did nothing when clicked on the field or arrow.
+          (if (i32.ne (local.get $cls) (i32.const 5))
+            (then
+              (if (call $dialog_route_mouse
+                    (local.get $ch) (local.get $msg) (local.get $wParam) (local.get $ch_lp))
+                (then (return (i32.const 1))))))
           ;; Click on a sibling control while another combo is dropped → cancel
           ;; that combo first (matches Win98: any click outside the dropdown's
           ;; field/listbox dismisses it). Skip when the hit IS the open combo
