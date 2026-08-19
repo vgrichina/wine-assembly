@@ -2272,6 +2272,12 @@
   ;; KB, and there are at most nine module ids.
   (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
   (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
+  ;; Where the modules an application ships with itself are staged, one
+  ;; megabyte each, above the 32-bit DLL tables and below the virtual-alloc
+  ;; backing store. They get their own area because their size is the app's
+  ;; business rather than the system's: VBRUN100.DLL alone is 265KB.
+  (global $WIN16_APP_DLL_STAGING i32 (i32.const 0x07A00000))
+  (global $WIN16_APP_DLL_STRIDE  i32 (i32.const 0x00100000))
   (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
   ;; The second continuation slot: CreateWindow calls the WH_CALLWNDPROC hook
   ;; before the window's own procedure, so the two returns have to be told

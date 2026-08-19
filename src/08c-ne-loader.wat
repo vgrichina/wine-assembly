@@ -108,7 +108,48 @@
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_CARDS))    (then (return (i32.const 9))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_DDEML))    (then (return (i32.const 10))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_NDDEAPI))  (then (return (i32.const 11))))
+    ;; Then the ones this task brought with it. A Win16 game is routinely three
+    ;; or four NE files -- Tetris alone imports ABOUTTET for its about box, and
+    ;; the Entertainment Pack ships IWLIB and WEPUTIL beside the games -- and
+    ;; none of those can be a name in this list, because the list is compiled
+    ;; and they are whatever the app happens to be made of. The host stages
+    ;; them and writes their names here; ids run from 12.
+    (call $win16_dynamic_module_id (local.get $pstr)))
+
+  ;; Up to four app-local modules, each a Pascal string in its own 16-byte
+  ;; slot. Four because a staging slot is 256KB and the space between
+  ;; WIN16_DLL_STAGING and DLL_TABLE holds sixteen of them, twelve of which are
+  ;; spoken for by the system modules and the emulated ones.
+  (global $WIN16_DYNAMIC_MODULES i32 (i32.const 4))
+
+  (func $win16_dynamic_module_slot (export "win16_dynamic_module_slot")
+        (param $i i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0x8400) (i32.mul (local.get $i) (i32.const 16)))))
+
+  (func $win16_dynamic_module_id (param $pstr i32) (result i32)
+    (local $i i32) (local $slot i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
+      (local.set $slot (call $win16_dynamic_module_slot (local.get $i)))
+      (if (i32.load8_u (local.get $slot))
+        (then
+          (if (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot))
+            (then (return (i32.add (local.get $i) (i32.const 12)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
     (i32.const 0))
+
+  ;; Clear the app-local names. Called when a task is loaded, so one run's
+  ;; modules cannot answer for the next one's.
+  (func $win16_dynamic_modules_reset (export "win16_dynamic_modules_reset")
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
+      (i32.store8 (call $win16_dynamic_module_slot (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
 
   ;; ---- Import thunks ----
   ;;
@@ -731,7 +772,17 @@
     (global.get $PE_STAGING))
 
   ;; The staging area for module `id`, which is where JS puts the file bytes.
+  ;;
+  ;; The app-local ones (12 and up) stage somewhere else, with a megabyte each.
+  ;; A system module is small and there are twelve id slots in front of them,
+  ;; but what an application brings with it can be anything: the Visual Basic 1
+  ;; runtime is 265KB and five Entertainment Pack games are written in it, so a
+  ;; 256KB slot rejected the file and the games stopped at their first call.
   (func $win16_dll_staging (export "win16_dll_staging") (param $module_id i32) (result i32)
+    (if (i32.ge_u (local.get $module_id) (i32.const 12))
+      (then (return (i32.add (global.get $WIN16_APP_DLL_STAGING)
+        (i32.mul (i32.sub (local.get $module_id) (i32.const 12))
+                 (global.get $WIN16_APP_DLL_STRIDE))))))
     (i32.add (global.get $WIN16_DLL_STAGING)
              (i32.mul (local.get $module_id) (global.get $WIN16_DLL_STAGING_STRIDE))))
 
