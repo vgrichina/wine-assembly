@@ -1398,6 +1398,27 @@
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
+  ;; $wnd_uncover_parent(hwnd): the window is about to stop being visible —
+  ;; hidden or destroyed — so hand the area it occupied back to its parent.
+  ;; On Win98 a child owns a visible region carved out of its parent's, and
+  ;; taking the child away turns that region into invalid area on the parent,
+  ;; which erases and repaints it. We keep one back-canvas per top-level, so
+  ;; a departing child's pixels are simply left on the parent's surface with
+  ;; nothing that would ever overwrite them. Ask the parent for an erase and
+  ;; a paint instead; the erase re-invalidates the surviving subtree.
+  ;; NSIS's wizard swaps pages by destroying the old page dialog, and without
+  ;; this the license text and the options checkboxes stayed on screen
+  ;; underneath the Installing Files page.
+  (func $wnd_uncover_parent (param $hwnd i32)
+    (local $parent i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd))) (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (if (i32.eq (call $wnd_table_find (local.get $parent)) (i32.const -1)) (then (return)))
+    (call $nc_flags_set (local.get $parent) (i32.const 2))
+    (call $invalidate_hwnd (local.get $parent)))
+
   ;; Paint flags table — 1 byte per WND slot at $PAINT_FLAGS. This mirrors
   ;; how real Win32 tracks paint state: a per-window pending bit, not a
   ;; central queue. No fixed capacity to overflow; CreateDialogParamA can

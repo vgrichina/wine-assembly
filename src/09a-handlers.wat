@@ -1800,6 +1800,9 @@
         (else
           (if (call $wnd_is_effectively_visible (local.get $arg0))
             (then (global.set $quit_flag (i32.const 1))))))))
+    ;; Give the parent back the area this window covered, before the record
+    ;; that says who the parent is goes away.
+    (call $wnd_uncover_parent (local.get $arg0))
     ;; Recursively destroy window and all its children (frees table slots)
     (call $wnd_destroy_recursive (local.get $arg0))
     ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.

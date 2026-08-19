@@ -1038,6 +1038,9 @@
               (i32.eqz (local.get $was_visible)))
           (then (call $nc_flags_set (local.get $arg0) (i32.const 2)))))
       (else
+        ;; Ask while the window still counts as visible: the area it covered
+        ;; on the shared surface belongs to the parent again.
+        (call $wnd_uncover_parent (local.get $arg0))
         (drop (call $wnd_set_style (local.get $arg0)
               (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0xEFFFFFFF))))
         ;; A hidden child must not later consume an already-queued paint.

@@ -170,7 +170,6 @@ for (const tc of CASES) {
       `--input=${LICENSE_WAIT},2:dlg-dump:license`,
       `--png="${pngPath}"`,
       '--quiet-api',
-      '--trace-api=DrawTextA,DrawTextW',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
@@ -193,10 +192,21 @@ for (const tc of CASES) {
     const wizardButtonInk = pngOk
       ? await countNonBtnFacePixels(pngPath, { x: 8, y: 268, w: 412, h: 40 })
       : 0;
+    // The header static's caption is one long sentence that only fits on two
+    // lines, so word wrap has a visible signature: the second line carries
+    // just the word "installing." at the left margin. Measure that instead of
+    // watching for a DrawText call -- the static wraps its own text inside
+    // WAT now, so no DrawText crosses the API boundary to trace.
+    const headerLine2Ink = pngOk
+      ? await countNearBlackPixels(pngPath, { x: 50, y: 44, w: 90, h: 18 })
+      : 0;
+    const headerLine2Tail = pngOk
+      ? await countNearBlackPixels(pngPath, { x: 140, y: 44, w: 272, h: 18 })
+      : Number.POSITIVE_INFINITY;
     const licenseChecks = [
       { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
-      { name: 'license text uses word-wrapped DrawText', pass:
-        /DrawText[AW]\(hdc=.*lpString="Winamp is a freeware product\..*uFormat=.*DT_WORDBREAK/.test(licenseOut) },
+      { name: `license header text is word-wrapped (${headerLine2Ink} px on line 2, ${headerLine2Tail} px past the wrap)`,
+        pass: headerLine2Ink > 40 && headerLine2Tail < 10 },
       { name: 'license page PNG captured', pass: pngOk },
       { name: 'license wizard buttons are visible', pass: wizardButtonInk > 700 },
     ];
@@ -226,7 +236,9 @@ for (const tc of CASES) {
       },
       {
         name: 'canvas scrollbar down arrow scrolls license text',
-        input: `${LICENSE_WAIT},2:click:400:250,4:dlg-send:1000:206:0:0`,
+        // The edit is at screen (13,72)-(412,243), so its scrollbar's down
+        // arrow is the 17x17 box at (395,226). (400,250) is below the control.
+        input: `${LICENSE_WAIT},2:click:403:235,4:dlg-send:1000:206:0:0`,
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=1/,
       },
       {
@@ -272,13 +284,16 @@ for (const tc of CASES) {
 
       if (probe.png) {
         const pngCaptured = fs.existsSync(probe.png) && fs.statSync(probe.png).size > 10000;
+        // The band above the edit is the page header, which has text of its
+        // own -- counting dark pixels there measures the header, not a leak.
+        // Scrolling must simply not change those pixels at all.
         let strayInk = Number.POSITIVE_INFINITY;
-        if (pngCaptured) {
-          strayInk = await countNearBlackPixels(probe.png, { x: 8, y: 22, w: 412, h: 50 });
+        if (pngCaptured && pngOk) {
+          strayInk = await diffPixelsInRect(pngPath, probe.png, { x: 8, y: 22, w: 412, h: 48 });
         }
-        const clipPass = pngCaptured && strayInk < 500;
+        const clipPass = pngCaptured && strayInk < 20;
         console.log((clipPass ? 'PASS  ' : 'FAIL  ') +
-          `scrolled license text stays clipped above RichEdit (${strayInk} stray dark pixels)`);
+          `scrolled license text stays clipped above RichEdit (${strayInk} changed pixels above it)`);
         if (!clipPass) failed++;
       }
     }
@@ -291,7 +306,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      `--input=${LICENSE_WAIT},50:png:${pressedBase},60:mousedown:400:250,70:png:${pressedHeld},80:mouseup:400:250`,
+      `--input=${LICENSE_WAIT},50:png:${pressedBase},60:mousedown:403:235,70:png:${pressedHeld},80:mouseup:403:235`,
       '--quiet-api',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
@@ -312,7 +327,7 @@ for (const tc of CASES) {
       fs.existsSync(pressedBase) && fs.statSync(pressedBase).size > 10000 &&
       fs.existsSync(pressedHeld) && fs.statSync(pressedHeld).size > 10000;
     const downArrowDiff = pressedPngsOk
-      ? await diffPixelsInRect(pressedBase, pressedHeld, { x: 397, y: 241, w: 16, h: 16 })
+      ? await diffPixelsInRect(pressedBase, pressedHeld, { x: 395, y: 226, w: 17, h: 17 })
       : 0;
     const pressedChecks = [
       { name: 'scrollbar down arrow shows pressed state while held', pass: downArrowDiff > 20 },
@@ -330,7 +345,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      `--input=${LICENSE_WAIT},2:mousedown:373:283,3:mouseup:373:283`,
+      `--input=${LICENSE_WAIT},2:mousedown:374:265,3:mouseup:374:265`,
       '--quiet-api',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
@@ -554,7 +569,10 @@ for (const tc of CASES) {
       ? await countHighlightPixels(installingPng, { x: 50, y: 52, w: 358, h: 14 })
       : 0;
     const installingChecks = [
-      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=10,10 wh=399,227/.test(installingOut) },
+      // The page dialog fills the wizard's placeholder static (id=1018), so
+      // its rect is that static's, not a fixed one. Its hwnd number depends on
+      // how many windows the run created before it, so don't pin that.
+      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x1[0-9a-f]{4} id=0 cls=0 style=0x50000448 xy=10,10 wh=399,211/.test(installingOut) },
       { name: 'installing page maps progress controls to native ProgressBar', pass: /id=1004 cls=17/.test(installingOut) && /id=1005 cls=17/.test(installingOut) },
       { name: 'installing page maps details pane to native ListView', pass: /id=1016 cls=18/.test(installingOut) },
       { name: 'installing page PNG captured', pass: installingPngOk },

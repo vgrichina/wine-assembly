@@ -358,6 +358,7 @@ E2E=(
   test/test-winamp.js
   test/test-winamp-audio.js
   test/test-winamp-eq-presets.js
+  test/test-winamp-installers.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
   test/test-wordpad-format-accelerators.js
@@ -423,10 +424,6 @@ QUARANTINE=(
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
   # Paint / app-specific.
-  # Measured 2026-08-19: five checks, one cause -- the NSIS license page's
-  # RichEdit is never mapped to a native edit, so there is no word-wrapped
-  # DrawText, no PNG, no wizard buttons and nothing for the wheel to scroll.
-  test/test-winamp-installers.js        # license RichEdit not mapped to a native edit
   # Measured 2026-08-19: no window titled "Winamp Equalizer" is visible at
   # all, so the three skin-pixel checks after it never get to run.
   test/test-winamp-visualization-web.js # no equalizer window in the browser run
