@@ -2517,13 +2517,8 @@ Resource-aware Win98 emulator
         }
         if (app.args) {
           wine._extraArgs = app.args;
-          if (wine.instance.exports.set_extra_cmdline) {
-            const enc = new TextEncoder();
-            const argBytes = enc.encode(app.args);
-            const staging = wine.instance.exports.get_staging();
-            new Uint8Array(wine.memory.buffer).set(argBytes, staging);
-            wine.instance.exports.set_extra_cmdline(staging, argBytes.length);
-          }
+          window.processBoot.setExtraCmdline(
+            wine.instance.exports, wine.memory.buffer, app.args);
         }
         // One list, shared with the CLI (lib/dll-registry.js), and one graph
         // walk (lib/process-boot.js). Both used to exist twice: this page knew

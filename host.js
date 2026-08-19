@@ -1,6 +1,11 @@
 // Wine-Assembly: JS host for the WASM x86 interpreter
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
+// The boot steps this host shares with the CLI harness: staging the EXE,
+// load_pe, the exe-name/cmdline pokes, and the DLL dependency walk.
+// lib/process-boot.js is a classic script loaded ahead of this one.
+const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
+
 class WineAssembly {
   static SOURCE_VERSION = '207';
   static _nextProcessId = 1000;
@@ -949,25 +954,10 @@ class WineAssembly {
     // $menu_load, $string_load_a, $rsrc_find_data_wa). The JS side no
     // longer pre-parses anything from the EXE bytes.
 
-    // Load EXE into staging buffer
-    const staging = this.instance.exports.get_staging();
-    const mem = new Uint8Array(this.memory.buffer);
-    // Self-extracting installers append their archive after the PE image, so
-    // the file can be far larger than the loader needs. The staging buffer sits
-    // below emulator-private tables — the API hash table among them — and an
-    // unbounded copy walks straight through them, after which every import
-    // resolves to api_id 0xFFFF and the app dies on its first call.
-    const stagingCap = this.instance.exports.get_staging_size();
-    const staged = Math.min(exeBytes.length, stagingCap);
-    if (staged < exeBytes.length) {
-      console.log(`[pe] staging ${staged} of ${exeBytes.length} bytes ` +
-        `(buffer is ${stagingCap}); the tail is appended data, read via the VFS`);
-    }
-    mem.set(exeBytes.subarray(0, staged), staging);
-
-    // Load PE
-    const entry = this.instance.exports.load_pe(staged);
-    console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
+    // Stage the EXE and load it. The staging clamp and its reasoning live in
+    // lib/process-boot.js, shared with the CLI harness.
+    const { entry } = ProcessBoot.stageAndLoadPe(
+      this.instance.exports, this.memory.buffer, exeBytes);
 
     const exeName = url.replace(/^.*[\\\/]/, '');
     this._applyExeCompatibilityPatches(exeName);
@@ -990,14 +980,7 @@ class WineAssembly {
       this._helpCtx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
       this._helpCtx.vfs.files.set('c:\\' + exeName.toLowerCase(), { data: exeData, attrs: 0x20 });
     }
-    if (this.instance.exports.set_exe_name) {
-      const enc = new TextEncoder();
-      const nameBytes = enc.encode(exeName);
-      const mem2 = new Uint8Array(this.memory.buffer);
-      const tmpOff = staging; // reuse staging as scratch
-      mem2.set(nameBytes, tmpOff);
-      this.instance.exports.set_exe_name(tmpOff, nameBytes.length);
-    }
+    ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
 
     return entry;
   }

@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
-const { resolveDllGraph } = require('../lib/process-boot');
+const { resolveDllGraph, stageAndLoadPe, setExeName, setExtraCmdline } = require('../lib/process-boot');
 const { applyExeCompatibilityPatches: applyProfilePatches } = require('../lib/app-profiles');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
@@ -2338,20 +2338,7 @@ async function main() {
   });
 
   const mem = new Uint8Array(memory.buffer);
-  // Self-extracting installers append their archive after the PE image, so the
-  // file can be far larger than anything the loader needs. The staging buffer
-  // sits below emulator-private tables — the API hash table among them — and an
-  // unbounded copy walks straight through them, after which every import
-  // resolves to api_id 0xFFFF and the app dies on its first call.
-  const stagingCap = instance.exports.get_staging_size();
-  const staged = Math.min(exeBytes.length, stagingCap);
-  if (staged < exeBytes.length) {
-    console.log(`[pe] staging ${staged} of ${exeBytes.length} bytes ` +
-      `(buffer is ${stagingCap}); the tail is appended data, read via the VFS`);
-  }
-  mem.set(exeBytes.subarray(0, staged), instance.exports.get_staging());
-  const entry = instance.exports.load_pe(staged);
-  console.log('PE loaded. Entry: ' + hex(entry));
+  const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
   // A 16-bit task's DLLs load into the same selector arena its own segments
   // went into, so this has to follow load_pe.
@@ -2371,20 +2358,11 @@ async function main() {
   }
 
   // Set EXE name from path
-  if (instance.exports.set_exe_name) {
-    const exeName = path.basename(EXE_PATH);
-    const nameBytes = Buffer.from(exeName);
-    const staging = instance.exports.get_staging();
-    mem.set(nameBytes, staging);
-    instance.exports.set_exe_name(staging, nameBytes.length);
-  }
+  setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
 
   // Pass extra command-line arguments via the staging buffer (--args="...")
-  if (EXTRA_ARGS && instance.exports.set_extra_cmdline) {
-    const argBytes = Buffer.from(EXTRA_ARGS);
-    const staging = instance.exports.get_staging();
-    mem.set(argBytes, staging);
-    instance.exports.set_extra_cmdline(staging, argBytes.length);
+  if (EXTRA_ARGS) {
+    setExtraCmdline(instance.exports, memory.buffer, EXTRA_ARGS);
     console.log(`Extra cmdline args: ${JSON.stringify(EXTRA_ARGS)}`);
   }
 
