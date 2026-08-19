@@ -90,6 +90,57 @@ class WineAssembly {
     return str;
   }
 
+  // The mounted view of a guest path: whatever the launch already put in the
+  // VFS, matched by full path, by c:\-rooted path, and finally by basename,
+  // because a guest names a file however its own code spelled it.
+  _vfsLookup(name, instanceVfs) {
+    const baseName = String(name).replace(/^.*[\\\/]/, '');
+    const lowerName = String(name).toLowerCase().replace(/\//g, '\\');
+    const lowerBase = baseName.toLowerCase();
+    const vfs = instanceVfs || (this._helpCtx && this._helpCtx.vfs);
+    if (!vfs || !vfs.files) return null;
+    const candidates = [
+      lowerName,
+      'c:\\' + lowerName.replace(/^\\+/, ''),
+      'c:\\' + lowerBase,
+    ];
+    for (const p of candidates) {
+      const entry = vfs.files.get(p);
+      if (entry && entry.data) return entry.data;
+    }
+    for (const [p, entry] of vfs.files) {
+      if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
+    }
+    return null;
+  }
+
+  // Fetch a file the launch did not mount, off the main thread, and mount it
+  // so every later read is a plain VFS hit. Both outcomes are remembered:
+  // an app that probes the same missing name in a loop costs one request, not
+  // one per probe, and a 404 is remembered as a 404.
+  _fetchMissingFile(name, instanceVfs) {
+    const baseName = String(name).replace(/^.*[\\\/]/, '');
+    if (!this._missingFetches) this._missingFetches = new Map();
+    const exeDir = this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
+    const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
+    const pending = this._missingFetches.get(url);
+    if (pending) return pending;
+    const p = fetch(url)
+      .then(r => (r.ok ? r.arrayBuffer() : null))
+      .then(buf => {
+        if (!buf) return null;
+        const data = new Uint8Array(buf);
+        const vfs = instanceVfs || (this._helpCtx && this._helpCtx.vfs);
+        if (vfs && vfs.files) {
+          vfs.files.set('c:\\' + baseName.toLowerCase(), { data, attrs: 0x20 });
+        }
+        return data;
+      })
+      .catch(() => null);
+    this._missingFetches.set(url, p);
+    return p;
+  }
+
   // Per-app thread-exit fixups (Winamp's visualizer bookkeeping) live in
   // lib/app-profiles.js, so the CLI harness runs the same ones.
   _onThreadExit(info) {
@@ -162,48 +213,19 @@ class WineAssembly {
       },
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
-      readFile: (name) => {
-        const baseName = name.replace(/^.*[\\\/]/, '');
-        const lowerName = name.toLowerCase().replace(/\//g, '\\');
-        const lowerBase = baseName.toLowerCase();
-        const vfs = ctx.vfs || (self._helpCtx && self._helpCtx.vfs);
-        if (vfs && vfs.files) {
-          const candidates = [
-            lowerName,
-            'c:\\' + lowerName.replace(/^\\+/, ''),
-            'c:\\' + lowerBase,
-          ];
-          for (const p of candidates) {
-            const entry = vfs.files.get(p);
-            if (entry && entry.data) return entry.data;
-          }
-          for (const [p, entry] of vfs.files) {
-            if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
-          }
-        }
-        // Last resort: a synchronous fetch on the main thread, which blocks the
-        // UI for a network round trip and is invisible to the perf HUD's phase
-        // marks. It stays synchronous because the caller is a WAT host import
-        // that must return bytes now; making it yield-and-resume the way DLL
-        // loading does is the real fix and a larger change.
-        //
-        // What is fixed here is the repeat: an app that probes the same missing
-        // file in a loop used to pay a full round trip every time. Both hits
-        // and misses are remembered, so each name costs at most one stall.
-        if (!self._syncFetchCache) self._syncFetchCache = new Map();
-        const exeDir = self._exeUrl ? self._exeUrl.replace(/[^\/\\]*$/, '') : '';
-        const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
-        if (self._syncFetchCache.has(url)) return self._syncFetchCache.get(url);
-        let result = null;
-        try {
-          const xhr = new XMLHttpRequest();
-          xhr.open('GET', url, false);
-          xhr.responseType = 'arraybuffer';
-          xhr.send();
-          if (xhr.status === 200) result = new Uint8Array(xhr.response);
-        } catch (_) {}
-        self._syncFetchCache.set(url, result);
-        return result;
+      readFile: (name) => self._vfsLookup(name, ctx.vfs),
+      // A miss is a file the app's registry entry never listed, so the page
+      // never mounted it. It used to be read with a *synchronous*
+      // XMLHttpRequest, which froze the tab for a whole network round trip
+      // and was invisible to the perf HUD's phase marks. Nothing that reads
+      // through here needs the bytes in the same turn: the two callers are a
+      // wallpaper set and an MCI open, and MCI is allowed to still be
+      // spinning a device up when open returns. So the miss now starts an
+      // async fetch and the caller applies the bytes when they land.
+      readFileAsync: (name) => {
+        const have = self._vfsLookup(name, ctx.vfs);
+        if (have) return Promise.resolve(have);
+        return self._fetchMissingFile(name, ctx.vfs);
       },
       onTopLevelWindowDestroyed: (hwnd, destroyed) => {
         if (!self._multiApp || !self.renderer || !self._hwndBase) return;
@@ -960,6 +982,17 @@ class WineAssembly {
           addFile(explicit);
         } else {
           addFile('c:\\' + url.replace(/^.*[\\\/]/, '').toLowerCase());
+        }
+        // A font an app ships was put in the Windows font directory by its
+        // installer on a real machine, and that is the only reason an app
+        // like Age of Empires can name "Copperplate Gothic Light" without
+        // ever calling AddFontResource. Mount it there too - but never over
+        // a vendored substitute, which is what keeps text identical on every
+        // machine.
+        const base = url.replace(/^.*[\\\/]/, '').toLowerCase();
+        if (/\.(ttf|ttc|fon)$/.test(base)) {
+          const installed = 'c:\\windows\\fonts\\' + base;
+          if (!vfs.files.has(installed)) addFile(installed);
         }
         loaded++;
       } catch (_) {

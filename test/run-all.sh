@@ -126,6 +126,7 @@ UNIT=(
   test/test-worker-imports.js
   test/test-debug-midi.js
   test/test-vfs-seed.js
+  test/test-vfs-miss-async.js
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
   test/test-web-fullscreen-consent.js
