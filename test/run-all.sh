@@ -319,6 +319,7 @@ E2E=(
   test/test-aoe-menu.js
   test/test-tworld-launch.js
   test/test-winamp-about-web.js
+  test/test-winamp-visualization-web.js
   test/test-vlan-loopback.js
   test/test-wat-windowposchanged.js
   test/test-tetrinet-connect.js
@@ -424,10 +425,6 @@ QUARANTINE=(
   # OLE presentation data -- the known static-handler/IDataObject gap.
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
-  # Paint / app-specific.
-  # Measured 2026-08-19: no window titled "Winamp Equalizer" is visible at
-  # all, so the three skin-pixel checks after it never get to run.
-  test/test-winamp-visualization-web.js # no equalizer window in the browser run
 )
 
 # A test file missing from every array above does not fail, it just never runs.

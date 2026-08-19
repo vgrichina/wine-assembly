@@ -2021,6 +2021,28 @@ async function main() {
         ` menu=${hex(ex.dlg_get_menu(hwnd))}`;
     }
     logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}${detail}`);
+    // Which WAT control class each template control resolved to. A template
+    // names its controls by string ("SysTreeView32") or ordinal, and the class
+    // it lands on decides everything afterwards: class 0 keeps the app's own
+    // registered wndproc, anything else replaces it with the WAT-native
+    // control. Nothing else in the log says which of the two happened, so a
+    // control that renders but ignores every click looks identical to one that
+    // was never wired up at all.
+    if (ex && ex.wnd_next_child_slot && ex.ctrl_get_class) {
+      let slot = 0;
+      for (;;) {
+        slot = ex.wnd_next_child_slot(hwnd, slot);
+        if (slot < 0) break;
+        const ch = ex.wnd_slot_hwnd(slot);
+        const xy = ex.ctrl_get_xy(ch), wh = ex.ctrl_get_wh(ch);
+        const s16 = v => (v << 16) >> 16;
+        logs.push(`[CreateDialog]   ctrl hwnd=0x${(ch >>> 0).toString(16)}`
+          + ` id=${ex.ctrl_get_id(ch)} class=${ex.ctrl_get_class(ch)}`
+          + ` at ${s16(xy & 0xFFFF)},${s16(xy >>> 16)}`
+          + ` ${s16(wh & 0xFFFF)}x${s16(wh >>> 16)}`);
+        slot++;
+      }
+    }
     if (renderer) renderer.createDialog(hwnd, parentHwnd);
   };
 
@@ -2346,9 +2368,42 @@ async function main() {
     // Sleep, QueryPerformanceCounter) logs unfiltered, and a long two-process
     // run emitted 2.3M such lines and died of heap exhaustion inside
     // console.log with the filter the caller asked for ignored.
+    // Typed args for the worker trace. The worker instance does not exist yet
+    // (ThreadManager builds it from these imports), so its exports are looked
+    // up by tid at log time; before it is registered these return null and the
+    // trace falls back to the bare name.
+    const workerExports = () => {
+      if (!threadManager) return null;
+      for (const [, t] of threadManager.threads) {
+        if ((t.tid | 0) === (tid | 0) && t.instance) return t.instance.exports;
+      }
+      return null;
+    };
+    const workerFmtCtx = () => {
+      const e = workerExports();
+      if (!e || !e.get_esp || !e.get_image_base) return null;
+      const imageBase = e.get_image_base();
+      const g2w = addr => addr - imageBase + 0x12000;
+      return {
+        esp: e.get_esp(),
+        ctx: { dv: new DataView(memory.buffer), g2w, memory: memory.buffer, readStr, hex },
+      };
+    };
     const workerApiLog = makeWorkerApiLogger({
       getBuffer: () => memory.buffer,
       threadId: tid,
+      formatCall: (name) => {
+        const entry = apiByName.get(name);
+        if (!entry) return null;
+        const f = workerFmtCtx();
+        return f ? fmtApiCall(entry, f.esp, f.ctx) : null;
+      },
+      formatReturn: (name, val) => {
+        const entry = apiByName.get(name);
+        if (!entry) return null;
+        const f = workerFmtCtx();
+        return f ? fmtApiRet(entry, val, f.ctx) : null;
+      },
       onCall: (name) => {
         if (apiCounts) apiCounts.set(name, (apiCounts.get(name) || 0) + 1);
       },
