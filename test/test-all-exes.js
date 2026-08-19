@@ -382,10 +382,28 @@ const TEST_CASES = [
     maxBatches: 80, batchSize: 50000,
     extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 30000 },
-  // Plus! 98 screensavers — MFC42
-  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'] },
+  // Plus! 98 screensavers — MFC42.
+  //
+  // These four drive their picture transitions through DirectAnimation, not
+  // GDI: the API histogram is IDirectAnimationDAView_QueryInterface /
+  // DirectSlot / Release once per frame, and the 138 StretchBlt calls all
+  // source a surface DirectAnimation never wrote. Raising the budget does not
+  // help — at 140x50000 (7M instructions, 9059 API calls) the PNG is the same
+  // 2061-byte solid colour as at the default 80k. So the blank frame is the
+  // honest result, and it is recorded here rather than hidden.
+  //
+  // They read as a regression in the PASS count only because the harness used
+  // to score a killed run as a pass; they have never rendered. WIN98.SCR is the
+  // same MFC family and does pass, because it goes through DDraw instead.
+  //
+  // The declared backstop is 60s because they are heavy, not because they are
+  // wedged: they complete their batches, just slowly (mfc42 load dominates).
+  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
   { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)',
     // Animates into DDraw offscreen buffers before the first primary Blt.
     // The default 80k instructions stops during the decode/update loop and
@@ -393,7 +411,8 @@ const TEST_CASES = [
     maxBatches: 140, batchSize: 50000,
     extraArgs: ['--args=/s', '--quiet-blocks'],
     timeoutMs: 30000 },
-  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
   // Plus! 98 screensavers — DirectDraw/Direct3DRM
   { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
   { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
@@ -465,9 +484,10 @@ function runExe(testCase, pngPath) {
   ];
 
   const startedAt = Date.now();
+  const budgetMs = wallBudgetMs(testCase);
   const result = spawnSync('node', args, {
     cwd: ROOT,
-    timeout: testCase.timeoutMs || 15000,
+    timeout: budgetMs,
     encoding: 'utf8',
     maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
@@ -522,7 +542,8 @@ function runExe(testCase, pngPath) {
       name: testCase.name,
       status: 'TIMEOUT',
       reason: `timed out after ${(elapsedMs / 1000).toFixed(1)}s ` +
-        `(limit ${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s, ` +
+        `(budget ${(budgetMs / 1000).toFixed(0)}s = declared ` +
+        `${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s x${LOAD_FACTOR.toFixed(1)}, ` +
         `load ${os.loadavg()[0].toFixed(1)}) — ${apiCalls.size} APIs, nothing verified`,
       apiCount: apiCalls.size,
       hasWindow,
@@ -592,8 +613,35 @@ if (!noBuild) {
   console.log('');
 }
 
+// Every case bounds its emulated work with --max-batches, so `timeoutMs` is not
+// the budget — it is a wall-clock backstop for a run that wedges. Its declared
+// value describes an idle box, and this one routinely sits at load 30+ with
+// several agent sessions sweeping the corpus at once. At that load the backstop
+// stops measuring the emulator and starts measuring the machine: Notepad, a
+// two-second app, timed out at 15.6s having logged zero API calls.
+//
+// So scale it by how oversubscribed the box actually is. An idle box keeps the
+// declared budgets exactly, which is where a real slow-down regression would
+// still be caught; a loaded box gets proportionally longer ones and reports the
+// factor in every timeout line, so a scaled budget can never be mistaken for
+// the declared one. --strict-timeouts pins the factor at 1 for a quiet machine
+// or CI runner where the declared numbers are the point.
+const LOAD_FACTOR = (() => {
+  if (process.argv.includes('--strict-timeouts')) return 1;
+  const perCpu = os.loadavg()[0] / Math.max(1, os.cpus().length);
+  return Math.min(8, Math.max(1, perCpu * 1.5));
+})();
+function wallBudgetMs(testCase) {
+  return Math.round((testCase.timeoutMs || 15000) * LOAD_FACTOR);
+}
+
 // Run all tests
 console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
+if (LOAD_FACTOR > 1.05) {
+  console.log(`  [load] ${os.loadavg()[0].toFixed(1)} on ${os.cpus().length} cpus — ` +
+    `wall-clock backstops scaled x${LOAD_FACTOR.toFixed(1)} (emulated work is unchanged; ` +
+    `--strict-timeouts to disable)\n`);
+}
 
 const filter = process.argv.slice(2).filter(a => !a.startsWith('--')).pop();
 
