@@ -1071,6 +1071,41 @@
       (then (drop (call $wnd_send_message (local.get $new_hwnd) (i32.const 0x0007) (local.get $old) (i32.const 0)))))
   )
 
+  ;; $focus_restore_after_modal(owner) — hand focus back when a modal dialog
+  ;; is torn down. USER returns activation to the dialog's owner, and the owner
+  ;; hears WM_SETFOCUS; an app that paused itself on the WM_KILLFOCUS the
+  ;; dialog caused depends on that message to start again. EmPipe kills its
+  ;; game timer on WM_KILLFOCUS and only re-arms it from WM_SETFOCUS (and only
+  ;; when GetFocus() already names its own window), so without this every
+  ;; "Stage cleared!" box left the game frozen on the stage it had just
+  ;; cleared — the app looked like it could not get past level one.
+  ;;
+  ;; The focus hwnd is set before the message goes out because that is the
+  ;; order the app observes: its WM_SETFOCUS handler calls GetFocus() and
+  ;; compares. WM_SETFOCUS is posted rather than sent, matching
+  ;; $handle_SetFocus, so a teardown running inside a control's wndproc does
+  ;; not nest a guest call underneath itself.
+  (func $focus_restore_after_modal (param $owner i32)
+    (if (i32.eqz (local.get $owner))
+      (then (local.set $owner (global.get $main_hwnd))))
+    (if (i32.eqz (local.get $owner)) (then (return)))
+    ;; Owner must still be a live window.
+    (if (i32.eqz (call $wnd_table_get (local.get $owner))) (then (return)))
+    ;; Something live already holds the focus — a dialog that deliberately
+    ;; handed focus elsewhere before closing keeps it.
+    (if (i32.and (i32.ne (global.get $focus_hwnd) (i32.const 0))
+                 (i32.ne (call $wnd_table_get (global.get $focus_hwnd)) (i32.const 0)))
+      (then (return)))
+    (global.set $focus_hwnd (local.get $owner))
+    (if (i32.ge_u (call $wnd_table_get (local.get $owner)) (i32.const 0xFFFF0000))
+      (then
+        (drop (call $wnd_send_message
+                (local.get $owner) (i32.const 0x0007) (i32.const 0) (i32.const 0))))
+      (else
+        (drop (call $post_queue_push
+                (local.get $owner) (i32.const 0x0007) (i32.const 0) (i32.const 0)))))
+  )
+
   ;; ---- SCROLL_TABLE / SCROLL_AUX_TABLE accessors ----
   ;;
   ;; Both tables are per-WND_RECORDS-slot, and they use *different* strides —
