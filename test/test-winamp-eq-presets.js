@@ -243,13 +243,19 @@ async function main() {
   const eqfCmd = [
     `node "${RUN}"`,
     `--exe="${EXE}"`,
-    '--max-batches=1150',
+    '--max-batches=2200',
     '--batch-size=100',
     '--quiet-api',
     '--quiet-blocks',
     '--trace-api=GetOpenFileNameA',
     '--no-close',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:260:176,820:click:445:256,1000:dlg-dump:eqfopen,1060:stop"',
+    // Every click waits for the guest to be ready before it lands, and the
+    // queue is strictly ordered, so the Load/Preset... clicks scheduled at
+    // 780 and 820 actually fire around batch 1030-1070. The dump has to be
+    // scheduled past that, and the run has to have batches left to serve the
+    // GetOpenFileNameA the second click causes -- at 1150 the call was the
+    // last thing in the run and nothing ever dumped the file dialog.
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:260:176,820:click:445:256,1500:dlg-dump:eqfopen,1600:stop"',
   ].join(' ');
   console.log('');
   console.log('$', eqfCmd);

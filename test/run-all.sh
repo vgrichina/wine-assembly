@@ -357,6 +357,7 @@ E2E=(
   test/test-solitaire-maximize-restore.js
   test/test-winamp.js
   test/test-winamp-audio.js
+  test/test-winamp-eq-presets.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
   test/test-wordpad-format-accelerators.js
@@ -422,13 +423,6 @@ QUARANTINE=(
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
   # Paint / app-specific.
-  # 24/27 since the click and schedule fixes. The three left are one symptom:
-  # Winamp's Load-EQF path calls GetOpenFileNameA and that call never returns
-  # -- it is the last API of the run, no OpenSave dialog reaches dlg-dump, and
-  # no later --input action is serviced. The same handler works for Notepad
-  # (test-open-cancel, test-render-open-dlg, notepad-dialogs "open"), so it is
-  # this call site, not the common dialog.
-  test/test-winamp-eq-presets.js        # 24/27: GetOpenFileNameA never returns
   # Measured 2026-08-19: five checks, one cause -- the NSIS license page's
   # RichEdit is never mapped to a native edit, so there is no word-wrapped
   # DrawText, no PNG, no wizard buttons and nothing for the wheel to scroll.
