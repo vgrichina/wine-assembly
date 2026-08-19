@@ -467,44 +467,6 @@
       (then (return (call $wnd_get_parent (local.get $hwnd)))))
     (call $wnd_get_owner (local.get $hwnd)))
 
-  ;; USER32 built-in controls must keep their native WAT wndprocs. This guard
-  ;; prevents registered-class fallback from stealing common classes like Edit.
-  (func $is_builtin_control_class (param $class_name i32) (result i32)
-    (local $name_w i32)
-    (if (i32.and (i32.ge_u (local.get $class_name) (i32.const 0x0080))
-                 (i32.le_u (local.get $class_name) (i32.const 0x0085)))
-      (then (return (i32.const 1))))
-    (if (i32.lt_u (local.get $class_name) (i32.const 0x10000))
-      (then (return (i32.const 0))))
-    (local.set $name_w (call $g2w (local.get $class_name)))
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74696465))
-      (then (return (i32.const 1)))) ;; edit
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x68636972))
-      (then (return (i32.const 1)))) ;; rich*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74747562))
-      (then (return (i32.const 1)))) ;; butt*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74617473))
-      (then (return (i32.const 1)))) ;; stat*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x7473696c))
-      (then (return (i32.const 1)))) ;; list*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x626d6f63))
-      (then (return (i32.const 1)))) ;; comb*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6f726373))
-      (then (return (i32.const 1)))) ;; scro*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74737973))
-      (then (return (i32.const 1)))) ;; syst*
-    (if (i32.and
-          (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c737973))
-          (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x76747369)))
-      (then (return (i32.const 1)))) ;; syslistview*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c6f6f74))
-      (then (return (i32.const 1)))) ;; tool*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x7463736d))
-      (then (return (i32.const 1)))) ;; msct*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x64696c73))
-      (then (return (i32.const 1)))) ;; slid*
-    (i32.const 0))
-
   ;; Identify the two pre-msftedit RichEdit class contracts used by Win9x
   ;; applications. RICHEDIT is the Riched32/RichEdit 1.0 class; RichEdit20A
   ;; and RichEdit20W are the Riched20/RichEdit 2.0+ classes. Return 0 for a

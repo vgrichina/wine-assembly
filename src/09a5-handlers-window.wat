@@ -313,25 +313,6 @@
               (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                       (i32.const 0x6f646e69)))))) ;; "indo"
       (then (local.set $tmp (i32.const 0))))
-    ;; If lookup failed and this isn't the first window, scan class table for an
-    ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
-    ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
-    (if (i32.and
-          (i32.and (i32.eqz (local.get $tmp)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
-          (i32.eqz (call $is_builtin_control_class (local.get $arg1))))
-      (then
-        (local.set $i (i32.const 0))
-        (block $found3 (loop $scan3
-          (br_if $found3 (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
-          ;; Read WNDCLASSA.lpfnWndProc at class record + 12
-          (local.set $v (i32.load offset=12 (call $class_record_addr (local.get $i))))
-          (if (i32.and
-            (i32.and (i32.ge_u (local.get $v) (global.get $image_base))
-                     (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
-            (i32.ne (local.get $v) (call $wnd_table_get (global.get $main_hwnd))))
-            (then (local.set $tmp (local.get $v)) (br $found3)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan3)))))
     (if (local.get $tmp)
       (then (call $wnd_table_set (local.get $hwnd) (local.get $tmp)))
       (else
