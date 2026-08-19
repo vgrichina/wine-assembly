@@ -199,6 +199,8 @@ UNIT=(
   test/test-window-control-id.js
   test/test-compile-wat-unknown-name.js
   test/test-gdi-public-seven.js
+  test/test-combobox.js
+  test/test-render-combobox.js
 )
 
 E2E=(
@@ -365,6 +367,7 @@ E2E=(
   test/test-find-mouse-click.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
+  test/test-combobox-pinball.js
 )
 
 SMOKE=(
@@ -388,10 +391,6 @@ QUARANTINE=(
   test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
   test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
-  # Combobox drop-down paints no text at all. Three tests agree, so this is one bug.
-  test/test-combobox.js                 # 57/59: CBS_DROPDOWN paints its selected list text (changedBytes=0)
-  test/test-render-combobox.js          # 4/5: canvas has 5 distinct colors after repaint, wanted >=8
-  test/test-combobox-pinball.js         # 16/18: field text not repainted after pick
   # Edit/RichEdit gaps.
   test/test-edit-wrap-resize.js         # 4/7: narrow edit never wraps (lines=1, scroll max=0)
   test/test-notepad-editing.js          # 7/10: type-over-selection, thumb drag, wheel scroll
