@@ -104,6 +104,8 @@ UNIT=(
   test/test-gdi-deferred-presentation.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
+  test/test-paint-wallpaper-host.js
+  test/test-region-window-client-rect.js
   test/test-wat-statusbar-grip.js
   test/test-wat-font-metrics-reference.js
   test/test-wat-decoder-runaway.js
@@ -207,6 +209,7 @@ UNIT=(
 )
 
 E2E=(
+  test/test-winhelp-reference.js
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
   test/test-taskman-web.js
@@ -388,9 +391,10 @@ SMOKE=(
 # Harness drift: the test calls a host/renderer entry point that no longer
 # exists. Cheap to fix; the product is probably fine.
 QUARANTINE=(
-  test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
-  test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
-  test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
+  # b2a93f7 added winhelp-freecell-default/-topics to apps.json without
+  # capturing their reviewed references; capture.js needs the Win98 v86 state
+  # off the network, and a reference nobody looked at is worse than none.
+  test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
   # Edit/RichEdit gaps.
   test/test-edit-wrap-resize.js         # 4/7: narrow edit never wraps (lines=1, scroll max=0)
@@ -411,7 +415,6 @@ QUARANTINE=(
   test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
   test/test-calc-view-switch.js         # 14/15: fixed dialogs oversized vertically
   test/test-pinball-select-players.js   # 5/7: 2 Players submenu never painted
-  test/test-region-window-client-rect.js # RuntimeError: unreachable (hits crash_unimplemented)
   test/test-dx-vtable-worker-sync.js    # worker does not restore the first generated COM vtable
   test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
   test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog

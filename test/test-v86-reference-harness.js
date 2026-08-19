@@ -44,7 +44,16 @@ for (const [id, app] of Object.entries(manifest.apps)) {
 }
 
 const capturedApps = Object.entries(manifest.apps).filter(([, app]) => !app.skip);
-assert.equal(capturedApps.length, 16, "reviewed corpus size changed unexpectedly");
+// Every app the manifest expects to capture needs a reviewed reference. This
+// used to assert a hardcoded count, so adding an app reported "reviewed corpus
+// size changed unexpectedly" -- true, but it named neither the app nor what is
+// actually missing, which is the capture.
+const uncaptured = capturedApps
+  .map(([id]) => id)
+  .filter(id => !fs.existsSync(path.join(reviewedRoot, `${id}.png`)));
+assert.deepEqual(uncaptured, [],
+  `manifest apps with no reviewed capture (run tools/v86-reference/capture.js, or mark them skip): ${uncaptured.join(", ")}`);
+assert(capturedApps.length >= 16, "reviewed corpus shrank unexpectedly");
 for (const [id] of capturedApps) {
   const pngPath = path.join(reviewedRoot, `${id}.png`);
   const jsonPath = path.join(reviewedRoot, `${id}.json`);
