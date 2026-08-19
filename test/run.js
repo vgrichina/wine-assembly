@@ -2546,6 +2546,23 @@ async function main() {
               size: stat.size,
               load: () => new Uint8Array(fs.readFileSync(fpath)),
             });
+            // A font shipped beside the exe was installed by the app's
+            // installer on a real machine, which is why an app like Age of
+            // Empires can ask for "Copperplate Gothic Light" without ever
+            // calling AddFontResource. Mount it where an installed font
+            // lives, but never over a vendored substitute already mounted
+            // there: the substitutes are what make text identical on every
+            // machine, and a bundled ARIAL.TTF must not displace one.
+            if (/\.(ttf|ttc|fon)$/i.test(f)) {
+              const installed = `c:\\windows\\fonts\\${f.toLowerCase()}`;
+              if (!ctx.vfs.files.has(installed)) {
+                ctx.vfs.setLazyFile(installed, {
+                  attrs: 0x20,
+                  size: stat.size,
+                  load: () => new Uint8Array(fs.readFileSync(fpath)),
+                });
+              }
+            }
           } else if (stat.isDirectory() && f !== '.' && f !== '..') {
             const subDir = vfsPrefix + f.toLowerCase() + '\\';
             ctx.vfs.dirs.add(subDir);
