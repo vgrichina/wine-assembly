@@ -7079,7 +7079,12 @@
         ;; the return address the call trace printed, is a frame bug, and those
         ;; are the bugs this layer actually has.
         (call $host_log_i32 (global.get $eip))
-        (call $host_log_i32 (global.get $esp)))))
+        (call $host_log_i32 (global.get $esp))
+        ;; How much the call actually took off the stack, counting the far
+        ;; return address: 4 + the Pascal argument bytes. Compare it against
+        ;; the API's real signature — a wrong count here is a frame bug that
+        ;; only shows up much later, as a return into nothing.
+        (call $host_log_i32 (i32.sub (global.get $esp) (global.get $win16_entry_esp))))))
 
   ;; Hooks.
   ;;
@@ -7407,6 +7412,11 @@
     ;; apart from LoadBitmap-was-never-asked. Six words covers every API here
     ;; with a fixed argument list — LoadString's five, and one spare to show
     ;; where the frame ends.
+    ;; ESP as the task left it, for the stack-delta check in $win16_trace_ret.
+    ;; A Pascal callee must leave it exactly its own frame higher, and an API
+    ;; that pops the wrong number of bytes is invisible until something returns
+    ;; through the damage thousands of instructions later.
+    (global.set $win16_entry_esp (global.get $esp))
     (if (global.get $win16_trace)
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F0))

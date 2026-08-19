@@ -2337,6 +2337,9 @@
   (global $win16_env_seg (mut i32) (i32.const 0))
   ;; The DOS disk transfer area as a far pointer, zero until first asked for.
   (global $win16_dta (mut i32) (i32.const 0))
+  ;; ESP as the dispatcher found it, so --trace-win16 can report how much each
+  ;; API actually popped.
+  (global $win16_entry_esp (mut i32) (i32.const 0))
   ;; Which module the resource call in flight is about, from its hInstance:
   ;; 1 = the task's own image, 0x10000|id = one of its DLLs, 0 = follow CS.
   ;; Set by the Win16 resource APIs around a lookup and cleared afterwards,

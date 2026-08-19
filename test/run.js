@@ -1753,7 +1753,7 @@ async function main() {
     if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
     if ((val >>> 0) === 0xCA16A9E7) { pendingWin16 = { want: 3, words: [], ddeData: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
-    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 5, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
@@ -1811,7 +1811,11 @@ async function main() {
         return;
       }
       if (isRet) {
-        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])} esp=${hex(words[3])}`);
+        // `popped` counts the far return address plus the Pascal argument
+        // bytes the API removed. Comparing it against the API's real signature
+        // is how a frame bug is found before it becomes a return into nothing.
+        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])}`
+          + ` esp=${hex(words[3])} popped=${words[4] | 0}`);
         return;
       }
       const [key, ret, nameAddr] = words;
