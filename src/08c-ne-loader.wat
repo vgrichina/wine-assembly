@@ -598,8 +598,10 @@
     (local $q i32) (local $i i32) (local $end i32) (local $ne_off i32) (local $img i32)
     (local $rt i32) (local $rid i32)
     (global.set $win16_res_len (i32.const 0))
-    (local.set $ne_off (call $win16_image_ne_off))
-    (local.set $img (call $win16_image_base_addr))
+    ;; Which image: what the caller's hInstance named, or CS when it named
+    ;; nothing — see $win16_res_module.
+    (local.set $ne_off (call $win16_res_ne_off (global.get $win16_res_module_id)))
+    (local.set $img (call $win16_res_base_addr (global.get $win16_res_module_id)))
     (local.set $p (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x24))))
     ;; A resource table offset of zero means the module has no resources at all.
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
@@ -641,6 +643,10 @@
               (then
                 (global.set $win16_res_len
                   (i32.shl (i32.load16_u (i32.add (local.get $q) (i32.const 2))) (local.get $shift)))
+                ;; Where it sits in the file, for AccessResource — which hands
+                ;; the caller a file handle seeked to exactly here.
+                (global.set $win16_res_file_off
+                  (i32.shl (i32.load16_u (local.get $q)) (local.get $shift)))
                 (return (i32.add (local.get $img)
                   (i32.shl (i32.load16_u (local.get $q)) (local.get $shift))))))
             (local.set $q (i32.add (local.get $q) (i32.const 12)))
@@ -854,6 +860,51 @@
   ;; Resource lookups follow this rather than the hInstance the caller passed:
   ;; a DLL asking for its own resources passes an instance handle this emulator
   ;; never issued -- CARDS passes 0xFFFF -- while its CS is unambiguous.
+  ;; Which image a resource call is about.
+  ;;
+  ;; CS is the right answer when a DLL asks for its own resources with an
+  ;; instance handle this emulator never issued — CARDS passes 0xFFFF. It is
+  ;; the wrong answer when a DLL asks for the *task's* resources, which is what
+  ;; a runtime library does: Visual Basic's VBRUN100 looks up the form data as
+  ;; RT_RCDATA #1 with the task's hInstance while running on its own code
+  ;; segment, and searching VBRUN100's resources found nothing. So a handle
+  ;; that names something is believed, and only a meaningless one falls back.
+  ;;
+  ;; Answers the module id, or 0 for "use CS".
+  (func $win16_res_module (param $hinst i32) (result i32)
+    (local $h i32)
+    (if (i32.eqz (local.get $hinst)) (then (return (i32.const 0))))
+    (if (i32.eq (i32.and (local.get $hinst) (i32.const 0xFFFF)) (i32.const 0xFFFF))
+      (then (return (i32.const 0))))
+    ;; The task's own instance handle is its DGROUP selector.
+    (if (i32.eq (i32.and (local.get $hinst) (i32.const 0xFFFF))
+                (call $win16_index_to_sel (global.get $win16_auto_data)))
+      (then (return (i32.const 1))))
+    ;; A module handle from LoadLibrary or GetModuleHandle.
+    (local.set $h (call $win16_h32 (i32.and (local.get $hinst) (i32.const 0xFFFF))))
+    (if (i32.eq (i32.and (local.get $h) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
+      (then (return (i32.or (i32.and (local.get $h) (i32.const 0xFFFF))
+                            (i32.const 0x10000)))))
+    (i32.const 0))
+
+  ;; The staged NE header of the module a resource call named: 1 means the
+  ;; task's own image, 0x10000|id one of its DLLs, 0 means follow CS.
+  (func $win16_res_ne_off (param $module i32) (result i32)
+    (if (i32.eq (local.get $module) (i32.const 1))
+      (then (return (global.get $win16_ne_off))))
+    (if (i32.and (local.get $module) (i32.const 0x10000))
+      (then (return (i32.load (call $win16_dll_rec
+                                (i32.and (local.get $module) (i32.const 0xFFFF)))))))
+    (call $win16_image_ne_off))
+
+  (func $win16_res_base_addr (param $module i32) (result i32)
+    (if (i32.eq (local.get $module) (i32.const 1))
+      (then (return (global.get $PE_STAGING))))
+    (if (i32.and (local.get $module) (i32.const 0x10000))
+      (then (return (i32.load offset=8 (call $win16_dll_rec
+                                         (i32.and (local.get $module) (i32.const 0xFFFF)))))))
+    (call $win16_image_base_addr))
+
   (func $win16_image_ne_off (result i32)
     (local $index i32) (local $id i32) (local $rec i32) (local $n i32) (local $base i32)
     (local.set $index (call $win16_sel_to_index (global.get $sreg_cs)))

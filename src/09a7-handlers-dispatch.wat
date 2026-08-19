@@ -179,7 +179,7 @@
   ;; 713: OpenFile(lpFileName, lpReOpenBuff, uStyle) — delegate to host_fs_create_file
   ;; arg0=lpFileName, arg1=lpReOpenBuff (OFSTRUCT), arg2=uStyle
   (func $handle_OpenFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $buf_wa i32)
+    (local $handle i32) (local $buf_wa i32) (local $i i32) (local $ch i32)
     (local.set $handle (call $host_fs_create_file
       (call $g2w (local.get $arg0))
       (i32.const 0x80000000)  ;; GENERIC_READ
@@ -191,9 +191,36 @@
       (then
         (local.set $buf_wa (call $g2w (local.get $arg1)))
         (i32.store8 (local.get $buf_wa) (i32.const 136))  ;; cBytes
+        ;; fFixedDisk, and the file's time and date where DOS puts them. There
+        ;; is one drive here and it is not removable, and the timestamp is the
+        ;; same fixed one INT 21h AH=57h reports — this filesystem keeps none,
+        ;; and answering with a different invented value each call would be
+        ;; worse than answering with one.
+        (i32.store8 (i32.add (local.get $buf_wa) (i32.const 1)) (i32.const 1))
+        (i32.store16 (i32.add (local.get $buf_wa) (i32.const 4)) (i32.const 0))
+        (i32.store16 (i32.add (local.get $buf_wa) (i32.const 6)) (i32.const 0x2421))
         (if (i32.eq (local.get $handle) (i32.const -1))
           (then (i32.store16 (i32.add (local.get $buf_wa) (i32.const 2)) (i32.const 2)))  ;; nErrCode=FILE_NOT_FOUND
-          (else (i32.store16 (i32.add (local.get $buf_wa) (i32.const 2)) (i32.const 0))))))
+          (else (i32.store16 (i32.add (local.get $buf_wa) (i32.const 2)) (i32.const 0))))
+        ;; szPathName at +8: the name the file was opened under. Callers read
+        ;; the file back out of here rather than keeping their own copy —
+        ;; Visual Basic opens a custom control with OpenFile and then hands
+        ;; this field to LoadLibrary, which was being given 128 bytes of zero.
+        (local.set $i (i32.const 0))
+        (block $named (loop $chars
+          (br_if $named (i32.ge_u (local.get $i) (i32.const 127)))
+          (local.set $ch (i32.load8_u (i32.add (call $g2w (local.get $arg0)) (local.get $i))))
+          ;; DOS reports the path in upper case and callers compare it.
+          (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                       (i32.le_u (local.get $ch) (i32.const 0x7A)))
+            (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20)))))
+          (i32.store8 (i32.add (i32.add (local.get $buf_wa) (i32.const 8)) (local.get $i))
+            (local.get $ch))
+          (br_if $named (i32.eqz (local.get $ch)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $chars)))
+        (i32.store8 (i32.add (i32.add (local.get $buf_wa) (i32.const 8)) (i32.const 127))
+          (i32.const 0))))
     ;; OF_EXIST (0x4000): check existence only, close handle
     (if (i32.and (local.get $arg2) (i32.const 0x4000))
       (then

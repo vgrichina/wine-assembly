@@ -95,8 +95,11 @@
     (call $zero_memory (call $win16_handle_table)
       (i32.shl (global.get $WIN16_HANDLE_MAX) (i32.const 2)))
     ;; The interrupt vectors go with the task: a zero means nothing is hooked,
-    ;; which is what a fresh task should see.
-    (call $zero_memory (call $win16_int_vectors) (i32.const 0x400)))
+    ;; which is what a fresh task should see. So do the extra local heaps —
+    ;; a selector one run laid a heap into is a different segment in the next.
+    (call $zero_memory (call $win16_int_vectors) (i32.const 0x400))
+    (call $zero_memory (call $win16_lheap_slot (i32.const 0))
+      (i32.mul (global.get $WIN16_LHEAPS) (i32.const 8))))
 
   ;; 256 far pointers, in the same arena page as the handle table and the DLL
   ;; records. A program that hooks an interrupt saves the old vector and puts
@@ -566,6 +569,9 @@
     (local $type i32) (local $id i32)
     (local.set $type (call $win16_res_arg (i32.const 0)))
     (local.set $id (call $win16_res_arg (i32.const 2)))
+    ;; hInstance is the last argument pushed before the two names.
+    (global.set $win16_res_module_id
+      (call $win16_res_module (call $win16_arg16 (i32.const 4))))
     (global.set $eax (i32.const 0))
     (if (i32.and (i32.ne (local.get $type) (i32.const -1))
                  (i32.ne (local.get $id) (i32.const -1)))
@@ -573,12 +579,66 @@
         (if (call $win16_find_resource (local.get $type) (local.get $id))
           (then (global.set $eax (call $win16_h16
             (call $win16_res_key (local.get $type) (local.get $id))))))))
+    (global.set $win16_res_module_id (i32.const 0))
     (call $win16_api_return (i32.const 10)))
 
   ;; KERNEL.61 LoadResource(hInstance, hResInfo) — nothing to load yet.
   (func $win16_LoadResource
     (global.set $eax (call $win16_arg16 (i32.const 0)))
     (call $win16_api_return (i32.const 4)))
+
+  ;; KERNEL.64 AccessResource(hInstance, hResInfo) -> a file handle positioned
+  ;; at the resource's first byte.
+  ;;
+  ;; This is the one resource call that hands back a file rather than memory,
+  ;; and it means what it says: the module's own file, seeked to where the
+  ;; resource starts. Visual Basic reads its forms this way rather than
+  ;; through LockResource, so all five VB games stop here.
+  ;;
+  ;; The image the caller named is already staged, but the file is in the VFS
+  ;; under the name GetModuleFileName reports — which is where the loader read
+  ;; it from — so opening it again is honest rather than a second copy.
+  (func $win16_AccessResource
+    (local $key i32) (local $path i32) (local $h i32)
+    (local.set $key (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (global.set $win16_res_module_id
+      (call $win16_res_module (call $win16_arg16 (i32.const 1))))
+    (global.set $eax (i32.const 0xFFFF))
+    (if (call $win16_find_resource (i32.shr_u (local.get $key) (i32.const 16))
+                                   (i32.and (local.get $key) (i32.const 0xFFFF)))
+      (then
+        (local.set $path (global.get $GUEST_STACK))
+        (call $win16_call32_begin (i32.const 3))
+        (call $handle_GetModuleFileNameA (i32.const 0) (local.get $path) (i32.const 260)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (call $win16_call32_begin (i32.const 2))
+        (call $handle__lopen (local.get $path) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (local.set $h (global.get $eax))
+        (if (i32.ne (local.get $h) (i32.const -1))
+          (then
+            (call $win16_call32_begin (i32.const 3))
+            (call $handle__llseek (local.get $h) (global.get $win16_res_file_off)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+            (call $win16_call32_end)
+            (global.set $eax (call $win16_h16 (local.get $h)))))))
+    (global.set $win16_res_module_id (i32.const 0))
+    (call $win16_api_return (i32.const 6)))
+
+  ;; KERNEL.65 SizeofResource(hInstance, hResInfo) -> its length in bytes.
+  (func $win16_SizeofResource
+    (local $key i32)
+    (local.set $key (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (global.set $win16_res_module_id
+      (call $win16_res_module (call $win16_arg16 (i32.const 1))))
+    (global.set $eax (i32.const 0))
+    (if (call $win16_find_resource (i32.shr_u (local.get $key) (i32.const 16))
+                                   (i32.and (local.get $key) (i32.const 0xFFFF)))
+      (then (global.set $eax (global.get $win16_res_len))))
+    (global.set $win16_res_module_id (i32.const 0))
+    (call $win16_api_return (i32.const 6)))
 
   ;; KERNEL.62 LockResource(hResData) -> far pointer.
   ;;
@@ -1199,21 +1259,102 @@
   ;; and a second LocalInit replaces the first rather than adding to it. That
   ;; matches every caller in this corpus; a task that wanted two would find
   ;; its first heap's blocks unreachable, which is why this says so.
+  ;; ---- Local heaps other than the task's own ----
+  ;;
+  ;; A task's DGROUP heap is built by the loader from the header's request and
+  ;; described by the three globals below. LocalInit is a program asking for
+  ;; another one, and the segment it names is usually not DGROUP: Visual Basic
+  ;; 1's runtime lays two heaps into blocks it has just allocated. Writing
+  ;; those through DS zeroed two kilobytes of the task's own data segment.
+  ;;
+  ;; Each extra heap is remembered by its selector, and LocalAlloc picks the
+  ;; one matching DS — which is how Windows resolves it too, since every local
+  ;; call there is implicitly about the current data segment.
+  (global $WIN16_LHEAPS i32 (i32.const 8))
+
+  (func $win16_lheap_slot (param $i i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0xE400) (i32.mul (local.get $i) (i32.const 8)))))
+
+  ;; The slot for the current DS, or -1 when this is the task's own heap.
+  (func $win16_lheap_current (result i32)
+    (local $i i32) (local $p i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_LHEAPS)))
+      (local.set $p (call $win16_lheap_slot (local.get $i)))
+      (if (i32.eq (i32.load16_u (local.get $p)) (global.get $sreg_ds))
+        (then (return (local.get $p))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; base/ptr/end of whichever heap the current DS names.
+  (func $win16_lheap_get (param $field i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $win16_lheap_current))
+    (if (i32.eq (local.get $p) (i32.const -1))
+      (then
+        (if (i32.eq (local.get $field) (i32.const 0))
+          (then (return (global.get $win16_lheap_base))))
+        (if (i32.eq (local.get $field) (i32.const 1))
+          (then (return (global.get $win16_lheap_ptr))))
+        (return (global.get $win16_lheap_end))))
+    (i32.load16_u (i32.add (local.get $p)
+                           (i32.mul (i32.add (local.get $field) (i32.const 1))
+                                    (i32.const 2)))))
+
+  (func $win16_lheap_set_ptr (param $v i32)
+    (local $p i32)
+    (local.set $p (call $win16_lheap_current))
+    (if (i32.eq (local.get $p) (i32.const -1))
+      (then (global.set $win16_lheap_ptr (local.get $v)) (return)))
+    (i32.store16 (i32.add (local.get $p) (i32.const 4)) (local.get $v)))
+
   (func $win16_LocalInit
-    (local $start i32) (local $end i32)
+    (local $start i32) (local $end i32) (local $sel i32) (local $base i32)
+    (local $i i32) (local $p i32) (local $slot i32)
     (local.set $end (call $win16_arg16 (i32.const 0)))
     (local.set $start (call $win16_arg16 (i32.const 1)))
-    (if (i32.ge_u (local.get $start) (local.get $end))
+    (local.set $sel (call $win16_arg16 (i32.const 2)))
+    ;; A zero segment means the caller's own, which is what DS holds.
+    (if (i32.eqz (local.get $sel)) (then (local.set $sel (global.get $sreg_ds))))
+    (local.set $base (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
+    (if (i32.or (i32.ge_u (local.get $start) (local.get $end))
+                (i32.eqz (local.get $base)))
       (then
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 6))
         (return)))
-    (call $zero_memory
-      (call $g2w (i32.add (global.get $seg_base_ds) (local.get $start)))
+    (call $zero_memory (call $g2w (i32.add (local.get $base) (local.get $start)))
       (i32.sub (local.get $end) (local.get $start)))
-    (global.set $win16_lheap_base (local.get $start))
-    (global.set $win16_lheap_ptr (local.get $start))
-    (global.set $win16_lheap_end (local.get $end))
+    ;; The task's own DGROUP keeps its heap in the globals; anything else takes
+    ;; a slot, reusing the one that already describes this segment.
+    (if (i32.eq (local.get $sel)
+                (call $win16_index_to_sel (global.get $win16_auto_data)))
+      (then
+        (global.set $win16_lheap_base (local.get $start))
+        (global.set $win16_lheap_ptr (local.get $start))
+        (global.set $win16_lheap_end (local.get $end)))
+      (else
+        (local.set $slot (i32.const -1))
+        (block $found (loop $scan
+          (br_if $found (i32.ge_u (local.get $i) (global.get $WIN16_LHEAPS)))
+          (local.set $p (call $win16_lheap_slot (local.get $i)))
+          (if (i32.or (i32.eq (i32.load16_u (local.get $p)) (local.get $sel))
+                      (i32.eqz (i32.load16_u (local.get $p))))
+            (then (local.set $slot (local.get $p)) (br $found)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+        (if (i32.eq (local.get $slot) (i32.const -1))
+          (then
+            (call $host_log_i32 (i32.const 0xCA16104F))   ;; no room for another heap
+            (call $host_log_i32 (local.get $sel))
+            (unreachable)))
+        (i32.store16 (local.get $slot) (local.get $sel))
+        (i32.store16 (i32.add (local.get $slot) (i32.const 2)) (local.get $start))
+        (i32.store16 (i32.add (local.get $slot) (i32.const 4)) (local.get $start))
+        (i32.store16 (i32.add (local.get $slot) (i32.const 6)) (local.get $end))))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 6)))
 
@@ -1224,11 +1365,13 @@
     ;; A zero-length block would make the walk below stand still.
     (if (i32.eqz (local.get $bytes)) (then (local.set $bytes (i32.const 2))))
 
-    ;; First fit across the blocks already handed out.
-    (local.set $p (global.get $win16_lheap_base))
+    ;; First fit across the blocks already handed out. Which heap that is comes
+    ;; from DS, so a task that has laid a second one into another segment and
+    ;; pointed DS at it allocates from that one.
+    (local.set $p (call $win16_lheap_get (i32.const 0)))
     (block $found
       (loop $walk
-        (br_if $found (i32.ge_u (local.get $p) (global.get $win16_lheap_ptr)))
+        (br_if $found (i32.ge_u (local.get $p) (call $win16_lheap_get (i32.const 1))))
         (local.set $size (call $win16_lblock_size (local.get $p)))
         (if (i32.and (call $win16_lblock_free (local.get $p))
                      (i32.ge_u (local.get $size) (local.get $bytes)))
@@ -1256,14 +1399,16 @@
         (local.set $p (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
         (br $walk)))
 
-    (local.set $h (i32.add (global.get $win16_lheap_ptr) (i32.const 2)))
-    (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes)) (global.get $win16_lheap_end))
+    (local.set $h (i32.add (call $win16_lheap_get (i32.const 1)) (i32.const 2)))
+    (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes))
+                  (call $win16_lheap_get (i32.const 2)))
       (then
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 4))
         (return)))
-    (call $win16_lblock_set (global.get $win16_lheap_ptr) (local.get $bytes) (i32.const 0))
-    (global.set $win16_lheap_ptr (i32.add (local.get $h) (local.get $bytes)))
+    (call $win16_lblock_set (call $win16_lheap_get (i32.const 1))
+      (local.get $bytes) (i32.const 0))
+    (call $win16_lheap_set_ptr (i32.add (local.get $h) (local.get $bytes)))
     ;; LMEM_ZEROINIT is the common flag and zeroing unconditionally is both
     ;; cheap and what every caller here expects of fresh memory.
     (call $zero_memory (call $g2w (i32.add (global.get $seg_base_ds) (local.get $h)))
@@ -1277,8 +1422,8 @@
   (func $win16_LocalFree
     (local $p i32) (local $size i32) (local $next i32)
     (local.set $p (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2)))
-    (if (i32.or (i32.lt_u (local.get $p) (global.get $win16_lheap_base))
-                (i32.ge_u (local.get $p) (global.get $win16_lheap_ptr)))
+    (if (i32.or (i32.lt_u (local.get $p) (call $win16_lheap_get (i32.const 0)))
+                (i32.ge_u (local.get $p) (call $win16_lheap_get (i32.const 1))))
       (then
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 2))
@@ -1287,14 +1432,14 @@
     (block $done
       (loop $merge
         (local.set $next (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
-        (br_if $done (i32.ge_u (local.get $next) (global.get $win16_lheap_ptr)))
+        (br_if $done (i32.ge_u (local.get $next) (call $win16_lheap_get (i32.const 1))))
         (br_if $done (i32.eqz (call $win16_lblock_free (local.get $next))))
         (local.set $size (i32.add (i32.add (local.get $size) (i32.const 2))
                                   (call $win16_lblock_size (local.get $next))))
         (br $merge)))
     (if (i32.ge_u (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size))
-                  (global.get $win16_lheap_ptr))
-      (then (global.set $win16_lheap_ptr (local.get $p)))
+                  (call $win16_lheap_get (i32.const 1)))
+      (then (call $win16_lheap_set_ptr (local.get $p)))
       (else (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1))))
     (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 2)))
@@ -1756,7 +1901,8 @@
       (then (call $win16_LocalSize) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 13))   ;; LocalCompact
       (then (call $win16_local_identity (i32.const 2)
-              (i32.sub (global.get $win16_lheap_end) (global.get $win16_lheap_ptr)))
+              (i32.sub (call $win16_lheap_get (i32.const 2))
+                       (call $win16_lheap_get (i32.const 1))))
             (return (i32.const 1))))
     ;; GetWinFlags / __WinFlags: WF_PMODE | WF_CPU386 | WF_ENHANCED is what a
     ;; 386 in enhanced mode reports, which is what these apps are written for,
@@ -1832,6 +1978,10 @@
       (then (call $win16_LoadResource) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 62))
       (then (call $win16_LockResource) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 64))
+      (then (call $win16_AccessResource) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 65))
+      (then (call $win16_SizeofResource) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 63))   ;; FreeResource
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 49))
@@ -1864,6 +2014,22 @@
   ;; where the extension is not part of the name.
   (func $win16_cstr_to_pstr (param $src i32) (param $dst i32) (param $stop_at_dot i32)
     (local $n i32) (local $c i32)
+    ;; A module name is the base name: LoadLibrary is routinely given a path,
+    ;; and Visual Basic hands it the full one for its custom controls. Skip to
+    ;; after the last separator before copying, or "C:\FIELD100" is what gets
+    ;; looked up and no such module is ever found.
+    (block $scanned (loop $path
+      (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $n))))
+      (br_if $scanned (i32.eqz (local.get $c)))
+      (if (i32.or (i32.eq (local.get $c) (i32.const 0x5C))    ;; backslash
+          (i32.or (i32.eq (local.get $c) (i32.const 0x2F))    ;; forward slash
+                  (i32.eq (local.get $c) (i32.const 0x3A))))  ;; colon
+        (then (local.set $src (i32.add (local.get $src)
+                                       (i32.add (local.get $n) (i32.const 1))))
+              (local.set $n (i32.const -1))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $path)))
+    (local.set $n (i32.const 0))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $n) (i32.const 63)))
       (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $n))))
@@ -1906,6 +2072,13 @@
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
     (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
+    ;; Which module the name resolved to, and whether it was already loaded —
+    ;; the two things that decide what this call does.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16110A))
+        (call $host_log_i32 (local.get $id))
+        (call $host_log_i32 (call $win16_dll_loaded (local.get $id)))))
     (if (i32.eqz (local.get $id))
       (then (call $win16_local_identity (i32.const 4) (i32.const 2)) (return)))
     (if (i32.eqz (call $win16_module_emulated (local.get $id)))
@@ -1917,7 +2090,7 @@
             ;; name is known. A slot claimed for a module with no file has to
             ;; be given back, or the next LoadLibrary of a real one finds the
             ;; table full.
-            (if (i32.ge_u (local.get $id) (i32.const 12))
+            (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
               (then
                 (if (i32.eqz (call $host_win16_stage_module
                                (call $g2w (call $win16_name_scratch)) (local.get $id)))
@@ -1927,7 +2100,7 @@
                     (return)))))
             (if (i32.eqz (call $load_ne_dll (local.get $id)))
               (then
-                (if (i32.ge_u (local.get $id) (i32.const 12))
+                (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
                   (then (call $win16_dynamic_module_release (local.get $id))))
                 (call $win16_local_identity (i32.const 4) (i32.const 2))
                 (return)))))))
@@ -2333,6 +2506,70 @@
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; USER.431 AnsiUpper / .432 AnsiLower(lpsz) and USER.437 AnsiUpperBuff /
+  ;; .438 AnsiLowerBuff(lpsz, cchLength).
+  ;;
+  ;; The first pair takes either a string or, when the selector is zero, a
+  ;; single character in the low byte — the same MAKEINTRESOURCE-shaped trick
+  ;; the resource calls use, and callers rely on both spellings. The buffered
+  ;; pair takes a length rather than a terminator, and a length of zero means
+  ;; 65536 bytes.
+  (func $win16_ansi_case (param $upper i32) (param $buffered i32)
+    (local $p i32) (local $n i32) (local $i i32) (local $ch i32) (local $sel i32)
+    (if (local.get $buffered)
+      (then
+        (local.set $n (call $win16_arg16 (i32.const 0)))
+        (if (i32.eqz (local.get $n)) (then (local.set $n (i32.const 0x10000))))
+        (local.set $sel (call $win16_arg16 (i32.const 2)))
+        (local.set $p (call $win16_far_to_guest (local.get $sel)
+                        (call $win16_arg16 (i32.const 1)))))
+      (else
+        (local.set $sel (call $win16_arg16 (i32.const 1)))
+        (local.set $p (call $win16_far_to_guest (local.get $sel)
+                        (call $win16_arg16 (i32.const 0))))
+        ;; A null selector: the "string" is one character in the offset.
+        (if (i32.eqz (local.get $sel))
+          (then
+            (local.set $ch (i32.and (call $win16_arg16 (i32.const 0)) (i32.const 0xFF)))
+            (if (local.get $upper)
+              (then (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                                 (i32.le_u (local.get $ch) (i32.const 0x7A)))
+                      (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20))))))
+              (else (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
+                                 (i32.le_u (local.get $ch) (i32.const 0x5A)))
+                      (then (local.set $ch (i32.add (local.get $ch) (i32.const 0x20)))))))
+            (global.set $edx (i32.const 0))
+            (global.set $eax (local.get $ch))
+            (call $win16_api_return (i32.const 4))
+            (return)))
+        (local.set $n (i32.const 0x10000))))
+    (block $done (loop $chars
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $ch (call $gl8 (i32.add (local.get $p) (local.get $i))))
+      ;; An unbuffered call stops at the terminator; a buffered one does not.
+      (if (i32.and (i32.eqz (local.get $buffered)) (i32.eqz (local.get $ch)))
+        (then (br $done)))
+      (if (local.get $upper)
+        (then (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                           (i32.le_u (local.get $ch) (i32.const 0x7A)))
+                (then (call $gs8 (i32.add (local.get $p) (local.get $i))
+                        (i32.sub (local.get $ch) (i32.const 0x20))))))
+        (else (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
+                           (i32.le_u (local.get $ch) (i32.const 0x5A)))
+                (then (call $gs8 (i32.add (local.get $p) (local.get $i))
+                        (i32.add (local.get $ch) (i32.const 0x20)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $chars)))
+    (if (local.get $buffered)
+      (then
+        (global.set $eax (local.get $i))
+        (call $win16_api_return (i32.const 6)))
+      (else
+        ;; Answers with the string it was given.
+        (global.set $edx (local.get $sel))
+        (global.set $eax (call $win16_arg16 (i32.const 0)))
+        (call $win16_api_return (i32.const 4)))))
+
   ;; USER.472 AnsiNext(lpszCurrentChar) -> the next character. With a
   ;; single-byte character set that is the pointer plus one, except at the
   ;; terminating NUL, where AnsiNext stands still so a walk cannot run off the
@@ -2447,13 +2684,21 @@
       (call $win16_arg16 (local.get $n)))))
 
   ;; Find a resource from a Load*-style argument pair, by id or by name.
+  ;; Every Load* call in this family is (hInstance, lpName), so the instance
+  ;; handle is the word above the name's far pointer. It decides which module's
+  ;; resources are searched — see $win16_res_module — and is cleared again so
+  ;; nothing else inherits it.
   (func $win16_res_lookup (param $type i32) (param $n i32) (result i32)
-    (local $id i32)
+    (local $id i32) (local $found i32)
+    (global.set $win16_res_module_id
+      (call $win16_res_module (call $win16_arg16 (i32.add (local.get $n) (i32.const 2)))))
     (local.set $id (call $win16_res_arg (local.get $n)))
     (if (i32.ne (local.get $id) (i32.const -1))
-      (then (return (call $win16_find_resource (local.get $type) (local.get $id)))))
-    (call $win16_find_resource_ex (local.get $type) (i32.const 0)
-      (call $win16_res_name_wa (local.get $n))))
+      (then (local.set $found (call $win16_find_resource (local.get $type) (local.get $id))))
+      (else (local.set $found (call $win16_find_resource_ex (local.get $type) (i32.const 0)
+              (call $win16_res_name_wa (local.get $n))))))
+    (global.set $win16_res_module_id (i32.const 0))
+    (local.get $found))
 
   ;; USER.179 GetSystemMetrics(nIndex). Same indices, same answers as Win32 —
   ;; see $system_metric in 09a-handlers.wat.
@@ -2612,6 +2857,14 @@
       (then (call $win16_wvsprintf) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 50))
       (then (call $win16_FindWindow) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 431))
+      (then (call $win16_ansi_case (i32.const 1) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 432))
+      (then (call $win16_ansi_case (i32.const 0) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 437))
+      (then (call $win16_ansi_case (i32.const 1) (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 438))
+      (then (call $win16_ansi_case (i32.const 0) (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 472))
       (then (call $win16_AnsiNext) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 121))
@@ -6946,6 +7199,34 @@
         (return (i32.const 1))))
     (i32.const 0))
 
+  ;; KEYBOARD.5 AnsiToOem(lpAnsiStr, lpOemStr) and .6 OemToAnsi. One code page
+  ;; here — the OEM and ANSI sets differ only above 0x7F, and nothing in this
+  ;; corpus writes those — so both are a copy, which is what the conversion
+  ;; comes to when the two encodings agree. AnsiToOem answers nothing;
+  ;; OemToAnsi answers TRUE.
+  (func $win16_oem_convert (param $to_ansi i32)
+    (local $src i32) (local $dst i32) (local $ch i32)
+    (local.set $dst (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (block $done (loop $copy
+      (local.set $ch (call $gl8 (local.get $src)))
+      (call $gs8 (local.get $dst) (local.get $ch))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (br $copy)))
+    (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $to_ansi)))
+    (call $win16_api_return (i32.const 8)))
+
+  (func $win16_keyboard (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 5))
+      (then (call $win16_oem_convert (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 6))
+      (then (call $win16_oem_convert (i32.const 1)) (return (i32.const 1))))
+    (i32.const 0))
+
   ;; SOUND is the Windows 3.0 tone generator — a voice queue driving the PC
   ;; speaker, replaced by MMSYSTEM in 3.1 and gone entirely by Win95. Nothing
   ;; here can play it, and OpenSound has a defined answer for exactly that
@@ -7213,6 +7494,9 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 12))
       (then (if (call $win16_win87em (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (i32.eq (local.get $module) (i32.const 4))
+      (then (if (call $win16_keyboard (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 5))
       (then (if (call $win16_sound (local.get $ordinal))

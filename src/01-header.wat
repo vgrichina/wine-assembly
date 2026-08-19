@@ -2325,6 +2325,14 @@
   (global $win16_env_seg (mut i32) (i32.const 0))
   ;; The DOS disk transfer area as a far pointer, zero until first asked for.
   (global $win16_dta (mut i32) (i32.const 0))
+  ;; Which module the resource call in flight is about, from its hInstance:
+  ;; 1 = the task's own image, 0x10000|id = one of its DLLs, 0 = follow CS.
+  ;; Set by the Win16 resource APIs around a lookup and cleared afterwards,
+  ;; because everything else that walks resources — the icon extractor, the
+  ;; dialog loader — is already about the image its code is running from.
+  (global $win16_res_module_id (mut i32) (i32.const 0))
+  ;; Where the last resource found sits in its module's file.
+  (global $win16_res_file_off (mut i32) (i32.const 0))
   ;; Scratch for the widened wvsprintf argument list — 32 dwords, allocated on
   ;; first use because most tasks never format anything.
   (global $win16_va_scratch (mut i32) (i32.const 0))
