@@ -1,0 +1,507 @@
+#!/usr/bin/env node
+// x86 disassembler for PE files (32-bit) and NE segments (16-bit)
+// Usage: node tools/disasm.js <exe> <VA> [count=20]
+//   node tools/disasm.js <exe> <VA> <endVA>   (if endVA > 0x1000, disasm range)
+//   node tools/disasm.js <exe> --base=0xLOADADDR <runtimeVA> [count=20]
+//     --base remaps: runtimeVA is translated to file VA via (runtimeVA - loadAddr + imageBase)
+//   --bits=16  decode as 16-bit code (see tools/ne-disasm.js for NE segments)
+//
+// Library usage:
+//   const { disasmAt } = require('./tools/disasm');
+//   disasmAt(buf, offset, va, count, importNames, { bits: 16 }) => string[]
+
+const regs32 = ['eax','ecx','edx','ebx','esp','ebp','esi','edi'];
+const regs16 = ['ax','cx','dx','bx','sp','bp','si','di'];
+const regs8  = ['al','cl','dl','bl','ah','ch','dh','bh'];
+const sregs  = ['es','cs','ss','ds','fs','gs'];
+const cc = ['o','no','b','nb','z','nz','be','a','s','ns','p','np','l','ge','le','g'];
+const aluOps = ['add','or','adc','sbb','and','sub','xor','cmp'];
+const shiftOps = ['rol','ror','rcl','rcr','shl','shr','sal','sar'];
+
+const _hex = v => '0x' + (v >>> 0).toString(16);
+const _hex8 = v => '0x' + (v & 0xff).toString(16);
+const _sx8 = v => (v & 0x80) ? v - 256 : v;
+
+// Disassemble `count` instructions from buf starting at byte offset `offset`,
+// with `va` as the virtual address for display / branch targets.
+// importNames is optional: { va_number: 'dll!FuncName' }.
+// Returns array of formatted strings.
+function disasmAt(buf, offset, va, count, importNames, opts) {
+  const bits = (opts && opts.bits) || 32;
+  const dv = buf.buffer
+    ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+    : new DataView(buf);
+  let pos = offset;
+  const rd8 = () => dv.getUint8(pos++);
+  const rd16 = () => { const v = dv.getUint16(pos, true); pos += 2; return v; };
+  const rd32 = () => { const v = dv.getUint32(pos, true); pos += 4; return v; };
+
+  // Address size for the instruction being decoded; set from `bits` and the
+  // 0x67 prefix at the top of each iteration.
+  let asz = bits;
+
+  // 16-bit addressing has no SIB and a fixed base/index table.
+  const rm16 = ['bx+si', 'bx+di', 'bp+si', 'bp+di', 'si', 'di', 'bp', 'bx'];
+
+  function modrm(sz) {
+    const b = rd8();
+    const mod = b >> 6, reg = (b >> 3) & 7, rm = b & 7;
+    const rn = sz === 8 ? regs8 : sz === 16 ? regs16 : regs32;
+    let ea;
+    if (mod === 3) { ea = rn[rm]; }
+    else if (asz === 16) {
+      let s;
+      if (mod === 0 && rm === 6) { s = _hex(rd16()); }
+      else {
+        s = rm16[rm];
+        if (mod === 1) { const d = _sx8(rd8()); s += d >= 0 ? '+' + _hex(d) : '-' + _hex(-d); }
+        else if (mod === 2) { s += '+' + _hex(rd16()); }
+      }
+      ea = `[${s}]`;
+    }
+    else {
+      if (mod === 0 && rm === 5) { ea = `[${_hex(rd32())}]`; }
+      else if (rm === 4) {
+        const sib = rd8();
+        const scale = 1 << (sib >> 6);
+        const idx = (sib >> 3) & 7;
+        const base = sib & 7;
+        let s = '';
+        if (mod === 0 && base === 5) { s = _hex(rd32()); }
+        else { s = regs32[base]; }
+        if (idx !== 4) s += '+' + regs32[idx] + (scale > 1 ? '*' + scale : '');
+        if (mod === 1) { const d = _sx8(rd8()); s += d >= 0 ? '+' + _hex(d) : '-' + _hex(-d); }
+        else if (mod === 2) { const d = rd32(); s += '+' + _hex(d); }
+        ea = `[${s}]`;
+      } else {
+        let s = regs32[rm];
+        if (mod === 1) { const d = _sx8(rd8()); s += d >= 0 ? '+' + _hex(d) : '-' + _hex(-d); }
+        else if (mod === 2) { const d = rd32(); s += '+' + _hex(d); }
+        ea = `[${s}]`;
+      }
+    }
+    return { reg, rm: ea, mod, rn: rn[reg], rn32: regs32[reg] };
+  }
+
+  function readImm(sz) {
+    if (sz === 8) return rd8();
+    if (sz === 16) return rd16();
+    return rd32();
+  }
+  // A rel16/rel32 branch displacement, sign-extended.
+  function relImm(sz) {
+    if (sz === 16) { const v = rd16(); return (v & 0x8000) ? v - 0x10000 : v; }
+    return rd32() | 0;
+  }
+  function szName(sz) { return sz === 8 ? 'byte' : sz === 16 ? 'word' : 'dword'; }
+
+  const lines = [];
+  for (let n = 0; n < count; n++) {
+    const curVA = va + (pos - offset);
+    const startPos = pos;
+    let insn = '??';
+
+    try {
+      let pfx66 = false, pfx67 = false, pfxF2 = false, pfxF3 = false, pfxSeg = '';
+      let op;
+      for (;;) {
+        op = rd8();
+        if (op === 0x66) pfx66 = true;
+        else if (op === 0x67) pfx67 = true;
+        else if (op === 0xF2) pfxF2 = true;
+        else if (op === 0xF3) pfxF3 = true;
+        else if (op === 0x26) pfxSeg = 'es:';
+        else if (op === 0x2E) pfxSeg = 'cs:';
+        else if (op === 0x36) pfxSeg = 'ss:';
+        else if (op === 0x3E) pfxSeg = 'ds:';
+        else if (op === 0x64) pfxSeg = 'fs:';
+        else if (op === 0x65) pfxSeg = 'gs:';
+        else break;
+      }
+
+      // In 16-bit code both size prefixes mean the opposite of what they mean
+      // in 32-bit code: they select the *other* size, not a fixed one.
+      const osz = (pfx66 !== (bits === 16)) ? 16 : 32;
+      asz = (pfx67 !== (bits === 16)) ? 16 : 32;
+      const rn = osz === 16 ? regs16 : regs32;
+      const accum = osz === 16 ? 'ax' : 'eax';
+      // Branch targets stay inside the segment in 16-bit code.
+      const target = (v) => _hex(bits === 16 ? (v & 0xffff) : (v >>> 0));
+
+      if (op <= 0x3F && op !== 0x0F) {
+        const row = op >> 3, col = op & 7;
+        if (col <= 5) {
+          if (col === 0) { const m = modrm(8); insn = `${aluOps[row]} ${m.rm}, ${m.rn}`; }
+          else if (col === 1) { const m = modrm(osz); insn = `${aluOps[row]} ${m.rm}, ${m.rn}`; }
+          else if (col === 2) { const m = modrm(8); insn = `${aluOps[row]} ${m.rn}, ${m.rm}`; }
+          else if (col === 3) { const m = modrm(osz); insn = `${aluOps[row]} ${m.rn}, ${m.rm}`; }
+          else if (col === 4) { insn = `${aluOps[row]} al, ${_hex8(rd8())}`; }
+          else if (col === 5) { insn = `${aluOps[row]} ${accum}, ${_hex(readImm(osz))}`; }
+        }
+        else if (col === 6 && row < 4) insn = `push ${sregs[row]}`;
+        else if (col === 7 && row < 4) insn = `pop ${sregs[row]}`;
+      }
+      else if (op >= 0x40 && op <= 0x47) insn = `inc ${rn[op - 0x40]}`;
+      else if (op >= 0x48 && op <= 0x4F) insn = `dec ${rn[op - 0x48]}`;
+      else if (op >= 0x50 && op <= 0x57) insn = `push ${rn[op - 0x50]}`;
+      else if (op >= 0x58 && op <= 0x5F) insn = `pop ${rn[op - 0x58]}`;
+      else if (op === 0x60) insn = osz === 16 ? 'pushaw' : 'pushad';
+      else if (op === 0x61) insn = osz === 16 ? 'popaw' : 'popad';
+      else if (op === 0x68) insn = `push ${_hex(readImm(osz))}`;
+      else if (op === 0x6A) insn = `push ${_hex8(rd8())}`;
+      else if (op === 0x69) { const m = modrm(osz); insn = `imul ${m.rn}, ${m.rm}, ${_hex(readImm(osz))}`; }
+      else if (op === 0x6B) { const m = modrm(osz); insn = `imul ${m.rn}, ${m.rm}, ${_hex8(rd8())}`; }
+      else if (op >= 0x70 && op <= 0x7F) { const d = _sx8(rd8()); insn = `j${cc[op-0x70]} short ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0x80) { const m = modrm(8); insn = `${aluOps[m.reg]} byte ${m.rm}, ${_hex8(rd8())}`; }
+      else if (op === 0x81) { const m = modrm(osz); insn = `${aluOps[m.reg]} ${szName(osz)} ${m.rm}, ${_hex(readImm(osz))}`; }
+      else if (op === 0x83) { const m = modrm(osz); const v = _sx8(rd8()); insn = `${aluOps[m.reg]} ${szName(osz)} ${m.rm}, ${v < 0 ? '-'+_hex(-v) : _hex(v)}`; }
+      else if (op === 0x84) { const m = modrm(8); insn = `test ${m.rm}, ${m.rn}`; }
+      else if (op === 0x85) { const m = modrm(osz); insn = `test ${m.rm}, ${m.rn}`; }
+      else if (op === 0x86) { const m = modrm(8); insn = `xchg ${m.rm}, ${m.rn}`; }
+      else if (op === 0x87) { const m = modrm(osz); insn = `xchg ${m.rm}, ${m.rn}`; }
+      else if (op === 0x88) { const m = modrm(8); insn = `mov ${m.rm}, ${m.rn}`; }
+      else if (op === 0x89) { const m = modrm(osz); insn = `mov ${m.rm}, ${m.rn}`; }
+      else if (op === 0x8A) { const m = modrm(8); insn = `mov ${m.rn}, ${m.rm}`; }
+      else if (op === 0x8B) { const m = modrm(osz); insn = `mov ${m.rn}, ${m.rm}`; }
+      else if (op === 0x8C) { const m = modrm(16); insn = `mov ${m.rm}, ${sregs[m.reg] || '??'}`; }
+      else if (op === 0x8D) { const m = modrm(osz); insn = `lea ${m.rn}, ${m.rm}`; }
+      else if (op === 0x8E) { const m = modrm(16); insn = `mov ${sregs[m.reg] || '??'}, ${m.rm}`; }
+      else if (op === 0x8F) { const m = modrm(osz); insn = `pop ${m.rm}`; }
+      else if (op === 0x90) insn = 'nop';
+      else if (op >= 0x91 && op <= 0x97) insn = `xchg ${accum}, ${rn[op - 0x90]}`;
+      else if (op === 0x98) insn = osz === 16 ? 'cbw' : 'cwde';
+      else if (op === 0x99) insn = osz === 16 ? 'cwd' : 'cdq';
+      else if (op === 0x9A) { const off = readImm(osz); const sel = rd16(); insn = `call far ${_hex(sel)}:${_hex(off)}`; }
+      else if (op === 0x9C) insn = osz === 16 ? 'pushf' : 'pushfd';
+      else if (op === 0x9D) insn = osz === 16 ? 'popf' : 'popfd';
+      else if (op === 0x9E) insn = 'sahf';
+      else if (op === 0x9F) insn = 'lahf';
+      else if (op === 0xA0) insn = `mov al, [${_hex(asz === 16 ? rd16() : rd32())}]`;
+      else if (op === 0xA1) insn = `mov ${accum}, [${_hex(asz === 16 ? rd16() : rd32())}]`;
+      else if (op === 0xA2) insn = `mov [${_hex(asz === 16 ? rd16() : rd32())}], al`;
+      else if (op === 0xA3) insn = `mov [${_hex(asz === 16 ? rd16() : rd32())}], ${accum}`;
+      else if (op === 0xA4) insn = (pfxF3 ? 'rep ' : '') + 'movsb';
+      else if (op === 0xA5) insn = (pfxF3 ? 'rep ' : '') + (osz === 16 ? 'movsw' : 'movsd');
+      else if (op === 0xA6) insn = (pfxF3 ? 'repe ' : pfxF2 ? 'repne ' : '') + 'cmpsb';
+      else if (op === 0xA7) insn = (pfxF3 ? 'repe ' : pfxF2 ? 'repne ' : '') + (osz === 16 ? 'cmpsw' : 'cmpsd');
+      else if (op === 0xA8) insn = `test al, ${_hex8(rd8())}`;
+      else if (op === 0xA9) insn = `test ${accum}, ${_hex(readImm(osz))}`;
+      else if (op === 0xAA) insn = (pfxF3 ? 'rep ' : '') + 'stosb';
+      else if (op === 0xAB) insn = (pfxF3 ? 'rep ' : '') + (osz === 16 ? 'stosw' : 'stosd');
+      else if (op === 0xAC) insn = (pfxF3 ? 'rep ' : '') + 'lodsb';
+      else if (op === 0xAD) insn = (pfxF3 ? 'rep ' : '') + (osz === 16 ? 'lodsw' : 'lodsd');
+      else if (op === 0xAE) insn = (pfxF3 ? 'repe ' : pfxF2 ? 'repne ' : '') + 'scasb';
+      else if (op === 0xAF) insn = (pfxF3 ? 'repe ' : pfxF2 ? 'repne ' : '') + (osz === 16 ? 'scasw' : 'scasd');
+      else if (op >= 0xB0 && op <= 0xB7) insn = `mov ${regs8[op-0xB0]}, ${_hex8(rd8())}`;
+      else if (op >= 0xB8 && op <= 0xBF) insn = `mov ${rn[op-0xB8]}, ${_hex(readImm(osz))}`;
+      else if (op === 0xC0) { const m = modrm(8); insn = `${shiftOps[m.reg]} ${m.rm}, ${_hex8(rd8())}`; }
+      else if (op === 0xC1) { const m = modrm(osz); insn = `${shiftOps[m.reg]} ${m.rm}, ${_hex8(rd8())}`; }
+      else if (op === 0xC2) insn = `ret ${_hex(rd16())}`;
+      else if (op === 0xC3) insn = 'ret';
+      else if (op === 0xC6) { const m = modrm(8); insn = `mov byte ${m.rm}, ${_hex8(rd8())}`; }
+      else if (op === 0xC7) { const m = modrm(osz); insn = `mov ${szName(osz)} ${m.rm}, ${_hex(readImm(osz))}`; }
+      else if (op === 0xC4) { const m = modrm(osz); insn = `les ${m.rn}, ${m.rm}`; }
+      else if (op === 0xC5) { const m = modrm(osz); insn = `lds ${m.rn}, ${m.rm}`; }
+      else if (op === 0xC8) { const sz = rd16(); insn = `enter ${_hex(sz)}, ${_hex8(rd8())}`; }
+      else if (op === 0xC9) insn = 'leave';
+      else if (op === 0xCA) insn = `retf ${_hex(rd16())}`;
+      else if (op === 0xCB) insn = 'retf';
+      else if (op === 0xCC) insn = 'int3';
+      else if (op === 0xCD) insn = `int ${_hex8(rd8())}`;
+      else if (op === 0xCF) insn = osz === 16 ? 'iret' : 'iretd';
+      else if (op === 0xD0) { const m = modrm(8); insn = `${shiftOps[m.reg]} ${m.rm}, 1`; }
+      else if (op === 0xD1) { const m = modrm(osz); insn = `${shiftOps[m.reg]} ${m.rm}, 1`; }
+      else if (op === 0xD2) { const m = modrm(8); insn = `${shiftOps[m.reg]} ${m.rm}, cl`; }
+      else if (op === 0xD3) { const m = modrm(osz); insn = `${shiftOps[m.reg]} ${m.rm}, cl`; }
+      else if (op >= 0xD8 && op <= 0xDF) {
+        const fpByte = dv.getUint8(pos);
+        const fpMod = fpByte >> 6, fpReg = (fpByte >> 3) & 7, fpRm = fpByte & 7;
+        const stN = i => `st(${i})`;
+        const fpMemOps = {
+          0xD8: ['fadd','fmul','fcom','fcomp','fsub','fsubr','fdiv','fdivr'],
+          0xD9: ['fld','??','fst','fstp','fldenv','fldcw','fnstenv','fnstcw'],
+          0xDA: ['fiadd','fimul','ficom','ficomp','fisub','fisubr','fidiv','fidivr'],
+          0xDB: ['fild','fisttp','fist','fistp','??','fld','??','fstp'],
+          0xDC: ['fadd','fmul','fcom','fcomp','fsub','fsubr','fdiv','fdivr'],
+          0xDD: ['fld','fisttp','fst','fstp','frstor','??','fnsave','fnstsw'],
+          0xDE: ['fiadd','fimul','ficom','ficomp','fisub','fisubr','fidiv','fidivr'],
+          0xDF: ['fild','fisttp','fist','fistp','fbld','fild','fbstp','fistp'],
+        };
+        const memSz = { 0xD8: 'dword', 0xD9: 'dword', 0xDA: 'dword', 0xDB: 'dword',
+                        0xDC: 'qword', 0xDD: 'qword', 0xDE: 'word', 0xDF: 'word' };
+        if (fpMod !== 3) {
+          const m = modrm(32);
+          const opName = fpMemOps[op][m.reg];
+          const sz = memSz[op];
+          insn = `${opName} ${sz} ${m.rm}`;
+        } else {
+          rd8();
+          if (op === 0xD8) {
+            insn = `${fpMemOps[0xD8][fpReg]} st, ${stN(fpRm)}`;
+          } else if (op === 0xD9) {
+            if (fpReg === 0) insn = `fld ${stN(fpRm)}`;
+            else if (fpReg === 1) insn = `fxch ${stN(fpRm)}`;
+            else if (fpByte === 0xE0) insn = 'fchs';
+            else if (fpByte === 0xE1) insn = 'fabs';
+            else if (fpByte === 0xE4) insn = 'ftst';
+            else if (fpByte === 0xE5) insn = 'fxam';
+            else if (fpByte === 0xE8) insn = 'fld1';
+            else if (fpByte === 0xE9) insn = 'fldl2t';
+            else if (fpByte === 0xEA) insn = 'fldl2e';
+            else if (fpByte === 0xEB) insn = 'fldpi';
+            else if (fpByte === 0xEC) insn = 'fldlg2';
+            else if (fpByte === 0xED) insn = 'fldln2';
+            else if (fpByte === 0xEE) insn = 'fldz';
+            else if (fpByte === 0xF0) insn = 'f2xm1';
+            else if (fpByte === 0xF1) insn = 'fyl2x';
+            else if (fpByte === 0xF2) insn = 'fptan';
+            else if (fpByte === 0xF3) insn = 'fpatan';
+            else if (fpByte === 0xF4) insn = 'fxtract';
+            else if (fpByte === 0xF5) insn = 'fprem1';
+            else if (fpByte === 0xF6) insn = 'fdecstp';
+            else if (fpByte === 0xF7) insn = 'fincstp';
+            else if (fpByte === 0xF8) insn = 'fprem';
+            else if (fpByte === 0xF9) insn = 'fyl2xp1';
+            else if (fpByte === 0xFA) insn = 'fsqrt';
+            else if (fpByte === 0xFB) insn = 'fsincos';
+            else if (fpByte === 0xFC) insn = 'frndint';
+            else if (fpByte === 0xFD) insn = 'fscale';
+            else if (fpByte === 0xFE) insn = 'fsin';
+            else if (fpByte === 0xFF) insn = 'fcos';
+            else if (fpByte === 0xD0) insn = 'fnop';
+            else insn = `fpu_d9 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDA) {
+            if (fpByte === 0xE9) insn = 'fucompp';
+            else if (fpReg === 0) insn = `fcmovb st, ${stN(fpRm)}`;
+            else if (fpReg === 1) insn = `fcmove st, ${stN(fpRm)}`;
+            else if (fpReg === 2) insn = `fcmovbe st, ${stN(fpRm)}`;
+            else if (fpReg === 3) insn = `fcmovu st, ${stN(fpRm)}`;
+            else insn = `fpu_da 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDB) {
+            if (fpByte === 0xE2) insn = 'fclex';
+            else if (fpByte === 0xE3) insn = 'finit';
+            else if (fpReg === 0) insn = `fcmovnb st, ${stN(fpRm)}`;
+            else if (fpReg === 1) insn = `fcmovne st, ${stN(fpRm)}`;
+            else if (fpReg === 2) insn = `fcmovnbe st, ${stN(fpRm)}`;
+            else if (fpReg === 3) insn = `fcmovnu st, ${stN(fpRm)}`;
+            else if (fpReg === 5) insn = `fucomi st, ${stN(fpRm)}`;
+            else if (fpReg === 6) insn = `fcomi st, ${stN(fpRm)}`;
+            else insn = `fpu_db 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDC) {
+            insn = `${fpMemOps[0xD8][fpReg]} ${stN(fpRm)}, st`;
+          } else if (op === 0xDD) {
+            if (fpReg === 0) insn = `ffree ${stN(fpRm)}`;
+            else if (fpReg === 2) insn = `fst ${stN(fpRm)}`;
+            else if (fpReg === 3) insn = `fstp ${stN(fpRm)}`;
+            else if (fpReg === 4) insn = `fucom ${stN(fpRm)}`;
+            else if (fpReg === 5) insn = `fucomp ${stN(fpRm)}`;
+            else insn = `fpu_dd 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDE) {
+            if (fpByte === 0xD9) insn = 'fcompp';
+            else if (fpReg === 0) insn = `faddp ${stN(fpRm)}, st`;
+            else if (fpReg === 1) insn = `fmulp ${stN(fpRm)}, st`;
+            else if (fpReg === 4) insn = `fsubrp ${stN(fpRm)}, st`;
+            else if (fpReg === 5) insn = `fsubp ${stN(fpRm)}, st`;
+            else if (fpReg === 6) insn = `fdivrp ${stN(fpRm)}, st`;
+            else if (fpReg === 7) insn = `fdivp ${stN(fpRm)}, st`;
+            else insn = `fpu_de 0x${fpByte.toString(16)}`;
+          } else if (op === 0xDF) {
+            if (fpByte === 0xE0) insn = 'fnstsw ax';
+            else if (fpReg === 5) insn = `fucomip st, ${stN(fpRm)}`;
+            else if (fpReg === 6) insn = `fcomip st, ${stN(fpRm)}`;
+            else insn = `fpu_df 0x${fpByte.toString(16)}`;
+          }
+        }
+      }
+      else if (op === 0xE0) { const d = _sx8(rd8()); insn = `loopnz ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xE1) { const d = _sx8(rd8()); insn = `loopz ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xE2) { const d = _sx8(rd8()); insn = `loop ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xE3) { const d = _sx8(rd8()); insn = `j${asz === 16 ? 'cxz' : 'ecxz'} ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xE8) { const d = relImm(osz); insn = `call ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xE9) { const d = relImm(osz); insn = `jmp ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xEA) { const off = readImm(osz); const sel = rd16(); insn = `jmp far ${_hex(sel)}:${_hex(off)}`; }
+      else if (op === 0xEB) { const d = _sx8(rd8()); insn = `jmp short ${target(curVA + (pos - startPos) + d)}`; }
+      else if (op === 0xF5) insn = 'cmc';
+      else if (op === 0xF6) {
+        const m = modrm(8);
+        if (m.reg === 0) insn = `test ${m.rm}, ${_hex8(rd8())}`;
+        else insn = `${['test','??','not','neg','mul','imul','div','idiv'][m.reg]} ${m.rm}`;
+      }
+      else if (op === 0xF7) {
+        const m = modrm(osz);
+        if (m.reg === 0) insn = `test ${m.rm}, ${_hex(readImm(osz))}`;
+        else insn = `${['test','??','not','neg','mul','imul','div','idiv'][m.reg]} ${m.rm}`;
+      }
+      else if (op === 0xF8) insn = 'clc';
+      else if (op === 0xF9) insn = 'stc';
+      else if (op === 0xFC) insn = 'cld';
+      else if (op === 0xFD) insn = 'std';
+      else if (op === 0xFE) { const m = modrm(8); insn = m.reg === 0 ? `inc byte ${m.rm}` : `dec byte ${m.rm}`; }
+      else if (op === 0xFF) {
+        const m = modrm(osz);
+        const ops = ['inc','dec','call','call far','jmp','jmp far','push'];
+        const name = ops[m.reg] || '??';
+        if (m.reg === 2 && m.rm.startsWith('[0x') && importNames) {
+          const addr = parseInt(m.rm.slice(1, -1), 16);
+          const fn = importNames[addr];
+          insn = fn ? `call ${m.rm}  ; ${fn}` : `call ${m.rm}`;
+        } else {
+          insn = `${name} ${m.rm}`;
+        }
+      }
+      else if (op === 0x0F) {
+        const op2 = rd8();
+        if (op2 >= 0x80 && op2 <= 0x8F) { const d = relImm(osz); insn = `j${cc[op2-0x80]} ${target(curVA + (pos - startPos) + d)}`; }
+        else if (op2 >= 0x90 && op2 <= 0x9F) { const m = modrm(8); insn = `set${cc[op2-0x90]} ${m.rm}`; }
+        else if (op2 === 0xA3) { const m = modrm(osz); insn = `bt ${m.rm}, ${m.rn}`; }
+        else if (op2 === 0xAB) { const m = modrm(osz); insn = `bts ${m.rm}, ${m.rn}`; }
+        else if (op2 === 0xAF) { const m = modrm(osz); insn = `imul ${m.rn}, ${m.rm}`; }
+        else if (op2 === 0xA4) { const m = modrm(osz); insn = `shld ${m.rm}, ${m.rn}, ${rd8()}`; }
+        else if (op2 === 0xA5) { const m = modrm(osz); insn = `shld ${m.rm}, ${m.rn}, cl`; }
+        else if (op2 === 0xAC) { const m = modrm(osz); insn = `shrd ${m.rm}, ${m.rn}, ${rd8()}`; }
+        else if (op2 === 0xAD) { const m = modrm(osz); insn = `shrd ${m.rm}, ${m.rn}, cl`; }
+        else if (op2 === 0xB1) { const m = modrm(osz); insn = `cmpxchg ${m.rm}, ${m.rn}`; }
+        else if (op2 === 0xB6) { const m = modrm(osz); insn = `movzx ${m.rn}, byte ${m.rm}`; }
+        else if (op2 === 0xB7) { const m = modrm(osz); insn = `movzx ${m.rn}, word ${m.rm}`; }
+        else if (op2 === 0xBA) {
+          const m = modrm(osz); const imm = rd8();
+          const ops = ['??','??','??','??','bt','bts','btr','btc'];
+          insn = `${ops[m.reg]} ${m.rm}, ${imm}`;
+        }
+        else if (op2 === 0xBE) { const m = modrm(osz); insn = `movsx ${m.rn}, byte ${m.rm}`; }
+        else if (op2 === 0xBF) { const m = modrm(osz); insn = `movsx ${m.rn}, word ${m.rm}`; }
+        else if (op2 === 0xC1) { const m = modrm(osz); insn = `xadd ${m.rm}, ${m.rn}`; }
+        else if (op2 === 0xC8) insn = 'bswap eax';
+        else if (op2 >= 0xC8 && op2 <= 0xCF) insn = `bswap ${regs32[op2 - 0xC8]}`;
+        else if (op2 === 0x31) insn = 'rdtsc';
+        else if (op2 >= 0x40 && op2 <= 0x4F) { const m = modrm(osz); insn = `cmov${cc[op2-0x40]} ${m.rn}, ${m.rm}`; }
+        else insn = `db 0x0f, 0x${op2.toString(16)}`;
+      }
+      else { insn = `db ${_hex8(op)}`; }
+
+      if (pfxSeg && insn !== '??') insn = pfxSeg + ' ' + insn;
+    } catch (e) {
+      insn = '<decode error>';
+    }
+
+    const len = pos - startPos;
+    const rawBytes = Array.from(buf.slice(startPos, startPos + len)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    lines.push(`${curVA.toString(16).padStart(8, '0')}  ${rawBytes.padEnd(28)} ${insn}`);
+
+    // Following one function stops where control leaves it. A linear sweep of a
+    // whole segment keeps going instead: everything past the first `ret` is
+    // still code, it is just a different function.
+    if (opts && opts.linear) continue;
+    if (insn === 'ret' || insn.startsWith('ret ') || insn === 'retf' || insn.startsWith('retf ')
+      || insn === 'iret' || insn === 'iretd'
+      || (insn.startsWith('jmp ') && !insn.includes('short')) || insn === 'int3') break;
+  }
+  return lines;
+}
+
+module.exports = { disasmAt };
+
+// --- CLI entry point ---
+if (require.main === module) {
+  const fs = require('fs');
+  const args = process.argv.slice(2);
+  let loadBase = null, bits = 32;
+  const filtered = args.filter(a => {
+    const m = a.match(/^--base=(?:0x)?([0-9a-fA-F]+)$/);
+    if (m) { loadBase = parseInt(m[1], 16); return false; }
+    if (a === '--bits=16') { bits = 16; return false; }
+    if (a === '--bits=32') { bits = 32; return false; }
+    return true;
+  });
+  const file = filtered[0];
+  let startVA = parseInt(filtered[1], 16);
+  let maxInsns = parseInt(filtered[2] || '20');
+  let endVA = 0;
+  if (maxInsns > 0x1000) { endVA = maxInsns; maxInsns = 100000; }
+
+  if (!file || isNaN(startVA)) {
+    console.error('Usage: node tools/disasm.js <exe> <VA> [count=20]');
+    console.error('       node tools/disasm.js <exe> --base=0xLOADADDR <runtimeVA> [count=20]');
+    process.exit(1);
+  }
+
+  const buf = fs.readFileSync(file);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+
+  const peOff = dv.getUint32(0x3c, true);
+  const numSect = dv.getUint16(peOff + 6, true);
+  const optSize = dv.getUint16(peOff + 4 + 16, true);
+  const imageBase = dv.getUint32(peOff + 4 + 20 + 28, true);
+  const sectOff = peOff + 4 + 20 + optSize;
+
+  // Build import name map: IAT address -> function name
+  const importRVA = dv.getUint32(peOff + 4 + 20 + 104, true);
+  const importNames = {};
+  if (importRVA) {
+    for (let i = 0; i < numSect; i++) {
+      const so = sectOff + i * 40;
+      const sva = dv.getUint32(so + 12, true);
+      const svs = Math.max(dv.getUint32(so + 8, true), dv.getUint32(so + 16, true));
+      const rawOff = dv.getUint32(so + 20, true);
+      if (importRVA >= sva && importRVA < sva + svs) {
+        let off = rawOff + (importRVA - sva);
+        while (off + 20 <= buf.length) {
+          const nameRVA = dv.getUint32(off + 12, true);
+          if (nameRVA === 0) break;
+          let dllName = '';
+          const dnOff = rawOff + (nameRVA - sva);
+          for (let j = dnOff; j < buf.length && buf[j]; j++) dllName += String.fromCharCode(buf[j]);
+          const iatRVA = dv.getUint32(off + 16, true) || dv.getUint32(off, true);
+          let tOff = rawOff + (iatRVA - sva), idx = 0;
+          while (tOff + 4 <= buf.length) {
+            const val = dv.getUint32(tOff, true);
+            if (val === 0) break;
+            if (!(val & 0x80000000)) {
+              let fnName = '';
+              const fnOff = rawOff + (val - sva) + 2;
+              for (let j = fnOff; j < buf.length && buf[j]; j++) fnName += String.fromCharCode(buf[j]);
+              importNames[imageBase + iatRVA + idx * 4] = dllName.replace(/\.dll$/i, '') + '!' + fnName;
+            }
+            tOff += 4; idx++;
+          }
+          off += 20;
+        }
+      }
+    }
+  }
+
+  function rvaToFileOff(rva) {
+    for (let i = 0; i < numSect; i++) {
+      const so = sectOff + i * 40;
+      const sva = dv.getUint32(so + 12, true);
+      const svs = Math.max(dv.getUint32(so + 8, true), dv.getUint32(so + 16, true));
+      const rawOff = dv.getUint32(so + 20, true);
+      if (rva >= sva && rva < sva + svs) return rva - sva + rawOff;
+    }
+    return -1;
+  }
+
+  if (loadBase !== null) {
+    if (endVA) endVA = endVA - loadBase + imageBase;
+    startVA = startVA - loadBase + imageBase;
+  }
+
+  const rva0 = startVA - imageBase;
+  const baseFileOff = rvaToFileOff(rva0);
+  if (baseFileOff < 0) { console.error('VA not in any section'); process.exit(1); }
+
+  const displayVA = loadBase !== null ? startVA - imageBase + loadBase : startVA;
+  const lines = disasmAt(buf, baseFileOff, displayVA, maxInsns, importNames, { bits });
+
+  // If endVA specified, filter to range
+  if (endVA) {
+    const endDisplay = loadBase !== null ? endVA - imageBase + loadBase : endVA;
+    for (const line of lines) {
+      const lineVA = parseInt(line.trim().split(/\s/)[0], 16);
+      if (lineVA >= endDisplay) break;
+      console.log(line);
+    }
+  } else {
+    lines.forEach(l => console.log(l));
+  }
+}

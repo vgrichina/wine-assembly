@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "scope": "Distinct named GDI32.dll imports in PE files under test/binaries.",
+  "corpus": {
+    "peFileCount": 244,
+    "importCount": 228,
+    "sortedImportSha256": "f06b5d82415127cf6c9daebf24818fba392e10411d25d8725a7dfffe9968e7b5",
+    "representedInApiTable": 225
+  },
+  "handlerCoverage": {
+    "dispatchable": 225,
+    "missing": [
+      "ColorMatchToTarget",
+      "SetICMMode",
+      "SetICMProfileA"
+    ],
+    "crashStub": [],
+    "meaning": "Every named corpus import reaches a WAT handler without crash_unimplemented. This is a dispatchability gate; the partial-fidelity contracts below remain explicit and are not counted as complete semantics."
+  },
+  "notExposed": [
+    "ColorMatchToTarget",
+    "SetICMMode",
+    "SetICMProfileA"
+  ],
+  "knownPartialOrUnsupported": {
+    "metafile": [
+      "CopyMetaFileA",
+      "CopyMetaFileW",
+      "EnumMetaFile",
+      "PlayMetaFileRecord",
+      "CreateMetaFileA/W records into a canonical 640x480 WAT surface; CloseMetaFile serializes a standard META_STRETCHDIB WMF and PlayMetaFile replays supported bitmap and vector records through the WAT rasterizer",
+      "PlayEnhMetaFile validates a bounded EMF handle table, composes the target rectangle, restores caller state, and replays EMR_STRETCHDIBITS plus core mapping/color/ROP2/fill/stretch/save/clip state, pen/brush lifetime, SetPixelV, MoveTo/LineTo, Rectangle, Ellipse, RoundRect, Polygon/Polyline/PolylineTo and their 16-bit variants through canonical WAT surfaces",
+      "Classic WMF playback supports mapping, colors, ROP2, fill mode, SaveDC/RestoreDC, pen/brush/font/region creation and lifetime, lines, rectangles, ellipses, round rectangles, polygons, polylines, bitmap-font text, region drawing, and mapped clip-region mutation",
+      "EnumMetaFile validates and enumerates every classic WMF record through the guest callback with a live HANDLETABLE; PlayMetaFileRecord reuses the canonical WAT state/object/vector/bitmap evaluator and callback early termination is honored",
+      "META_TEXTOUT and META_EXTTEXTOUT parse bounded Win16 strings, ETO rectangles, signed Dx arrays, font and text state in WAT; installed FNT faces rasterize without Canvas and scalable faces retain the text-only fallback",
+      "Enhanced-metafile fonts/text, regions, paths, world transforms, arcs/Bezier families, multi-poly records, palettes, and remaining bitmap record variants are not implemented; unsupported well-formed classic WMF records are skipped during playback and raster conversion"
+    ],
+    "printer": [
+      "CreateDCA/W and PrintDlg allocate a WAT-owned 2400x3150 32-bpp page; StartDoc/StartPage/EndPage/EndDoc/AbortDoc enforce job ordering and each page begins white",
+      "Browser spool/export and persistent storage for every completed page are not implemented; the canonical bitmap retains the current page",
+      "SetAbortProc accepts but does not invoke the application callback; Escape and ExtEscape expose only the compatibility queries used by tracked applications"
+    ],
+    "path": [
+      "SelectClipPath consumes and combines canonical closed-path regions; general BeginPath/EndPath geometry recording is not exposed by the corpus API table"
+    ],
+    "presentation": [
+      "SetDeviceGammaRamp state round-trips but the LUT is not applied by the browser compositor",
+      "Pixel-format APIs expose one software RGBA format; OpenGL command rendering is outside GDI"
+    ],
+    "fontPolicy": [
+      "AddFontResourceA installs user-supplied NE .FON or standalone FNT 2.x/3.x bitmap strikes from the VFS; RemoveFontResourceA unregisters them",
+      "Browser and CLI preload the tracked W95FA FON; WAT lazily installs it and routes stock variable UI fonts plus common Win9x UI aliases through deterministic bitmap metrics and rasterization",
+      "WAT selects installed bitmap faces by name and rasterizes TextOut, ExtTextOut rectangle/lpDx semantics, and DrawText layout directly into canonical GDI pixels; unsupported formats and shaped/scalable text paths retain the Canvas fallback",
+      "GetCharWidthA/W and GetCharWidth32A/W use exact selected FNT advances in WAT and per-character Canvas measurement only for scalable fallback faces; GetCharacterPlacementW owns deterministic Latin ordering, widths, carets, classifications, glyph arrays, maximum extent, and simple justification in WAT",
+      "GetFontData returns GDI_ERROR because raw selected-font table export is not implemented",
+      "GetGlyphOutlineA returns WAT-derived GGO_METRICS and DWORD-aligned GGO_BITMAP payloads for selected FNT strikes; scalable fonts retain Canvas metrics-only fallback, while native/Bezier/gray bitmap formats and transformed bitmap strikes remain unavailable",
+      "EnumFontsA and EnumFontFamilies A/W enumerate scalable Arial first for compatibility, followed by unique installed FNT faces with WAT-derived ENUMLOGFONTEX and NEWTEXTMETRICEX fields; family/charset filters and callback early termination are WAT-owned",
+      "Complex-script reordering, ligation, kerning, glyph shaping, Kashida justification, and DBCS expansion in GetCharacterPlacementW remain unavailable"
+    ]
+  }
+}

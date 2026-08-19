@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wine-Assembly Safari Private Probe</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    body { margin: 0; background: #101418; color: #dce7ef; }
+    main { max-width: 920px; margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 8px; font: 600 22px system-ui, sans-serif; }
+    p { color: #9fb2c0; line-height: 1.45; }
+    #status { padding: 12px; border: 1px solid #385466; background: #15212a; color: #9fe3b1; }
+    #events { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-size: 12px; }
+    iframe {
+      display: block;
+      width: min(100% - 32px, 800px);
+      height: 720px;
+      margin: 0 auto 24px;
+      border: 1px solid #385466;
+      background: #000;
+    }
+    .warn { color: #ffd479; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Safari Private Browsing Probe</h1>
+    <p>Keep this Private Window open and active. The page automatically runs Bricks and Spider with native and forced compatibility dispatch. It reloads between cases to release each 512&nbsp;MiB Wasm memory.</p>
+    <div id="status">Starting…</div>
+    <pre id="events"></pre>
+  </main>
+  <script>
+  (() => {
+    'use strict';
+
+    const CASES = [
+      { app: 'bricks', mode: 'native', forceCompat: false },
+      { app: 'spider', mode: 'native', forceCompat: false },
+      { app: 'bricks', mode: 'compat', forceCompat: true },
+      { app: 'spider', mode: 'compat', forceCompat: true },
+    ];
+    const params = new URLSearchParams(location.search);
+    const run = params.get('run') || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    const caseIndex = Math.max(0, Math.min(CASES.length, parseInt(params.get('case') || '0', 10) || 0));
+    const current = CASES[caseIndex] || null;
+    const started = performance.now();
+    const status = document.getElementById('status');
+    const eventLog = document.getElementById('events');
+    let sequence = 0;
+    let phase = 'page-start';
+    let harness = null;
+    let heartbeatAt = performance.now();
+    let finished = false;
+
+    if (!params.get('run')) {
+      history.replaceState(null, '', `${location.pathname}?run=${encodeURIComponent(run)}&case=${caseIndex}`);
+    }
+
+    function compact(value, depth = 0) {
+      if (depth > 4) return '[depth]';
+      if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+      if (Array.isArray(value)) return value.slice(0, 40).map(item => compact(item, depth + 1));
+      const out = {};
+      for (const [key, item] of Object.entries(value).slice(0, 80)) out[key] = compact(item, depth + 1);
+      return out;
+    }
+
+    function send(kind, data = {}) {
+      const event = {
+        run,
+        sequence: ++sequence,
+        caseIndex,
+        case: current ? `${current.app}-${current.mode}` : 'complete',
+        kind,
+        phase,
+        elapsedMs: +((performance.now() - started).toFixed(1)),
+        data: compact(data),
+      };
+      eventLog.textContent = `${JSON.stringify(event)}\n${eventLog.textContent}`.slice(0, 24000);
+      fetch('/__probe_event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event),
+        cache: 'no-store',
+        keepalive: true,
+      }).catch(error => {
+        status.innerHTML = `<span class="warn">Collector send failed: ${String(error)}</span>`;
+      });
+      return event;
+    }
+
+    function setPhase(next, data) {
+      phase = next;
+      status.textContent = current
+        ? `Run ${run} — ${current.app} ${current.mode} — ${phase}`
+        : `Run ${run} — ${phase}`;
+      send('phase', data || {});
+    }
+
+    function tailCallProbe() {
+      const probe = new Uint8Array([
+        0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x03, 0x02, 0x00, 0x00,
+        0x0A, 0x09, 0x02, 0x04, 0x00, 0x12, 0x01, 0x0B, 0x02, 0x00, 0x0B,
+      ]);
+      try { return WebAssembly.validate(probe); }
+      catch (_) { return false; }
+    }
+
+    function storageRoundTrip(storage, name) {
+      const key = `__wa_private_probe_${run}`;
+      try {
+        storage.setItem(key, 'ok');
+        const value = storage.getItem(key);
+        storage.removeItem(key);
+        return { name, ok: value === 'ok', length: storage.length };
+      } catch (error) {
+        return { name, ok: false, error: `${error.name}: ${error.message}` };
+      }
+    }
+
+    function indexedDbProbe() {
+      return new Promise(resolve => {
+        if (!window.indexedDB) return resolve({ ok: false, error: 'indexedDB unavailable' });
+        const name = `wa-private-probe-${run}`;
+        let settled = false;
+        const finish = value => {
+          if (settled) return;
+          settled = true;
+          try { indexedDB.deleteDatabase(name); } catch (_) {}
+          resolve(value);
+        };
+        const timer = setTimeout(() => finish({ ok: false, error: 'indexedDB timeout' }), 3000);
+        try {
+          const request = indexedDB.open(name, 1);
+          request.onupgradeneeded = () => request.result.createObjectStore('probe');
+          request.onerror = () => {
+            clearTimeout(timer);
+            finish({ ok: false, error: request.error ? `${request.error.name}: ${request.error.message}` : 'open failed' });
+          };
+          request.onsuccess = () => {
+            try {
+              const db = request.result;
+              const tx = db.transaction('probe', 'readwrite');
+              tx.objectStore('probe').put('ok', 'key');
+              tx.oncomplete = () => {
+                db.close();
+                clearTimeout(timer);
+                finish({ ok: true });
+              };
+              tx.onerror = () => {
+                db.close();
+                clearTimeout(timer);
+                finish({ ok: false, error: tx.error ? `${tx.error.name}: ${tx.error.message}` : 'transaction failed' });
+              };
+            } catch (error) {
+              clearTimeout(timer);
+              finish({ ok: false, error: `${error.name}: ${error.message}` });
+            }
+          };
+        } catch (error) {
+          clearTimeout(timer);
+          finish({ ok: false, error: `${error.name}: ${error.message}` });
+        }
+      });
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function harnessEval(source) {
+      if (!harness || !harness.contentWindow) throw new Error('harness iframe is unavailable');
+      return harness.contentWindow.eval(source);
+    }
+
+    async function waitFor(test, timeoutMs, label) {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
+        try {
+          const value = test();
+          if (value) return value;
+        } catch (_) {}
+        await delay(50);
+      }
+      throw new Error(`${label} timed out after ${timeoutMs}ms`);
+    }
+
+    function harnessState(includePixels = false) {
+      if (!harness || !harness.contentWindow) return { iframe: false };
+      const d = harness.contentDocument;
+      let globals;
+      try {
+        globals = harnessEval('({ apps: runningApps, renderer: sharedRenderer, WineAssembly })');
+      } catch (_) {
+        globals = { apps: null, renderer: null, WineAssembly: null };
+      }
+      const app = globals.apps && globals.apps[0];
+      const wine = app && app.wine;
+      const exports = wine && wine.instance && wine.instance.exports;
+      const renderer = globals.renderer || (wine && wine.renderer);
+      const state = {
+        iframe: true,
+        readyState: d && d.readyState,
+        status: d && d.getElementById('status') ? d.getElementById('status').textContent : '',
+        compileStatus: d && d.getElementById('compile-status') ? {
+          text: d.getElementById('compile-status').textContent,
+          display: getComputedStyle(d.getElementById('compile-status')).display,
+        } : null,
+        tailCallProbe: globals.WineAssembly && globals.WineAssembly.supportsWasmTailCalls ? globals.WineAssembly.supportsWasmTailCalls() : null,
+        apps: globals.apps ? globals.apps.length : null,
+        running: !!(wine && wine.running),
+        selectedStepsPerSlice: wine ? wine.stepsPerSlice : null,
+        runSlices: wine ? (wine._runSliceCount || 0) : 0,
+        eip: exports && exports.get_eip ? exports.get_eip() >>> 0 : null,
+        yieldReason: exports && exports.get_yield_reason ? exports.get_yield_reason() >>> 0 : null,
+        hwnd: exports && exports.get_main_hwnd ? exports.get_main_hwnd() >>> 0 : null,
+        memoryBytes: wine && wine.memory ? wine.memory.buffer.byteLength : null,
+        windows: renderer ? Object.values(renderer.windows || {}).filter(win => win && win.visible).map(win => ({
+          hwnd: win.hwnd >>> 0,
+          title: win.title || '',
+          x: win.x | 0,
+          y: win.y | 0,
+          w: win.w | 0,
+          h: win.h | 0,
+          back: !!win._backCanvas,
+        })) : [],
+        logTail: d && d.getElementById('log') ? d.getElementById('log').textContent.slice(-2500) : '',
+      };
+      if (includePixels && d) {
+        try {
+          if (renderer && renderer.repaint) renderer.repaint();
+          const canvas = d.getElementById('screen');
+          const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+          const colors = new Set();
+          let opaque = 0;
+          for (let i = 0; i < pixels.length; i += 64) {
+            if (!pixels[i + 3]) continue;
+            opaque++;
+            colors.add((pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]);
+          }
+          state.canvas = { w: canvas.width, h: canvas.height, sampledColors: colors.size, opaqueSamples: opaque };
+        } catch (error) {
+          state.canvas = { error: `${error.name}: ${error.message}` };
+        }
+      }
+      return state;
+    }
+
+    window.addEventListener('error', event => {
+      send('window-error', { message: event.message, filename: event.filename, line: event.lineno, column: event.colno });
+    });
+    window.addEventListener('unhandledrejection', event => {
+      send('unhandled-rejection', { reason: String(event.reason && event.reason.stack || event.reason) });
+    });
+
+    const heartbeat = setInterval(() => {
+      const now = performance.now();
+      const driftMs = now - heartbeatAt - 1000;
+      heartbeatAt = now;
+      send('heartbeat', { driftMs: +driftMs.toFixed(1), state: harnessState(false) });
+    }, 1000);
+
+    async function runCase() {
+      if (!current) {
+        phase = 'complete';
+        finished = true;
+        status.textContent = `Run ${run} complete — all ${CASES.length} cases reported`;
+        send('run-complete', { cases: CASES.map(item => `${item.app}-${item.mode}`) });
+        clearInterval(heartbeat);
+        return;
+      }
+
+      if (caseIndex === 0) {
+        setPhase('environment');
+        send('environment', {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          online: navigator.onLine,
+          crossOriginIsolated: window.crossOriginIsolated,
+          sharedArrayBuffer: typeof SharedArrayBuffer,
+          wasmTailCalls: tailCallProbe(),
+          localStorage: storageRoundTrip(localStorage, 'localStorage'),
+          sessionStorage: storageRoundTrip(sessionStorage, 'sessionStorage'),
+          indexedDB: await indexedDbProbe(),
+        });
+      }
+
+      setPhase('iframe-create');
+      harness = document.createElement('iframe');
+      harness.src = `/index.html?debug&private-probe=${encodeURIComponent(run)}&case=${caseIndex}&nonce=${Date.now()}`;
+      document.body.appendChild(harness);
+      await waitFor(() => harness.contentDocument && harness.contentDocument.readyState === 'complete', 30000, 'harness document load');
+      await waitFor(() => {
+        const w = harness.contentWindow;
+        return w && w.eval('typeof launchApp === "function" && typeof WineAssembly !== "undefined"');
+      }, 10000, 'harness globals');
+
+      const WineAssembly = harnessEval('WineAssembly');
+      if (current.forceCompat) {
+        WineAssembly._supportsWasmTailCalls = false;
+        WineAssembly._wasmModulePromise = null;
+      }
+      harness.contentDocument.getElementById('app-select').value = current.app;
+      const selectedSlice = harnessEval(`selectedRunSlice(${JSON.stringify(current.app)})`);
+      setPhase('launch-begin', {
+        selectedSlice,
+        forcedCompat: current.forceCompat,
+        detectedTailCalls: WineAssembly.supportsWasmTailCalls(),
+        state: harnessState(false),
+      });
+
+      // If a synchronous Wasm slice freezes WebKit, neither this await nor the
+      // heartbeat can advance. The collector's last event remains launch-begin.
+      await Promise.race([
+        Promise.resolve(harnessEval('launchApp()')),
+        delay(30000).then(() => { throw new Error('launchApp timed out after 30000ms'); }),
+      ]);
+      setPhase('launch-returned', harnessState(false));
+
+      // Compatibility dispatch deliberately executes much less guest work per
+      // slice. Spider normally needs about 33 slices in Safari, so give it a
+      // longer window while continuing to report one-second progress snapshots.
+      const runtimeTimeoutMs = current.forceCompat ? 180000 : 60000;
+      const deadline = performance.now() + runtimeTimeoutMs;
+      let lastSnapshot = 0;
+      let ready = false;
+      const runtimeReady = state => {
+        const hasMainWindow = state.windows.some(win => current.app === 'bricks'
+          ? /Bricks/i.test(win.title)
+          : /Spider/i.test(win.title));
+        return hasMainWindow && state.yieldReason === 7 && state.runSlices > 0;
+      };
+      while (performance.now() < deadline) {
+        const state = harnessState(false);
+        if (runtimeReady(state)) {
+          ready = true;
+          break;
+        }
+        if (performance.now() - lastSnapshot >= 1000) {
+          send('launch-progress', state);
+          lastSnapshot = performance.now();
+        }
+        await delay(100);
+      }
+      const finalState = harnessState(true);
+      // A single synchronous Wasm slice may outlive the observation deadline.
+      // Accept the state it reached instead of reporting a false timeout.
+      ready = ready || runtimeReady(finalState);
+      if (!ready) throw new Error(`runtime did not reach message wait after ${runtimeTimeoutMs}ms: ${JSON.stringify(finalState)}`);
+      setPhase('case-complete', finalState);
+
+      await delay(5000);
+      try { harnessEval('stopAllApps()'); } catch (_) {}
+      harness.remove();
+      harness = null;
+      location.replace(`${location.pathname}?run=${encodeURIComponent(run)}&case=${caseIndex + 1}`);
+    }
+
+    runCase().catch(error => {
+      phase = 'case-failed';
+      finished = true;
+      status.innerHTML = `<span class="warn">${current ? `${current.app} ${current.mode}` : 'probe'} failed: ${String(error.message || error)}</span>`;
+      send('case-failed', {
+        error: String(error && error.stack || error),
+        state: harnessState(true),
+      });
+      clearInterval(heartbeat);
+    });
+  })();
+  </script>
+</body>
+</html>

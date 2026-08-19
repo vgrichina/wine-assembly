@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-14T01:44:41.037Z",
+  "app": {
+    "id": "notepad98",
+    "title": "Notepad (Windows 98)",
+    "launch": "D:\\NOTEPAD.EXE"
+  },
+  "display": {
+    "width": 640,
+    "height": 480,
+    "display": "block",
+    "running": true
+  },
+  "output": "screenshots/v86-reference/reviewed/notepad98.png",
+  "screenshotSha256": "e72009fd6c94846aa762cd82d2faafe78b0d4ec2e7a62afa0e857010f074d0d4",
+  "v86": {
+    "package": "v86@0.5.432",
+    "embeddedVersion": "0.5.432+gf3d4472",
+    "upstreamCommit": "f3d4472a9c934b9ad78a311f5849ba711a296d23"
+  },
+  "sources": {
+    "bios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/seabios.bin",
+    "vgaBios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/vgabios.bin",
+    "disk": "https://i.copy.sh/windows98/.img",
+    "state": "https://i.copy.sh/windows98_state-v2.bin.zst"
+  },
+  "payload": [
+    {
+      "name": "NOTEPAD.EXE",
+      "source": "test/binaries/win98-apps/notepad98.exe",
+      "sha256": "e7b01ab85a35ba6f577067d13efa522dc3d605de7712340e4acaf7065f866340"
+    }
+  ]
+}

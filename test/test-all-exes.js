@@ -1,0 +1,775 @@
+#!/usr/bin/env node
+// Automated smoke tests for all EXE binaries
+// Runs each EXE with limited batches, checks for crashes vs clean exit
+
+const { execSync, spawnSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { createCanvas, loadImage } = require('../lib/canvas-compat');
+
+const ROOT = path.join(__dirname, '..');
+const RUN_JS = path.join(__dirname, 'run.js');
+const PNG_DIR = path.join(ROOT, 'test', 'output', 'all-exes');
+const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in PNG
+const ORGANIC_ART_D3DRM_SMOKE = {
+  // Organic Art spends thousands of small batches reading scene/assets before
+  // its first meaningful Direct3DRM frame, similar to the DX SDK globe sample.
+  maxBatches: 7000,
+  extraArgs: ['--args=/s', '--quiet-blocks'],
+  timeoutMs: 30000,
+};
+const VOLUME_CONTROL_SMOKE = {
+  // sndvol32 creates a tiny hidden owner first and shows the mixer dialog via
+  // SW_SHOWDEFAULT. Keep it open and capture the dialog back-canvas directly.
+  maxBatches: 140, batchSize: 5000,
+  extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+  captureHwnd: 0x10002, captureBatch: 120, captureStopBatch: 121,
+  timeoutMs: 90000,
+};
+const DX5_TEXTURED_EXECUTE_SMOKE = {
+  // Tunnel/Twist parse several large ASCII PPM textures in guest code before
+  // their first execute-buffer frame. The default 80k-instruction smoke budget
+  // stops during that decode and captures an apparently healthy window with a
+  // black viewport.
+  maxBatches: 18, batchSize: 100000,
+  extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+  timeoutMs: 30000,
+  // This rectangle is the intersection of the app viewport in the renderer
+  // canvas and in the final DirectDraw primary capture. It excludes all chrome
+  // and FPS/format text is too sparse to satisfy the threshold by itself.
+  contentRegion: { x: 23, y: 61, width: 294, height: 254 },
+  minRegionNonBlackPixels: 3000,
+};
+
+// Return { colors, topShare } for a PNG — colors = unique RGB triples seen,
+// topShare = fraction of pixels covered by the most common color. A PNG is
+// "blank" iff colors ≤ threshold AND topShare > 0.97 (near-solid fill).
+// Sparse text on a solid fill (e.g. ddex3's "Even Screen" title) is a real
+// render with 3 colors but ~95% background and must PASS — so the cutoff
+// is tighter than 0.95.
+async function analyzePng(pngPath, contentRegion) {
+  try {
+    const img = await loadImage(pngPath);
+    const w = img.width, h = img.height;
+    if (!w || !h) return { colors: 0, topShare: 1 };
+    const c = createCanvas(w, h);
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const hist = new Map();
+    let total = 0;
+    let centerTotal = 0;
+    const centerHist = new Map();
+    let regionNonBlack = 0;
+    const centerX0 = Math.floor(w * 0.25), centerX1 = Math.ceil(w * 0.75);
+    const centerY0 = Math.floor(h * 0.20), centerY1 = Math.ceil(h * 0.80);
+    for (let i = 0; i < data.length; i += 4) {
+      const k = (data[i] << 16) | (data[i+1] << 8) | data[i+2];
+      hist.set(k, (hist.get(k) || 0) + 1);
+      const x = total % w, y = Math.floor(total / w);
+      if (x >= centerX0 && x < centerX1 && y >= centerY0 && y < centerY1) {
+        centerHist.set(k, (centerHist.get(k) || 0) + 1);
+        centerTotal++;
+      }
+      if (contentRegion &&
+          x >= contentRegion.x && x < contentRegion.x + contentRegion.width &&
+          y >= contentRegion.y && y < contentRegion.y + contentRegion.height &&
+          (data[i] > 8 || data[i+1] > 8 || data[i+2] > 8)) {
+        regionNonBlack++;
+      }
+      total++;
+    }
+    let top = 0, topColor = 0;
+    for (const [color, n] of hist) {
+      if (n > top) {
+        top = n;
+        topColor = color;
+      }
+    }
+    const centerContent = centerTotal - (centerHist.get(topColor) || 0);
+    return { colors: hist.size, topShare: total ? top / total : 1, centerContent, regionNonBlack };
+  } catch (_) {
+    return null;
+  }
+}
+
+// All test binaries with their expected behavior
+const TEST_CASES = [
+  { exe: 'test/binaries/notepad.exe', name: 'Notepad' },
+  { exe: 'test/binaries/calc.exe', name: 'Calculator',
+    // calc.exe (XP build) spends ~700 batches on msvcrt CRT init (every
+    // critical-section table entry gets InitializeCriticalSection) before
+    // CreateDialog. Default 80 batches doesn't reach the dialog. With
+    // --no-close + 800 batches it renders the full button grid.
+    maxBatches: 800, extraArgs: ['--no-close'], timeoutMs: 10000 },
+  { exe: 'test/binaries/entertainment-pack/ski32.exe', name: 'SkiFree' },
+  { exe: 'test/binaries/entertainment-pack/freecell.exe', name: 'FreeCell',
+    extraArgs: ['--no-close', '--input=5:0x111:102'] },  // Game > New Game (F2)
+  { exe: 'test/binaries/entertainment-pack/sol.exe', name: 'Solitaire',
+    extraArgs: ['--no-close', '--input=5:0x111:1000'] },  // Game > Deal
+  { exe: 'test/binaries/mspaint.exe', name: 'MSPaint (Win98)',
+    maxBatches: 140, batchSize: 50000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'] },
+  { exe: 'test/binaries/nt/mspaint.exe', name: 'MSPaint (NT)' },
+  { exe: 'test/binaries/entertainment-pack/cruel.exe', name: 'Cruel',
+    extraArgs: ['--no-close', '--input=5:0x111:1'] },  // Game > New
+  { exe: 'test/binaries/entertainment-pack/golf.exe', name: 'Golf',
+    extraArgs: ['--no-close', '--input=5:0x111:1'] },  // Game > New
+  { exe: 'test/binaries/entertainment-pack/pegged.exe', name: 'Pegged' },
+  { exe: 'test/binaries/entertainment-pack/snake.exe', name: 'Rattler Race' },
+  { exe: 'test/binaries/entertainment-pack/taipei.exe', name: 'Taipei' },
+  { exe: 'test/binaries/entertainment-pack/tictac.exe', name: 'TicTacToe' },
+  { exe: 'test/binaries/xp/winmine.exe', name: 'Minesweeper (XP)' },
+  // Entertainment Pack additions
+  { exe: 'test/binaries/entertainment-pack/reversi.exe', name: 'Reversi' },
+  { exe: 'test/binaries/entertainment-pack/winmine.exe', name: 'Minesweeper (WEP)' },
+  // Win98 accessories
+  { exe: 'test/binaries/win98-apps/wordpad.exe', name: 'WordPad',
+    // WordPad is MFC: at the default 80k-instruction budget it has a titled
+    // frame but has not painted its toolbar, format bar, ruler or status bar
+    // yet, so it captured as BLANK and the whole app sat in the known-blank
+    // list. It draws all of them by ~300 batches.
+    maxBatches: 300 },
+  { exe: 'test/binaries/win98-apps/write.exe', name: 'Write',
+    // Win98 write.exe is a compatibility launcher for WordPad. It should
+    // ShellExecute wordpad.exe and exit without drawing its own UI.
+    expectOutput: '[API] ShellExecuteA', noPng: true },
+  { exe: 'test/binaries/win98-apps/cdplayer.exe', name: 'CD Player' },
+  { exe: 'test/binaries/win98-apps/mplayer.exe', name: 'Media Player' },
+  { exe: 'test/binaries/win98-apps/mplay32.exe', name: 'Media Player 32' },
+  { exe: 'test/binaries/win98-apps/fontview.exe', name: 'Font Viewer',
+    maxBatches: 100, extraArgs: ['--args=vgasys.fon', '--no-close', '--quiet-blocks'] },
+  // These three are blocked on companion DLLs that are not in the tree at
+  // all — only the .exe files were collected. Nothing in the emulator can
+  // make them run, and each dies on the first import it needs from one.
+  // Recording the specific DLL means a *different* crash here would stand out
+  // instead of blending into a generic "not a target" note.
+  // Kodak Imaging draws its full frame — menu bar, toolbar, annotation strip.
+  // It then reports "The Image Admin control cannot be found": the document
+  // pane is the Imaging.AdminCtrl.1 OCX, which is not on the Win98 media we
+  // have, so CLSIDFromProgID has nothing to resolve. Everything up to that
+  // point is the real application.
+  { exe: 'test/binaries/win98-apps/kodakimg.exe', name: 'Kodak Imaging',
+    maxBatches: 800, batchSize: 50000, timeoutMs: 60000 },
+  { exe: 'test/binaries/win98-apps/kodakprv.exe', name: 'Kodak Preview',
+    // Draws its Imaging Preview frame, menus and split panes once OIDIS400 and
+    // OIADM400 are present beside the exe.
+    maxBatches: 500, batchSize: 20000, timeoutMs: 60000 },
+  { exe: 'test/binaries/win98-apps/hypertrm.exe', name: 'HyperTerminal',
+    expectedCrash: 'needs HYPERTRM.dll (InitInstance)' },
+  { exe: 'test/binaries/win98-apps/sndvol32.exe', name: 'Volume Control',
+    ...VOLUME_CONTROL_SMOKE },
+  { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
+  // Explorer runs its real startup against the vendored SHELL32/SHLWAPI/
+  // SHDOCVW in explorer98/dlls, then does GetProcAddress(shell32, ordinal 181)
+  // and calls it. That export (RVA 0x22ab1) is a flat-thunk stub — `mov cl,0xc`,
+  // two `push word`, `call [0x7fcd2b68]`, `cwde` — and the pointer it calls
+  // through is filled in by ThunkConnect32 from the SL01/LS01/"Smag" block in
+  // INSTDATA (orig 0x7fd38000, runtime 0x583000). $handle_ThunkConnect32
+  // returns TRUE without writing anything, so the block is still the 0xCC
+  // padding the linker left, execution marches through it into the zeros at
+  // 0x583548 and the decoder's zero-page guard traps.
+  //
+  // The NE loader exists now, so the note this replaces is out of date, but
+  // that is not what is missing: binding these thunks needs the 16-bit
+  // SHELL.DLL those ordinals live in, and that file is not in the tree (only
+  // CARDS/FREECELL/MSHEARTS/SOL/WINMINE are, under win98-16bit). Until it is,
+  // the only alternative is implementing each thunked ordinal natively and
+  // having ThunkConnect32 patch the block to reach it.
+  { exe: 'test/binaries/explorer98/explorer.exe', name: 'Explorer (98)',
+    expectedCrash: 'SHELL32 ordinal 181 is a flat thunk ThunkConnect32 never bound (no 16-bit SHELL.DLL in the tree)' },
+  { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
+  { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
+  // On a first run Welcome registers itself as Run\Welcome = "welcome.exe /R"
+  // and exits; /R is the flag that actually shows the window, exactly as it
+  // behaves on a real install.
+  { exe: 'test/binaries/win98-apps/welcome.exe', name: 'Welcome (98)',
+    maxBatches: 400, batchSize: 20000,
+    extraArgs: ['--args=/R', '--no-close'] },
+  // The visual is not broken — tour98.exe is a launcher, and it correctly
+  // reports that Discover.exe (which ships on the Win98 CD, not with us) is
+  // missing. It cannot do its job, but it draws the right dialog for that.
+  { exe: 'test/binaries/win98-apps/tour98.exe', name: 'Win98 Tour' },
+  // Renders correctly: a Win98 message box reporting that the PERF device
+  // driver is absent, which is the truthful answer here — we emulate no VxD.
+  { exe: 'test/binaries/win98-apps/sysmon.exe', name: 'System Monitor' },
+  // Renders its real startup notice, checkbox and all.
+  { exe: 'test/binaries/win98-apps/rsrcmtr.exe', name: 'Resource Meter' },
+  { exe: 'test/binaries/win98-apps/winipcfg.exe', name: 'IP Config' },
+  // Renders its Select Drive dialog with a populated drive combo.
+  { exe: 'test/binaries/win98-apps/cleanmgr.exe', name: 'Disk Cleanup' },
+  { exe: 'test/binaries/win98-apps/notepad98.exe', name: 'Notepad (98)' },
+  { exe: 'test/binaries/win98-apps/vol98.exe', name: 'Volume (98)',
+    ...VOLUME_CONTROL_SMOKE },
+  { exe: 'test/binaries/win98-apps/telnet.exe', name: 'Telnet' },
+  // XP apps
+  { exe: 'test/binaries/xp/claass.exe', name: 'Volume Control (XP)',
+    ...VOLUME_CONTROL_SMOKE },
+  { exe: 'test/binaries/xp/sndrec32.exe', name: 'Sound Recorder (XP)' },
+  { exe: 'test/binaries/xp/xp_eos.exe', name: 'XP End of Life' },
+  // Entertainment Pack extras
+  { exe: 'test/binaries/entertainment-pack/mspaint.exe', name: 'MSPaint (EP)' },
+  // Pinball
+  { exe: 'test/binaries/pinball/pinball.exe', name: 'Space Cadet Pinball',
+    // Pinball's shutdown repaint path is too expensive for final --png.
+    // Capture the real table window back-canvas after the quick startup blits.
+    maxBatches: 30, batchSize: 500000,
+    extraArgs: ['--args=-quick', '--quiet-blocks', '--stuck-after=5000'],
+    captureHwnd: 0x10002, captureBatch: 20, captureStopBatch: 21,
+    timeoutMs: 90000 },
+  { exe: 'test/binaries/pinball-plus95/pinball.exe', name: 'Pinball (Plus! 95)',
+    // Same shape as the Space Cadet entry above: it needs a real budget to
+    // load the table. It was blank for a different reason until the VFS read
+    // stopped spanning sparse-mapping boundaries and wrecking its allocator.
+    maxBatches: 40, batchSize: 500000,
+    extraArgs: ['--args=-quick', '--quiet-blocks'], timeoutMs: 90000 },
+  // Winamp extracted app
+  { exe: 'test/binaries/winamp.exe', name: 'Winamp' },
+  // Installers (NSIS etc.)
+  // Both run with NSIS /S — a silent install, which by definition draws no UI.
+  // Reaching CreateProcessA is the whole success signal, so capturing a frame
+  // only produced a bare desktop that scored as BLANK.
+  { exe: 'test/binaries/installers/winamp291.exe', name: 'Winamp 2.91 Installer',
+    extraArgs: ['--args=/S'], maxBatches: 8000, batchSize: 5000, timeoutMs: 180000,
+    expectOutput: '[API] CreateProcessA', noPng: true },
+  { exe: 'test/binaries/installers/winamp295.exe', name: 'Winamp 2.95 Installer',
+    extraArgs: ['--args=/S'], maxBatches: 8000, batchSize: 5000, timeoutMs: 180000,
+    expectOutput: '[API] CreateProcessA', noPng: true },
+  { exe: 'test/binaries/installers/mirc59.exe', name: 'mIRC Installer', expectedCrash: 'not a current-stage target' },
+  // WEP community 32-bit remakes (archive.org/details/wep-32bit)
+  { exe: 'test/binaries/wep32-community/Bricks/bricks.exe', name: 'Bricks (Klotski)' },
+  { exe: 'test/binaries/wep32-community/EmPipe/EMPIPE.EXE', name: 'EmPipe (PipeDream)' },
+  { exe: 'test/binaries/wep32-community/Funpack/Funtris.exe', name: 'Funtris (Tetris)',
+    maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40004'],
+    forbidVisibleTitles: ['Get Started'] },
+  { exe: 'test/binaries/wep32-community/Funpack/Peaks.exe', name: 'Peaks (TriPeaks)',
+    maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40003'],
+    forbidVisibleTitles: ['Get Started', 'Hall of Fame'] },
+  { exe: 'test/binaries/wep32-community/Funpack/Pyramid.exe', name: 'Pyramid (TutsTomb)',
+    maxBatches: 220, extraArgs: ['--no-close', '--input=80:0x111:40003'],
+    forbidVisibleTitles: ['Get Started'] },
+  { exe: 'test/binaries/wep32-community/Funpack/FourStones.exe', name: 'FourStones (TicTacDrop)' },
+  // Renders its own "This program requires DirectX 9 or later!" dialog
+  // correctly. The DX9 requirement is real and unmet; the drawing is not the
+  // problem, so gate the drawing.
+  { exe: 'test/binaries/wep32-community/Pawn/Pawn.exe', name: 'Pawn (Chess)' },
+  { exe: 'test/binaries/wep32-community/QBlackjack/QuickBlackjack.exe', name: 'QuickBlackjack' },
+  { exe: 'test/binaries/wep32-community/Runenlegen/Runenlegen.exe', name: 'Runenlegen (Stones)',
+    // Was an expected crash on the 0x67 address-size prefix. It now runs, but
+    // draws its board and stats only after the sprite sheets are composed.
+    maxBatches: 400, batchSize: 20000 },
+  { exe: 'test/binaries/wep32-community/Tetravex/Tetravex.exe', name: 'Tetravex',
+    maxBatches: 220, batchSize: 10000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    timeoutMs: 60000 },
+  { exe: 'test/binaries/wep32-community/Winarc/Winarc.exe', name: 'Winarc (Pegs/Krypto/Life)' },
+  { exe: 'test/binaries/wep32-community/Wordzap/CWordZap.exe', name: 'CWordZap',
+    // Startup expands a BI_RLE4 splash after a comparatively expensive
+    // resource decode. The default 80k budget stops before its first paint.
+    maxBatches: 20, batchSize: 100000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'] },
+  { exe: 'test/binaries/wep32-community/TWorld/tworld.exe', name: 'TWorld (SDL, expected fail)' },
+  { exe: 'test/binaries/wep32-community/Jigssawme/JigSawedME.exe', name: 'JigSawedME (VB6, expected fail)', expectedCrash: 'VB6 runtime not a current-stage target' },
+  { exe: 'test/binaries/wep32-community/Rodent2000/Rodent2000.exe', name: 'Rodent2000 (VB6, expected fail)', expectedCrash: 'VB6 runtime not a current-stage target' },
+  // Plus! 98
+  { exe: 'test/binaries/plus98/SPIDER.EXE', name: 'Spider (Plus!98)' },
+  { exe: 'test/binaries/plus98/MARBLES.EXE', name: 'LoseYourMarbles (DX)' },
+  // Shareware / demos — DirectX titles
+  { exe: 'test/binaries/shareware/abe/ex/AbeDemo.exe', name: 'Abe Oddysee demo (DX)',
+    // Needs enough timer/load-loop budget for the title/copyright pixels to
+    // appear on the 1024x512 offscreen DDraw surface.
+    maxBatches: 1000, extraArgs: ['--quiet-blocks'], timeoutMs: 30000 },
+  { exe: 'test/binaries/shareware/aoe/aoe_ex/Empires.exe', name: 'Age of Empires demo (DX)',
+    // Needs enough budget to finish the DDraw/palette splash sequence and
+    // expose the title-art surface rather than the initial black frame.
+    maxBatches: 3000, extraArgs: ['--no-close', '--quiet-blocks'], timeoutMs: 60000 },
+  { exe: 'test/binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', name: 'Age of Empires 2 demo (DX)' },
+  { exe: 'test/binaries/shareware/mcm/mcm_ex/MCM.EXE', name: 'Motocross Madness demo (DX+d3drm)',
+    // First run prompts for a video-memory test; accept it and wait for the
+    // D3DDevice2 render loop to present the logo splash.
+    maxBatches: 330, batchSize: 5000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000', '--input=60:click:210:153'],
+    timeoutMs: 150000 },
+  { exe: 'test/binaries/shareware/mw3/ex/Program_Files/mech3demo.exe', name: 'MechWarrior 3 demo (DX/D3DIM)',
+    // Needs a larger instruction budget to get through MW3's guest 16bpp
+    // pixel-filter loop and present the preview splash.
+    maxBatches: 250, batchSize: 100000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    timeoutMs: 90000 },
+  { exe: 'test/binaries/shareware/rct/English/RCT.exe', name: 'RollerCoaster Tycoon (DX)',
+    // RCT's pre-window loader is instruction-heavy. 40 batches only reached a
+    // black window — it needs roughly 200 to decode and present the Hasbro
+    // Interactive splash, which is the first real DirectDraw frame.
+    maxBatches: 200, batchSize: 5000000, extraArgs: ['--quiet-blocks'], timeoutMs: 180000 },
+  // DirectX 5 SDK samples (D3DIM verify gate — see apps/mcm.md D3D-1)
+  // ddex1 and ddex2 draw one line of text on an otherwise black flipping
+  // surface — "Back buffer (F12 to quit)" and "Front buffer (F12 to quit)".
+  // That is the whole sample, so the frame is legitimately ~99% one colour and
+  // the generic blank heuristic cannot distinguish it from a dead screen. Gate
+  // on the text band actually being lit instead.
+  { exe: 'test/binaries/dx-sdk/bin/ddex1.exe', name: 'DX5 DDraw Sample 1 (ddex1)',
+    contentRegion: { x: 0, y: 0, width: 260, height: 24 },
+    minRegionNonBlackPixels: 300 },   // renders 569; a dead surface gives 0
+  { exe: 'test/binaries/dx-sdk/bin/ddex2.exe', name: 'DX5 DDraw Sample 2 (ddex2)',
+    contentRegion: { x: 0, y: 0, width: 260, height: 24 },
+    minRegionNonBlackPixels: 1200 },  // renders 2464 (filled blue label)
+  { exe: 'test/binaries/dx-sdk/bin/ddex3.exe', name: 'DX5 DDraw Sample 3 (ddex3)' },
+  { exe: 'test/binaries/dx-sdk/bin/ddex4.exe', name: 'DX5 DDraw Sample 4 (ddex4)' },
+  { exe: 'test/binaries/dx-sdk/bin/ddex5.exe', name: 'DX5 DDraw Sample 5 (ddex5)', maxBatches: 500 },
+  { exe: 'test/binaries/dx-sdk/bin/flip2d.exe', name: 'DX5 Flip2D' },
+  { exe: 'test/binaries/dx-sdk/bin/palette.exe', name: 'DX5 Palette' },
+  { exe: 'test/binaries/dx-sdk/bin/stretch.exe', name: 'DX5 Stretch' },
+  { exe: 'test/binaries/dx-sdk/bin/tunnel.exe', name: 'DX5 D3DIM Tunnel (DrawPrimitive)',
+    ...DX5_TEXTURED_EXECUTE_SMOKE },
+  { exe: 'test/binaries/dx-sdk/bin/twist.exe', name: 'DX5 D3DIM Twist',
+    ...DX5_TEXTURED_EXECUTE_SMOKE },
+  { exe: 'test/binaries/dx-sdk/bin/boids.exe', name: 'DX5 D3DIM Boids' },
+  { exe: 'test/binaries/dx-sdk/bin/globe.exe', name: 'DX5 D3DIM Globe',
+    // D3DRM loads/parses mesh and texture data before the first visible
+    // execute-buffer present; capture after the first primary Blt.
+    maxBatches: 9000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    captureBatch: 8500, captureStopBatch: 8501,
+    timeoutMs: 30000 },
+  { exe: 'test/binaries/dx-sdk/bin/bellhop.exe', name: 'DX5 D3DIM Bellhop' },
+  { exe: 'test/binaries/dx-sdk/bin/viewer.exe', name: 'DX5 D3DIM Viewer',
+    // viewer opens camera.x, mslogo.x and sphere2.x by name, and our extract of
+    // the SDK ships none of them — every .x in it is a pm_*.x ProgressiveMesh.
+    // Feed it real plain-Mesh files through the VFS instead of leaving it the
+    // three PM copies that were fabricated under those names, which is what
+    // made MeshBuilder::Load return D3DRMERR_NOTFOUND. See
+    // test/fixtures/d3drm/README.md.
+    // It parses three meshes and builds the scene before the first frame
+    // reaches the primary surface, so the 80-batch default captures black.
+    maxBatches: 400, batchSize: 2000, captureBatch: 380, captureStopBatch: 381,
+    timeoutMs: 60000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--input=' + [
+      '0:vfs-import:camera.x:test/fixtures/d3drm/tetra.x',
+      '0:vfs-import:mslogo.x:test/fixtures/d3drm/cube.x',
+      '0:vfs-import:sphere2.x:test/fixtures/d3drm/cube.x',
+    ].join(',')] },
+  { exe: 'test/binaries/dx-sdk/bin/donut.exe', name: 'DX5 Donut' },
+  { exe: 'test/binaries/dx-sdk/bin/donuts.exe', name: 'DX5 Donuts',
+    // The attract screen renders early, then the sample enters a heavy
+    // DirectDraw presentation loop. Capture the title frame and stop cleanly.
+    maxBatches: 20, batchSize: 1000,
+    extraArgs: ['--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    captureBatch: 10, captureStopBatch: 11,
+    timeoutMs: 30000 },
+  { exe: 'test/binaries/dx-sdk/bin/flip3dtl.exe', name: 'DX5 D3DIM Flip3DTL',
+    // The FPS/menu HUD alone has enough colors to pass the generic blank gate.
+    // Require actual cube pixels in the middle of the frame as well.
+    minCenterContentPixels: 1000 },
+  { exe: 'test/binaries/dx-sdk/bin/wormhole.exe', name: 'DX5 D3DIM Wormhole' },
+  { exe: 'test/binaries/dx-sdk/foxbear/foxbear.exe', name: 'DX5 FoxBear (DDraw sprite demo)',
+    // Loads hundreds of art-file sprites before the full scene appears.
+    maxBatches: 1800, extraArgs: ['--no-close'], timeoutMs: 30000 },
+  // Plus! 98 screensavers — pure GDI
+  { exe: 'test/binaries/screensavers/CATHY.SCR', name: 'Cathy (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/CITYSCAP.SCR', name: 'Cityscape (screensaver)',
+    // Worker thread animates from a captured desktop DIB; give it enough
+    // slices after the main thread reaches GetMessage.
+    maxBatches: 120, batchSize: 10000,
+    extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000', '--thread-slices=500'],
+    timeoutMs: 90000 },
+  { exe: 'test/binaries/screensavers/DOONBURY.SCR', name: 'Doonesbury (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/FOXTROT.SCR', name: 'FoxTrot (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/GA_SAVER.SCR', name: 'Garfield (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/PEANUTS.SCR', name: 'Peanuts (screensaver)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/PHODISC.SCR', name: 'PhotoDisc (screensaver)',
+    // Decodes a 640x480 DIB in guest code before its first StretchDIBits.
+    maxBatches: 80, batchSize: 50000,
+    extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000'],
+    timeoutMs: 30000 },
+  // Plus! 98 screensavers — MFC42.
+  //
+  // These four drive their picture transitions through DirectAnimation, not
+  // GDI: the API histogram is IDirectAnimationDAView_QueryInterface /
+  // DirectSlot / Release once per frame, and the 138 StretchBlt calls all
+  // source a surface DirectAnimation never wrote. Raising the budget does not
+  // help — at 140x50000 (7M instructions, 9059 API calls) the PNG is the same
+  // 2061-byte solid colour as at the default 80k. So the blank frame is the
+  // honest result, and it is recorded here rather than hidden.
+  //
+  // They read as a regression in the PASS count only because the harness used
+  // to score a killed run as a pass; they have never rendered. WIN98.SCR is the
+  // same MFC family and does pass, because it goes through DDraw instead.
+  //
+  // The declared backstop is 60s because they are heavy, not because they are
+  // wedged: they complete their batches, just slowly (mfc42 load dominates).
+  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)',
+    // Animates into DDraw offscreen buffers before the first primary Blt.
+    // The default 80k instructions stops during the decode/update loop and
+    // captures the still-black primary surface.
+    maxBatches: 140, batchSize: 50000,
+    extraArgs: ['--args=/s', '--quiet-blocks'],
+    timeoutMs: 30000 },
+  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  // Plus! 98 screensavers — DirectDraw/Direct3DRM
+  { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/GEOMETRY.SCR', name: 'Geometry (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/JAZZ.SCR', name: 'Jazz (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/OASAVER.SCR', name: 'OnlineArt (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/ROCKROLL.SCR', name: 'RockRoll (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  { exe: 'test/binaries/screensavers/SCIFI.SCR', name: 'SciFi (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
+  // 16-bit NE binaries — emulator is 32-bit PE only, expected to fail at load
+  // time. Kept in the list as SKIP candidates so coverage stays honest.
+  { exe: 'test/binaries/win98-16bit/FREECELL.EXE', name: 'FreeCell (16-bit)', expect16bit: true },
+  { exe: 'test/binaries/win98-16bit/SOL.EXE', name: 'Solitaire (16-bit)', expect16bit: true },
+  { exe: 'test/binaries/win98-16bit/MSHEARTS.EXE', name: 'Hearts (16-bit)', expect16bit: true },
+  { exe: 'test/binaries/win98-16bit/WINMINE.EXE', name: 'Minesweeper (16-bit)', expect16bit: true },
+];
+
+const MAX_BATCHES = 80;
+const BATCH_SIZE = 1000;
+
+function runExe(testCase, pngPath) {
+  const exePath = path.join(ROOT, testCase.exe);
+  if (!fs.existsSync(exePath)) {
+    return { name: testCase.name, status: 'SKIP', reason: 'file not found' };
+  }
+  if (testCase.expect16bit) {
+    // NE format. The loader links these and the decoder runs them, into their
+    // own WinMain, but the Win16 API layer is incomplete, so each stops at the
+    // first ordinal not written yet. test/test-win16-exec.js is what asserts
+    // how far they get; this stays a SKIP until one reaches a window.
+    try {
+      const buf = fs.readFileSync(exePath);
+      if (buf.length >= 0x40 && buf[0] === 0x4D && buf[1] === 0x5A) {
+        const peOff = buf.readUInt32LE(0x3C);
+        if (peOff + 2 <= buf.length && buf[peOff] === 0x4E && buf[peOff + 1] === 0x45) {
+          return { name: testCase.name, status: 'SKIP', reason: '16-bit NE (executes; Win16 API layer incomplete)' };
+        }
+      }
+    } catch (_) {}
+    return { name: testCase.name, status: 'SKIP', reason: 'expected 16-bit NE' };
+  }
+
+  const extraArgs = [...(testCase.extraArgs || [])];
+  const hasScheduledCapture = pngPath && (testCase.captureHwnd || testCase.captureBatch);
+  const useFinalPng = pngPath && !hasScheduledCapture;
+  if (hasScheduledCapture) {
+    const captureBatch = testCase.captureBatch || testCase.maxBatches || MAX_BATCHES;
+    const stopBatch = testCase.captureStopBatch || (captureBatch + 1);
+    const captureAction = testCase.captureHwnd
+      ? `hwnd-png-pixels:${testCase.captureHwnd}:${pngPath}`
+      : `png-pixels:${pngPath}`;
+    const captureSpec = `${captureBatch}:${captureAction},${stopBatch}:stop`;
+    const inputIdx = extraArgs.findIndex(a => a.startsWith('--input='));
+    if (inputIdx >= 0) {
+      extraArgs[inputIdx] += `,${captureSpec}`;
+    } else {
+      extraArgs.push(`--input=${captureSpec}`);
+    }
+  }
+
+  const args = [
+    RUN_JS,
+    `--exe=${exePath}`,
+    `--max-batches=${testCase.maxBatches || MAX_BATCHES}`,
+    `--batch-size=${testCase.batchSize || BATCH_SIZE}`,
+    '--no-build',
+    '--verbose',
+    ...(useFinalPng ? [`--png=${pngPath}`] : []),
+    ...extraArgs,
+  ];
+
+  const startedAt = Date.now();
+  const budgetMs = wallBudgetMs(testCase);
+  const result = spawnSync('node', args, {
+    cwd: ROOT,
+    timeout: budgetMs,
+    encoding: 'utf8',
+    maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
+    env: { ...process.env, NODE_OPTIONS: '' },
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  // A run killed by the timeout exits via a signal, so `result.status` is null,
+  // not a non-zero code. The crash test below reads `status !== null && !== 0`,
+  // which is false for a signal — so before this check a timed-out run fell
+  // straight through to the success path, and because it was killed before
+  // writing its --png, the blank-pixel gate was skipped too (it requires the
+  // file to exist). Net effect: a run that never finished was reported OK, and
+  // the *slower* the box, the more apps passed. That is the reported
+  // 105-vs-103 instability, and in the direction nobody expects.
+  const timedOut = result.error ? result.error.code === 'ETIMEDOUT' : Boolean(result.signal);
+
+  const output = (result.stdout || '') + (result.stderr || '');
+  const lines = output.split('\n');
+
+  // Check for crash_unimplemented (missing API)
+  const unimplMatch = output.match(/crash_unimplemented|unreachable|RuntimeError/);
+
+  // Find all unique API calls — handles both --verbose ([API] Name) and --trace-api ([API #N] Name(...))
+  const apiCalls = new Set();
+  const apiPattern = /\[API[^\]]*\]\s*(\S+)/g;
+  let m;
+  while ((m = apiPattern.exec(output)) !== null) {
+    const name = m[1].replace(/\(.*/, '');
+    if (name) apiCalls.add(name);
+  }
+
+  // Check for window creation (sign of successful init)
+  const hasWindow = output.includes('[CreateWindow]') || output.includes('[CreateDialog]');
+  const hasShowWindow = output.includes('[ShowWindow]');
+  const hasMessageLoop = /GetMessageA|GetMessageW|DispatchMessageA|DispatchMessageW/.test(output);
+  const hasWmClose = output.includes('WM_CLOSE') || output.includes('0x10');
+  const exitClean = output.includes('[Exit]');
+  const hasMessageBox = output.includes('[MessageBox]');
+  const visibleTitle = testCase.expectVisibleTitle
+    ? lines.some(l => l.includes('visible=true') && l.includes(`title="${testCase.expectVisibleTitle}"`))
+    : true;
+  const forbiddenVisibleTitle = (testCase.forbidVisibleTitles || [])
+    .find(title => lines.some(l => l.includes('visible=true') && l.includes(`title="${title}"`))) || '';
+
+  // Report the timeout as itself. It is not a pass (the app never finished and
+  // never wrote its PNG, so nothing about its rendering was actually checked)
+  // and it is not a crash (the app was healthy, the wall clock ran out). The
+  // load average goes in the reason because that is nearly always the cause on
+  // this box, and without it the line reads like an app regression.
+  if (timedOut) {
+    return {
+      name: testCase.name,
+      status: 'TIMEOUT',
+      reason: `timed out after ${(elapsedMs / 1000).toFixed(1)}s ` +
+        `(budget ${(budgetMs / 1000).toFixed(0)}s = max(declared ` +
+        `${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s, floor ` +
+        `${(MIN_BACKSTOP_MS / 1000).toFixed(0)}s) x${LOAD_FACTOR.toFixed(1)}, ` +
+        `load ${os.loadavg()[0].toFixed(1)}) — ${apiCalls.size} APIs, nothing verified`,
+      apiCount: apiCalls.size,
+      hasWindow,
+    };
+  }
+
+  if ((result.status !== null && result.status !== 0) || unimplMatch) {
+    // run.js prints "*** CRASH at batch N: <msg>" then "  EIP before batch: 0xXXXX"
+    const crashMsgMatch = output.match(/\*\*\* CRASH at batch \d+: (.+)/);
+    const crashMsg = crashMsgMatch ? crashMsgMatch[1].trim() : '';
+    const eipBeforeMatch = output.match(/EIP before batch:\s*(0x[0-9a-fA-F]+)/);
+    const eipBefore = eipBeforeMatch ? eipBeforeMatch[1] : '';
+
+    // crash_unimplemented is the one case where "last API" IS the crash site:
+    // the WAT $crash_unimplemented trap fires from inside an unimplemented handler stub.
+    const isUnimpl = /crash_unimplemented/.test(output);
+    const apiLines = lines.filter(l => /^\[API/.test(l.trim()));
+    const lastApi = apiLines.length > 0
+      ? apiLines[apiLines.length - 1].trim().replace(/^\[API[^\]]*\]\s*/, '').replace(/\(.*/, '')
+      : '';
+
+    let reason;
+    if (isUnimpl && lastApi) {
+      reason = `unimpl API: ${lastApi}`;
+    } else if (crashMsg) {
+      reason = eipBefore ? `${crashMsg} @ EIP=${eipBefore}` : crashMsg;
+      if (lastApi) reason += ` (last API: ${lastApi})`;
+    } else {
+      reason = 'unknown crash';
+    }
+
+    return {
+      name: testCase.name,
+      status: testCase.expectedCrash ? 'WARN' : 'CRASH',
+      reason: testCase.expectedCrash ? `${reason} — EXPECTED_CRASH (${testCase.expectedCrash})` : reason,
+      apiCount: apiCalls.size,
+      hasWindow,
+    };
+  }
+
+  // Reached max batches without crash = likely working
+  const windowOrLoop = hasWindow || hasMessageLoop || hasMessageBox;
+  const sawExpectedOutput = testCase.expectOutput ? output.includes(testCase.expectOutput) : false;
+  return {
+    name: testCase.name,
+    status: windowOrLoop || exitClean || sawExpectedOutput ? 'OK' : 'WARN',
+    reason: sawExpectedOutput
+      ? `${apiCalls.size} APIs, saw ${testCase.expectOutput}`
+      : windowOrLoop
+      ? `${apiCalls.size} APIs, ${hasWindow ? 'window created' : hasMessageBox ? 'message box shown' : 'message loop running'}`
+      : exitClean
+        ? `${apiCalls.size} APIs, clean exit`
+        : `${apiCalls.size} APIs, no window`,
+    apiCount: apiCalls.size,
+    hasWindow,
+    hasShowWindow,
+    visibleTitle,
+    forbiddenVisibleTitle,
+  };
+}
+
+// Build first (skip with --no-build)
+const noBuild = process.argv.includes('--no-build');
+if (!noBuild) {
+  console.log('Building WASM...');
+  execSync('bash tools/build.sh', { cwd: ROOT, stdio: 'inherit' });
+  console.log('');
+}
+
+// Every case bounds its emulated work with --max-batches, so `timeoutMs` is not
+// the budget — it is a wall-clock backstop for a run that wedges. Its declared
+// value describes an idle box, and this one routinely sits at load 30+ with
+// several agent sessions sweeping the corpus at once. At that load the backstop
+// stops measuring the emulator and starts measuring the machine: Notepad, a
+// two-second app, timed out at 15.6s having logged zero API calls.
+//
+// So scale it by how oversubscribed the box actually is. An idle box keeps the
+// declared budgets exactly, which is where a real slow-down regression would
+// still be caught; a loaded box gets proportionally longer ones and reports the
+// factor in every timeout line, so a scaled budget can never be mistaken for
+// the declared one. --strict-timeouts pins the factor at 1 for a quiet machine
+// or CI runner where the declared numbers are the point.
+const LOAD_FACTOR = (() => {
+  if (process.argv.includes('--strict-timeouts')) return 1;
+  const perCpu = os.loadavg()[0] / Math.max(1, os.cpus().length);
+  return Math.min(8, Math.max(1, perCpu * 1.5));
+})();
+// Every run pays the same fixed startup before it emulates anything: node
+// boot, the wasm compile, the PE and its DLLs. Measured on this box, notepad.exe
+// at its default 80-batch budget takes 19.5s wall for 5.2s of CPU — so a 10s or
+// 15s declared backstop is below the floor no matter how little work the case
+// asks for, and Notepad and Calculator timed out at load 10 having logged
+// nothing. Since --max-batches is what actually bounds the work, the backstop
+// only has to be above that floor to still catch a wedge.
+const MIN_BACKSTOP_MS = 30000;
+function wallBudgetMs(testCase) {
+  return Math.round(Math.max(testCase.timeoutMs || 15000, MIN_BACKSTOP_MS) * LOAD_FACTOR);
+}
+
+// Run all tests
+console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
+if (LOAD_FACTOR > 1.05) {
+  console.log(`  [load] ${os.loadavg()[0].toFixed(1)} on ${os.cpus().length} cpus — ` +
+    `wall-clock backstops scaled x${LOAD_FACTOR.toFixed(1)} (emulated work is unchanged; ` +
+    `--strict-timeouts to disable)\n`);
+}
+
+const filter = process.argv.slice(2).filter(a => !a.startsWith('--')).pop();
+
+fs.mkdirSync(PNG_DIR, { recursive: true });
+
+(async () => {
+  const results = [];
+  for (const tc of TEST_CASES) {
+    if (filter && !tc.name.toLowerCase().includes(filter.toLowerCase()) && !tc.exe.toLowerCase().includes(filter.toLowerCase())) {
+      continue;
+    }
+    process.stdout.write(`  ${tc.name.padEnd(22)} ... `);
+    const safeName = tc.name.replace(/[^a-zA-Z0-9]+/g, '_');
+    const pngPath = tc.noPng ? null : path.join(PNG_DIR, `${safeName}.png`);
+    if (pngPath) {
+      try { fs.unlinkSync(pngPath); } catch (_) {}
+    }
+    const r = runExe(tc, pngPath);
+
+    // A case that asked for a PNG and did not get one was never pixel-checked,
+    // so calling it PASS claims a verification that did not happen. The gate
+    // below is guarded on the file existing, which silently converted every
+    // such case into a pass.
+    if (r.status === 'OK' && pngPath && !fs.existsSync(pngPath)) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — NO_PNG (run produced no frame to check)`;
+    }
+
+    // Pixel-diversity gate: apparent PASS with a near-blank PNG is really a WARN.
+    // Two-signal: few unique colors AND >95% of pixels in one color = blank.
+    // Cartoon content (few colors but real shapes) passes the second check.
+    if (r.status === 'OK' && pngPath && fs.existsSync(pngPath)) {
+      const a = await analyzePng(pngPath, tc.contentRegion);
+      if (a) {
+        r.colors = a.colors;
+        // A case that declares its own region gate is making a sharper claim
+        // than the generic heuristic can — "these pixels must be lit" beats
+        // "the whole frame should not be near-solid". Some correct renders are
+        // one line of text on a solid field (the ddex samples draw exactly
+        // that), which the whole-frame test cannot tell from nothing at all.
+        const isBlank = !tc.minRegionNonBlackPixels &&
+          a.colors <= BLANK_COLOR_THRESHOLD && a.topShare > 0.97;
+        if (isBlank) {
+          r.status = 'WARN';
+          r.reason = `${r.reason} — BLANK (${a.colors} colors, ${(a.topShare*100).toFixed(1)}% one color)`;
+        } else {
+          r.reason = `${r.reason}, ${a.colors} colors`;
+        }
+        if (r.status === 'OK' && tc.minCenterContentPixels &&
+            a.centerContent < tc.minCenterContentPixels) {
+          r.status = 'WARN';
+          r.reason = `${r.reason} — CENTER_BLANK (${a.centerContent} content pixels, expected at least ${tc.minCenterContentPixels})`;
+        } else if (tc.minCenterContentPixels) {
+          r.reason = `${r.reason}, ${a.centerContent} center content pixels`;
+        }
+        if (r.status === 'OK' && tc.minRegionNonBlackPixels &&
+            a.regionNonBlack < tc.minRegionNonBlackPixels) {
+          r.status = 'WARN';
+          r.reason = `${r.reason} — VIEWPORT_BLANK (${a.regionNonBlack} non-black pixels, expected at least ${tc.minRegionNonBlackPixels})`;
+        } else if (tc.minRegionNonBlackPixels) {
+          r.reason = `${r.reason}, ${a.regionNonBlack} viewport pixels`;
+        }
+      }
+    }
+    if (r.status === 'OK' && tc.expectVisibleTitle && !r.visibleTitle) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — expected visible title "${tc.expectVisibleTitle}"`;
+    }
+    if (r.status === 'OK' && r.forbiddenVisibleTitle) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — forbidden visible title "${r.forbiddenVisibleTitle}"`;
+    }
+    if (tc.knownBadRender && (r.status === 'OK' || r.status === 'WARN')) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — KNOWN_BAD_RENDER (${tc.knownBadRender})`;
+    }
+    results.push(r);
+
+    const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP'
+      : r.status === 'WARN' ? 'WARN' : r.status === 'TIMEOUT' ? 'TMOUT' : 'FAIL';
+    console.log(`${icon}  ${r.reason}`);
+  }
+
+  console.log('\n=== Summary ===');
+  const pass = results.filter(r => r.status === 'OK').length;
+  const fail = results.filter(r => r.status === 'CRASH').length;
+  const warn = results.filter(r => r.status === 'WARN').length;
+  const skip = results.filter(r => r.status === 'SKIP').length;
+  const timeouts = results.filter(r => r.status === 'TIMEOUT');
+  console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}` +
+    `  TIMEOUT: ${timeouts.length}  Total: ${results.length}`);
+
+  // Loud, because a timeout used to be counted as a PASS: any number here means
+  // the PASS count above is measuring the box, not the emulator. Re-run on an
+  // idle machine before comparing it to anything.
+  if (timeouts.length > 0) {
+    console.log(`\nTimed out — NOT verified, do not read the PASS count as stable ` +
+      `(load now ${os.loadavg()[0].toFixed(1)}):`);
+    for (const r of timeouts) console.log(`  ${r.name}: ${r.reason}`);
+  }
+
+  if (fail > 0) {
+    console.log('\nCrashed EXEs:');
+    for (const r of results.filter(r => r.status === 'CRASH')) {
+      console.log(`  ${r.name}: ${r.reason}`);
+    }
+  }
+
+  const blanks = results.filter(r => r.status === 'WARN' && /BLANK/.test(r.reason || ''));
+  if (blanks.length > 0) {
+    console.log('\nBlank canvases (demoted from PASS):');
+    for (const r of blanks) console.log(`  ${r.name}: ${r.reason}`);
+  }
+
+  const knownBad = results.filter(r => r.status === 'WARN' && /KNOWN_BAD_RENDER/.test(r.reason || ''));
+  if (knownBad.length > 0) {
+    console.log('\nKnown bad renders / non-stage targets (demoted from PASS):');
+    for (const r of knownBad) console.log(`  ${r.name}: ${r.reason}`);
+  }
+
+  process.exit(fail > 0 ? 1 : 0);
+})();

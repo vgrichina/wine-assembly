@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-14T01:40:32.826Z",
+  "app": {
+    "id": "volume-control",
+    "title": "Volume Control",
+    "launch": "D:\\SNDVOL32.EXE"
+  },
+  "display": {
+    "width": 640,
+    "height": 480,
+    "display": "block",
+    "running": true
+  },
+  "output": "screenshots/v86-reference/reviewed/volume-control.png",
+  "screenshotSha256": "99f75bd9361213d486487c3bdfa488b94be9c5c990ca7c24b980c2b6cb4480f6",
+  "v86": {
+    "package": "v86@0.5.432",
+    "embeddedVersion": "0.5.432+gf3d4472",
+    "upstreamCommit": "f3d4472a9c934b9ad78a311f5849ba711a296d23"
+  },
+  "sources": {
+    "bios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/seabios.bin",
+    "vgaBios": "https://raw.githubusercontent.com/copy/v86/f3d4472a9c934b9ad78a311f5849ba711a296d23/bios/vgabios.bin",
+    "disk": "https://i.copy.sh/windows98/.img",
+    "state": "https://i.copy.sh/windows98_state-v2.bin.zst"
+  },
+  "payload": [
+    {
+      "name": "SNDVOL32.EXE",
+      "source": "test/binaries/win98-apps/sndvol32.exe",
+      "sha256": "a4bc3c6eaad2cc6a0be75ab2e3d39221f61311777c65a9e036beefb8e2555ddc"
+    }
+  ]
+}

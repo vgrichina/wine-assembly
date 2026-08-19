@@ -1,0 +1,38 @@
+# Wine-Assembly: Deep Codebase Audit Report (2026-04-25)
+
+## 1. Resolved Issues (Audit 2026-04-25)
+*   **SHLD/SHRD Flag Updates:** Fixed in 16-bit and 32-bit versions.
+*   **BT/BTS/BTR/BTC Flagging:** Fixed; now correctly sets Carry Flag.
+*   **Far Call/Jump Support:** Fixed; decoded as flat-mode near ops.
+*   **Exception Codes:** Division errors now use standard NT status codes (0xC0000094).
+
+## 2. Deep Dive: Pending Implementation Gaps
+
+### Direct3D Immediate Mode (src/09ab-handlers-d3dim-core.wat)
+*   **Vertex Pipeline Limitation:** `d3dim_draw_primitive` only supports `vtxType == 3` (TLVERTEX). If an app uses `D3DVT_VERTEX` or `D3DVT_LVERTEX`, the emulator crashes.
+*   **Lighting Stub:** `d3dim_exec_process_vertices` transformation works, but lighting is a no-op (hardcoded white).
+*   **DirectDraw Gaps:** `EnumSurfaces` and `DuplicateSurface` are stubs that call `crash_unimplemented`.
+
+### x87 FPU (src/06-fpu.wat)
+*   **Stub Density:** 23 distinct calls to `fpu_crash_op`.
+*   **Critical Missing Ops:** `FLDENV`, `FNSTENV`, `FRSTOR`, and `FNSAVE` (state management) are unimplemented.
+*   **Data Types:** No BCD support (`FBLD`/`FBSTP`).
+
+### Windows UI & Controls (src/09c3-controls.wat, src/09a5-handlers-window.wat)
+*   **Scrollbar Limitations:** `scrollbar_ctrl_wndproc` only handles arrow button clicks. **Thumb dragging and page-up/page-down regions are unimplemented.**
+*   **DefWndProc Focus:** `WM_SETFOCUS` / `WM_KILLFOCUS` handling is a TODO; doesn't currently track internal focus state.
+*   **SetWindowLong Gaps:** Subclassing via `GWL_WNDPROC` is partially implemented, but many other indices (like `GWL_EXSTYLE`) are not fully functional.
+*   **LineDDA Stub:** In `src/09a7-handlers-dispatch.wat`, `LineDDA` returns without invoking the caller's callback.
+
+### Virtual Filesystem (lib/filesystem.js)
+*   **Handle Leak:** `closeHandle` intentionally leaks memory by not deleting handle IDs from `this.handles` to avoid race conditions.
+
+### GDI & Rendering (lib/host-imports.js)
+*   **Partial Overlap:** Window clipping for partially overlapping child windows (non-containing) is prone to visual artifacts and generates many sub-rects.
+*   **StretchDIBits Corruption:** Debug workaround `SDB_FULL_BLIT` remains due to unresolved sub-rect blitting bugs.
+
+### CRT & Locale (src/09a6-handlers-crt.wat)
+*   **DBCS/MBCS Gaps:** Lead-byte logic for multi-byte character sets (CJK) is missing in `_mbsinc` and related functions.
+
+### DLL Loader (lib/dll-loader.js)
+*   **Trap Masking:** `DllMain` entry traps are potentially masked if `EAX=1` and `EIP` is near 0.

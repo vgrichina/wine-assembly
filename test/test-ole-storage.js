@@ -1,0 +1,603 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { createHostImports } = require('../lib/host-imports');
+const { compileWat } = require('../lib/compile-wat');
+
+const ROOT = path.join(__dirname, '..');
+const SRC = path.join(ROOT, 'src');
+
+async function main() {
+  const wasm = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
+  const imports = createHostImports(ctx);
+  imports.host.memory = memory;
+  imports.host.create_thread = () => 0;
+  imports.host.exit_thread = () => 0;
+  imports.host.create_event = () => 0;
+  imports.host.set_event = () => 0;
+  imports.host.reset_event = () => 0;
+  imports.host.wait_single = () => 0;
+  imports.host.wait_multiple = () => 0;
+  imports.host.com_create_instance = () => 0x80004002;
+
+  const { instance } = await WebAssembly.instantiate(wasm, imports);
+  const e = instance.exports;
+  e.init_dx_com_thunks();
+  const u8 = new Uint8Array(memory.buffer);
+  const dv = new DataView(memory.buffer);
+  const wa = gp => gp - e.get_image_base() + e.get_guest_base();
+
+  let passed = 0;
+  let failed = 0;
+  function check(name, ok, detail = '') {
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
+    if (ok) passed++; else failed++;
+  }
+  function alloc(bytes) { return e.guest_alloc(bytes); }
+  function writeWide(text) {
+    const gp = alloc((text.length + 1) * 2);
+    for (let i = 0; i < text.length; i++) dv.setUint16(wa(gp) + i * 2, text.charCodeAt(i), true);
+    dv.setUint16(wa(gp) + text.length * 2, 0, true);
+    return gp;
+  }
+  function readWide(gp, max = 256) {
+    let text = '';
+    for (let i = 0; i < max; i++) {
+      const code = dv.getUint16(wa(gp) + i * 2, true);
+      if (!code) break;
+      text += String.fromCharCode(code);
+    }
+    return text;
+  }
+  function writeBytes(bytes) {
+    const gp = alloc(bytes.length);
+    u8.set(bytes, wa(gp));
+    return gp;
+  }
+
+  const lockbytes = e.test_ole_create_lockbytes(0, 1) >>> 0;
+  const storage = e.test_ole_create_storage(lockbytes) >>> 0;
+  const name = writeWide('ObjectData');
+  const stream = e.test_ole_create_stream(storage, name) >>> 0;
+  check('creates distinct ILockBytes, IStorage and IStream objects',
+    lockbytes !== 0 && storage !== 0 && stream !== 0 && new Set([lockbytes, storage, stream]).size === 3);
+
+  const payload = Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0x4f, 0x4c, 0x45, 0x21]);
+  const input = writeBytes(payload);
+  const count = alloc(4);
+  const writeHr = e.test_ole_stream_write(stream, input, payload.length, count) >>> 0;
+  check('IStream write grows the backing buffer', writeHr === 0 && dv.getUint32(wa(count), true) === payload.length && e.test_ole_stream_size(stream) === payload.length);
+
+  const streamStat = alloc(72);
+  check('IStream Stat reports its name, 64-bit size, type and lock capabilities',
+    e.test_ole_fill_stat(stream, streamStat, 0) === 0 &&
+    readWide(dv.getUint32(wa(streamStat), true)) === 'ObjectData' &&
+    dv.getUint32(wa(streamStat) + 4, true) === 2 &&
+    dv.getUint32(wa(streamStat) + 8, true) === payload.length &&
+    dv.getUint32(wa(streamStat) + 12, true) === 0 &&
+    dv.getUint32(wa(streamStat) + 44, true) === 3);
+  e.guest_free(dv.getUint32(wa(streamStat), true));
+  check('STATFLAG_NONAME suppresses allocated stream names',
+    e.test_ole_fill_stat(stream, streamStat, 1) === 0 &&
+    dv.getUint32(wa(streamStat), true) === 0);
+
+  const lockbytesStat = alloc(72);
+  const storageStat = alloc(72);
+  check('ILockBytes and root IStorage Stat return complete unnamed object types',
+    e.test_ole_fill_stat(lockbytes, lockbytesStat, 0) === 0 &&
+    dv.getUint32(wa(lockbytesStat), true) === 0 &&
+    dv.getUint32(wa(lockbytesStat) + 4, true) === 3 &&
+    dv.getUint32(wa(lockbytesStat) + 12, true) === 0 &&
+    e.test_ole_fill_stat(storage, storageStat, 0) === 0 &&
+    dv.getUint32(wa(storageStat), true) === 0 &&
+    dv.getUint32(wa(storageStat) + 4, true) === 1);
+
+  e.test_ole_stream_seek(stream, 0);
+  const output = alloc(16);
+  u8.fill(0xcc, wa(output), wa(output) + 16);
+  const readHr = e.test_ole_stream_read(stream, output, 16, count) >>> 0;
+  const roundTrip = Array.from(u8.slice(wa(output), wa(output) + payload.length));
+  check('IStream read returns S_FALSE at EOF with exact byte count', readHr === 1 && dv.getUint32(wa(count), true) === payload.length);
+  check('IStream bytes round-trip without text transcoding', roundTrip.every((v, i) => v === payload[i]));
+
+  e.test_ole_stream_seek(stream, 3);
+  const clone = e.test_ole_stream_clone(stream) >>> 0;
+  check('IStream Clone returns a distinct interface at the source cursor',
+    clone !== 0 && clone !== stream && e.test_ole_stream_position(clone) === 3);
+  e.test_ole_stream_seek(stream, 0);
+  check('cloned streams keep independent seek cursors',
+    e.test_ole_stream_position(stream) === 0 && e.test_ole_stream_position(clone) === 3);
+
+  const clonePatch = writeBytes(Uint8Array.from([0xaa, 0xbb]));
+  check('writing through a clone updates the shared backing bytes',
+    e.test_ole_stream_write(clone, clonePatch, 2, count) === 0 &&
+    e.test_ole_stream_position(clone) === 5 && e.test_ole_stream_position(stream) === 0);
+  const sharedOut = alloc(payload.length);
+  check('the original stream observes clone writes without sharing its cursor',
+    e.test_ole_stream_read(stream, sharedOut, payload.length, count) === 0 &&
+    u8[wa(sharedOut) + 3] === 0xaa && u8[wa(sharedOut) + 4] === 0xbb);
+
+  check('SetSize through a clone updates shared size',
+    e.test_ole_stream_set_size(clone, 3) === 0 &&
+    e.test_ole_stream_size(stream) === 3 && e.test_ole_stream_size(clone) === 3);
+  check('shrinking does not clamp independent cursors',
+    e.test_ole_stream_position(stream) === payload.length && e.test_ole_stream_position(clone) === 5);
+  check('growing a previously shrunk stream zero-fills the exposed range',
+    e.test_ole_stream_set_size(stream, 8) === 0 && e.test_ole_stream_size(clone) === 8 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 3);
+      const zeros = alloc(5);
+      return e.test_ole_stream_read(clone, zeros, 5, count) === 0 &&
+        Array.from(u8.slice(wa(zeros), wa(zeros) + 5)).every(byte => byte === 0);
+    })());
+
+  check('IStream Revert without a checkpoint reports STG_E_REVERTED',
+    (e.test_ole_stream_revert(stream) >>> 0) === 0x80030102);
+  e.test_ole_stream_seek(stream, 0);
+  e.test_ole_stream_write(stream, writeBytes(Uint8Array.from([4, 5, 6, 7])), 4, count);
+  e.test_ole_stream_set_size(stream, 4);
+  check('IStream Commit captures shared backing bytes', e.test_ole_stream_commit(clone) === 0);
+  e.test_ole_stream_seek(clone, 1);
+  e.test_ole_stream_write(clone, writeBytes(Uint8Array.from([0xee, 0xff])), 2, count);
+  e.test_ole_stream_set_size(clone, 6);
+  check('IStream Revert through a clone restores shared bytes and size',
+    e.test_ole_stream_revert(stream) === 0 && e.test_ole_stream_size(stream) === 4 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 0);
+      const restored = alloc(4);
+      return e.test_ole_stream_read(clone, restored, 4, count) === 0 &&
+        Array.from(u8.slice(wa(restored), wa(restored) + 4)).join(',') === '4,5,6,7';
+    })());
+
+  e.test_ole_stream_seek(stream, 0);
+  check('exclusive region locks block clone reads and writes',
+    e.test_ole_stream_lock(stream, 1, 2, 2) === 0 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 1);
+      const readBlocked = (e.test_ole_stream_read(clone, alloc(1), 1, count) >>> 0) === 0x80030021;
+      e.test_ole_stream_seek(clone, 1);
+      const writeBlocked = (e.test_ole_stream_write(clone, writeBytes(Uint8Array.from([9])), 1, count) >>> 0) === 0x80030021;
+      return readBlocked && writeBlocked;
+    })());
+  check('lock owners can access their own locked range',
+    (() => {
+      e.test_ole_stream_seek(stream, 1);
+      return e.test_ole_stream_read(stream, alloc(1), 1, count) === 0;
+    })());
+  check('UnlockRegion requires the exact owner, range and flags',
+    (e.test_ole_stream_unlock(clone, 1, 2, 2) >>> 0) === 0x80030001 &&
+    e.test_ole_stream_unlock(stream, 1, 2, 2) === 0);
+  check('write locks allow clone reads but block clone writes and resize',
+    e.test_ole_stream_lock(stream, 3, 3, 1) === 0 &&
+    (() => {
+      e.test_ole_stream_seek(clone, 3);
+      const readable = e.test_ole_stream_read(clone, alloc(1), 1, count) === 0;
+      e.test_ole_stream_seek(clone, 3);
+      const writeBlocked = (e.test_ole_stream_write(clone, writeBytes(Uint8Array.from([1])), 1, count) >>> 0) === 0x80030021;
+      const resizeBlocked = (e.test_ole_stream_set_size(clone, 6) >>> 0) === 0x80030021;
+      return readable && writeBlocked && resizeBlocked;
+    })());
+  e.test_ole_stream_unlock(stream, 3, 3, 1);
+  const lockOwnerClone = e.test_ole_stream_clone(stream) >>> 0;
+  e.test_ole_stream_lock(lockOwnerClone, 0, 1, 2);
+  e.test_ole_release(lockOwnerClone);
+  e.test_ole_stream_seek(stream, 0);
+  check('releasing a clone automatically removes its region locks',
+    e.test_ole_stream_write(stream, writeBytes(Uint8Array.from([4])), 1, count) === 0);
+
+  const copyTarget = e.test_ole_create_hglobal_stream(0, 0) >>> 0;
+  const copyWritten = alloc(8);
+  e.test_ole_stream_seek(stream, 0);
+  check('IStream CopyTo returns S_FALSE with exact partial 64-bit counts at EOF',
+    e.test_ole_stream_copy_to(stream, copyTarget, 10, 0, count, copyWritten) === 1 &&
+    dv.getUint32(wa(count), true) === 4 && dv.getUint32(wa(copyWritten), true) === 4 &&
+    e.test_ole_stream_position(stream) === 4 && e.test_ole_stream_position(copyTarget) === 4);
+  e.test_ole_stream_seek(stream, 0);
+  e.test_ole_stream_seek(copyTarget, 0);
+  check('IStream CopyTo returns S_OK for an exact requested byte count',
+    e.test_ole_stream_copy_to(stream, copyTarget, 2, 0, count, copyWritten) === 0 &&
+    dv.getUint32(wa(count), true) === 2 && dv.getUint32(wa(copyWritten), true) === 2);
+  e.test_ole_stream_seek(stream, 0);
+  check('IStream CopyTo supports self-copy using a stable temporary buffer',
+    e.test_ole_stream_copy_to(stream, stream, 2, 0, count, copyWritten) === 0 &&
+    e.test_ole_stream_position(stream) === 4);
+  e.test_ole_release(copyTarget);
+
+  // Restore the original ownership/lifetime fixture used by the checks below.
+  e.test_ole_stream_set_size(stream, 3);
+  e.test_ole_stream_seek(stream, 0);
+  e.test_ole_stream_write(stream, input, 3, count);
+  e.test_ole_stream_set_size(stream, payload.length);
+
+  const lookupName = writeWide('objectdata');
+  const opened = e.test_ole_find_stream(storage, lookupName) >>> 0;
+  check('IStorage opens named streams case-insensitively', opened === stream);
+  e.test_ole_release(opened);
+
+  const clsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => i * 13 + 7));
+  const clsidOut = alloc(16);
+  e.test_ole_set_class(storage, clsid);
+  e.test_ole_get_class(storage, clsidOut);
+  check('IStorage persists the 16-byte class identifier',
+    Array.from(u8.slice(wa(clsidOut), wa(clsidOut) + 16)).every((v, i) => v === u8[wa(clsid) + i]));
+
+  const folderName = writeWide('Folder');
+  const childStorage = e.test_ole_create_child_storage(storage, folderName) >>> 0;
+  const grandchildName = writeWide('Grandchild');
+  const grandchildStorage = e.test_ole_create_child_storage(childStorage, grandchildName) >>> 0;
+  const siblingName = writeWide('Sibling');
+  const siblingStorage = e.test_ole_create_child_storage(storage, siblingName) >>> 0;
+  check('IStorage creates independent nested and sibling storage nodes',
+    childStorage !== 0 && grandchildStorage !== 0 && siblingStorage !== 0 &&
+    e.test_ole_storage_parent(childStorage) === storage &&
+    e.test_ole_storage_parent(grandchildStorage) === childStorage &&
+    e.test_ole_storage_parent(siblingStorage) === storage);
+  const childClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0x70 + i));
+  e.test_ole_set_class(childStorage, childClsid);
+  e.test_ole_storage_set_state_bits(childStorage, 0xa5, 0xff);
+  e.test_ole_storage_set_state_bits(childStorage, 0x10, 0x30);
+  const childStat = alloc(72);
+  check('IStorage SetStateBits masks updates and Stat returns name, CLSID and state',
+    e.test_ole_fill_stat(childStorage, childStat, 0) === 0 &&
+    readWide(dv.getUint32(wa(childStat), true)) === 'Folder' &&
+    dv.getUint32(wa(childStat) + 4, true) === 1 &&
+    Array.from(u8.slice(wa(childStat) + 48, wa(childStat) + 64))
+      .every((value, i) => value === 0x70 + i) &&
+    dv.getUint32(wa(childStat) + 64, true) === 0x95);
+  e.guest_free(dv.getUint32(wa(childStat), true));
+  e.test_ole_release(siblingStorage);
+
+  const foldedFolderName = writeWide('fOlDeR');
+  const reopenedChild = e.test_ole_find_storage(storage, foldedFolderName) >>> 0;
+  check('IStorage opens nested storages case-insensitively without confusing sibling links',
+    reopenedChild === childStorage);
+  e.test_ole_release(reopenedChild);
+
+  const collisionName = writeWide('Element');
+  const childStream = e.test_ole_create_stream(childStorage, collisionName) >>> 0;
+  const foldedCollisionName = writeWide('eLeMeNt');
+  check('streams and child storages share one case-insensitive element namespace',
+    childStream !== 0 && e.test_ole_create_child_storage(childStorage, foldedCollisionName) === 0);
+
+  const renamedStreamName = writeWide('Payload');
+  check('RenameElement updates a stream name without changing its identity',
+    e.test_ole_rename_element(childStorage, foldedCollisionName, renamedStreamName) === 0 &&
+    e.test_ole_find_stream(childStorage, foldedCollisionName) === 0 &&
+    (() => {
+      const renamed = e.test_ole_find_stream(childStorage, writeWide('pAyLoAd')) >>> 0;
+      const same = renamed === childStream;
+      if (renamed) e.test_ole_release(renamed);
+      return same;
+    })());
+  check('RenameElement rejects a cross-type name collision',
+    (e.test_ole_rename_element(childStorage, renamedStreamName, grandchildName) >>> 0) === 0x80030050);
+  check('DestroyElement removes lookup ownership but preserves a retained stream',
+    e.test_ole_destroy_element(childStorage, renamedStreamName) === 0 &&
+    e.test_ole_find_stream(childStorage, renamedStreamName) === 0 &&
+    e.test_ole_stream_set_size(childStream, 4) === 0 && e.test_ole_stream_size(childStream) === 4);
+  check('DestroyElement reports a missing element',
+    (e.test_ole_destroy_element(childStorage, renamedStreamName) >>> 0) === 0x80030002);
+  e.test_ole_release(childStream);
+
+  const renamedGrandchildName = writeWide('Nested');
+  check('RenameElement updates a child storage name case-insensitively',
+    e.test_ole_rename_element(childStorage, writeWide('GRANDCHILD'), renamedGrandchildName) === 0 &&
+    e.test_ole_find_storage(childStorage, grandchildName) === 0 &&
+    (() => {
+      const renamed = e.test_ole_find_storage(childStorage, writeWide('nEsTeD')) >>> 0;
+      const same = renamed === grandchildStorage;
+      if (renamed) e.test_ole_release(renamed);
+      return same;
+    })());
+
+  const detachedName = writeWide('Detached');
+  const detachedStorage = e.test_ole_create_child_storage(childStorage, detachedName) >>> 0;
+  const detachedStream = e.test_ole_create_stream(detachedStorage, writeWide('StillHere')) >>> 0;
+  check('DestroyElement detaches a retained storage with its subtree intact',
+    detachedStorage !== 0 && detachedStream !== 0 &&
+    e.test_ole_destroy_element(childStorage, detachedName) === 0 &&
+    e.test_ole_find_storage(childStorage, detachedName) === 0 &&
+    e.test_ole_storage_parent(detachedStorage) === 0 &&
+    (() => {
+      const retained = e.test_ole_find_stream(detachedStorage, writeWide('stillhere')) >>> 0;
+      const same = retained === detachedStream;
+      if (retained) e.test_ole_release(retained);
+      return same;
+    })());
+  e.test_ole_release(detachedStream);
+  e.test_ole_release(detachedStorage);
+
+  const copyStreamName = writeWide('CopyBytes');
+  const copySourceStream = e.test_ole_create_stream(childStorage, copyStreamName) >>> 0;
+  const copyPayload = writeBytes(Uint8Array.from([1, 2, 3, 4]));
+  e.test_ole_stream_write(copySourceStream, copyPayload, 4, count);
+  const nestedCopyStreamName = writeWide('NestedBytes');
+  const nestedCopySource = e.test_ole_create_stream(grandchildStorage, nestedCopyStreamName) >>> 0;
+  e.test_ole_stream_write(nestedCopySource, writeBytes(Uint8Array.from([8, 9])), 2, count);
+  e.test_ole_storage_set_state_bits(grandchildStorage, 0x1234, 0xffff);
+  const copyDestination = e.test_ole_create_storage(0) >>> 0;
+  check('IStorage CopyTo deep-copies mixed stream/storage trees',
+    e.test_ole_copy_storage(childStorage, copyDestination) === 0 &&
+    (() => {
+      const copiedStream = e.test_ole_find_stream(copyDestination, writeWide('copybytes')) >>> 0;
+      const copiedNested = e.test_ole_find_storage(copyDestination, writeWide('nested')) >>> 0;
+      const copiedNestedStream = copiedNested
+        ? e.test_ole_find_stream(copiedNested, writeWide('nestedbytes')) >>> 0 : 0;
+      const copiedNestedStat = alloc(72);
+      const metadataOk = copiedNested && e.test_ole_fill_stat(copiedNested, copiedNestedStat, 1) === 0 &&
+        dv.getUint32(wa(copiedNestedStat) + 64, true) === 0x1234;
+      const ok = copiedStream !== 0 && copiedStream !== copySourceStream &&
+        copiedNested !== 0 && copiedNested !== grandchildStorage && copiedNestedStream !== 0 && metadataOk;
+      if (copiedNestedStream) e.test_ole_release(copiedNestedStream);
+      if (copiedNested) e.test_ole_release(copiedNested);
+      if (copiedStream) e.test_ole_release(copiedStream);
+      return ok;
+    })());
+  e.test_ole_stream_seek(copySourceStream, 0);
+  e.test_ole_stream_write(copySourceStream, writeBytes(Uint8Array.from([0xee])), 1, count);
+  const independentCopy = e.test_ole_find_stream(copyDestination, copyStreamName) >>> 0;
+  e.test_ole_stream_seek(independentCopy, 0);
+  const independentOut = alloc(1);
+  check('IStorage CopyTo stream bytes are independent after the copy',
+    e.test_ole_stream_read(independentCopy, independentOut, 1, count) === 0 &&
+    u8[wa(independentOut)] === 1);
+  e.test_ole_release(independentCopy);
+  check('IStorage CopyTo rejects copying a tree into its own descendant',
+    (e.test_ole_copy_storage(childStorage, grandchildStorage) >>> 0) === 0x80030005);
+  e.test_ole_release(copySourceStream);
+  e.test_ole_release(nestedCopySource);
+  e.test_ole_release(copyDestination);
+
+  const moveSource = e.test_ole_create_storage(0) >>> 0;
+  const moveDestination = e.test_ole_create_storage(0) >>> 0;
+  const moveStreamName = writeWide('MoveStream');
+  const movedStreamName = writeWide('MovedStream');
+  const moveStream = e.test_ole_create_stream(moveSource, moveStreamName) >>> 0;
+  check('MoveElementTo transfers a stream without changing interface identity',
+    e.test_ole_move_element(moveSource, moveStreamName, moveDestination, movedStreamName, 0) === 0 &&
+    e.test_ole_find_stream(moveSource, moveStreamName) === 0 &&
+    (() => {
+      const moved = e.test_ole_find_stream(moveDestination, writeWide('movedstream')) >>> 0;
+      const same = moved === moveStream;
+      if (moved) e.test_ole_release(moved);
+      return same;
+    })());
+  const moveFolderName = writeWide('MoveFolder');
+  const movedFolderName = writeWide('MovedFolder');
+  const moveFolder = e.test_ole_create_child_storage(moveSource, moveFolderName) >>> 0;
+  check('MoveElementTo transfers a storage subtree without changing identity',
+    e.test_ole_move_element(moveSource, moveFolderName, moveDestination, movedFolderName, 0) === 0 &&
+    e.test_ole_storage_parent(moveFolder) === moveDestination &&
+    e.test_ole_find_storage(moveSource, moveFolderName) === 0);
+  check('MoveElementTo rejects cycles without unlinking the source storage',
+    (e.test_ole_move_element(moveDestination, movedFolderName, moveFolder, writeWide('Cycle'), 0) >>> 0) === 0x80030005 &&
+    e.test_ole_storage_parent(moveFolder) === moveDestination);
+  const collisionStream = e.test_ole_create_stream(moveSource, writeWide('Occupied')) >>> 0;
+  check('MoveElementTo rejects destination collisions without losing the source',
+    (e.test_ole_move_element(moveSource, writeWide('Occupied'), moveDestination, movedFolderName, 0) >>> 0) === 0x80030050 &&
+    e.test_ole_find_stream(moveSource, writeWide('occupied')) !== 0);
+  const copiedMoveName = writeWide('CopiedMove');
+  check('STGMOVE_COPY copies a stream while retaining the source element',
+    e.test_ole_move_element(moveSource, writeWide('Occupied'), moveDestination, copiedMoveName, 1) === 0 &&
+    e.test_ole_find_stream(moveSource, writeWide('occupied')) !== 0 &&
+    e.test_ole_find_stream(moveDestination, writeWide('copiedmove')) !== 0);
+  e.test_ole_release(collisionStream);
+  e.test_ole_release(moveStream);
+  e.test_ole_release(moveFolder);
+  e.test_ole_release(moveSource);
+  e.test_ole_release(moveDestination);
+
+  const enumStorage = e.test_ole_create_storage(0) >>> 0;
+  const enumAlphaName = writeWide('Alpha');
+  const enumBetaName = writeWide('Beta');
+  const enumFolderName = writeWide('EnumFolder');
+  const enumAlpha = e.test_ole_create_stream(enumStorage, enumAlphaName) >>> 0;
+  const enumBeta = e.test_ole_create_stream(enumStorage, enumBetaName) >>> 0;
+  e.test_ole_stream_set_size(enumAlpha, 5);
+  e.test_ole_stream_set_size(enumBeta, 2);
+  const enumFolder = e.test_ole_create_child_storage(enumStorage, enumFolderName) >>> 0;
+  const enumClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0xa0 + i));
+  e.test_ole_set_class(enumFolder, enumClsid);
+  e.test_ole_storage_set_state_bits(enumFolder, 0x55aa, 0xffff);
+  const statEnum = e.test_ole_create_stat_enum(enumStorage) >>> 0;
+  check('IStorage EnumElements creates a snapshot enumerator', statEnum !== 0);
+  e.test_ole_rename_element(enumStorage, enumAlphaName, writeWide('AlphaNow'));
+  e.test_ole_destroy_element(enumStorage, enumBetaName);
+  e.test_ole_rename_element(enumStorage, enumFolderName, writeWide('FolderNow'));
+  e.test_ole_release(enumAlpha);
+  e.test_ole_release(enumBeta);
+  e.test_ole_release(enumFolder);
+  e.test_ole_release(enumStorage);
+
+  const stats = alloc(72 * 4);
+  const enumFetched = alloc(4);
+  const enumHr = e.test_ole_stat_enum_next(statEnum, 4, stats, enumFetched) >>> 0;
+  const fetchedStats = [];
+  for (let i = 0; i < dv.getUint32(wa(enumFetched), true); i++) {
+    const stat = stats + i * 72;
+    const statName = dv.getUint32(wa(stat), true) >>> 0;
+    fetchedStats.push({
+      name: readWide(statName),
+      type: dv.getUint32(wa(stat) + 4, true),
+      size: dv.getUint32(wa(stat) + 8, true),
+      sizeHigh: dv.getUint32(wa(stat) + 12, true),
+      locks: dv.getUint32(wa(stat) + 44, true),
+      clsid: Array.from(u8.slice(wa(stat) + 48, wa(stat) + 64)),
+      stateBits: dv.getUint32(wa(stat) + 64, true),
+    });
+    e.guest_free(statName);
+  }
+  check('IEnumSTATSTG Next returns S_FALSE with an exact partial fetched count',
+    enumHr === 1 && fetchedStats.length === 3);
+  check('IEnumSTATSTG snapshot preserves complete stream and storage metadata after live mutation',
+    fetchedStats.some(s => s.name === 'Alpha' && s.type === 2 && s.size === 5 && s.sizeHigh === 0 && s.locks === 3) &&
+    fetchedStats.some(s => s.name === 'Beta' && s.type === 2 && s.size === 2 && s.sizeHigh === 0 && s.locks === 3) &&
+    fetchedStats.some(s => s.name === 'EnumFolder' && s.type === 1 &&
+      s.stateBits === 0x55aa && s.clsid.every((v, i) => v === 0xa0 + i)));
+
+  check('IEnumSTATSTG Reset and Skip update the snapshot cursor',
+    e.test_ole_stat_enum_reset(statEnum) === 0 && e.test_ole_stat_enum_skip(statEnum, 1) === 0);
+  const statEnumClone = e.test_ole_clone_stat_enum(statEnum) >>> 0;
+  const oneStat = alloc(72);
+  const cloneStat = alloc(72);
+  const originalNextHr = e.test_ole_stat_enum_next(statEnum, 1, oneStat, 0) >>> 0;
+  const cloneNextHr = e.test_ole_stat_enum_next(statEnumClone, 1, cloneStat, 0) >>> 0;
+  const originalNamePtr = dv.getUint32(wa(oneStat), true) >>> 0;
+  const cloneNamePtr = dv.getUint32(wa(cloneStat), true) >>> 0;
+  check('IEnumSTATSTG Clone starts at the same cursor with independent name ownership',
+    statEnumClone !== 0 && originalNextHr === 0 && cloneNextHr === 0 &&
+    readWide(originalNamePtr) === readWide(cloneNamePtr) && originalNamePtr !== cloneNamePtr);
+  e.guest_free(originalNamePtr);
+  e.guest_free(cloneNamePtr);
+  check('IEnumSTATSTG cloned cursors advance independently',
+    e.test_ole_stat_enum_skip(statEnum, 1) === 0 &&
+    e.test_ole_stat_enum_next(statEnum, 1, oneStat, 0) === 1 &&
+    e.test_ole_stat_enum_next(statEnumClone, 1, cloneStat, 0) === 0);
+  const cloneLastName = dv.getUint32(wa(cloneStat), true) >>> 0;
+  e.guest_free(cloneLastName);
+  e.test_ole_release(statEnumClone);
+  e.test_ole_release(statEnum);
+
+  const txStorage = e.test_ole_create_storage(0) >>> 0;
+  check('IStorage Revert without a committed snapshot reports STG_E_REVERTED',
+    (e.test_ole_storage_revert(txStorage) >>> 0) === 0x80030102);
+  const txStreamName = writeWide('CommittedStream');
+  const txStream = e.test_ole_create_stream(txStorage, txStreamName) >>> 0;
+  e.test_ole_stream_write(txStream, writeBytes(Uint8Array.from([3, 1, 4])), 3, count);
+  const txFolderName = writeWide('CommittedFolder');
+  const txFolder = e.test_ole_create_child_storage(txStorage, txFolderName) >>> 0;
+  const txNestedName = writeWide('NestedValue');
+  const txNested = e.test_ole_create_stream(txFolder, txNestedName) >>> 0;
+  e.test_ole_stream_write(txNested, writeBytes(Uint8Array.from([2, 7])), 2, count);
+  const txClsid = writeBytes(Uint8Array.from({ length: 16 }, (_, i) => 0x30 + i));
+  e.test_ole_set_class(txStorage, txClsid);
+  e.test_ole_storage_set_state_bits(txStorage, 0xcafe, 0xffff);
+  check('IStorage Commit captures a deep transaction checkpoint',
+    e.test_ole_storage_commit(txStorage) === 0);
+
+  e.test_ole_stream_seek(txStream, 0);
+  e.test_ole_stream_write(txStream, writeBytes(Uint8Array.from([0xff])), 1, count);
+  e.test_ole_rename_element(txStorage, txStreamName, writeWide('ChangedStream'));
+  e.test_ole_destroy_element(txFolder, txNestedName);
+  const postCommitName = writeWide('PostCommit');
+  const postCommit = e.test_ole_create_stream(txStorage, postCommitName) >>> 0;
+  e.test_ole_set_class(txStorage, writeBytes(Uint8Array.from({ length: 16 }, () => 0xee)));
+  e.test_ole_storage_set_state_bits(txStorage, 0xbeef, 0xffff);
+  check('IStorage Revert atomically restores the committed tree',
+    e.test_ole_storage_revert(txStorage) === 0 &&
+    e.test_ole_find_stream(txStorage, writeWide('ChangedStream')) === 0 &&
+    e.test_ole_find_stream(txStorage, postCommitName) === 0 &&
+    e.test_ole_find_storage(txStorage, txFolderName) !== 0);
+  check('IStorage Revert restores committed stream bytes and CLSID',
+    (() => {
+      const restored = e.test_ole_find_stream(txStorage, writeWide('committedstream')) >>> 0;
+      const restoredFolder = e.test_ole_find_storage(txStorage, writeWide('committedfolder')) >>> 0;
+      const restoredNested = restoredFolder
+        ? e.test_ole_find_stream(restoredFolder, writeWide('nestedvalue')) >>> 0 : 0;
+      const restoredClsid = alloc(16);
+      const restoredStat = alloc(72);
+      e.test_ole_get_class(txStorage, restoredClsid);
+      e.test_ole_fill_stat(txStorage, restoredStat, 1);
+      e.test_ole_stream_seek(restored, 0);
+      const restoredBytes = alloc(3);
+      const ok = restored !== 0 && restored !== txStream && restoredNested !== 0 &&
+        e.test_ole_stream_read(restored, restoredBytes, 3, count) === 0 &&
+        Array.from(u8.slice(wa(restoredBytes), wa(restoredBytes) + 3)).join(',') === '3,1,4' &&
+        Array.from(u8.slice(wa(restoredClsid), wa(restoredClsid) + 16))
+          .every((v, i) => v === 0x30 + i) &&
+        dv.getUint32(wa(restoredStat) + 64, true) === 0xcafe;
+      if (restoredNested) e.test_ole_release(restoredNested);
+      if (restoredFolder) e.test_ole_release(restoredFolder);
+      if (restored) e.test_ole_release(restored);
+      return ok;
+    })());
+  check('pre-revert retained interfaces detach and remain independently usable',
+    e.test_ole_storage_parent(txFolder) === 0 &&
+    e.test_ole_stream_set_size(txStream, 1) === 0 && e.test_ole_stream_size(txStream) === 1 &&
+    e.test_ole_stream_set_size(postCommit, 2) === 0);
+
+  const latestName = writeWide('LatestCheckpoint');
+  const latestStream = e.test_ole_create_stream(txStorage, latestName) >>> 0;
+  check('a later Commit replaces the previous transaction checkpoint',
+    latestStream !== 0 && e.test_ole_storage_commit(txStorage) === 0 &&
+    e.test_ole_destroy_element(txStorage, latestName) === 0 &&
+    e.test_ole_storage_revert(txStorage) === 0 &&
+    e.test_ole_find_stream(txStorage, writeWide('latestcheckpoint')) !== 0);
+  e.test_ole_release(latestStream);
+  e.test_ole_release(postCommit);
+  e.test_ole_release(txNested);
+  e.test_ole_release(txFolder);
+  e.test_ole_release(txStream);
+  e.test_ole_release(txStorage);
+  e.test_ole_release(grandchildStorage);
+
+  check('COM reference counts include storage and clone ownership',
+    e.test_ole_addref(stream) === 4 && e.test_ole_release(stream) === 3);
+  check('caller stream release preserves storage and clone ownership', e.test_ole_release(stream) === 2);
+
+  const reopened = e.test_ole_find_stream(storage, name) >>> 0;
+  e.test_ole_stream_seek(reopened, 0);
+  const reread = alloc(payload.length);
+  check('storage-owned stream remains readable after caller release',
+    e.test_ole_stream_read(reopened, reread, payload.length, count) === 0 &&
+    Array.from(u8.slice(wa(reread), wa(reread) + 3)).every((v, i) => v === payload[i]) &&
+    Array.from(u8.slice(wa(reread) + 3, wa(reread) + payload.length)).every(v => v === 0));
+  e.test_ole_release(reopened);
+
+  e.test_ole_release(storage);
+  e.test_ole_stream_seek(clone, 0);
+  const cloneAfterOriginalRelease = alloc(8);
+  check('a clone keeps the shared backing alive after original and storage release',
+    e.test_ole_stream_read(clone, cloneAfterOriginalRelease, 8, count) === 0 &&
+    dv.getUint32(wa(count), true) === 8);
+  e.test_ole_release(clone);
+
+  const retainedGrandchild = e.test_ole_find_storage(childStorage, writeWide('NESTED')) >>> 0;
+  check('a retained child storage survives root release with its subtree intact',
+    e.test_ole_storage_parent(childStorage) === 0 && retainedGrandchild === grandchildStorage &&
+    e.test_ole_storage_parent(retainedGrandchild) === childStorage);
+  e.test_ole_release(retainedGrandchild);
+  e.test_ole_release(childStorage);
+
+  const globalPayload = writeBytes(Uint8Array.from([9, 8, 7, 6]));
+  const globalStream = e.test_ole_create_hglobal_stream(globalPayload, 0) >>> 0;
+  check('CreateStreamOnHGlobal exposes the caller HGLOBAL without copying',
+    globalStream !== 0 && (e.test_ole_get_hglobal(globalStream) >>> 0) === globalPayload && e.test_ole_stream_size(globalStream) >= 4);
+  e.test_ole_stream_seek(globalStream, 0);
+  const globalOut = alloc(4);
+  check('HGLOBAL-backed IStream reads the original allocation',
+    e.test_ole_stream_read(globalStream, globalOut, 4, count) === 0 &&
+    Array.from(u8.slice(wa(globalOut), wa(globalOut) + 4)).join(',') === '9,8,7,6');
+  e.test_ole_release(globalStream);
+  // fDeleteOnRelease=FALSE leaves ownership with the caller.
+  u8[wa(globalPayload)] = 5;
+  check('non-owning HGLOBAL stream leaves the caller allocation valid', u8[wa(globalPayload)] === 5);
+
+  const createdGlobalStream = e.test_ole_create_hglobal_stream(0, 0) >>> 0;
+  check('NULL HGLOBAL stream creates a stable backing handle',
+    createdGlobalStream !== 0 && (e.test_ole_get_hglobal(createdGlobalStream) >>> 0) !== 0 && e.test_ole_stream_size(createdGlobalStream) === 0);
+  e.test_ole_release(createdGlobalStream);
+
+  const owningGlobalStream = e.test_ole_create_hglobal_stream(0, 0) >>> 0;
+  const owningGlobalClone = e.test_ole_stream_clone(owningGlobalStream) >>> 0;
+  const ownedHandle = e.test_ole_get_hglobal(owningGlobalStream) >>> 0;
+  check('HGLOBAL stream clones expose the same backing handle',
+    owningGlobalClone !== 0 && (e.test_ole_get_hglobal(owningGlobalClone) >>> 0) === ownedHandle);
+  e.test_ole_release(owningGlobalStream);
+  check('an HGLOBAL clone retains its root after original interface release',
+    (e.test_ole_get_hglobal(owningGlobalClone) >>> 0) === ownedHandle);
+  e.test_ole_release(owningGlobalClone);
+
+  e.test_ole_release(lockbytes);
+  console.log(`\n${passed}/${passed + failed} checks passed`);
+  if (failed) process.exit(1);
+}
+
+main().catch(error => {
+  console.error(error && error.stack || error);
+  process.exit(1);
+});

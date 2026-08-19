@@ -1,0 +1,447 @@
+  ;; ============================================================
+  ;; THREAD HANDLER TABLE
+  ;; ============================================================
+  ;; New design: fewer, more generic handlers.
+  ;; The decoder does ModR/M resolution and emits resolved ops.
+  ;;
+  ;; Thread word format: [handler_idx:i32, operand:i32] = 8 bytes
+  ;; Some handlers read additional i32 words after the thread word.
+  ;;
+  ;; Register encoding: 0=eax,1=ecx,2=edx,3=ebx,4=esp,5=ebp,6=esi,7=edi
+  ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
+
+  (type $handler_t (func (param i32)))
+  (table $handlers 388 funcref)
+
+  (elem (i32.const 0)
+    ;; -- Core --
+    $th_nop                ;; 0
+    $th_next_word          ;; 1: skip (reads+ignores next word), used as spacer
+    ;; -- Register-Immediate (operand=reg, imm32 in next word) --
+    $th_mov_r_i32          ;; 2
+    $th_add_r_i32          ;; 3
+    $th_or_r_i32           ;; 4
+    $th_adc_r_i32          ;; 5
+    $th_sbb_r_i32          ;; 6
+    $th_and_r_i32          ;; 7
+    $th_sub_r_i32          ;; 8
+    $th_xor_r_i32          ;; 9
+    $th_cmp_r_i32          ;; 10
+    ;; -- Register-Register (operand = dst<<4 | src) --
+    $th_mov_r_r            ;; 11
+    $th_add_r_r            ;; 12
+    $th_or_r_r             ;; 13
+    $th_adc_r_r            ;; 14
+    $th_sbb_r_r            ;; 15
+    $th_and_r_r            ;; 16
+    $th_sub_r_r            ;; 17
+    $th_xor_r_r            ;; 18
+    $th_cmp_r_r            ;; 19
+    ;; -- Load/Store 32 (operand = reg, guest_addr in next word) --
+    $th_load32             ;; 20: reg = [addr]
+    $th_store32            ;; 21: [addr] = reg
+    ;; -- Load/Store 16 --
+    $th_load16             ;; 22
+    $th_store16            ;; 23
+    ;; -- Load/Store 8 --
+    $th_load8              ;; 24: load byte, zero-extend into reg
+    $th_store8             ;; 25: store low byte of reg
+    ;; -- Load with reg base + offset (operand=dst<<4|base, disp in next word) --
+    $th_load32_ro          ;; 26
+    $th_store32_ro         ;; 27
+    $th_load8_ro           ;; 28
+    $th_store8_ro          ;; 29
+    $th_load16_ro          ;; 30
+    $th_store16_ro         ;; 31
+    ;; -- Stack --
+    $th_push_r             ;; 32: push reg
+    $th_pop_r              ;; 33: pop reg
+    $th_push_i32           ;; 34: push imm32 (in next word)
+    $th_pushad             ;; 35
+    $th_popad              ;; 36
+    $th_pushfd             ;; 37
+    $th_popfd              ;; 38
+    ;; -- Control flow --
+    $th_call_rel           ;; 39: operand=ret_addr, target in next word
+    $th_call_ind           ;; 40: operand=ret_addr, mem_addr in next word (reads [mem] for target)
+    $th_ret                ;; 41
+    $th_ret_imm            ;; 42: operand=bytes to pop
+    $th_jmp                ;; 43: operand=ignored, target in next word
+    $th_jcc                ;; 44: operand=cc, fall_through+target in next 2 words
+    $th_block_end          ;; 45: operand=eip to set
+    $th_loop               ;; 46: operand=cc (LOOP/LOOPE/LOOPNE), target in next word, fallthrough in next
+    ;; -- ALU memory (operand=alu_op, addr in next word, reg in word after) --
+    $th_alu_m32_r          ;; 47: [addr] OP= reg
+    $th_alu_r_m32          ;; 48: reg OP= [addr]
+    $th_alu_m8_r           ;; 49: [addr] OP= reg (byte)
+    $th_alu_r_m8           ;; 50: reg OP= [addr] (byte)
+    $th_alu_m32_i32        ;; 51: [addr] OP= imm32 (op, addr, imm in words)
+    $th_alu_m8_i8          ;; 52: [addr] OP= imm8
+    ;; -- Shifts (operand = reg, shift_type<<8 | count; or count=0 means CL) --
+    $th_shift_r            ;; 53: shift/rotate reg by imm or CL
+    $th_shift_m32          ;; 54: shift/rotate [addr] (addr in next word)
+    ;; -- Multiply/Divide --
+    $th_mul32              ;; 55: operand=reg (mul eax by reg, result in edx:eax)
+    $th_imul32             ;; 56: signed mul
+    $th_div32              ;; 57: unsigned div
+    $th_idiv32             ;; 58: signed div
+    $th_imul_r_r_i         ;; 59: imul reg, r/m, imm (operand=dst<<4|src, imm in next word)
+    $th_mul_m32            ;; 60: mul by [addr] (addr in next word)
+    $th_imul_m32           ;; 61
+    $th_div_m32            ;; 62
+    $th_idiv_m32           ;; 63
+    ;; -- Unary (operand = reg) --
+    $th_inc_r              ;; 64
+    $th_dec_r              ;; 65
+    $th_not_r              ;; 66
+    $th_neg_r              ;; 67
+    ;; -- Unary memory (operand = operation, addr in next word) --
+    $th_unary_m32          ;; 68: inc/dec/not/neg [addr]
+    $th_unary_m8           ;; 69
+    ;; -- LEA (operand = dst reg, addr in next word) --
+    $th_lea                ;; 70
+    ;; -- XCHG --
+    $th_xchg_r_r           ;; 71: operand = r1<<4|r2
+    ;; -- TEST --
+    $th_test_r_r           ;; 72: operand = r1<<4|r2
+    $th_test_r_i32         ;; 73: operand = reg, imm in next word
+    $th_test_m32_r         ;; 74: addr in next word, reg in operand
+    $th_test_m32_i32       ;; 75: addr+imm in next words
+    ;; -- MOV special --
+    $th_mov_m32_i32        ;; 76: addr in next word, imm in word after
+    $th_mov_m8_i8          ;; 77: addr in next word, imm in operand
+    ;; -- MOVZX / MOVSX --
+    $th_movzx8             ;; 78: operand=dst, loads byte from addr in next word, zero-extends
+    $th_movsx8             ;; 79: sign-extends
+    $th_movzx16            ;; 80
+    $th_movsx16            ;; 81
+    ;; -- String ops --
+    $th_rep_movsb          ;; 82
+    $th_rep_movsd          ;; 83
+    $th_rep_stosb          ;; 84
+    $th_rep_stosd          ;; 85
+    $th_movsb              ;; 86
+    $th_movsd              ;; 87
+    $th_stosb              ;; 88
+    $th_stosd              ;; 89
+    $th_lodsb              ;; 90
+    $th_lodsd              ;; 91
+    $th_rep_cmpsb          ;; 92
+    $th_rep_scasb          ;; 93
+    $th_cmpsb              ;; 94
+    $th_scasb              ;; 95
+    ;; -- Bit ops --
+    $th_bt_r_i8            ;; 96: operand=reg, bit in next word
+    $th_bts_r_i8           ;; 97
+    $th_btr_r_i8           ;; 98
+    $th_btc_r_i8           ;; 99
+    $th_bsf                ;; 100: operand=dst<<4|src
+    $th_bsr                ;; 101
+    ;; -- SETcc --
+    $th_setcc              ;; 102: operand=cc, addr/reg in next word
+    ;; -- SHLD/SHRD --
+    $th_shld               ;; 103: operand=dst<<4|src, count in next word
+    $th_shrd               ;; 104
+    ;; -- Misc --
+    $th_cdq                ;; 105: sign-extend eax into edx:eax
+    $th_cbw                ;; 106: sign-extend al into ax
+    $th_cwde               ;; 107: sign-extend ax into eax
+    $th_cld                ;; 108
+    $th_std                ;; 109
+    $th_clc                ;; 110
+    $th_stc                ;; 111
+    $th_cmc                ;; 112
+    $th_leave              ;; 113
+    $th_nop2               ;; 114: multi-byte nop
+    $th_bswap              ;; 115: operand=reg
+    $th_xchg_eax_r         ;; 116: operand=reg (xchg eax, reg)
+    $th_thunk_call         ;; 117: Win32 API dispatch
+    $th_imul_r_r           ;; 118: imul reg, r/m (2-operand, operand=dst<<4|src)
+    $th_call_r             ;; 119: call reg (operand=ret_addr, reg in next word)
+    $th_jmp_r              ;; 120: jmp reg (reg in operand)
+    $th_push_m32           ;; 121: push [addr] (addr in next word)
+    $th_alu_m16_i16        ;; 122: [addr] OP= imm16
+    $th_load8s             ;; 123: load byte, sign-extend (for movsx)
+    $th_test_m8_i8         ;; 124: addr in next word, imm in operand
+    $th_jmp_ind            ;; 125: jmp [mem] — load target, check thunk, set EIP
+    $th_lea_ro             ;; 126: lea dst, [base+disp] (runtime)
+    $th_alu_m32_r_ro       ;; 127: [base+disp] OP= reg (runtime EA)
+    $th_alu_r_m32_ro       ;; 128: reg OP= [base+disp] (runtime EA)
+    $th_alu_m8_r_ro        ;; 129: [base+disp] OP= reg8 (runtime EA)
+    $th_alu_r_m8_ro        ;; 130: reg8 OP= [base+disp] (runtime EA)
+    $th_alu_m32_i_ro       ;; 131: [base+disp] OP= imm32 (runtime EA)
+    $th_alu_m8_i_ro        ;; 132: [base+disp] OP= imm8 (runtime EA)
+    $th_mov_m32_i32_ro     ;; 133: [base+disp] = imm32 (op=base, disp+imm in words)
+    $th_mov_m8_i8_ro       ;; 134: [base+disp] = imm8
+    $th_unary_m32_ro       ;; 135: inc/dec/not/neg [base+disp] (op=unary_op<<4|base, disp in word)
+    $th_test_m32_r_ro      ;; 136: test [base+disp], reg (op=reg<<4|base, disp in word)
+    $th_test_m32_i32_ro    ;; 137: test [base+disp], imm32 (op=base, disp+imm in words)
+    $th_test_m8_i8_ro      ;; 138: test [base+disp], imm8 (op=base, disp+imm in words)
+    $th_shift_m32_ro       ;; 139: shift [base+disp] (op=base, shift_info+disp in words)
+    $th_call_ind_ro        ;; 140: call [base+disp] (op=ret_addr, base+disp in words)
+    $th_jmp_ind_ro         ;; 141: jmp [base+disp] (op=0, base+disp in words)
+    $th_push_m32_ro        ;; 142: push [base+disp] (op=base, disp in word)
+    $th_movzx8_ro          ;; 143: movzx reg, byte [base+disp] (op=dst<<4|base, disp in word)
+    $th_movsx8_ro          ;; 144
+    $th_movzx16_ro         ;; 145
+    $th_movsx16_ro         ;; 146
+    $th_muldiv_m32_ro      ;; 147: mul/imul/div/idiv [base+disp] (op=type<<4|base, disp in word)
+    $th_lea_sib            ;; 148: LEA dst, [base+index*scale+disp] (op=dst, base|index<<4|scale<<8 in word, disp in word)
+    $th_compute_ea_sib     ;; 149: compute SIB EA → ea_temp, then fall through to next handler (same encoding as 148 but op ignored)
+    $th_test_r8_r8         ;; 150: test reg8, reg8 (operand = r1<<4|r2)
+    $th_test_m8_r          ;; 151: test [addr], reg8 (operand=reg, addr in next word)
+    $th_test_m8_r_ro       ;; 152: test [base+disp], reg8 (op=reg<<4|base, disp in word)
+    $th_alu_r8_r8          ;; 153: byte ALU reg8,reg8 (op=alu_op<<8|dst<<4|src)
+    $th_alu_r8_i8          ;; 154: byte ALU reg8,imm8 (op=alu_op<<8|reg, imm in next word)
+    $th_mov_r8_r8          ;; 155: MOV reg8,reg8 (op=dst<<4|src)
+    $th_mov_r8_i8          ;; 156: MOV reg8,imm8 (op=reg, imm in next word)
+    $th_imul_r_m_ro        ;; 157: imul reg, [base+disp] (op=reg<<4|base, disp in word)
+    $th_imul_r_m_abs       ;; 158: imul reg, [addr] (op=reg, addr in next word)
+    $th_alu_r16_m16        ;; 159: r16 OP= [addr] (op=alu_op<<4|reg, addr in next word)
+    $th_alu_m16_r16        ;; 160: [addr] OP= r16 (op=alu_op<<4|reg, addr in next word)
+    $th_alu_r16_m16_ro     ;; 161: r16 OP= [base+disp] (op=alu_op<<8|reg<<4|base, disp in word)
+    $th_alu_m16_r16_ro     ;; 162: [addr] OP= r16 (op=alu_op<<8|reg<<4|base, disp in word)
+    $th_mov_m16_r16        ;; 163: mov [addr], r16 (op=reg, addr in next word)
+    $th_mov_r16_m16        ;; 164: mov r16, [addr] (op=reg, addr in next word)
+    $th_mov_m16_r16_ro     ;; 165: mov [base+disp], r16 (op=reg<<4|base, disp in word)
+    $th_mov_r16_m16_ro     ;; 166: mov r16, [base+disp] (op=reg<<4|base, disp in word)
+    $th_mov_m16_i16        ;; 167: mov [addr], imm16 (op=0, addr+imm in words)
+    $th_mov_m16_i16_ro     ;; 168: mov [base+disp], imm16 (op=base, disp+imm in words)
+    ;; -- CMPSD/SCASD --
+    $th_rep_cmpsd          ;; 169
+    $th_rep_scasd          ;; 170
+    $th_cmpsd              ;; 171
+    $th_scasd              ;; 172
+    ;; -- CMPXCHG/XADD/CPUID --
+    $th_cmpxchg            ;; 173: operand=reg, addr in next word (or mod=3: operand=dst<<4|src)
+    $th_xadd               ;; 174: same encoding as cmpxchg
+    $th_cpuid              ;; 175
+    ;; -- Memory BT/BTS/BTR/BTC --
+    $th_bt_m_i8            ;; 176: addr in next word, bit in word after
+    $th_bts_m_i8           ;; 177
+    $th_btr_m_i8           ;; 178
+    $th_btc_m_i8           ;; 179
+    ;; -- 0x66 prefix helpers --
+    $th_cwd                ;; 180: CWD (AX → DX:AX sign extend)
+    $th_push_r16           ;; 181: push 16-bit reg (operand=reg)
+    $th_pop_r16            ;; 182: pop 16-bit reg
+    $th_movsw              ;; 183
+    $th_stosw              ;; 184
+    $th_lodsw              ;; 185
+    $th_rep_movsw          ;; 186
+    $th_rep_stosw          ;; 187
+    ;; -- x87 FPU --
+    $th_fpu_mem            ;; 188
+    $th_fpu_reg            ;; 189
+    $th_fpu_mem_ro         ;; 190
+    ;; -- 8/16-bit shifts --
+    $th_shift_r8           ;; 191
+    $th_shift_m8           ;; 192
+    $th_shift_r16          ;; 193
+    $th_shift_m16          ;; 194
+    ;; -- CMPXCHG8B --
+    $th_cmpxchg8b          ;; 195
+    ;; -- XCHG memory --
+    $th_xchg_m_r           ;; 196: xchg [addr], reg (op=reg, addr in next word)
+    $th_xchg_m_r_ro        ;; 197: xchg [base+disp], reg (op=reg<<4|base, disp in word)
+    ;; -- BT/BTS/BTR/BTC r,r --
+    $th_bt_r_r             ;; 198: bt reg, reg (op=dst<<4|src)
+    $th_bts_r_r            ;; 199: bts reg, reg
+    $th_btr_r_r            ;; 200: btr reg, reg
+    $th_btc_r_r            ;; 201: btc reg, reg
+    ;; -- 16-bit INC/DEC --
+    $th_inc_r16            ;; 202: inc r16 (op=reg)
+    $th_dec_r16            ;; 203: dec r16 (op=reg)
+    ;; -- 16-bit TEST --
+    $th_test_r16_r16       ;; 204: test r16, r16 (op=dst<<4|src)
+    $th_test_ax_i16        ;; 205: test ax, imm16 (imm in next word)
+    ;; -- 16-bit register ALU --
+    $th_alu_r16_r16        ;; 206: r16 OP= r16 (op=alu_op<<8|dst<<4|src)
+    $th_alu_r16_i16        ;; 207: r16 OP= imm16 (op=alu_op<<4|reg, imm in next word)
+    $th_movzx_r_r8         ;; 208: movzx r32, reg8 (op=dst<<4|src_byte_reg)
+    $th_movsx_r_r8         ;; 209: movsx r32, reg8 (op=dst<<4|src_byte_reg)
+    $th_mov_r16_r16        ;; 210: mov r16, r16 (op=dst<<4|src)
+    $th_setcc_mem          ;; 211: SETcc [addr] (op=cc, addr in next word)
+    ;; -- SAHF / LAHF --
+    $th_sahf               ;; 212: SAHF — load flags from AH
+    $th_lahf               ;; 213: LAHF — store flags to AH
+    ;; -- 8-bit register unary --
+    $th_neg_r8             ;; 214: NEG r8 (8-bit negate with flags)
+    $th_not_r8             ;; 215: NOT r8 (8-bit bitwise NOT)
+    $th_jecxz              ;; 216: JECXZ — jump if ECX==0 (target+fall in next 2 words)
+    $th_test_r8_i          ;; 217: TEST r8, imm8 (op=byte_reg, imm in next word)
+    $th_setcc_mem_ro       ;; 218: SETcc [base+disp] (op=cc<<4|base, disp in next word)
+    $th_xchg_r8_r8         ;; 219: xchg r8, r8 (op=r1<<4|r2, byte regs)
+    $th_alu_m16_i_ro       ;; 220: [base+disp] OP= imm16 (runtime EA, 16-bit)
+    $th_cmovcc_rr          ;; 221: CMOVcc r32, r32 (op=cc<<8|dst<<4|src)
+    $th_cmovcc_rm          ;; 222: CMOVcc r32, [mem] (op=cc<<4|dst, addr next word)
+    $th_shld_m             ;; 223: SHLD [mem], src, imm (op=src, addr word, count word)
+    $th_shrd_m             ;; 224: SHRD [mem], src, imm (op=src, addr word, count word)
+    $th_bsf_rm             ;; 225: BSF dst, [mem] (op=dst, addr next word)
+    $th_bsr_rm             ;; 226: BSR dst, [mem] (op=dst, addr next word)
+    $th_bt_m_r             ;; 227: BT  [mem], r32 (op=src_reg, addr next word)
+    $th_bts_m_r            ;; 228: BTS [mem], r32
+    $th_btr_m_r            ;; 229: BTR [mem], r32
+    $th_btc_m_r            ;; 230: BTC [mem], r32
+    $th_pop_m32            ;; 231: pop [addr] (addr in next word)
+    $th_pop_m32_ro         ;; 232: pop [base+disp] (op=base, disp in word)
+    $th_emms               ;; 233
+    $th_inc_r8             ;; 234: INC r8 (op=byte_reg)
+    $th_dec_r8             ;; 235: DEC r8 (op=byte_reg)
+    $th_mov_r16_i16        ;; 236: MOV r16, imm16 (op=reg, imm in next word) — preserves upper 16
+    $th_xchg_m8_r          ;; 237: XCHG [addr], r8 (op=byte_reg, addr in next word)
+    $th_xchg_m8_r_ro       ;; 238: XCHG [base+disp], r8 (op=reg<<4|base, disp in next word)
+    $th_mul8               ;; 239: MUL AL, r8 → AX (op=byte_reg)
+    $th_imul8              ;; 240: IMUL AL, r8 → AX signed (op=byte_reg)
+    $th_div8               ;; 241: DIV AX by r8 → AL=quot,AH=rem (op=byte_reg)
+    $th_idiv8              ;; 242: IDIV AX by r8 → AL=quot,AH=rem signed (op=byte_reg)
+    $th_muldiv_m8          ;; 243: 8-bit MUL/DIV [addr] (op=type 0-3, addr next word)
+    $th_muldiv_m8_ro       ;; 244: 8-bit MUL/DIV [base+disp] (op=type<<4|base, disp next word)
+    $th_shift_m8_ro        ;; 245: shift [base+disp] 8-bit (op=base, disp+shift_info in words)
+    $th_shift_m16_ro       ;; 246: shift [base+disp] 16-bit (op=base, disp+shift_info in words)
+    $th_cmpsw              ;; 247: CMPSW single
+    $th_rep_cmpsw          ;; 248: REP CMPSW (op=0 REPE, 1 REPNE)
+    $th_scasw              ;; 249: SCASW single
+    $th_rep_scasw          ;; 250: REP SCASW (op=0 REPE, 1 REPNE)
+    $th_imul_r16_r16_i     ;; 251: IMUL r16, r16, imm16 (op=dst<<4|src, imm next word)
+    $th_cmpxchg8           ;; 252: CMPXCHG r/m8, r8 (same encoding as th_cmpxchg but 8-bit)
+    $th_pushf16            ;; 253: PUSHF (16-bit flags)
+    $th_popf16             ;; 254: POPF (16-bit flags)
+    $th_xchg_ax_r16        ;; 255: XCHG AX, r16 (op=reg, preserves upper 16 of both)
+    $th_cmovcc_rr16        ;; 256: CMOVcc r16, r16 (op=cc<<8|dst<<4|src)
+    $th_cmovcc_rm16        ;; 257: CMOVcc r16, [mem] (op=cc<<4|dst, addr next word)
+    $th_shld16             ;; 258: SHLD r16, r16, count (op=dst<<4|src, count next word)
+    $th_shrd16             ;; 259: SHRD r16, r16, count
+    $th_shld16_m           ;; 260: SHLD [mem], r16, count (op=src, addr+count in words)
+    $th_shrd16_m           ;; 261: SHRD [mem], r16, count
+    $th_bsf16              ;; 262: BSF r16, r16 (op=dst<<4|src)
+    $th_bsr16              ;; 263: BSR r16, r16
+    $th_bsf16_m            ;; 264: BSF r16, [mem] (op=dst, addr next word)
+    $th_bsr16_m            ;; 265: BSR r16, [mem]
+    $th_call_rel16         ;; 266: CALL rel16
+    $th_push_m16           ;; 267: PUSH [addr] 16-bit (addr next word)
+    $th_pop_m16            ;; 268: POP [addr] 16-bit (addr next word)
+    $th_push_m16_ro        ;; 269: PUSH [base+disp] 16-bit (op=base, disp next word)
+    $th_xchg_m16_r         ;; 270: xchg [addr], r16 (op=reg, addr in next word)
+    $th_xchg_m16_r_ro      ;; 271: xchg [base+disp], r16 (op=reg<<4|base, disp in word)
+    $th_xchg_r16_r16       ;; 272: xchg r16, r16 (op=r1<<4|r2, preserves upper 16)
+    $th_test_m16_r         ;; 273: test [addr], r16 (op=reg, addr in next word)
+    $th_test_m16_r_ro      ;; 274: test [base+disp], r16 (op=reg<<4|base, disp in word)
+    $th_test_m16_i         ;; 275: test [addr], imm16 (addr+imm in next words)
+    $th_test_m16_i_ro      ;; 276: test [base+disp], imm16 (op=base, disp+imm in words)
+    $th_cmpxchg16          ;; 277: cmpxchg r/m16, r16 (same encoding as th_cmpxchg)
+    $th_xadd16             ;; 278: xadd r/m16, r16 (same encoding as th_xadd)
+    $th_test_r16_i16       ;; 279: test r16, imm16 (op=reg, imm in next word)
+    $th_xlat               ;; 280: XLAT — AL = [EBX + AL] (zero-ext AL as offset)
+    $th_unary_m16          ;; 281: 16-bit unary [addr] (op=0/1/2/3 for inc/dec/not/neg, addr next word)
+    $th_mul16              ;; 282: MUL AX by r16 -> DX:AX
+    $th_imul16             ;; 283: IMUL AX by r16 -> DX:AX
+    $th_div16              ;; 284: DIV DX:AX by r16 -> AX quotient, DX remainder
+    $th_idiv16             ;; 285: IDIV DX:AX by r16
+    $th_muldiv_m16         ;; 286: 16-bit MUL/IMUL/DIV/IDIV [addr] (op=type, addr next word)
+    $th_muldiv_m16_ro      ;; 287: 16-bit MUL/IMUL/DIV/IDIV [base+disp] (op=type<<4|base, disp next word)
+    $th_imul_r16_r16       ;; 288: IMUL r16, r/m16 register form (op=dst<<4|src)
+    $th_imul_r16_m         ;; 289: IMUL r16, [addr] (op=dst, addr next word)
+    $th_imul_r16_m_ro      ;; 290: IMUL r16, [base+disp] (op=dst<<4|base, disp next word)
+    $th_bt_r16_i8          ;; 291: BT r16, imm8
+    $th_bts_r16_i8         ;; 292: BTS r16, imm8
+    $th_btr_r16_i8         ;; 293: BTR r16, imm8
+    $th_btc_r16_i8         ;; 294: BTC r16, imm8
+    $th_bt_r16_r16         ;; 295: BT r16, r16
+    $th_bts_r16_r16        ;; 296: BTS r16, r16
+    $th_btr_r16_r16        ;; 297: BTR r16, r16
+    $th_btc_r16_r16        ;; 298: BTC r16, r16
+    $th_bt_m16_i8          ;; 299: BT [addr], imm8
+    $th_bts_m16_i8         ;; 300: BTS [addr], imm8
+    $th_btr_m16_i8         ;; 301: BTR [addr], imm8
+    $th_btc_m16_i8         ;; 302: BTC [addr], imm8
+    $th_bt_m16_r16         ;; 303: BT [addr], r16
+    $th_bts_m16_r16        ;; 304: BTS [addr], r16
+    $th_btr_m16_r16        ;; 305: BTR [addr], r16
+    $th_btc_m16_r16        ;; 306: BTC [addr], r16
+    ;; -- Specialized Jcc (same payload as 44: fall-through, target) --
+    $th_jcc_o              ;; 307: JO
+    $th_jcc_no             ;; 308: JNO
+    $th_jcc_b              ;; 309: JB/JC/JNAE
+    $th_jcc_ae             ;; 310: JAE/JNB/JNC
+    $th_jcc_z              ;; 311: JZ/JE
+    $th_jcc_nz             ;; 312: JNZ/JNE
+    $th_jcc_be             ;; 313: JBE/JNA
+    $th_jcc_a              ;; 314: JA/JNBE
+    $th_jcc_s              ;; 315: JS
+    $th_jcc_ns             ;; 316: JNS
+    $th_jcc_p              ;; 317: JP/JPE
+    $th_jcc_np             ;; 318: JNP/JPO
+    $th_jcc_l              ;; 319: JL/JNGE
+    $th_jcc_ge             ;; 320: JGE/JNL
+    $th_jcc_le             ;; 321: JLE/JNG
+    $th_jcc_g              ;; 322: JG/JNLE
+    ;; -- Specialized PUSH/POP r32 --
+    $th_push_eax           ;; 323
+    $th_push_ecx           ;; 324
+    $th_push_edx           ;; 325
+    $th_push_ebx           ;; 326
+    $th_push_esp           ;; 327
+    $th_push_ebp           ;; 328
+    $th_push_esi           ;; 329
+    $th_push_edi           ;; 330
+    $th_pop_eax            ;; 331
+    $th_pop_ecx            ;; 332
+    $th_pop_edx            ;; 333
+    $th_pop_ebx            ;; 334
+    $th_pop_esp            ;; 335
+    $th_pop_ebp            ;; 336
+    $th_pop_esi            ;; 337
+    $th_pop_edi            ;; 338
+    ;; -- Specialized MOV r32, [base+disp] / MOV [base+disp], r32 --
+    $th_load32_ro_base_eax  ;; 339
+    $th_load32_ro_base_ecx  ;; 340
+    $th_load32_ro_base_edx  ;; 341
+    $th_load32_ro_base_ebx  ;; 342
+    $th_load32_ro_base_esp  ;; 343
+    $th_load32_ro_base_ebp  ;; 344
+    $th_load32_ro_base_esi  ;; 345
+    $th_load32_ro_base_edi  ;; 346
+    $th_store32_ro_base_eax ;; 347
+    $th_store32_ro_base_ecx ;; 348
+    $th_store32_ro_base_edx ;; 349
+    $th_store32_ro_base_ebx ;; 350
+    $th_store32_ro_base_esp ;; 351
+    $th_store32_ro_base_ebp ;; 352
+    $th_store32_ro_base_esi ;; 353
+    $th_store32_ro_base_edi ;; 354
+    $th_jmp_ind_sib_eax4_abs ;; 355: jmp [disp+eax*4]
+    $th_stack_packet         ;; 356: flagged stack-packet prototype
+    $th_movzx_r_r16          ;; 357: movzx r32, r16 (preserves flags)
+    $th_movsx_r_r16          ;; 358: movsx r32, r16 (preserves flags)
+    $th_push_seg             ;; 359: push flat-mode segment selector (op bit16=16-bit)
+    $th_pop_seg              ;; 360: discard popped segment selector (op=16-bit flag)
+    $th_bad_opcode           ;; 361: undecodable opcode — trap with eip + bytes
+    $th_bound                ;; 362: BOUND r32, m32&32 (Borland range check)
+    ;; -- 16-bit segmented execution (src/05c-seg16-ops.wat) --
+    $th_compute_ea16         ;; 363: segmented EA → ea_temp (info, disp in next words)
+    $th_lea16                ;; 364: LEA r16, m — offset only, no segment base
+    $th_ret16                ;; 365: near RET, pops IP
+    $th_ret16_imm            ;; 366: near RET imm16
+    $th_call_far_imm         ;; 367: CALL FAR ptr16:16
+    $th_jmp_far_imm          ;; 368: JMP FAR ptr16:16
+    $th_call_far_mem         ;; 369: CALL FAR m16:16
+    $th_jmp_far_mem          ;; 370: JMP FAR m16:16
+    $th_retf16               ;; 371: RETF / RETF imm16 (op = bytes to pop)
+    $th_mov_sreg_r16         ;; 372: MOV Sreg, r16
+    $th_mov_sreg_m16         ;; 373: MOV Sreg, m16
+    $th_push_sreg16          ;; 374: PUSH Sreg
+    $th_pop_sreg16           ;; 375: POP Sreg
+    $th_load_far_ptr         ;; 376: LES/LDS r16, m16:16
+    $th_mov_r16_sreg         ;; 377: MOV r16, Sreg
+    $th_mov_m16_sreg         ;; 378: MOV m16, Sreg
+    $th_call_near16_r        ;; 379: CALL r16
+    $th_call_near16_m        ;; 380: CALL m16
+    $th_jmp_near16_r         ;; 381: JMP r16
+    $th_jmp_near16_m         ;; 382: JMP m16
+    $th_enter16              ;; 383: ENTER imm16, 0
+    $th_leave16              ;; 384: LEAVE (16-bit frame)
+    $th_push_imm16          ;; 385: PUSH imm16 (16-bit operand size)
+    $th_string16            ;; 386: 16-bit string op (MOVS/STOS/LODS/CMPS/SCAS + REP)
+    $th_xlat16              ;; 387: XLAT (16-bit)
+  )

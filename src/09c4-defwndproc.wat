@@ -1,0 +1,1105 @@
+  ;; ============================================================
+  ;; DefWindowProc — top-level window non-client paint
+  ;; ============================================================
+  ;; Real Win32 calls DefWindowProc(WM_NCPAINT) from inside the
+  ;; application wndproc to draw the standard window chrome (3D
+  ;; outset frame, caption gradient + text, sysmenu buttons).
+  ;;
+  ;; Our equivalent: $defwndproc_ncpaint, exported as a callable
+  ;; entry point. The renderer sets _activeChildDraw to (canvas,
+  ;; screen-x, screen-y) of the window and calls this; the gdi_*
+  ;; host primitives composite onto the screen at window-relative
+  ;; coordinates. Same plumbing as the WAT-native control wndprocs
+  ;; (button/edit/static/listbox/colorgrid) — see 09c3-controls.wat.
+  ;;
+  ;; Args:
+  ;;   $hwnd      — top-level hwnd (used to encode hdc = hwnd+0x40000)
+  ;;   $w, $h     — window width / height
+  ;;   $title_wa  — WASM addr of title text bytes (0 = no title)
+  ;;   $title_len — title length in bytes (0 ok)
+  ;;   $flags     — bit0 active, bit1 dialog_style (no min/max),
+  ;;                bit2 maximized, bit3 has_caption
+  ;; Returns: caption_height (18 if has_caption, else 0)
+  ;;
+  ;; Layout (window-relative, origin at top-left of window):
+  ;;   outset 3D border at (0,0,w,h)
+  ;;   frame fill: btnFace strips on top/left/right/bottom (3px borders
+  ;;     + caption strip)
+  ;;   if has_caption:
+  ;;     title bar at (3, 3, w-3, 21), gradient + text + sysbuttons
+  ;;
+  ;; Stock objects used:
+  ;;   0x30010 WHITE_BRUSH    0x30011 LTGRAY_BRUSH (= btnFace)
+  ;;   0x30014 BLACK_BRUSH    0x30017 BLACK_PEN
+  ;;   0x30022 caption font (added — 11px MS Sans Serif Bold)
+
+  ;; Width of a top-level window's border, in pixels. Win98's sizing frame is
+  ;; SM_CXFRAME = 4; a fixed frame is SM_CXDLGFRAME = 3. Measured against real
+  ;; Win98 under v86 (tools/v86-reference/shell-apps.json, probed with
+  ;; tools/png-crop.js --probe): a WS_THICKFRAME window reads
+  ;;
+  ;;   top/left  outward-in:   3DFACE, 3DHILIGHT, 3DFACE, 3DFACE
+  ;;   bottom/right inward-out: 3DFACE, 3DFACE, 3DSHADOW, 3DDKSHADOW
+  ;;
+  ;; and its caption starts at (4,4). That is our raised edge with its top-left
+  ;; moved one pixel inward and the extra pixel left as frame fill; the
+  ;; bottom-right two-tone edge already sat on the window boundary.
+  ;;
+  ;; Three call sites must agree — the frame painter, WM_NCCALCSIZE and
+  ;; WM_NCHITTEST — or the chrome, the client origin and the resize bands
+  ;; drift apart.
+  (func $defwndproc_frame_width (param $hwnd i32) (result i32)
+    (select (i32.const 4) (i32.const 3)
+      (i32.ne
+        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00040000))
+        (i32.const 0))))
+
+  (func $defwndproc_ncpaint (export "defwndproc_ncpaint")
+        (param $hwnd i32) (param $w i32) (param $h i32)
+        (param $title_wa i32) (param $title_len i32) (param $flags i32)
+        (param $client_top i32)
+        (result i32)
+    (local $hdc i32)
+    (local $has_caption i32)
+    (local $is_active i32)
+    (local $is_dialog i32)
+    (local $is_maxed i32)
+    (local $cap_h i32)
+    (local $cap_top i32)   ;; y of title bar (window-relative)
+    (local $cap_bot i32)
+    (local $cap_l i32)     ;; x of title bar
+    (local $cap_r i32)
+    (local $btn_y i32)     ;; sysbutton top
+    (local $btn_h i32)
+    (local $btn_w i32)
+    (local $close_x i32)
+    (local $max_x i32)
+    (local $min_x i32)
+    (local $cx i32) (local $cy i32) (local $cs i32)
+    (local $is_p i32)        ;; pressed flag for current sysbutton
+    (local $edge i32)        ;; EDGE_RAISED (0x05) or EDGE_SUNKEN (0x0A)
+    (local $off i32)         ;; glyph offset (0 or 1) when pressed
+    (local $pr_close i32) (local $pr_context i32) (local $pr_max i32) (local $pr_min i32)
+    (local $nc_style i32) (local $has_context i32) (local $has_min i32) (local $has_max i32)
+    (local $simple_child_border i32)
+    (local $glyph_brush i32)
+    (local $frame i32)
+
+    ;; NC paint gets a real typed DC with a WAT-built visible clip:
+    ;; window rect minus client rect. JS only applies this region to the
+    ;; top-level canvas.
+    (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
+    (local.set $has_caption (i32.and (local.get $flags) (i32.const 0x08)))
+    (local.set $is_active   (i32.and (local.get $flags) (i32.const 0x01)))
+    (local.set $is_dialog   (i32.and (local.get $flags) (i32.const 0x02)))
+    (local.set $is_maxed    (i32.and (local.get $flags) (i32.const 0x04)))
+    (local.set $cap_h (select (i32.const 18) (i32.const 0) (local.get $has_caption)))
+    (local.set $nc_style (call $wnd_get_style (local.get $hwnd)))
+    ;; DS_CONTEXTHELP shares 0x2000 with the dialog template's style word.
+    ;; USER renders its question-mark caption button only on dialog frames.
+    (local.set $has_context
+      (i32.and
+        (i32.ne (local.get $is_dialog) (i32.const 0))
+        (i32.ne (i32.and (local.get $nc_style) (i32.const 0x00002000)) (i32.const 0))))
+    (local.set $simple_child_border
+      (i32.and
+        (i32.and
+          (i32.ne (i32.and (local.get $nc_style) (i32.const 0x40000000)) (i32.const 0))
+          (i32.eqz (local.get $has_caption)))
+        (i32.ne (i32.and (local.get $nc_style) (i32.const 0x00800000)) (i32.const 0))))
+
+    (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd) (local.get $w) (local.get $h))
+    (if (local.get $simple_child_border)
+      (then
+        ;; Plain WS_CHILD|WS_BORDER controls get a simple 1px border, not
+        ;; a top-level raised frame. The NC clip excludes the client inset.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x30014)))
+        (drop (call $host_release_dc (local.get $hdc)))
+        (return (i32.const 0))))
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.const 0) (i32.const 0)
+            (local.get $w) (local.get $h)
+            (i32.const 0x30011)))
+
+    ;; -------------------------------------------------
+    ;; Outset 3D border around the whole window.
+    ;; EDGE_RAISED = BDR_RAISEDOUTER(1) | BDR_RAISEDINNER(4) = 5
+    ;; BF_RECT (all four sides) = 0x0F
+    ;;
+    ;; A sizing frame is one pixel wider than the edge draws, and Win98 spends
+    ;; that pixel on the top and left, outside the highlight — see
+    ;; $defwndproc_frame_width. Insetting the edge's top-left leaves the fill
+    ;; showing there and keeps the shadow/dkshadow pair on the window boundary
+    ;; where Win98 puts it.
+    ;; -------------------------------------------------
+    (local.set $frame (call $defwndproc_frame_width (local.get $hwnd)))
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (i32.sub (local.get $frame) (i32.const 3))
+            (i32.sub (local.get $frame) (i32.const 3))
+            (local.get $w) (local.get $h)
+            (i32.const 0x05) (i32.const 0x0F)))
+
+    ;; If no caption, we're done.
+    (if (i32.eqz (local.get $has_caption))
+      (then
+        (drop (call $host_release_dc (local.get $hdc)))
+        (return (i32.const 0))))
+
+    ;; -------------------------------------------------
+    ;; Title bar gradient at (3, 3, w-3, 21).
+    ;; Active:   0x000080 → 0x1084D0 (Win98 default caption gradient)
+    ;; Inactive: 0x808080 → 0xC0C0C0
+    ;; Colors are passed as 0xBBGGRR (Win32 COLORREF order); the
+    ;; host primitive interprets the same way as gdi_fill_rect.
+    ;; -------------------------------------------------
+    (local.set $cap_l (local.get $frame))
+    (local.set $cap_r (i32.sub (local.get $w) (local.get $frame)))
+    (local.set $cap_top (local.get $frame))
+    (local.set $cap_bot (i32.add (local.get $cap_top) (local.get $cap_h)))
+    (if (local.get $is_active)
+      (then
+        (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
+                (local.get $cap_l) (local.get $cap_top)
+                (local.get $cap_r) (local.get $cap_bot)
+                (i32.const 0x800000)    ;; 0x000080 in BGR
+                (i32.const 0xD08410)))) ;; 0x1084D0 in BGR
+      (else
+        (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
+                (local.get $cap_l) (local.get $cap_top)
+                (local.get $cap_r) (local.get $cap_bot)
+                (i32.const 0x808080)
+                (i32.const 0xC0C0C0)))))
+
+    ;; -------------------------------------------------
+    ;; Title text. White, MS Sans Serif Bold, left-aligned with 4px
+    ;; pad, vertically centred. Use TRANSPARENT bk so the gradient
+    ;; shows through letter gaps.
+    ;; -------------------------------------------------
+    (if (local.get $title_len)
+      (then
+        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30022)))
+        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF)))
+        ;; PAINT_SCRATCH RECT: l, t, r, b
+        (i32.store           (global.get $PAINT_SCRATCH) (i32.add (local.get $cap_l) (i32.const 4)))
+        (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $cap_top))
+        (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $cap_r))
+        (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $cap_bot))
+        ;; DT_LEFT(0) | DT_VCENTER(4) | DT_SINGLELINE(0x20) | DT_NOPREFIX(0x800) = 0x824
+        (drop (call $host_gdi_draw_text (local.get $hdc)
+                (local.get $title_wa) (local.get $title_len)
+                (global.get $PAINT_SCRATCH)
+                (i32.const 0x824) (i32.const 0)))))
+
+    ;; -------------------------------------------------
+    ;; System buttons (close / max / min). Each is 16x14, top y =
+    ;; cap_top + 2. Layout matches the original drawTitleBar.
+    ;; -------------------------------------------------
+    (local.set $btn_w (i32.const 16))
+    (local.set $btn_h (i32.const 14))
+    (local.set $btn_y (i32.add (local.get $cap_top) (i32.const 2)))
+    (local.set $close_x (i32.sub (local.get $cap_r) (i32.add (local.get $btn_w) (i32.const 2))))
+    (local.set $max_x   (i32.sub (local.get $cap_r) (i32.add (i32.mul (local.get $btn_w) (i32.const 2)) (i32.const 4))))
+    (local.set $min_x   (i32.sub (local.get $cap_r) (i32.add (i32.mul (local.get $btn_w) (i32.const 3)) (i32.const 4))))
+
+    ;; Pressed-state per sysbutton (only when this hwnd matches nc_pressed_hwnd).
+    (if (i32.eq (global.get $nc_pressed_hwnd) (local.get $hwnd))
+      (then
+        (local.set $pr_close (i32.eq (global.get $nc_pressed_hit) (i32.const 20)))
+        (local.set $pr_context (i32.eq (global.get $nc_pressed_hit) (i32.const 21)))
+        (local.set $pr_max   (i32.eq (global.get $nc_pressed_hit) (i32.const 9)))
+        (local.set $pr_min   (i32.eq (global.get $nc_pressed_hit) (i32.const 8)))))
+
+    ;; --- Close button frame ---
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $close_x) (local.get $btn_y)
+            (i32.add (local.get $close_x) (local.get $btn_w))
+            (i32.add (local.get $btn_y) (local.get $btn_h))
+            (i32.const 0x30011)))
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (local.get $close_x) (local.get $btn_y)
+            (i32.add (local.get $close_x) (local.get $btn_w))
+            (i32.add (local.get $btn_y) (local.get $btn_h))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_close))
+            (i32.const 0x0F)))
+    ;; X glyph: two diagonal strokes inside the button.
+    ;; The original used lineWidth=1.5 strokes; we approximate with
+    ;; two 1px BLACK_PEN passes (offset by 1px) to get a 2px-thick X.
+    ;; When pressed, shift the glyph 1px down/right for the classic Win98
+    ;; sunken-button feel.
+    (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_close)))
+    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
+    (local.set $cx (i32.add (i32.add (local.get $close_x) (i32.const 4)) (local.get $off)))
+    (local.set $cy (i32.add (i32.add (local.get $btn_y) (i32.const 3)) (local.get $off)))
+    (local.set $cs (i32.const 7))
+    (drop (call $host_gdi_move_to (local.get $hdc) (local.get $cx) (local.get $cy)))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.add (local.get $cx) (local.get $cs))
+            (i32.add (local.get $cy) (local.get $cs))))
+    (drop (call $host_gdi_move_to (local.get $hdc)
+            (i32.add (local.get $cx) (local.get $cs)) (local.get $cy)))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (local.get $cx) (i32.add (local.get $cy) (local.get $cs))))
+    ;; Second pass for thickness. Offset the descending stroke right and the
+    ;; ascending stroke left: that produces USER's symmetric 8x7 close glyph.
+    ;; Offsetting both strokes right makes the X 9px wide and skews its centre.
+    (drop (call $host_gdi_move_to (local.get $hdc)
+            (i32.add (local.get $cx) (i32.const 1)) (local.get $cy)))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.add (local.get $cx) (i32.add (local.get $cs) (i32.const 1)))
+            (i32.add (local.get $cy) (local.get $cs))))
+    (drop (call $host_gdi_move_to (local.get $hdc)
+            (i32.add (local.get $cx) (i32.sub (local.get $cs) (i32.const 1))) (local.get $cy)))
+    (drop (call $host_gdi_line_to (local.get $hdc)
+            (i32.sub (local.get $cx) (i32.const 1)) (i32.add (local.get $cy) (local.get $cs))))
+
+    ;; --- Context-help button (DS_CONTEXTHELP) ---
+    ;; Win98 places this immediately left of Close and uses a compact bitmap
+    ;; question mark rather than the caption font. The rectangles below match
+    ;; the native 6x9 mask exactly and shift with the pressed frame.
+    (if (local.get $has_context)
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (local.get $max_x) (local.get $btn_y)
+                (i32.add (local.get $max_x) (local.get $btn_w))
+                (i32.add (local.get $btn_y) (local.get $btn_h))
+                (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (local.get $max_x) (local.get $btn_y)
+                (i32.add (local.get $max_x) (local.get $btn_w))
+                (i32.add (local.get $btn_y) (local.get $btn_h))
+                (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_context))
+                (i32.const 0x0F)))
+        (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_context)))
+        (local.set $cx (i32.add (local.get $max_x) (local.get $off)))
+        (local.set $cy (i32.add (local.get $btn_y) (local.get $off)))
+        ;; Top hook: .####. / ##..## / ##..##
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 6))
+                (i32.add (local.get $cy) (i32.const 2))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 5))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 7))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 11))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.const 0x30014)))
+        ;; Bend, stem, one-row gap, and two-pixel-high dot.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 8))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 6))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 7))
+                (i32.add (local.get $cy) (i32.const 6))
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 8))
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 7))
+                (i32.add (local.get $cy) (i32.const 9))
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 11))
+                (i32.const 0x30014)))))
+
+    ;; Dialog style: Close plus optional context help; never min/max.
+    (if (local.get $is_dialog)
+      (then
+        (drop (call $host_release_dc (local.get $hdc)))
+        (return (local.get $cap_h))))
+
+    ;; Re-fetch style bits for min/max presence — `$flags` only carries
+    ;; active/dialog/maxed/has_caption. When the window lacks BOTH
+    ;; WS_MINIMIZEBOX and WS_MAXIMIZEBOX, both buttons are hidden
+    ;; (close-only caption). When one is missing but the other is
+    ;; present (e.g. minesweeper has WS_MINIMIZEBOX only), Win98 renders
+    ;; the missing button's frame normally but draws the glyph in
+    ;; gray (COLOR_GRAYTEXT) so it looks disabled.
+    (local.set $nc_style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $has_max (i32.and (local.get $nc_style) (i32.const 0x00010000)))
+    (local.set $has_min (i32.and (local.get $nc_style) (i32.const 0x00020000)))
+    (if (i32.and (i32.eqz (local.get $has_max)) (i32.eqz (local.get $has_min)))
+      (then
+        (drop (call $host_release_dc (local.get $hdc)))
+        (return (local.get $cap_h))))
+
+    ;; --- Max / Restore button ---
+    (local.set $glyph_brush (select (i32.const 0x30014) (i32.const 0x30012) (local.get $has_max))) ;; black vs gray
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $max_x) (local.get $btn_y)
+            (i32.add (local.get $max_x) (local.get $btn_w))
+            (i32.add (local.get $btn_y) (local.get $btn_h))
+            (i32.const 0x30011)))
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (local.get $max_x) (local.get $btn_y)
+            (i32.add (local.get $max_x) (local.get $btn_w))
+            (i32.add (local.get $btn_y) (local.get $btn_h))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_max))
+            (i32.const 0x0F)))
+    (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_max)))
+    ;; Glyph base shifted by $off for the pressed-button feel.
+    (local.set $cx (i32.add (local.get $max_x) (local.get $off)))
+    (local.set $cy (i32.add (local.get $btn_y) (local.get $off)))
+    (if (local.get $is_maxed)
+      (then
+        ;; Restore glyph: two overlapping rectangles, flat 1px outlines.
+        ;; Back rect at (x+5..x+12, y+2..y+9): top stroke 2px, sides+bottom 1px.
+        ;; Top thick bar
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 5))
+                (i32.add (local.get $cy) (i32.const 2))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 4))
+                (local.get $glyph_brush)))
+        ;; Right side
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 11))
+                (i32.add (local.get $cy) (i32.const 4))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 9))
+                (local.get $glyph_brush)))
+        ;; Bottom edge of back rect
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 8))
+                (i32.add (local.get $cy) (i32.const 8))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 9))
+                (local.get $glyph_brush)))
+        ;; Front rect at (x+3..x+10, y+4..y+11): white interior, top 2px black,
+        ;; sides+bottom 1px black. Erase the back-rect bottom-left it overlaps.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 4))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 11))
+                (i32.const 0x30010)))
+        ;; Top thick bar
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 4))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 6))
+                (local.get $glyph_brush)))
+        ;; Left side
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 6))
+                (i32.add (local.get $cx) (i32.const 4))
+                (i32.add (local.get $cy) (i32.const 11))
+                (local.get $glyph_brush)))
+        ;; Right side
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 9))
+                (i32.add (local.get $cy) (i32.const 6))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 11))
+                (local.get $glyph_brush)))
+        ;; Bottom
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 10))
+                (i32.add (local.get $cx) (i32.const 10))
+                (i32.add (local.get $cy) (i32.const 11))
+                (local.get $glyph_brush))))
+      (else
+        ;; Maximize glyph: 9x8 rectangle (x+3..x+12, y+3..y+11), flat 1px
+        ;; outline with a 2px-thick top bar — the canonical Win98 look.
+        ;; Top thick bar (2px black)
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 3))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 5))
+                (local.get $glyph_brush)))
+        ;; Left edge
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.add (local.get $cx) (i32.const 4))
+                (i32.add (local.get $cy) (i32.const 11))
+                (local.get $glyph_brush)))
+        ;; Right edge
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 11))
+                (i32.add (local.get $cy) (i32.const 5))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 11))
+                (local.get $glyph_brush)))
+        ;; Bottom edge
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.add (local.get $cx) (i32.const 3))
+                (i32.add (local.get $cy) (i32.const 10))
+                (i32.add (local.get $cx) (i32.const 12))
+                (i32.add (local.get $cy) (i32.const 11))
+                (local.get $glyph_brush)))))
+
+    ;; --- Min button: 7x2 horizontal bar near the bottom ---
+    (local.set $glyph_brush (select (i32.const 0x30014) (i32.const 0x30012) (local.get $has_min))) ;; black vs gray
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $min_x) (local.get $btn_y)
+            (i32.add (local.get $min_x) (local.get $btn_w))
+            (i32.add (local.get $btn_y) (local.get $btn_h))
+            (i32.const 0x30011)))
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (local.get $min_x) (local.get $btn_y)
+            (i32.add (local.get $min_x) (local.get $btn_w))
+            (i32.add (local.get $btn_y) (local.get $btn_h))
+            (select (i32.const 0x0A) (i32.const 0x05) (local.get $pr_min))
+            (i32.const 0x0F)))
+    (local.set $off (select (i32.const 1) (i32.const 0) (local.get $pr_min)))
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.add (i32.add (local.get $min_x) (i32.const 4)) (local.get $off))
+            (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 5))) (local.get $off))
+            (i32.add (i32.add (local.get $min_x) (i32.const 11)) (local.get $off))
+            (i32.add (i32.add (local.get $btn_y) (i32.sub (local.get $btn_h) (i32.const 3))) (local.get $off))
+            (local.get $glyph_brush)))
+
+    (drop (call $host_release_dc (local.get $hdc)))
+    (local.get $cap_h))
+
+  ;; ============================================================
+  ;; Default WM_NCPAINT handler — invoked by DefWindowProcA.
+  ;; Fetches window width/height from JS via $host_get_window_rect,
+  ;; pulls title from TITLE_TABLE, derives flags from style + auxiliary
+  ;; tables, then calls $defwndproc_ncpaint. No JS-side plumbing.
+  ;; ============================================================
+  ;; Paint one standard non-client scrollbar from SCROLLINFO state.
+  (func $defwndproc_paint_standard_scrollbar
+        (param $hdc i32) (param $x i32) (param $y i32)
+        (param $w i32) (param $h i32) (param $vert i32)
+        (param $pos i32) (param $smin i32) (param $smax i32) (param $page i32)
+    (local $long i32) (local $cross i32) (local $arrow i32) (local $track i32)
+    (local $total i32) (local $thumb i32) (local $travel i32)
+    (local $max_pos i32) (local $range i32) (local $thumb_pos i32)
+    (local.set $long (select (local.get $h) (local.get $w) (local.get $vert)))
+    (local.set $cross (select (local.get $w) (local.get $h) (local.get $vert)))
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (local.get $w))
+      (i32.add (local.get $y) (local.get $h))
+      (i32.const 0x30011)))
+    (local.set $arrow (call $scrollbar_arrow_size (local.get $long)))
+    (if (local.get $arrow)
+      (then
+        (if (local.get $vert)
+          (then
+            (call $draw_sb_arrow (local.get $hdc)
+              (local.get $x) (local.get $y) (local.get $cross) (local.get $arrow)
+              (i32.const 0) (i32.const 0))
+            (call $draw_sb_arrow (local.get $hdc)
+              (local.get $x) (i32.sub (i32.add (local.get $y) (local.get $long)) (local.get $arrow))
+              (local.get $cross) (local.get $arrow) (i32.const 1) (i32.const 0)))
+          (else
+            (call $draw_sb_arrow (local.get $hdc)
+              (local.get $x) (local.get $y) (local.get $arrow) (local.get $cross)
+              (i32.const 2) (i32.const 0))
+            (call $draw_sb_arrow (local.get $hdc)
+              (i32.sub (i32.add (local.get $x) (local.get $long)) (local.get $arrow)) (local.get $y)
+              (local.get $arrow) (local.get $cross) (i32.const 3) (i32.const 0))))))
+    ;; Geometry lives in $sb_page_* so that whoever hit-tests this scrollbar
+    ;; computes the same thumb this draws. It used to be inline here, which is
+    ;; why the EDIT could not tell a click on its thumb from a click on text.
+    (local.set $track (call $sb_track_len (local.get $long)))
+    (local.set $total (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1)))
+    (if (i32.or (i32.le_s (local.get $track) (i32.const 0))
+                (i32.le_s (local.get $total) (i32.const 0)))
+      (then (return)))
+    (local.set $thumb (call $sb_page_thumb
+      (local.get $track) (local.get $page) (local.get $total)))
+    (local.set $thumb_pos (call $sb_page_thumb_pos
+      (local.get $long) (local.get $pos) (local.get $smin) (local.get $smax) (local.get $page)))
+    (if (local.get $vert)
+      (then
+        ;; Win98 standard thumbs span the complete 16px scrollbar strip. The
+        ;; raised edge itself supplies the chrome; a cross-axis inset leaves
+        ;; exposed track rails and makes the thumb look only 12px wide.
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (local.get $x) (i32.add (local.get $y) (local.get $thumb_pos))
+          (i32.add (local.get $x) (local.get $w))
+          (i32.add (i32.add (local.get $y) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (local.get $x) (i32.add (local.get $y) (local.get $thumb_pos))
+          (i32.add (local.get $x) (local.get $w))
+          (i32.add (i32.add (local.get $y) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.const 0x05) (i32.const 0x0F))))
+      (else
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $y)
+          (i32.add (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.add (local.get $y) (local.get $h))
+          (i32.const 0x30011)))
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $y)
+          (i32.add (i32.add (local.get $x) (local.get $thumb_pos)) (local.get $thumb))
+          (i32.add (local.get $y) (local.get $h))
+          (i32.const 0x05) (i32.const 0x0F))))))
+
+  (func $defwndproc_do_ncpaint (param $hwnd i32)
+    (local $rect i32) (local $w i32) (local $h i32)
+    (local $style i32) (local $flags i32) (local $is_child i32) (local $has_caption i32)
+    (local $title_wa i32) (local $title_len i32)
+    (local $hdc i32) (local $slot i32) (local $base i32) (local $aux i32)
+    (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    ;; Reuse PAINT_SCRATCH for the rect — it's 16 bytes and not in use
+    ;; between the GetWindowRect/DrawText overlap here.
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+    (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
+                            (i32.load         (local.get $rect))))
+    (local.set $h (i32.sub (i32.load offset=12 (local.get $rect))
+                            (i32.load offset=4  (local.get $rect))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return)))
+    ;; Flags
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $flags (i32.const 1))                                ;; active (TODO: focus-aware)
+    (if (call $get_flash_state_slot (local.get $hwnd))
+      (then (local.set $flags (i32.xor (local.get $flags) (i32.const 1)))))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+    (local.set $has_caption
+      (i32.or
+        (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                (i32.const 0x00C00000))                            ;; WS_CAPTION
+        (i32.and
+          (i32.eqz (local.get $is_child))
+          (i32.and
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0)) ;; WS_BORDER
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0)))))) ;; WS_SYSMENU
+    (if (local.get $has_caption)
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 8)))))
+    ;; Dialog style (WS_DLGFRAME 0x00400000 without WS_THICKFRAME 0x00040000
+    ;; and without WS_MINIMIZEBOX/MAXIMIZEBOX 0x00010000/0x00020000).
+    (if (i32.and
+          (i32.and (i32.ne (i32.and (local.get $style) (i32.const 0x00400000)) (i32.const 0))
+                   (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000))))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
+    ;; Maximized — flips the max button glyph to the restore (overlapping rects) form.
+    (if (call $wnd_max_get (local.get $hwnd))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 4)))))
+    ;; Title
+    (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
+    (local.set $title_len (call $title_table_get_len (local.get $hwnd)))
+    (drop (call $defwndproc_ncpaint
+      (local.get $hwnd) (local.get $w) (local.get $h)
+      (local.get $title_wa) (local.get $title_len)
+      (local.get $flags) (i32.const 0)))
+    ;; WS_EX_CLIENTEDGE sinks the CLIENT area, not the window. It is the
+    ;; innermost chrome, drawn in the two-pixel band $defwndproc_do_nccalcsize
+    ;; reserved just outside the client rect — inside any sizing frame and
+    ;; caption, and outside the scrollbars, which Win98 places within the sunk
+    ;; area. Drawing it at the window rect instead paints EDGE_SUNKEN over the
+    ;; raised outer frame, which turns a normal window's top-left border from
+    ;; face-and-highlight into black-and-shadow. mspaint's main window carries
+    ;; WS_EX_CLIENTEDGE, so it wore that inverted frame.
+    ;;
+    ;; Gated like the nccalcsize inset: WAT-native controls draw their own.
+    (if (i32.and
+          (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+          (i32.ne
+            (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
+            (i32.const 0)))
+      (then
+        (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+        (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+        (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+        (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+        (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+          (then (local.set $cr (i32.add (local.get $cr) (i32.const 16)))))
+        (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+          (then (local.set $cb (i32.add (local.get $cb) (i32.const 16)))))
+        (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
+        (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd)
+          (local.get $w) (local.get $h))
+        ;; EDGE_SUNKEN (BDR_SUNKENOUTER|BDR_SUNKENINNER) | BF_RECT
+        (drop (call $host_gdi_draw_edge (local.get $hdc)
+          (i32.sub (local.get $cl) (i32.const 2))
+          (i32.sub (local.get $ct) (i32.const 2))
+          (i32.add (local.get $cr) (i32.const 2))
+          (i32.add (local.get $cb) (i32.const 2))
+          (i32.const 0x0A) (i32.const 0x0F)))
+        (drop (call $host_release_dc (local.get $hdc)))))
+    (if (i32.and (local.get $style) (i32.const 0x00300000))
+      (then
+        (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+        (if (i32.ge_s (local.get $slot) (i32.const 0))
+          (then
+            (local.set $base (call $scroll_record_addr (local.get $slot)))
+            (local.set $aux (call $scroll_aux_addr (local.get $slot)))
+            (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+            (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+            (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+            (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+            (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
+            (call $dc_apply_nc_clip (local.get $hdc) (local.get $hwnd) (local.get $w) (local.get $h))
+            (if (i32.and (local.get $style) (i32.const 0x00200000))
+              (then (call $defwndproc_paint_standard_scrollbar
+                (local.get $hdc) (local.get $cr) (local.get $ct)
+                (i32.const 16) (i32.sub (local.get $cb) (local.get $ct)) (i32.const 1)
+                (i32.load offset=12 (local.get $base)) (i32.load offset=16 (local.get $base))
+                (i32.load offset=20 (local.get $base)) (i32.load offset=8 (local.get $aux)))))
+            (if (i32.and (local.get $style) (i32.const 0x00100000))
+              (then (call $defwndproc_paint_standard_scrollbar
+                (local.get $hdc) (local.get $cl) (local.get $cb)
+                (i32.sub (local.get $cr) (local.get $cl)) (i32.const 16) (i32.const 0)
+                (i32.load (local.get $base)) (i32.load offset=4 (local.get $base))
+                (i32.load offset=8 (local.get $base)) (i32.load (local.get $aux)))))
+            (if (i32.eq (i32.and (local.get $style) (i32.const 0x00300000)) (i32.const 0x00300000))
+              (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (local.get $cr) (local.get $cb)
+                (i32.add (local.get $cr) (i32.const 16)) (i32.add (local.get $cb) (i32.const 16))
+                (i32.const 0x30011)))))
+            (drop (call $host_release_dc (local.get $hdc))))))))
+
+  ;; Default WM_NCCALCSIZE: compute the client rect (window-local) from
+  ;; window rect minus standard borders / caption / menu bar.  Writes the
+  ;; result to CLIENT_RECT for JS (and later WAT) consumers.
+  (func $defwndproc_do_nccalcsize (param $hwnd i32)
+    (local $rect i32) (local $w i32) (local $h i32)
+    (local $style i32)
+    (local $has_cap i32) (local $has_border i32)
+    (local $is_child i32) (local $simple_child_border i32)
+    (local $bw i32) (local $cy i32) (local $bot i32) (local $right i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+    (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
+                            (i32.load         (local.get $rect))))
+    (local.set $h (i32.sub (i32.load offset=12 (local.get $rect))
+                            (i32.load offset=4  (local.get $rect))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return)))
+    (if (call $wnd_region_get (local.get $hwnd))
+      (then
+        (call $client_rect_set
+          (local.get $hwnd)
+          (i32.const 0) (i32.const 0)
+          (local.get $w) (local.get $h))
+        (return)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+    (local.set $has_cap
+      (i32.or
+        (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                (i32.const 0x00C00000))
+        (i32.and
+          (i32.eqz (local.get $is_child))
+          (i32.and
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0))
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0))))))
+    (local.set $has_border (i32.or (local.get $has_cap)
+                                    (i32.and (local.get $style) (i32.const 0x00800000))))
+    (local.set $simple_child_border
+      (i32.and
+        (i32.and
+          (local.get $is_child)
+          (i32.ne (local.get $has_border) (i32.const 0)))
+        (i32.eqz (local.get $has_cap))))
+    (if (local.get $simple_child_border)
+      (then
+        (local.set $bw (i32.const 1))
+        (local.set $cy (i32.const 1))
+        (local.set $bot (i32.const 1)))
+      (else
+        (local.set $bw (select (call $defwndproc_frame_width (local.get $hwnd))
+          (i32.const 0) (local.get $has_border)))
+        (local.set $cy (local.get $bw))
+        (if (local.get $has_cap) (then (local.set $cy (i32.add (local.get $cy) (i32.const 19)))))
+        (if (i32.and
+              (i32.eqz (local.get $is_child))
+              (i32.gt_s (call $menu_bar_count (local.get $hwnd)) (i32.const 0)))
+          (then (local.set $cy (i32.add (local.get $cy) (i32.const 18)))))
+        (if (local.get $has_border) (then (local.set $cy (i32.add (local.get $cy) (i32.const 1)))))
+        (local.set $bot (select (i32.const 4) (i32.const 0) (local.get $has_border)))))
+    ;; WS_EX_CLIENTEDGE sinks the client area into a 3D frame two pixels deep
+    ;; on every side (SM_CXEDGE/SM_CYEDGE were 2 on Win98). It sits outside any
+    ;; scrollbar, so it is added before the scrollbar strips below.
+    ;;
+    ;; Only for windows that are not WAT-native controls. Edit, listbox and the
+    ;; rest already draw their own sunken border inside their wndproc and size
+    ;; their content around it; adding a second one here would both double the
+    ;; border and move the client rect out from under them.
+    (if (i32.and
+          (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+          (i32.ne
+            (i32.and (call $ctrl_get_ex_style (local.get $hwnd)) (i32.const 0x200))
+            (i32.const 0)))
+      (then
+        (local.set $bw  (i32.add (local.get $bw)  (i32.const 2)))
+        (local.set $cy  (i32.add (local.get $cy)  (i32.const 2)))
+        (local.set $bot (i32.add (local.get $bot) (i32.const 2)))))
+    ;; Standard window scrollbars are non-client strips. USER removes their
+    ;; 16px metrics from the usable client area whenever the style bit is set.
+    (local.set $right (local.get $bw))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then (local.set $right (i32.add (local.get $right) (i32.const 16)))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then (local.set $bot (i32.add (local.get $bot) (i32.const 16)))))
+    ;; Store window-local l/t/r/b.
+    (call $client_rect_set (local.get $hwnd)
+      (local.get $bw) (local.get $cy)
+      (i32.sub (local.get $w) (local.get $right))
+      (i32.sub (local.get $h) (local.get $bot))))
+
+  ;; Default WM_NCHITTEST: classify (screen_x, screen_y) against window
+  ;; chrome. Returns a HT* code. Button geometry matches
+  ;; $defwndproc_ncpaint exactly — single source of truth.
+  ;;
+  ;; HT codes: HTNOWHERE=0 HTCLIENT=1 HTCAPTION=2 HTSYSMENU=3
+  ;;           HTLEFT=10 HTRIGHT=11 HTTOP=12 HTTOPLEFT=13 HTTOPRIGHT=14
+  ;;           HTBOTTOM=15 HTBOTTOMLEFT=16 HTBOTTOMRIGHT=17
+  ;;           HTBORDER=18 HTCLOSE=20 HTHELP=21 HTMINBUTTON=8 HTMAXBUTTON=9
+  (func $defwndproc_do_nchittest
+        (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $rect i32) (local $wx i32) (local $wy i32)
+    (local $w i32) (local $h i32) (local $lx i32) (local $ly i32)
+    (local $style i32) (local $has_cap i32) (local $is_dialog i32) (local $is_child i32)
+    (local $has_context i32)
+    (local $has_thick i32) (local $has_min i32) (local $has_max i32)
+    (local $corner i32) (local $border i32) (local $frame i32)
+    (local $cap_top i32) (local $cap_bot i32) (local $cap_l i32) (local $cap_r i32)
+    (local $btn_y i32) (local $btn_bot i32)
+    (local $close_x i32) (local $max_x i32) (local $min_x i32)
+    (local $bw i32) (local $bh i32)
+    (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
+    (local $has_vsb i32) (local $has_hsb i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $rect (global.get $PAINT_SCRATCH))
+    (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
+    (local.set $wx (i32.load         (local.get $rect)))
+    (local.set $wy (i32.load offset=4 (local.get $rect)))
+    (local.set $w  (i32.sub (i32.load offset=8  (local.get $rect)) (local.get $wx)))
+    (local.set $h  (i32.sub (i32.load offset=12 (local.get $rect)) (local.get $wy)))
+    (local.set $lx (i32.sub (local.get $sx) (local.get $wx)))
+    (local.set $ly (i32.sub (local.get $sy) (local.get $wy)))
+    ;; Outside window
+    (if (i32.or (i32.or (i32.lt_s (local.get $lx) (i32.const 0))
+                         (i32.lt_s (local.get $ly) (i32.const 0)))
+                 (i32.or (i32.ge_s (local.get $lx) (local.get $w))
+                         (i32.ge_s (local.get $ly) (local.get $h))))
+      (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $is_child (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+    (local.set $has_cap
+      (i32.or
+        (i32.eq (i32.and (local.get $style) (i32.const 0x00C00000))
+                (i32.const 0x00C00000))
+        (i32.and
+          (i32.eqz (local.get $is_child))
+          (i32.and
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00800000)) (i32.const 0))
+            (i32.ne (i32.and (local.get $style) (i32.const 0x00080000)) (i32.const 0))))))
+    (local.set $has_thick (i32.and (local.get $style) (i32.const 0x00040000)))
+    ;; Maximized windows are pinned to the work area — Win98 disables
+    ;; edge/corner resize until the user restores. Suppress the HT* resize
+    ;; codes by treating the frame as non-thick while maximized; the border
+    ;; band still classifies as HTBORDER so the cursor stays IDC_ARROW.
+    (if (call $wnd_max_get (local.get $hwnd))
+      (then (local.set $has_thick (i32.const 0))))
+    (local.set $has_min   (i32.and (local.get $style) (i32.const 0x00020000)))
+    (local.set $has_max   (i32.and (local.get $style) (i32.const 0x00010000)))
+    ;; Title bar region: (frame, frame)-(w-frame, frame+18); button strip
+    ;; (frame+2)..(frame+16) high. Same frame width the painter used.
+    (local.set $frame (call $defwndproc_frame_width (local.get $hwnd)))
+    (if (local.get $has_cap)
+      (then
+        (local.set $cap_l (local.get $frame))
+        (local.set $cap_r (i32.sub (local.get $w) (local.get $frame)))
+        (local.set $cap_top (local.get $frame))
+        (local.set $cap_bot (i32.add (local.get $cap_top) (i32.const 18)))
+        (if (i32.and (i32.and (i32.ge_s (local.get $lx) (local.get $cap_l))
+                                (i32.lt_s (local.get $lx) (local.get $cap_r)))
+                       (i32.and (i32.ge_s (local.get $ly) (local.get $cap_top))
+                                (i32.lt_s (local.get $ly) (local.get $cap_bot))))
+          (then
+            (local.set $bw (i32.const 16))
+            (local.set $bh (i32.const 14))
+            (local.set $btn_y (i32.add (local.get $cap_top) (i32.const 2)))
+            (local.set $btn_bot (i32.add (local.get $btn_y) (local.get $bh)))
+            (local.set $close_x (i32.sub (local.get $cap_r)
+                                   (i32.add (local.get $bw) (i32.const 2))))
+            (local.set $max_x   (i32.sub (local.get $cap_r)
+                                   (i32.add (i32.mul (local.get $bw) (i32.const 2)) (i32.const 4))))
+            (local.set $min_x   (i32.sub (local.get $cap_r)
+                                   (i32.add (i32.mul (local.get $bw) (i32.const 3)) (i32.const 4))))
+            ;; Dialog style: close only (matches $defwndproc_ncpaint dialog branch).
+            (local.set $is_dialog (i32.and
+              (i32.and
+                (i32.ne (i32.and (local.get $style) (i32.const 0x00400000)) (i32.const 0))
+                (i32.eqz (i32.and (local.get $style) (i32.const 0x00040000))))
+              (i32.eqz (i32.and (local.get $style) (i32.const 0x00030000)))))
+            (local.set $has_context
+              (i32.and
+                (i32.ne (local.get $is_dialog) (i32.const 0))
+                (i32.ne (i32.and (local.get $style) (i32.const 0x00002000)) (i32.const 0))))
+            (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                  (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                          (i32.and (i32.ge_s (local.get $lx) (local.get $close_x))
+                                   (i32.lt_s (local.get $lx) (i32.add (local.get $close_x) (local.get $bw)))))
+              (then (return (i32.const 20)))) ;; HTCLOSE
+            (if (i32.and
+                  (local.get $has_context)
+                  (i32.and
+                    (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                             (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                    (i32.and (i32.ge_s (local.get $lx) (local.get $max_x))
+                             (i32.lt_s (local.get $lx) (i32.add (local.get $max_x) (local.get $bw))))))
+              (then (return (i32.const 21)))) ;; HTHELP
+            (if (i32.eqz (local.get $is_dialog))
+              (then
+                (if (local.get $has_max)
+                  (then
+                    (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                          (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                                  (i32.and (i32.ge_s (local.get $lx) (local.get $max_x))
+                                           (i32.lt_s (local.get $lx) (i32.add (local.get $max_x) (local.get $bw)))))
+                      (then (return (i32.const 9)))))) ;; HTMAXBUTTON
+                (if (local.get $has_min)
+                  (then
+                    (if (i32.and (i32.and (i32.ge_s (local.get $ly) (local.get $btn_y))
+                                          (i32.lt_s (local.get $ly) (local.get $btn_bot)))
+                                  (i32.and (i32.ge_s (local.get $lx) (local.get $min_x))
+                                           (i32.lt_s (local.get $lx) (i32.add (local.get $min_x) (local.get $bw)))))
+                      (then (return (i32.const 8))))))))  ;; HTMINBUTTON
+            (return (i32.const 2)))))) ;; HTCAPTION
+    ;; Border band, as wide as the frame the painter drew; thick-frame windows
+    ;; get resize codes (corners win over edges within a 12 px zone).
+    (local.set $border (i32.or (i32.or (i32.lt_s (local.get $lx) (local.get $frame))
+                                        (i32.lt_s (local.get $ly) (local.get $frame)))
+                                (i32.or (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (local.get $frame)))
+                                        (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $frame))))))
+    (if (local.get $border)
+      (then
+        (if (i32.eqz (local.get $has_thick))
+          (then (return (i32.const 18)))) ;; HTBORDER — non-resizable
+        (local.set $corner (i32.const 12))
+        ;; Top edges
+        (if (i32.lt_s (local.get $ly) (local.get $frame))
+          (then
+            (if (i32.lt_s (local.get $lx) (local.get $corner))
+              (then (return (i32.const 13))))                              ;; HTTOPLEFT
+            (if (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (local.get $corner)))
+              (then (return (i32.const 14))))                              ;; HTTOPRIGHT
+            (return (i32.const 12))))                                      ;; HTTOP
+        ;; Bottom edges
+        (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $frame)))
+          (then
+            (if (i32.lt_s (local.get $lx) (local.get $corner))
+              (then (return (i32.const 16))))                              ;; HTBOTTOMLEFT
+            (if (i32.ge_s (local.get $lx) (i32.sub (local.get $w) (local.get $corner)))
+              (then (return (i32.const 17))))                              ;; HTBOTTOMRIGHT
+            (return (i32.const 15))))                                      ;; HTBOTTOM
+        ;; Left / right edges (corner-y check too, in case the top/bottom
+        ;; branches didn't fire because ly was inside the band).
+        (if (i32.lt_s (local.get $lx) (local.get $frame))
+          (then
+            (if (i32.lt_s (local.get $ly) (local.get $corner))
+              (then (return (i32.const 13))))                              ;; HTTOPLEFT
+            (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $corner)))
+              (then (return (i32.const 16))))                              ;; HTBOTTOMLEFT
+            (return (i32.const 10))))                                      ;; HTLEFT
+        (if (i32.lt_s (local.get $ly) (local.get $corner))
+          (then (return (i32.const 14))))                                  ;; HTTOPRIGHT
+        (if (i32.ge_s (local.get $ly) (i32.sub (local.get $h) (local.get $corner)))
+          (then (return (i32.const 17))))                                  ;; HTBOTTOMRIGHT
+        (return (i32.const 11))))                                          ;; HTRIGHT
+    ;; Standard scrollbars are non-client: $defwndproc_do_nccalcsize carves
+    ;; their 16px strips out of the window just outside the client rect, and
+    ;; $defwndproc_do_ncpaint draws them there. Classifying them is what lets
+    ;; the pointer go back to IDC_ARROW over a scrollbar while the app's own
+    ;; tool cursor still owns the client area — mspaint sets a pencil on
+    ;; WM_SETCURSOR/HTCLIENT, so without this its image view kept the pencil
+    ;; all the way out over both bars.
+    (if (i32.and (local.get $style) (i32.const 0x00300000)) ;; WS_VSCROLL|WS_HSCROLL
+      (then
+        (local.set $cl (call $client_rect_get_l (local.get $hwnd)))
+        (local.set $ct (call $client_rect_get_t (local.get $hwnd)))
+        (local.set $cr (call $client_rect_get_r (local.get $hwnd)))
+        (local.set $cb (call $client_rect_get_b (local.get $hwnd)))
+        (local.set $has_vsb (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0)))
+        (local.set $has_hsb (i32.ne (i32.and (local.get $style) (i32.const 0x00100000)) (i32.const 0)))
+        ;; The square where the two bars meet is the sizing box, not either bar.
+        (if (i32.and
+              (i32.and (local.get $has_vsb) (local.get $has_hsb))
+              (i32.and
+                (i32.and (i32.ge_s (local.get $lx) (local.get $cr))
+                         (i32.lt_s (local.get $lx) (i32.add (local.get $cr) (i32.const 16))))
+                (i32.and (i32.ge_s (local.get $ly) (local.get $cb))
+                         (i32.lt_s (local.get $ly) (i32.add (local.get $cb) (i32.const 16))))))
+          (then (return (i32.const 4))))                                   ;; HTSIZE
+        (if (i32.and
+              (local.get $has_vsb)
+              (i32.and
+                (i32.and (i32.ge_s (local.get $lx) (local.get $cr))
+                         (i32.lt_s (local.get $lx) (i32.add (local.get $cr) (i32.const 16))))
+                (i32.and (i32.ge_s (local.get $ly) (local.get $ct))
+                         (i32.lt_s (local.get $ly) (local.get $cb)))))
+          (then (return (i32.const 7))))                                   ;; HTVSCROLL
+        (if (i32.and
+              (local.get $has_hsb)
+              (i32.and
+                (i32.and (i32.ge_s (local.get $ly) (local.get $cb))
+                         (i32.lt_s (local.get $ly) (i32.add (local.get $cb) (i32.const 16))))
+                (i32.and (i32.ge_s (local.get $lx) (local.get $cl))
+                         (i32.lt_s (local.get $lx) (local.get $cr)))))
+          (then (return (i32.const 6))))))                                 ;; HTHSCROLL
+    (i32.const 1))                    ;; HTCLIENT
+
+  ;; Default WM_SETCURSOR handler.
+  ;;
+  ;; HTCLIENT (1): apply WNDCLASS.hCursor, captured per window at creation.
+  ;; This is what separates a tool palette from the drawing area beside it —
+  ;; both are HTCLIENT, but the palette's class registered IDC_ARROW while
+  ;; the drawing view's app sets a pencil from its own WM_SETCURSOR.
+  ;;
+  ;; A NULL class cursor means the window paints its own, so leave it alone.
+  ;; That is both the Win32 rule and what protects apps calling SetCursor from
+  ;; WM_MOUSEMOVE (Reversi's cross over valid moves): WM_SETCURSOR is
+  ;; dispatched ahead of the next WM_MOUSEMOVE, so applying a cursor a class
+  ;; never asked for would flicker it away on every tick.
+  ;;
+  ;; Chrome hits (HTCAPTION/HTBORDER/HTSYSMENU/HTCLOSE/HTMIN/HTMAX) and the
+  ;; scrollbar strips: apply IDC_ARROW.
+  (func $defwndproc_do_setcursor (param $hwnd i32) (param $hit i32) (result i32)
+    (local $class_cursor i32)
+    (if (i32.eq (local.get $hit) (i32.const 1))
+      (then
+        (local.set $class_cursor (call $wnd_get_class_cursor (local.get $hwnd)))
+        (if (local.get $class_cursor)
+          (then (drop (call $set_cursor_internal (local.get $class_cursor)))))
+        (return (i32.const 1))))
+    ;; Resize edges get the appropriate sizing cursor.
+    ;; HTLEFT/HTRIGHT → SIZEWE, HTTOP/HTBOTTOM → SIZENS,
+    ;; HTTOPLEFT/HTBOTTOMRIGHT → SIZENWSE, HTTOPRIGHT/HTBOTTOMLEFT → SIZENESW.
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 10))
+                (i32.eq (local.get $hit) (i32.const 11)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F84))) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 12))
+                (i32.eq (local.get $hit) (i32.const 15)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F85))) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 13))
+                (i32.eq (local.get $hit) (i32.const 17)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F82))) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $hit) (i32.const 14))
+                (i32.eq (local.get $hit) (i32.const 16)))
+      (then (drop (call $set_cursor_internal (i32.const 0x67F83))) (return (i32.const 1))))
+    (drop (call $set_cursor_internal (i32.const 0x67F00))) ;; IDC_ARROW
+    (i32.const 1))
+
+  ;; Tiny wrapper so $defwndproc_do_ncpaint can peek FLASH_TABLE without
+  ;; reaching into the table address directly (keeps the layout private
+  ;; to help.wat and avoids leaking the offset into two files).
+  (func $get_flash_state_slot (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $idx))))
+
+  ;; Per-window maximized state. Set by the WM_SYSCOMMAND handler after
+  ;; SC_MAXIMIZE / SC_RESTORE commits its geometry change. Read by the
+  ;; HTMAXBUTTON click handler (to flip SC_MAXIMIZE↔SC_RESTORE) and by
+  ;; $defwndproc_do_ncpaint (so the glyph reflects current state).
+  (func $wnd_max_get (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $MAX_TABLE) (local.get $idx))))
+  (func $wnd_max_set (param $hwnd i32) (param $val i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $idx))
+                        (local.get $val)))))
+
+  ;; ---- Sysbutton press state (used by JS while user holds LMB on a
+  ;; title-bar button). Setting to (hwnd, hit) makes the next ncpaint
+  ;; render that button with EDGE_SUNKEN + 1px glyph offset. nc_clear
+  ;; restores the raised look. JS calls these from handleMouseDown /
+  ;; handleMouseMove / handleMouseUp around the press-and-release window.
+  (func $nc_set_pressed (export "nc_set_pressed") (param $hwnd i32) (param $hit i32)
+    (global.set $nc_pressed_hwnd (local.get $hwnd))
+    (global.set $nc_pressed_hit  (local.get $hit))
+    (global.set $nc_tracking_hit (local.get $hit)))
+  (func $nc_clear_pressed (export "nc_clear_pressed")
+    (global.set $nc_pressed_hwnd (i32.const 0))
+    (global.set $nc_pressed_hit  (i32.const 0))
+    (global.set $nc_tracking_hit (i32.const 0)))
+  ;; Synchronous chrome repaint — JS invokes this right after toggling the
+  ;; sysbutton press state so the back-canvas updates *now* instead of
+  ;; waiting for the next message-pump tick to drain a posted WM_NCPAINT.
+  (func (export "nc_repaint_now") (param $hwnd i32)
+    (call $defwndproc_do_ncpaint (local.get $hwnd)))
+
+  ;; USER non-client button tracking. JS supplies raw screen coordinates only;
+  ;; WAT hit-tests, owns the pressed visual state, and posts the eventual
+  ;; WM_NCLBUTTONDOWN on release if the cursor is still over the same button.
+  (func $nc_sysbutton_down (export "nc_sysbutton_down")
+        (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $hit i32)
+    (local.set $hit (call $defwndproc_do_nchittest
+      (local.get $hwnd) (local.get $sx) (local.get $sy)))
+    (if (i32.or
+          (i32.or
+            (i32.or (i32.eq (local.get $hit) (i32.const 20))
+                    (i32.eq (local.get $hit) (i32.const 21)))
+            (i32.eq (local.get $hit) (i32.const 8)))
+          (i32.eq (local.get $hit) (i32.const 9)))
+      (then
+        (call $nc_set_pressed (local.get $hwnd) (local.get $hit))
+        (call $defwndproc_do_ncpaint (local.get $hwnd))
+        (return (local.get $hit))))
+    (i32.const 0))
+
+  (func $nc_sysbutton_move (export "nc_sysbutton_move")
+        (param $sx i32) (param $sy i32) (result i32)
+    (local $hit i32) (local $pressed i32)
+    (if (i32.eqz (global.get $nc_pressed_hwnd)) (then (return (i32.const 0))))
+    (local.set $hit (call $defwndproc_do_nchittest
+      (global.get $nc_pressed_hwnd) (local.get $sx) (local.get $sy)))
+    (local.set $pressed
+      (select (global.get $nc_tracking_hit) (i32.const 0)
+        (i32.eq (local.get $hit) (global.get $nc_tracking_hit))))
+    (if (i32.eq (local.get $pressed) (global.get $nc_pressed_hit))
+      (then (return (i32.const 0))))
+    (global.set $nc_pressed_hit (local.get $pressed))
+    (call $defwndproc_do_ncpaint (global.get $nc_pressed_hwnd))
+    (i32.const 1))
+
+  (func $nc_sysbutton_up (export "nc_sysbutton_up")
+        (param $sx i32) (param $sy i32) (result i32)
+    (local $hwnd i32) (local $down_hit i32) (local $cur_hit i32) (local $lp i32)
+    (local.set $hwnd (global.get $nc_pressed_hwnd))
+    (local.set $down_hit (global.get $nc_tracking_hit))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (local.set $cur_hit (call $defwndproc_do_nchittest
+      (local.get $hwnd) (local.get $sx) (local.get $sy)))
+    (call $nc_clear_pressed)
+    (call $defwndproc_do_ncpaint (local.get $hwnd))
+    (if (i32.and
+          (i32.ne (local.get $down_hit) (i32.const 0))
+          (i32.eq (local.get $cur_hit) (local.get $down_hit)))
+      (then
+        (local.set $lp
+          (i32.or
+            (i32.shl (i32.and (local.get $sy) (i32.const 0xFFFF)) (i32.const 16))
+            (i32.and (local.get $sx) (i32.const 0xFFFF))))
+        (drop (call $post_queue_push
+          (local.get $hwnd) (i32.const 0x00A1) (local.get $down_hit) (local.get $lp)))))
+    (i32.const 1))

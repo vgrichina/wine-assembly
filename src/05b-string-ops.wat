@@ -1,0 +1,371 @@
+  ;; ============================================================
+  ;; STRING OPERATIONS (movsb/movsd/stosb/stosd/cmps/scas + REP)
+  ;; ============================================================
+
+  ;; memory.copy/fill operate on linear WASM offsets. Sparse guest mappings can
+  ;; be adjacent in guest space but backed by non-adjacent WASM blocks when
+  ;; commits are interleaved. Only use the bulk instructions when translating
+  ;; both ends proves that the whole guest range is linear.
+  (func $string_guest_range_contiguous (param $guest i32) (param $size i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $size))
+      (then (i32.const 1))
+      (else
+        (i32.eq
+          (call $g2w (i32.add (local.get $guest) (i32.sub (local.get $size) (i32.const 1))))
+          (i32.add (call $g2w (local.get $guest))
+            (i32.sub (local.get $size) (i32.const 1)))))))
+
+  ;; --- String ops ---
+  (func $th_movsb (param $op i32)
+    (call $gs8 (global.get $edi) (call $gl8 (global.get $esi)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 1)))
+            (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 1)))
+            (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
+    (return_call $next))
+  (func $th_movsd (param $op i32)
+    (call $gs32 (global.get $edi) (call $gl32 (global.get $esi)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 4)))
+            (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 4)))
+            (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+    (return_call $next))
+  (func $th_stosb (param $op i32)
+    (call $gs8 (global.get $edi) (i32.and (global.get $eax) (i32.const 0xFF)))
+    (if (global.get $df)
+      (then (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
+      (else (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
+    (return_call $next))
+  (func $th_stosd (param $op i32)
+    (call $gs32 (global.get $edi) (global.get $eax))
+    (if (global.get $df)
+      (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+      (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+    (return_call $next))
+  (func $th_lodsb (param $op i32)
+    (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFFFF00)) (call $gl8 (global.get $esi))))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 1))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 1)))))
+    (return_call $next))
+  (func $th_lodsd (param $op i32)
+    (global.set $eax (call $gl32 (global.get $esi)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 4))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 4)))))
+    (return_call $next))
+  ;; REP versions (inline loop)
+  (func $th_rep_movsb (param $op i32)
+    (local $n i32) (local $dst i32) (local $src i32) (local $i i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
+      (if (global.get $df)
+        (then
+          ;; Backward: src/dst point to highest byte, copy from (addr - n + 1)
+          (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (local.set $src (i32.sub (global.get $esi) (i32.sub (local.get $n) (i32.const 1))))
+          (call $invalidate_code_write (local.get $dst))
+          (call $invalidate_code_write (global.get $edi))
+          (if (i32.or
+                (i32.and
+                  (i32.lt_u (local.get $dst) (local.get $src))
+                  (i32.lt_u (local.get $src) (i32.add (local.get $dst) (local.get $n))))
+                (i32.or
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $n)))
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $n)))))
+            (then
+              (local.set $i (i32.const 0))
+              (block $done (loop $copy
+                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+                (call $gs8
+                  (i32.sub (global.get $edi) (local.get $i))
+                  (call $gl8 (i32.sub (global.get $esi) (local.get $i))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $copy))))
+            (else
+              (memory.copy
+                (call $g2w (local.get $dst))
+                (call $g2w (local.get $src))
+                (local.get $n))))
+          (global.set $esi (i32.sub (global.get $esi) (local.get $n)))
+          (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
+        (else
+          (local.set $src (global.get $esi))
+          (local.set $dst (global.get $edi))
+          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (if (i32.or
+                (i32.and
+                  (i32.lt_u (local.get $src) (local.get $dst))
+                  (i32.lt_u (local.get $dst) (i32.add (local.get $src) (local.get $n))))
+                (i32.or
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $n)))
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $n)))))
+            (then
+              (local.set $i (i32.const 0))
+              (block $done (loop $copy
+                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+                (call $gs8
+                  (i32.add (global.get $edi) (local.get $i))
+                  (call $gl8 (i32.add (global.get $esi) (local.get $i))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $copy))))
+            (else
+              (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $n))))
+          (global.set $esi (i32.add (global.get $esi) (local.get $n)))
+          (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
+      (global.set $ecx (i32.const 0))))
+    (return_call $next))
+  (func $th_rep_movsd (param $op i32)
+    (local $n i32) (local $bytes i32) (local $dst i32) (local $src i32) (local $i i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
+      (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
+      (if (global.get $df)
+        (then
+          (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+          (local.set $src (i32.sub (global.get $esi) (i32.sub (local.get $bytes) (i32.const 4))))
+          (call $invalidate_code_write (local.get $dst))
+          (call $invalidate_code_write (global.get $edi))
+          (if (i32.or
+                (i32.and
+                  (i32.lt_u (local.get $dst) (local.get $src))
+                  (i32.lt_u (local.get $src) (i32.add (local.get $dst) (local.get $bytes))))
+                (i32.or
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $bytes)))))
+            (then
+              (local.set $i (i32.const 0))
+              (block $done (loop $copy
+                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+                (call $gs32
+                  (i32.sub (global.get $edi) (i32.shl (local.get $i) (i32.const 2)))
+                  (call $gl32 (i32.sub (global.get $esi) (i32.shl (local.get $i) (i32.const 2)))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $copy))))
+            (else
+              (memory.copy
+                (call $g2w (local.get $dst))
+                (call $g2w (local.get $src))
+                (local.get $bytes))))
+          (global.set $esi (i32.sub (global.get $esi) (local.get $bytes)))
+          (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
+        (else
+          (local.set $src (global.get $esi))
+          (local.set $dst (global.get $edi))
+          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
+          (if (i32.or
+                (i32.and
+                  (i32.lt_u (local.get $src) (local.get $dst))
+                  (i32.lt_u (local.get $dst) (i32.add (local.get $src) (local.get $bytes))))
+                (i32.or
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
+                  (i32.eqz (call $string_guest_range_contiguous (local.get $src) (local.get $bytes)))))
+            (then
+              (local.set $i (i32.const 0))
+              (block $done (loop $copy
+                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+                (call $gs32
+                  (i32.add (global.get $edi) (i32.shl (local.get $i) (i32.const 2)))
+                  (call $gl32 (i32.add (global.get $esi) (i32.shl (local.get $i) (i32.const 2)))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $copy))))
+            (else
+              (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $bytes))))
+          (global.set $esi (i32.add (global.get $esi) (local.get $bytes)))
+          (global.set $edi (i32.add (global.get $edi) (local.get $bytes)))))
+      (global.set $ecx (i32.const 0))))
+    (return_call $next))
+  (func $th_rep_stosb (param $op i32)
+    (local $n i32) (local $dst i32) (local $i i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
+      (if (global.get $df)
+        (then
+          (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (call $invalidate_code_write (local.get $dst))
+          (call $invalidate_code_write (global.get $edi))
+          (if (call $string_guest_range_contiguous (local.get $dst) (local.get $n))
+            (then
+              (memory.fill
+                (call $g2w (local.get $dst))
+                (i32.and (global.get $eax) (i32.const 0xFF))
+                (local.get $n)))
+            (else
+              (local.set $i (i32.const 0))
+              (block $done (loop $fill
+                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+                (call $gs8 (i32.sub (global.get $edi) (local.get $i))
+                  (i32.and (global.get $eax) (i32.const 0xFF)))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $fill)))))
+          (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
+        (else
+          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (if (call $string_guest_range_contiguous (global.get $edi) (local.get $n))
+            (then
+              (memory.fill (call $g2w (global.get $edi))
+                (i32.and (global.get $eax) (i32.const 0xFF)) (local.get $n)))
+            (else
+              (local.set $i (i32.const 0))
+              (block $done (loop $fill
+                (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+                (call $gs8 (i32.add (global.get $edi) (local.get $i))
+                  (i32.and (global.get $eax) (i32.const 0xFF)))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $fill)))))
+          (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
+      (global.set $ecx (i32.const 0))))
+    (return_call $next))
+  (func $th_rep_stosd (param $op i32)
+    (local $n i32) (local $bytes i32) (local $al i32) (local $dst i32)
+    (local.set $n (global.get $ecx))
+    (if (local.get $n) (then
+      ;; Ensure n is positive for shift (ECX is unsigned)
+      (local.set $bytes (i32.shl (local.get $n) (i32.const 2)))
+      (local.set $al (i32.and (global.get $eax) (i32.const 0xFF)))
+      (local.set $dst
+        (select
+          (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4)))
+          (global.get $edi)
+          (i32.ne (global.get $df) (i32.const 0))))
+      ;; Fast path: if all 4 bytes of EAX are the same, use memory.fill
+      (if (i32.and
+            (i32.eq (global.get $eax) (i32.or (i32.shl (local.get $al) (i32.const 24))
+              (i32.or (i32.shl (local.get $al) (i32.const 16))
+                (i32.or (i32.shl (local.get $al) (i32.const 8)) (local.get $al)))))
+            (call $string_guest_range_contiguous (local.get $dst) (local.get $bytes)))
+        (then
+          (if (global.get $df)
+            (then
+              (call $invalidate_code_write (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+              (call $invalidate_code_write (global.get $edi))
+              (memory.fill
+                (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
+                (local.get $al) (local.get $bytes))
+              (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
+            (else
+              (call $invalidate_code_write (global.get $edi))
+              (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
+              (memory.fill (call $g2w (global.get $edi)) (local.get $al) (local.get $bytes))
+              (global.set $edi (i32.add (global.get $edi) (local.get $bytes))))))
+        (else
+          ;; Slow path: arbitrary dword value
+          (block $d (loop $l
+            (br_if $d (i32.eqz (local.get $n)))
+            (call $gs32 (global.get $edi) (global.get $eax))
+            (if (global.get $df)
+              (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+              (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+            (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+            (br $l)))))
+      (global.set $ecx (i32.const 0))))
+    (return_call $next))
+  (func $th_cmpsb (param $op i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (call $gl8 (global.get $esi))) (local.set $b (call $gl8 (global.get $edi)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 1)))
+            (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 1)))
+            (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
+    (return_call $next))
+  (func $th_scasb (param $op i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (i32.and (global.get $eax) (i32.const 0xFF)))
+    (local.set $b (call $gl8 (global.get $edi)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+    (if (global.get $df)
+      (then (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
+      (else (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
+    (return_call $next))
+  (func $th_rep_cmpsb (param $op i32)
+    ;; operand: 0=REPE, 1=REPNE
+    (local $a i32) (local $b i32)
+    (block $d (loop $l
+      (br_if $d (i32.eqz (global.get $ecx)))
+      (local.set $a (call $gl8 (global.get $esi))) (local.set $b (call $gl8 (global.get $edi)))
+      (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+      (if (global.get $df)
+        (then (global.set $esi (i32.sub (global.get $esi) (i32.const 1)))
+              (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
+        (else (global.set $esi (i32.add (global.get $esi) (i32.const 1)))
+              (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
+      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+      (if (i32.eqz (local.get $op)) ;; REPE: stop if not equal
+        (then (br_if $d (i32.ne (local.get $a) (local.get $b))))
+        (else (br_if $d (i32.eq (local.get $a) (local.get $b))))) ;; REPNE: stop if equal
+      (br $l))) (return_call $next))
+  (func $th_rep_scasb (param $op i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (i32.and (global.get $eax) (i32.const 0xFF)))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (global.get $ecx)))
+      (local.set $b (call $gl8 (global.get $edi)))
+      (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+      (if (global.get $df)
+        (then (global.set $edi (i32.sub (global.get $edi) (i32.const 1))))
+        (else (global.set $edi (i32.add (global.get $edi) (i32.const 1)))))
+      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+      (if (i32.eqz (local.get $op))
+        (then (br_if $d (i32.ne (local.get $a) (local.get $b))))
+        (else (br_if $d (i32.eq (local.get $a) (local.get $b)))))
+      (br $l))) (return_call $next))
+
+  ;; --- CMPSD/SCASD (dword variants) ---
+  (func $th_cmpsd (param $op i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (call $gl32 (global.get $esi))) (local.set $b (call $gl32 (global.get $edi)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+    (if (global.get $df)
+      (then (global.set $esi (i32.sub (global.get $esi) (i32.const 4)))
+            (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+      (else (global.set $esi (i32.add (global.get $esi) (i32.const 4)))
+            (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+    (return_call $next))
+  (func $th_scasd (param $op i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (global.get $eax))
+    (local.set $b (call $gl32 (global.get $edi)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+    (if (global.get $df)
+      (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+      (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+    (return_call $next))
+  (func $th_rep_cmpsd (param $op i32)
+    ;; operand: 0=REPE, 1=REPNE
+    (local $a i32) (local $b i32)
+    (block $d (loop $l
+      (br_if $d (i32.eqz (global.get $ecx)))
+      (local.set $a (call $gl32 (global.get $esi))) (local.set $b (call $gl32 (global.get $edi)))
+      (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+      (if (global.get $df)
+        (then (global.set $esi (i32.sub (global.get $esi) (i32.const 4)))
+              (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+        (else (global.set $esi (i32.add (global.get $esi) (i32.const 4)))
+              (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+      (if (i32.eqz (local.get $op))
+        (then (br_if $d (i32.ne (local.get $a) (local.get $b))))
+        (else (br_if $d (i32.eq (local.get $a) (local.get $b)))))
+      (br $l))) (return_call $next))
+  (func $th_rep_scasd (param $op i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (global.get $eax))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (global.get $ecx)))
+      (local.set $b (call $gl32 (global.get $edi)))
+      (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+      (if (global.get $df)
+        (then (global.set $edi (i32.sub (global.get $edi) (i32.const 4))))
+        (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
+      (global.set $ecx (i32.sub (global.get $ecx) (i32.const 1)))
+      (if (i32.eqz (local.get $op))
+        (then (br_if $d (i32.ne (local.get $a) (local.get $b))))
+        (else (br_if $d (i32.eq (local.get $a) (local.get $b)))))
+      (br $l))) (return_call $next))
