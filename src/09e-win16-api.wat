@@ -625,7 +625,10 @@
             (call $win16_call32_end)
             (global.set $eax (call $win16_h16 (local.get $h)))))))
     (global.set $win16_res_module_id (i32.const 0))
-    (call $win16_api_return (i32.const 6)))
+    ;; Two words: an instance handle and a resource handle. Popping six left
+    ;; two bytes of the caller's frame behind, and Visual Basic's runtime
+    ;; returned through it into nothing a few calls later.
+    (call $win16_api_return (i32.const 4)))
 
   ;; KERNEL.65 SizeofResource(hInstance, hResInfo) -> its length in bytes.
   (func $win16_SizeofResource
@@ -638,7 +641,7 @@
                                    (i32.and (local.get $key) (i32.const 0xFFFF)))
       (then (global.set $eax (global.get $win16_res_len))))
     (global.set $win16_res_module_id (i32.const 0))
-    (call $win16_api_return (i32.const 6)))
+    (call $win16_api_return (i32.const 4)))
 
   ;; KERNEL.62 LockResource(hResData) -> far pointer.
   ;;
