@@ -701,8 +701,17 @@
   ;; frame, so put those bytes back: EIP still points at the thunk, and the
   ;; host re-enters this same handler with the same arguments once the wire
   ;; has moved.
+  ;;
+  ;; $handler_set_eip is what keeps that true. $run's thunk-zone auto-pop fires
+  ;; whenever a handler leaves EIP alone — yield or no yield — and sets
+  ;; EIP = [ESP], splicing the call out: the guest resumes past its own connect
+  ;; or recv with the arguments still on the stack, having never made the call,
+  ;; and drifts by $unpop bytes every park. Every re-entering thunk raises this;
+  ;; see the CACA000x continuations and $cs_block, where the same omission cost a
+  ;; session before it was found.
   (func $vsock_block (param $unpop i32)
     (global.set $esp (i32.sub (global.get $esp) (local.get $unpop)))
+    (global.set $handler_set_eip (i32.const 1))
     (global.set $yield_reason (i32.const 8))
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0)))

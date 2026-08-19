@@ -819,9 +819,13 @@ no yield — and sets `EIP = [ESP]`, splicing the call out entirely. A parking
 handler must raise `$handler_set_eip`, the way every `CACA000x` continuation
 does. Without it the guest resumed past the call without the section and with its
 argument still on the stack: four bytes per park, and a dead thread later at a
-garbage EIP. **`$vsock_block` in `src/09d-winsock.wat` does not raise it either**,
-so a parked blocking socket call has the same defect — untouched here because it
-is a networking change and needs the vlan tests, but it should not stay.
+garbage EIP. **`$vsock_block` in `src/09d-winsock.wat` had the same defect** — a
+parked blocking socket call was spliced out too, resuming past its own `connect`
+or `recv` having never made it, and drifting ESP by the frame size on every park.
+Fixed, and verified where it can actually be seen: `test-vlan-tetrinet.js` runs
+two real emulator processes through a blocking accept and recv round trip
+(`test-vlan-wire.js` asserts the *yield* by calling the handler directly, which
+never goes through `$run` and so cannot see the auto-pop at all).
 
 `$cs_waits` / `$cs_steals` / `$cs_barges` / `$cs_bad_leaves` are exported, printed by
 `test/run.js` when nonzero, and carried per-thread in the worker slice reply, so
