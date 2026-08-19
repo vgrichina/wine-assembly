@@ -20,6 +20,7 @@ Build gates, in order: manifest ↔ glob equality, `api_table.json` (id == index
 
 - **Browser:** Open `index.html` (at repo root), select an app, click Launch. Live build deployed at https://wine-assembly.berrry.app via `tools/deploy-berrry.js --update`.
 - **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
+- **CLI, by app id:** `node test/run.js --app=sol` — takes the exe, its DLLs, its data files and its command line from `lib/apps.js`, the same registry the desktop icons read, so the CLI mounts exactly what the browser mounts. `--app=` with an unknown id prints the full id list. An explicit `--exe`/`--args` overrides the registry.
 - **PNG render:** `node test/run.js --exe=path/to/exe --png=output.png`
 
 ## Tracing (reach for this BEFORE editing source to add `console.log`)
@@ -271,6 +272,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/build.sh` — Build script (gates + concat + `lib/compile-wat.js`)
 - `tools/check-wat-manifest.js` — asserts `WAT_FILES` == `src/*.wat` as a set and as an order
 - `tools/concat-wat.js` — writes `build/combined.wat` from `WAT_FILES` (not a shell glob)
+- `tools/check-apps-registry.js` — asserts every `lib/apps.js` entry points at files that exist (exe, path-form DLLs, data files). Both hosts read that registry now, so a typo'd path breaks `run.js --app=<id>` as well as the desktop icon.
 - `tools/check-api-table.js` — asserts `api_table.json` ids are array positions and the array is append-only vs `HEAD`
 - `tools/check-data-strings.js` — asserts every `(i32.const 0xADDR) ;; Name` string-address annotation still names the string at that address
 - `tools/gen_dispatch.js --check` — fails if the generated dispatch table is stale rather than regenerating it

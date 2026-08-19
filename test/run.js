@@ -12,6 +12,7 @@ const {
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
+const { APPS } = require('../lib/apps');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -205,12 +206,28 @@ const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.g
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: also preload the EXE directory on D:\
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
-const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
+// --app=sol launches what the desktop icon launches: lib/apps.js is the one
+// registry both hosts read, so the exe, the DLLs beside it, the data files it
+// needs in the VFS and its command line all come from the same entry the
+// browser uses. An explicit --exe/--args still wins over the registry.
+const APP_ID = getArg('app', null);
+const APP_ENTRY = (() => {
+  if (!APP_ID) return null;
+  const entry = APPS[APP_ID];
+  if (entry) return entry;
+  console.error(`unknown --app=${APP_ID}. Known ids:\n  ` +
+    Object.keys(APPS).sort().join(' '));
+  process.exit(1);
+})();
+// Registry paths are repo-relative and lean on the top-level `binaries`
+// symlink, so they resolve the same from the page and from here.
+const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
+const EXE_PATH = getArg('exe', APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe');
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
-const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
+const EXTRA_ARGS = getArg('args', (APP_ENTRY && APP_ENTRY.args) || null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
@@ -2415,12 +2432,27 @@ async function main() {
       }
       return null;
     };
+    // App-local DLLs ship beside their exe, so a dependency named by another
+    // DLL is looked up in this app's own `files` list too — same rule the page
+    // applies (index.html appFileByName).
+    const appFileByName = new Map();
+    for (const f of ((APP_ENTRY && APP_ENTRY.files) || [])) {
+      const url = typeof f === 'string' ? f : (f && f.url);
+      if (url) appFileByName.set(url.split('/').pop().toLowerCase(), url);
+    }
     dlls = await resolveDllGraph({
       exeBytes,
+      seeds: (APP_ENTRY && APP_ENTRY.dlls) || [],
       detectRequiredDlls,
-      loadSpec: (name) => {
-        const p = findDllFile(name);
-        return p ? { name, bytes: fs.readFileSync(p) } : null;
+      loadSpec: (spec) => {
+        // Registry seeds arrive as repo-relative paths; the graph walk's own
+        // discoveries arrive as bare DLL names.
+        const name = spec.split('/').pop();
+        const p = spec.includes('/')
+          ? appAsset(spec)
+          : (findDllFile(name) || (appFileByName.has(name.toLowerCase())
+              ? appAsset(appFileByName.get(name.toLowerCase())) : null));
+        return (p && fs.existsSync(p)) ? { name, bytes: fs.readFileSync(p) } : null;
       },
     });
   }
@@ -2510,6 +2542,50 @@ async function main() {
       }
     };
     loadDir(exeDir, 'c:\\');
+    // --app: mount the registry's data files at the same VFS paths the page
+    // gives them. An entry is a repo-relative URL (-> c:\basename), or
+    // {url, vfsPath}, or {url, vfsPaths} when one file needs several aliases.
+    if (APP_ENTRY && APP_ENTRY.files) {
+      const addFile = (rawPath, hostPath, size) => {
+        let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
+        if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+        let p = vfsPath;
+        while (true) {
+          const idx = p.lastIndexOf('\\');
+          if (idx <= 2) break;
+          p = p.slice(0, idx);
+          ctx.vfs.dirs.add(p);
+        }
+        ctx.vfs.setLazyFile(vfsPath, {
+          attrs: 0x20,
+          size,
+          load: () => new Uint8Array(fs.readFileSync(hostPath)),
+        });
+      };
+      const missing = [];
+      for (const item of APP_ENTRY.files) {
+        const url = typeof item === 'string' ? item : (item && item.url);
+        if (!url) continue;
+        const hostPath = appAsset(url);
+        let size = 0;
+        try {
+          size = fs.statSync(hostPath).size;
+        } catch (_) {
+          missing.push(url);
+          continue;
+        }
+        const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
+          ? item.vfsPaths
+          : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
+        for (const p of paths) addFile(p, hostPath, size);
+      }
+      if (missing.length) {
+        const msg = `--app=${APP_ID}: ${missing.length} file(s) not found: ${missing.slice(0, 5).join(', ')}` +
+          (missing.length > 5 ? ` (+${missing.length - 5} more)` : '');
+        if (APP_ENTRY.requiredFiles) throw new Error(msg);
+        console.log('[app] ' + msg);
+      }
+    }
     if (VFS_DRIVE) {
       const drive = VFS_DRIVE.replace(/:$/, '').toLowerCase();
       if (!/^[a-z]$/.test(drive)) throw new Error(`invalid --vfs-drive: ${VFS_DRIVE}`);
