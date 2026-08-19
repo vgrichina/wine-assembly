@@ -389,6 +389,7 @@ E2E=(
   test/test-wordpad-caret.js
   test/test-wordpad-replace.js
   test/test-wordpad-undo-find.js
+  test/test-wordpad-ui-advanced.js
   # Green only once their budgets stopped being shorter than the work: the two
   # vlan ones spawn a second emulator and wait for it over the wire.
   test/test-find-mouse-click.js
@@ -416,8 +417,6 @@ QUARANTINE=(
   # off the network, and a reference nobody looked at is worse than none.
   test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
-  # Edit/RichEdit gaps.
-  test/test-wordpad-ui-advanced.js      # 8/9: ruler drag adds no paragraph tab stop
   # OLE presentation data -- the known static-handler/IDataObject gap.
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
