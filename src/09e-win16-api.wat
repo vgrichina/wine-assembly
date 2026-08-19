@@ -1606,6 +1606,27 @@
   ;; GlobalReAlloc(h, dwBytes, wFlags). Growing inside the slots the block
   ;; already owns is free; anything else moves it, which a caller that kept a
   ;; pointer instead of the handle would notice — as it would on real Windows.
+  ;; Let a segment grow inside the arena slot it already owns, and move the
+  ;; local heap with it when the segment is the task's own DGROUP.
+  ;;
+  ;; A task that grows DGROUP is making room for a layout of its own — Visual
+  ;; Basic's is [its 0x3a44 bytes of runtime state][stack][heap], and it sets
+  ;; SP to the top of the stack immediately afterwards. The heap belongs at the
+  ;; top; leaving it where the loader guessed it had LocalAlloc handing out
+  ;; offsets in the middle of the state VB had just copied in, so VB's own
+  ;; tables were being overwritten by its own allocations.
+  (func $win16_gseg_grow (param $index i32) (param $bytes i32)
+    (if (i32.le_u (local.get $bytes) (call $win16_seg_limit (local.get $index)))
+      (then (return)))
+    (call $win16_gseg_store (local.get $index) (i32.const 4) (local.get $bytes))
+    (if (i32.and (i32.eq (local.get $index) (global.get $win16_auto_data))
+                 (i32.gt_u (local.get $bytes) (global.get $win16_heap_size)))
+      (then
+        (global.set $win16_lheap_base
+          (i32.sub (local.get $bytes) (global.get $win16_heap_size)))
+        (global.set $win16_lheap_ptr (global.get $win16_lheap_base))
+        (global.set $win16_lheap_end (local.get $bytes)))))
+
   (func $win16_GlobalReAlloc
     (local $h i32) (local $bytes i32) (local $index i32) (local $new i32)
     (local $old i32) (local $i i32)
@@ -1617,6 +1638,7 @@
                   (call $win16_gseg_count (local.get $old)))
       (then
         (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $bytes))
+        (call $win16_gseg_grow (local.get $index) (local.get $bytes))
         (global.set $eax (local.get $h))
         (call $win16_api_return (i32.const 8))
         (return)))
@@ -1630,8 +1652,7 @@
                  (i32.ne (call $win16_seg_base (local.get $index)) (i32.const 0)))
       (then
         (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $bytes))
-        (if (i32.gt_u (local.get $bytes) (call $win16_seg_limit (local.get $index)))
-          (then (call $win16_gseg_store (local.get $index) (i32.const 4) (local.get $bytes))))
+        (call $win16_gseg_grow (local.get $index) (local.get $bytes))
         (global.set $eax (local.get $h))
         (call $win16_api_return (i32.const 8))
         (return)))
