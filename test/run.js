@@ -131,6 +131,12 @@ const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (N
 // large enough to change the timing of anything involving two processes, so a
 // race between two emulators in one room needs the quiet version.
 const TRACE_WIN16_DDE = (getArg('trace-win16', '') || '').split(',').includes('dde');
+// --trace-fpu: every x87 exception flag as it is raised, and every FCLEX or
+// FNINIT that takes them down again. The flags are sticky, so a program that
+// reads the status word reports whatever the last few thousand instructions
+// left in it -- Visual Basic says "Division by zero" from a status read, which
+// can be an arbitrary distance from the divide that set ZE.
+const TRACE_FPU = hasFlag('trace-fpu');
 const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
 // --vlan-ip=10.77.0.2: this process's room address (host of the room keeps
 // 10.77.0.1). --vlan-wire joins the segment offered by the parent process
@@ -481,6 +487,7 @@ async function main() {
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let pendingWin16 = null;  // words following the 0xCA16A9F1 Win16 dispatch marker
+  let pendingFpu = null;    // words following the 0xCAF00001 --trace-fpu marker
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
     if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
@@ -1741,6 +1748,19 @@ async function main() {
     // 0xCA16A9F0 / 0xCA16A9EF are the two halves of --trace-win16: the call
     // with the four stack words nearest the top, then AX and DX once it has
     // run. Only the F1/F2 markers mean the task stopped.
+    // --trace-fpu (06-fpu.wat): the flags, whether they went up or came down,
+    // and the EIP of the block that did it.
+    if ((val >>> 0) === 0xCAF00001) { pendingFpu = { words: [] }; return; }
+    if (pendingFpu) {
+      pendingFpu.words.push(val >>> 0);
+      if (pendingFpu.words.length < 3) return;
+      const [bits, raised, eip] = pendingFpu.words;
+      pendingFpu = null;
+      const names = ['IE', 'DE', 'ZE', 'OE', 'UE', 'PE', 'SF', 'ES']
+        .filter((_, i) => bits & (1 << i)).join('|') || 'none';
+      logs.push(`[fpu] ${raised ? 'raise' : 'clear'} ${names} at ${hex(eip)}`);
+      return;
+    }
     if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
     // A by-name call into a loaded DLL that resolved: same three words as the
@@ -3106,6 +3126,9 @@ async function main() {
   }
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
+  }
+  if (TRACE_FPU && instance.exports.set_fpu_trace) {
+    instance.exports.set_fpu_trace(1);
   }
   const dumpCallstack = (label, e) => {
     if (!TRACE_CALLSTACK || !e || !e.get_callstack_depth) return;

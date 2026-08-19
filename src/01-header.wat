@@ -2424,6 +2424,12 @@
   (global $WIN16_HANDLE_BASE i32 (i32.const 0x100))
   ;; --trace-win16: log every dispatch, not only the one that stops the task.
   (global $win16_trace (mut i32) (i32.const 0))
+  ;; --trace-fpu: log every x87 exception flag as it is raised or cleared. The
+  ;; flags are sticky -- nothing clears them but FCLEX/FINIT -- so a program
+  ;; that reads the status word sees whatever the last few thousand
+  ;; instructions left there, and "Division by zero" can be reported an
+  ;; arbitrary distance from the divide that set ZE.
+  (global $fpu_trace (mut i32) (i32.const 0))
   ;; The task's real ESP while a Win16 handler is borrowing the 32-bit stack to
   ;; call a $handle_* — see $win16_call32_begin in src/09e-win16-api.wat.
   (global $win16_esp_save (mut i32) (i32.const 0))
