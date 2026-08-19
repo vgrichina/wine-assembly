@@ -412,45 +412,24 @@ class WineAssembly {
         self._lastInputEvent = null;
         self.renderer._activeInputEvent = null;
       };
-      // In multi-app mode, only dequeue events for this app's hwnd range
-      let evt;
-      if (self._hwndBase && self._multiApp) {
-        const lo = self._hwndBase;
-        const hi = lo + 0x10000;
-        const q = self.renderer.inputQueue;
-        const idx = q.findIndex(e => !e.hwnd || (e.hwnd >= lo && e.hwnd < hi));
-        if (idx < 0) {
-          if (q.length === 0) clearInactiveInput();
-          return 0;
-        }
-        evt = q.splice(idx, 1)[0];
-      } else {
-        const q = self.renderer.inputQueue;
-        const ownerInstance = ctx.instance || self.instance;
-        const ownsEvent = (e) => {
+      // Which queued events are this instance's to take. In multi-app mode
+      // that is its own hwnd range; otherwise it is any window this WASM
+      // instance owns. An event with no hwnd belongs to whoever asks first.
+      // The dequeue itself, and the async-key/repaint bookkeeping that has to
+      // follow it, live in the renderer (renderer-input.js takeInput) -- this
+      // used to be a second transcription of them that had already lost the
+      // GetAsyncKeyState press bit.
+      const ownerInstance = ctx.instance || self.instance;
+      const owns = (self._hwndBase && self._multiApp)
+        ? (e) => !e.hwnd || (e.hwnd >= self._hwndBase && e.hwnd < self._hwndBase + 0x10000)
+        : (e) => {
           if (!ownerInstance || !e || !e.hwnd) return true;
           const win = self.renderer.windows && self.renderer.windows[e.hwnd];
           return !win || !win.wasm || win.wasm === ownerInstance;
         };
-        const idx = q.findIndex(ownsEvent);
-        if (idx < 0) {
-          if (q.length === 0) clearInactiveInput();
-          return 0;
-        }
-        evt = q.splice(idx, 1)[0];
-        if (evt && (evt.msg === 0x0100 || evt.msg === 0x0102 || evt.msg === 0x0104)) {
-          self.renderer._profileMark && self.renderer._profileMark('input-queue-dispatch', { msg: evt.msg, wParam: evt.wParam });
-        }
-        if (evt && evt.msg === 0x000F) self.renderer.scheduleRepaint();
-        if (evt && (evt.msg === 0x0100 || evt.msg === 0x0104)) {
-          if (!self.renderer._asyncKeys) self.renderer._asyncKeys = Object.create(null);
-          self.renderer._asyncKeys[evt.wParam & 0xFF] = true;
-        } else if (evt && (evt.msg === 0x0101 || evt.msg === 0x0105)) {
-          if (self.renderer._asyncKeys) self.renderer._asyncKeys[evt.wParam & 0xFF] = false;
-        }
-      }
+      const evt = self.renderer.takeInput(owns);
       if (!evt) {
-        clearInactiveInput();
+        if (self.renderer.inputQueue.length === 0) clearInactiveInput();
         return 0;
       }
       self._lastInputEvent = evt;
@@ -466,19 +445,8 @@ class WineAssembly {
     h.check_input_hwnd = () => {
       const evt = self._lastInputEvent;
       if (!evt) return 0;
-      if (evt.hwnd) return evt.hwnd | 0;
-      // Browser key events are queued without a target HWND. Route them to
-      // the guest focus owner just like the CLI harness; otherwise GetMessage
-      // substitutes main_hwnd and native child controls such as WordPad's
-      // RichEdit20A never receive WM_KEYDOWN/WM_CHAR.
-      if (evt.msg >= 0x0100 && evt.msg <= 0x0108) {
-        const exports = self.instance && self.instance.exports;
-        if (exports && exports.get_focus_hwnd) {
-          const focus = exports.get_focus_hwnd() | 0;
-          if (focus) return focus;
-        }
-      }
-      return 0;
+      // The routing rule itself is shared with the CLI (lib/host-window.js).
+      return inputEventHwnd(evt, self.instance && self.instance.exports);
     };
 
     // Wire thread/event imports to ThreadManager
