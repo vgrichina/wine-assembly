@@ -358,6 +358,11 @@ E2E=(
   test/test-wordpad-selection-highlight.js
   test/test-wordpad-toolbar-color-menu.js
   test/test-wordpad-toolbar-format-buttons.js
+  # Green only once their budgets stopped being shorter than the work: the two
+  # vlan ones spawn a second emulator and wait for it over the wire.
+  test/test-find-mouse-click.js
+  test/test-liquid-war-candidate.js
+  test/test-vlan-tetrinet.js
 )
 
 SMOKE=(
@@ -380,9 +385,15 @@ QUARANTINE=(
   test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
   test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
   test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
-  # Module fails to compile -- a real WAT bug in whatever variant these build.
+  # Module fails to instantiate. Not a stack bug in the WAT -- 09b2's generated
+  # dispatch table calls $handle_StartDocW, $handle_CopyMetaFileA and
+  # $handle_GetCharWidth32W, none of which exist. compile-wat only WARNS on an
+  # unknown func and drops the call, so the args stay on the stack and any
+  # module that lands one of those in a value position fails validation. The
+  # shipped wasm has the same three holes; they are silent no-ops there rather
+  # than crash_unimplemented, which is why nothing else notices.
   test/test-gdi-public-seven.js         # fn #6391: expected 1 elements on the stack for fallthru, found 5
-  test/test-vlan-match.js               # fn #1178: not enough arguments on the stack for call (need 4, got 3)
+  test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
   # Combobox drop-down paints no text at all. Three tests agree, so this is one bug.
   test/test-combobox.js                 # 57/59: CBS_DROPDOWN paints its selected list text (changedBytes=0)
   test/test-render-combobox.js          # 4/5: canvas has 5 distinct colors after repaint, wanted >=8
@@ -405,7 +416,6 @@ QUARANTINE=(
   test/test-mspaint-statusbar.js        # status bar loses its MFC docked geometry
   test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
   test/test-calc-view-switch.js         # 14/15: fixed dialogs oversized vertically
-  test/test-find-mouse-click.js         # 4/7: mouse down/up never injected into Find
   test/test-pinball-select-players.js   # 5/7: 2 Players submenu never painted
   test/test-region-window-client-rect.js # RuntimeError: unreachable (hits crash_unimplemented)
   test/test-dx-vtable-worker-sync.js    # worker does not restore the first generated COM vtable
@@ -413,10 +423,6 @@ QUARANTINE=(
   test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog
   test/test-winamp-installers.js        # license page: no word-wrapped DrawText, no PNG
   test/test-winamp-visualization-web.js # wVis plug-in window should be visible
-  # Two-process vlan tests: no progress inside a 300s budget on 2.0s of CPU,
-  # i.e. they are stuck waiting, not slow.
-  test/test-liquid-war-candidate.js     # spawnSync ETIMEDOUT
-  test/test-vlan-tetrinet.js            # never returns; server never listens
 )
 
 # A test file missing from every array above does not fail, it just never runs.
