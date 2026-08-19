@@ -1532,30 +1532,77 @@
       (then (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $h))
               (i32.add (local.get $h) (i32.const 2))))))
 
-  ;; LocalLock(hMem) -> the block. A fixed handle is already the block; a
-  ;; moveable one holds the address of the block in its first word, and says
-  ;; so by holding exactly the address two bytes along. Nothing else here
-  ;; writes that pattern, and a caller that wrote it over its own data would
-  ;; be pointing at its own second word either way.
+  ;; ---- What a local handle names ----
+  ;;
+  ;; A Win16 moveable handle outlives the block it names: LocalReAlloc moves
+  ;; the data and the handle keeps working, which is the whole point of asking
+  ;; for LMEM_MOVEABLE. Visual Basic's runtime relies on it — it grows the
+  ;; array behind a form's control list and then writes the new entry through
+  ;; the handle it has been holding all along. Handing back a different handle
+  ;; left it writing into the block that had just been freed, twelve bytes
+  ;; past its end and straight over the next block: the custom-control model
+  ;; list, whose records live there. The controls THREED.VBX had registered
+  ;; vanished from the chain and the second form could not find SSPanel.
+  ;;
+  ;; So a handle stays put and the data moves out from under it. Three shapes,
+  ;; told apart by the two words at the handle:
+  ;;
+  ;;   fixed        [h] is the caller's own data      -> the handle is the block
+  ;;   moveable     [h] == h+2                        -> data starts two along
+  ;;   moved        [h] == data, [h+2] == h           -> a four-byte stub
+  ;;
+  ;; The stub's second word holding its own address is what tells it from a
+  ;; fixed block, and a fixed block would have to contain its own offset in
+  ;; its second word to be mistaken for one.
+  (func $win16_lhandle_kind (param $h i32) (result i32)
+    (local $b i32)
+    (local.set $b (global.get $seg_base_ds))
+    (if (i32.eq (call $gl16 (i32.add (local.get $b) (local.get $h)))
+                (i32.add (local.get $h) (i32.const 2)))
+      (then (return (i32.const 1))))
+    (if (i32.eq (call $gl16 (i32.add (local.get $b)
+                                     (i32.add (local.get $h) (i32.const 2))))
+                (local.get $h))
+      (then (return (i32.const 2))))
+    (i32.const 0))
+
+  (func $win16_lhandle_data (param $h i32) (result i32)
+    (local $k i32)
+    (local.set $k (call $win16_lhandle_kind (local.get $h)))
+    (if (i32.eq (local.get $k) (i32.const 1))
+      (then (return (i32.add (local.get $h) (i32.const 2)))))
+    (if (i32.eq (local.get $k) (i32.const 2))
+      (then (return (call $gl16 (i32.add (global.get $seg_base_ds) (local.get $h))))))
+    (local.get $h))
+
+  ;; Bytes the caller may use, which is the block minus the word a moveable
+  ;; handle spends on pointing at its own data.
+  (func $win16_lhandle_size (param $h i32) (result i32)
+    (if (i32.eq (call $win16_lhandle_kind (local.get $h)) (i32.const 1))
+      (then (return (i32.sub
+        (call $win16_lblock_size (i32.sub (local.get $h) (i32.const 2)))
+        (i32.const 2)))))
+    (call $win16_lblock_size
+      (i32.sub (call $win16_lhandle_data (local.get $h)) (i32.const 2))))
+
+  ;; LocalLock(hMem) -> the block the handle currently names.
   (func $win16_LocalLock
-    (local $h i32) (local $w i32)
-    (local.set $h (call $win16_arg16 (i32.const 0)))
-    (local.set $w (call $gl16 (i32.add (global.get $seg_base_ds) (local.get $h))))
-    (global.set $eax (select (local.get $w) (local.get $h)
-      (i32.eq (local.get $w) (i32.add (local.get $h) (i32.const 2)))))
+    (global.set $eax (call $win16_lhandle_data (call $win16_arg16 (i32.const 0))))
     (call $win16_api_return (i32.const 2)))
 
   ;; KERNEL.6 LocalReAlloc(hMem, wBytes, wFlags) -> the block, resized.
   ;;
   ;; Shrinking, or growing into slack the block already has, is free. Growing
-  ;; the last block in the heap extends the bump pointer. Anything else takes
-  ;; a fresh block, copies, and frees the old one — nothing here ever moves a
-  ;; block behind the caller's back, so a moveable handle keeps pointing at
-  ;; its own data either way. Visual Basic resizes its control list as a form
-  ;; is built.
+  ;; the block at the top of the heap extends the bump pointer. Anything else
+  ;; takes a fresh block and copies — and for a moveable handle the handle
+  ;; itself stays where it is, shrunk to a four-byte stub that points at the
+  ;; data's new home, because that is the contract the caller asked for.
+  ;; Visual Basic resizes its control list as a form is built and then writes
+  ;; through the handle it kept.
   (func $win16_LocalReAlloc
-    (local $h i32) (local $bytes i32) (local $p i32) (local $size i32)
-    (local $mov i32) (local $new i32) (local $i i32) (local $copy i32)
+    (local $h i32) (local $bytes i32) (local $k i32) (local $extra i32)
+    (local $d i32) (local $dp i32) (local $dsize i32) (local $blk i32)
+    (local $new i32) (local $i i32) (local $copy i32)
     (local.set $h (call $win16_arg16 (i32.const 2)))
     (local.set $bytes (i32.and (i32.add (call $win16_arg16 (i32.const 1)) (i32.const 1))
                                (i32.const 0xFFFE)))
@@ -1567,32 +1614,34 @@
         (global.set $eax (i32.const 0))
         (call $win16_api_return (i32.const 6))
         (return)))
-    (local.set $p (i32.sub (local.get $h) (i32.const 2)))
-    (local.set $size (call $win16_lblock_size (local.get $p)))
-    (local.set $mov (i32.eq
-      (call $gl16 (i32.add (global.get $seg_base_ds) (local.get $h)))
-      (i32.add (local.get $h) (i32.const 2))))
-    (if (local.get $mov) (then (local.set $bytes (i32.add (local.get $bytes) (i32.const 2)))))
-    (if (i32.le_u (local.get $bytes) (local.get $size))
+    (local.set $k (call $win16_lhandle_kind (local.get $h)))
+    (local.set $extra (select (i32.const 2) (i32.const 0)
+      (i32.eq (local.get $k) (i32.const 1))))
+    (local.set $d (call $win16_lhandle_data (local.get $h)))
+    (local.set $dp (i32.sub (i32.sub (local.get $d) (i32.const 2)) (local.get $extra)))
+    (local.set $dsize (call $win16_lhandle_size (local.get $h)))
+    (if (i32.le_u (local.get $bytes) (local.get $dsize))
       (then
         (global.set $eax (local.get $h))
         (call $win16_api_return (i32.const 6))
         (return)))
-    ;; The last block can simply take more of the heap, growing it if needed.
-    (if (i32.and (i32.eq (i32.add (local.get $h) (local.get $size))
+    ;; The block on top of the heap can simply take more of it, growing the
+    ;; heap if that is what it takes.
+    (if (i32.and (i32.eq (i32.add (local.get $d) (local.get $dsize))
                          (call $win16_lheap_get (i32.const 1)))
-                 (call $win16_lheap_room (i32.add (local.get $h) (local.get $bytes))))
+                 (call $win16_lheap_room (i32.add (local.get $d) (local.get $bytes))))
       (then
         (call $zero_memory
           (call $g2w (i32.add (global.get $seg_base_ds)
-                              (i32.add (local.get $h) (local.get $size))))
-          (i32.sub (local.get $bytes) (local.get $size)))
-        (call $win16_lblock_set (local.get $p) (local.get $bytes) (i32.const 0))
-        (call $win16_lheap_set_ptr (i32.add (local.get $h) (local.get $bytes)))
+                              (i32.add (local.get $d) (local.get $dsize))))
+          (i32.sub (local.get $bytes) (local.get $dsize)))
+        (call $win16_lblock_set (local.get $dp)
+          (i32.add (local.get $bytes) (local.get $extra)) (i32.const 0))
+        (call $win16_lheap_set_ptr (i32.add (local.get $d) (local.get $bytes)))
         (global.set $eax (local.get $h))
         (call $win16_api_return (i32.const 6))
         (return)))
-    ;; Otherwise a fresh block at the top of the heap, and the old one back.
+    ;; Otherwise a fresh block at the top of the heap, copied into.
     (local.set $new (i32.add (call $win16_lheap_get (i32.const 1)) (i32.const 2)))
     (if (i32.eqz (call $win16_lheap_room
                    (i32.add (local.get $new) (local.get $bytes))))
@@ -1605,33 +1654,47 @@
     (call $win16_lheap_set_ptr (i32.add (local.get $new) (local.get $bytes)))
     (call $zero_memory (call $g2w (i32.add (global.get $seg_base_ds) (local.get $new)))
       (local.get $bytes))
-    (local.set $copy (select (local.get $bytes) (local.get $size)
-      (i32.lt_u (local.get $bytes) (local.get $size))))
+    (local.set $copy (select (local.get $bytes) (local.get $dsize)
+      (i32.lt_u (local.get $bytes) (local.get $dsize))))
     (block $copied (loop $byte
       (br_if $copied (i32.ge_u (local.get $i) (local.get $copy)))
       (call $gs8 (i32.add (i32.add (global.get $seg_base_ds) (local.get $new))
                           (local.get $i))
-        (call $gl8 (i32.add (i32.add (global.get $seg_base_ds) (local.get $h))
+        (call $gl8 (i32.add (i32.add (global.get $seg_base_ds) (local.get $d))
                             (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $byte)))
-    (call $win16_lmoveable (local.get $new) (local.get $mov))
-    (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1))
-    (global.set $eax (local.get $new))
+    ;; A fixed handle is the block, so it has no choice but to move with it.
+    (if (i32.eqz (local.get $k))
+      (then
+        (call $win16_lfree_block (local.get $dp))
+        (global.set $eax (local.get $new))
+        (call $win16_api_return (i32.const 6))
+        (return)))
+    ;; A moveable one keeps its offset. The first move leaves the handle's own
+    ;; block behind as the stub and returns the rest of it to the heap; a
+    ;; later move only has the data block to give back.
+    (if (i32.eq (local.get $k) (i32.const 1))
+      (then
+        (local.set $blk (call $win16_lblock_size (local.get $dp)))
+        (if (i32.ge_u (i32.sub (local.get $blk) (i32.const 4)) (i32.const 4))
+          (then
+            (call $win16_lblock_set (i32.add (local.get $h) (i32.const 4))
+              (i32.sub (local.get $blk) (i32.const 6)) (i32.const 1))
+            (call $win16_lblock_set (local.get $dp) (i32.const 4) (i32.const 0)))))
+      (else
+        (call $win16_lfree_block (local.get $dp))))
+    (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $h)) (local.get $new))
+    (call $gs16 (i32.add (global.get $seg_base_ds) (i32.add (local.get $h) (i32.const 2)))
+      (local.get $h))
+    (global.set $eax (local.get $h))
     (call $win16_api_return (i32.const 6)))
 
   ;; Mark the block free, absorb any free blocks that follow it, and give the
   ;; space straight back to the bump pointer when it turns out to be the last
   ;; one — without that the heap only ever grows by its high-water mark.
-  (func $win16_LocalFree
-    (local $p i32) (local $size i32) (local $next i32)
-    (local.set $p (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2)))
-    (if (i32.or (i32.lt_u (local.get $p) (call $win16_lheap_get (i32.const 0)))
-                (i32.ge_u (local.get $p) (call $win16_lheap_get (i32.const 1))))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 2))
-        (return)))
+  (func $win16_lfree_block (param $p i32)
+    (local $size i32) (local $next i32)
     (local.set $size (call $win16_lblock_size (local.get $p)))
     (block $done
       (loop $merge
@@ -1644,13 +1707,34 @@
     (if (i32.ge_u (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size))
                   (call $win16_lheap_get (i32.const 1)))
       (then (call $win16_lheap_set_ptr (local.get $p)))
-      (else (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1))))
+      (else (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1)))))
+
+  ;; A handle whose data has moved owns two blocks — the stub and the data —
+  ;; and freeing only the stub would leak the larger of the two.
+  (func $win16_LocalFree
+    (local $h i32) (local $d i32)
+    (local.set $h (call $win16_arg16 (i32.const 0)))
+    (if (i32.or (i32.lt_u (local.get $h) (i32.add (call $win16_lheap_get (i32.const 0))
+                                                  (i32.const 2)))
+                (i32.ge_u (i32.sub (local.get $h) (i32.const 2))
+                          (call $win16_lheap_get (i32.const 1))))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 2))
+        (return)))
+    (if (i32.eq (call $win16_lhandle_kind (local.get $h)) (i32.const 2))
+      (then
+        (local.set $d (call $win16_lhandle_data (local.get $h)))
+        (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $h)) (i32.const 0))
+        (call $gs16 (i32.add (global.get $seg_base_ds)
+                             (i32.add (local.get $h) (i32.const 2))) (i32.const 0))
+        (call $win16_lfree_block (i32.sub (local.get $d) (i32.const 2)))))
+    (call $win16_lfree_block (i32.sub (local.get $h) (i32.const 2)))
     (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 2)))
 
   (func $win16_LocalSize
-    (global.set $eax (call $win16_lblock_size
-      (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2))))
+    (global.set $eax (call $win16_lhandle_size (call $win16_arg16 (i32.const 0))))
     (call $win16_api_return (i32.const 2)))
 
   ;; LocalLock, LocalUnlock and LocalCompact on a fixed block: the handle is
