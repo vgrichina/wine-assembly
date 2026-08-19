@@ -1264,6 +1264,7 @@ async function main() {
     0x2022: 'XTYP_ADVREQ', 0x20B0: 'XTYP_REQUEST', 0x20E2: 'XTYP_WILDCONNECT',
     0x4010: 'XTYP_ADVDATA', 0x4050: 'XTYP_EXECUTE', 0x4090: 'XTYP_POKE',
     0x8002: 'XTYP_ERROR', 0x8040: 'XTYP_ADVSTOP', 0x8072: 'XTYP_CONNECT_CONFIRM',
+    0x8080: 'XTYP_XACT_COMPLETE',
     0x80A2: 'XTYP_DISCONNECT', 0x80C2: 'XTYP_REGISTER_NOTIFY',
   };
   const WIN16_MSG_NAMES = {
@@ -1712,18 +1713,25 @@ async function main() {
     // wParam, lParam, and the dialog the pump belongs to.
     if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
     if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
-    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 8, words: [], ddeAsk: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 12, words: [], ddeAsk: true }; return; }
     if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E7) { pendingWin16 = { want: 3, words: [], ddeData: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
       const { call: isCall, ret: isRet, route: isRoute, posted: isPosted,
-              ddeAsk: isDdeAsk, ddeAns: isDdeAns, resolved, words } = pendingWin16;
+              ddeAsk: isDdeAsk, ddeAns: isDdeAns, ddeData: isDdeData,
+              resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isDdeData) {
+        logs.push(`[win16] dde answered with ${words[0]} bytes:` +
+          ` ${hex(words[1])},${hex(words[2])}`);
+        return;
+      }
       if (isDdeAsk) {
-        const [type, inst, conv, hsz1, hsz2, cb, fmt, hdata] = words;
+        const [type, inst, conv, hsz1, hsz2, cb, fmt, hdata, head, dlen, head2, head3] = words;
         // Named, not numbered. A string handle is per-instance, so the two
         // sides of one conversation give the same name different numbers and
         // comparing two transcripts by handle proves nothing -- which is how a
@@ -1741,7 +1749,7 @@ async function main() {
         logs.push(`[win16] dde offer ${WIN16_DDE_XTYP[type] || hex(type)}` +
           ` inst=${inst} conv=${conv}` +
           ` topic=${hszText(hsz1)} item=${hszText(hsz2)}` +
-          ` fmt=${fmt} data=${hex(hdata)} callback=${hex(cb)}` +
+          ` fmt=${fmt} data=${hex(hdata)}${hdata ? `[${dlen}]=${hex(head)},${hex(head2)},${hex(head3)}` : ''} callback=${hex(cb)}` +
           `${cb >>> 16 ? '' : ' NO CALLBACK -- nobody to ask'}`);
         return;
       }
@@ -2231,6 +2239,21 @@ async function main() {
   const wasmModule = await WebAssembly.compile(wasmBytes);
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
+  // A run that is stopped from outside still knows things worth having. The
+  // two-process tests kill both emulators when their checks are done, and
+  // without this the --count summary -- the whole point of the flag -- was
+  // never printed for either of them.
+  if (countAddrs.length && instance.exports.get_count) {
+    for (const sig of ['SIGTERM', 'SIGINT']) {
+      process.on(sig, () => {
+        console.log(`Hit counts (on ${sig}):`);
+        for (let i = 0; i < countAddrs.length; i++) {
+          console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i)}`);
+        }
+        process.exit(0);
+      });
+    }
+  }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
   if (VLAN_IP && instance.exports.set_vlan_local_ip) {
     const octets = VLAN_IP.split('.').map(Number);

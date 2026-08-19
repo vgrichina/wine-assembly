@@ -131,6 +131,9 @@ const LOCATE_OK = '284:90';
 // ones furthest from the overlapping fan.
 const CARDS = ['250:380', '320:380', '390:380'];
 const PASS_BUTTON = '320:298';
+// Hearts opens with the two of clubs and refuses anything else -- "You must
+// lead the two of clubs" -- and the hand is sorted, so it is the leftmost card.
+const LOWEST_CARD = '200:380';
 
 const shot = name => path.join(OUT, `${name}.png`);
 
@@ -179,6 +182,12 @@ const DEALER_INPUT = [
   `${DEAL_AT + 78000}:click:${PASS_BUTTON}`,
   `${DEAL_AT + 83000}:click:${PASS_BUTTON}`,
   `${DEAL_AT + 88000}:png:${shot('dealer-passed')}`,
+  // And the trick. The dealer plays nothing here -- the lead is the other
+  // player's -- so this only has to be looking at the table when the card
+  // arrives.
+  `${DEAL_AT + 89000}:wait-go`,
+  `${DEAL_AT + 90000}:click:${PASS_BUTTON}`,
+  `${DEAL_AT + 100000}:png:${shot('dealer-trick')}`,
 ].join(',');
 
 const CLIENT_INPUT = [
@@ -206,6 +215,14 @@ const CLIENT_INPUT = [
   `102000:click:${PASS_BUTTON}`,
   `107000:click:${PASS_BUTTON}`,
   `112000:png:${shot('client-passed')}`,
+  // Hearts opens with the two of clubs, and whoever holds it leads -- so this
+  // is the leftmost card in the hand, and the one the game will accept.
+  '113000:wait-go',
+  // The three cards passed to you have to be accepted before the hand starts,
+  // and the button that passed is the button that accepts.
+  `114000:click:${PASS_BUTTON}`,
+  `119000:click:${LOWEST_CARD}`,
+  `130000:png:${shot('client-trick')}`,
 ].join(',');
 
 // Only a bounded tail of each transcript is kept: two processes at tens of
@@ -324,6 +341,18 @@ async function quiet(state, ms) {
   return false;
 }
 
+// Release one side's next held step. A game that has already ended is not a
+// reason to end the run with an IPC error on top of whatever really happened,
+// so a closed channel is reported and stepped over.
+function go(state) {
+  if (state.exited || !state.child.connected) {
+    console.log(`  [go] ${state.label} has already exited`);
+    return false;
+  }
+  state.child.send({ t: 'go' });
+  return true;
+}
+
 async function waitForFile(file) {
   const deadline = Math.min(Date.now() + MILESTONE_MS, DEADLINE);
   while (Date.now() < deadline) {
@@ -340,11 +369,11 @@ async function waitForFile(file) {
 // The table is green baize; the cards on it are white, and so are the three
 // computer hands' backs. Both fractions together separate "a table with cards"
 // from "a table" and from "a dialog still up".
-function table(file) {
+function table(file, x0 = 60, y0 = 30, x1 = 580, y1 = 440) {
   const png = PNG.sync.read(fs.readFileSync(file));
   let green = 0, white = 0, total = 0;
-  for (let y = 30; y < 440 && y < png.height; y++) {
-    for (let x = 60; x < 580 && x < png.width; x++) {
+  for (let y = y0; y < y1 && y < png.height; y++) {
+    for (let x = x0; x < x1 && x < png.width; x++) {
       const i = (y * png.width + x) * 4;
       const [r, g, b] = [png.data[i], png.data[i + 1], png.data[i + 2]];
       total++;
@@ -392,7 +421,7 @@ function table(file) {
   // through the last step of its own.
   const seated = await waitForFile(shot('dealer-waiting'));
   check('the dealer reached its table', seated, 'no screenshot was written');
-  client.child.send({ t: 'go' });
+  go(client);
 
   // 1-3: the room carried the request and something came back. "Nothing was
   // asked", "nobody answered", and "the answer came after we stopped waiting"
@@ -424,7 +453,7 @@ function table(file) {
   await quiet(client, 2000);
   check('the dealer seated the player', !client.seen.has('turnedAway'),
     '"The dealer is not ready, or the game is already in progress"');
-  dealer.child.send({ t: 'go' });
+  go(dealer);
   const dealt = await waitForFile(shot('dealer-dealt'));
   check('the dealer drew its table after New Game', dealt, 'no screenshot');
   if (dealt) {
@@ -435,7 +464,7 @@ function table(file) {
   // The dealer's screen is on disk; the client's hand has still to cross the
   // room and be drawn.
   await sleep(5000);
-  client.child.send({ t: 'go' });
+  go(client);
   const clientDealt = await waitForFile(shot('client-dealt'));
   check('the client drew its table', clientDealt, 'no screenshot');
   if (clientDealt) {
@@ -455,9 +484,9 @@ function table(file) {
   // button is only live while three cards are up, so a side held back until
   // the other had finished would be clicking a greyed button.
   const pokesBefore = dealer.pokes;
-  dealer.child.send({ t: 'go' });
+  go(client);
   await sleep(8000);
-  client.child.send({ t: 'go' });
+  go(dealer);
 
   // The move crossing the room, in one line: the client's three cards leave as
   // a DDE poke and this is the dealer receiving it. Waiting for this rather
@@ -479,8 +508,8 @@ function table(file) {
   // Let both sides settle the exchange before photographing them: the poke is
   // answered with an ack and the advise loops that redraw both tables.
   await quiet(dealer, 2000);
-  dealer.child.send({ t: 'go' });
-  client.child.send({ t: 'go' });
+  go(dealer);
+  go(client);
   const passedShots = await Promise.all([
     waitForFile(shot('dealer-passed')), waitForFile(shot('client-passed')),
   ]);
@@ -504,6 +533,35 @@ function table(file) {
   check('the pass came round and cards were offered to a player',
     dealer.seen.has('passed') || client.seen.has('passed'),
     'neither side was ever offered cards to accept');
+
+  // 7: a card. Passing is still setup of a kind -- this is the hand being
+  // played, one seat leading and the other watching it happen from the other
+  // side of the wire.
+  const pokesBeforePlay = dealer.pokes;
+  go(client);
+  const played = await (async () => {
+    const limit = Math.min(Date.now() + MILESTONE_MS, DEADLINE);
+    while (Date.now() < limit) {
+      if (dealer.pokes > pokesBeforePlay) return true;
+      if (dealer.exited || client.exited) return dealer.pokes > pokesBeforePlay;
+      await sleep(200);
+    }
+    return false;
+  })();
+  check('the played card reached the dealer', played, 'no poke followed the click');
+  await quiet(dealer, 2000);
+  go(dealer);
+  const trickShots = await Promise.all([
+    waitForFile(shot('dealer-trick')), waitForFile(shot('client-trick')),
+  ]);
+  for (const [name, drawn] of [['dealer', trickShots[0]], ['client', trickShots[1]]]) {
+    if (!drawn) { check(`the ${name} drew the trick`, false, 'no screenshot'); continue; }
+    // The middle of the table is empty baize until somebody leads; a card
+    // there is the trick in progress, and it is the same card on both screens.
+    const t = table(shot(`${name}-trick`), 250, 150, 400, 300);
+    check(`the ${name} has a card on the table (${(t.white * 100).toFixed(0)}% of the middle)`,
+      t.white > 0.05, JSON.stringify(t));
+  }
   // Not a failure, and not hidden either. The dealer's own seat does not
   // finish the round: it receives the client's "Pass" poke, reads it with
   // DdeGetData, posts an advise and acknowledges with DDE_FACK -- and its

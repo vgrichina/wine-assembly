@@ -3637,6 +3637,41 @@
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; GDI.172 SetRectRgn(hrgn, left, top, right, bottom).
+  ;;
+  ;; CARDS.DLL clips to the card it is about to draw, so the first card played
+  ;; in a networked hand went straight through this and trapped -- both players
+  ;; died on the opening lead.
+  (func $win16_SetRectRgn
+    (local $rgn i32) (local $l i32) (local $t i32) (local $r i32) (local $b i32)
+    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 4))))
+    (local.set $l (call $win16_coord (call $win16_arg16 (i32.const 3))))
+    (local.set $t (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (local.set $r (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $b (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 5))
+    (call $handle_SetRectRgn (local.get $rgn) (local.get $l) (local.get $t)
+      (local.get $r) (local.get $b) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
+  ;; GDI.47 CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode).
+  ;; The other half of the same clip: Hearts builds the rectangle it is about to
+  ;; redraw with SetRectRgn and folds it into the region it keeps.
+  (func $win16_CombineRgn
+    (local $dst i32) (local $a i32) (local $b i32) (local $mode i32)
+    (local.set $dst  (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $a    (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $b    (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local.set $mode (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_CombineRgn (local.get $dst) (local.get $a) (local.get $b)
+      (local.get $mode) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
   ;; GDI.45 SelectObject(hDC, hObject) -> the object it replaced.
   (func $win16_SelectObject
     (local $hdc i32) (local $obj i32)
@@ -4268,6 +4303,10 @@
       (then (call $win16_set_dc_color (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 45))
       (then (call $win16_SelectObject) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 172))
+      (then (call $win16_SetRectRgn) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 47))
+      (then (call $win16_CombineRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 51))
       (then (call $win16_CreateCompatibleBitmap) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 52))
