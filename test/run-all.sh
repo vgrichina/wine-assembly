@@ -131,6 +131,7 @@ UNIT=(
   test/test-render-font-dlg.js
   test/test-render-open-dlg.js
   test/test-canvas-keydown-preventdefault.js
+  test/test-renderer-input-cursor.js
   test/test-renderer-mouse-drag-mask.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
@@ -209,6 +210,7 @@ E2E=(
   test/test-mspaint-clipboard.js
   test/test-mspaint-large-scroll.js
   test/test-mspaint-scrollbar-thumb.js
+  test/test-cursor-class.js
   test/test-mspaint-thumbnail.js
   test/test-mplay32-dual-mode.js
   test/test-statusbar-surface.js

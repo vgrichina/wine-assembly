@@ -146,6 +146,14 @@ check('child sizing box reaches WM_SETCURSOR', childHover(4), 4);
 check('other child codes stay HTCLIENT', childHover(18), 1);
 check('unresolved child rect stays HTCLIENT', childHover(0), 1);
 
+// Off every window is the desktop, and the desktop's cursor is the arrow.
+// It has no hwnd to send WM_SETCURSOR to, so the reset lives in the renderer;
+// without it the pointer keeps whatever the last window set and you drag
+// mspaint's pencil out onto the desktop.
+const offWindow = renderer('crosshair', 1);
+offWindow.handleMouseMove(500, 500);
+check('leaving every window restores the desktop arrow', offWindow.canvas.style.cursor, 'default');
+
 const passed = checks.filter(Boolean).length;
 console.log(`\n${passed}/${checks.length} checks passed`);
 process.exit(passed === checks.length ? 0 : 1);

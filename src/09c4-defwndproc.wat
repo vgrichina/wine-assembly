@@ -964,18 +964,27 @@
 
   ;; Default WM_SETCURSOR handler.
   ;;
-  ;; HTCLIENT (1): leave the cursor alone. Real Win32 would apply
-  ;; WNDCLASS.hCursor here — class-cursor lookup is deferred. Leaving it
-  ;; alone is better than forcing arrow: apps that call SetCursor(IDC_X)
-  ;; from WM_MOUSEMOVE (e.g. Reversi's cross over valid moves) would
-  ;; otherwise flicker back to arrow on every subsequent tick because
-  ;; WM_SETCURSOR is dispatched ahead of the next WM_MOUSEMOVE.
+  ;; HTCLIENT (1): apply WNDCLASS.hCursor, captured per window at creation.
+  ;; This is what separates a tool palette from the drawing area beside it —
+  ;; both are HTCLIENT, but the palette's class registered IDC_ARROW while
+  ;; the drawing view's app sets a pencil from its own WM_SETCURSOR.
   ;;
-  ;; Chrome hits (HTCAPTION/HTBORDER/HTSYSMENU/HTCLOSE/HTMIN/HTMAX):
-  ;; apply IDC_ARROW.
+  ;; A NULL class cursor means the window paints its own, so leave it alone.
+  ;; That is both the Win32 rule and what protects apps calling SetCursor from
+  ;; WM_MOUSEMOVE (Reversi's cross over valid moves): WM_SETCURSOR is
+  ;; dispatched ahead of the next WM_MOUSEMOVE, so applying a cursor a class
+  ;; never asked for would flicker it away on every tick.
+  ;;
+  ;; Chrome hits (HTCAPTION/HTBORDER/HTSYSMENU/HTCLOSE/HTMIN/HTMAX) and the
+  ;; scrollbar strips: apply IDC_ARROW.
   (func $defwndproc_do_setcursor (param $hwnd i32) (param $hit i32) (result i32)
+    (local $class_cursor i32)
     (if (i32.eq (local.get $hit) (i32.const 1))
-      (then (return (i32.const 1)))) ;; HTCLIENT — leave cursor alone
+      (then
+        (local.set $class_cursor (call $wnd_get_class_cursor (local.get $hwnd)))
+        (if (local.get $class_cursor)
+          (then (drop (call $set_cursor_internal (local.get $class_cursor)))))
+        (return (i32.const 1))))
     ;; Resize edges get the appropriate sizing cursor.
     ;; HTLEFT/HTRIGHT → SIZEWE, HTTOP/HTBOTTOM → SIZENS,
     ;; HTTOPLEFT/HTBOTTOMRIGHT → SIZENWSE, HTTOPRIGHT/HTBOTTOMLEFT → SIZENESW.

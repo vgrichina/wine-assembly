@@ -970,7 +970,8 @@
   ;; 0x00003000  256B    UPDATE_FLAGS   (1 byte per window slot, non-empty update state)
   ;; 0x00003100  128B    CLASS_NAME_STRINGS (built-in control class names)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
-  ;; 0x00003900  ~1.75KB Free
+  ;; 0x00003900  1KB     WND_CLASS_CURSOR_TABLE (256 × 4 bytes — class hCursor per hwnd)
+  ;; 0x00003D00  ~768B   Free
   ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
@@ -1143,6 +1144,14 @@
   (global $CLASS_NAME_STRINGS_SIZE i32 (i32.const 0x00000080))
   (global $WND_BG_BRUSH_TABLE i32 (i32.const 0x00003500))
   (global $WND_BG_BRUSH_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; WNDCLASS.hCursor, resolved per window at creation exactly like the class
+  ;; background brush above. $defwndproc_do_setcursor applies it for HTCLIENT,
+  ;; which is what makes a tool palette read as buttons (arrow) while the
+  ;; drawing area next to it keeps the app's own tool cursor. Zero means the
+  ;; class registered a NULL cursor — Win32's way of saying "the window sets
+  ;; its own", so the default handler must leave it alone.
+  (global $WND_CLASS_CURSOR_TABLE i32 (i32.const 0x00003900))
+  (global $WND_CLASS_CURSOR_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; UPDATE_RECT / UPDATE_FLAGS: WAT-owned Win32 update-region state. We store
   ;; a bounding RECT per hwnd slot; JS is only asked to schedule canvas work.
   (global $UPDATE_RECT    i32 (i32.const 0x00002000))

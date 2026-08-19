@@ -44,6 +44,7 @@
   ;; Anything keyed by WND_RECORDS slot belongs in this one function.
   (func $wnd_slot_reset (param $slot i32)
     (call $wnd_bg_brush_reset_slot (local.get $slot))
+    (call $wnd_class_cursor_reset_slot (local.get $slot))
     (call $nc_flags_reset_slot (local.get $slot))
     (call $title_table_reset_slot (local.get $slot))
     (call $client_rect_reset_slot (local.get $slot))
@@ -122,6 +123,7 @@
           (if (local.get $state) (then (call $heap_free (local.get $state))))
           ;; Drop parallel-table state tied to this slot.
           (call $wnd_bg_brush_reset_slot (local.get $i))
+          (call $wnd_class_cursor_reset_slot (local.get $i))
           (call $nc_flags_reset_slot (local.get $i))
           (call $title_table_reset_slot (local.get $i))
           (call $client_rect_reset_slot (local.get $i))
@@ -399,6 +401,42 @@
         (call $wnd_set_bg_brush
           (local.get $hwnd)
           (i32.load offset=36 (call $class_record_addr (local.get $slot)))))))
+
+  ;; ---- Class cursor, resolved per window at creation ----
+  ;;
+  ;; Same shape as the background brush above, and for the same reason: the
+  ;; class record can be re-registered or its slot reused, so the value a
+  ;; window was created with is captured once rather than looked up later.
+  (func $wnd_class_cursor_reset_slot (param $slot i32)
+    (i32.store
+      (i32.add (global.get $WND_CLASS_CURSOR_TABLE) (i32.mul (local.get $slot) (i32.const 4)))
+      (i32.const 0)))
+
+  (func $wnd_set_class_cursor (param $hwnd i32) (param $cursor i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store
+          (i32.add (global.get $WND_CLASS_CURSOR_TABLE) (i32.mul (local.get $idx) (i32.const 4)))
+          (local.get $cursor)))))
+
+  (func $wnd_get_class_cursor (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $WND_CLASS_CURSOR_TABLE) (i32.mul (local.get $idx) (i32.const 4)))))
+
+  (func $wnd_set_class_cursor_from_name (param $hwnd i32) (param $class_name_guest i32)
+    (local $slot i32)
+    (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        ;; WNDCLASSA.hCursor is at +24 inside WNDCLASSA, i.e. class record +32.
+        (call $wnd_set_class_cursor
+          (local.get $hwnd)
+          (i32.load offset=32 (call $class_record_addr (local.get $slot)))))))
 
   ;; Owner hwnd for owned popup/top-level windows. This is deliberately
   ;; separate from parent: only WS_CHILD windows inherit geometry from parent.

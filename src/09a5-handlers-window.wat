@@ -195,7 +195,8 @@
               (then (call $wnd_table_set (local.get $hwnd) (global.get $wndproc_addr)))
               (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN)))))))
         (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
-        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1)))
+        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
+        (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1)))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
@@ -533,6 +534,7 @@
           (then (call $tab_native_mark_slot
             (local.get $v) (i32.const 1))))))
     (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
+    (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
     ;; modal dialogs do not inherit the owner's client coordinates.
