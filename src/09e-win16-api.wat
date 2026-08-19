@@ -2757,6 +2757,109 @@
     (global.set $win16_res_module_id (i32.const 0))
     (call $win16_api_return (i32.const 10)))
 
+  ;; The scroll bar of a window, USER.62..65. The state lives in one place for
+  ;; both worlds — the per-window scroll table the 32-bit handlers keep — so
+  ;; these only narrow. SB_HORZ/SB_VERT/SB_CTL are the same three numbers in
+  ;; both, and every position and limit is a signed word.
+  ;;
+  ;; USER.62 SetScrollPos(hWnd, nBar, nPos, bRedraw) -> the previous position.
+  (func $win16_SetScrollPos
+    (local $hwnd i32) (local $bar i32) (local $pos i32) (local $redraw i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $bar (call $win16_arg16 (i32.const 2)))
+    (local.set $pos (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $redraw (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_SetScrollPos (local.get $hwnd) (local.get $bar)
+      (local.get $pos) (local.get $redraw) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 8)))
+
+  ;; USER.63 GetScrollPos(hWnd, nBar) -> the position.
+  (func $win16_GetScrollPos
+    (local $hwnd i32) (local $bar i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local.set $bar (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetScrollPos (local.get $hwnd) (local.get $bar)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
+  ;; USER.64 SetScrollRange(hWnd, nBar, nMinPos, nMaxPos, bRedraw).
+  (func $win16_SetScrollRange
+    (local $hwnd i32) (local $bar i32) (local $lo i32) (local $hi i32)
+    (local $redraw i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
+    (local.set $bar (call $win16_arg16 (i32.const 3)))
+    (local.set $lo (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (local.set $hi (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $redraw (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 5))
+    (call $win16_call32_arg (i32.const 4) (local.get $redraw))
+    (call $handle_SetScrollRange (local.get $hwnd) (local.get $bar)
+      (local.get $lo) (local.get $hi) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 10)))
+
+  ;; USER.65 GetScrollRange(hWnd, nBar, lpMinPos, lpMaxPos). The two answers
+  ;; are ints, which are words here — the 32-bit handler writes dwords, so it
+  ;; writes into scratch and the words are stored from there.
+  (func $win16_GetScrollRange
+    (local $hwnd i32) (local $tmp i32) (local $lo i32) (local $hi i32)
+    (local $bar i32) (local $have_lo i32) (local $have_hi i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
+    (local.set $lo (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $hi (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (local.set $bar (call $win16_arg16 (i32.const 4)))
+    (local.set $have_lo (call $win16_arg16 (i32.const 3)))
+    (local.set $have_hi (call $win16_arg16 (i32.const 1)))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_GetScrollRange (local.get $hwnd) (local.get $bar)
+      (local.get $tmp) (i32.add (local.get $tmp) (i32.const 4))
+      (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (local.get $have_lo)
+      (then (call $gs16 (local.get $lo) (call $gl32 (local.get $tmp)))))
+    (if (local.get $have_hi)
+      (then (call $gs16 (local.get $hi)
+              (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 12)))
+
+  ;; USER.61 ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect). Either
+  ;; rectangle may be NULL, meaning the whole client area, and must stay NULL
+  ;; rather than becoming a pointer to a zero rectangle.
+  (func $win16_ScrollWindow
+    (local $hwnd i32) (local $rc i32) (local $clip i32)
+    (local $dx i32) (local $dy i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (local.set $dx (call $win16_coord (call $win16_arg16 (i32.const 5))))
+    (local.set $dy (call $win16_coord (call $win16_arg16 (i32.const 4))))
+    (if (call $win16_arg16 (i32.const 3))
+      (then
+        (local.set $rc (global.get $GUEST_STACK))
+        (call $win16_rect_widen (local.get $rc) (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))))
+    (if (call $win16_arg16 (i32.const 1))
+      (then
+        (local.set $clip (i32.add (global.get $GUEST_STACK) (i32.const 16)))
+        (call $win16_rect_widen (local.get $clip) (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
+    (call $win16_call32_begin (i32.const 5))
+    (call $win16_call32_arg (i32.const 4) (local.get $clip))
+    (call $handle_ScrollWindow (local.get $hwnd) (local.get $dx) (local.get $dy)
+      (local.get $rc) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 14)))
+
   ;; USER.66 GetDC(hWnd) -> HDC, USER.68 ReleaseDC(hWnd, hDC).
   ;;
   ;; These go straight to the same host primitives $handle_GetDC uses. A Win16
@@ -3233,6 +3336,16 @@
       (then (call $win16_GetDC) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 68))
       (then (call $win16_ReleaseDC) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 61))
+      (then (call $win16_ScrollWindow) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 62))
+      (then (call $win16_SetScrollPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 63))
+      (then (call $win16_GetScrollPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 64))
+      (then (call $win16_SetScrollRange) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 65))
+      (then (call $win16_GetScrollRange) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_InitApp) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 15))
