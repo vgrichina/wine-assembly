@@ -219,6 +219,7 @@ E2E=(
   test/test-wordpad-thread-startup.js
   test/test-wordpad-copy-clipboard.js
   test/test-wordpad-paste-refcount.js
+  test/test-wordpad-font-combo.js
   test/test-fontview.js
   test/test-mspaint-web.js
   test/test-qblackjack-web.js
