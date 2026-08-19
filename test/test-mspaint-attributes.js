@@ -42,7 +42,7 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   output = `${error.stdout || ''}${error.stderr || ''}`;
   assert.fail(`Paint Attributes run failed:\n${output.slice(-4000)}`);

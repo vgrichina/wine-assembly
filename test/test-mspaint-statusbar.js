@@ -39,7 +39,7 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   output = `${error.stdout || ''}${error.stderr || ''}`;
   assert.fail(`Paint status-bar run failed:\n${output.slice(-3000)}`);

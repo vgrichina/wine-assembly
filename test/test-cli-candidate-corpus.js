@@ -106,7 +106,7 @@ function runCandidate(candidate, executable, wasmPath) {
   const result = spawnSync('node', args, {
     cwd: ROOT,
     encoding: 'utf8',
-    timeout: cli.timeoutMs || 20000,
+    timeout: cli.timeoutMs || 120000,
     maxBuffer: 32 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

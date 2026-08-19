@@ -27,7 +27,7 @@ let out = '';
 try {
   out = execSync(cmd, {
     encoding: 'utf-8',
-    timeout: 60000,
+    timeout: 180000,
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,

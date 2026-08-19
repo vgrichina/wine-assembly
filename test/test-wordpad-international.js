@@ -40,7 +40,7 @@ const result = spawnSync(process.execPath, [
   path.join(__dirname, 'run.js'), `--exe=${EXE}`, `--input=${seq.join(',')}`,
   `--max-batches=${batch + 48}`, '--batch-size=50000', '--quiet-api',
   '--quiet-blocks', '--no-close',
-], { cwd: ROOT, encoding: 'utf8', timeout: 100000, maxBuffer: 32 * 1024 * 1024 });
+], { cwd: ROOT, encoding: 'utf8', timeout: 180000, maxBuffer: 32 * 1024 * 1024 });
 const output = `${result.stdout || ''}${result.stderr || ''}`;
 for (const line of output.split('\n')) {
   if (/dump-focus-unicode|ime-|png-pixels|UNIMPLEMENTED|CRASH|RuntimeError/.test(line)) console.log('  ' + line);

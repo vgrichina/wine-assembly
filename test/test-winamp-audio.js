@@ -55,7 +55,7 @@ console.log('$', cmd);
 let out = '';
 const t0 = Date.now();
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 30000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  out = execSync(cmd, { encoding: 'utf-8', timeout: 120000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
   if (e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {

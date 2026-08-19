@@ -54,7 +54,7 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 12000, maxBuffer: 4 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;

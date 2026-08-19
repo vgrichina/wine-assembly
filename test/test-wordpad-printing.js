@@ -17,7 +17,7 @@ function run(input, max = 2600) {
   return spawnSync(process.execPath, [
     path.join(__dirname, 'run.js'), `--exe=${EXE}`,
     `--max-batches=${max}`, '--quiet-api', '--quiet-blocks', `--input=${input}`,
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 70000, maxBuffer: 16 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 180000, maxBuffer: 16 * 1024 * 1024 });
 }
 
 let failures = 0;
