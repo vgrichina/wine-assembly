@@ -196,6 +196,7 @@ const WORKER_THREADS = hasFlag('threads'); // --threads: run each guest thread i
 const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE * --thread-slices, min 20000)
 const CS_STEAL_AFTER = parseInt(getArg('cs-steal-after', '0'), 10) || 0; // --cs-steal-after=N: fruitless EnterCriticalSection rounds before taking the section by force (0 = WAT default; huge = never, to tell "waiting forever" from "took it")
 const THREADS_SERIAL = hasFlag('threads-serial'); // --threads-serial: with --threads, never run two guest threads at once (splits "race" from "wrong per-thread state")
+const RPC_CENSUS = hasFlag('rpc-census'); // --rpc-census: with --threads, per-thread histogram of brokered host imports (a blocking one stops that thread until the main thread answers)
 // Module scope so every exit path can terminate the threads: a live worker keeps
 // node alive, so a run that ends — cleanly or by throwing — would otherwise hang
 // instead of reporting.
@@ -2278,6 +2279,7 @@ async function main() {
       hostImportsForSlot: (slot, tid) => makeWorkerImports(tid).host,
       workerUrl: path.join(ROOT, 'lib', 'guest-worker.js'),
       localMainExports: () => instance.exports,
+      countCalls: RPC_CENSUS,
       clockIntervalMs: 0,          // the CLI clock is the batch counter, published by hand
       tickMs: () => tickState.batch * 200,
       log: msg => console.log(msg),
@@ -6088,6 +6090,19 @@ if (VERBOSE) {
         const cs = e.get_cs_waits ? `${e.get_cs_waits() >>> 0}/${e.get_cs_steals ? e.get_cs_steals() >>> 0 : 0}` : '-';
         console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} eip=0x${eip.toString(16)} esp=0x${esp.toString(16)} ebp=0x${ebp.toString(16)} yield=${yr} waitH=0x${wh.toString(16)} sleepCount=${t.sleepCount||0} csPark/steal=${cs}`);
       } catch (ex) { console.log(`  T${t.tid} dump error: ${ex.message}`); }
+    }
+  }
+
+  // --rpc-census: what each guest thread went out to the host for. In worker
+  // mode a blocking import costs that thread a postMessage and an Atomics.wait,
+  // so this is the throughput question, and --host-census cannot answer it —
+  // it wraps the main thread's table and never sees a worker's calls.
+  if (RPC_CENSUS && workerThreadHost && workerThreadHost.broker) {
+    const { calls, served } = workerThreadHost.broker.stats();
+    console.log(`\nBrokered host imports (${served} served, top ${Math.min(20, calls.length)}):`);
+    const pad = String(calls[0] ? calls[0].count : 0).length;
+    for (const c of calls.slice(0, 20)) {
+      console.log(`  ${String(c.count).padStart(pad)}  T${c.slot}  ${c.name}`);
     }
   }
 

@@ -952,7 +952,52 @@ address in `edi`, and a loop at `0xc18bbf` — are gone with the `Leave` fix. Th
 were downstream of the same permanently-owned section, which is why neither ever
 reproduced in the CLI while the deadlock did.
 
-What remains open in worker mode is throughput rather than correctness, and that
+### What a worker thread was actually spending its life on
+
+The audio above was intermittent — 2 runs in 4 came back as pure silence, with
+the same input and the same byte count. That is not a decode bug: `_CIpow` was
+called exactly 9,919 times in both the silent and the audible run, so the
+decoder did the same work; it simply never got far enough to emit samples inside
+the captured window.
+
+`--rpc-census` (new) says why, per thread. A blocking host import in worker mode
+is a `postMessage` plus an `Atomics.wait` — the guest thread stops until the main
+thread takes a turn — and Winamp's decode thread was making **20,317** of them
+per run:
+
+```
+10346  T2  log              <- twice per Win32 API dispatch, discarded by --quiet-api
+ 9909  T2  math_pow         <- the MP3 dequantiser
+```
+
+Neither needs the main thread at all:
+
+- **`math_pow` and friends are pure functions.** `lib/host-imports.js` implements
+  them as the bare `Math.*`, and a worker has its own JS. They are computed
+  locally now — the same fast path as the published clock, minus the publishing.
+- **`log` carries a pointer, which is why it blocked**, but all three of its
+  callers pass something immutable (a name in the PE import table, the fixed
+  ordinal placeholder, or a scratch buffer whose thread crashes immediately
+  after). Checked rather than assumed, then moved to `ASYNC_SAFE`.
+
+And separately, from `--host-census`: **87,596 of 105,637 host calls** in a run
+were `get_window_client_size`, from the clip helpers on the drawing path. The JS
+implementation of that import *begins by calling back into the WAT* for the same
+answer — so the round trip existed to be told what WAT already knew. Asking
+locally first (`$wnd_client_size_packed`, host import kept as the fallback it
+always was) removed 83% of all host calls.
+
+| Winamp, CLI `--threads`, 1200 batches | before | after |
+|---|---|---|
+| T2 blocking RPCs | 20,317 | **57** |
+| T2 guest time | 6,244 ms | **773 ms** |
+| host calls, whole process | 105,637 | 17,882 |
+| `test-winamp-audio --threads` | 2 of 4 runs silent | **4 of 4 pass** |
+
+The silence was a throughput symptom all along, which is why nothing about the
+decoder looked wrong.
+
+What remains open in worker mode is the rest of the throughput story, and that
 number has to come from a real browser (see §6).
 
 ---

@@ -14164,7 +14164,7 @@
   (func $update_invalidate_full (param $hwnd i32)
     (local $cs i32) (local $wh i32) (local $w i32) (local $h i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
-    (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+    (local.set $cs (call $wnd_client_size_packed (local.get $hwnd)))
     (local.set $w (i32.and (local.get $cs) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (local.get $cs) (i32.const 16)))
     (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
@@ -14413,7 +14413,7 @@
               (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
                 (then (global.set $paint_pending (i32.const 0)))))
             (else
-              (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+              (local.set $cs (call $wnd_client_size_packed (local.get $hwnd)))
               (if (i32.and
                     (i32.or
                       (i32.eqz (i32.and (local.get $cs) (i32.const 0xFFFF)))
@@ -16315,6 +16315,38 @@
   ;; These helpers build the Win32 visible clip for window DCs. JS owns only
   ;; the target canvas and applies the resulting DC clip region.
 
+  ;; Client size of a top-level window, packed (w | h<<16).
+  ;;
+  ;; The host import is the FALLBACK, not the first question. `get_window_client_size`
+  ;; in lib/host-imports.js begins by calling back into this module's
+  ;; get_client_rect_wh and returns that whenever it is nonzero — so for any
+  ;; window whose client rect WAT already knows, the round trip out to JS exists
+  ;; only to be told what WAT just told it. Measured on Winamp: 87,596 of 105,637
+  ;; host calls in one run were this one, 83% of everything, nearly all of them
+  ;; from the clip helpers below on the drawing path.
+  ;;
+  ;; That is expensive everywhere and much worse in worker mode, where a host
+  ;; import is a postMessage plus an Atomics.wait — the guest thread stops until
+  ;; the main thread takes a turn. Winamp's decode thread made 20,383 such
+  ;; blocking round trips in 39 slices.
+  ;;
+  ;; The fallback stays because the renderer legitimately owns the answer before
+  ;; WM_NCCALCSIZE has run and for windows WAT has no client rect for.
+  (func $wnd_client_size_packed (param $hwnd i32) (result i32)
+    (local $wh i32)
+    (local.set $wh
+      (i32.or
+        (i32.and
+          (i32.sub (call $client_rect_get_r (local.get $hwnd))
+                   (call $client_rect_get_l (local.get $hwnd)))
+          (i32.const 0xFFFF))
+        (i32.shl
+          (i32.sub (call $client_rect_get_b (local.get $hwnd))
+                   (call $client_rect_get_t (local.get $hwnd)))
+          (i32.const 16))))
+    (if (local.get $wh) (then (return (local.get $wh))))
+    (call $host_get_window_client_size (local.get $hwnd)))
+
   (func $wnd_client_w_for_clip (param $hwnd i32) (result i32)
     (local $style i32) (local $sz i32)
     (local $cl i32) (local $cr i32)
@@ -16328,7 +16360,7 @@
           (then (return (i32.sub (local.get $cr) (local.get $cl)))))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.and (local.get $sz) (i32.const 0xFFFF)))))
-    (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+    (local.set $sz (call $wnd_client_size_packed (local.get $hwnd)))
     (i32.and (local.get $sz) (i32.const 0xFFFF)))
 
   (func $wnd_client_h_for_clip (param $hwnd i32) (result i32)
@@ -16344,7 +16376,7 @@
           (then (return (i32.sub (local.get $cb) (local.get $ct)))))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.shr_u (local.get $sz) (i32.const 16)))))
-    (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
+    (local.set $sz (call $wnd_client_size_packed (local.get $hwnd)))
     (i32.shr_u (local.get $sz) (i32.const 16)))
 
   (func $dc_clip_to_parent_client (param $hdc i32) (param $hwnd i32)
