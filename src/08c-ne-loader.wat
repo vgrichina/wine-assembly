@@ -688,11 +688,15 @@
       (br $entries)))
     (i32.const 0))
 
-  ;; Case-insensitive compare of two NUL-terminated names.
+  ;; Case-insensitive compare of two NUL-terminated names. Bounded: neither
+  ;; string is trusted to end — one comes from the app and the other from a
+  ;; resource — and no resource name is anywhere near this long.
   (func $win16_res_name_eq_z (param $a i32) (param $b i32) (result i32)
-    (local $x i32) (local $y i32)
+    (local $x i32) (local $y i32) (local $n i32)
     (if (i32.eqz (local.get $b)) (then (return (i32.const 0))))
     (block $done (loop $cmp
+      (if (i32.ge_u (local.get $n) (i32.const 64)) (then (return (i32.const 0))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
       (local.set $x (i32.load8_u (local.get $a)))
       (local.set $y (i32.load8_u (local.get $b)))
       (if (i32.and (i32.ge_u (local.get $x) (i32.const 0x61))

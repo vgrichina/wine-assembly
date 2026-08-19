@@ -1244,13 +1244,17 @@
       (then (call $win16_local_identity (i32.const 2)
               (i32.sub (global.get $win16_lheap_end) (global.get $win16_lheap_ptr)))
             (return (i32.const 1))))
-    ;; GetWinFlags / __WinFlags: WF_STANDARD | WF_PMODE | WF_80x87 absent,
-    ;; WF_ENHANCED (0x0020) and WF_CPU386 (0x0004) is what a 386 in enhanced
-    ;; mode reports, which is what these apps are written for.
+    ;; GetWinFlags / __WinFlags: WF_PMODE | WF_CPU386 | WF_ENHANCED is what a
+    ;; 386 in enhanced mode reports, which is what these apps are written for,
+    ;; plus WF_80x87 (0x0400) because there is a real x87 here — see
+    ;; src/06-fpu.wat. Saying otherwise sends every floating-point app down the
+    ;; WIN87EM emulator path, whose entry point patches its caller's code and
+    ;; then runs on state this emulator does not keep; Fuji Golf called it
+    ;; three times and jumped into a segment nothing had filled.
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 132))
                 (i32.eq (local.get $ordinal) (i32.const 178)))
       (then
-        (global.set $eax (i32.const 0x0025))
+        (global.set $eax (i32.const 0x0425))
         (global.set $edx (i32.const 0))
         (call $win16_api_return (i32.const 0))
         (return (i32.const 1))))
@@ -1697,6 +1701,18 @@
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 4)))
 
+  ;; USER.243 GetDialogBaseUnits() -> the width in AX and the height in DX of
+  ;; the system font's average character, which is what a dialog unit is
+  ;; measured in.
+  (func $win16_GetDialogBaseUnits
+    (call $win16_call32_begin (i32.const 0))
+    (call $handle_GetDialogBaseUnits (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 0)))
+
   ;; USER.47 IsWindow(hWnd). A handle the task made up, or one it kept after
   ;; the window was destroyed, has no 32-bit counterpart and is not a window.
   (func $win16_IsWindow
@@ -1972,6 +1988,8 @@
       (then (call $win16_GetKeyboardState) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 223))
       (then (call $win16_SetKeyboardState) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 243))
+      (then (call $win16_GetDialogBaseUnits) (return (i32.const 1))))
     ;; USER.282/283 are the window-aware spellings of GDI.361/362.
     (if (i32.eq (local.get $ordinal) (i32.const 282))
       (then (call $win16_SelectPalette) (return (i32.const 1))))
