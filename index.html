@@ -662,6 +662,7 @@ Resource-aware Win98 emulator
   <script src="lib/renderer-input.js?v=188"></script>
   <script src="lib/renderer.js?v=178"></script>
   <script src="lib/dll-registry.js?v=1"></script>
+  <script src="lib/process-boot.js?v=1"></script>
   <script src="lib/dll-loader.js?v=168"></script>
   <script src="lib/storage.js?v=169"></script>
   <script src="lib/filesystem.js?v=169"></script>
@@ -2523,27 +2524,34 @@ Resource-aware Win98 emulator
             wine.instance.exports.set_extra_cmdline(staging, argBytes.length);
           }
         }
-        const dllsToLoad = app.dlls ? [...app.dlls] : [];
-        // One list, shared with the CLI (lib/dll-registry.js). It used to be a
-        // 14-entry map here and a ~30-name set in test/run.js, so an app whose
-        // imports needed SHELL32, HYPERTRM or the Kodak OI*400 set loaded
-        // headless and failed in the browser.
+        // One list, shared with the CLI (lib/dll-registry.js), and one graph
+        // walk (lib/process-boot.js). Both used to exist twice: this page knew
+        // a 14-entry URL map and resolved only the EXE's own imports, so an app
+        // needing SHELL32 — or the Kodak OI*400 set, which imports itself two
+        // levels deep — booted headless and trapped here on the first
+        // cross-DLL ordinal.
         const availableDlls = { ...window.dllRegistry.DLL_PATHS };
-        // App-local DLLs ship beside their exe; the app's own `files` list
-        // already fetches those, and listing them here would 404.
         wine._availableDllFiles = new Set(Object.keys(availableDlls));
-        if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
-          const required = DllLoader.detectRequiredDlls(wine._exeBytes);
-          if (required.length) {
-            log.textContent += `Detected DLLs: ${required.join(', ')}\n`;
-          }
-          const alreadyListed = new Set(dllsToLoad.map(d => d.split('/').pop().toLowerCase()));
-          for (const name of required) {
-            if (availableDlls[name] && !alreadyListed.has(name)) {
-              dllsToLoad.push(availableDlls[name]);
-            }
-          }
-        }
+        // App-local DLLs ship beside their exe, so a dependency named by
+        // another DLL is looked up in this app's own `files` list too.
+        const appFileByName = new Map();
+        for (const f of (app.files || [])) appFileByName.set(f.split('/').pop().toLowerCase(), f);
+        const fetchDll = async (spec) => {
+          const name = spec.split('/').pop();
+          const url = spec.includes('/') ? spec
+            : (availableDlls[name.toLowerCase()] || appFileByName.get(name.toLowerCase()));
+          if (!url) return null;
+          const resp = await fetch(url);
+          if (!resp.ok) { console.error('Failed to fetch DLL:', url); return null; }
+          return { name, bytes: new Uint8Array(await resp.arrayBuffer()) };
+        };
+        const dllsToLoad = await window.processBoot.resolveDllGraph({
+          exeBytes: wine._exeBytes,
+          seeds: app.dlls || [],
+          detectRequiredDlls: DllLoader && DllLoader.detectRequiredDlls,
+          loadSpec: fetchDll,
+          onLog: (msg) => { log.textContent += msg + '\n'; },
+        });
         if (dllsToLoad.length) {
           document.getElementById('status').textContent = 'Loading DLLs...';
           log.textContent += `Loading ${dllsToLoad.length} DLL(s)...\n`;

@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
-const dllRegistry = require('../lib/dll-registry');
+const { resolveDllGraph } = require('../lib/process-boot');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -2453,10 +2453,9 @@ async function main() {
     }));
   } else {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
-    const required = requiredDlls;
-    // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
-    // The one list, shared with the browser (lib/dll-registry.js).
-    const LOADABLE_DLLS = dllRegistry.LOADABLE_DLLS;
+    // Only load DLLs that work as real PE DLLs; others are handled by WAT stub
+    // handlers — the one list, shared with the browser (lib/dll-registry.js),
+    // as is the graph walk itself (lib/process-boot.js).
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,
@@ -2465,17 +2464,6 @@ async function main() {
       path.join(exeDir, '..', 'shared_dlls'),
       path.join(__dirname, 'binaries', 'dlls'),
     ];
-    dlls = [];
-    // Old MFC builds import their matching CRT during DllMain. Preserve a
-    // dependency-safe order even when the EXE import directory lists MFC first.
-    const orderedRequired = [...required].sort((a, b) => {
-      const rank = name => name.toLowerCase() === 'msvcrt20.dll' ? 0 : 1;
-      return rank(a) - rank(b);
-    });
-    // A DLL's own imports have to be satisfied too. Kodak Imaging pulls in
-    // IMGCMN, which imports OIFIL400, which imports its siblings — leave any
-    // of them unloaded and the first cross-DLL ordinal resolves to a system
-    // thunk and traps. Walk the dependency graph, not just the EXE's row of it.
     const findDllFile = name => {
       for (const dir of dllSearchDirs) {
         const p = path.join(dir, name);
@@ -2483,23 +2471,14 @@ async function main() {
       }
       return null;
     };
-    const queued = new Set();
-    const queue = [...orderedRequired];
-    while (queue.length) {
-      const name = queue.shift();
-      const key = name.toLowerCase();
-      if (queued.has(key) || !LOADABLE_DLLS.has(key)) continue;
-      const p = findDllFile(name);
-      if (!p) continue;
-      queued.add(key);
-      const bytes = fs.readFileSync(p);
-      dlls.push({ name, bytes });
-      try {
-        for (const dep of detectRequiredDlls(bytes)) {
-          if (!queued.has(dep.toLowerCase())) queue.push(dep);
-        }
-      } catch (_) { /* a DLL we cannot parse simply contributes no deps */ }
-    }
+    dlls = await resolveDllGraph({
+      exeBytes,
+      detectRequiredDlls,
+      loadSpec: (name) => {
+        const p = findDllFile(name);
+        return p ? { name, bytes: fs.readFileSync(p) } : null;
+      },
+    });
   }
   // Register exe in moduleBases so `exe+0xVA` and basename-relative specs work.
   {
