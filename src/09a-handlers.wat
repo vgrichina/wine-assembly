@@ -5297,60 +5297,6 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
     (global.set $eax (call $wnd_unicode_get (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
-  ;; Identify one of USER's own control classes by name, case-insensitively,
-  ;; returning the $control_wndproc_dispatch class id (0 = not a system class).
-  ;; Same lowercase-LE-dword idiom CreateWindowExA uses to classify a window.
-  (func $system_class_id (param $name i32) (result i32)
-    (local $d0 i32)
-    (local.set $d0 (i32.or (i32.load (local.get $name)) (i32.const 0x20202020)))
-    ;; "button"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74747562))
-          (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
-                    (i32.const 0x6e6f))
-            (i32.eqz (i32.load8_u offset=6 (local.get $name)))))
-      (then (return (i32.const 1))))
-    ;; "edit"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74696465))
-                 (i32.eqz (i32.load8_u offset=4 (local.get $name))))
-      (then (return (i32.const 2))))
-    ;; "static"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74617473))
-          (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
-                    (i32.const 0x6369))
-            (i32.eqz (i32.load8_u offset=6 (local.get $name)))))
-      (then (return (i32.const 3))))
-    ;; "listbox"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x7473696c))
-          (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
-                    (i32.const 0x6f62))
-            (i32.and
-              (i32.eq (i32.or (i32.load8_u offset=6 (local.get $name)) (i32.const 0x20))
-                      (i32.const 0x78))
-              (i32.eqz (i32.load8_u offset=7 (local.get $name))))))
-      (then (return (i32.const 4))))
-    ;; "combobox"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x626d6f63))
-          (i32.and
-            (i32.eq (i32.or (i32.load offset=4 (local.get $name)) (i32.const 0x20202020))
-                    (i32.const 0x786f626f))
-            (i32.eqz (i32.load8_u offset=8 (local.get $name)))))
-      (then (return (i32.const 5))))
-    ;; "scrollbar"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6f726373))
-          (i32.and
-            (i32.eq (i32.or (i32.load offset=4 (local.get $name)) (i32.const 0x20202020))
-                    (i32.const 0x61626c6c))
-            (i32.and
-              (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name)) (i32.const 0x20))
-                      (i32.const 0x72))
-              (i32.eqz (i32.load8_u offset=9 (local.get $name))))))
-      (then (return (i32.const 7))))
-    (i32.const 0))
-
   ;; Describe a system control class to an app that asked about it.
   ;;
   ;; Neither VCL nor MFC creates a BUTTON window directly. They call
@@ -5363,19 +5309,24 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
   ;; The wndproc handed out is a marker carrying the class id, because by the
   ;; time it is called back the window's own class name is the app's, not
   ;; USER's — the marker is the only remaining link to what it started as.
-  (func $system_class_describe (param $name_guest i32) (param $out_guest i32)
-        (param $hinstance i32) (result i32)
+  ;; $name_key is the class key ($class_name_key for A, $class_wide_name_key
+  ;; for W): an atom, or the WASM address of the name. $name_guest is what the
+  ;; caller passed, and is echoed back as lpszClassName.
+  (func $system_class_describe (param $name_key i32) (param $name_guest i32)
+        (param $out_guest i32) (param $hinstance i32) (result i32)
     (local $class i32) (local $out i32)
-    ;; An atom, not a string. Our class table already handles the atoms USER
-    ;; predefines for these classes.
-    (if (i32.lt_u (local.get $name_guest) (i32.const 0x10000))
-      (then (return (i32.const 0))))
-    (local.set $class (call $system_class_id (call $g2w (local.get $name_guest))))
+    ;; Both spellings resolve here. An atom is a perfectly good lpClassName --
+    ;; GetClassInfo(NULL, MAKEINTATOM(0x0080), &wc) succeeds on Windows -- so
+    ;; declining the atom form, as this used to, told a dialog-driven app that
+    ;; BUTTON does not exist.
+    (local.set $class (call $builtin_ctrl_class_id_key (local.get $name_key)))
     (if (i32.eqz (local.get $class)) (then (return (i32.const 0))))
     (local.set $out (call $g2w (local.get $out_guest)))
-    ;; CS_VREDRAW|CS_HREDRAW|CS_DBLCLKS, as USER registers these. VCL masks the
-    ;; DC bits off and forces CS_PARENTDC regardless of what it is told.
-    (i32.store (local.get $out) (i32.const 0x000B))
+    ;; CS_VREDRAW|CS_HREDRAW|CS_DBLCLKS|CS_GLOBALCLASS, as USER registers these.
+    ;; VCL masks the DC bits off and forces CS_PARENTDC regardless of what it is
+    ;; told. CS_GLOBALCLASS is what makes them visible to every process, which
+    ;; is precisely the property an app is confirming when it asks.
+    (i32.store (local.get $out) (i32.const 0x400B))
     (i32.store offset=4 (local.get $out)
       (i32.or (global.get $WNDPROC_SYSCLASS) (local.get $class)))
     (i32.store offset=8 (local.get $out) (i32.const 0))   ;; cbClsExtra
@@ -5402,7 +5353,9 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     ;; Not one of the app's own classes — it may be one of USER's.
-    (if (call $system_class_describe (local.get $arg1) (local.get $arg2) (local.get $arg0))
+    (if (call $system_class_describe
+          (call $class_name_key (local.get $arg1))
+          (local.get $arg1) (local.get $arg2) (local.get $arg0))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -5414,12 +5367,23 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
 
   ;; 306: GetClassInfoW(hInstance, lpClassName, lpWndClass)
   (func $handle_GetClassInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $slot i32) (local $src i32)
-    (local.set $slot (call $class_find_slot (call $class_wide_name_key (local.get $arg1))))
+    (local $slot i32) (local $src i32) (local $key i32)
+    (local.set $key (call $class_wide_name_key (local.get $arg1)))
+    (local.set $slot (call $class_find_slot (local.get $key)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $src (call $class_wndclass_addr (local.get $slot)))
         (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; USER's own classes answer the W entry point too. Before this, an app that
+    ;; asked for L"BUTTON" was told no such class exists, which is the same
+    ;; DefWindowProc fallback $system_class_describe was written to prevent --
+    ;; it just could not be reached from here.
+    (if (call $system_class_describe
+          (local.get $key) (local.get $arg1) (local.get $arg2) (local.get $arg0))
+      (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))

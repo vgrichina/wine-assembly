@@ -769,11 +769,18 @@
   ;; twelve separate compares in CreateWindowExA, and the id list existed only
   ;; in a comment above them.
   (func $builtin_ctrl_class_id (param $guest i32) (result i32)
+    (call $builtin_ctrl_class_id_key (call $class_name_key (local.get $guest))))
+
+  ;; Same answer for a caller that already holds a class key rather than the
+  ;; raw guest pointer -- an atom, or the WASM address of the name. The W
+  ;; entry points arrive this way, since their UTF-16 name has to be narrowed
+  ;; into a byte string before anything can compare it.
+  (func $builtin_ctrl_class_id_key (param $key i32) (result i32)
     (local $atom i32)
     (local.set $atom
-      (if (result i32) (i32.lt_u (local.get $guest) (i32.const 0x10000))
-        (then (local.get $guest))
-        (else (call $builtin_class_atom (call $g2w (local.get $guest))))))
+      (if (result i32) (i32.lt_u (local.get $key) (i32.const 0x10000))
+        (then (local.get $key))
+        (else (call $builtin_class_atom (local.get $key)))))
     (if (i32.eq (local.get $atom) (i32.const 0x0080)) (then (return (i32.const 1))))   ;; Button
     (if (i32.eq (local.get $atom) (i32.const 0x0081)) (then (return (i32.const 2))))   ;; Edit
     (if (i32.eq (local.get $atom) (i32.const 0x0082)) (then (return (i32.const 3))))   ;; Static
