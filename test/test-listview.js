@@ -9,6 +9,9 @@ const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
+const { createCanvas } = require('../lib/canvas-compat');
+const { Win98Renderer } = require('../lib/renderer');
+const { mountBundledFonts } = require('./render-helper');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -101,9 +104,12 @@ const IMAGE_MASK = 0x00C0C0C0;
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  // The control's own painting is checked by reading the pixels it produces,
+  // and a surface needs a renderer to hang off.
+  const renderer = new Win98Renderer(createCanvas(640, 480));
   const ctx = {
     getMemory: () => memory.buffer,
-    renderer: null,
+    renderer,
     resourceJson: { menus: {}, dialogs: {}, strings: {}, bitmaps: {} },
     onExit: () => {},
   };
@@ -117,6 +123,10 @@ async function main() {
   base.host.wait_single = () => 0;
   base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
+  // Must follow createHostImports -- it needs ctx.vfs and silently does
+  // nothing without it. No font mounted means draw_text draws no glyphs, so
+  // every text-pixel check below would fail against a control that paints.
+  mountBundledFonts(ctx);
   const gdiTrace = {
     solidBrushColors: [],
     fillBrushColors: [],
@@ -226,7 +236,10 @@ async function main() {
         u8[p + 2] = r;
       }
     }
-    return base.host.gdi_create_bitmap(width, height, bpp, bits);
+    // host.gdi_create_bitmap was a JS import until the GDI bridge was cut down
+    // to primitives; bitmaps are WAT objects now, so go through CreateBitmap
+    // itself -- (width, height, planes, bpp, lpBits) with a *guest* pointer.
+    return e.test_call_CreateBitmap(width, height, 1, bpp, bitsG);
   }
   function insertColumn(idx, text, width) {
     const g = e.guest_alloc(32);
@@ -548,20 +561,63 @@ async function main() {
   check('initial top index is 0', e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 0);
   check('LVM_GETCOUNTPERPAGE is 4', e.send_message(lv, LVM_GETCOUNTPERPAGE, 0, 0) === 4);
 
-  resetGdiTrace();
+  // What the control paints is now decided entirely inside WAT: the brush,
+  // text and blit calls this used to intercept on base.host are no longer
+  // crossed at all, so wrapping them recorded nothing whatever the control
+  // did. Read the pixels it produced instead.
+  // A child paints onto its top-level window's surface, and that surface only
+  // exists for a window the renderer knows about with a real client rect.
+  const parentHwnd = e.wnd_get_parent(lv);
+  renderer.windows[parentHwnd] = {
+    hwnd: parentHwnd, x: 0, y: 0, w: 240, h: 100, zOrder: 1,
+    style: 0x10000000, visible: true, isChild: false,
+    clientRect: { x: 0, y: 0, w: 240, h: 100 },
+  };
+  e.ctrl_set_geom(parentHwnd, 0, 0, 240, 100);
+  e.test_gdi_client_rect_set(parentHwnd, 0, 0, 240, 100);
+  const parentDC = e.test_call_GetDC(parentHwnd) >>> 0;
+  check('the listview parent has a drawable surface', parentDC !== 0);
+  const countColors = (x0, y0, x1, y1) => {
+    const seen = new Map();
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const c = e.test_call_GetPixel(parentDC, x, y) >>> 0;
+        seen.set(c, (seen.get(c) || 0) + 1);
+      }
+    }
+    return seen;
+  };
+  // Rows sit below the 18px header; the first column is 120 wide.
+  const rowBand = () => countColors(0, 18, 220, 82);
+  const iconCell = () => countColors(0, 18, 18, 36);
+
   check('WM_PAINT handles populated listview', e.send_message(lv, WM_PAINT, 0, 0) === 0);
-  check('WM_PAINT uses ListView custom background color', gdiTrace.solidBrushColors.includes(CUSTOM_BK), JSON.stringify(gdiTrace.solidBrushColors));
-  check('WM_PAINT uses ListView custom text color', gdiTrace.textColors.includes(CUSTOM_TEXT), JSON.stringify(gdiTrace.textColors));
-  check('WM_PAINT uses ListView custom text background color', gdiTrace.bkColors.includes(CUSTOM_TEXT_BK), JSON.stringify(gdiTrace.bkColors));
-  check('WM_PAINT paints opaque row text background when text-bk is set', gdiTrace.bkModes.includes(2), JSON.stringify(gdiTrace.bkModes));
+  let painted = rowBand();
+  check('WM_PAINT uses ListView custom background color', (painted.get(CUSTOM_BK) || 0) > 0,
+    `bk pixels=${painted.get(CUSTOM_BK) || 0}`);
+  check('WM_PAINT uses ListView custom text color', (painted.get(CUSTOM_TEXT) || 0) > 0,
+    `text pixels=${painted.get(CUSTOM_TEXT) || 0}`);
+  check('WM_PAINT uses ListView custom text background color', (painted.get(CUSTOM_TEXT_BK) || 0) > 0,
+    `text-bk pixels=${painted.get(CUSTOM_TEXT_BK) || 0}`);
+  // An opaque text background covers a run behind the glyphs, so it has to be
+  // wider than the glyphs it sits behind.
+  check('WM_PAINT paints opaque row text background when text-bk is set',
+    (painted.get(CUSTOM_TEXT_BK) || 0) > (painted.get(CUSTOM_TEXT) || 0),
+    `text-bk=${painted.get(CUSTOM_TEXT_BK) || 0} text=${painted.get(CUSTOM_TEXT) || 0}`);
+  // Row 0 was set to image 1, the green half of the two-image strip; the grey
+  // IMAGE_MASK around it is the transparent key and must not be blitted.
+  const icons = iconCell();
   check('WM_PAINT draws in-range report image from image-list strip',
-    gdiTrace.transparentBlts.some(b => b.w === 16 && b.h === 16 && b.sx === 16 && b.sy === 0 && b.key === IMAGE_MASK),
-    JSON.stringify(gdiTrace.transparentBlts));
+    (icons.get(0x001EA014) || 0) > 0 && (icons.get(IMAGE_MASK) || 0) === 0,
+    JSON.stringify([...icons].map(([c, n]) => [c.toString(16), n])));
+
   check('LVM_SETTEXTBKCOLOR accepts CLR_NONE', e.send_message(lv, LVM_SETTEXTBKCOLOR, 0, CLR_NONE) === CUSTOM_TEXT_BK);
   check('LVM_GETTEXTBKCOLOR returns CLR_NONE', (e.send_message(lv, LVM_GETTEXTBKCOLOR, 0, 0) >>> 0) === CLR_NONE);
-  resetGdiTrace();
   check('WM_PAINT handles CLR_NONE text background', e.send_message(lv, WM_PAINT, 0, 0) === 0);
-  check('CLR_NONE row paint leaves row text transparent', gdiTrace.textColors.includes(CUSTOM_TEXT) && !gdiTrace.bkColors.includes(CUSTOM_TEXT_BK), JSON.stringify(gdiTrace));
+  painted = rowBand();
+  check('CLR_NONE row paint leaves row text transparent',
+    (painted.get(CUSTOM_TEXT) || 0) > 0 && (painted.get(CUSTOM_TEXT_BK) || 0) === 0,
+    `text=${painted.get(CUSTOM_TEXT) || 0} text-bk=${painted.get(CUSTOM_TEXT_BK) || 0}`);
 
   e.send_message(lv, WM_MOUSEWHEEL, (-120 << 16), 0);
   check('mouse wheel scrolls down 3 rows', e.listview_get_top_index(lv) === 3);

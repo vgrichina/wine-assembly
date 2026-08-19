@@ -162,6 +162,8 @@ UNIT=(
   test/test-findreplace-matchcase-flags.js
   test/test-gdi-exttextout-clipping.js
   test/test-gdi-transparent-blt.js
+  test/test-gdi-scroll-window-rect.js
+  test/test-listview.js
   test/test-isequalguid.js
   test/test-kernel32-last-error.js
   test/test-movewindow-child-size.js
@@ -386,8 +388,6 @@ SMOKE=(
 # Harness drift: the test calls a host/renderer entry point that no longer
 # exists. Cheap to fix; the product is probably fine.
 QUARANTINE=(
-  test/test-gdi-scroll-window-rect.js   # host.gdi_scroll_window is not a function
-  test/test-listview.js                 # host.gdi_create_bitmap is not a function
   test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
   test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
   test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
