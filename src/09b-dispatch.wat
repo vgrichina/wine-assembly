@@ -14,6 +14,34 @@
     ;; can create or return a DirectX/OLE wrapper.
     (call $dx_sync_thread_vtables_if_needed)
 
+    ;; An EnterCriticalSection that parked left its stdcall frame on the stack
+    ;; for the re-entry to find. If the guest arrives at a DIFFERENT thunk while
+    ;; that is still outstanding, the call was abandoned: those 8 bytes are now
+    ;; stack garbage that the caller's own `ret` will eventually pop, and it will
+    ;; "return" to the section pointer. Counted here, at the moment it happens,
+    ;; because the crash it causes is thousands of instructions away and names
+    ;; nothing.
+    (if (global.get $cs_park_pending)
+      (then
+        (if (i32.ne (global.get $eip) (global.get $cs_park_eip))
+          (then
+            (global.set $cs_abandoned (i32.add (global.get $cs_abandoned) (i32.const 1)))
+            (global.set $cs_abandoned_eip (global.get $eip))
+            (global.set $cs_park_pending (i32.const 0))))))
+
+    ;; Which thunk this is, in GUEST addresses — the address a parking handler
+    ;; must send EIP to so the call is re-entered rather than re-executed.
+    ;;
+    ;; $run's thunk branch already set this, but most API calls never go through
+    ;; it: the decoded `call` handlers in 05-alu.wat and 06b-core-handlers.wat
+    ;; dispatch inline, mid-block, and there EIP still names the BLOCK's first
+    ;; instruction. A handler that parks and leaves EIP alone therefore resumes
+    ;; by re-running the block — pushing the call's arguments a second time. That
+    ;; is an 8-byte stack drift per park for a one-argument API, and the caller's
+    ;; own `ret` eventually pops an argument and jumps to it.
+    (global.set $current_thunk_eip
+      (i32.add (global.get $thunk_guest_base) (i32.mul (local.get $thunk_idx) (i32.const 8))))
+
     ;; Read thunk data
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
     (local.set $api_id (i32.load (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8))) (i32.const 4))))

@@ -155,6 +155,31 @@ function check(ok, label, detail) {
   }
 
   {
+    // The park's own invariants, both of which were broken and cost a session.
+    //
+    // A parked Enter has NOT made its call yet: its stdcall frame is still on
+    // the stack for the re-entry to find, so ESP must come back untouched. And
+    // EIP must point at the thunk, because most API calls are dispatched inline
+    // from inside a decoded block — leaving EIP alone there resumes by
+    // re-executing the block, which pushes the arguments a second time. That
+    // showed up as ESP 8 bytes low and, much later, a `ret` into .data.
+    const THUNK = 0x07112340;
+    t1.exports.test_cs_enter(CS_GUEST);          // t1 holds it
+    t2.exports.set_current_thunk_eip(THUNK);
+    const espBefore = t2.exports.get_esp() >>> 0;
+    const parked = t2.exports.test_cs_enter(CS_GUEST) | 0;
+    check(parked === 1 && (t2.exports.get_esp() >>> 0) === espBefore,
+      'a park leaves ESP exactly where the call left it',
+      `parked=${parked} esp 0x${espBefore.toString(16)} -> 0x${(t2.exports.get_esp() >>> 0).toString(16)}`);
+    check((t2.exports.get_eip() >>> 0) === THUNK,
+      'a park sends EIP back to the call, not to the block that made it',
+      `eip=0x${(t2.exports.get_eip() >>> 0).toString(16)}`);
+    t1.exports.test_cs_leave(CS_GUEST);
+    t2.exports.test_cs_enter(CS_GUEST);
+    t2.exports.test_cs_leave(CS_GUEST);
+  }
+
+  {
     // Release-at-thread-exit: the only answer to a thread that ended inside a
     // section, including one that ended by trapping.
     t2.exports.test_cs_enter(CS_GUEST);

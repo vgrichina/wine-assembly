@@ -6076,6 +6076,17 @@ if (VERBOSE) {
     const steals = instance.exports.get_cs_steals ? instance.exports.get_cs_steals() >>> 0 : 0;
     const badLeaves = instance.exports.get_cs_bad_leaves ? instance.exports.get_cs_bad_leaves() >>> 0 : 0;
     const barges = instance.exports.get_cs_barges ? instance.exports.get_cs_barges() >>> 0 : 0;
+    const abandoned = instance.exports.get_cs_abandoned ? instance.exports.get_cs_abandoned() >>> 0 : 0;
+    if (abandoned) {
+      const at = instance.exports.get_cs_abandoned_eip ? instance.exports.get_cs_abandoned_eip() >>> 0 : 0;
+      console.log(`critical sections: ${abandoned} parked Enter(s) ABANDONED — the guest was `
+        + `dispatched elsewhere (last at ${hex(at)}) with the call's frame still on the stack`);
+    }
+    const resumeDelta = instance.exports.get_cs_resume_esp_delta
+      ? instance.exports.get_cs_resume_esp_delta() | 0 : 0;
+    if (resumeDelta) {
+      console.log(`critical sections: ESP moved ${resumeDelta} bytes across a park before the retry`);
+    }
     if (waits || steals || badLeaves || barges) {
       console.log(`critical sections: main parked ${waits}x, stole ${steals}, `
         + `barged ${barges} (nested wndproc), released ${badLeaves} it did not own`);

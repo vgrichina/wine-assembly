@@ -5708,6 +5708,12 @@ nW — STUB: unimplemented
   ;; WordPad's thread trapped after three of them.)
   (func $cs_block (param $cs i32) (param $owner i32)
     (global.set $cs_waits (i32.add (global.get $cs_waits) (i32.const 1)))
+    ;; The frame is deliberately left on the stack for the re-entry to find, so
+    ;; record where it is. If the guest is dispatched anywhere else before it
+    ;; comes back, those bytes are lost — see $cs_park_pending.
+    (global.set $cs_park_pending (i32.const 1))
+    (global.set $cs_park_esp (global.get $esp))
+    (global.set $cs_park_eip (global.get $eip))
     ;; What this thread is parked on, and who had it. "Thread blocked" is not a
     ;; diagnosis; "thread blocked on section X held by thread N" is, and it is the
     ;; difference between guessing at a deadlock and reading it.
@@ -5720,6 +5726,13 @@ nW — STUB: unimplemented
     ;; later at a garbage EIP (0x113, in the browser). Every other re-entering
     ;; thunk raises this for the same reason; see the CACA000x continuations.
     (global.set $handler_set_eip (i32.const 1))
+    ;; Re-enter the CALL, not the block. Most API calls are dispatched inline
+    ;; from inside a decoded block, where EIP still names that block's first
+    ;; instruction — so leaving EIP alone makes the resume re-execute the
+    ;; argument pushes and call the API again on top of the frame it already
+    ;; left on the stack. Measured on Winamp: ESP 8 bytes lower on the retry,
+    ;; and thread 1 later returning into .data at winamp.exe+0x4fe9c.
+    (global.set $eip (global.get $current_thunk_eip))
     (global.set $yield_reason (i32.const 9))
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0)))
@@ -5818,6 +5831,14 @@ nW — STUB: unimplemented
             (call $cs_block (local.get $cs) (local.get $prev))
             (return)))))
     (global.set $cs_wait_spins (i32.const 0))
+    ;; Came back to a park: the frame must be exactly where it was left, or the
+    ;; caller's `ret` will pop something that is not its return address.
+    (if (global.get $cs_park_pending)
+      (then
+        (if (i32.ne (global.get $esp) (global.get $cs_park_esp))
+          (then (global.set $cs_resume_esp_delta
+            (i32.sub (global.get $esp) (global.get $cs_park_esp)))))
+        (global.set $cs_park_pending (i32.const 0))))
     ;; Not parked any more. Left set, this reads as "still waiting" long after the
     ;; section was acquired, and a stale name in a deadlock report is worse than
     ;; no name — it accuses a thread that let go.

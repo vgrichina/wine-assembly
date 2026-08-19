@@ -230,6 +230,18 @@
   ;; Sections entered while already held, because a nested synchronous wndproc
   ;; was running and could not be parked. Exclusion was not honoured for these.
   (func (export "get_cs_barges") (result i32) (global.get $cs_barges))
+  ;; Parked EnterCriticalSection calls the guest never returned to, where it
+  ;; went instead, and any ESP movement across a park that did come back.
+  ;; For test/test-wat-critical-section.js: a unit test calls the handler
+  ;; directly, so nothing has recorded which thunk the guest is inside. Setting
+  ;; it lets the test assert the property that actually broke — that a park
+  ;; sends EIP back to the CALL, not to wherever the block began.
+  (func (export "set_current_thunk_eip") (param i32)
+    (global.set $current_thunk_eip (local.get 0)))
+  (func (export "get_cs_park_eip") (result i32) (global.get $cs_park_eip))
+  (func (export "get_cs_abandoned") (result i32) (global.get $cs_abandoned))
+  (func (export "get_cs_abandoned_eip") (result i32) (global.get $cs_abandoned_eip))
+  (func (export "get_cs_resume_esp_delta") (result i32) (global.get $cs_resume_esp_delta))
   (func (export "get_cs_bad_leave_addr") (result i32) (global.get $cs_bad_leave_addr))
   (func (export "get_cs_bad_leave_owner") (result i32) (global.get $cs_bad_leave_owner))
   (func (export "get_cs_wait_addr") (result i32) (global.get $cs_wait_addr))

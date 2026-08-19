@@ -2091,6 +2091,21 @@
   ;; The section this thread last parked on, and its owner at that moment.
   (global $cs_wait_addr (mut i32) (i32.const 0))
   (global $cs_wait_owner (mut i32) (i32.const 0))
+  ;; Where this thread was when EnterCriticalSection parked, and whether it is
+  ;; still parked. A park deliberately leaves the stdcall frame on the stack for
+  ;; the re-entry to find, so if the guest is ever dispatched somewhere ELSE
+  ;; while this is set, those 8 bytes are lost and the caller's own `ret` will
+  ;; later pop the section pointer and jump to it. That is the trap at
+  ;; winamp.exe+0x4fe9c; these three make it visible at the moment it happens
+  ;; rather than thousands of instructions later.
+  (global $cs_park_pending (mut i32) (i32.const 0))
+  (global $cs_park_esp (mut i32) (i32.const 0))
+  (global $cs_park_eip (mut i32) (i32.const 0))
+  ;; Parked Enters the guest never came back to, and how far ESP had moved by
+  ;; the time it was dispatched elsewhere.
+  (global $cs_abandoned (mut i32) (i32.const 0))
+  (global $cs_abandoned_eip (mut i32) (i32.const 0))
+  (global $cs_resume_esp_delta (mut i32) (i32.const 0))
   ;; The last section this thread released without owning, and who did own it. A
   ;; count says how often the emulator ran an Enter and its Leave on different
   ;; threads; these say WHICH section, which is what points at the guest code.
