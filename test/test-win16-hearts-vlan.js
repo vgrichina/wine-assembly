@@ -134,6 +134,10 @@ const PASS_BUTTON = '320:298';
 // Hearts opens with the two of clubs and refuses anything else -- "You must
 // lead the two of clubs" -- and the hand is sorted, so it is the leftmost card.
 const LOWEST_CARD = '200:380';
+// Somewhere along the hand, for the soak. Following suit is compulsory, so a
+// click on one particular card is a legal move only sometimes -- cycling
+// across the fan means each turn gets several tries and the hand keeps moving.
+const ALONG_THE_HAND = ['200:380', '240:380', '280:380', '320:380', '360:380'];
 
 const shot = name => path.join(OUT, `${name}.png`);
 
@@ -197,9 +201,10 @@ const DEALER_INPUT = [
   // leftmost one over and over is a legal move whenever it is this seat's turn
   // and nothing at all when it is not -- which makes it a soak: several tricks
   // of real traffic between two processes, with no timing to get right.
-  ...Array.from({ length: 12 }, (_, i) =>
-    `${DEAL_AT + 120000 + i * 8000}:click:${LOWEST_CARD}`),
+  ...Array.from({ length: 60 }, (_, i) =>
+    `${DEAL_AT + 120000 + i * 6000}:click:${ALONG_THE_HAND[i % ALONG_THE_HAND.length]}`),
   `${DEAL_AT + 220000}:png:${shot('dealer-late')}`,
+  `${DEAL_AT + 460000}:png:${shot('dealer-end')}`,
 ].join(',');
 
 const CLIENT_INPUT = [
@@ -235,9 +240,10 @@ const CLIENT_INPUT = [
   `114000:click:${PASS_BUTTON}`,
   `119000:click:${LOWEST_CARD}`,
   `130000:png:${shot('client-trick')}`,
-  ...Array.from({ length: 12 }, (_, i) =>
-    `${140000 + i * 8000}:click:${LOWEST_CARD}`),
+  ...Array.from({ length: 60 }, (_, i) =>
+    `${140000 + i * 6000}:click:${ALONG_THE_HAND[i % ALONG_THE_HAND.length]}`),
   `240000:png:${shot('client-late')}`,
+  `480000:png:${shot('client-end')}`,
 ].join(',');
 
 // Only a bounded tail of each transcript is kept: two processes at tens of
@@ -291,7 +297,7 @@ function spawn(label, ip, input, patterns) {
     '--vlan-max-waits=200000',
   ], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const state = { out: '', exited: false, label, seen: new Set(), carry: '', at: {},
-                  lastNet: 0, net: [], pokes: 0 };
+                  lastNet: 0, net: [], pokes: 0, dialogs: 0 };
   // Streamed rather than kept: with --trace-win16 a side produces hundreds of
   // megabytes, and the interesting part is not always the tail.
   const sink = fs.createWriteStream(path.join(OUT, `${label}.log`));
@@ -311,6 +317,11 @@ function spawn(label, ip, input, patterns) {
         // step waits on is one MORE than it had.
         if (line.includes('.. arrived type6')) state.pokes++;
       }
+    }
+    // The welcome box is the first dialog either side opens; a second one is
+    // the score, and the score is a hand having been played to its end.
+    for (const line of chunk.split('\n')) {
+      if (line.includes('[CreateDialog]')) state.dialogs++;
     }
     const text = state.carry + chunk;
     for (const [name, re] of Object.entries(patterns || {})) {
@@ -599,10 +610,26 @@ function table(file, x0 = 60, y0 = 30, x1 = 580, y1 = 440) {
   for (const [name, drawn] of [['dealer', lateShots[0]], ['client', lateShots[1]]]) {
     if (!drawn) { check(`the ${name} was still drawing later in the hand`, false, 'no screenshot'); continue; }
     const t = table(shot(`${name}-late`));
+    // Green and white both, but not much of either required: by now the hand
+    // may be nearly over, and a finished one puts a score box over the table.
     check(`the ${name} is still at a table of cards later in the hand ` +
       `(${(t.green * 100).toFixed(0)}% baize, ${(t.white * 100).toFixed(0)}% cards)`,
-      t.green > 0.3 && t.white > 0.05, JSON.stringify(t));
+      t.green > 0.2 && t.white > 0.05, JSON.stringify(t));
   }
+  // 10: the hand played out. Hearts scores a hand by putting up a box, and the
+  // welcome dialog was the only one either side had opened until now -- so a
+  // second one is thirteen tricks having been played between two processes.
+  const endShots = await Promise.all([
+    waitForFile(shot('dealer-end')), waitForFile(shot('client-end')),
+  ]);
+  for (const [s, drawn] of [[dealer, endShots[0]], [client, endShots[1]]]) {
+    check(`the ${s.label} was still drawing at the end of the hand`, !!drawn, 'no screenshot');
+  }
+  check(`the hand was played out and scored ` +
+    `(dealer saw ${dealer.dialogs} dialogs, client ${client.dialogs})`,
+    dealer.dialogs > 1 || client.dialogs > 1,
+    'no second dialog on either side, so no hand ever finished');
+
   for (const s of [dealer, client]) {
     check(`the ${s.label} was still running at the end of the hand`,
       !s.seen.has('crashed'), 'it trapped -- see the transcript');
