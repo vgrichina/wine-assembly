@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 179,
+  "count": 181,
   "sigs": {
     "log": {
       "params": [
@@ -84,6 +84,12 @@
         "i32"
       ]
     },
+    "real_time_ms": {
+      "params": [],
+      "results": [
+        "i32"
+      ]
+    },
     "yield": {
       "params": [
         "i32"
@@ -151,6 +157,12 @@
       "results": []
     },
     "invalidate": {
+      "params": [
+        "i32"
+      ],
+      "results": []
+    },
+    "invalidate_frame": {
       "params": [
         "i32"
       ],
@@ -554,6 +566,7 @@
     },
     "ctrl_paint_trace": {
       "params": [
+        "i32",
         "i32",
         "i32",
         "i32",

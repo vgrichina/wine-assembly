@@ -214,6 +214,7 @@ const WORKER_THREADS = hasFlag('threads'); // --threads: run each guest thread i
 const THREAD_BATCH_SIZE_ARG = parseInt(getArg('thread-batch-size', '0'), 10) || 0; // --thread-batch-size=N: steps per worker-thread slice with --threads (default: BATCH_SIZE * --thread-slices, min 20000)
 const CS_STEAL_AFTER = parseInt(getArg('cs-steal-after', '0'), 10) || 0; // --cs-steal-after=N: fruitless EnterCriticalSection rounds before taking the section by force (0 = WAT default; huge = never, to tell "waiting forever" from "took it")
 const THREADS_SERIAL = hasFlag('threads-serial'); // --threads-serial: with --threads, never run two guest threads at once (splits "race" from "wrong per-thread state")
+const ESP_AUDIT = hasFlag('esp-audit'); // --esp-audit: with --threads, check every handler's stdcall epilogue (4*(nargs+1)) on the thread that actually ran it
 const RPC_CENSUS = hasFlag('rpc-census'); // --rpc-census: with --threads, per-thread histogram of brokered host imports (a blocking one stops that thread until the main thread answers)
 // Module scope so every exit path can terminate the threads: a live worker keeps
 // node alive, so a run that ends — cleanly or by throwing — would otherwise hang
@@ -2375,6 +2376,26 @@ async function main() {
       workerUrl: path.join(ROOT, 'lib', 'guest-worker.js'),
       localMainExports: () => instance.exports,
       countCalls: RPC_CENSUS,
+      // The audit runs inside each worker, against its own instance: this
+      // process's get_esp() belongs to the main thread and cannot see a
+      // worker's stack at all. Arities come from the same table
+      // tools/esp-epilogue.js checks the handlers against.
+      // Expected ESP movement per API, not raw nargs: the rule depends on the
+      // calling convention, and getting that wrong makes the audit lie. A
+      // stdcall handler pops the return address plus its arguments; a cdecl one
+      // pops ONLY the return address, because the caller cleans the arguments.
+      // Measured before this distinction existed, the audit's first "finding"
+      // was wsprintfA — a correct cdecl epilogue. tools/esp-epilogue.js skips
+      // cdecl entirely; expecting 4 checks it instead.
+      espExpect: ESP_AUDIT ? Object.fromEntries(apiTable
+        .filter(e => typeof e.nargs === 'number')
+        .map((e) => {
+          const conv = e.convention || 'stdcall';
+          if (conv === 'cdecl') return [e.name, 4];
+          if (conv !== 'stdcall' || e.nargs < 0) return null;
+          return [e.name, 4 * (e.nargs + 1)];
+        })
+        .filter(Boolean)) : null,
       clockIntervalMs: 0,          // the CLI clock is the batch counter, published by hand
       tickMs: () => tickState.batch * 200,
       log: msg => console.log(msg),
@@ -6231,6 +6252,22 @@ if (VERBOSE) {
         console.log(`  T${t.tid} h=0x${handle.toString(16)} state=${t.state} eip=0x${eip.toString(16)} esp=0x${esp.toString(16)} ebp=0x${ebp.toString(16)} yield=${yr} waitH=0x${wh.toString(16)} sleepCount=${t.sleepCount||0} csPark/steal=${cs}`);
       } catch (ex) { console.log(`  T${t.tid} dump error: ${ex.message}`); }
     }
+  }
+
+  // --esp-audit: how much was actually measured, per thread. Printed even when
+  // nothing offended, because "no complaints" and "the audit never ran" look
+  // identical otherwise, and a silent audit is worse than none.
+  if (ESP_AUDIT && threadManager && threadManager.threads && threadManager.threads.size) {
+    let any = false;
+    for (const [, t] of threadManager.threads) {
+      const a = t.espAudit;
+      if (!a) continue;
+      if (!any) { console.log('\nStdcall epilogue audit (--esp-audit):'); any = true; }
+      console.log(`  T${t.tid} ${a.checked} of ${a.calls} dispatches checked, `
+        + `${a.bad.length} handler(s) off`
+        + (a.bad.length ? ': ' + a.bad.map(b => `${b.name} ${b.delta}!=${b.expected}`).join(', ') : ''));
+    }
+    if (!any) console.log('\nStdcall epilogue audit (--esp-audit): no worker thread reported (needs --threads)');
   }
 
   // --rpc-census: what each guest thread went out to the host for. In worker
