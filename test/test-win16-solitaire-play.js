@@ -78,6 +78,7 @@ function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const dealt = path.join(OUT, 'dealt.png');
   const moved = path.join(OUT, 'moved.png');
+  const dbl = path.join(OUT, 'double-clicked.png');
 
   // No input at all: the table has to be there on its own.
   const log = run(`6000:png:${dealt}`, 9000);
@@ -92,15 +93,27 @@ function main() {
   // Drag column 1's card onto column 3's. Whether that particular move is legal
   // is the game's business; what this checks is that the game picked the card
   // up at all, which it shows by emptying the column it came from.
+  // The double-click at the end is the one that used to kill the game. It asks
+  // for the card to fly to a foundation, and the flight is drawn by the app
+  // itself through GDI.100 LineDDA — a callback per point of the line. That
+  // ordinal was unimplemented, so a double-click anywhere on the table trapped,
+  // which is what "it crashes after a while of playing" turned out to mean. It
+  // is checked here rather than in a run of its own because the card need not
+  // have anywhere to go for LineDDA to be called.
   const log2 = run(`7000:mousedown:${COL1.x}:${COL1.y},` +
     `7200:mousemove:120:205,7400:mousemove:180:210,` +
     `7600:mousemove:${COL3.x}:${COL3.y},7800:mouseup:${COL3.x}:${COL3.y},` +
-    `11000:png:${moved}`, 14000);
+    `11000:png:${moved},11500:dblclick:${COL3.x}:${COL3.y},` +
+    `13500:png:${dbl}`, 14000);
   check('the drag did not crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
   const after = columns(moved);
   check(`the card left column 1 (${before.col(1)} -> ${after.col(1)} white px)`,
     after.col(1) < before.col(1) / 2);
   check('the rest of the table is still drawn', after.all > 20000);
+  check('the double-click did not crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
+  const ddaed = columns(dbl);
+  check(`the table survived the double-click (${ddaed.all} white px)`,
+    ddaed.all > 20000);
 
   console.log(`\n${pass} passed, 0 failed`);
   console.log(`Snapshots: ${OUT}`);

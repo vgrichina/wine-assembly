@@ -19,6 +19,7 @@
 // All other args are forwarded to test/run.js (e.g. --args=, --max-batches=, --no-close).
 
 const path = require('path');
+const { scanXrefs } = require('./xrefs');
 const { spawnSync } = require('child_process');
 
 const args = process.argv.slice(2);
@@ -49,15 +50,18 @@ const peFile = PE_OVERRIDE
   || (MODULE.toLowerCase() === 'exe' ? EXE : path.join('test/binaries/dlls', `${MODULE}.dll`));
 
 // 1. Static scan: who calls the callee?
-const xrefsRun = spawnSync('node', ['tools/xrefs.js', peFile, CALLEE, '--code']);
-if (xrefsRun.status !== 0) {
-  console.error(xrefsRun.stderr.toString());
+// This used to spawn tools/xrefs.js and regex its printed output, so a change
+// to that tool's print format silently produced "no static callers found"
+// rather than an error. It calls the scan directly now.
+let callerVAs;
+try {
+  const { results } = scanXrefs(peFile, parseInt(CALLEE, 16), { codeOnly: true });
+  callerVAs = results
+    .filter(r => r.kind === 'branch')
+    .map(r => '0x' + r.va.toString(16));
+} catch (e) {
+  console.error(e.message);
   process.exit(1);
-}
-const callerVAs = [];
-for (const line of xrefsRun.stdout.toString().split('\n')) {
-  const m = line.match(/^\s+(0x[0-9a-fA-F]+)\s+\[.+?\]\s+branch/);
-  if (m) callerVAs.push(m[1].toLowerCase());
 }
 if (callerVAs.length === 0) {
   console.error(`no static callers found for ${CALLEE} in ${peFile}`);

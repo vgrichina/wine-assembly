@@ -179,22 +179,6 @@
     (i32.const 0)
   )
 
-  ;; Post queue dequeue — reads one i32 at a time from queue at 0x400
-  ;; Call 4 times to get hwnd, msg, wParam, lParam; auto-shifts on 4th read
-  (func $post_queue_dequeue (result i32)
-    (local $val i32)
-    (local.set $val (i32.load (i32.add (i32.const 0x400) (global.get $pq_read_off))))
-    (global.set $pq_read_off (i32.add (global.get $pq_read_off) (i32.const 4)))
-    (if (i32.ge_u (global.get $pq_read_off) (i32.const 16))
-      (then
-        (global.set $pq_read_off (i32.const 0))
-        (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
-        (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-          (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
-            (i32.mul (global.get $post_queue_count) (i32.const 16)))))))
-    (local.get $val)
-  )
-
   ;; Shared cross-instance posted-message queue.
   ;; Worker threads run in separate WASM instances, so globals such as
   ;; $post_queue_count are private. Win98 USER queues are shared by the window
@@ -1832,15 +1816,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 84: DestroyMenu(hMenu) — 1 arg stdcall, return TRUE
-  (func $handle_DestroyMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (call $dynamic_menu_destroy (local.get $arg0))
-      (then (global.set $eax (i32.const 1)))
-      (else (global.set $eax (call $host_menu_destroy (local.get $arg0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  (func $compat_is_pinball_exe (result i32)
+(func $compat_is_pinball_exe (result i32)
     (if (i32.ne (global.get $exe_name_len) (i32.const 11))
       (then (return (i32.const 0))))
     (if (i32.ne (i32.load (global.get $exe_name_wa)) (i32.const 0x626E6970))
@@ -1879,116 +1855,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-  ;; 86: GetDeviceCaps
-  (func $handle_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $screen i32)
-    ;; Letter printer: 8.5x11 inches at 300 DPI, printable 8x10.5 inches.
-    (if (i32.and
-          (i32.ne (global.get $printer_hdc) (i32.const 0))
-          (i32.eq (local.get $arg0) (global.get $printer_hdc)))
-      (then
-        (global.set $eax (i32.const 0))
-        (if (i32.eq (local.get $arg1) (i32.const 2)) (then (global.set $eax (i32.const 2))))    ;; DT_RASPRINTER
-        (if (i32.eq (local.get $arg1) (i32.const 4)) (then (global.set $eax (i32.const 216))))  ;; HORZSIZE mm
-        (if (i32.eq (local.get $arg1) (i32.const 6)) (then (global.set $eax (i32.const 279))))  ;; VERTSIZE mm
-        (if (i32.eq (local.get $arg1) (i32.const 8)) (then (global.set $eax (i32.const 2400)))) ;; HORZRES
-        (if (i32.eq (local.get $arg1) (i32.const 10)) (then (global.set $eax (i32.const 3150)))) ;; VERTRES
-        (if (i32.eq (local.get $arg1) (i32.const 12)) (then (global.set $eax (i32.const 32))))   ;; BITSPIXEL
-        (if (i32.eq (local.get $arg1) (i32.const 14)) (then (global.set $eax (i32.const 1))))    ;; PLANES
-        (if (i32.eq (local.get $arg1) (i32.const 88)) (then (global.set $eax (i32.const 300))))  ;; LOGPIXELSX
-        (if (i32.eq (local.get $arg1) (i32.const 90)) (then (global.set $eax (i32.const 300))))  ;; LOGPIXELSY
-        (if (i32.eq (local.get $arg1) (i32.const 110)) (then (global.set $eax (i32.const 2550)))) ;; PHYSICALWIDTH
-        (if (i32.eq (local.get $arg1) (i32.const 111)) (then (global.set $eax (i32.const 3300)))) ;; PHYSICALHEIGHT
-        (if (i32.eq (local.get $arg1) (i32.const 112)) (then (global.set $eax (i32.const 75))))   ;; PHYSICALOFFSETX
-        (if (i32.eq (local.get $arg1) (i32.const 113)) (then (global.set $eax (i32.const 75))))   ;; PHYSICALOFFSETY
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    ;; Return reasonable defaults for common caps
-    ;; TECHNOLOGY=2, HORZSIZE=4, VERTSIZE=6, HORZRES=8, VERTRES=10,
-    ;; RASTERCAPS=38, ASPECT*=40/42/44, LOGPIXELSX=88, LOGPIXELSY=90.
-    ;; Unknown caps default to 0. Leaving EAX untouched here leaks unrelated
-    ;; previous API return values into layout code (RichEdit queries several
-    ;; display caps while positioning typed text).
-    (global.set $eax (i32.const 0))
-    (if (i32.eq (local.get $arg1) (i32.const 2))
-    (then (global.set $eax (i32.const 1))))   ;; TECHNOLOGY: DT_RASDISPLAY
-    (if (i32.eq (local.get $arg1) (i32.const 4))
-    (then
-      (local.set $screen (call $host_get_screen_size))
-      (global.set $eax
-        (i32.div_u
-          (i32.mul (i32.and (local.get $screen) (i32.const 0xFFFF)) (i32.const 254))
-          (i32.const 960)))))                ;; HORZSIZE in millimeters
-    (if (i32.eq (local.get $arg1) (i32.const 6))
-    (then
-      (local.set $screen (call $host_get_screen_size))
-      (global.set $eax
-        (i32.div_u
-          (i32.mul (i32.shr_u (local.get $screen) (i32.const 16)) (i32.const 254))
-          (i32.const 960)))))                ;; VERTSIZE in millimeters
-    (if (i32.or (i32.eq (local.get $arg1) (i32.const 8)) (i32.eq (local.get $arg1) (i32.const 10)))
-    (then
-    (local.set $screen (call $host_get_screen_size))
-    (if (i32.eq (local.get $arg1) (i32.const 8))
-    (then (global.set $eax (i32.and (local.get $screen) (i32.const 0xFFFF)))))  ;; HORZRES
-    (if (i32.eq (local.get $arg1) (i32.const 10))
-    (then (global.set $eax (i32.shr_u (local.get $screen) (i32.const 16)))))))
-    (if (i32.eq (local.get $arg1) (i32.const 88))
-    (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSX
-    (if (i32.eq (local.get $arg1) (i32.const 90))
-    (then (global.set $eax (i32.const 96))))   ;; LOGPIXELSY
-    (if (i32.eq (local.get $arg1) (i32.const 12))
-    (then (global.set $eax (i32.const 32))))  ;; BITSPIXEL
-    (if (i32.eq (local.get $arg1) (i32.const 14))
-    (then (global.set $eax (i32.const 1))))   ;; PLANES
-    (if (i32.eq (local.get $arg1) (i32.const 24))
-    (then (global.set $eax (i32.const -1))))  ;; NUMCOLORS — -1 = >256 colors
-    (if (i32.eq (local.get $arg1) (i32.const 36))
-    (then (global.set $eax (i32.const 1))))   ;; CLIPCAPS: CP_RECTANGLE
-    (if (i32.eq (local.get $arg1) (i32.const 38))
-    (then (global.set $eax (i32.const 15033)))) ;; RASTERCAPS: common raster ops
-    (if (i32.eq (local.get $arg1) (i32.const 40))
-    (then (global.set $eax (i32.const 36))))  ;; ASPECTX
-    (if (i32.eq (local.get $arg1) (i32.const 42))
-    (then (global.set $eax (i32.const 36))))  ;; ASPECTY
-    (if (i32.eq (local.get $arg1) (i32.const 44))
-    (then (global.set $eax (i32.const 51))))  ;; ASPECTXY
-    (if (i32.eq (local.get $arg1) (i32.const 104))
-    (then (global.set $eax (i32.const 0))))   ;; SIZEPALETTE: no palette device
-    (if (i32.eq (local.get $arg1) (i32.const 108))
-    (then (global.set $eax (i32.const 24))))  ;; COLORRES — 24-bit color
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; 87: GetMenu(hwnd) — return the attached menu's stable resource key.
-  (func $handle_GetMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Named class menus use a guest string pointer rather than a low-word
-    ;; resource ID. Preserve that identity so SetMenu can reattach the menu
-    ;; after an app temporarily removes it (Pinball fullscreen). menu_set's
-    ;; legacy host blobs have no source key, so retain the old fake fallback.
-    (global.set $eax (call $menu_source_get (local.get $arg0)))
-    (if (i32.and
-          (i32.eqz (global.get $eax))
-          (i32.gt_s (call $menu_bar_count (local.get $arg0)) (i32.const 0)))
-      (then (global.set $eax (i32.const 0x80001))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 88: GetSubMenu(hMenu, nPos) → HMENU
-  ;; Returns submenu handle at position nPos. Encode as hMenu | (pos << 16).
-  (func $handle_GetSubMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.or
-      (i32.and (local.get $arg0) (i32.const 0xFFFF))
-      (i32.shl (i32.add (local.get $arg1) (i32.const 1)) (i32.const 16))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; 314: GetSystemMenu(hwnd, bRevert) — stdcall(2)
-  (func $handle_GetSystemMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x40003))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; The SM_* table, with no calling convention attached. GetSystemMetrics is
+he SM_* table, with no calling convention attached. GetSystemMetrics is
   ;; the same question in Win32 and in Win16 — USER.179 takes the same indices
   ;; and means the same things — so the answers live here and both dispatchers
   ;; call in. An index with no entry is 0, which is what Windows returns for a
@@ -2820,22 +2687,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 113: EnableMenuItem(hMenu, uIDEnableItem, uEnable).
-  ;; EnableMenuItem(hMenu, uIDEnableItem, uEnable). MF_BYPOSITION is 0x400 and
-  ;; has to be honoured: it is how MFC addresses items while walking a popup,
-  ;; and treating a position as a command id put the state on the wrong item.
-  (func $handle_EnableMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
-        (then (call $menu_enable_position_global
-          (local.get $arg0) (local.get $arg1)
-          (i32.ne (i32.and (local.get $arg2) (i32.const 3)) (i32.const 0))))
-        (else (call $menu_enable_item_global
-          (local.get $arg0) (local.get $arg1) (local.get $arg2)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 114: EndDialog(hDlg, nResult) — end modal dialog, set result
+;; 114: EndDialog(hDlg, nResult) — end modal dialog, set result
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
@@ -2885,6 +2737,12 @@
         (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
     (call $update_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))
+    ;; bErase is deliberately not turned into a queued WM_ERASEBKGND here.
+    ;; Windows erases from inside BeginPaint, in the same breath as the paint;
+    ;; a separately queued erase arrives whenever the pump gets to it, and Hearts
+    ;; draws a dealt hand with its own DC outside WM_PAINT -- so the erase landed
+    ;; after the cards and wiped four of them off the table. See $handle_BeginPaint
+    ;; for where the background is decided instead.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))
@@ -2988,33 +2846,7 @@
     (return)
   )
 
-  ;; 121: CheckMenuRadioItem(hMenu, idFirst, idLast, idCheck, uFlags)
-  ;; Unchecks items [idFirst..idLast], checks idCheck with radio bullet. Returns TRUE.
-  ;; Menu item state is tracked in the renderer's menu model when available.
-  (func $handle_CheckMenuRadioItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_check_radio_global
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-
-  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) → previous state
-  ;; We don't track HMENU-to-window mapping directly, so walk every
-  ;; window with a menu blob and toggle the first matching command id.
-  ;; uCheck combines MF_BYCOMMAND/MF_BYPOSITION with MF_CHECKED (8) or
-  ;; MF_UNCHECKED (0); MF_BYPOSITION isn't supported here — in practice
-  ;; callers use MF_BYCOMMAND, which is what our id-based walk matches.
-  (func $handle_CheckMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and (local.get $arg2) (i32.const 0x400))
-      (then (global.set $eax (call $menu_check_position_global
-        (local.get $arg0) (local.get $arg1)
-        (i32.and (local.get $arg2) (i32.const 8)))))
-      (else (global.set $eax (call $menu_check_item_global
-        (local.get $arg1)
-        (i32.and (local.get $arg2) (i32.const 8))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 123: CheckRadioButton(hDlg, firstId, lastId, checkId) — clear all in
+ 123: CheckRadioButton(hDlg, firstId, lastId, checkId) — clear all in
   ;; [firstId,lastId] and set checkId. Pure WAT path now that ButtonState
   ;; bit 1 is the source of truth.
   (func $handle_CheckRadioButton (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3110,19 +2942,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
-  ;; 131: TabbedTextOutA — WAT-owned tab parsing and glyph-mask composition.
-  (func $handle_TabbedTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_tabbed_text
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-      (i32.const 0) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
-  )
-
-  ;; 132: WinHelpA(hwnd, lpszHelp, uCommand, dwData) — unified WAT dispatcher
+;; 132: WinHelpA(hwnd, lpszHelp, uCommand, dwData) — unified WAT dispatcher
   (func $handle_WinHelpA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $accepted i32)
     (local.set $accepted (call $help_dispatch_api_a
@@ -3264,27 +3084,7 @@
     (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
   )
 
-  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
-  ;; Return menu resource ID as handle (host renderer resolves by ID)
-  (func $handle_LoadMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; If lpMenuName < 0x10000, it's MAKEINTRESOURCE (resource ID)
-    (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-      (then
-        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (global.set $last_load_menu_hinst (local.get $arg0))
-        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
-      (else (global.set $eax (i32.const 0x00BE0001))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 138: TrackPopupMenuEx(hMenu, uFlags, x, y, hWnd, lptpm)
-  (func $handle_TrackPopupMenuEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_track_popup_open
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-  )
-
-  ;; 139: OffsetRect — STUB: unimplemented
+ 139: OffsetRect — STUB: unimplemented
   (func $handle_OffsetRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; OffsetRect(lprc, dx, dy) → BOOL. Moves rect by (dx, dy)
     ;; RECT: left, top, right, bottom (4 DWORDs)
@@ -3452,7 +3252,9 @@
               (then
                 (global.set $paint_pending (i32.const 1))
                 (call $update_invalidate_full (local.get $arg0))
-                (call $host_invalidate (local.get $arg0)))
+                ;; SWP_SHOWWINDOW: the frame itself is appearing, so the
+                ;; non-client area needs painting, not just a composite.
+                (call $host_invalidate_frame (local.get $arg0)))
               (else (call $paint_flag_set_inv (local.get $arg0))))))))
     (if (i32.and (local.get $uFlags) (i32.const 0x0080)) ;; SWP_HIDEWINDOW
       (then
@@ -4089,29 +3891,46 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
+  ;; 218-222, 250: the lstr* family. These used to call $dispatch_lstr, which
+  ;; re-read the API *name* one character at a time to decide which of them it
+  ;; was — after the generated br_table had already resolved that name to this
+  ;; exact function. The name-sniffing layer is gone; each handler is its own
+  ;; body, which is also what lets the Win16 bridge (09e) call them directly:
+  ;; it has an ordinal, not a name, and so used to reimplement them instead.
+
   ;; 218: lstrlenA
   (func $handle_lstrlenA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $guest_strlen (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 219: lstrcpyA
   (func $handle_lstrcpyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $guest_strcpy (local.get $arg0) (local.get $arg1))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 220: lstrcatA
   (func $handle_lstrcatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $guest_strcpy
+      (i32.add (local.get $arg0) (call $guest_strlen (local.get $arg0)))
+      (local.get $arg1))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 221: lstrcpynA
+  ;; 221: lstrcpynA(dst, src, count) — copies at most count-1 chars.
   (func $handle_lstrcpynA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $guest_strncpy (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 222: lstrcmpA
   (func $handle_lstrcmpA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $guest_strcmp (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 223: RegCloseKey(hKey) — 1 arg stdcall
@@ -4229,29 +4048,42 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 227: LocalAlloc
+  ;; 227-231: the Local* family, formerly routed through $dispatch_local, which
+  ;; picked the operation from name[5]. Local and Global memory are the same
+  ;; heap here, so the pairs are deliberately identical bodies.
+
+  ;; 227: LocalAlloc(uFlags, uBytes)
   (func $handle_LocalAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_alloc (local.get $arg1)))
+    (if (i32.and (local.get $arg0) (i32.const 0x40)) ;; LMEM_ZEROINIT
+      (then (if (global.get $eax)
+              (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 228: LocalFree
   (func $handle_LocalFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $heap_free (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 229: LocalLock
+  ;; 229: LocalLock — handles are pointers here, so locking is the identity.
   (func $handle_LocalLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 230: LocalUnlock
+  ;; 230: LocalUnlock — returns FALSE, meaning the lock count reached zero.
   (func $handle_LocalUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 231: LocalReAlloc
+  ;; 231: LocalReAlloc(hMem, uBytes, uFlags)
   (func $handle_LocalReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_local (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_realloc (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; LocalSize(hMem) — LocalAlloc returns a fixed guest pointer whose aligned
@@ -4267,34 +4099,51 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 232: GlobalAlloc
+  ;; 232-237: the Global* family, formerly routed through $dispatch_global,
+  ;; which picked the operation from name[6]. That byte aliased
+  ;; GlobalAddAtomA with GlobalAlloc and GlobalFindAtomA/GlobalFlags with
+  ;; GlobalFree — safe only because those happened to have their own handlers.
+
+  ;; 232: GlobalAlloc(uFlags, dwBytes)
   (func $handle_GlobalAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_alloc (local.get $arg1)))
+    (if (i32.and (local.get $arg0) (i32.const 0x40)) ;; GMEM_ZEROINIT
+      (then (if (global.get $eax)
+              (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 233: GlobalFree
   (func $handle_GlobalFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (call $heap_free (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 234: GlobalLock
   (func $handle_GlobalLock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 235: GlobalUnlock
   (func $handle_GlobalUnlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 236: GlobalReAlloc
+  ;; 236: GlobalReAlloc(hMem, dwBytes, uFlags)
   (func $handle_GlobalReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $heap_realloc (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 237: GlobalSize
+  ;; 237: GlobalSize — usable bytes, from the four-byte heap header before the
+  ;; block. Same rule as $handle_LocalSize.
   (func $handle_GlobalSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_global (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax
+      (i32.sub (call $gl32 (i32.sub (local.get $arg0) (i32.const 4))) (i32.const 4)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 238: GlobalCompact — STUB: unimplemented
@@ -4458,8 +4307,34 @@
     ;; is constrained by the update/visible region; erasing before the clip is
     ;; installed wipes too much during small invalidations (Spider card drags).
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-    (if (local.get $brush)
+    ;; Whose background is it? Filling here unconditionally is right for a
+    ;; window that lets USER paint its background, and destroys one that paints
+    ;; its own: Hearts fills its baize green in WM_ERASEBKGND and was registered
+    ;; with WHITE_BRUSH, so every paint turned the table white -- and which of
+    ;; the two won depended on the order the pump happened to run them in, so it
+    ;; flickered between green and white as the game went on.
+    ;;
+    ;; The window itself has already answered the question. NC_FLAGS bit 3 is
+    ;; set when a WM_ERASEBKGND reaches DefWindowProc, which only happens for a
+    ;; window that did not want it. Bit 1 means an erase is still outstanding
+    ;; and nobody has been given it yet -- the first paint of a window's life --
+    ;; and the class brush is the right answer there too.
+    ;;
+    ;; Children keep the old unconditional fill. An erase is only ever queued
+    ;; for a window once, at creation, so for anything that repaints often this
+    ;; is the only background it gets; Hearts' own status bar draws its text
+    ;; straight over whatever is there and its lines piled up on each other the
+    ;; moment the fill stopped. The bug being fixed here is a top-level one --
+    ;; a game that paints its table and was registered with WHITE_BRUSH -- so
+    ;; that is where the behaviour changes.
+    (if (i32.and (local.get $brush)
+          (i32.or
+            (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
+                             (i32.const 0x40000000)) (i32.const 0))
+            (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
+                             (i32.const 10)) (i32.const 0))))
       (then
+        (call $nc_flags_clear (local.get $arg0) (i32.const 2))
         (local.set $desc (global.get $GDI_LINE_DESC))
         (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
           (then (drop (call $gdi_fill_rect_desc
@@ -4549,26 +4424,10 @@
     (call $modal_begin (local.get $dlg) (i32.const 8))
   )
 
-  ;; 249: SetViewportExtEx(hdc, x, y, lpSize) → BOOL
-  (func $handle_SetViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then
-        (call $gs32 (local.get $arg3)
-          (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
-        (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-          (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))))
-    (if (i32.and (local.get $arg1) (local.get $arg2))
-      (then
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64) (local.get $arg1) (i32.const 1)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68) (local.get $arg2) (i32.const 1)))
-        (global.set $eax (i32.const 1)))
-      (else (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 250: lstrcmpiA
+;; 250: lstrcmpiA
   (func $handle_lstrcmpiA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $dispatch_lstr (local.get $name_ptr) (local.get $arg0) (local.get $arg1) (local.get $arg2))
+    (global.set $eax (call $guest_stricmp (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 251: FreeEnvironmentStringsA — no-op (we don't really alloc env strings)
@@ -4589,20 +4448,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 254: GetTextExtentPoint32A — font-aware via host
-  (func $handle_GetTextExtentPoint32A (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (call $gs32 (local.get $arg3)
-      (call $host_measure_text (local.get $arg0) (call $g2w (local.get $arg1))
-        (local.get $arg2) (i32.const 0)))
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 255: wsprintfA
+;; 255: wsprintfA
   (func $handle_wsprintfA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; wsprintfA(buf, fmt, ...) — cdecl, caller cleans stack
     (global.set $eax (call $wsprintf_impl
@@ -5048,6 +4894,13 @@
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
+    ;; Reaching here is the window saying that USER owns its background: it was
+    ;; sent the erase and handed it straight back. NC_FLAGS bit 3 records that,
+    ;; and $handle_BeginPaint uses it to decide whether to repaint the class
+    ;; brush on later paints. A window that erases for itself never gets here,
+    ;; and must not have its own background overwritten -- Hearts fills its
+    ;; baize green and was registered with WHITE_BRUSH.
+    (call $nc_flags_set (local.get $arg0) (i32.const 8))
     (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (global.set $eax (i32.const 0))
@@ -5075,19 +4928,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 292: LoadMenuW — return fake handle — STUB: unimplemented
-  (func $handle_LoadMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; LoadMenuW — same as LoadMenuA
-    (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-      (then
-        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (global.set $last_load_menu_hinst (local.get $arg0))
-        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
-      (else (global.set $eax (i32.const 0x00BE0001))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 293: MessageBoxW — build the same modal UI as MessageBoxA
+;; 293: MessageBoxW — build the same modal UI as MessageBoxA
   (func $handle_MessageBoxW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dlg i32) (local $text_gp i32) (local $cap_gp i32) (local $text_wa i32) (local $cap_wa i32)
     (call $modal_capture_nonvolatile)
@@ -5479,60 +5320,6 @@
     (global.set $eax (call $wnd_unicode_get (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; GetClassInfoA(hInstance, lpClassName, lpWndClass) — 3 args stdcall, return FALSE
-  ;; Identify one of USER's own control classes by name, case-insensitively,
-  ;; returning the $control_wndproc_dispatch class id (0 = not a system class).
-  ;; Same lowercase-LE-dword idiom CreateWindowExA uses to classify a window.
-  (func $system_class_id (param $name i32) (result i32)
-    (local $d0 i32)
-    (local.set $d0 (i32.or (i32.load (local.get $name)) (i32.const 0x20202020)))
-    ;; "button"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74747562))
-          (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
-                    (i32.const 0x6e6f))
-            (i32.eqz (i32.load8_u offset=6 (local.get $name)))))
-      (then (return (i32.const 1))))
-    ;; "edit"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74696465))
-                 (i32.eqz (i32.load8_u offset=4 (local.get $name))))
-      (then (return (i32.const 2))))
-    ;; "static"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74617473))
-          (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
-                    (i32.const 0x6369))
-            (i32.eqz (i32.load8_u offset=6 (local.get $name)))))
-      (then (return (i32.const 3))))
-    ;; "listbox"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x7473696c))
-          (i32.and
-            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name)) (i32.const 0x2020))
-                    (i32.const 0x6f62))
-            (i32.and
-              (i32.eq (i32.or (i32.load8_u offset=6 (local.get $name)) (i32.const 0x20))
-                      (i32.const 0x78))
-              (i32.eqz (i32.load8_u offset=7 (local.get $name))))))
-      (then (return (i32.const 4))))
-    ;; "combobox"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x626d6f63))
-          (i32.and
-            (i32.eq (i32.or (i32.load offset=4 (local.get $name)) (i32.const 0x20202020))
-                    (i32.const 0x786f626f))
-            (i32.eqz (i32.load8_u offset=8 (local.get $name)))))
-      (then (return (i32.const 5))))
-    ;; "scrollbar"
-    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x6f726373))
-          (i32.and
-            (i32.eq (i32.or (i32.load offset=4 (local.get $name)) (i32.const 0x20202020))
-                    (i32.const 0x61626c6c))
-            (i32.and
-              (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name)) (i32.const 0x20))
-                      (i32.const 0x72))
-              (i32.eqz (i32.load8_u offset=9 (local.get $name))))))
-      (then (return (i32.const 7))))
-    (i32.const 0))
-
   ;; Describe a system control class to an app that asked about it.
   ;;
   ;; Neither VCL nor MFC creates a BUTTON window directly. They call
@@ -5545,19 +5332,24 @@
   ;; The wndproc handed out is a marker carrying the class id, because by the
   ;; time it is called back the window's own class name is the app's, not
   ;; USER's — the marker is the only remaining link to what it started as.
-  (func $system_class_describe (param $name_guest i32) (param $out_guest i32)
-        (param $hinstance i32) (result i32)
+  ;; $name_key is the class key ($class_name_key for A, $class_wide_name_key
+  ;; for W): an atom, or the WASM address of the name. $name_guest is what the
+  ;; caller passed, and is echoed back as lpszClassName.
+  (func $system_class_describe (param $name_key i32) (param $name_guest i32)
+        (param $out_guest i32) (param $hinstance i32) (result i32)
     (local $class i32) (local $out i32)
-    ;; An atom, not a string. Our class table already handles the atoms USER
-    ;; predefines for these classes.
-    (if (i32.lt_u (local.get $name_guest) (i32.const 0x10000))
-      (then (return (i32.const 0))))
-    (local.set $class (call $system_class_id (call $g2w (local.get $name_guest))))
+    ;; Both spellings resolve here. An atom is a perfectly good lpClassName --
+    ;; GetClassInfo(NULL, MAKEINTATOM(0x0080), &wc) succeeds on Windows -- so
+    ;; declining the atom form, as this used to, told a dialog-driven app that
+    ;; BUTTON does not exist.
+    (local.set $class (call $builtin_ctrl_class_id_key (local.get $name_key)))
     (if (i32.eqz (local.get $class)) (then (return (i32.const 0))))
     (local.set $out (call $g2w (local.get $out_guest)))
-    ;; CS_VREDRAW|CS_HREDRAW|CS_DBLCLKS, as USER registers these. VCL masks the
-    ;; DC bits off and forces CS_PARENTDC regardless of what it is told.
-    (i32.store (local.get $out) (i32.const 0x000B))
+    ;; CS_VREDRAW|CS_HREDRAW|CS_DBLCLKS|CS_GLOBALCLASS, as USER registers these.
+    ;; VCL masks the DC bits off and forces CS_PARENTDC regardless of what it is
+    ;; told. CS_GLOBALCLASS is what makes them visible to every process, which
+    ;; is precisely the property an app is confirming when it asks.
+    (i32.store (local.get $out) (i32.const 0x400B))
     (i32.store offset=4 (local.get $out)
       (i32.or (global.get $WNDPROC_SYSCLASS) (local.get $class)))
     (i32.store offset=8 (local.get $out) (i32.const 0))   ;; cbClsExtra
@@ -5584,7 +5376,9 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     ;; Not one of the app's own classes — it may be one of USER's.
-    (if (call $system_class_describe (local.get $arg1) (local.get $arg2) (local.get $arg0))
+    (if (call $system_class_describe
+          (call $class_name_key (local.get $arg1))
+          (local.get $arg1) (local.get $arg2) (local.get $arg0))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
@@ -5596,12 +5390,23 @@
 
   ;; 306: GetClassInfoW(hInstance, lpClassName, lpWndClass)
   (func $handle_GetClassInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $slot i32) (local $src i32)
-    (local.set $slot (call $class_find_slot (call $class_wide_name_key (local.get $arg1))))
+    (local $slot i32) (local $src i32) (local $key i32)
+    (local.set $key (call $class_wide_name_key (local.get $arg1)))
+    (local.set $slot (call $class_find_slot (local.get $key)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $src (call $class_wndclass_addr (local.get $slot)))
         (call $memcpy (call $g2w (local.get $arg2)) (local.get $src) (i32.const 40))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; USER's own classes answer the W entry point too. Before this, an app that
+    ;; asked for L"BUTTON" was told no such class exists, which is the same
+    ;; DefWindowProc fallback $system_class_describe was written to prevent --
+    ;; it just could not be reached from here.
+    (if (call $system_class_describe
+          (local.get $key) (local.get $arg1) (local.get $arg2) (local.get $arg0))
+      (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
@@ -5655,118 +5460,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 312: SaveDC(hdc) → saved state index.
-  (func $handle_SaveDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_save (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 313: RestoreDC(hdc, nSavedDC) → BOOL.
-  (func $handle_RestoreDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_restore (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 314: GetTextMetricsW — zero-fill, return 1
-  (func $handle_GetTextMetricsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $h i32) (local $aveW i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (local.set $h (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (local.set $aveW (i32.shr_u (local.get $packed) (i32.const 16)))
-    (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 60))
-    (call $gs32 (local.get $arg1) (local.get $h))                                    ;; tmHeight
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-      (i32.sub (local.get $h) (i32.const 3)))                                        ;; tmAscent
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 3))             ;; tmDescent
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 20)) (local.get $aveW))        ;; tmAveCharWidth
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 24))
-      (i32.mul (local.get $aveW) (i32.const 2)))                                     ;; tmMaxCharWidth
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 28)) (i32.const 400))          ;; tmWeight
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 36)) (i32.const 96))           ;; tmDigitizedAspectX
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 40)) (i32.const 96))           ;; tmDigitizedAspectY
-    (call $gs16 (i32.add (local.get $arg1) (i32.const 44)) (i32.const 32))           ;; tmFirstChar
-    (call $gs16 (i32.add (local.get $arg1) (i32.const 46)) (i32.const 255))          ;; tmLastChar
-    (call $gs16 (i32.add (local.get $arg1) (i32.const 48)) (i32.const 31))           ;; tmDefaultChar
-    (call $gs16 (i32.add (local.get $arg1) (i32.const 50)) (i32.const 32))           ;; tmBreakChar
-    (i32.store8 (i32.add (call $g2w (local.get $arg1)) (i32.const 55)) (i32.const 0x26)) ;; tmPitchAndFamily
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; 315: CreateFontIndirectW — LOGFONTW at arg0
-  (func $handle_CreateFontIndirectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lf i32) (local $face i32) (local $handle i32)
-    (local.set $lf (call $g2w (local.get $arg0)))
-    (local.set $face (call $heap_alloc (i32.const 64)))
-    (if (i32.eqz (local.get $face))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; LOGFONTW: lfHeight(+0), lfWeight(+16), lfItalic(+20), lfFaceName(+28 wchar[32])
-    (drop (call $wide_to_ansi (i32.add (local.get $arg0) (i32.const 28)) (local.get $face) (i32.const 64)))
-    (local.set $handle (call $gdi_font_create
-      (i32.load (local.get $lf))                              ;; height
-      (i32.load (i32.add (local.get $lf) (i32.const 16)))    ;; weight
-      (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
-      (call $g2w (local.get $face))                          ;; faceName WASM ptr
-    ))
-    (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
-    (if (local.get $face) (then (call $heap_free (local.get $face))))
-    (global.set $eax (local.get $handle))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
-  )
-
-  ;; 316: SetStretchBltMode(hdc, mode) → previous mode — 2 args stdcall
-  (func $handle_SetStretchBltMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and (i32.ge_u (local.get $arg1) (i32.const 1))
-          (i32.le_u (local.get $arg1) (i32.const 4)))
-      (then (global.set $eax (call $gdi_dc_set_field
-        (local.get $arg0) (i32.const 80) (local.get $arg1) (i32.const 1))))
-      (else (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 317: GetPixel(hdc, x, y) → COLORREF
-  (func $handle_GetPixel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32)
-    (local.set $desc (global.get $GDI_BLIT_DST_DESC))
-    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
-      (then (global.set $eax (call $gdi_raster_get_pixel
-        (local.get $desc)
-        (call $gdi_line_map_x (local.get $desc) (local.get $arg1))
-        (call $gdi_line_map_y (local.get $desc) (local.get $arg2)))))
-      (else (global.set $eax (i32.const -1))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
-  )
-
-  ;; 318: SetPixel(hdc, x, y, color) → prev color
-  (func $handle_SetPixel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32) (local $x i32) (local $y i32) (local $result i32)
-    (local.set $desc (global.get $GDI_BLIT_DST_DESC))
-    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
-      (then
-        (local.set $x (call $gdi_line_map_x (local.get $desc) (local.get $arg1)))
-        (local.set $y (call $gdi_line_map_y (local.get $desc) (local.get $arg2)))
-        (local.set $result (call $gdi_raster_set_pixel
-          (local.get $desc) (local.get $x) (local.get $y) (local.get $arg3)))
-        (if (i32.ne (local.get $result) (i32.const -1))
-          (then (call $gdi_geometry_present (local.get $arg0) (local.get $desc)
-            (local.get $x) (local.get $y)
-            (i32.add (local.get $x) (i32.const 1))
-            (i32.add (local.get $y) (i32.const 1))))))
-      (else (local.set $result (i32.const -1))))
-    (global.set $eax (local.get $result))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
-  )
-
-  ;; 319: SetROP2(hdc, rop2) → previous ROP2 mode
-  (func $handle_SetROP2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_set_rop2 (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
-  )
-
-  ;; 320: lstrlenW — STUB: unimplemented
+nW — STUB: unimplemented
   (func $handle_lstrlenW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; lstrlenW(lpString) → length in WCHARs. 1 arg stdcall
     (local $ptr i32) (local $len i32)
@@ -6285,13 +5979,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 972: GdiFlush() → BOOL — 0 args stdcall, no-op
-  (func $handle_GdiFlush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
-
-  ;; Is [ptr, ptr+len) unreadable? $g2w already knows the answer: it translates
+;; Is [ptr, ptr+len) unreadable? $g2w already knows the answer: it translates
   ;; every mapped guest region — the direct image window, DIB sections and the
   ;; sparse VirtualAlloc mappings — and returns $NULL_SENTINEL for anything it
   ;; cannot place. Asking it is the only test that stays true as the address
@@ -6481,73 +6169,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
-  ;; 357: CreatePatternBrush(hBitmap) — 1 arg stdcall
-  (func $handle_CreatePatternBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_bitmap_create_pattern_brush
-      (local.get $arg0) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 358: GetPaletteEntries(hPalette, iStart, nEntries, lppe) — 4 args stdcall
-  (func $handle_GetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_palette_get_entries
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; 4 args stdcall
-  )
-
-  ;; 359: SelectPalette(hdc, hPalette, bForceBackground) — 3 args stdcall
-  ;; Store the logical palette in canonical per-DC WAT state.
-  (func $handle_SelectPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $prev i32)
-    (local.set $prev (call $gdi_dc_select_palette (local.get $arg0) (local.get $arg1)))
-    (global.set $eax (select (local.get $prev) (i32.const 0)
-      (i32.ne (local.get $prev) (i32.const -1))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
-  )
-
-  ;; 360: RealizePalette(hdc) — 1 arg stdcall
-  ;; In true-color mode this is mostly a no-op; return number of entries mapped
-  (func $handle_RealizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_palette_count
-      (call $gdi_dc_selected_palette (local.get $arg0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
-  )
-
-  ;; 361: CreateRectRgnIndirect(lprc) — allocate a WAT-owned rectangle region.
-  (func $handle_CreateRectRgnIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $r i32)
-    (local.set $r (call $g2w (local.get $arg0)))
-    (global.set $eax (call $gdi_rgn_alloc_rect
-      (i32.load (local.get $r))
-      (i32.load (i32.add (local.get $r) (i32.const 4)))
-      (i32.load (i32.add (local.get $r) (i32.const 8)))
-      (i32.load (i32.add (local.get $r) (i32.const 12)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 362: GetObjectW — same object layout as GetObjectA for bitmaps
-  (func $handle_GetObjectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (call $gdi_object_type (local.get $arg0)) (i32.const 4))
-      (then
-        (global.set $eax (call $gdi_font_write_logfont (local.get $arg0)
-          (if (result i32) (local.get $arg2)
-            (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-          (local.get $arg1) (i32.const 1)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-      (else (call $handle_GetObjectA
-        (local.get $arg0) (local.get $arg1) (local.get $arg2)
-        (local.get $arg3) (local.get $arg4) (local.get $name_ptr))))
-  )
-
-  ;; SetTextAlign(hdc, fMode) — store alignment on the DC and return the previous value.
-  (func $handle_SetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_set_text_align (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; Win9x comctl32 can route an ANSI status-bar string through ExtTextOutW
+ctl32 can route an ANSI status-bar string through ExtTextOutW
   ;; as packed byte pairs. Recognize only a printable byte string terminated
   ;; within the supplied UTF-16 span; ordinary UTF-16 ASCII has zero high
   ;; bytes and cannot match. The count can extend past the ANSI terminator
@@ -6579,100 +6201,7 @@
       (then (return (local.get $limit))))
     (i32.const 0))
 
-  ;; 364: ExtTextOutW(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
-  ;; Selected FNT strikes consume lpDx in WAT; the generic host path ignores it.
-  (func $handle_ExtTextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
-    (local $packed_ansi_len i32) (local $wide i32) (local $dx_wa i32) (local $lpDx i32)
-    (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
-    (local.set $count    (call $gl32 (i32.add (global.get $esp) (i32.const 28)))) ;; arg6 (wchar count)
-    (if (local.get $arg4)
-      (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
-    (if (local.get $lpString)
-      (then (local.set $text_wa (call $g2w (local.get $lpString)))))
-    (local.set $lpDx (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    (if (local.get $lpDx)
-      (then (local.set $dx_wa (call $g2w (local.get $lpDx)))))
-    (local.set $wide (i32.const 1))
-    (local.set $packed_ansi_len
-      (call $gdi_ext_text_out_w_packed_ansi_len (local.get $text_wa) (local.get $count)))
-    (if (local.get $packed_ansi_len)
-      (then
-        (local.set $count (local.get $packed_ansi_len))
-        (local.set $wide (i32.const 0))))
-    (global.set $eax (call $host_gdi_ext_text_out
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $rect_wa)
-      (local.get $text_wa) (local.get $count) (local.get $dx_wa) (local.get $wide)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
-  )
-
-  ;; 365: PlayMetaFile(hdc, hmf) — parse and replay WAT-owned WMF records.
-  (func $handle_PlayMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_metafile_play_wmf
-      (local.get $arg0) (local.get $arg1)
-      (i32.const 0) (i32.const 0) (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 366: CreatePalette(lpLogPalette) — 1 arg stdcall
-  ;; LOGPALETTE: palVersion(u16, +0), palNumEntries(u16, +2), palPalEntry[](+4, each 4 bytes RGBX)
-  (func $handle_CreatePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src_wa i32) (local $num_entries i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (local.set $src_wa (call $g2w (local.get $arg0)))
-    (local.set $num_entries (i32.load16_u (i32.add (local.get $src_wa) (i32.const 2))))
-    (global.set $eax (call $gdi_palette_alloc
-      (i32.add (local.get $src_wa) (i32.const 4)) (local.get $num_entries)
-      (i32.load16_u (local.get $src_wa))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
-  )
-
-  ;; 367: GetNearestColor — STUB: unimplemented
-  (func $handle_GetNearestColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; On true-color display, return the same color
-    (global.set $eax (local.get $arg1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 368: StretchDIBits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, lpBits, lpBmi, usage, rop)
-  ;; 13 args stdcall
-  (func $handle_StretchDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_stretch_dib_bits
-      (local.get $arg0)                                              ;; hdc
-      (local.get $arg1)                                              ;; xDst
-      (local.get $arg2)                                              ;; yDst
-      (local.get $arg3)                                              ;; wDst
-      (local.get $arg4)                                              ;; hDst
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))       ;; xSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))       ;; ySrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))       ;; wSrc
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36)))       ;; hSrc
-      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 40))))  ;; lpBits → WASM addr
-      (call $g2w (call $gl32 (i32.add (global.get $esp) (i32.const 44))))  ;; lpBmi → WASM addr
-      (call $gl32 (i32.add (global.get $esp) (i32.const 48)))       ;; iUsage
-      (call $gl32 (i32.add (global.get $esp) (i32.const 52)))       ;; dwRop
-    ))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 56))))
-
-  ;; 369: OffsetRgn(hrgn, nXOffset, nYOffset) → region complexity
-  (func $handle_OffsetRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_rgn_offset
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 370: UnrealizeObject — no-op for our immediate-mode GDI object model.
-  (func $handle_UnrealizeObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 371: SetBrushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
+rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
   (func $handle_SetBrushOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $old_x i32) (local $old_y i32) (local $aux i32)
     (local.set $aux (call $gdi_dc_aux_entry (local.get $arg0) (i32.const 1)))
@@ -6698,144 +6227,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 372: CreateDCW — wide printer/display DC owns a canonical page surface.
-  (func $handle_CreateDCW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $printer_hdc (call $gdi_printer_dc_alloc))
-    (global.set $eax (global.get $printer_hdc))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 373: PtVisible(hdc, x, y) — query the WAT-owned explicit clip.
-  (func $handle_PtVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_point_visible
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
-  )
-
-  ;; 374: RectVisible(hdc, lprc) — query the WAT-owned explicit clip.
-  (func $handle_RectVisible (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_rect_visible
-      (local.get $arg0) (call $g2w (local.get $arg1))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 375: TextOutW(hdc, x, y, lpString, c) — 5 args stdcall, host reads UTF-16 LE.
-  (func $handle_TextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_text_out
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (call $g2w (local.get $arg3)) (local.get $arg4) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 376: Escape(hdc, nEscape, cbInput, lpInData, lpOutData).
-  ;; Win9x MFC print preview still uses the legacy physical-page escapes even
-  ;; when the printer DC otherwise exposes modern GetDeviceCaps metrics.
-  (func $handle_Escape (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $query i32) (local $out i32)
-    (local.set $out (local.get $arg4))
-    ;; QUERYESCSUPPORT: lpInData contains the escape number being queried.
-    (if (i32.eq (local.get $arg1) (i32.const 8))
-      (then
-        (if (local.get $arg3)
-          (then (local.set $query (call $gl32 (local.get $arg3)))))
-        (global.set $eax
-          (i32.or
-            (i32.or (i32.eq (local.get $query) (i32.const 12))
-                    (i32.eq (local.get $query) (i32.const 13)))
-            (i32.eq (local.get $query) (i32.const 14))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; GETPHYSPAGESIZE: Letter at 300 DPI.
-    (if (i32.eq (local.get $arg1) (i32.const 12))
-      (then
-        (if (local.get $out)
-          (then
-            (call $gs32 (local.get $out) (i32.const 2550))
-            (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 3300))))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; GETPRINTINGOFFSET: 0.25-inch non-printable origin at 300 DPI.
-    (if (i32.eq (local.get $arg1) (i32.const 13))
-      (then
-        (if (local.get $out)
-          (then
-            (call $gs32 (local.get $out) (i32.const 75))
-            (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 75))))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; GETSCALINGFACTOR: no device-side scaling.
-    (if (i32.eq (local.get $arg1) (i32.const 14))
-      (then
-        (if (local.get $out)
-          (then
-            (call $gs32 (local.get $out) (i32.const 0))
-            (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 0))))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; EnumFontFamiliesExA(hdc, lpLogfont, proc, lParam, flags) → INT.
-  (func $handle_EnumFontFamiliesExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret i32) (local $charset i32)
-    (local.set $ret (call $gl32 (global.get $esp)))
-    (local.set $charset (i32.const 0xFF))
-    (if (local.get $arg1)
-      (then
-        (local.set $charset (call $gl8 (i32.add (local.get $arg1) (i32.const 23))))
-        (if (i32.eq (local.get $charset) (i32.const 1))
-          (then (local.set $charset (i32.const 0xFF))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
-      (local.get $ret) (global.get $esp)
-      (select (i32.add (local.get $arg1) (i32.const 28)) (i32.const 0)
-        (i32.ne (local.get $arg1) (i32.const 0)))
-      (i32.const 0) (local.get $charset))
-  )
-
-  ;; EnumFontFamiliesA(hdc, lpszFamily, proc, lParam) → INT.
-  (func $handle_EnumFontFamiliesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret i32)
-    (local.set $ret (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
-      (local.get $ret) (global.get $esp) (local.get $arg1)
-      (i32.const 0) (i32.const 0xFF))
-  )
-
-  ;; 377: EnumFontFamiliesExW(hdc, lpLogfont, proc, lParam, flags) → INT.
-  (func $handle_EnumFontFamiliesExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret i32) (local $charset i32)
-    (local.set $ret (call $gl32 (global.get $esp)))
-    (local.set $charset (i32.const 0xFF))
-    (if (local.get $arg1)
-      (then
-        (local.set $charset (call $gl8 (i32.add (local.get $arg1) (i32.const 23))))
-        (if (i32.eq (local.get $charset) (i32.const 1))
-          (then (local.set $charset (i32.const 0xFF))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
-      (local.get $ret) (global.get $esp)
-      (select (i32.add (local.get $arg1) (i32.const 28)) (i32.const 0)
-        (i32.ne (local.get $arg1) (i32.const 0)))
-      (i32.const 1) (local.get $charset))
-  )
-
-  ;; 378: EnumFontFamiliesW(hdc, lpszFamily, proc, lParam) → INT.
-  (func $handle_EnumFontFamiliesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret i32)
-    (local.set $ret (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
-      (local.get $ret) (global.get $esp) (local.get $arg1)
-      (i32.const 1) (i32.const 0xFF))
-  )
-
-  ;; 379: CallNextHookEx — no next hook in chain, return 0
+HookEx — no next hook in chain, return 0
   (func $handle_CallNextHookEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CallNextHookEx(hhk, nCode, wParam, lParam) — 4 args stdcall
     (global.set $eax (i32.const 0))
@@ -6999,23 +6391,56 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 389: SystemParametersInfoW — return TRUE, 4 args stdcall
-  (func $handle_SystemParametersInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
+  ;; One LOGFONT{A,W} of system-font defaults at $buf. The two structs differ
+  ;; only in lfFaceName's element width — 28 bytes of fields, then 32 chars —
+  ;; so the whole NONCLIENTMETRICS layout below shifts with $wide and cannot be
+  ;; written with static offsets.
+  (func $spi_write_logfont (param $buf i32) (param $wide i32)
+    (local $i i32) (local $ch i32)
+    (i32.store offset=0  (local.get $buf) (i32.const -11))  ;; lfHeight
+    (i32.store offset=16 (local.get $buf) (i32.const 400))  ;; lfWeight
+    ;; lfFaceName at +28: "MS Sans Serif" from the shared constant at 0x270.
+    (local.set $i (i32.const 0))
+    (block $done (loop $copy
+      (local.set $ch (i32.load8_u (i32.add (i32.const 0x270) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (local.get $wide)
+        (then (i32.store16
+                (i32.add (i32.add (local.get $buf) (i32.const 28))
+                         (i32.shl (local.get $i) (i32.const 1)))
+                (local.get $ch)))
+        (else (i32.store8
+                (i32.add (i32.add (local.get $buf) (i32.const 28)) (local.get $i))
+                (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy))))
 
-  ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
-  (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; SystemParametersInfo{A,W}(uiAction, uiParam, pvParam, fWinIni) — one body,
+  ;; $wide selects the string encoding. The W entry point used to be a 6-line
+  ;; return-TRUE stub sitting directly above this implementation, so every W
+  ;; caller got a success code and an untouched buffer.
+  (func $spi_core (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $wide i32) (result i32)
     (local $buf i32) (local $i i32) (local $screen i32)
+    (local $lf i32) (local $narrow i32) (local $p i32)
+    ;; LOGFONTA is 60 bytes, LOGFONTW 92 — every offset past lfCaptionFont moves.
+    (local.set $lf (if (result i32) (local.get $wide) (then (i32.const 92)) (else (i32.const 60))))
     ;; SPI_SETDESKWALLPAPER = 0x14. The host loads the named VFS bitmap and
     ;; interprets uiParam=0/1 as centered/tiled for the Win98 Paint commands.
     (if (i32.eq (local.get $arg0) (i32.const 0x14))
       (then
-        (global.set $eax (call $host_set_wallpaper
-          (call $g2w (local.get $arg2)) (local.get $arg1)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
+        (if (i32.eqz (local.get $arg2)) (then (return (i32.const 0))))
+        ;; The host reads a NUL-terminated byte path, so a W caller's UTF-16
+        ;; name has to be narrowed before it is handed over.
+        (if (local.get $wide)
+          (then
+            (local.set $narrow (call $shellexec_narrow_w (local.get $arg2)))
+            (if (i32.eqz (local.get $narrow)) (then (return (i32.const 0))))
+            (local.set $i (call $host_set_wallpaper
+              (call $g2w (local.get $narrow)) (local.get $arg1)))
+            (call $heap_free (local.get $narrow))
+            (return (local.get $i))))
+        (return (call $host_set_wallpaper
+          (call $g2w (local.get $arg2)) (local.get $arg1)))))
     ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area.
     ;; We do not emulate taskbar reservation, so the work area is the screen.
     (if (i32.eq (local.get $arg0) (i32.const 0x30))
@@ -7028,9 +6453,7 @@
             (i32.store offset=4  (local.get $buf) (i32.const 0))
             (i32.store offset=8  (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))
             (i32.store offset=12 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))))
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
+        (return (i32.const 1))))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
     ;; arg0=0x29, arg1=cbSize, arg2=pvParam (struct ptr)
     (if (i32.eq (local.get $arg0) (i32.const 0x29))
@@ -7052,40 +6475,46 @@
             (i32.store offset=12 (local.get $buf) (i32.const 16))   ;; iScrollHeight
             (i32.store offset=16 (local.get $buf) (i32.const 18))   ;; iCaptionWidth
             (i32.store offset=20 (local.get $buf) (i32.const 18))   ;; iCaptionHeight
-            ;; lfCaptionFont (LOGFONT, 60 bytes) at offset 24
-            ;;   lfHeight (i32) = -11, then defaults; lfFaceName (32 bytes) = "MS Sans Serif"
-            (i32.store offset=24 (local.get $buf) (i32.const -11))  ;; lfHeight
-            (i32.store offset=40 (local.get $buf) (i32.const 400))  ;; lfWeight
-            ;; faceName at offset 24+28 = 52: "MS Sans Serif\0"
-            (i32.store8 offset=52 (local.get $buf) (i32.const 0x4D)) ;; M
-            (i32.store8 offset=53 (local.get $buf) (i32.const 0x53)) ;; S
-            (i32.store8 offset=54 (local.get $buf) (i32.const 0x20))
-            (i32.store8 offset=55 (local.get $buf) (i32.const 0x53)) ;; S
-            (i32.store8 offset=56 (local.get $buf) (i32.const 0x61))
-            (i32.store8 offset=57 (local.get $buf) (i32.const 0x6E))
-            (i32.store8 offset=58 (local.get $buf) (i32.const 0x73))
-            (i32.store8 offset=59 (local.get $buf) (i32.const 0x20))
-            (i32.store8 offset=60 (local.get $buf) (i32.const 0x53)) ;; S
-            (i32.store8 offset=61 (local.get $buf) (i32.const 0x65))
-            (i32.store8 offset=62 (local.get $buf) (i32.const 0x72))
-            (i32.store8 offset=63 (local.get $buf) (i32.const 0x69))
-            (i32.store8 offset=64 (local.get $buf) (i32.const 0x66))
-            ;; Repeat the LOGFONT defaults at the other 4 font offsets:
-            ;; lfSmCaptionFont @ +84+offset, lfMenuFont @ +148, lfStatusFont @ +212, lfMessageFont @ +276
-            ;; (Each LOGFONT is 60 bytes; use the same minimal pattern.)
-            (i32.store offset=84  (local.get $buf) (i32.const -11))
-            (i32.store offset=100 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=112 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=113 (local.get $buf) (i32.const 0x53))
-            (i32.store offset=148 (local.get $buf) (i32.const -11))
-            (i32.store offset=164 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=176 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=177 (local.get $buf) (i32.const 0x53))
-            (i32.store offset=212 (local.get $buf) (i32.const -11))
-            (i32.store offset=228 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=240 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=241 (local.get $buf) (i32.const 0x53))
-            (i32.store offset=276 (local.get $buf) (i32.const -11))
-            (i32.store offset=292 (local.get $buf) (i32.const 400))
-            (i32.store8 offset=304 (local.get $buf) (i32.const 0x4D)) (i32.store8 offset=305 (local.get $buf) (i32.const 0x53))))))
-    (global.set $eax (i32.const 1))
+            ;; Five LOGFONTs at their real struct offsets. The A path used to
+            ;; place them at 84/148/212/276 — that spacing skips the two
+            ;; iSmCaption and two iMenu ints, so every font after the caption
+            ;; font landed inside the preceding one. Real layout:
+            ;;   lfCaptionFont   24
+            ;;   iSmCaptionWidth/Height  24+lf, +4
+            ;;   lfSmCaptionFont 32+lf
+            ;;   iMenuWidth/Height       32+2lf, +4
+            ;;   lfMenuFont      40+2lf
+            ;;   lfStatusFont    40+3lf
+            ;;   lfMessageFont   40+4lf
+            ;; cbSize is therefore 340 (A) / 500 (W).
+            (local.set $p (i32.add (local.get $buf) (i32.const 24)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (i32.store offset=0 (local.get $p) (i32.const 12))  ;; iSmCaptionWidth
+            (i32.store offset=4 (local.get $p) (i32.const 15))  ;; iSmCaptionHeight
+            (local.set $p (i32.add (local.get $p) (i32.const 8)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (i32.store offset=0 (local.get $p) (i32.const 18))  ;; iMenuWidth
+            (i32.store offset=4 (local.get $p) (i32.const 18))  ;; iMenuHeight
+            (local.set $p (i32.add (local.get $p) (i32.const 8)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))  ;; lfMenuFont
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide))  ;; lfStatusFont
+            (local.set $p (i32.add (local.get $p) (local.get $lf)))
+            (call $spi_write_logfont (local.get $p) (local.get $wide)))) ;; lfMessageFont
+        (return (i32.const 1))))
+    (i32.const 1))
+
+  ;; 389: SystemParametersInfoW — 4 args stdcall
+  (func $handle_SystemParametersInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $spi_core (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; SystemParametersInfoA(uiAction, uiParam, pvParam, fWinIni) — 4 args stdcall
+  (func $handle_SystemParametersInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $spi_core (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -7423,15 +6852,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.
-  ;; AppendMenuA/InsertMenuA are no-ops in this build (the menu bar is parsed
-  ;; from the PE resource), so RemoveMenu has nothing real to remove either.
-  (func $handle_RemoveMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 408: SetFilePointer — STUB: unimplemented
+;; 408: SetFilePointer — STUB: unimplemented
   (func $handle_SetFilePointer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetFilePointer(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod) — 4 args
     (global.set $eax (call $host_fs_set_file_pointer
@@ -7802,269 +7223,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 438: FillRgn(hdc, hrgn, hbrush) → BOOL
-  (func $handle_FillRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_fill_rgn
-      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; PaintRgn(hdc, hrgn) → BOOL — paint with DC's current brush
-  (func $handle_PaintRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_fill_rgn
-      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; FrameRgn(hdc, hrgn, hbrush, nWidth, nHeight) -> BOOL
-  (func $handle_FrameRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_frame_rgn
-      (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1))
-      (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 439: GetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
-  (func $handle_GetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_get_dib_color_table
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  ;; 440: SetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
-  (func $handle_SetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_set_dib_color_table
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  ;; 441: ResizePalette(hPalette, nEntries) — 2 args stdcall
-  (func $handle_ResizePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_palette_resize (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args stdcall
-  )
-
-  ;; 442: GetNearestPaletteIndex(hPalette, crColor) — 2 args stdcall
-  ;; Find the closest PALETTEENTRY in canonical WAT storage.
-  (func $handle_GetNearestPaletteIndex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_palette_nearest_index
-      (local.get $arg0) (i32.and (local.get $arg1) (i32.const 0x00FFFFFF))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args stdcall
-  )
-
-  ;; 443: SetPaletteEntries(hPalette, iStart, nEntries, lppe) — 4 args stdcall
-  (func $handle_SetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_palette_set_entries
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; 4 args stdcall
-  )
-
-  ;; 444: SetDIBits — STUB: unimplemented
-  (func $handle_SetDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetDIBits(hdc, hBitmap, uStartScan, cScanLines, lpBits, lpBMI, fuColorUse) → numScans
-    ;; 7 args stdcall. arg0=hdc, arg1=hBitmap, arg2=uStartScan, arg3=cScanLines, arg4=lpBits
-    ;; [esp+24]=lpBMI, [esp+28]=fuColorUse
-    (local $wa_esp i32) (local $lpBMI i32) (local $fuColorUse i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $lpBMI (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (local.set $fuColorUse (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
-    (global.set $eax (call $host_gdi_set_dib_bits
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
-      (call $g2w (local.get $arg4))
-      (call $g2w (local.get $lpBMI))
-      (local.get $fuColorUse)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
-  )
-
-  ;; 719: SetDIBitsToDevice(hdc, xDest, yDest, w, h, xSrc, ySrc, StartScan, cLines, lpBits, lpBMI, ColorUse)
-  ;; 12 args stdcall. arg0-arg4 = hdc, xDest, yDest, w, h; rest on stack
-  (func $handle_SetDIBitsToDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $xSrc i32) (local $ySrc i32) (local $startScan i32) (local $cLines i32)
-    (local $lpBits i32) (local $lpBMI i32) (local $colorUse i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $xSrc (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (local.set $ySrc (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
-    (local.set $startScan (i32.load (i32.add (local.get $wa_esp) (i32.const 32))))
-    (local.set $cLines (i32.load (i32.add (local.get $wa_esp) (i32.const 36))))
-    (local.set $lpBits (i32.load (i32.add (local.get $wa_esp) (i32.const 40))))
-    (local.set $lpBMI (i32.load (i32.add (local.get $wa_esp) (i32.const 44))))
-    (local.set $colorUse (i32.load (i32.add (local.get $wa_esp) (i32.const 48))))
-    (global.set $eax (call $host_gdi_set_dib_to_device
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-      (local.get $xSrc) (local.get $ySrc) (local.get $startScan) (local.get $cLines)
-      (call $g2w (local.get $lpBits)) (call $g2w (local.get $lpBMI)) (local.get $colorUse)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 52)))  ;; stdcall, 12 args
-  )
-
-  ;; 445: GetTextExtentPointW — font-aware wide text measurement
-  (func $handle_GetTextExtentPointW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (call $gs32 (local.get $arg3)
-      (i32.mul (local.get $arg2) (i32.shr_u (local.get $packed) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 446: CreateICW — STUB: unimplemented
-  (func $handle_CreateICW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CreateICW(lpszDriver, lpszDevice, lpszOutput, lpdvmInit) → HDC
-    ;; 4 args stdcall. Returns an information context (IC) handle — use same as CreateCompatibleDC(0)
-    (global.set $eax (call $host_gdi_create_compat_dc (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
-  )
-
-  ;; 718: CreateICA(lpszDriver, lpszDevice, lpszOutput, lpdvmInit) → HDC
-  (func $handle_CreateICA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Same as CreateICW — returns an information context handle
-    (global.set $eax (call $host_gdi_create_compat_dc (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
-  )
-
-  ;; 447: CreateDIBSection(hdc, pbmi, usage, ppvBits, hSection, offset)
-  ;; Own the pixels and RGBQUAD color table in one canonical WAT allocation.
-  (func $handle_CreateDIBSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $record i32)
-    (local.set $handle (call $gdi_bitmap_create_dib_section
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg2)))
-    (if (local.get $arg3)
-      (then
-        (local.set $record (call $gdi_object_record (local.get $handle)))
-        (call $gs32 (local.get $arg3)
-          (if (result i32) (local.get $record)
-            (then (call $w2g (i32.load offset=24 (local.get $record))))
-            (else (i32.const 0))))))
-    (global.set $eax (local.get $handle))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
-
-  ;; 448: GetDIBits(hdc, hbmp, uStartScan, cScanLines, lpvBits, lpbmi, uUsage) — 7 args stdcall
-  (func $handle_GetDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $lpbmi i32) (local $uUsage i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $lpbmi (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (local.set $uUsage (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
-    (global.set $eax (call $host_gdi_get_di_bits
-      (local.get $arg0)              ;; hdc
-      (local.get $arg1)              ;; hbmp
-      (local.get $arg2)              ;; uStartScan
-      (local.get $arg3)              ;; cScanLines
-      (local.get $arg4)              ;; lpvBits (guest address)
-      (if (result i32) (local.get $lpbmi) (then (call $g2w (local.get $lpbmi))) (else (i32.const 0)))  ;; lpbmi (WASM ptr)
-      (local.get $uUsage)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; 7 args + ret
-  )
-
-  ;; 449: CreateDIBitmap(hdc, lpbmih, fdwInit, lpbInit, lpbmi, fuUsage) — 6 args
-  (func $handle_CreateDIBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CBM_INIT=4. lpbmi carries the RGBQUAD table; lpbmih is sufficient for
-    ;; true-color callers that omit the duplicate BITMAPINFO pointer.
-    (global.set $eax (call $gdi_bitmap_create_dibitmap
-      (local.get $arg0)
-      (call $g2w (select (local.get $arg4) (local.get $arg1)
-        (i32.ne (local.get $arg4) (i32.const 0))))
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
-      (i32.ne (i32.and (local.get $arg2) (i32.const 4)) (i32.const 0))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28))) ;; 6 args + ret
-  )
-
-  ;; 450: StretchBlt(hdcDest, xDest, yDest, wDest, hDest, hdcSrc, xSrc, ySrc, wSrc, hSrc, dwRop)
-  (func $handle_StretchBlt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $src i32) (local $src_hdc i32)
-    (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
-    (local $rop i32) (local $rop3 i32)
-    (local $dx i32) (local $dy i32) (local $pattern i32) (local $ok i32)
-    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
-    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
-    (local.set $src_hdc (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (local.set $sx (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (local.set $sy (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    (local.set $sw (call $gl32 (i32.add (global.get $esp) (i32.const 36))))
-    (local.set $sh (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
-    (local.set $rop (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
-    (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
-    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $dst))
-      (then
-        (local.set $dx (call $gdi_line_map_x (local.get $dst) (local.get $arg1)))
-        (local.set $dy (call $gdi_line_map_y (local.get $dst) (local.get $arg2)))
-        (if (local.get $src_hdc)
-          (then
-            (if (i32.eqz (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src)))
-              (then (local.set $src (i32.const 0))))
-            (if (local.get $src)
-              (then
-                (local.set $sx (call $gdi_line_map_x (local.get $src) (local.get $sx)))
-                (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy))))))
-          (else (local.set $src (i32.const 0))))
-        (if (i32.and
-              (i32.ne (i32.and
-                (i32.xor (local.get $rop3) (i32.shr_u (local.get $rop3) (i32.const 2)))
-                (i32.const 0x33)) (i32.const 0))
-              (i32.eqz (local.get $src)))
-          (then (local.set $ok (i32.const 0)))
-          (else
-            (local.set $ok (call $gdi_raster_stretch_blt
-              (local.get $arg0) (local.get $src_hdc) (local.get $dst) (local.get $dx) (local.get $dy)
-              (local.get $arg3) (local.get $arg4) (local.get $src)
-              (local.get $sx) (local.get $sy) (local.get $sw) (local.get $sh)
-              (local.get $pattern) (local.get $rop)))))
-        (if (local.get $ok)
-          (then (call $gdi_geometry_present (local.get $arg0) (local.get $dst)
-            (local.get $dx) (local.get $dy)
-            (i32.add (local.get $dx) (local.get $arg3))
-            (i32.add (local.get $dy) (local.get $arg4))))))
-      (else (local.set $ok (i32.const 0))))
-    (global.set $eax (local.get $ok))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 48)))  ;; stdcall, 11 args
-  )
-
-  ;; 451: Polygon(hdc, lpPoints, nCount) — 3 args stdcall
-  (func $handle_Polygon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $desc i32)
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then
-        (global.set $eax (call $gdi_dc_path_record_polygon
-          (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (local.set $desc (global.get $GDI_LINE_DESC))
-    (if (call $gdi_surface_descriptor (local.get $arg0) (local.get $desc))
-      (then (global.set $eax (call $gdi_polygon_desc
-        (local.get $arg0) (local.get $desc) (call $g2w (local.get $arg1)) (local.get $arg2)
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 4) (i32.const 0x30017))
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 8) (i32.const 0x30010))
-        (call $gdi_dc_get_rop2 (local.get $arg0))
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 76) (i32.const 1)))))
-      (else (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args + ret
-  )
-
-  ;; 452: RoundRect(hdc, left, top, right, bottom, width, height) — 7 args stdcall
-  (func $handle_RoundRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then
-        (global.set $eax (call $gdi_dc_path_record_round_rect
-          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-          (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-          (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-        (return)))
-    (global.set $eax (call $host_gdi_round_rect
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-  )
-
-  ;; 453: ExtFloodFill(hdc, x, y, color, fillType)
+r, fillType)
   (func $handle_ExtFloodFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32)
     (local.set $desc (global.get $GDI_BLIT_DST_DESC))
@@ -8077,81 +7236,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 454: CreatePolygonRgn(lpPoints, cPoints, fnPolyFillMode) → HRGN
-  (func $handle_CreatePolygonRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_rgn_alloc_polygon
-      (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 455: PolyBezier(hdc, lppt, cPoints)
-  (func $handle_PolyBezier (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then (global.set $eax (call $gdi_dc_path_record_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0))))
-      (else (global.set $eax (call $host_gdi_poly_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 456: Polyline(hdc, lppt, cPoints) — MoveTo first, LineTo rest
-  (func $handle_Polyline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $n i32) (local $ok i32)
-    (local.set $n (local.get $arg2))
-    (if (i32.lt_s (local.get $n) (i32.const 1))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $p (call $g2w (local.get $arg1)))
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then (local.set $ok (call $gdi_dc_path_record_polyline
-        (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0))))
-      (else (local.set $ok (call $gdi_polyline_try
-        (local.get $arg0) (local.get $p) (local.get $n) (i32.const 0)))))
-    (global.set $eax (local.get $ok))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 457: CreateHalftonePalette(hdc) — 1 arg stdcall
-  ;; Return a palette handle for a standard 256-color halftone palette
-  (func $handle_CreateHalftonePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $record i32) (local $dst i32)
-    (local $i i32) (local $r i32) (local $g i32) (local $b i32)
-    (local.set $handle (call $gdi_palette_alloc
-      (i32.const 0) (i32.const 256) (i32.const 0x300)))
-    (if (i32.eqz (local.get $handle))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (local.set $record (call $gdi_palette_record (local.get $handle)))
-    ;; Fill with 6x6x6 color cube + grays
-    (local.set $dst (i32.load offset=24 (local.get $record)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $fill
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 216)))
-      (local.set $r (i32.mul (i32.rem_u (local.get $i) (i32.const 6)) (i32.const 51)))
-      (local.set $g (i32.mul (i32.rem_u (i32.div_u (local.get $i) (i32.const 6)) (i32.const 6)) (i32.const 51)))
-      (local.set $b (i32.mul (i32.div_u (local.get $i) (i32.const 36)) (i32.const 51)))
-      (i32.store (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 4)))
-        (i32.or (i32.or (local.get $r) (i32.shl (local.get $g) (i32.const 8)))
-          (i32.shl (local.get $b) (i32.const 16))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $fill)))
-    ;; Fill remaining 40 with grays
-    (block $done2 (loop $gray
-      (br_if $done2 (i32.ge_u (local.get $i) (i32.const 256)))
-      (local.set $r (i32.mul (i32.sub (local.get $i) (i32.const 216)) (i32.const 6)))
-      (i32.store (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 4)))
-        (i32.or (i32.or (local.get $r) (i32.shl (local.get $r) (i32.const 8)))
-          (i32.shl (local.get $r) (i32.const 16))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $gray)))
-    (global.set $eax (local.get $handle))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg stdcall
-  )
-
-  ;; 458: EnableScrollBar(hWnd, wSBflags, wArrows) — we have no scroll bars,
+: EnableScrollBar(hWnd, wSBflags, wArrows) — we have no scroll bars,
   ;; so enabling/disabling is a no-op. Return TRUE so apps don't think the
   ;; call failed.
   (func $handle_EnableScrollBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8279,13 +7364,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; IsMenu(hMenu) → BOOL.
-  (func $handle_IsMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_handle_is_valid (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 462: WriteClassStg(pStg, rclsid) — persist the root storage CLSID.
+;; 462: WriteClassStg(pStg, rclsid) — persist the root storage CLSID.
   (func $handle_WriteClassStg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
       (then (global.set $eax (i32.const 0x80004003)))
@@ -9723,17 +8802,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; Classic metafile recording uses a bounded canonical WAT surface. Closing
-  ;; serializes it into an interoperable META_STRETCHDIB WMF stream.
-  (func $handle_CreateMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_metafile_recording_dc_create))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_CreateMetaFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_metafile_recording_dc_create))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+unc $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 6)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -9741,82 +8810,7 @@
     (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 6)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL.
-  (func $handle_DPtoLP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $p i32)
-    (local $wx i32) (local $wy i32) (local $wex i32) (local $wey i32)
-    (local $vx i32) (local $vy i32) (local $vex i32) (local $vey i32)
-    (if (i32.or (i32.eqz (local.get $arg1)) (i32.lt_s (local.get $arg2) (i32.const 0)))
-      (then (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (local.set $wx (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
-    (local.set $wy (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
-    (local.set $wex (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
-    (local.set $wey (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))
-    (local.set $vx (call $gdi_dc_get_field (local.get $arg0) (i32.const 56) (i32.const 0)))
-    (local.set $vy (call $gdi_dc_get_field (local.get $arg0) (i32.const 60) (i32.const 0)))
-    (local.set $vex (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
-    (local.set $vey (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))
-    (if (i32.or (i32.eqz (local.get $vex)) (i32.eqz (local.get $vey)))
-      (then (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (block $done (loop $points
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (local.set $p (i32.add (local.get $arg1) (i32.shl (local.get $i) (i32.const 3))))
-      (call $gs32 (local.get $p)
-        (call $gdi_map_coordinate (call $gl32 (local.get $p))
-          (local.get $vx) (local.get $vex) (local.get $wx) (local.get $wex)))
-      (call $gs32 (i32.add (local.get $p) (i32.const 4))
-        (call $gdi_map_coordinate (call $gl32 (i32.add (local.get $p) (i32.const 4)))
-          (local.get $vy) (local.get $vey) (local.get $wy) (local.get $wey)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $points)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 555: CombineRgn — WAT owns rectangle semantics; complex compatibility is mirrored.
-  (func $handle_CombineRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode) — 4 args stdcall
-    (global.set $eax (call $gdi_rgn_combine
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 556: SetRectRgn — update WAT-owned geometry and the presentation mirror.
-  (func $handle_SetRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetRectRgn(hrgn, left, top, right, bottom) — 5 args stdcall.
-    (global.set $eax (call $gdi_rgn_set_rect
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 557: GetMapMode(hdc) → MM_TEXT. The host renderer uses pixel/text
-  ;; coordinates, so MM_TEXT is the stable default.
-  (func $handle_GetMapMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 558: CreateDIBPatternBrushPt — copy packed DIB bytes into an owned WAT pattern.
-  (func $handle_CreateDIBPatternBrushPt (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_bitmap_create_dib_pattern_brush
-      (if (result i32) (local.get $arg0)
-        (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-      (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 559: CreateHatchBrush(fnStyle, color) — preserve hatch style in WAT.
-  (func $handle_CreateHatchBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.gt_u (local.get $arg0) (i32.const 5))
-      (then (global.set $eax (i32.const 0)))
-      (else (global.set $eax (call $gdi_object_alloc (i32.const 2)
-        (i32.const 2) (local.get $arg0) (local.get $arg1) (i32.const 0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 560: ExtCreatePen(style, width, LOGBRUSH*, styleCount, styleEntries).
+tCreatePen(style, width, LOGBRUSH*, styleCount, styleEntries).
   (func $handle_ExtCreatePen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $brush i32) (local $style i32) (local $color i32) (local $flags i32)
     (if (i32.eqz (local.get $arg2))
@@ -9843,95 +8837,7 @@
       (local.get $arg2) (local.get $arg3) (local.get $ret) (global.get $esp))
   )
 
-  ;; 562: GetObjectType(h) → OBJ_* type. Host GDI owns the full object table,
-  ;; but common handles have stable ranges/sentinels. Report enough type data
-  ;; for code that distinguishes DC/metafile/font/brush/bitmap paths.
-  (func $handle_GetObjectType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wat_type i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (if (call $gdi_rgn_record (local.get $arg0))
-      (then
-        (global.set $eax (i32.const 8)) ;; OBJ_REGION
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (local.set $wat_type (call $gdi_object_type (local.get $arg0)))
-    (if (i32.eq (local.get $wat_type) (i32.const 6))
-      (then
-        (global.set $eax (i32.const 9)) ;; OBJ_METAFILE
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (if (i32.eq (local.get $wat_type) (i32.const 7))
-      (then
-        (global.set $eax (i32.const 13)) ;; OBJ_ENHMETAFILE
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (if (local.get $wat_type)
-      (then
-        (global.set $eax
-          (if (result i32) (i32.eq (local.get $wat_type) (i32.const 3))
-            (then (i32.const 7))
-            (else (if (result i32) (i32.eq (local.get $wat_type) (i32.const 4))
-              (then (i32.const 6)) (else (local.get $wat_type))))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Explicit/surface DC handles.
-    (if (i32.and
-          (i32.ge_u (local.get $arg0) (i32.const 0x00200000))
-          (i32.lt_u (local.get $arg0) (i32.const 0x00400000)))
-      (then
-        (global.set $eax (i32.const 3)) ;; OBJ_DC
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Legacy window DC encodings: hwnd + 0x40000 / hwnd + 0xC0000.
-    (if (i32.and
-          (i32.ge_u (local.get $arg0) (i32.const 0x00040000))
-          (i32.lt_u (local.get $arg0) (i32.const 0x00100000)))
-      (then
-        (global.set $eax (i32.const 3)) ;; OBJ_DC
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Stock/default object sentinels.
-    (if (i32.or
-          (i32.eq (local.get $arg0) (i32.const 0x00030001))
-          (i32.eq (local.get $arg0) (i32.const 0x00030007)))
-      (then
-        (global.set $eax (i32.const 7)) ;; OBJ_BITMAP
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (if (i32.or
-          (i32.eq (local.get $arg0) (i32.const 0x00030002))
-          (i32.and
-            (i32.ge_u (local.get $arg0) (i32.const 0x00030010))
-            (i32.le_u (local.get $arg0) (i32.const 0x00030015))))
-      (then
-        (global.set $eax (i32.const 2)) ;; OBJ_BRUSH
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (if (i32.and
-          (i32.ge_u (local.get $arg0) (i32.const 0x00030016))
-          (i32.le_u (local.get $arg0) (i32.const 0x00030018)))
-      (then
-        (global.set $eax (i32.const 1)) ;; OBJ_PEN
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (if (i32.and
-          (i32.ge_u (local.get $arg0) (i32.const 0x0003001a))
-          (i32.le_u (local.get $arg0) (i32.const 0x00030022)))
-      (then
-        (global.set $eax (i32.const 6)) ;; OBJ_FONT
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Every dynamic GDI object is represented in the canonical WAT table.
-    ;; A handle which reached this point is invalid or has already been freed.
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 563: PlayMetaFileRecord — replay one validated WMF record against the
+;; 563: PlayMetaFileRecord — replay one validated WMF record against the
   ;; caller's live HANDLETABLE, preserving object/state changes for the next
   ;; EnumMetaFile callback.
   (func $handle_PlayMetaFileRecord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9945,44 +8851,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 564: ExtSelectClipRgn(hdc, hrgn, fnMode) — 3 args stdcall
-  (func $handle_ExtSelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_ext_select
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
-
-  ;; 565: SelectClipPath(hdc, mode) — 2 args stdcall. The public BOOL hides
-  ;; canonical region complexity.
-  (func $handle_SelectClipPath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_path_select_clip
-      (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 566: CreateRectRgn — allocate a WAT-owned rectangle region.
-  (func $handle_CreateRectRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CreateRectRgn(left, top, right, bottom) — 4 args stdcall
-    (global.set $eax (call $gdi_rgn_alloc_rect
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 567: GetClipRgn(hdc, hrgn) — 2 args stdcall. Returns 1 if clip region set, 0 if none, -1 on error.
-  (func $handle_GetClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_get (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; 568: PolyBezierTo(hdc, lppt, cPoints)
-  (func $handle_PolyBezierTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then (global.set $eax (call $gdi_dc_path_record_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1))))
-      (else (global.set $eax (call $host_gdi_poly_bezier
-        (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 569: SetColorAdjustment — validate and copy complete per-DC state.
+SetColorAdjustment — validate and copy complete per-DC state.
   (func $handle_SetColorAdjustment (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_color_adjustment_set
       (local.get $arg0)
@@ -9999,28 +8868,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 570: PolylineTo(hdc, lppt, cPoints)
-  (func $handle_PolylineTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32) (local $ok i32) (local $last i32) (local $x i32) (local $y i32)
-    (local.set $p (call $g2w (local.get $arg1)))
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then (local.set $ok (call $gdi_dc_path_record_polyline
-        (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1))))
-      (else (local.set $ok (call $gdi_polyline_try
-        (local.get $arg0) (local.get $p) (local.get $arg2) (i32.const 1)))))
-    (if (i32.and (local.get $ok) (i32.gt_s (local.get $arg2) (i32.const 0)))
-      (then
-        (local.set $last (i32.add (local.get $p)
-          (i32.shl (i32.sub (local.get $arg2) (i32.const 1)) (i32.const 3))))
-        (local.set $x (i32.load (local.get $last)))
-        (local.set $y (i32.load offset=4 (local.get $last)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 12) (local.get $x) (i32.const 0)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 16) (local.get $y) (i32.const 0)))))
-    (global.set $eax (local.get $ok))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 571: PolyDraw — WAT-owned PT_MOVETO/PT_LINETO/PT_BEZIERTO path execution.
+;; 571: PolyDraw — WAT-owned PT_MOVETO/PT_LINETO/PT_BEZIERTO path execution.
   (func $handle_PolyDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (global.set $eax (call $gdi_dc_path_record_polydraw (local.get $arg0)
@@ -10030,108 +8878,14 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 572: SetArcDirection(hdc, direction) -> previous direction.
-  (func $handle_SetArcDirection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.or (i32.eq (local.get $arg1) (i32.const 1))
-          (i32.eq (local.get $arg1) (i32.const 2)))
-      (then (global.set $eax (call $gdi_dc_aux_set
-        (local.get $arg0) (i32.const 4) (local.get $arg1) (i32.const 1))))
-      (else (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 573: ArcTo — connect current position to the projected arc start and update it.
-  (func $handle_ArcTo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then
-        (global.set $eax (call $gdi_dc_path_record_arc
-          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-          (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-          (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-          (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-          (call $gl32 (i32.add (global.get $esp) (i32.const 36))) (i32.const 1)))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
-        (return)))
-    (global.set $eax (call $gdi_arc
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 32)))
-      (call $gl32 (i32.add (global.get $esp) (i32.const 36))) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
-  )
-
-  ;; 574: SetMapperFlags — per-DC font mapper flags.
+ 574: SetMapperFlags — per-DC font mapper flags.
   (func $handle_SetMapperFlags (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_dc_aux_set
       (local.get $arg0) (i32.const 16) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 575: SetTextCharacterExtra — per-DC spacing consumed by WAT text layout.
-  (func $handle_SetTextCharacterExtra (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_aux_set
-      (local.get $arg0) (i32.const 20) (local.get $arg1) (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 576: SetTextJustification — distribute extra pixels across break characters.
-  (func $handle_SetTextJustification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $gdi_dc_aux_set
-      (local.get $arg0) (i32.const 24) (local.get $arg1) (i32.const 0)))
-    (drop (call $gdi_dc_aux_set
-      (local.get $arg0) (i32.const 28) (local.get $arg2) (i32.const 0)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 577: OffsetClipRgn(hdc, dx, dy) — offset the WAT-owned explicit clip.
-  (func $handle_OffsetClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_offset
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 578: ExcludeClipRect(hdc, l, t, r, b) — 5 args stdcall.
-  (func $handle_ExcludeClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_exclude_rect
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 579: SelectClipRgn(hdc, hrgn) — 2 args stdcall
-  (func $handle_SelectClipRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_select (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  ;; 580: OffsetWindowOrgEx(hdc, dx, dy, lpPoint) → BOOL
-  (func $handle_OffsetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $px i32) (local $py i32)
-    (local.set $px (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
-    (local.set $py (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
-    (if (local.get $arg3) (then
-      (call $gs32 (local.get $arg3) (local.get $px))
-      (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $py))
-    ))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 40)
-      (i32.add (local.get $px) (local.get $arg1)) (i32.const 0)))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 44)
-      (i32.add (local.get $py) (local.get $arg2)) (i32.const 0)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-  )
-
-  ;; 581: SetPolyFillMode(hdc, mode) → previous mode.
-  (func $handle_SetPolyFillMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.or (i32.eq (local.get $arg1) (i32.const 1))
-          (i32.eq (local.get $arg1) (i32.const 2)))
-      (then (global.set $eax (call $gdi_dc_set_field
-        (local.get $arg0) (i32.const 76) (local.get $arg1) (i32.const 1))))
-      (else (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  (func $handle_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+e_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.or
           (i32.ne (local.get $arg0) (global.get $printer_hdc))
           (i32.ne (global.get $printer_doc_state) (i32.const 0)))
@@ -10143,243 +8897,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; Finish recording, serialize the canonical surface and release the DC.
-  (func $handle_CloseMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_metafile_snapshot_wmf (local.get $arg0)))
-    (if (call $gdi_metafile_recording_bitmap (local.get $arg0))
-      (then (drop (call $gdi_dc_delete (local.get $arg0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  (func $handle_DeleteMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (if (result i32)
-        (i32.ne (call $gdi_metafile_record (local.get $arg0) (i32.const 6)) (i32.const 0))
-        (then (call $gdi_object_delete_full (local.get $arg0)))
-        (else (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; 585: IntersectClipRect(hdc, l, t, r, b) — 5 args stdcall.
-  (func $handle_IntersectClipRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_intersect_rect
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 586: GetWindowOrgEx(hdc, lpPoint) → BOOL
-  (func $handle_GetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1) (then
-      (call $gs32 (local.get $arg1)
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
-      (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
-    ))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
-  )
-
-  ;; 587: SetWindowOrgEx(hdc, X, Y, lpPoint) → BOOL. Stores new logical origin; subsequent GDI
-  ;; calls translate by (viewport_org - window_org). lpPoint receives the previous origin.
-  (func $handle_SetWindowOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then
-      (call $gs32 (local.get $arg3)
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 40) (i32.const 0)))
-      (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 44) (i32.const 0)))
-    ))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 40) (local.get $arg1) (i32.const 0)))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 44) (local.get $arg2) (i32.const 0)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-  )
-
-  ;; 588: GetCurrentPositionEx(hdc, lpPoint) -> BOOL
-  (func $handle_GetCurrentPositionEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (call $gs32 (local.get $arg1)
-      (call $gdi_dc_get_field (local.get $arg0) (i32.const 12) (i32.const 0)))
-    (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-      (call $gdi_dc_get_field (local.get $arg0) (i32.const 16) (i32.const 0)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 589: ScaleWindowExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
-  (func $handle_ScaleWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $old_x i32) (local $old_y i32) (local $lp_size i32)
-    (local.set $old_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
-    (local.set $old_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))
-    (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (if (local.get $lp_size)
-      (then
-        (call $gs32 (local.get $lp_size) (local.get $old_x))
-        (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
-    (if (i32.and (local.get $arg2) (local.get $arg4))
-      (then
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 48)
-          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_x))
-            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))) (i32.const 1)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 52)
-          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_y))
-            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))) (i32.const 1)))
-        (global.set $eax (i32.const 1)))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-  )
-
-  ;; 590: ScaleViewportExtEx(hdc, xNum, xDenom, yNum, yDenom, lpSize) → BOOL
-  (func $handle_ScaleViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $old_x i32) (local $old_y i32) (local $lp_size i32)
-    (local.set $old_x (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
-    (local.set $old_y (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))
-    (local.set $lp_size (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (if (local.get $lp_size)
-      (then
-        (call $gs32 (local.get $lp_size) (local.get $old_x))
-        (call $gs32 (i32.add (local.get $lp_size) (i32.const 4)) (local.get $old_y))))
-    (if (i32.and (local.get $arg2) (local.get $arg4))
-      (then
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 64)
-          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_x))
-            (i64.extend_i32_s (local.get $arg1))) (i64.extend_i32_s (local.get $arg2)))) (i32.const 1)))
-        (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 68)
-          (i32.wrap_i64 (i64.div_s (i64.mul (i64.extend_i32_s (local.get $old_y))
-            (i64.extend_i32_s (local.get $arg3))) (i64.extend_i32_s (local.get $arg4)))) (i32.const 1)))
-        (global.set $eax (i32.const 1)))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-  )
-
-  ;; 591: OffsetViewportOrgEx(hdc, dx, dy, lpPoint) → BOOL
-  (func $handle_OffsetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $px i32) (local $py i32)
-    (local.set $px (call $gdi_dc_get_field (local.get $arg0) (i32.const 56) (i32.const 0)))
-    (local.set $py (call $gdi_dc_get_field (local.get $arg0) (i32.const 60) (i32.const 0)))
-    (if (local.get $arg3) (then
-      (call $gs32 (local.get $arg3) (local.get $px))
-      (call $gs32 (i32.add (local.get $arg3) (i32.const 4)) (local.get $py))
-    ))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 56)
-      (i32.add (local.get $px) (local.get $arg1)) (i32.const 0)))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 60)
-      (i32.add (local.get $py) (local.get $arg2)) (i32.const 0)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-  )
-
-  ;; 592: SetViewportOrgEx(hdc, x, y, lpPoint) → BOOL
-  (func $handle_SetViewportOrgEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then
-      (call $gs32 (local.get $arg3)
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 56) (i32.const 0)))
-      (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-        (call $gdi_dc_get_field (local.get $arg0) (i32.const 60) (i32.const 0)))
-    ))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 56) (local.get $arg1) (i32.const 0)))
-    (drop (call $gdi_dc_set_field (local.get $arg0) (i32.const 60) (local.get $arg2) (i32.const 0)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
-  )
-
-  ;; 593: GetViewportExtEx(hdc, lpSize) → BOOL
-  (func $handle_GetViewportExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1)
-      (then
-        (call $gs32 (local.get $arg1)
-          (call $gdi_dc_get_field (local.get $arg0) (i32.const 64) (i32.const 1)))
-        (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-          (call $gdi_dc_get_field (local.get $arg0) (i32.const 68) (i32.const 1)))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 594: GetROP2(hdc) → current WAT-owned binary raster mode.
-  (func $handle_GetROP2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_get_rop2 (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 595: GetWindowExtEx(hdc, lpSize) → BOOL
-  (func $handle_GetWindowExtEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1)
-      (then
-        (call $gs32 (local.get $arg1)
-          (call $gdi_dc_get_field (local.get $arg0) (i32.const 48) (i32.const 1)))
-        (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
-          (call $gdi_dc_get_field (local.get $arg0) (i32.const 52) (i32.const 1)))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; GetTextAlign(hdc) — return current alignment flags.
-  (func $handle_GetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_get_text_align (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 597: GetPolyFillMode(hdc) → current polygon fill mode.
-  (func $handle_GetPolyFillMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_get_field (local.get $arg0) (i32.const 76) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 598: GetBkMode(hdc) — current OPAQUE/TRANSPARENT setting
-  (func $handle_GetBkMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_get_bk_mode (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 599: GetTextColor — STUB: unimplemented
-  ;; GetTextColor(hdc) → COLORREF — 1 arg stdcall
-  (func $handle_GetTextColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_get_text_color (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 600: GetStretchBltMode(hdc) — BLACKONWHITE default
-  (func $handle_GetStretchBltMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_get_field (local.get $arg0) (i32.const 80) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 601: GetBkColor — STUB: unimplemented
-  ;; GetBkColor(hdc) → COLORREF — 1 arg stdcall
-  (func $handle_GetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_gdi_get_bk_color (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; 602: CreateFontW — convert the face name, then share the font-provider policy.
-  (func $handle_CreateFontW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $face i32) (local $weight i32) (local $italic i32) (local $handle i32)
-    ;; Fourteen arguments, so argument n is at esp+4n: fnWeight is the 5th,
-    ;; fdwItalic the 6th, lpszFace the 14th. See $handle_CreateFontA.
-    (local.set $weight (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
-    (local.set $italic (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (local.set $face (call $heap_alloc (i32.const 64)))
-    (if (i32.eqz (local.get $face))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
-        (return)))
-    (drop (call $wide_to_ansi
-      (call $gl32 (i32.add (global.get $esp) (i32.const 56)))
-      (local.get $face) (i32.const 64)))
-    (local.set $handle (call $gdi_font_create
-      (local.get $arg0) (local.get $weight) (local.get $italic)
-      (call $g2w (local.get $face))))
-    (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
-    (if (local.get $face) (then (call $heap_free (local.get $face))))
-    (global.set $eax (local.get $handle))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 60)))
-  )
-
-  ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.
+, widths) — UTF-16 range width query.
   (func $handle_GetCharWidthW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_font_char_widths
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -10389,26 +8907,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 604: GetTextExtentPoint32W — font-aware wide text measurement
-  (func $handle_GetTextExtentPoint32W (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32)
-    (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
-    (call $gs32 (local.get $arg3)
-      (i32.mul (local.get $arg2) (i32.shr_u (local.get $packed) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $arg3) (i32.const 4))
-      (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 605: GetClipBox(hdc, lpRect) → regionType — 2 args stdcall
-  (func $handle_GetClipBox (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_dc_clip_get_box
-      (local.get $arg0) (call $g2w (local.get $arg1))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
+ 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
   (func $handle_GetTextFaceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_font_write_text_face
       (local.get $arg0) (local.get $arg1)
@@ -10845,52 +9344,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 619: TrackPopupMenu(hMenu, uFlags, x, y, nReserved, hWnd, prcRect)
-  (func $handle_TrackPopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $hwnd i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $hwnd (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $menu_track_popup_open
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $hwnd)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-  )
-
-  ;; 620: GetMenuItemID — STUB: unimplemented
-  ;; GetMenuItemID(hMenu, nPos) — 0 for a separator or a submenu, which is
-  ;; what Windows answers and what MFC's update loop expects to skip on.
-  (func $handle_GetMenuItemID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_handle_item_id (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
-  )
-
-  ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; menu subsystem
-  ;; is a stub. flip2d calls this during window setup but doesn't depend on it.
-  (func $handle_SetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
-  )
-
-  ;; GetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; zero the struct
-  ;; past its dwSize (caller-provided at +0) so callers don't see garbage.
-  (func $handle_GetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
-  )
-
-  ;; 621: GetMenuItemCount(hMenu) — the menu subsystem is a stub that doesn't
-  ;; track items, so report 0 (empty menu) rather than crashing. DX samples
-  ;; like flip2d call this during window setup but don't care about the count.
-  ;; GetMenuItemCount(hMenu). Returning 0 here is what kept every MFC menu
-  ;; stale: CFrameWnd::OnInitMenuPopup walks the popup by index to run its
-  ;; ON_UPDATE_COMMAND_UI handlers, and a count of zero means it walks nothing
-  ;; and never enables or greys anything. Paint offered File > Send... in black
-  ;; on a machine with no mail subsystem because of this.
-  (func $handle_GetMenuItemCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_handle_item_count (local.get $arg0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; 1 arg stdcall
-  )
-
-  ;; 622: GetTopWindow(hWnd) — 1 arg stdcall
+GetTopWindow(hWnd) — 1 arg stdcall
   (func $handle_GetTopWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $wnd_find_first_child (local.get $arg0)))
     (if (i32.eqz (global.get $eax))
@@ -11049,7 +9503,14 @@
         (if (i32.or
               (i32.ne (local.get $arg3) (i32.const 0))
               (i32.ne (local.get $new_style) (local.get $style)))
-          (then (call $defwndproc_do_ncpaint (local.get $arg0))))
+          (then
+            (call $defwndproc_do_ncpaint (local.get $arg0))
+            ;; ...and leave the non-client area marked dirty. Children share
+            ;; their parent's back-canvas, so the client paint the app performs
+            ;; right after this call can cover the bar we just drew; the pump's
+            ;; NC drain puts it back. USER gets this for free from the window's
+            ;; non-client update region.
+            (call $nc_flags_set (local.get $arg0) (i32.const 1))))
         (global.set $eax (i32.load (local.get $base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
@@ -11136,235 +9597,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
   )
 
-  ;; 635: DispatchMessageW — same as DispatchMessageA (delegates to shared dispatch logic)
+  ;; DispatchMessageW — see the note on $handle_GetMessageW. The parallel copy
+  ;; did not know about the native status bar or tab control, so a W app with
+  ;; either one silently lost their messages.
   (func $handle_DispatchMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $wndproc i32) (local $ctrl_class i32)
-    ;; Skip WM_NULL — idle message, don't dispatch to WndProc
-    (if (i32.eqz (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-    (then (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    ;; MM_TIMER (0x7FF0): multimedia timer callback — TimeProc(uTimerID, uMsg=0, dwUser, 0, 0)
-    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x7FF0))
-    (then
-    (local.set $tmp (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $tmp))
-    (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
-    (global.set $steps (i32.const 0))
-    (return)))
-    ;; WM_TIMER with callback (lParam != 0): call callback(hwnd, WM_TIMER, timerID, tickcount)
-    (if (i32.and (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x0113))
-    (i32.ne (call $gl32 (i32.add (local.get $arg0) (i32.const 12))) (i32.const 0)))
-    (then
-    (local.set $tmp (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $tick_count))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0x0113))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $tmp))
-    (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
-    (global.set $steps (i32.const 0))
-    (return)))
-    ;; Paint for WAT-owned controls is rendered by our native control path.
-    ;; Keep this in sync with DispatchMessageA: GetMessageW can synthesize
-    ;; WM_PAINT MSGs for child controls, and those must validate through WAT.
-    (local.set $ctrl_class (call $ctrl_table_get_class (call $gl32 (local.get $arg0))))
-    (if (i32.and (i32.ne (local.get $ctrl_class) (i32.const 0))
-                 (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 0x000F)))
-      (then
-        ;; WAT-native controls paint without BeginPaint/EndPaint. Validate at
-        ;; dispatch so PM_NOREMOVE + DispatchMessage loops cannot keep
-        ;; redispatching the same synthetic WM_PAINT forever.
-        (call $update_clear_hwnd (call $gl32 (local.get $arg0)))
-        (call $paint_flag_clear_hwnd (call $gl32 (local.get $arg0)))
-        (global.set $eax (call $control_wndproc_dispatch
-          (call $gl32 (local.get $arg0))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Look up wndproc from window table
-    (local.set $wndproc (call $wnd_table_get (call $gl32 (local.get $arg0))))
-    ;; WAT-native WndProc dispatch
-    (if (i32.ge_u (local.get $wndproc) (i32.const 0xFFFF0000))
-      (then
-        (global.set $eax (call $wat_wndproc_dispatch
-          (call $gl32 (local.get $arg0))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Built-in control wndproc — act as DefWindowProc (return 0)
-    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; A dialog HWND keeps USER's DefDlgProc marker in the window table, not an
-    ;; x86 address, and the marker sits below the WAT-native range checked
-    ;; above. Falling through would set EIP to 0xFFFE0002 and decode emulator
-    ;; memory as guest code. Route it through the stored DLGPROC instead.
-    (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
-      (then
-        (global.set $eax (call $dialog_default_proc
-          (call $gl32 (local.get $arg0))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    ;; Fall back to global wndproc
-    (if (i32.eqz (local.get $wndproc))
-      (then
-        (if (i32.eq (call $gl32 (local.get $arg0)) (global.get $main_hwnd))
-          (then (local.set $wndproc (global.get $wndproc_addr)))
-          (else (if (global.get $wndproc_addr2)
-            (then (local.set $wndproc (global.get $wndproc_addr2)))
-            (else (local.set $wndproc (global.get $wndproc_addr))))))))
-    (if (i32.or (i32.eqz (local.get $wndproc)) (i32.eqz (local.get $arg0)))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (local.set $tmp (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))
-    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $tmp))
-    (global.set $eip (local.get $wndproc))
-    (global.set $steps (i32.const 0))
-    (return)
-  )
+    (call $handle_DispatchMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
-  ;; 636: PeekMessageW — same as PeekMessageA
+  ;; PeekMessageW — see the note on $handle_GetMessageW. The A version was
+  ;; missing twenty-two things this one does, timers and the post queue among
+  ;; them.
   (func $handle_PeekMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $msg i32) (local $tmp i32) (local $lparam i32)
-    ;; MSG has no encoding-sensitive fields. Keep PM_NOREMOVE caching, input
-    ;; priority, paints, and timers identical to the mature ANSI queue path.
-    (call $handle_PeekMessageA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-    (return)
-    ;; Check posted message queue
-    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-      (then
-        ;; Dequeue into lpMsg
-        (call $gs32 (local.get $arg0) (i32.load (i32.const 0x400)))
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.load (i32.const 0x404)))
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.load (i32.const 0x408)))
-        (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.load (i32.const 0x40C)))
-        ;; If PM_REMOVE (arg4 & 1), shift queue
-        (if (i32.and (local.get $arg4) (i32.const 1))
-          (then
-            (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
-            (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-              (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
-                (i32.mul (global.get $post_queue_count) (i32.const 16)))))
-          )
-        )
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)
-      )
-    )
-    (if (call $shared_post_queue_read
-          (local.get $arg0)
-          (i32.and (local.get $arg4) (i32.const 1)))
-      (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-        (return)))
-    ;; Poll host for input events
-    (local.set $packed (call $host_check_input))
-    (if (i32.ne (local.get $packed) (i32.const 0))
-      (then
-        (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
-        ;; Check message filter range (0,0 = accept all)
-        (if (i32.or (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
-              (i32.and (i32.ge_u (local.get $msg) (local.get $arg2))
-                       (i32.le_u (local.get $msg) (local.get $arg3))))
-          (then
-            (local.set $tmp (call $host_check_input_hwnd))
-            (if (i32.eqz (local.get $tmp))
-              (then (local.set $tmp (global.get $main_hwnd))))
-            (local.set $lparam (call $host_check_input_lparam))
-            (call $gs32 (local.get $arg0) (local.get $tmp))
-            (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $msg))
-            (call $gs32 (i32.add (local.get $arg0) (i32.const 8))
-              (i32.shr_u (local.get $packed) (i32.const 16)))
-            (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
-              (local.get $lparam))
-            (call $msg_store_input_tail
-              (local.get $arg0)
-              (local.get $tmp)
-              (local.get $msg)
-              (local.get $lparam))
-            (global.set $eax (i32.const 1))
-            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return)
-          )
-        )
-      )
-    )
-    ;; WM_PAINT if pending. Match PeekMessageA: WAT owns update selection
-    ;; and child propagation; PM_REMOVE consumes/validates the update.
-    (if (i32.and (local.get $arg4) (i32.const 1))
-      (then (drop (call $paint_drain_native_control_paints))))
-    (local.set $tmp (call $paint_select_next_dirty))
-    (if (local.get $tmp)
-    (then
-      (if (i32.and (local.get $arg4) (i32.const 1))
-        (then
-          (call $paint_flag_clear_hwnd (local.get $tmp))
-          (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
-            (then (global.set $paint_pending (i32.const 0))))
-          (drop (call $paint_seed_child_paints (local.get $tmp)))
-          (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
-            (then
-              (drop (call $update_validate_rect (local.get $tmp)
-                      (i32.const 0) (i32.const 0)
-                      (i32.const 32767) (i32.const 32767)))))))
-      (call $gs32 (local.get $arg0) (local.get $tmp))
-      (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x000F))
-      (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
-      (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
-      (global.set $eax (i32.const 1))
-      (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-      (return)))
-    (local.set $tmp (call $gl32 (global.get $esp)))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    (global.set $eip (local.get $tmp))
-    (global.set $yield_flag (i32.const 1))
-    (global.set $steps (i32.const 0))
-    (return)
-  )
+    (call $handle_PeekMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; 637: SendDlgItemMessageW — STUB: unimplemented
   (func $handle_SendDlgItemMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -11460,194 +9703,20 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 647: GetMessageW — same as GetMessageA
+  ;; GetMessageW — the A pump, which is the maintained one.
+  ;;
+  ;; This used to be a 189-line parallel copy of $handle_GetMessageA, and it
+  ;; had fallen behind: no WM_NCPAINT delivery (the $nc_flags_scan pass), no
+  ;; virtual-LAN pump, no per-message hwnd/lParam from the input queue, no
+  ;; WM_NCCALCSIZE for a child's WM_SIZE. Its one piece of unique state,
+  ;; $pending_wm_create, was dead — nothing in the module ever set it, so the
+  ;; WM_NCCREATE/WM_CREATE arms it carried could not run.
+  ;;
+  ;; A and W differ in the *encoding of text payloads*, and nothing in this
+  ;; emulator produces a non-ASCII WM_CHAR, so there is nothing left to
+  ;; translate. If that changes, convert here rather than forking the pump.
   (func $handle_GetMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $lparam i32)
-    (local.set $msg_ptr (local.get $arg0))
-    (if (i32.eqz (local.get $msg_ptr))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    ;; If quit flag set, return 0 (WM_QUIT)
-    (if (global.get $quit_flag)
-    (then
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver pending WM_NCCREATE then WM_CREATE
-    ;; pending_wm_create: 2=need NCCREATE, 1=need CREATE, 0=done
-    (if (i32.eq (global.get $pending_wm_create) (i32.const 2))
-    (then
-    (global.set $pending_wm_create (i32.const 1))
-    ;; Fill CREATESTRUCT at image_base+0x100
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (i32.const 0))  ;; lpCreateParams
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0081)) ;; WM_NCCREATE
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.add (global.get $image_base) (i32.const 0x100)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    (if (i32.eq (global.get $pending_wm_create) (i32.const 1))
-    (then
-    (global.set $pending_wm_create (i32.const 0))
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x100)) (i32.const 0))
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x110)) (global.get $main_win_cy))
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x114)) (global.get $main_win_cx))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001)) ;; WM_CREATE
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.add (global.get $image_base) (i32.const 0x100)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver child WM_CREATE between main WM_CREATE and main WM_SIZE
-    (if (global.get $pending_child_create)
-    (then
-    (local.set $tmp (global.get $pending_child_create))
-    (global.set $pending_child_create (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0001))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    ;; lParam = &CREATESTRUCT (built in $handle_CreateWindowExA).
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-                (i32.add (global.get $image_base) (i32.const 0x100)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver child WM_SIZE after child WM_CREATE
-    (if (global.get $pending_child_size)
-    (then
-    (local.set $packed (global.get $pending_child_size))
-    (global.set $pending_child_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $pending_child_size_hwnd))
-    (global.set $pending_child_size_hwnd (i32.const 0))
-	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
-	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-	    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
-	    (call $invalidate_hwnd (global.get $main_hwnd))
-	    (global.set $eax (i32.const 1))
-	    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Deliver pending WM_SIZE after WM_CREATE
-    (if (global.get $pending_wm_size)
-    (then
-    (local.set $packed (global.get $pending_wm_size))
-    (global.set $pending_wm_size (i32.const 0))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0005))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $packed))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Drain posted message queue first
-    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-    (then
-    (local.set $tmp (i32.const 0x400))
-    (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12))))
-    (global.set $post_queue_count (i32.sub (global.get $post_queue_count) (i32.const 1)))
-    (if (i32.gt_u (global.get $post_queue_count) (i32.const 0))
-    (then (call $memcpy (i32.const 0x400) (i32.const 0x410)
-    (i32.mul (global.get $post_queue_count) (i32.const 16)))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
-    (then
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 0: send WM_ACTIVATE first
-    (if (i32.eqz (global.get $msg_phase))
-    (then
-    (global.set $msg_phase (i32.const 1))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0006))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 1))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $main_hwnd))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 1: send WM_ERASEBKGND
-    (if (i32.eq (global.get $msg_phase) (i32.const 1))
-    (then
-    (global.set $msg_phase (i32.const 2))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0014))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.add (global.get $main_hwnd) (i32.const 0x40000)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Phase 2: send WM_PAINT
-    (if (i32.eq (global.get $msg_phase) (i32.const 2))
-    (then
-    (global.set $msg_phase (i32.const 3))
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Poll for input events from the host
-    (local.set $packed (call $host_check_input))
-    (if (i32.ne (local.get $packed) (i32.const 0))
-    (then
-    (local.set $tmp (call $host_check_input_hwnd))
-    (if (i32.eqz (local.get $tmp))
-    (then (local.set $tmp (global.get $main_hwnd))))
-    (local.set $lparam (call $host_check_input_lparam))
-    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
-    (i32.and (local.get $packed) (i32.const 0xFFFF)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
-    (i32.shr_u (local.get $packed) (i32.const 16)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-    (local.get $lparam))
-    (call $msg_store_input_tail
-      (local.get $msg_ptr)
-      (local.get $tmp)
-      (i32.and (local.get $packed) (i32.const 0xFFFF))
-      (local.get $lparam))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No input — deliver WM_PAINT if pending. Match GetMessageA:
-    ;; WAT owns update selection, child propagation, and validation.
-    (drop (call $paint_drain_native_control_paints))
-    (local.set $tmp (call $paint_select_next_dirty))
-    (if (local.get $tmp)
-    (then
-    (call $paint_flag_clear_hwnd (local.get $tmp))
-    (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
-      (then (global.set $paint_pending (i32.const 0))))
-    (drop (call $paint_seed_child_paints (local.get $tmp)))
-    (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
-      (then
-        (drop (call $update_validate_rect (local.get $tmp)
-                (i32.const 0) (i32.const 0)
-                (i32.const 32767) (i32.const 32767)))))
-    (call $gs32 (local.get $msg_ptr) (local.get $tmp))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x000F))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No paint — deliver WM_TIMER if any timer is due (consume=1)
-    (if (call $timer_check_due (local.get $msg_ptr) (i32.const 1))
-    (then
-    (global.set $yield_flag (i32.const 1))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; No message ready. Real GetMessage blocks here; keep the API call live
-    ;; and let JS wake/re-enter this handler when input/post/paint/timer work
-    ;; becomes available.
-    (global.set $message_wait_msg_ptr (local.get $msg_ptr))
-    (global.set $yield_reason (i32.const 7))
-    (global.set $yield_flag (i32.const 1))
-    (global.set $steps (i32.const 0))
-    (return)
-  )
+    (call $handle_GetMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; 648: DefFrameProcW — STUB: unimplemented
   (func $handle_DefFrameProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -11659,14 +9728,7 @@
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 650: DrawMenuBar — STUB: unimplemented
-  (func $handle_DrawMenuBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; DrawMenuBar(hwnd) → BOOL. Redraws menu bar — host renderer handles menus, just return TRUE
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
-  )
-
-  ;; 651: DefMDIChildProcW — STUB: unimplemented
+;; 651: DefMDIChildProcW — STUB: unimplemented
   (func $handle_DefMDIChildProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
   )
@@ -11704,86 +9766,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 655: AppendMenuW(hMenu, uFlags, uIDNewItem, lpNewItem)
-  (func $handle_AppendMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dyn i32)
-    (local.set $dyn
-      (call $dynamic_menu_append
-        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (if (i32.ne (local.get $dyn) (i32.const -1))
-      (then (global.set $eax (local.get $dyn)))
-      (else
-        (global.set $eax (call $host_menu_append
-          (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 1)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; AppendMenuA(hMenu, uFlags, uIDNewItem, lpNewItem) — return TRUE
-  (func $handle_AppendMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dyn i32)
-    (local.set $dyn
-      (call $dynamic_menu_append
-        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (if (i32.ne (local.get $dyn) (i32.const -1))
-      (then (global.set $eax (local.get $dyn)))
-      (else
-        (global.set $eax (call $host_menu_append
-          (local.get $arg0) (local.get $arg1) (local.get $arg2) (call $g2w (local.get $arg3)) (i32.const 0)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
-  ;; MF_BYPOSITION is 0x400; without it uPosition names the item to insert
-  ;; before by command id. Resource-backed menu blobs are not mutable yet, so
-  ;; those handles keep reporting success as they always have.
-  (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dyn i32)
-    (local.set $dyn
-      (call $dynamic_menu_insert
-        (local.get $arg0)
-        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1)
-          (i32.and (local.get $arg2) (i32.const 0x400)))
-        (local.get $arg2) (local.get $arg3) (local.get $arg4)
-        ;; MF_POPUP: uIDNewItem is the submenu handle, not a command id.
-        (if (result i32) (i32.and (local.get $arg2) (i32.const 0x10))
-          (then (local.get $arg3))
-          (else (i32.const 0)))))
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
-        (then (i32.const 1))
-        (else (local.get $dyn))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; InsertMenuItemA/W(hMenu, uItem, fByPosition, lpmii)
-  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dyn i32) (local $flags i32)
-    (local.set $flags (call $menu_item_info_decode (local.get $arg3)))
-    (local.set $dyn
-      (call $dynamic_menu_insert
-        (local.get $arg0)
-        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1) (local.get $arg2))
-        (local.get $flags) (global.get $mii_out_id) (global.get $mii_out_data)
-        (global.get $mii_out_submenu)))
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
-        (then (i32.const 1))
-        (else (local.get $dyn))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  (func $handle_InsertMenuItemW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_InsertMenuItemA (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
-  )
-
-  ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
-  (func $handle_ModifyMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; RegisterDragDrop(hwnd, pDropTarget) — return S_OK.
+rDragDrop(hwnd, pDropTarget) — return S_OK.
   ;; No real drag/drop path: there is no host OS drop source to deliver IDataObjects
   ;; from, so tracking the IDropTarget would be pure bookkeeping. Return S_OK so
   ;; callers proceed; any later drop events simply never arrive.
@@ -11806,14 +9789,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 656: DeleteMenu — STUB: unimplemented
-  (func $handle_DeleteMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; DeleteMenu(hMenu, uPosition, uFlags) — return TRUE
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; 657: GetDCEx — STUB: unimplemented
+;; 657: GetDCEx — STUB: unimplemented
   (func $handle_GetDCEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hdc i32)
     ;; GetDCEx(hwnd, hrgnClip, flags). Minimal USER/GDI compatibility:
@@ -12108,64 +10084,8 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 672: SetMenuItemBitmaps — STUB: unimplemented
-  (func $handle_SetMenuItemBitmaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 673: ModifyMenuW — STUB: unimplemented
-  (func $handle_ModifyMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; 674: GetMenuState — STUB: unimplemented
-  ;; GetMenuState(hMenu, uId, uFlags) → MF_* state, or -1 when the item is not
-  ;; there. MF_BYPOSITION is 0x400; without it uId is a command id.
-  (func $handle_GetMenuState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax
-      (if (result i32) (i32.and (local.get $arg2) (i32.const 0x400))
-        (then (call $menu_handle_item_state (local.get $arg0) (local.get $arg1)))
-        (else (call $menu_handle_state_by_id (local.get $arg0) (local.get $arg1)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args
-  )
-
-  ;; 735: GetMenuItemRect(hWnd, hMenu, uItem, lprcItem) -> BOOL
-  (func $handle_GetMenuItemRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rect_wasm i32)
-    ;; arg0=hWnd, arg1=hMenu, arg2=uItem, arg3=lprcItem
-    (local.set $rect_wasm (call $g2w (local.get $arg3)))
-    ;; Fill RECT with reasonable defaults per menu item
-    (i32.store (local.get $rect_wasm)
-      (i32.mul (local.get $arg2) (i32.const 100))) ;; left
-    (i32.store (i32.add (local.get $rect_wasm) (i32.const 4))
-      (i32.const 0)) ;; top
-    (i32.store (i32.add (local.get $rect_wasm) (i32.const 8))
-      (i32.add (i32.mul (local.get $arg2) (i32.const 100)) (i32.const 100))) ;; right
-    (i32.store (i32.add (local.get $rect_wasm) (i32.const 12))
-      (i32.const 20)) ;; bottom
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; stdcall 4 params + ret
-  )
-
-  ;; GetLayout(hdc) -> DWORD — return 0 (LTR layout)
-  (func $handle_GetLayout (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))) ;; stdcall 1 param + ret
-  )
-
-  ;; SetLayout(hdc, dwLayout) -> DWORD — return previous layout (0)
-  (func $handle_SetLayout (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; stdcall 2 params + ret
-  )
-
-  ;; 675: GetMenuCheckMarkDimensions — STUB: unimplemented
-  (func $handle_GetMenuCheckMarkDimensions (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 676: SetCursorPos(x, y) → BOOL — 2 args stdcall
+Layout(hdc) -> DWORD — return 0 (LTR layout)
+ 676: SetCursorPos(x, y) → BOOL — 2 args stdcall
   (func $handle_SetCursorPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $host_set_mouse_position (local.get $arg0) (local.get $arg1))
     (global.set $eax (i32.const 1))
@@ -12209,34 +10129,7 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 682: InsertMenuW(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
-  ;; Resource-menu mutation is not represented yet; match InsertMenuA and
-  ;; report success so applications can continue constructing optional items.
-  (func $handle_InsertMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; GetMenuStringA(hMenu, uIDItem, lpString, cchMax, uFlag) → chars copied.
-  ;; MFC reads every label back while walking a popup, so this sits directly
-  ;; behind the WM_INITMENUPOPUP path -- it was not registered at all, and the
-  ;; unimplemented-API crash was the first thing Paint hit once its update loop
-  ;; started running. MF_BYPOSITION is 0x400.
-  (func $handle_GetMenuStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $menu_handle_copy_label
-      (local.get $arg0) (local.get $arg1)
-      (i32.and (local.get $arg4) (i32.const 0x400))
-      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
-  )
-
-  ;; 683: GetMenuStringW — STUB: unimplemented
-  (func $handle_GetMenuStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-  )
-
-  ;; 684: CopyAcceleratorTableW — STUB: unimplemented
+84: CopyAcceleratorTableW — STUB: unimplemented
   (func $handle_CopyAcceleratorTableW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
   )
@@ -12315,22 +10208,7 @@
     (call $handle_PostThreadMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 687: CreateMenu() — allocate opaque HMENU. No backing state: AppendMenu/InsertMenu
-  ;; are already no-ops, menu bars render from PE RT_MENU resources, and DestroyMenu is
-  ;; a return-TRUE no-op. The handle just needs to be non-zero and distinguishable so
-  ;; downstream APIs that validate it won't trip.
-  (func $handle_CreateMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_menu_create))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
-
-  ;; CreatePopupMenu() — WAT-owned dynamic popup menu state.
-  (func $handle_CreatePopupMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $dynamic_menu_create))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
-
-  ;; 688: WindowFromDC — STUB: unimplemented
+ 688: WindowFromDC — STUB: unimplemented
   (func $handle_WindowFromDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
   )
@@ -12818,688 +10696,7 @@
   ;; COMCTL32 Common Controls handlers
   ;; ============================================================
 
-  ;; InitCommonControls() — 0 args, void return, registers common control window classes
-  (func $handle_InitCommonControls (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; No-op: our window creation handles class names directly
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-  )
-
-  ;; ImageList_Create(cx, cy, flags, cInitial, cGrow) — 5 args, returns HIMAGELIST handle
-  (func $handle_ImageList_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32)
-    ;; ImageList struct:
-    ;; +0 cx, +4 cy, +8 bk color, +12 count, +16 bitmap strip, +20 mask color.
-    (local.set $buf (call $heap_alloc (i32.const 24)))
-    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 24))
-    (i32.store (call $g2w (local.get $buf)) (local.get $arg0))           ;; cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $arg1))  ;; cy
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))     ;; CLR_NONE
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (i32.const 0))     ;; count=0
-    (global.set $eax (local.get $buf))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
-  )
-
-  ;; ImageList_Destroy(himl) — 1 arg, returns BOOL
-  (func $handle_ImageList_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Free not implemented yet, just return TRUE
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; ImageList_LoadImageA(hi, lpbmp, cx, cGrow, crMask, uType, uFlags) — 7 args
-  (func $handle_ImageList_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $cx i32) (local $bmp i32) (local $bmp_w i32) (local $count i32)
-    ;; LoadImage returns an image-list wrapper around a bitmap strip when host
-    ;; resource loading can resolve the bitmap. If not, still return a valid
-    ;; empty image list so callers can proceed.
-    (local.set $cx (local.get $arg2))
-    (if (i32.le_s (local.get $cx) (i32.const 0))
-      (then (local.set $cx (i32.const 16))))
-    (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg0) (local.get $arg1)))
-    (if (local.get $bmp)
-      (then
-        (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
-        (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
-          (then
-            (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
-            (if (i32.eqz (local.get $count))
-              (then (local.set $count (i32.const 1))))))))
-    (local.set $buf (call $heap_alloc (i32.const 24)))
-    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 24))
-    (i32.store (call $g2w (local.get $buf)) (local.get $cx))           ;; cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $cx))  ;; cy=cx
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))   ;; CLR_NONE
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (local.get $count))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 16))) (local.get $bmp))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 20))) (local.get $arg4))
-    (global.set $eax (local.get $buf))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; stdcall, 7 args
-  )
-
-  ;; ImageList_LoadImageW — same as A, 7 args
-  (func $handle_ImageList_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $cx i32) (local $bmp i32) (local $bmp_w i32) (local $count i32)
-    (local.set $cx (local.get $arg2))
-    (if (i32.le_s (local.get $cx) (i32.const 0))
-      (then (local.set $cx (i32.const 16))))
-    (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg0) (local.get $arg1)))
-    (if (local.get $bmp)
-      (then
-        (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
-        (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
-          (then
-            (local.set $count (i32.div_u (local.get $bmp_w) (local.get $cx)))
-            (if (i32.eqz (local.get $count))
-              (then (local.set $count (i32.const 1))))))))
-    (local.set $buf (call $heap_alloc (i32.const 24)))
-    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 24))
-    (i32.store (call $g2w (local.get $buf)) (local.get $cx))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 4))) (local.get $cx))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 8))) (i32.const -1))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 12))) (local.get $count))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 16))) (local.get $bmp))
-    (i32.store (call $g2w (i32.add (local.get $buf) (i32.const 20))) (local.get $arg4))
-    (global.set $eax (local.get $buf))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
-  )
-
-  ;; ImageList_AddMasked(himl, hbmImage, crMask) — 3 args, returns image index
-  (func $handle_ImageList_AddMasked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32) (local $cx i32) (local $bmp_w i32) (local $add_count i32) (local $sw i32)
-    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
-      (then
-        (global.set $eax (i32.const 0xffffffff))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-        (return)))
-    (local.set $sw (call $g2w (local.get $arg0)))
-    (local.set $count (i32.load offset=12 (local.get $sw)))
-    (local.set $cx (i32.load (local.get $sw)))
-    (if (i32.le_s (local.get $cx) (i32.const 0))
-      (then (local.set $cx (i32.const 16))))
-    (local.set $add_count (i32.const 1))
-    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $arg1)))
-    (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
-      (then
-        (local.set $add_count (i32.div_u (local.get $bmp_w) (local.get $cx)))
-        (if (i32.eqz (local.get $add_count))
-          (then (local.set $add_count (i32.const 1))))))
-    (if (i32.eqz (i32.load offset=16 (local.get $sw)))
-      (then
-        (i32.store offset=16 (local.get $sw) (local.get $arg1))
-        (i32.store offset=20 (local.get $sw) (local.get $arg2))))
-    (i32.store offset=12 (local.get $sw) (i32.add (local.get $count) (local.get $add_count)))
-    (global.set $eax (local.get $count))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  (func $create_status_window
-    (param $style i32) (param $text_wa i32) (param $parent i32) (param $id i32)
-    (result i32)
-    (local $hwnd i32)
-    (local.set $hwnd (call $ctrl_create_child
-      (local.get $parent) (i32.const 22) (local.get $id)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 20)
-      (local.get $style) (i32.const 0)))
-    (drop (call $host_create_window
-      (local.get $hwnd) (local.get $style)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 20)
-      (local.get $text_wa) (local.get $id)))
-    (call $host_set_parent (local.get $hwnd) (local.get $parent))
-    (call $host_set_window_class (local.get $hwnd) (i32.const 0x3260))
-    (local.get $hwnd))
-
-  ;; CreateStatusWindowA(style, lpszText, hwndParent, wID) — 4 args, returns HWND
-  (func $handle_CreateStatusWindowA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $create_status_window
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; CreateToolbarEx — 13 args, returns HWND of toolbar
-  (func $handle_CreateToolbarEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CreateToolbarEx(hwndParent, ws, wID, nBitmaps, hBMInst, wBMID, lpButtons, iNumButtons, dxButton, dyButton, dxBitmap, dyBitmap, uStructSize)
-    (local $wa_esp i32) (local $hwnd i32) (local $state i32) (local $sw i32)
-    (local $buttons i32) (local $button_count i32) (local $button_w i32) (local $button_h i32)
-    (local $bitmap_w i32) (local $bitmap_h i32) (local $struct_size i32) (local $bmp i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $buttons (i32.load offset=28 (local.get $wa_esp)))
-    (local.set $button_count (i32.load offset=32 (local.get $wa_esp)))
-    (local.set $button_w (i32.load offset=36 (local.get $wa_esp)))
-    (local.set $button_h (i32.load offset=40 (local.get $wa_esp)))
-    (local.set $bitmap_w (i32.load offset=44 (local.get $wa_esp)))
-    (local.set $bitmap_h (i32.load offset=48 (local.get $wa_esp)))
-    (local.set $struct_size (i32.load offset=52 (local.get $wa_esp)))
-    ;; Win9x common controls treat these as requested image/button extents,
-    ;; then retain the standard face padding around the bitmap. Media Player
-    ;; passes equal 16x16 values and expects the familiar 23x22 transport
-    ;; buttons, not tightly cropped 16x16 faces.
-    (if (i32.le_u (local.get $button_w) (local.get $bitmap_w))
-      (then (local.set $button_w (i32.add (local.get $bitmap_w) (i32.const 7)))))
-    (if (i32.le_u (local.get $button_h) (local.get $bitmap_h))
-      (then (local.set $button_h (i32.add (local.get $bitmap_h) (i32.const 6)))))
-    ;; Create a real class-21 child so SendMessage routes through the toolbar
-    ;; control model. The old renderer-only HWND had no parent/control state,
-    ;; causing Media Player's layout messages to enter its application wndproc.
-    (local.set $hwnd (call $ctrl_create_child
-      (local.get $arg0) (i32.const 21) (local.get $arg2)
-      (i32.const 0) (i32.const 0) (i32.const 100) (i32.const 30)
-      (local.get $arg1) (i32.const 0)))
-    (drop (call $host_create_window
-      (local.get $hwnd) (local.get $arg1)
-      (i32.const 0) (i32.const 0) (i32.const 100) (i32.const 30)
-      (i32.const 0) (local.get $arg2)))
-    (call $wnd_set_parent (local.get $hwnd) (local.get $arg0))
-    (call $host_set_parent (local.get $hwnd) (local.get $arg0))
-    (call $host_set_window_class (local.get $hwnd) (i32.const 0x3274))
-    (local.set $state (call $toolbar_ensure_state (local.get $hwnd)))
-    (local.set $sw (call $g2w (local.get $state)))
-    (if (local.get $button_w) (then (i32.store offset=4 (local.get $sw) (local.get $button_w))))
-    (if (local.get $button_h) (then (i32.store offset=8 (local.get $sw) (local.get $button_h))))
-    (if (local.get $bitmap_w) (then (i32.store offset=12 (local.get $sw) (local.get $bitmap_w))))
-    (if (local.get $bitmap_h) (then (i32.store offset=16 (local.get $sw) (local.get $bitmap_h))))
-    (if (local.get $struct_size) (then (i32.store offset=24 (local.get $sw) (local.get $struct_size))))
-    ;; CreateToolbarEx supplies the initial strip directly instead of sending
-    ;; TB_ADDBITMAP. Load it here so the copied iBitmap indices have pixels.
-    (if (local.get $arg3)
-      (then
-        (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg4)
-          (i32.and (i32.load offset=24 (local.get $wa_esp)) (i32.const 0xFFFF))))
-        (if (local.get $bmp)
-          (then
-            (i32.store offset=48 (local.get $sw) (local.get $bmp))
-            (i32.store offset=28 (local.get $sw) (local.get $arg3))))))
-    (if (i32.and (local.get $buttons) (local.get $button_count))
-      (then
-        (drop (call $toolbar_ensure_capacity (local.get $sw) (local.get $button_count)))
-        (local.set $state (i32.const 0))
-        (block $done (loop $copy
-          (br_if $done (i32.ge_u (local.get $state) (local.get $button_count)))
-          (call $toolbar_copy_button_in
-            (call $toolbar_button_ptr (local.get $sw) (local.get $state))
-            (i32.add (local.get $buttons) (i32.mul (local.get $state) (local.get $struct_size)))
-            (local.get $struct_size) (local.get $state))
-          (local.set $state (i32.add (local.get $state) (i32.const 1)))
-          (br $copy)))
-        (i32.store (local.get $sw) (local.get $button_count))))
-    (call $toolbar_autosize (local.get $hwnd))
-    (global.set $eax (local.get $hwnd))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 56)))  ;; stdcall, 13 args
-  )
-
-  ;; CreateUpDownControl — 12 args, returns HWND
-  (func $handle_CreateUpDownControl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; CreateUpDownControl(dwStyle, x, y, cx, cy, hParent, nID, hInst, hBuddy, nUpper, nLower, nPos)
-    (global.set $eax (call $host_create_window
-      (global.get $next_hwnd)
-      (local.get $arg0) ;; style
-      (local.get $arg1) ;; x
-      (local.get $arg2) ;; y
-      (local.get $arg3) ;; cx
-      (local.get $arg4) ;; cy
-      (i32.const 0) ;; no text
-      (i32.const 0)))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 52)))  ;; stdcall, 12 args
-  )
-
-  ;; GetEffectiveClientRect(hWnd, lprc, lpInfo) — 3 args, void
-  (func $handle_GetEffectiveClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Calculates the client rect excluding toolbars/status bars
-    ;; For now, just call GetClientRect equivalent — fill rect with window client area
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (local.get $wa) (i32.const 0))          ;; left
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))  ;; top
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 640))  ;; right
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 480)) ;; bottom
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; DrawStatusTextA(hDC, lprc, pszText, uFlags) — 4 args, void
-  (func $handle_DrawStatusTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Draw text through the supplied HDC so the child-window origin and clip
-    ;; match USER/GDI. Comctl32 DrawStatusText uses a recessed border; for now
-    ;; preserve the app-provided rect and flags, but avoid the old global
-    ;; renderer text path.
-    (if (local.get $arg2)
-      (then
-        (drop (call $host_gdi_draw_text
-          (local.get $arg0) ;; hDC
-          (call $g2w (local.get $arg2)) ;; text
-          (i32.const -1) ;; nCount=-1 (null terminated)
-          (call $g2w (local.get $arg1)) ;; lpRect
-          (i32.or (local.get $arg3) (i32.const 0x24)) ;; DT_SINGLELINE|DT_VCENTER
-          (i32.const 0))))) ;; ANSI
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; DrawStatusTextW — 4 args, void (same but wide)
-  (func $handle_DrawStatusTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Wide version — for now just skip the draw
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; MenuHelp(uMsg, wParam, lParam, hMainMenu, hInst) — 5 args, void
-  (func $handle_MenuHelp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Processes WM_MENUSELECT and WM_COMMAND for status bar help text — no-op
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; ShowHideMenuCtl(hWnd, uFlags, lpInfo) — 3 args, returns BOOL
-  (func $handle_ShowHideMenuCtl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; CreateMappedBitmap(hInstance, idBitmap, wFlags, lpColorMap, iNumMaps) — 5 args, returns HBITMAP
-  (func $handle_CreateMappedBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    ;; Bounded compatibility: load the requested RT_BITMAP and skip the
-    ;; optional comctl32 color map for now. Returning a real HBITMAP matters
-    ;; more than the previous fake handle because toolbar/image painters can
-    ;; validate and blit it.
-    (local.set $tmp
-      (call $host_gdi_load_bitmap
-        (local.get $arg0)
-        (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
-          (then (local.get $arg1))
-          (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
-    (if (i32.eqz (local.get $tmp))
-      (then
-        (local.set $tmp
-          (call $host_gdi_create_compat_bitmap
-            (i32.const 0) (i32.const 16) (i32.const 16) (i32.const 0)))))
-    (global.set $eax (local.get $tmp))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-  )
-
-  ;; CreatePropertySheetPageA(lppsp) — 1 arg, returns HPROPSHEETPAGE
-  (func $handle_CreatePropertySheetPageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return a fake handle
-    (local.set $arg0 (call $heap_alloc (i32.const 4)))
-    (global.set $eax (local.get $arg0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; PropertySheetA(lppsph) — 1 arg, returns int (>0 if user clicked OK)
-  (func $handle_PropertySheetA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return 0 (user cancelled / no change)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; ImageList_SetBkColor(himl, clrBk) — 2 args, returns old bk color
-  (func $handle_ImageList_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $old i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const -1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-        (return)))
-    (local.set $old (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $arg1))
-    (global.set $eax (local.get $old))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; ImageList_GetBkColor(himl) — 1 arg
-  (func $handle_ImageList_GetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (global.set $eax (i32.const -1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-        (return)))
-    (global.set $eax (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; CreateStatusWindowW — same as A version, 4 args
-  (func $handle_CreateStatusWindowW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; The renderer string bridge is ANSI; the app sets status text later via
-    ;; messages, so create the Unicode control with an initially empty title.
-    (global.set $eax (call $create_status_window
-      (local.get $arg0) (i32.const 0) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; ============================================================
-  ;; COMCTL32 internal heap functions (ordinal-only)
-  ;; ============================================================
-
-  ;; Comctl32_Alloc(dwSize) — 1 arg, returns pointer (zeroed)
-  (func $handle_Comctl32_Alloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32)
-    (local.set $ptr (call $heap_alloc (local.get $arg0)))
-    ;; Zero the allocation
-    (if (local.get $arg0)
-      (then (memory.fill (call $g2w (local.get $ptr)) (i32.const 0) (local.get $arg0))))
-    (global.set $eax (local.get $ptr))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; Comctl32_ReAlloc(pv, cbNew) — 2 args, returns pointer
-  (func $handle_Comctl32_ReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Simple: allocate new, copy, return new (no free of old — heap doesn't support free yet)
-    (local $new_ptr i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        ;; NULL input = just alloc
-        (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
-        (if (local.get $arg1)
-          (then (memory.fill (call $g2w (local.get $new_ptr)) (i32.const 0) (local.get $arg1)))))
-      (else
-        ;; Realloc: alloc new, copy old data
-        (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
-        (if (local.get $arg1)
-          (then (memory.copy (call $g2w (local.get $new_ptr)) (call $g2w (local.get $arg0)) (local.get $arg1))))))
-    (global.set $eax (local.get $new_ptr))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; Comctl32_Free(pv) — 1 arg, returns BOOL
-  (func $handle_Comctl32_Free (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Our heap doesn't support free, just return TRUE
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; Comctl32_GetSize(pv) — 1 arg, returns DWORD size
-  (func $handle_Comctl32_GetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Our heap doesn't track sizes, return a reasonable default
-    (global.set $eax (i32.const 256))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; ============================================================
-  ;; DSA (Dynamic Structure Array) — real implementation
-  ;; DSA layout in memory: [item_size:4, count:4, capacity:4, data_ptr:4]
-  ;; ============================================================
-
-  ;; DSA_Create(cbItem, cItemGrow) — 2 args, returns HDSA
-  (func $handle_DSA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dsa i32)
-    (local $cap i32)
-    (local.set $cap (select (local.get $arg1) (i32.const 8) (i32.gt_u (local.get $arg1) (i32.const 0))))
-    (local.set $dsa (call $heap_alloc (i32.const 16)))
-    (i32.store (call $g2w (local.get $dsa)) (local.get $arg0))           ;; item_size
-    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 4))) (i32.const 0))  ;; count
-    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 8))) (local.get $cap))  ;; capacity
-    ;; Allocate data buffer: capacity * item_size
-    (i32.store (call $g2w (i32.add (local.get $dsa) (i32.const 12)))
-      (call $heap_alloc (i32.mul (local.get $cap) (local.get $arg0))))
-    (global.set $eax (local.get $dsa))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; DSA_Destroy(hdsa) — 1 arg, returns BOOL
-  (func $handle_DSA_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Can't free, just return TRUE
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; DSA_GetItem(hdsa, index, pitem) — 3 args, returns BOOL
-  (func $handle_DSA_GetItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
-    (local $data_ptr i32)
-    (local $count i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
-    (if (i32.lt_u (local.get $arg1) (local.get $count))
-      (then
-        ;; Copy item_size bytes from data[index*item_size] to pitem
-        (memory.copy (call $g2w (local.get $arg2))
-          (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size))))
-          (local.get $item_size))
-        (global.set $eax (i32.const 1)))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; DSA_GetItemPtr(hdsa, index) — 2 args, returns pointer to item
-  (func $handle_DSA_GetItemPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
-    (local $data_ptr i32)
-    (local $count i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
-    (if (i32.lt_u (local.get $arg1) (local.get $count))
-      (then
-        (global.set $eax (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size)))))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; DSA_InsertItem(hdsa, index, pitem) — 3 args, returns index or -1
-  ;; Callers index a DSA in lockstep with a parallel list control — Task
-  ;; Manager reads row N of its listbox and asks the DSA for item N — so an
-  ;; insert in the middle has to move the later items up rather than overwrite
-  ;; the one already there, and has to grow the buffer instead of running off
-  ;; the end of it once the initial capacity fills.
-  (func $handle_DSA_InsertItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
-    (local $count i32)
-    (local $cap i32)
-    (local $data_ptr i32)
-    (local $idx i32)
-    (local $new_cap i32)
-    (local $new_data i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $cap (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
-    ;; Clamp index: if index > count or DA_LAST (0x7FFFFFFF), append
-    (local.set $idx (select (local.get $count) (local.get $arg1)
-      (i32.gt_u (local.get $arg1) (local.get $count))))
-    ;; Grow first so the extra slot exists before the shift.
-    (if (i32.ge_u (local.get $count) (local.get $cap))
-      (then
-        (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
-        (if (i32.lt_u (local.get $new_cap) (i32.const 8))
-          (then (local.set $new_cap (i32.const 8))))
-        (local.set $new_data (call $heap_alloc (i32.mul (local.get $new_cap) (local.get $item_size))))
-        (if (local.get $count)
-          (then
-            (memory.copy (call $g2w (local.get $new_data)) (call $g2w (local.get $data_ptr))
-              (i32.mul (local.get $count) (local.get $item_size)))))
-        (if (local.get $data_ptr) (then (call $heap_free (local.get $data_ptr))))
-        (local.set $data_ptr (local.get $new_data))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $new_cap))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 12))) (local.get $new_data))))
-    ;; Shift [idx, count) up one slot. memory.copy is defined to behave like
-    ;; memmove, so the overlap here is safe.
-    (if (i32.gt_u (local.get $count) (local.get $idx))
-      (then
-        (memory.copy
-          (call $g2w (i32.add (local.get $data_ptr)
-            (i32.mul (i32.add (local.get $idx) (i32.const 1)) (local.get $item_size))))
-          (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
-          (i32.mul (i32.sub (local.get $count) (local.get $idx)) (local.get $item_size)))))
-    ;; Copy item data to data[idx * item_size]
-    (memory.copy
-      (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $idx) (local.get $item_size))))
-      (call $g2w (local.get $arg2))
-      (local.get $item_size))
-    ;; Increment count
-    (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
-      (i32.add (local.get $count) (i32.const 1)))
-    (global.set $eax (local.get $idx))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; DSA_DeleteItem(hdsa, index) — 2 args, returns BOOL
-  ;; Removing item N must close the gap. Only decrementing the count drops the
-  ;; LAST item logically while every index from N on still reads its old
-  ;; neighbour — which is how Task Manager's End Task came to act on the row
-  ;; above the one the user had selected.
-  (func $handle_DSA_DeleteItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $item_size i32)
-    (local $count i32)
-    (local $data_ptr i32)
-    (local.set $item_size (i32.load (call $g2w (local.get $arg0))))
-    (local.set $count (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $data_ptr (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 12)))))
-    (if (i32.lt_u (local.get $arg1) (local.get $count))
-      (then
-        ;; Shift (index, count) down over the removed slot.
-        (if (i32.gt_u (i32.sub (local.get $count) (i32.const 1)) (local.get $arg1))
-          (then
-            (memory.copy
-              (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size))))
-              (call $g2w (i32.add (local.get $data_ptr)
-                (i32.mul (i32.add (local.get $arg1) (i32.const 1)) (local.get $item_size))))
-              (i32.mul (i32.sub (i32.sub (local.get $count) (i32.const 1)) (local.get $arg1))
-                (local.get $item_size)))))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4)))
-          (i32.sub (local.get $count) (i32.const 1)))
-        (global.set $eax (i32.const 1)))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; ============================================================
-  ;; DPA (Dynamic Pointer Array) — real implementation
-  ;; DPA layout: [count:4, capacity:4, ptrs_ptr:4]
-  ;; ============================================================
-
-  ;; DPA_Create(cItemGrow) — 1 arg, returns HDPA
-  (func $handle_DPA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dpa i32)
-    (local $cap i32)
-    (local.set $cap (select (local.get $arg0) (i32.const 8) (i32.gt_u (local.get $arg0) (i32.const 0))))
-    (local.set $dpa (call $heap_alloc (i32.const 12)))
-    (i32.store (call $g2w (local.get $dpa)) (i32.const 0))           ;; count
-    (i32.store (call $g2w (i32.add (local.get $dpa) (i32.const 4))) (local.get $cap))  ;; capacity
-    (i32.store (call $g2w (i32.add (local.get $dpa) (i32.const 8)))
-      (call $heap_alloc (i32.shl (local.get $cap) (i32.const 2))))   ;; ptrs array
-    (global.set $eax (local.get $dpa))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; DPA_Destroy(hdpa) — 1 arg, returns BOOL
-  (func $handle_DPA_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; DPA_GetPtr(hdpa, index) — 2 args, returns pointer at index
-  (func $handle_DPA_GetPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32)
-    (local $ptrs i32)
-    (local.set $count (i32.load (call $g2w (local.get $arg0))))
-    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (if (i32.lt_u (local.get $arg1) (local.get $count))
-      (then
-        (global.set $eax (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $arg1) (i32.const 2)))))))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; DPA_InsertPtr(hdpa, index, p) — 3 args, returns index or -1
-  ;; A DPA is an ordered array, and callers index it in lockstep with a
-  ;; parallel list control: Task Manager reads row N of its listbox and asks
-  ;; the DPA for element N. So an insert must move the later elements up
-  ;; rather than overwrite the one already at that slot, and must grow the
-  ;; backing array instead of writing past it once the initial capacity fills.
-  (func $handle_DPA_InsertPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32)
-    (local $cap i32)
-    (local $ptrs i32)
-    (local $idx i32)
-    (local $i i32)
-    (local $new_cap i32)
-    (local $new_ptrs i32)
-    (local.set $count (i32.load (call $g2w (local.get $arg0))))
-    (local.set $cap (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 4)))))
-    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    ;; DPA_APPEND (0x7FFFFFFF) and any out-of-range index append.
-    (local.set $idx (select (local.get $count) (local.get $arg1)
-      (i32.gt_u (local.get $arg1) (local.get $count))))
-    ;; Grow before the shift so the extra slot exists.
-    (if (i32.ge_u (local.get $count) (local.get $cap))
-      (then
-        (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
-        (if (i32.lt_u (local.get $new_cap) (i32.const 8))
-          (then (local.set $new_cap (i32.const 8))))
-        (local.set $new_ptrs (call $heap_alloc (i32.shl (local.get $new_cap) (i32.const 2))))
-        (local.set $i (i32.const 0))
-        (block $copy_done (loop $copy
-          (br_if $copy_done (i32.ge_u (local.get $i) (local.get $count)))
-          (i32.store
-            (call $g2w (i32.add (local.get $new_ptrs) (i32.shl (local.get $i) (i32.const 2))))
-            (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $i) (i32.const 2))))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $copy)))
-        (if (local.get $ptrs) (then (call $heap_free (local.get $ptrs))))
-        (local.set $ptrs (local.get $new_ptrs))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 4))) (local.get $new_cap))
-        (i32.store (call $g2w (i32.add (local.get $arg0) (i32.const 8))) (local.get $new_ptrs))))
-    ;; Shift [idx, count) up one slot, walking down so the copy cannot
-    ;; overwrite a source it has not read yet.
-    (local.set $i (local.get $count))
-    (block $shift_done (loop $shift
-      (br_if $shift_done (i32.le_u (local.get $i) (local.get $idx)))
-      (i32.store
-        (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $i) (i32.const 2))))
-        (i32.load (call $g2w (i32.add (local.get $ptrs)
-          (i32.shl (i32.sub (local.get $i) (i32.const 1)) (i32.const 2))))))
-      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
-      (br $shift)))
-    (i32.store (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $idx) (i32.const 2))))
-      (local.get $arg2))
-    (i32.store (call $g2w (local.get $arg0)) (i32.add (local.get $count) (i32.const 1)))
-    (global.set $eax (local.get $idx))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-  )
-
-  ;; DPA_DeletePtr(hdpa, index) — 2 args, returns removed pointer
-  ;; Removing element N must close the gap. Only decrementing the count
-  ;; drops the LAST element logically while leaving every index from N on
-  ;; pointing at its old record — which is how Task Manager's End Task came
-  ;; to post WM_CLOSE to a window belonging to an app that had already quit.
-  (func $handle_DPA_DeletePtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $count i32)
-    (local $ptrs i32)
-    (local $removed i32)
-    (local $i i32)
-    (local.set $count (i32.load (call $g2w (local.get $arg0))))
-    (local.set $ptrs (i32.load (call $g2w (i32.add (local.get $arg0) (i32.const 8)))))
-    (if (i32.lt_u (local.get $arg1) (local.get $count))
-      (then
-        (local.set $removed (i32.load (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $arg1) (i32.const 2))))))
-        (local.set $i (local.get $arg1))
-        (block $shift_done (loop $shift
-          (br_if $shift_done (i32.ge_u (local.get $i) (i32.sub (local.get $count) (i32.const 1))))
-          (i32.store
-            (call $g2w (i32.add (local.get $ptrs) (i32.shl (local.get $i) (i32.const 2))))
-            (i32.load (call $g2w (i32.add (local.get $ptrs)
-              (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 2))))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $shift)))
-        (i32.store (call $g2w (local.get $arg0)) (i32.sub (local.get $count) (i32.const 1)))
-        (global.set $eax (local.get $removed)))
-      (else
-        (global.set $eax (i32.const 0))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; DPA_DeleteAllPtrs(hdpa) — 1 arg, returns BOOL
-  (func $handle_DPA_DeleteAllPtrs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Set count to 0
-    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
-  )
-
-  ;; StrToIntA(lpSrc) — 1 arg, returns integer value
+;; StrToIntA(lpSrc) — 1 arg, returns integer value
   (func $handle_StrToIntA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ptr i32) (local $result i32) (local $neg i32) (local $ch i32)
     (local.set $ptr (call $g2w (local.get $arg0)))
@@ -13816,28 +11013,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 949: ExtTextOutA(hdc, x, y, options, lprect, lpString, c, lpDx) — 8 args stdcall
-  ;; Selected FNT strikes consume lpDx in WAT; the generic host path ignores it.
-  (func $handle_ExtTextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lpString i32) (local $count i32) (local $rect_wa i32) (local $text_wa i32)
-    (local $lpDx i32) (local $dx_wa i32)
-    (local.set $lpString (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; arg5
-    (local.set $count (call $gl32 (i32.add (global.get $esp) (i32.const 28))))    ;; arg6
-    (if (local.get $arg4)
-      (then (local.set $rect_wa (call $g2w (local.get $arg4)))))
-    (if (local.get $lpString)
-      (then (local.set $text_wa (call $g2w (local.get $lpString)))))
-    (local.set $lpDx (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
-    (if (local.get $lpDx)
-      (then (local.set $dx_wa (call $g2w (local.get $lpDx)))))
-    (global.set $eax (call $host_gdi_ext_text_out
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $rect_wa)
-      (local.get $text_wa) (local.get $count) (local.get $dx_wa) (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 36))) ;; 8 args + ret
-  )
-
-  ;; 948: RegEnumKeyA(hKey, dwIndex, lpName, cchName) — 4 args stdcall
+;; 948: RegEnumKeyA(hKey, dwIndex, lpName, cchName) — 4 args stdcall
   (func $handle_RegEnumKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_reg_enum_key
       (local.get $arg0)                    ;; hKey
@@ -13907,14 +11083,7 @@
       (then (call $gs32 (i32.load offset=44 (local.get $wa_esp)) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))))
 
-  ;; 947: SetPixelV(hdc, x, y, color) — 4 args stdcall, like SetPixel but returns BOOL
-  (func $handle_SetPixelV (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_gdi_set_pixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; 946: CopyImage(hImage, uType, cx, cy, flags) — 5 args stdcall, return same handle
+;; 946: CopyImage(hImage, uType, cx, cy, flags) — 5 args stdcall, return same handle
   (func $handle_CopyImage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
@@ -14081,25 +11250,7 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; CreateEllipticRgn(left, top, right, bottom) → HRGN
-  (func $handle_CreateEllipticRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_rgn_alloc_ellipse
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-  )
-
-  ;; GetRgnBox(hrgn, lprc) → complexity. Writes bbox into lprc and returns
-  ;; SIMPLEREGION/COMPLEXREGION/NULLREGION (1/2/3) like the real GDI.
-  (func $handle_GetRgnBox (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rect_wa i32)
-    (local.set $rect_wa (if (result i32) (local.get $arg1)
-      (then (call $g2w (local.get $arg1))) (else (i32.const 0))))
-    (global.set $eax (call $gdi_rgn_get_box
-      (local.get $arg0) (local.get $rect_wa)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
-  )
-
-  ;; GetWindowTextLengthA(hwnd) → length in chars (no NUL).
+ GetWindowTextLengthA(hwnd) → length in chars (no NUL).
   (func $handle_GetWindowTextLengthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (call $ctrl_table_get_class (local.get $arg0))
       (then
@@ -14113,27 +11264,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; ret + 1 arg
   )
 
-  ;; Additional GDI entry points used by the expanded application corpus.
-  (func $handle_CreateDIBPatternBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Global-memory handles are direct guest pointers in this Win32 model.
-    (call $handle_CreateDIBPatternBrushPt
-      (local.get $arg0) (local.get $arg1) (i32.const 0) (i32.const 0)
-      (i32.const 0) (local.get $name_ptr)))
-
-  (func $handle_CreateDiscardableBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_CreateCompatibleBitmap
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)
-      (i32.const 0) (local.get $name_ptr)))
-
-  (func $handle_GetCharWidth32A (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_font_char_widths
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (if (result i32) (local.get $arg3)
-        (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
-      (i32.const 0)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
-
-  (func $handle_GetCharWidth32W (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+c $handle_GetCharWidth32W (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_font_char_widths
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (if (result i32) (local.get $arg3)
@@ -14152,24 +11283,3 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
-  (func $handle_InvertRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $gdi_hdc_invert_rgn (local.get $arg0) (local.get $arg1)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
-
-  (func $handle_PolyPolyline (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (call $gdi_dc_path_is_open (local.get $arg0))
-      (then (global.set $eax (call $gdi_dc_path_record_poly_polyline
-        (local.get $arg0)
-        (if (result i32) (local.get $arg1)
-          (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-        (if (result i32) (local.get $arg2)
-          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-        (local.get $arg3))))
-      (else (global.set $eax (call $gdi_poly_polyline_try
-        (local.get $arg0)
-        (if (result i32) (local.get $arg1)
-          (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-        (if (result i32) (local.get $arg2)
-          (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-        (local.get $arg3)))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))

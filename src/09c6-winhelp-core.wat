@@ -908,20 +908,6 @@
       (then (return (i32.const 0))))
     (i32.add (local.get $base) (i32.add (local.get $offset) (local.get $relative_offset))))
 
-  (func $help_subslice
-    (param $slice i32) (param $relative_offset i32) (param $length i32)
-    (param $out_slice i32) (result i32)
-    (if (i32.eqz (call $help_slice_address
-          (local.get $slice) (local.get $relative_offset) (local.get $length)))
-      (then (return (i32.const 0))))
-    (call $help_slice_init
-      (local.get $out_slice)
-      (i32.load (local.get $slice))
-      (i32.load offset=4 (local.get $slice))
-      (i32.add (i32.load offset=8 (local.get $slice)) (local.get $relative_offset))
-      (local.get $length))
-    (i32.const 1))
-
   ;; Return a bounded C-string length, or -1 if no terminator occurs inside
   ;; both max_length and the current slice.
   (func $help_read_cstring_length

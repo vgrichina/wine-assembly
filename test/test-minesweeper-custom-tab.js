@@ -63,7 +63,7 @@ console.log('$', cmd.replace(ROOT, '.'));
 
 let out = '';
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT,
+  out = execSync(cmd, { encoding: 'utf-8', timeout: 180000, cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();

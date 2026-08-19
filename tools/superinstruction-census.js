@@ -7,6 +7,7 @@
 // profiling before adding threaded handlers.
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const path = require('path');
 const { disasmAt } = require('./disasm');
 
@@ -28,34 +29,19 @@ function sx32(v) {
 }
 
 function parsePe(file) {
-  const buf = fs.readFileSync(file);
-  const peOff = buf.readUInt32LE(0x3c);
-  const optOff = peOff + 24;
-  const imageBase = buf.readUInt32LE(optOff + 28);
-  const numSections = buf.readUInt16LE(peOff + 6);
-  const sectOff = optOff + buf.readUInt16LE(peOff + 20);
-  const sections = [];
-  for (let i = 0; i < numSections; i++) {
-    const off = sectOff + i * 40;
-    const name = buf.toString('ascii', off, off + 8).replace(/\0.*$/, '');
-    const vsize = buf.readUInt32LE(off + 8);
-    const vaddr = buf.readUInt32LE(off + 12);
-    const rawSize = buf.readUInt32LE(off + 16);
-    const rawOff = buf.readUInt32LE(off + 20);
-    const characteristics = buf.readUInt32LE(off + 36);
-    const executable = !!(characteristics & 0x20000000);
-    const code = !!(characteristics & 0x20);
-    if ((executable || code) && rawSize > 0) {
-      sections.push({
-        name,
-        va: (imageBase + vaddr) >>> 0,
-        rawOff,
-        rawSize: Math.min(rawSize, Math.max(0, buf.length - rawOff)),
-        vsize,
-      });
-    }
-  }
-  return { buf, imageBase, sections };
+  const pe = readPE(file);
+  // Code sections with real bytes on disk. lib/pe.js's isCode carries the
+  // Borland "named CodeSeg but flagged as data" rule as well as the flags.
+  const sections = pe.sections
+    .filter(s => s.isCode && s.rawSize > 0)
+    .map(s => ({
+      name: s.name,
+      va: s.va >>> 0,
+      rawOff: s.rawOff,
+      rawSize: Math.min(s.rawSize, Math.max(0, pe.buf.length - s.rawOff)),
+      vsize: s.vsize,
+    }));
+  return { buf: pe.buf, imageBase: pe.imageBase, sections };
 }
 
 function fallbackLen(buf, off, va) {

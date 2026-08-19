@@ -30,7 +30,7 @@ function runWordPad(seq, maxBatches) {
   const args = [RUN, `--exe=${EXE}`, `--input=${seq.join(',')}`, `--max-batches=${maxBatches}`,
     '--batch-size=50000', '--quiet-api', '--quiet-blocks', '--no-close'];
   try {
-    return execFileSync('node', args, { cwd: ROOT, encoding: 'utf8', timeout: 85000,
+    return execFileSync('node', args, { cwd: ROOT, encoding: 'utf8', timeout: 180000,
       stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   } catch (error) {
     return String(error.stdout || '') + String(error.stderr || '');

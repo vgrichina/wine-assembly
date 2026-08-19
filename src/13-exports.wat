@@ -19,6 +19,15 @@
         (then
           (global.set $thread_alloc (global.get $THREAD_BASE))
           (call $clear_cache)))
+      ;; Yield flag — host needs control (e.g. after WM_TIMER delivery)
+      (if (global.get $yield_flag)
+        (then
+          (global.set $yield_flag (i32.const 0))
+          (br $halt)))
+      ;; Everything below to the end of this block is a debug facility, and all
+      ;; of them are off in a normal run. $dbg_any is the OR of the six arming
+      ;; flags, so the common case pays one test instead of six.
+      (if (global.get $dbg_any) (then
       ;; Watchpoint: break when watched region (1/2/4 bytes) changes
       (if (global.get $watch_addr)
         (then
@@ -26,11 +35,6 @@
             (then
               (global.set $watch_val (call $watch_load (global.get $watch_addr)))
               (br $halt)))))
-      ;; Yield flag — host needs control (e.g. after WM_TIMER delivery)
-      (if (global.get $yield_flag)
-        (then
-          (global.set $yield_flag (i32.const 0))
-          (br $halt)))
       ;; EIP breakpoint. On halt we set $bp_skip_once so re-entry (same $eip)
       ;; dispatches the block once before the bp can fire again — without this,
       ;; JS-driven re-arm (e.g. --trace-at) spins halting at the same address.
@@ -61,6 +65,7 @@
             (local.set $hc_i (i32.add (local.get $hc_i) (i32.const 1)))
             (br $hc_loop))))
         )
+      ))
       ;; Catch a 16-bit task leaving the selector arena here, before
       ;; $dbg_prev_eip is advanced — at this point it still names the block
       ;; that just ran and produced the bad EIP, which is the only thing that
@@ -135,6 +140,7 @@
       ;; the value being overwritten is kept one step longer.
       (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
       (global.set $dbg_prev_eip (global.get $eip))
+      (if (global.get $dbg_any) (then
       ;; --trace-esp: emit (eip, esp) at block entry for in-range EIPs.
       (if (global.get $trace_esp_flag)
         (then
@@ -153,8 +159,14 @@
             (then (call $host_log_eip (global.get $eip))))))
       (if (global.get $handler_hist_enabled)
         (then (call $hot_block_hist_record (global.get $eip))))
-      (if (call $fast_msvc_sbh_scan)
-        (then (br $main)))
+      ))
+      ;; Two compares against addresses the decoder recognized, instead of the
+      ;; 17-load byte-signature scan this used to run ahead of every block.
+      (if (i32.or (i32.eq (global.get $eip) (global.get $sbh_eip_a))
+                  (i32.eq (global.get $eip) (global.get $sbh_eip_b)))
+        (then
+          (if (call $fast_msvc_sbh_scan)
+            (then (br $main)))))
       (local.set $thread (call $cache_lookup (global.get $eip)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_block (global.get $eip)))))
@@ -165,6 +177,24 @@
       (global.set $steps (i32.const 1000))
       (call $next)
       (br $main))))
+
+  ;; Hook for test/test-shift-equivalence.js, which checks the unified
+  ;; $do_shift against an independent model of the x86 semantics over every
+  ;; (width, op, count) and a spread of values. Runs one shift with a chosen
+  ;; carry-in and leaves CF/ZF/SF readable.
+  (func (export "test_shift") (param $bits i32) (param $type i32)
+        (param $val i32) (param $count i32) (param $cf_in i32) (result i32)
+    ;; flag_op 8 with a/b is the raw-carry form, which is how a carry-in is
+    ;; seeded without disturbing the result flags.
+    (global.set $flag_op (i32.const 8))
+    (global.set $flag_a (local.get $cf_in))
+    (global.set $flag_b (i32.const 0))
+    (call $do_shift (local.get $bits) (local.get $type) (local.get $val) (local.get $count)))
+
+  (func (export "test_shift_flags") (result i32)
+    (i32.or (call $get_cf)
+      (i32.or (i32.shl (call $get_zf) (i32.const 1))
+              (i32.shl (call $get_sf) (i32.const 2)))))
 
   ;; ============================================================
   ;; DEBUG EXPORTS
@@ -2039,14 +2069,10 @@
   (func (export "get_client_rect_r") (param $hwnd i32) (result i32) (call $client_rect_get_r (local.get $hwnd)))
   (func (export "get_client_rect_b") (param $hwnd i32) (result i32) (call $client_rect_get_b (local.get $hwnd)))
   ;; Packed client width|height (low 16 | high 16) — convenience for host_imports.
+  ;; Same value $wnd_client_w/h_for_clip read directly -- shared so the export
+  ;; and the WAT-internal fast path cannot disagree about what a client rect is.
   (func (export "get_client_rect_wh") (param $hwnd i32) (result i32)
-    (i32.or
-      (i32.and
-        (i32.sub (call $client_rect_get_r (local.get $hwnd)) (call $client_rect_get_l (local.get $hwnd)))
-        (i32.const 0xFFFF))
-      (i32.shl
-        (i32.sub (call $client_rect_get_b (local.get $hwnd)) (call $client_rect_get_t (local.get $hwnd)))
-        (i32.const 16))))
+    (call $client_rect_wh_packed (local.get $hwnd)))
   ;; Title storage — JS writes via set_window_title_wa; DefWindowProc reads during NCPAINT.
   (func (export "set_window_title_wa") (param $hwnd i32) (param $wa_ptr i32) (param $len i32)
     (call $title_table_set (local.get $hwnd) (local.get $wa_ptr) (local.get $len)))
@@ -2233,9 +2259,22 @@
   (func (export "set_hwnd_base") (param i32) (global.set $next_hwnd (local.get 0)))
   (func (export "get_hwnd_base") (result i32) (global.get $next_hwnd))
 
+  ;; The run loop tests $dbg_any once instead of testing all six arming flags.
+  ;; Every setter below that can arm or disarm one of them ends by calling this.
+  ;; Missing a call here does not corrupt anything — it makes one debug flag
+  ;; silently do nothing, which is why they are all in one place.
+  (func $dbg_recompute
+    (global.set $dbg_any
+      (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
+        (i32.or (i32.ne (global.get $bp_addr) (i32.const 0))
+          (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
+            (i32.or (i32.ne (global.get $trace_esp_flag) (i32.const 0))
+              (i32.or (i32.ne (global.get $trace_eip_flag) (i32.const 0))
+                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0)))))))))
+
   ;; Watchpoint exports
-  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)))
-  (func (export "clear_bp") (global.set $bp_addr (i32.const 0)))
+  (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
+  (func (export "clear_bp") (global.set $bp_addr (i32.const 0)) (call $dbg_recompute))
   (func (export "get_bp_addr") (result i32) (global.get $bp_addr))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
@@ -2244,13 +2283,15 @@
   (func (export "set_trace_esp") (param $flag i32) (param $lo i32) (param $hi i32)
     (global.set $trace_esp_flag (local.get $flag))
     (global.set $trace_esp_lo (local.get $lo))
-    (global.set $trace_esp_hi (local.get $hi)))
+    (global.set $trace_esp_hi (local.get $hi))
+    (call $dbg_recompute))
 
   ;; --trace-eip-range wiring. Pass hi=0 to leave upper bound open.
   (func (export "set_trace_eip_range") (param $flag i32) (param $lo i32) (param $hi i32)
     (global.set $trace_eip_flag (local.get $flag))
     (global.set $trace_eip_lo (local.get $lo))
-    (global.set $trace_eip_hi (local.get $hi)))
+    (global.set $trace_eip_hi (local.get $hi))
+    (call $dbg_recompute))
 
   ;; Hit counters: set_count writes addr into slot N and zeros its count,
   ;; bumping $hit_count_n so the run loop includes this slot. Caller passes
@@ -2262,18 +2303,29 @@
     (i32.store          (local.get $base) (local.get $addr))
     (i32.store offset=4 (local.get $base) (i32.const 0))
     (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
-      (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1))))))
+      (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1)))))
+    (call $dbg_recompute))
   (func (export "get_count") (param $slot i32) (result i32)
     (i32.load offset=4 (i32.add (global.get $HIT_COUNT_BASE)
                                 (i32.shl (local.get $slot) (i32.const 3)))))
-  (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)))
+  (func (export "clear_counts") (global.set $hit_count_n (i32.const 0)) (call $dbg_recompute))
 
   ;; Disabled-by-default stack-packet compiler prototype. Toggling clears the
   ;; decoded-block cache so already-decoded generic/packet blocks do not linger.
-  (func (export "set_stack_packet_enabled") (param $flag i32) (param $addr i32)
+  ;; $variant selects which packet handler the armed address compiles to.
+  ;; Passing 0 (or omitting the argument, which the JS API zero-fills) keeps the
+  ;; historical address->variant mapping so existing callers behave the same;
+  ;; the mapping lives here, in the prototype's own switch, rather than inside
+  ;; $decode_block where every app pays to read it.
+  (func (export "set_stack_packet_enabled") (param $flag i32) (param $addr i32) (param $variant i32)
     (global.set $stack_packet_enabled (local.get $flag))
     (if (local.get $addr)
       (then (global.set $stack_packet_addr (local.get $addr))))
+    (if (local.get $variant)
+      (then (global.set $stack_packet_variant (local.get $variant)))
+      (else (global.set $stack_packet_variant
+        (select (i32.const 2) (i32.const 1)
+          (i32.eq (global.get $stack_packet_addr) (i32.const 0x0049DD20))))))
     (call $clear_cache))
   (func (export "set_stack_packet_count_enabled") (param $flag i32)
     (global.set $stack_packet_count_enabled (local.get $flag)))
@@ -2312,7 +2364,8 @@
     (global.set $handler_hist_enabled (local.get $flag))
     (global.set $branch_hist_kind (i32.const 0))
     (if (local.get $flag)
-      (then (global.set $handler_hist_last (i32.const -1)))))
+      (then (global.set $handler_hist_last (i32.const -1))))
+    (call $dbg_recompute))
   (func (export "reset_handler_hist")
     (local $ptr i32) (local $end i32)
     (local.set $ptr (global.get $HANDLER_HIST_COUNTS))
@@ -2394,7 +2447,8 @@
     (global.set $watch_addr (local.get $addr))
     (if (local.get $addr)
       (then (global.set $watch_val (call $watch_load (local.get $addr))))
-      (else (global.set $watch_val (i32.const 0)))))
+      (else (global.set $watch_val (i32.const 0))))
+    (call $dbg_recompute))
   (func (export "set_watchpoint_size") (param $size i32)
     (global.set $watch_size (local.get $size))
     ;; re-read current value with new size so caller sees consistent baseline
@@ -2486,6 +2540,17 @@
     (call $gs8 (local.get $ga) (local.get $val)))
   (func (export "guest_read8") (param $ga i32) (result i32)
     (call $gl8 (local.get $ga)))
+
+  ;; FormatMessage insert expansion, exercised by
+  ;; test/test-format-message-inserts.js. All three addresses are guest
+  ;; addresses; $dst_g == 0 is the measure-only mode the real handler uses to
+  ;; size an ALLOCATE_BUFFER allocation before writing into it.
+  (func (export "test_format_message_expand")
+      (param $src_g i32) (param $dst_g i32) (param $max i32) (param $args_g i32) (result i32)
+    (call $format_message_expand
+      (call $g2w (local.get $src_g))
+      (select (i32.const 0) (call $g2w (local.get $dst_g)) (i32.eqz (local.get $dst_g)))
+      (local.get $max) (local.get $args_g)))
 
   ;; Allocate guest heap memory (returns guest address)
   (func (export "guest_alloc") (param $size i32) (result i32)
@@ -2727,6 +2792,118 @@
     (call $win16_dde_hsz_intern (local.get $ga)))
   (func (export "test_dde_instance") (param $i i32) (param $used i32)
     (i32.store (call $win16_dde_inst (local.get $i)) (local.get $used)))
+  ;; Point an instance's DDE callback at a far proc. A real task sets this
+  ;; through DdeInitialize; a test needs it to aim the callback at a stub it
+  ;; can predict the answer of, which is the only way to exercise the
+  ;; XTYP_CONNECT path without driving an app all the way to a live server.
+  (func (export "test_dde_set_callback") (param $inst i32) (param $proc i32)
+    (i32.store offset=4 (call $win16_dde_inst
+      (i32.sub (local.get $inst) (i32.const 1))) (local.get $proc)))
+  (func (export "test_dde_ask_pending") (result i32)
+    (i32.ge_s (call $win16_dde_ask_next) (i32.const 0)))
+  ;; 0 free, 1 established, 2 offered to the application and not yet answered.
+  (func (export "test_dde_conv_state") (param $conv i32) (result i32)
+    (i32.load (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))))
+
+  ;; A data handle holding known bytes, so a server's callback has something
+  ;; real to answer a request with and the test can check what crossed.
+  (func (export "test_dde_make_data") (param $ga i32) (param $len i32) (result i32)
+    (call $win16_dde_data_take (call $g2w (local.get $ga)) (local.get $len)))
+  (func (export "test_dde_data_len") (param $h i32) (result i32)
+    (if (i32.ge_u (i32.sub (local.get $h) (i32.const 0x100)) (i32.const 16))
+      (then (return (i32.const -1))))
+    (i32.load offset=4 (call $win16_dde_data_slot
+      (i32.sub (local.get $h) (i32.const 0x100)))))
+  (func (export "test_dde_data_byte") (param $h i32) (param $i i32) (result i32)
+    (i32.load8_u (i32.add (i32.add (call $win16_dde_data_slot
+      (i32.sub (local.get $h) (i32.const 0x100))) (i32.const 8)) (local.get $i))))
+
+  ;; The client half of DdeClientTransaction(XTYP_REQUEST) without the park,
+  ;; so a test can drive both machines by hand. The parking itself is the same
+  ;; $win16_dde_park the connect test already covers.
+  (func (export "test_dde_xact_begin") (param $conv i32) (param $item i32) (result i32)
+    (local $pend i32) (local $wa i32) (local $len i32)
+    (if (i32.ne (i32.load (call $win16_dde_conv_slot
+          (i32.sub (local.get $conv) (i32.const 1)))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (local.set $pend (call $win16_dde_pending_slot))
+    (i32.store (local.get $pend) (i32.const 1))
+    (i32.store offset=4  (local.get $pend) (i32.const 0))
+    (i32.store offset=8  (local.get $pend) (local.get $conv))
+    (i32.store offset=12 (local.get $pend) (i32.const 0))
+    (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
+    (i32.store offset=20 (local.get $pend) (i32.const 0))
+    (i32.store offset=24 (local.get $pend) (global.get $DDE_CONNECT_TIMEOUT_MS))
+    (i32.store offset=28 (local.get $pend) (i32.const 0))
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    (local.set $len (call $win16_dde_put_hsz
+      (local.get $wa) (global.get $DDE_HDR) (local.get $item)))
+    (call $win16_dde_emit (i32.const 4) (local.get $conv)
+      (i32.load offset=12 (call $win16_dde_conv_slot
+        (i32.sub (local.get $conv) (i32.const 1))))
+      (i32.sub (local.get $len) (global.get $DDE_HDR))))
+  ;; 0 while still waiting, else the handle the far application answered with.
+  (func (export "test_dde_xact_done") (result i32)
+    (local $pend i32)
+    (local.set $pend (call $win16_dde_pending_slot))
+    (if (i32.eqz (i32.load offset=12 (local.get $pend))) (then (return (i32.const 0))))
+    (i32.load offset=20 (local.get $pend)))
+
+  ;; Start an advise loop from the client, and count the loops a server holds.
+  (func (export "test_dde_advstart") (param $conv i32) (param $item i32) (result i32)
+    (local $pend i32) (local $wa i32) (local $len i32)
+    (if (i32.ne (i32.load (call $win16_dde_conv_slot
+          (i32.sub (local.get $conv) (i32.const 1)))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (local.set $pend (call $win16_dde_pending_slot))
+    (i32.store (local.get $pend) (i32.const 1))
+    (i32.store offset=4  (local.get $pend) (i32.const 0))
+    (i32.store offset=8  (local.get $pend) (local.get $conv))
+    (i32.store offset=12 (local.get $pend) (i32.const 0))
+    (i32.store offset=16 (local.get $pend) (global.get $DDE_WAIT_XACT))
+    (i32.store offset=20 (local.get $pend) (i32.const 0))
+    (i32.store offset=24 (local.get $pend) (global.get $DDE_CONNECT_TIMEOUT_MS))
+    (i32.store offset=28 (local.get $pend) (i32.const 0))
+    (local.set $wa (call $win16_dde_frame_wa))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    (local.set $len (call $win16_dde_put_hsz
+      (local.get $wa) (global.get $DDE_HDR) (local.get $item)))
+    (call $win16_dde_emit (i32.const 8) (local.get $conv)
+      (i32.load offset=12 (call $win16_dde_conv_slot
+        (i32.sub (local.get $conv) (i32.const 1))))
+      (i32.sub (local.get $len) (global.get $DDE_HDR))))
+  (func (export "test_dde_advise_count") (result i32)
+    (local $i i32) (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (if (i32.load (call $win16_dde_advise_slot (local.get $i)))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+  ;; The application announcing that an item changed, as DdePostAdvise does.
+  (func (export "test_dde_post_advise") (param $inst i32) (param $topic i32)
+        (param $item i32)
+    (local $i i32) (local $slot i32) (local $conv i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (local.set $slot (call $win16_dde_advise_slot (local.get $i)))
+      (if (i32.load (local.get $slot))
+        (then
+          (local.set $conv (i32.load offset=4 (local.get $slot)))
+          (if (i32.or (i32.eqz (local.get $item))
+                      (i32.eq (i32.load offset=8 (local.get $slot)) (local.get $item)))
+            (then (drop (call $win16_dde_ask_push (global.get $XTYP_ADVREQ)
+                    (local.get $inst) (local.get $conv) (local.get $topic)
+                    (i32.load offset=8 (local.get $slot))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+  ;; What the client's own callback was last handed, so a push can be checked
+  ;; from the receiving end rather than only from the sender's.
+  (func (export "test_dde_last_advdata") (result i32)
+    (global.get $win16_dde_last_advdata))
+
   (func (export "test_dde_register") (param $inst i32) (param $hsz i32)
     (i32.store (call $win16_dde_service_slot
                  (i32.sub (local.get $inst) (i32.const 1))) (local.get $hsz)))
@@ -3129,6 +3306,66 @@
     (call $ole_obj_release (local.get $obj)))
   (func (export "test_ole_create_data_object") (param $formatetc i32) (param $medium i32) (result i32)
     (call $ole_create_data_object (local.get $formatetc) (local.get $medium)))
+
+  (func (export "test_ole_clipboard_wrap_win32") (result i32)
+    (call $ole_clipboard_wrap_win32))
+
+  (func (export "test_create_insert_object_dialog") (param $params i32) (result i32)
+    (local $dlg i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_insert_object_dialog (local.get $dlg) (i32.const 0) (local.get $params))
+    (local.get $dlg))
+
+  ;; What OK would report, and what it would have written into the struct.
+  (func (export "test_insert_object_commit") (param $hwnd i32) (result i32)
+    (call $insertobj_commit (local.get $hwnd)))
+
+  ;; How many insertable classes the registry walk found for this dialog.
+  (func (export "test_insert_object_type_count") (param $hwnd i32) (result i32)
+    (local $ctx i32)
+    (local.set $ctx (call $wnd_get_userdata (local.get $hwnd)))
+    (if (i32.eqz (local.get $ctx)) (then (return (i32.const -1))))
+    (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+
+  (func (export "test_clsid_from_string") (param $src i32) (param $dest i32) (result i32)
+    (call $clsid_from_string (local.get $src) (local.get $dest)))
+
+  ;; The static-object side of OleCreateFromData, minus the guest stack frame:
+  ;; pick a presentation format off a source, build the handler, load its cache.
+  ;; Returns the handler, or 0. The two accessors below report what a container
+  ;; would find on it — the render slot OleDraw uses, and the HIMETRIC extent.
+  (func (export "test_ole_static_from_data") (param $source i32) (result i32)
+    (local $picture i32) (local $obj i32)
+    (local.set $picture (call $ole_data_first_static_format (local.get $source)))
+    (if (i32.eqz (local.get $picture)) (then (return (i32.const 0))))
+    (local.set $obj (call $ole_create_static_handler (i32.const 0)))
+    (if (i32.eqz (local.get $obj))
+      (then (call $heap_free (local.get $picture)) (return (i32.const 0))))
+    (drop (call $ole_static_cache_from_data
+      (local.get $obj) (local.get $source) (local.get $picture)))
+    (call $heap_free (local.get $picture))
+    (local.get $obj))
+
+  ;; The HRESULT of the cache load alone, so a failure names itself instead of
+  ;; showing up as an object that silently draws nothing.
+  (func (export "test_ole_static_load_cache") (param $root i32) (param $source i32) (result i32)
+    (local $picture i32) (local $hr i32)
+    (local.set $picture (call $ole_data_first_static_format (local.get $source)))
+    (if (i32.eqz (local.get $picture)) (then (return (i32.const -1))))
+    (local.set $hr (call $ole_static_cache_from_data
+      (local.get $root) (local.get $source) (local.get $picture)))
+    (call $heap_free (local.get $picture))
+    (local.get $hr))
+
+  (func (export "test_ole_static_render_dib") (param $root i32) (result i32)
+    (if (i32.eqz (call $gl32 (i32.add (local.get $root) (i32.const 92))))
+      (then (return (i32.const 0))))
+    (call $gl32 (i32.add (local.get $root) (i32.const 64))))
+
+  (func (export "test_ole_static_extent") (param $root i32) (param $axis i32) (result i32)
+    (call $gl32 (i32.add (local.get $root)
+      (select (i32.const 44) (i32.const 40) (local.get $axis)))))
   (func (export "test_ole_data_query") (param $obj i32) (param $formatetc i32) (result i32)
     (call $ole_data_query_error (local.get $obj) (local.get $formatetc)))
   (func (export "test_ole_data_get") (param $obj i32) (param $formatetc i32) (param $medium i32) (result i32)
@@ -3564,33 +3801,29 @@
     (local $slot i32) (local $base i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
-    (local.set $base (i32.add (global.get $SCROLL_TABLE)
-      (i32.add (i32.mul (local.get $slot) (i32.const 24))
-        (i32.mul (i32.ne (local.get $bar) (i32.const 0)) (i32.const 12)))))
+    (local.set $base (call $scroll_bar_addr (local.get $slot)
+      (i32.ne (local.get $bar) (i32.const 0))))
     (i32.load (local.get $base)))
   (func $standard_scroll_min (export "standard_scroll_min") (param $hwnd i32) (param $bar i32) (result i32)
     (local $slot i32) (local $base i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
-    (local.set $base (i32.add (global.get $SCROLL_TABLE)
-      (i32.add (i32.mul (local.get $slot) (i32.const 24))
-        (i32.mul (i32.ne (local.get $bar) (i32.const 0)) (i32.const 12)))))
+    (local.set $base (call $scroll_bar_addr (local.get $slot)
+      (i32.ne (local.get $bar) (i32.const 0))))
     (i32.load offset=4 (local.get $base)))
   (func $standard_scroll_max (export "standard_scroll_max") (param $hwnd i32) (param $bar i32) (result i32)
     (local $slot i32) (local $base i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
-    (local.set $base (i32.add (global.get $SCROLL_TABLE)
-      (i32.add (i32.mul (local.get $slot) (i32.const 24))
-        (i32.mul (i32.ne (local.get $bar) (i32.const 0)) (i32.const 12)))))
+    (local.set $base (call $scroll_bar_addr (local.get $slot)
+      (i32.ne (local.get $bar) (i32.const 0))))
     (i32.load offset=8 (local.get $base)))
   (func $standard_scroll_page (export "standard_scroll_page") (param $hwnd i32) (param $bar i32) (result i32)
     (local $slot i32) (local $aux i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
-    (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
-      (i32.add (i32.mul (local.get $slot) (i32.const 16))
-        (i32.mul (i32.ne (local.get $bar) (i32.const 0)) (i32.const 8)))))
+    (local.set $aux (call $scroll_aux_bar_addr (local.get $slot)
+      (i32.ne (local.get $bar) (i32.const 0))))
     (i32.load (local.get $aux)))
 
   (func (export "dc_apply_client_clip") (param $hdc i32) (param $hwnd i32)
@@ -4243,6 +4476,40 @@
                                   (local.get $len))))))
     (i32.store8 (i32.add (call $g2w (local.get $dest_guest)) (local.get $len)) (i32.const 0))
     (local.get $len))
+
+  ;; GDI table occupancy. Both the DC-state and object tables are fixed 256-slot
+  ;; arrays, and running one dry does not announce itself: GetDC starts
+  ;; returning NULL and the app converts that into whatever its own error path
+  ;; is (MFC throws CResourceException, which lands as an unhandled C++ throw
+  ;; several thousand instructions away from the leak). These are pure reads of
+  ;; the same words the allocators scan, so a census costs nothing but a walk.
+  (func (export "gdi_dc_state_used") (result i32)
+    (local $i i32) (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_STATE_COUNT)))
+      (if (i32.load (i32.add (global.get $GDI_DC_STATE_TABLE)
+            (i32.mul (local.get $i) (global.get $GDI_DC_STATE_STRIDE))))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  (func (export "gdi_object_used") (result i32)
+    (local $i i32) (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
+      (if (i32.load (i32.add (global.get $GDI_OBJECT_TABLE)
+            (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
+        (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
+  ;; slot 0 = clip table, 1 = system clip table, 2 = DC state table.
+  (func (export "gdi_table_mark") (param $slot i32) (result i32)
+    (if (i32.ge_u (local.get $slot) (i32.const 4)) (then (return (i32.const -1))))
+    (i32.load (i32.add (global.get $GDI_TABLE_MARKS)
+      (i32.shl (local.get $slot) (i32.const 2)))))
 
   (func (export "static_get_image_ordinal") (param $hwnd i32) (result i32)
     (local $state i32)

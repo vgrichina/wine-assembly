@@ -47,7 +47,7 @@ console.log('$ node', args.map(a => a.replace(ROOT, '.')).join(' '));
 const r = spawnSync(process.execPath, args, {
   cwd: ROOT,
   encoding: 'utf8',
-  timeout: 75000,
+  timeout: 180000,
   maxBuffer: 64 * 1024 * 1024,
 });
 

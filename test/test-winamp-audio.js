@@ -36,13 +36,14 @@ if (!fs.existsSync(MP3))  { console.log('SKIP  demo.mp3 not found');    process.
 fs.mkdirSync(OUTDIR, { recursive: true });
 if (fs.existsSync(PCM)) fs.unlinkSync(PCM);
 
-// Worker mode pays a message round trip per blocking host import, and the
-// output thread makes ~20k of them before the buffer fills, so the same guest
-// progress takes longer in wall clock. The assertion here is about audio, not
-// about speed, so the budget scales with the execution model rather than quietly
-// failing it. Cooperative stays at 30s, which is where it was.
+// One budget for both execution models, and generous, because the assertion
+// here is about audio and not about speed: on a loaded box the emulator's own
+// CPU cost is what a tight budget measures. 120s is what e2bc3a3 settled on for
+// the whole suite for the same reason. (Worker mode used to need the headroom
+// far more — it paid a blocking round trip per host import, ~20k of them a run,
+// until the decode thread stopped making them.)
 const THREADS_MODE = process.argv.slice(2).includes('--threads');
-const TIME_BUDGET_MS = THREADS_MODE ? 120000 : 30000;
+const TIME_BUDGET_MS = 120000;
 // Winamp primes its output with silence and the decode thread fills in behind
 // it. Under real threads that lead is longer — measured: the first non-zero
 // sample can land past 16KB where cooperatively it lands at byte 4350 — so

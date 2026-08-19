@@ -7,7 +7,7 @@
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
-    (local $detected_class i32) (local $name_w i32) (local $wat_statusbar i32) (local $wat_tab i32)
+    (local $detected_class i32) (local $wat_statusbar i32) (local $wat_tab i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
     ;; treating the caller's stack frame as the source of truth.
@@ -195,7 +195,8 @@
               (then (call $wnd_table_set (local.get $hwnd) (global.get $wndproc_addr)))
               (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN)))))))
         (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
-        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1)))
+        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
+        (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1)))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
@@ -334,160 +335,15 @@
     (if (local.get $tmp)
       (then (call $wnd_table_set (local.get $hwnd) (local.get $tmp)))
       (else
-        ;; System control class detection — atoms or case-insensitive name match.
-        ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082, LISTBOX=0x0083,
-        ;;        SCROLLBAR=0x0084, COMBOBOX=0x0085.
-        ;; ctrl class IDs (see $control_wndproc_dispatch):
-        ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7,
-        ;;   TreeView=8, ListView=18, TrackBar=19, Tooltip=20, Toolbar=21.
+        ;; Which control this class denotes, decided in one place for every
+        ;; caller ($class_name_to_ctrl_id, 09c0-window-table.wat). It folds
+        ;; MAKEINTATOM(0x0080..0x0085) from a dialog template and the class
+        ;; name from source code onto one answer, exactly as Windows does, so
+        ;; the two spellings cannot drift apart -- and it is the same answer
+        ;; GetClassInfo and the class-hash path give.
         ;; Registered status bars deliberately remain unclassified: MFC must
         ;; subclass and lay them out before the separate paint marker is used.
-        (local.set $detected_class (i32.const 0))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0082)) (then (local.set $detected_class (i32.const 3))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0083)) (then (local.set $detected_class (i32.const 4))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0084)) (then (local.set $detected_class (i32.const 7))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0085)) (then (local.set $detected_class (i32.const 5))))
-        ;; String compare (case-insensitive via OR 0x20). Lowercase LE dwords:
-        ;;   "edit\0"   = 0x74696465, NUL at offset 4
-        ;;   "button\0" = 0x74747562, "on\0" at offset 4 (0x6e6f), NUL at offset 6
-        ;;   "static\0" = 0x74617473, "ic\0" at offset 4 (0x6369), NUL at offset 6
-        (if (i32.and (i32.eqz (local.get $detected_class))
-                     (i32.ge_u (local.get $arg1) (i32.const 0x10000)))
-          (then
-            (local.set $name_w (call $g2w (local.get $arg1)))
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74696465))
-                  (i32.eqz (i32.load8_u offset=4 (local.get $name_w))))
-              (then (local.set $detected_class (i32.const 2))))
-            ;; Keep RichEdit 1.0 and 2.0+ distinguishable while sharing the
-            ;; edit state/paint implementation. Class 24 is RICHEDIT;
-            ;; class 25 is RichEdit20A/W.
-            (local.set $v (call $richedit_class_version (local.get $arg1)))
-            (if (i32.eq (local.get $v) (i32.const 1))
-              (then (local.set $detected_class (i32.const 24))))
-            (if (i32.eq (local.get $v) (i32.const 2))
-              (then (local.set $detected_class (i32.const 25))))
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74747562))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                            (i32.const 0x6e6f))
-                    (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 1))))
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74617473))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                            (i32.const 0x6369))
-                    (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 3))))
-            ;; "SysTreeView*" → class 8 (TreeView)
-            ;; LE dwords: "syst"=0x74737973, "reev"=0x76656572
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x76656572)))
-              (then (local.set $detected_class (i32.const 8))))
-            ;; "SysListView*" → class 18 (ListView)
-            ;; LE dwords: "sysl"=0x6c737973, "istv"=0x76747369
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x76747369)))
-              (then (local.set $detected_class (i32.const 18))))
-            ;; "SysLink\0" → class 28 (SysLink)
-            ;; LE dwords: "sysl"=0x6c737973, "ink\0"=0x006b6e69. The trailing
-            ;; NUL keeps this from colliding with the SysListView32 test above.
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x00202020))
-                          (i32.const 0x006b6e69)))
-              (then (local.set $detected_class (i32.const 28))))
-            ;; "msctls_trackbar32" / "Slider1" -> class 19 (TrackBar).
-            ;; Prefix matching also accepts the Win9x A/W common-control aliases.
-            (if (i32.or
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x7463736d)) ;; "msct"
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x747f736c))) ;; "ls_t" after ASCII lowercase mask
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x64696c73)) ;; "slid"
-                    (i32.eq
-                      (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                      (i32.const 0x7265)))) ;; "er"
-              (then (local.set $detected_class (i32.const 19))))
-            ;; "tooltips_class32" → class 20 (Tooltip)
-            ;; LE dwords: "tool"=0x6c6f6f74, "tips"=0x73706974
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c6f6f74))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x73706974)))
-              (then (local.set $detected_class (i32.const 20))))
-            ;; "ToolbarWindow32" → class 21 (Toolbar)
-            ;; LE dwords: "tool"=0x6c6f6f74, "barw"=0x77726162, "indo"=0x6f646e69
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c6f6f74))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x77726162))
-                    (i32.eq (i32.or (i32.load offset=8 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x6f646e69))))
-              (then (local.set $detected_class (i32.const 21))))
-            ;; "listbox\0" — LE dwords: "list"=0x7473696c, "box\0" = u32 0x00786f62.
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x7473696c))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                            (i32.const 0x6f62))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=6 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
-                      (i32.eqz (i32.load8_u offset=7 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 4))))
-            ;; "combobox\0" — LE dwords: "comb"=0x626d6f63, "obox"=0x786f626f
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x626d6f63))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x786f626f))
-                    (i32.eqz (i32.load8_u offset=8 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 5))))
-            ;; "ComboLBox\0" — popup-listbox class used by some apps
-            ;; LE dwords: "Comb" lower → "comb"=0x626d6f63, "oLBo" lower → "olbo"=0x6f626c6f, "x\0"
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x626d6f63))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x6f626c6f))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
-                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 4))))
-            ;; "scrollbar\0" — LE dwords: "scro"=0x6f726373, "llba"=0x61626c6c, "r\0"
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6f726373))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x61626c6c))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x72))
-                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 7))))))
+        (local.set $detected_class (call $class_name_to_ctrl_id (local.get $arg1)))
         (if (local.get $detected_class)
           (then
             ;; System control class → WAT-native control. WM_CREATE is
@@ -533,6 +389,7 @@
           (then (call $tab_native_mark_slot
             (local.get $v) (i32.const 1))))))
     (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
+    (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
     ;; modal dialogs do not inherit the owner's client coordinates.
@@ -1382,12 +1239,46 @@
 
   ;; 72: UpdateWindow
   (func $handle_UpdateWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Queue the update and let the normal WAT-owned message pump deliver
-    ;; WM_PAINT. Some Win98 apps call UpdateWindow during fragile startup
-    ;; sequences; synchronous re-entry here can run dialog/control procs
-    ;; before their surrounding initialization has unwound.
+    (local $wp i32)
     (call $paint_flag_set_inv (local.get $arg0))
     (call $defwndproc_do_ncpaint (local.get $arg0))
+    ;; UpdateWindow does not return until WM_PAINT has been handled, and
+    ;; BeginPaint runs the window's pending WM_ERASEBKGND on the way in.
+    ;; Apps depend on that ordering: Taipei paints its splash screen through
+    ;; a GetDC handle on the line after UpdateWindow, so an erase and paint
+    ;; left queued for the pump land on top of the splash and wipe it.
+    ;;
+    ;; Restricted to a visible top-level window with a real x86 wndproc, and
+    ;; never while another synchronous send is already unwinding. That is the
+    ;; hazard this call used to defer around: a dialog or control procedure
+    ;; re-entered before its own initialization has finished.
+    (local.set $wp (call $wnd_table_get (local.get $arg0)))
+    (if (i32.and
+          (i32.and
+            (i32.eqz (global.get $sync_msg_depth))
+            (i32.eqz (global.get $code16)))
+          (i32.and
+            (i32.and
+              (i32.ne (local.get $wp) (i32.const 0))
+              (i32.lt_u (local.get $wp) (i32.const 0xFFFE0000)))
+            (i32.and
+              (call $wnd_is_effectively_visible (local.get $arg0))
+              (i32.eqz (call $ctrl_table_get_class (local.get $arg0))))))
+      (then
+        ;; Erase first — this is BeginPaint's half of the sequence, and the
+        ;; queued NC_FLAGS bit is where the pump would otherwise have found it.
+        (if (i32.and (call $nc_flags_test (local.get $arg0)) (i32.const 2))
+          (then
+            (call $nc_flags_clear (local.get $arg0) (i32.const 2))
+            (drop (call $wnd_send_message
+              (local.get $arg0) (i32.const 0x0014)
+              (i32.add (local.get $arg0) (i32.const 0x40000)) (i32.const 0)))))
+        (call $paint_flag_clear_hwnd (local.get $arg0))
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 0))))
+        (drop (call $paint_seed_child_paints (local.get $arg0)))
+        (drop (call $wnd_send_message
+          (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -2534,7 +2425,7 @@
         ;; bInvert=FALSE: restore to normal (not flashing)
         (i32.store8 (local.get $addr) (i32.const 0))))
     ;; Trigger repaint so the caption redraws with inverted active state
-    (call $host_invalidate (local.get $arg0))
+    (call $host_invalidate_frame (local.get $arg0))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))

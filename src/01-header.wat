@@ -21,6 +21,10 @@
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
   (import "host" "read_file" (func $host_read_file (param i32 i32 i32) (result i32)))
   (import "host" "get_ticks" (func $host_get_ticks (result i32)))
+  ;; Wall clock, as against the guest clock above, which a harness may
+  ;; synthesise — test/run.js derives get_ticks from the batch counter. Use
+  ;; this only to bound a wait on something outside this instance.
+  (import "host" "real_time_ms" (func $host_real_time_ms (result i32)))
   (import "host" "yield" (func $host_yield (param i32)))
   (import "host" "resolve_ordinal" (func $host_resolve_ordinal (param i32 i32) (result i32)))
   ;; resolve_ordinal(dll_name_ptr, ordinal) → api_id (-1 if unknown)
@@ -41,7 +45,13 @@
   (import "host" "set_window_text" (func $host_set_window_text (param i32 i32)))
   ;; set_window_text(hwnd, text_ptr)
   (import "host" "invalidate" (func $host_invalidate (param i32)))
-  ;; invalidate(hwnd)
+  ;; invalidate(hwnd) — client-area damage: schedule a composite, nothing more.
+  ;; The window's own non-client chrome is already dirtied by whoever changed it
+  ;; ($nc_flags_set on create/show/move/text/menu), so an InvalidateRect on an
+  ;; edit control must not drag a title bar + border redraw along with it.
+  (import "host" "invalidate_frame" (func $host_invalidate_frame (param i32)))
+  ;; invalidate_frame(hwnd) — the caller changed something the non-client area
+  ;; draws (caption flash state, a frame becoming visible). Posts WM_NCPAINT.
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
   (import "host" "sync_window_client" (func $host_sync_window_client (param i32 i32 i32 i32 i32)))
   ;; move_window(hwnd, x, y, w, h, flags)  flags: SWP_NOSIZE=1, SWP_NOMOVE=2
@@ -524,7 +534,7 @@
   ;; can no longer answer "who drew these pixels". JS formats and logs iff
   ;; --trace-ctrl is set.
   (import "host" "ctrl_paint_trace"
-    (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32)))
+    (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32 i32)))
 
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
@@ -538,7 +548,12 @@
   (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
   ;; reg_close_key(hKey) → 0
   (import "host" "reg_enum_key" (func $host_reg_enum_key (param i32 i32 i32 i32 i32) (result i32)))
-  ;; reg_enum_key(hKey, dwIndex, lpNameWA, cchName, isWide) → error code
+  ;; reg_enum_key(hKey, dwIndex, lpNameGA, cchName, isWide) → error code
+  ;; NOTE the address space: the name is written through the host's writeStr,
+  ;; which translates guest→WASM itself, so this one takes a GUEST pointer while
+  ;; reg_open_key/reg_create_key just above take WASM ones. Passing a WASM
+  ;; address here writes the name somewhere else entirely and the call still
+  ;; reports ERROR_SUCCESS with an empty buffer.
   (import "host" "reg_enum_value" (func $host_reg_enum_value (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; reg_enum_value(hKey, index, nameGA, nameLenGA, typeGA, dataGA, dataLenGA, isWide) → error code
   (import "host" "reg_query_info" (func $host_reg_query_info (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -840,6 +855,16 @@
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
   (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00")
+  ;; The machine's NetDDE share database. A DDE share maps a name that clients
+  ;; on other machines ask for onto the local application and topic that
+  ;; actually serves it, and on a real Win98 box it is written at install time
+  ;; and belongs to the MACHINE, not to the app — Hearts never creates its own
+  ;; (it imports no NDDEAPI entry and only LoadLibrarys it for NDdeGetWindow).
+  ;; So this is a table of what a Win98 install ships, not a special case: a
+  ;; remote Hearts asks for topic "Hearts$" on \\SOMEBODY\NDDE$, and that share
+  ;; is what says the local server is application "MSHearts" topic "Hearts".
+  ;; Records are share, application, topic; an empty share ends the table.
+  (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
@@ -941,6 +966,31 @@
   ;; their own validated mask triplet; DirectDraw explicitly requests RGB565.
   (data (i32.const 0x32A0) "\00\7c\00\00\e0\03\00\00\1f\00\00\00")
 
+  ;; The two registered clipboard formats that carry an embedded OLE object.
+  ;; OleCreateFromData looks for these on a source data object and declines with
+  ;; DV_E_FORMATETC when neither is there, which is what sends a container down
+  ;; its static-picture path instead.
+  (data (i32.const 0x32B0) "Embed Source\00")      ;; 0x32B0 Embed Source
+  (data (i32.const 0x32C0) "Embedded Object\00")   ;; 0x32C0 Embedded Object
+  ;; ProgIDs of the two server-less object classes OLE defines itself.
+  (data (i32.const 0x32D0) "StaticMetafile\00")    ;; 0x32D0 StaticMetafile
+  (data (i32.const 0x32E0) "StaticDib\00")         ;; 0x32E0 StaticDib
+
+  ;; Insert Object dialog. The object-type list is built by walking
+  ;; HKEY_CLASSES_ROOT\CLSID for subkeys that carry an Insertable key, which is
+  ;; how Windows decides what may be embedded.
+  (data (i32.const 0x32F0) "CLSID\00")             ;; 0x32F0 CLSID
+  (data (i32.const 0x3300) "Insertable\00")        ;; 0x3300 Insertable
+  (data (i32.const 0x3310) "Insert Object\00")     ;; 0x3310 Insert Object
+  (data (i32.const 0x3320) "Object Type:\00")      ;; 0x3320 Object Type:
+  (data (i32.const 0x3330) "Create New\00")        ;; 0x3330 Create New
+  (data (i32.const 0x3340) "Create from File\00")  ;; 0x3340 Create from File
+  (data (i32.const 0x3358) "OK\00")                ;; 0x3358 OK
+  (data (i32.const 0x3360) "Cancel\00")            ;; 0x3360 Cancel
+  ;; Shown when no server is registered, which is the state of a machine with
+  ;; no OLE applications installed -- Windows shows an empty list there too.
+  (data (i32.const 0x3370) "(no object types registered)\00") ;; 0x3370 (no object types registered)
+
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================
@@ -950,7 +1000,8 @@
   ;; 0x00003000  256B    UPDATE_FLAGS   (1 byte per window slot, non-empty update state)
   ;; 0x00003100  128B    CLASS_NAME_STRINGS (built-in control class names)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
-  ;; 0x00003900  ~1.75KB Free
+  ;; 0x00003900  1KB     WND_CLASS_CURSOR_TABLE (256 × 4 bytes — class hCursor per hwnd)
+  ;; 0x00003D00  ~768B   Free
   ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
@@ -958,7 +1009,8 @@
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
-  ;; 0x00006A00  1.5KB   Free (former API dispatch hash table)
+  ;; 0x00006A00  1KB     CLIPFORMAT_TABLE (128 entries × 8 bytes — RegisterClipboardFormat)
+  ;; 0x00006E00  512B    Free (former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -1042,6 +1094,7 @@
   ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
   ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide allocators; +0 class atom)
+  ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1129,6 +1182,14 @@
   (global $CLASS_NAME_STRINGS_SIZE i32 (i32.const 0x00000080))
   (global $WND_BG_BRUSH_TABLE i32 (i32.const 0x00003500))
   (global $WND_BG_BRUSH_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; WNDCLASS.hCursor, resolved per window at creation exactly like the class
+  ;; background brush above. $defwndproc_do_setcursor applies it for HTCLIENT,
+  ;; which is what makes a tool palette read as buttons (arrow) while the
+  ;; drawing area next to it keeps the app's own tool cursor. Zero means the
+  ;; class registered a NULL cursor — Win32's way of saying "the window sets
+  ;; its own", so the default handler must leave it alone.
+  (global $WND_CLASS_CURSOR_TABLE i32 (i32.const 0x00003900))
+  (global $WND_CLASS_CURSOR_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; UPDATE_RECT / UPDATE_FLAGS: WAT-owned Win32 update-region state. We store
   ;; a bounding RECT per hwnd slot; JS is only asked to schedule canvas work.
   (global $UPDATE_RECT    i32 (i32.const 0x00002000))
@@ -1267,6 +1328,16 @@
   (global $GDI_DC_SYSTEM_CLIP_TABLE i32 (i32.const 0x07F0C000))
   (global $GDI_DC_SYSTEM_CLIP_TABLE_SIZE i32 (i32.const 0x00000800))
   (global $GDI_DC_SYSTEM_CLIP_COUNT i32 (i32.const 256))
+  ;; How far each DC-keyed table has ever been filled, so a lookup that misses
+  ;; can stop instead of walking all 256 slots. These must be memory, not
+  ;; globals: worker threads are separate WASM instances sharing this memory,
+  ;; so a slot allocated on one thread has to bound the scan on every other.
+  ;;   +0 GDI_DC_CLIP_TABLE  +4 GDI_DC_SYSTEM_CLIP_TABLE  +8 GDI_DC_STATE_TABLE
+  ;; Moved off 0x07F0C800 on the real-threads merge: that address is HEAP_SHARED,
+  ;; the cross-instance low-heap cursor, which main's branch did not have. The two
+  ;; would have overlapped silently — test-wat-memory-map.js is what says so.
+  (global $GDI_TABLE_MARKS i32 (i32.const 0x07F0CE60))
+  (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
@@ -1685,6 +1756,17 @@
   (global $ip    (mut i32) (i32.const 0))
   (global $steps (mut i32) (i32.const 0))
   (global $handler_hist_enabled (mut i32) (i32.const 0))
+  ;; Nonzero when ANY of the run loop's debug facilities is armed: watchpoint,
+  ;; breakpoint, --count hit counters, --trace-esp, --trace-eip-range, or the
+  ;; handler histogram. All six are off in every normal run, so the loop tests
+  ;; this one global instead of six. Maintained by $dbg_recompute, which every
+  ;; setter that arms one of them calls.
+  (global $dbg_any (mut i32) (i32.const 0))
+  ;; Block entries recognized as the MSVC small-block-heap scan loop (see
+  ;; $sbh_note_candidate). Per instance on purpose: each thread decodes its own
+  ;; blocks, so a worker just re-recognizes the same address for itself.
+  (global $sbh_eip_a (mut i32) (i32.const 0))
+  (global $sbh_eip_b (mut i32) (i32.const 0))
   (global $handler_hist_last (mut i32) (i32.const -1))
   (global $branch_hist_kind (mut i32) (i32.const 0))
   (global $branch_hist_operand (mut i32) (i32.const 0))
@@ -1693,6 +1775,10 @@
   ;; $th_stack_packet.
   (global $stack_packet_enabled (mut i32) (i32.const 0))
   (global $stack_packet_addr (mut i32) (i32.const 0x0049D9D1))
+  ;; Which packet handler the address above compiles to (1 or 2). Set from JS
+  ;; together with the address, so $decode_block carries no binary's function
+  ;; addresses — see set_stack_packet_enabled in 13-exports.wat.
+  (global $stack_packet_variant (mut i32) (i32.const 1))
   (global $stack_packet_count_enabled (mut i32) (i32.const 1))
   (global $stack_packet_entries (mut i32) (i32.const 0))
   (global $stack_packet_0049d9d1_entries (mut i32) (i32.const 0))
@@ -1864,6 +1950,17 @@
   ;; string atoms. Integer atoms (HIWORD(lpString) == 0) never occupy a slot.
   (global $ATOM_LOCAL_TABLE  i32 (i32.const 0x00006200))
   (global $ATOM_GLOBAL_TABLE i32 (i32.const 0x00006600))
+  ;; CLIPFORMAT_TABLE: registered clipboard format names, same shape as the atom
+  ;; tables but with the id stored rather than derived, so the two namespaces can
+  ;; never be confused for each other. RegisterClipboardFormat is an *interning*
+  ;; call: the whole point is that two callers naming the same string get the
+  ;; same number back, which is how riched20 and its container agree on what
+  ;; "Rich Text Format" or "Embed Source" means. We used to hand out a fresh id
+  ;; per call, so no two components could ever agree on a registered format.
+  ;;   +0 name — guest heap pointer to the NUL-terminated ANSI name (0 = free)
+  ;;   +4 id   — the CLIPFORMAT value handed out for it
+  (global $CLIPFORMAT_TABLE  i32 (i32.const 0x00006A00))
+  (global $CLIPFORMAT_SLOTS  i32 (i32.const 128))
   (global $ATOM_TABLE_SLOTS  i32 (i32.const 128))     ;; per table; 128 × 8 = 1KB each
   (global $ATOM_FIRST        i32 (i32.const 0xC000))  ;; first string-atom value
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
@@ -2340,6 +2437,13 @@
   ;; table for GetProcAddress to read, so its one entry point is reached
   ;; through a fixed thunk-segment slot, the same way the pumps above are.
   (global $WIN16_NDDE_GETWINDOW i32 (i32.const 0xFF60))
+  ;; DdeConnect waits for a peer that is not in this process, so like a modal
+  ;; message box it cannot answer inside the call. It parks EIP here and the
+  ;; run loop re-enters this slot each pass until the room answers or the
+  ;; attempt runs out. The far return it has to splice back onto is kept
+  ;; beside it, exactly as the modal pump keeps $win16_modal_ret.
+  (global $WIN16_DDE_PUMP i32 (i32.const 0xFF70))
+  (global $win16_dde_ret (mut i32) (i32.const 0))
   ;; The window that answers for network DDE in this emulator — see
   ;; $win16_ndde_window.
   (global $win16_ndde_hwnd (mut i32) (i32.const 0))
@@ -2393,6 +2497,7 @@
   (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
   (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
   (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
+  (global $WIN16_DDE_SHARES i32 (i32.const 0x11EE0))
 
   ;; Console screen buffer state (for Telnet etc.)
   ;; Character data at 0x3000 (80×25×2 = 4000 bytes, UTF-16 LE)

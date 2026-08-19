@@ -105,7 +105,7 @@ const extra = [
   { name: 'GlobalLock', nargs: 1 },
   { name: 'GlobalUnlock', nargs: 1 },
   { name: 'GlobalReAlloc', nargs: 3 },
-  { name: 'GlobalSize', nargs: 2 },
+  { name: 'GlobalSize', nargs: 1 },
   { name: 'GlobalCompact', nargs: 1 },
   { name: 'RegOpenKeyA', nargs: 3 },
   { name: 'RegOpenKeyExA', nargs: 5 },

@@ -3,23 +3,41 @@
 # them sequentially, printing a summary at the end.
 #
 # Usage:
-#   test/run-all.sh            # everything
+#   test/run-all.sh            # everything, CPU-count tests at a time
+#   test/run-all.sh quick -j4  # cap the parallelism (JOBS=4 works too)
 #   test/run-all.sh unit       # only unit (in-process WASM, fast)
 #   test/run-all.sh e2e        # only e2e (spawns test/run.js per case)
 #   test/run-all.sh smoke      # only smoke matrix (all-exes, dialogs)
 #   test/run-all.sh quick      # unit only — the pre-commit tier
 #
-# Tiers are computed from filename patterns below — no test-file edits needed
-# to add or reclassify. Logs land in test/output/run-all/<tier>/<name>.log so
+# Tiers are the explicit arrays below — a new test/test-*.js has to be added to
+# one of them by hand, and tools/check-test-manifest.sh (run before any tier)
+# fails if one is in none. Logs land in test/output/run-all/<tier>/<name>.log so
 # a failure can be inspected without re-running.
 
 set -u
 cd "$(dirname "$0")/.."
 
-TIER="${1:-all}"
+# Args in any order: the tier name, plus -jN / --jobs=N / --heap=MB.
+TIER=all
+for a in "$@"; do
+  case "$a" in
+    -j*)        JOBS="${a#-j}" ;;
+    --jobs=*)   JOBS="${a#--jobs=}" ;;
+    --heap=*)   TEST_HEAP_MB="${a#--heap=}" ;;
+    -h|--help)
+      echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB]"
+      echo "  -jN / --jobs=N   tests to run at once (default: CPU count; env JOBS also works)"
+      echo "  --heap=MB        per-child JS heap cap (default 2048; env TEST_HEAP_MB)"
+      exit 0 ;;
+    -*)         echo "unknown option: $a" >&2; exit 2 ;;
+    *)          TIER="$a" ;;
+  esac
+done
 
 UNIT=(
   test/test-x86-ops.js
+  test/test-shift-equivalence.js
   test/test-ne-loader.js
   test/test-win16-exec.js
   test/test-fs-prefix.js
@@ -31,7 +49,11 @@ UNIT=(
   test/test-atom-table.js
   test/test-menu-insert.js
   test/test-sscanf.js
+  test/test-format-message-inserts.js
+  test/test-ole-clipboard-wrap.js
+  test/test-ole-insert-object-dlg.js
   test/test-wat-dib-rle.js
+  test/test-icon-extract.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
   test/test-midi-mci.js
@@ -119,10 +141,69 @@ UNIT=(
   test/test-render-font-dlg.js
   test/test-render-open-dlg.js
   test/test-canvas-keydown-preventdefault.js
+  test/test-renderer-input-cursor.js
   test/test-renderer-mouse-drag-mask.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
+  # Recovered 2026-08-18: written, never listed here, so never run. All green
+  # on the sweep that found them; see QUARANTINE for the ones that were not.
+  test/test-aoe-span-trace-handler.js
+  test/test-aoe-stack-packet-handler.js
+  test/test-clipboard-rtf-api.js
+  test/test-coinitialize-ex.js
+  test/test-ddraw-surface-dirty-rect.js
+  test/test-defer-window-pos-visibility.js
+  test/test-delphi-seh-mutated-chain.js
+  test/test-desktop-surface-color.js
+  test/test-dialog-idok-handled.js
+  test/test-directdraw-cooperative-window.js
+  test/test-directdraw-create-ex.js
+  test/test-directinput-device.js
+  test/test-directinput8-create.js
+  test/test-directx-ordinals.js
+  test/test-disabled-dialog-controls.js
+  test/test-duplicate-handle.js
+  test/test-ext-text-out-wide.js
+  test/test-findreplace-matchcase-flags.js
+  test/test-gdi-exttextout-clipping.js
+  test/test-gdi-transparent-blt.js
+  test/test-isequalguid.js
+  test/test-kernel32-last-error.js
+  test/test-movewindow-child-size.js
+  test/test-nested-child-paint.js
+  test/test-ole-bind-context.js
+  test/test-ole-cfb.js
+  test/test-ole-data-object.js
+  test/test-ole-guest-callback.js
+  test/test-ole-moniker.js
+  test/test-ole-running-object-table.js
+  test/test-ole-static-handler.js
+  test/test-ole-storage.js
+  test/test-parent-child-paint-order.js
+  test/test-pe-zero-original-first-thunk.js
+  test/test-peek-message-filter.js
+  test/test-raster-canvas.js
+  test/test-renderer-dialog-modal-input.js
+  test/test-renderer-input-resize.js
+  test/test-renderer-palette-route.js
+  test/test-renderer-transparent-desktop.js
+  test/test-richedit-version-compat.js
+  test/test-rtf-stylesheet.js
+  test/test-solitaire-web.js
+  test/test-string-ops-sparse-boundary.js
+  test/test-surface.js
+  test/test-system-metrics.js
+  test/test-toolbar-insert.js
+  test/test-treeview-scroll.js
+  test/test-v86-reference-paint-workflows.js
+  test/test-vfs-legacy-hfile.js
+  test/test-virtual-map-cross-instance.js
+  test/test-wat-drive-types.js
+  test/test-wat-gdi-region-lazy-mirror.js
+  test/test-wat-gdi-screen-readback.js
+  test/test-wat-winsock-hostname.js
+  test/test-window-control-id.js
 )
 
 E2E=(
@@ -132,6 +213,8 @@ E2E=(
   test/test-wordpad-web.js
   test/test-wordpad-thread-startup.js
   test/test-cli-worker-threads.js
+  test/test-wordpad-copy-clipboard.js
+  test/test-wordpad-paste-refcount.js
   test/test-fontview.js
   test/test-mspaint-web.js
   test/test-sound-recorder-audio.js
@@ -141,6 +224,7 @@ E2E=(
   test/test-notepad-menu.js
   test/test-notepad-menu-items.js
   test/test-notepad-typing-latency.js
+  test/test-notepad-typing-scroll.js
   test/test-find-typing.js
   test/test-notepad-find-next-positive.js
   test/test-notepad-find-not-found-msgbox.js
@@ -169,8 +253,13 @@ E2E=(
   test/test-win16-menus.js
   test/test-win16-hearts-startup.js
   test/test-win16-solitaire-play.js
+  test/test-win16-minesweeper-smiley.js
   test/test-win16-hearts-menus.js
+  test/test-win16-hearts-vlan.js
+  test/test-web-hearts-lan.js
+  test/test-web-hearts-rtc.js
   test/test-win16-dde-room.js
+  test/test-win16-dde-connect-callback.js
   test/test-sysmon-perfstats.js
   test/test-local-candidates-playability.js
   test/test-dxball-candidate.js
@@ -191,6 +280,7 @@ E2E=(
   test/test-mspaint-clipboard.js
   test/test-mspaint-large-scroll.js
   test/test-mspaint-scrollbar-thumb.js
+  test/test-cursor-class.js
   test/test-mspaint-thumbnail.js
   test/test-mplay32-dual-mode.js
   test/test-statusbar-surface.js
@@ -221,6 +311,67 @@ E2E=(
   test/test-wat-windowposchanged.js
   test/test-tetrinet-connect.js
   test/test-vlan-browser.js
+  # Recovered 2026-08-18 (see the UNIT note). Several of these only pass now
+  # because their spawn budgets were raised off the 5-15s they were written
+  # with -- that is under the emulator's own CPU cost on a loaded box.
+  test/test-calc-button-pressed.js
+  test/test-cli-candidate-corpus.js
+  test/test-cwordzap-gameplay.js
+  test/test-entertainment-menu-client-layout.js
+  test/test-generated-fixedsys-fon.js
+  test/test-generated-wine-fonts.js
+  test/test-minesweeper-custom-tab.js
+  test/test-mspaint-attributes.js
+  test/test-mspaint-dock-toggle.js
+  test/test-mspaint-edit-colors-hook.js
+  test/test-mspaint-flip-radio-groups.js
+  test/test-mspaint-line-width.js
+  test/test-mspaint-magnifier-menu.js
+  test/test-mspaint-opaque-selection.js
+  test/test-mspaint-selection-move.js
+  test/test-mspaint-stretch-icons.js
+  test/test-notepad-file-menu.js
+  test/test-notepad-find-radio-click.js
+  test/test-notepad-find-tab.js
+  test/test-notepad-open-file-title.js
+  test/test-notepad-type-and-find.js
+  test/test-pinball-playable.js
+  test/test-pinball-select-table.js
+  test/test-qbob-candidate.js
+  test/test-solitaire-maximize-restore.js
+  test/test-winamp-audio.js
+  test/test-wordpad-advanced-rtf.js
+  test/test-wordpad-dialog-lifecycle.js
+  test/test-wordpad-format-accelerators.js
+  test/test-wordpad-format-roundtrip.js
+  test/test-wordpad-international.js
+  test/test-wordpad-keyboard-rich-clipboard-format.js
+  test/test-wordpad-layout-stress.js
+  test/test-wordpad-menu-edit-clipboard.js
+  test/test-wordpad-mixed-charformat.js
+  test/test-wordpad-mixed-format-roundtrip.js
+  test/test-wordpad-ole-clipboard.js
+  test/test-wordpad-ole-keyboard-undo.js
+  test/test-wordpad-ole-space-copy.js
+  test/test-wordpad-paraformat-fields.js
+  test/test-wordpad-paraformat-roundtrip.js
+  test/test-wordpad-plain-text-filter.js
+  test/test-wordpad-printing.js
+  test/test-wordpad-reopen-saved.js
+  test/test-wordpad-rich-clipboard-format.js
+  test/test-wordpad-richedit-clipping.js
+  test/test-wordpad-richedit-color.js
+  test/test-wordpad-richedit-scroll.js
+  test/test-wordpad-richedit.js
+  test/test-wordpad-save-as.js
+  test/test-wordpad-selection-highlight.js
+  test/test-wordpad-toolbar-color-menu.js
+  test/test-wordpad-toolbar-format-buttons.js
+  # Green only once their budgets stopped being shorter than the work: the two
+  # vlan ones spawn a second emulator and wait for it over the wire.
+  test/test-find-mouse-click.js
+  test/test-liquid-war-candidate.js
+  test/test-vlan-tetrinet.js
 )
 
 SMOKE=(
@@ -228,9 +379,87 @@ SMOKE=(
   test/test-notepad-dialogs.js
 )
 
+# Known-red. These are NOT run by any tier; they are listed so that
+# tools/check-test-manifest.sh can tell "deliberately parked" from "nobody ever
+# added it", which is how 145 files ended up invisible in the first place.
+# Every entry carries what it actually reports -- fix the cause, then move the
+# line up into UNIT or E2E. Reasons measured 2026-08-18.
+#
+# Harness drift: the test calls a host/renderer entry point that no longer
+# exists. Cheap to fix; the product is probably fine.
+QUARANTINE=(
+  test/test-gdi-scroll-window-rect.js   # host.gdi_scroll_window is not a function
+  test/test-listview.js                 # host.gdi_create_bitmap is not a function
+  test/test-menu-popup-text.js          # renderer._menuFormatText is not a function
+  test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
+  test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
+  test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
+  # Module fails to instantiate. Not a stack bug in the WAT -- 09b2's generated
+  # dispatch table calls $handle_StartDocW, $handle_CopyMetaFileA and
+  # $handle_GetCharWidth32W, none of which exist. compile-wat only WARNS on an
+  # unknown func and drops the call, so the args stay on the stack and any
+  # module that lands one of those in a value position fails validation. The
+  # shipped wasm has the same three holes; they are silent no-ops there rather
+  # than crash_unimplemented, which is why nothing else notices.
+  test/test-gdi-public-seven.js         # fn #6391: expected 1 elements on the stack for fallthru, found 5
+  test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
+  # Combobox drop-down paints no text at all. Three tests agree, so this is one bug.
+  test/test-combobox.js                 # 57/59: CBS_DROPDOWN paints its selected list text (changedBytes=0)
+  test/test-render-combobox.js          # 4/5: canvas has 5 distinct colors after repaint, wanted >=8
+  test/test-combobox-pinball.js         # 16/18: field text not repainted after pick
+  # Edit/RichEdit gaps.
+  test/test-edit-wrap-resize.js         # 4/7: narrow edit never wraps (lines=1, scroll max=0)
+  test/test-notepad-editing.js          # 7/10: type-over-selection, thumb drag, wheel scroll
+  test/test-wordpad-caret.js            # 11/13: caret off phase does not erase the stroke
+  test/test-wordpad-replace.js          # 13/14: empty Replace All does not delete every match
+  test/test-wordpad-undo-find.js        # 8/11: typed text does not reach the native RichEdit
+  test/test-wordpad-font-dialog.js      # 15/16: 24pt does not increase text height
+  test/test-wordpad-paragraph-align.js  # 16/17: center alignment does not shift text
+  test/test-wordpad-ui-advanced.js      # 8/9: ruler drag adds no paragraph tab stop
+  test/test-wordpad-toolbar.js          # no WAT-native ToolbarWindow32 at all
+  # OLE presentation data -- the known static-handler/IDataObject gap.
+  test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
+  test/test-wordpad-ole-delete-roundtrip.js
+  # Paint / app-specific.
+  test/test-mspaint-image-edit.js       # 7/9: Invert Colors misses part of the image
+  test/test-mspaint-statusbar.js        # status bar loses its MFC docked geometry
+  test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
+  test/test-calc-view-switch.js         # 14/15: fixed dialogs oversized vertically
+  test/test-pinball-select-players.js   # 5/7: 2 Players submenu never painted
+  test/test-region-window-client-rect.js # RuntimeError: unreachable (hits crash_unimplemented)
+  test/test-dx-vtable-worker-sync.js    # worker does not restore the first generated COM vtable
+  test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
+  test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog
+  test/test-winamp-installers.js        # license page: no word-wrapped DrawText, no PNG
+  test/test-winamp-visualization-web.js # wVis plug-in window should be visible
+)
+
+# A test file missing from every array above does not fail, it just never runs.
+# Refuse to report a green suite while that is true of anything.
+if ! bash tools/check-test-manifest.sh; then
+  echo "run-all: refusing to run an incomplete suite" >&2
+  exit 2
+fi
+
 LOG_ROOT=test/output/run-all
 mkdir -p "$LOG_ROOT"
 
+# Each test is its own node process with its own 128MB WASM memory, so the tier
+# is embarrassingly parallel and was running one at a time on an 8-core box.
+#   -jN / --jobs=N or JOBS=N     how many at once (default: CPU count)
+#   --heap=MB or TEST_HEAP_MB    per-child JS heap cap (default 2048). The
+#                 guest's 128MB WASM memory lives outside this cap, so it is
+#                 about keeping N children from collectively swapping, not
+#                 about how much memory the emulated app can have.
+if [ -z "${JOBS:-}" ]; then
+  if command -v sysctl >/dev/null 2>&1; then JOBS=$(sysctl -n hw.ncpu 2>/dev/null)
+  elif command -v nproc >/dev/null 2>&1; then JOBS=$(nproc)
+  fi
+  JOBS=${JOBS:-4}
+fi
+TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
+
+# bash 3.2 (what macOS ships) has no `wait -n`, so slots are polled.
 run_tier() {
   local tier_name="$1"; shift
   local files=("$@")
@@ -238,22 +467,61 @@ run_tier() {
   mkdir -p "$log_dir"
   local passed=0 failed=0
   local fail_list=()
-  echo "=== $tier_name (${#files[@]} files) ==="
+  echo "=== $tier_name (${#files[@]} files, ${JOBS} at a time) ==="
   local start_tier=$SECONDS
-  for f in "${files[@]}"; do
-    local name
-    name=$(basename "$f" .js)
-    local log="$log_dir/$name.log"
-    local start=$SECONDS
-    if node "$f" >"$log" 2>&1; then
-      printf "PASS  %-40s  %3ds\n" "$name" "$((SECONDS - start))"
-      passed=$((passed + 1))
-    else
-      printf "FAIL  %-40s  %3ds  %s\n" "$name" "$((SECONDS - start))" "$log"
-      failed=$((failed + 1))
-      fail_list+=("$name")
-    fi
+
+  local slot_pid=() slot_name=() slot_log=() slot_start=()
+  local i=0
+  while [ $i -lt "$JOBS" ]; do slot_pid[$i]=""; i=$((i + 1)); done
+
+  # Never leave children behind if the runner is interrupted.
+  trap 'for p in "${slot_pid[@]}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done; exit 130' INT TERM
+
+  local next=0 running=0
+  local total=${#files[@]}
+  while [ $next -lt "$total" ] || [ $running -gt 0 ]; do
+    # Fill free slots.
+    i=0
+    while [ $i -lt "$JOBS" ] && [ $next -lt "$total" ]; do
+      if [ -z "${slot_pid[$i]}" ]; then
+        local f="${files[$next]}"
+        local name; name=$(basename "$f" .js)
+        slot_name[$i]="$name"
+        slot_log[$i]="$log_dir/$name.log"
+        slot_start[$i]=$SECONDS
+        NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$TEST_HEAP_MB" \
+          node "$f" >"${slot_log[$i]}" 2>&1 &
+        slot_pid[$i]=$!
+        running=$((running + 1))
+        next=$((next + 1))
+      fi
+      i=$((i + 1))
+    done
+    # Reap whatever finished.
+    local reaped=0
+    i=0
+    while [ $i -lt "$JOBS" ]; do
+      local pid="${slot_pid[$i]}"
+      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        local status=0
+        wait "$pid" || status=$?
+        if [ $status -eq 0 ]; then
+          printf "PASS  %-40s  %3ds\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))"
+          passed=$((passed + 1))
+        else
+          printf "FAIL  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))" "${slot_log[$i]}"
+          failed=$((failed + 1))
+          fail_list+=("${slot_name[$i]}")
+        fi
+        slot_pid[$i]=""
+        running=$((running - 1))
+        reaped=1
+      fi
+      i=$((i + 1))
+    done
+    [ $reaped -eq 0 ] && [ $running -gt 0 ] && sleep 0.2
   done
+  trap - INT TERM
   echo "--- $tier_name: $passed passed, $failed failed in $((SECONDS - start_tier))s"
   if [ ${#fail_list[@]} -gt 0 ]; then
     TOTAL_FAILS+=("${fail_list[@]}")

@@ -1234,7 +1234,7 @@
     (if (i32.eq (local.get $ordinal) (i32.const 19))
       (then (call $win16_ReleaseCapture) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 22))
-      (then (call $win16_hwnd_query (i32.const 0)) (return (i32.const 1))))
+      (then (call $win16_SetFocus) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 23))
       (then (call $win16_GetFocus) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 31))
@@ -2097,9 +2097,26 @@
   ;; keeps going, and the yield flag left raised so the host still gets its
   ;; turn to deliver input between batches.
   (func $win16_GetMessage
-    (local $dst i32) (local $tmp i32) (local $waited i32)
+    (local $dst i32) (local $tmp i32) (local $waited i32) (local $ask i32)
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
+    ;; A DDEML server owes its application an XTYP_CONNECT before it agrees to
+    ;; a conversation, and the message pump is where that can be asked: the
+    ;; task is between things here and the stack is its own, which is not true
+    ;; inside the wire drain. The callback is entered with a far return onto
+    ;; $WIN16_DDE_CB, which acts on the answer and then finishes this very call
+    ;; with an idle message so the task's loop never notices the detour.
+    (local.set $ask (call $win16_dde_ask_next))
+    (if (i32.ge_s (local.get $ask) (i32.const 0))
+      (then
+        (global.set $win16_dde_cb_msg (local.get $dst))
+        (global.set $win16_dde_cb_ret
+          (i32.or (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2)))
+                           (i32.const 16))
+                  (call $gl16 (global.get $esp))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 14)))
+        (call $win16_dde_ask_enter (local.get $ask))
+        (return)))
     (local.set $tmp (global.get $GUEST_STACK))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_GetMessageA (local.get $tmp) (i32.const 0) (i32.const 0) (i32.const 0)
@@ -2137,9 +2154,25 @@
         (call $gl32 (i32.add (local.get $tmp) (i32.const 12)))))
     (call $gs32 (i32.add (local.get $dst) (i32.const 10))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0))
+    (call $win16_msg_pt_narrow (local.get $dst) (local.get $tmp))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
+
+  ;; MSG.pt, which is not decoration. It is the cursor in *screen* space at the
+  ;; moment the message was posted, and a tracking loop is what reads it:
+  ;; Minesweeper's smiley captures the mouse, peeks for the button-up itself,
+  ;; and asks PtInRect whether msg.pt is still inside the face — a rectangle it
+  ;; put into screen space with ClientToScreen for exactly this comparison.
+  ;; Written as a zero, that point is the top-left corner of the screen, which
+  ;; is inside nothing: the button-up was read, the capture released, and the
+  ;; game never reset. The 32-bit side already works the position out from the
+  ;; message's own lParam and the window's origin, so this only has to stop
+  ;; discarding it. Two words, x then y, where the 32-bit MSG has two longs.
+  (func $win16_msg_pt_narrow (param $dst i32) (param $src i32)
+    (call $gs16 (i32.add (local.get $dst) (i32.const 14))
+      (call $gl32 (i32.add (local.get $src) (i32.const 20))))
+    (call $gs16 (i32.add (local.get $dst) (i32.const 16))
+      (call $gl32 (i32.add (local.get $src) (i32.const 24)))))
 
   ;; Narrowing a MSG is not always a truncation: when wParam carries a handle it
   ;; has to go through the handle map, because a 32-bit handle's low word means
@@ -3084,15 +3117,75 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; A 16-bit accelerator table is not the 32-bit one with narrower fields, it
+  ;; is a different record: BYTE fFlags, WORD key, WORD id -- five bytes, with
+  ;; 0x80 in the flags of the last one. The 32-bit walker reads WORD fFlags,
+  ;; WORD key, WORD id, WORD padding on an eight-byte stride, so handed a
+  ;; 16-bit table it matches nothing at all and every accelerator in the app is
+  ;; dead. Hearts is the whole game: F2 is "begin with current players", and
+  ;; the dealer's only way to start a hand.
+  ;;
+  ;; Widening keeps the format knowledge on the 16-bit side, beside the MSG
+  ;; widening TranslateAccelerator already does, rather than teaching the
+  ;; 32-bit walker about a layout no PE ever has.
+  (global $win16_accel_buf (mut i32) (i32.const 0))
+
+  (func $win16_accel_widen (param $src i32) (param $size i32)
+    (local $n i32) (local $off i32)
+    (local $fv i32) (local $dst i32) (local $d i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $src))
+                (i32.lt_u (local.get $size) (i32.const 5)))
+      (then (return)))
+    ;; Count by walking to the 0x80 entry rather than dividing: the resource is
+    ;; padded out to its alignment, and those trailing zero bytes would read as
+    ;; extra entries.
+    (block $counted (loop $count
+      (br_if $counted
+        (i32.gt_u (i32.add (local.get $off) (i32.const 5)) (local.get $size)))
+      (local.set $fv (i32.load8_u (i32.add (local.get $src) (local.get $off))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (local.set $off (i32.add (local.get $off) (i32.const 5)))
+      (br_if $counted (i32.and (local.get $fv) (i32.const 0x80)))
+      (br $count)))
+    (if (i32.eqz (local.get $n)) (then (return)))
+    (if (global.get $win16_accel_buf)
+      (then (call $heap_free (global.get $win16_accel_buf))))
+    (global.set $win16_accel_buf
+      (call $heap_alloc (i32.mul (local.get $n) (i32.const 8))))
+    (if (i32.eqz (global.get $win16_accel_buf)) (then (return)))
+    (local.set $dst (call $g2w (global.get $win16_accel_buf)))
+    (block $done (loop $widen
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $off (i32.mul (local.get $i) (i32.const 5)))
+      (local.set $d (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 8))))
+      (i32.store16 (local.get $d)
+        (i32.load8_u (i32.add (local.get $src) (local.get $off))))
+      (i32.store16 offset=2 (local.get $d)
+        (i32.load16_u (i32.add (local.get $src)
+          (i32.add (local.get $off) (i32.const 1)))))
+      (i32.store16 offset=4 (local.get $d)
+        (i32.load16_u (i32.add (local.get $src)
+          (i32.add (local.get $off) (i32.const 3)))))
+      (i32.store16 offset=6 (local.get $d) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $widen)))
+    (global.set $haccel_data (local.get $dst))
+    (global.set $haccel_count (local.get $n)))
+
   ;; USER.177 LoadAccelerators(hInstance, lpTableName).
+  ;;
+  ;; Not a call into the 32-bit handler: that one walks a PE resource tree, and
+  ;; there is none here. It also reports success unconditionally, so a table it
+  ;; had not found was indistinguishable from one it had -- which is how this
+  ;; looked like a matching bug for as long as it did.
   (func $win16_LoadAccelerators
-    (local $id i32)
-    (local.set $id (call $win16_res_arg (i32.const 0)))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_LoadAcceleratorsA (i32.const 0) (local.get $id)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (local $data i32)
+    (local.set $data (call $win16_res_lookup (i32.const 9) (i32.const 0)))
+    (global.set $eax (i32.const 0))
+    (if (local.get $data)
+      (then
+        (call $win16_accel_widen (local.get $data) (global.get $win16_res_len))
+        (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
     (call $win16_api_return (i32.const 6)))
 
   ;; USER.178 TranslateAccelerator(hWnd, hAccTable, lpMsg).
@@ -3175,6 +3268,33 @@
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
+
+  ;; USER.22 SetFocus(hWnd) -> the window that had it.
+  ;;
+  ;; Deliberately not the 32-bit handler. That one delivers WM_SETFOCUS by
+  ;; redirecting EIP into the window procedure, and a handler that moves EIP
+  ;; can never return across this bridge -- $win16_call32_end traps on exactly
+  ;; that. Hearts renames its "Pass Left" button to "OK" and calls SetFocus on
+  ;; it the instant you pass three cards, so the game died on the first move of
+  ;; every hand.
+  ;;
+  ;; Posting both notifications is what the task's own pump does with them a
+  ;; moment later anyway, and it keeps the focus bookkeeping identical.
+  (func $win16_SetFocus
+    (local $hwnd i32) (local $prev i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $prev (global.get $focus_hwnd))
+    (if (i32.ne (local.get $prev) (local.get $hwnd))
+      (then
+        (if (local.get $prev)
+          (then (drop (call $post_queue_push (local.get $prev)
+                  (i32.const 0x0008) (local.get $hwnd) (i32.const 0)))))
+        (global.set $focus_hwnd (local.get $hwnd))
+        (if (local.get $hwnd)
+          (then (drop (call $post_queue_push (local.get $hwnd)
+                  (i32.const 0x0007) (local.get $prev) (i32.const 0)))))))
+    (global.set $eax (call $win16_h16 (local.get $prev)))
+    (call $win16_api_return (i32.const 2)))
 
   ;; The window calls that take one handle and answer with a word, and the two
   ;; that take none. Grouping them keeps sixteen near-identical eight-line
@@ -3363,7 +3483,7 @@
           (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 10))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
-        (call $gs32 (i32.add (local.get $dst) (i32.const 14)) (i32.const 0))))
+        (call $win16_msg_pt_narrow (local.get $dst) (local.get $tmp))))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 12)))
 
@@ -3809,7 +3929,10 @@
     (call $handle_PatBlt (local.get $hdc) (local.get $x) (local.get $y)
       (local.get $w) (local.get $h) (i32.const 0))
     (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
+    ;; Report what the fill actually did. Answering TRUE regardless hid a
+    ;; PatBlt that drew nothing at all behind a call that looked like it had
+    ;; worked, which is the hardest kind of paint bug to see from a trace.
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 14)))
 
   ;; GDI.20 MoveTo / GDI.19 LineTo / GDI.83 GetPixel(hDC, X, Y). MoveTo and
@@ -3983,7 +4106,118 @@
                               (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; GDI.100 LineDDA(nXStart, nYStart, nXEnd, nYEnd, lpLineFunc, lpData).
+  ;;
+  ;; Windows walks the line and hands each point to the application; none of the
+  ;; drawing is GDI's. Solitaire uses it for the card that flies to a foundation
+  ;; on a double-click, so this is what a double-click reached — and, being
+  ;; unimplemented, what it died on.
+  ;;
+  ;; The callback is guest code, so this cannot be a loop: every point has to
+  ;; give the interpreter the task back and be picked up again on the far
+  ;; return. The walk's state lives in globals between points and the Pascal
+  ;; frame goes up front, the way the modal pump parks — the far return saved
+  ;; here is what the last point resumes.
+  (global $WIN16_DDA_CB i32 (i32.const 0xFF90))
+  (global $win16_dda_ret  (mut i32) (i32.const 0))
+  (global $win16_dda_proc (mut i32) (i32.const 0))
+  (global $win16_dda_data (mut i32) (i32.const 0))
+  (global $win16_dda_x    (mut i32) (i32.const 0))
+  (global $win16_dda_y    (mut i32) (i32.const 0))
+  (global $win16_dda_dx   (mut i32) (i32.const 0))
+  (global $win16_dda_dy   (mut i32) (i32.const 0))
+  (global $win16_dda_sx   (mut i32) (i32.const 0))
+  (global $win16_dda_sy   (mut i32) (i32.const 0))
+  (global $win16_dda_err  (mut i32) (i32.const 0))
+  (global $win16_dda_left (mut i32) (i32.const 0))
+
+  (func $win16_LineDDA
+    (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
+    (local $dx i32) (local $dy i32)
+    (local.set $x0 (call $win16_coord (call $win16_arg16 (i32.const 7))))
+    (local.set $y0 (call $win16_coord (call $win16_arg16 (i32.const 6))))
+    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 5))))
+    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 4))))
+    (global.set $win16_dda_proc (call $win16_arg32 (i32.const 2)))
+    (global.set $win16_dda_data (call $win16_arg32 (i32.const 0)))
+    (global.set $win16_dda_ret (i32.or
+      (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2))) (i32.const 16))
+      (call $gl16 (global.get $esp))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; far return + 16 argbytes
+    (local.set $dx (i32.sub (local.get $x1) (local.get $x0)))
+    (local.set $dy (i32.sub (local.get $y1) (local.get $y0)))
+    (global.set $win16_dda_sx
+      (select (i32.const 1) (i32.const -1) (i32.ge_s (local.get $dx) (i32.const 0))))
+    (global.set $win16_dda_sy
+      (select (i32.const 1) (i32.const -1) (i32.ge_s (local.get $dy) (i32.const 0))))
+    (local.set $dx (select (local.get $dx) (i32.sub (i32.const 0) (local.get $dx))
+                           (i32.ge_s (local.get $dx) (i32.const 0))))
+    (local.set $dy (select (local.get $dy) (i32.sub (i32.const 0) (local.get $dy))
+                           (i32.ge_s (local.get $dy) (i32.const 0))))
+    (global.set $win16_dda_dx (local.get $dx))
+    (global.set $win16_dda_dy (local.get $dy))
+    (global.set $win16_dda_err (i32.sub (local.get $dx) (local.get $dy)))
+    (global.set $win16_dda_x (local.get $x0))
+    (global.set $win16_dda_y (local.get $y0))
+    ;; The end point is not one of the points, so a line from a point to itself
+    ;; calls back not at all.
+    (global.set $win16_dda_left
+      (select (local.get $dx) (local.get $dy) (i32.gt_s (local.get $dx) (local.get $dy))))
+    (if (i32.eqz (global.get $win16_dda_left))
+      (then (call $win16_dda_resume) (return)))
+    (call $win16_dda_enter))
+
+  ;; One point, handed over with the callback's own Pascal frame: x, y, the
+  ;; application's DWORD, and a far return onto $WIN16_DDA_CB. The callback
+  ;; removes its arguments itself, so the stack comes back as it went in.
+  (func $win16_dda_enter
+    (call $win16_push16 (global.get $win16_dda_x))
+    (call $win16_push16 (global.get $win16_dda_y))
+    (call $win16_push16 (i32.shr_u (global.get $win16_dda_data) (i32.const 16)))
+    (call $win16_push16 (global.get $win16_dda_data))
+    (call $win16_push16 (global.get $WIN16_THUNK_SEL))
+    (call $win16_push16 (global.get $WIN16_DDA_CB))
+    (call $win16_set_sreg (i32.const 1) (i32.shr_u (global.get $win16_dda_proc) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_dda_proc) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
+  ;; The callback has returned. Step the line on by one point — Bresenham, so
+  ;; the points are the ones a drawn line would cover — and either hand over the
+  ;; next or give the caller its call back.
+  (func $win16_dda_step
+    (local $e2 i32)
+    (local.set $e2 (i32.shl (global.get $win16_dda_err) (i32.const 1)))
+    (if (i32.gt_s (local.get $e2) (i32.sub (i32.const 0) (global.get $win16_dda_dy)))
+      (then
+        (global.set $win16_dda_err
+          (i32.sub (global.get $win16_dda_err) (global.get $win16_dda_dy)))
+        (global.set $win16_dda_x
+          (i32.add (global.get $win16_dda_x) (global.get $win16_dda_sx)))))
+    (if (i32.lt_s (local.get $e2) (global.get $win16_dda_dx))
+      (then
+        (global.set $win16_dda_err
+          (i32.add (global.get $win16_dda_err) (global.get $win16_dda_dx)))
+        (global.set $win16_dda_y
+          (i32.add (global.get $win16_dda_y) (global.get $win16_dda_sy)))))
+    (global.set $win16_dda_left (i32.sub (global.get $win16_dda_left) (i32.const 1)))
+    (if (i32.gt_s (global.get $win16_dda_left) (i32.const 0))
+      (then (call $win16_dda_enter) (return)))
+    (call $win16_dda_resume))
+
+  ;; LineDDA returns nothing, so AX carries nothing worth setting beyond a
+  ;; defined zero. The frame went when the walk started; this is the splice back
+  ;; to the instruction after the call.
+  (func $win16_dda_resume
+    (global.set $eax (i32.const 0))
+    (call $win16_set_sreg (i32.const 1) (i32.shr_u (global.get $win16_dda_ret) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_dda_ret) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
   (func $win16_gdi (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 100))
+      (then (call $win16_LineDDA) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 79))
       (then (call $win16_GetDCOrg) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 103))
@@ -4256,6 +4490,7 @@
 
   (func $win16_dispatch (export "win16_dispatch") (param $thunk_off i32) (param $ret_lin i32)
     (local $module i32) (local $ordinal i32) (local $target i32)
+    (global.set $win16_api_calls (i32.add (global.get $win16_api_calls) (i32.const 1)))
     (local.set $module  (call $win16_thunk_module  (local.get $thunk_off)))
     (local.set $ordinal (call $win16_thunk_ordinal (local.get $thunk_off)))
     (global.set $win16_last_module (local.get $module))
@@ -4288,12 +4523,46 @@
     ;; what it was standing in front of.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DLG_CWP))
       (then (call $win16_dlg_cwp_resume) (return)))
+    ;; A LineDDA callback has returned; the next point of the line is owed to it.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDA_CB))
+      (then (call $win16_dda_step) (return)))
     ;; An NDDEAPI entry point the task took the address of and called.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_NDDE_GETWINDOW))
       (then (call $win16_NDdeGetWindow) (return)))
     ;; The modal pump. EIP is parked here, not called here, so there is no
     ;; frame to unwind — the API's own frame went when it parked, and the far
     ;; return it saved is what the completed box goes back to.
+    ;; The application has answered an XTYP_CONNECT. Act on it, then finish the
+    ;; GetMessage this was taken out of: fill its MSG with the idle message and
+    ;; return TRUE, so the task's loop dispatches a harmless WM_NULL and calls
+    ;; the pump again. It never learns that its callback ran mid-call.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDE_CB))
+      (then
+        (call $win16_dde_ask_finish
+          (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $zero_memory (call $g2w (global.get $win16_dde_cb_msg)) (i32.const 16))
+        (global.set $eax (i32.const 1))
+        (call $win16_set_sreg (i32.const 1)
+          (i32.shr_u (global.get $win16_dde_cb_ret) (i32.const 16)))
+        (global.set $eip (i32.add (global.get $seg_base_cs)
+          (i32.and (global.get $win16_dde_cb_ret) (i32.const 0xFFFF))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
+    ;; A DdeConnect waiting on the room. Each pass drains the wire; when the
+    ;; room answers, or has been given enough chances not to, the result is
+    ;; already in AX/DX and the far call it was taken out of is spliced back.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDE_PUMP))
+      (then
+        (if (call $win16_dde_pump_step) (then (return)))
+        (global.set $yield_reason (i32.const 0))
+        (call $win16_set_sreg (i32.const 1)
+          (i32.shr_u (global.get $win16_dde_ret) (i32.const 16)))
+        (global.set $eip (i32.add (global.get $seg_base_cs)
+          (i32.and (global.get $win16_dde_ret) (i32.const 0xFFFF))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_MODAL_PUMP))
       (then
         (if (call $modal_pump_step
@@ -4446,10 +4715,28 @@
     (if (i32.lt_u (global.get $eip) (global.get $seg_base_cs))
       (then (return (i32.const 0))))
     (local.set $off (i32.sub (global.get $eip) (global.get $seg_base_cs)))
-    (i32.or (i32.eq (local.get $off) (global.get $WIN16_MODAL_PUMP))
-            (i32.eq (local.get $off) (global.get $WIN16_DLG_PUMP))))
+    (i32.or (i32.eq (local.get $off) (global.get $WIN16_DDE_PUMP))
+      (i32.or (i32.eq (local.get $off) (global.get $WIN16_MODAL_PUMP))
+              (i32.eq (local.get $off) (global.get $WIN16_DLG_PUMP)))))
+
+  ;; How many Win16 API calls this task has made. It is a liveness signal, not
+  ;; a statistic: a harness watching a 16-bit task has only EIP and the
+  ;; registers to judge progress by, and both can read identical at two batch
+  ;; boundaries of a perfectly healthy message loop. test/run.js's own API
+  ;; counter never moves for these tasks — it counts the 32-bit dispatch path,
+  ;; which is why every Win16 run reports "0 API calls" — so an idle
+  ;; Minesweeper was indistinguishable from a wedged one and got reported STUCK.
+  (global $win16_api_calls (mut i32) (i32.const 0))
+  (func (export "win16_api_count") (result i32) (global.get $win16_api_calls))
 
   (func (export "set_win16_trace") (param $on i32) (global.set $win16_trace (local.get $on)))
+  ;; The DDE offers and answers on their own, without the API call/return and
+  ;; message-pump lines around them. Those are hundreds of megabytes on a run
+  ;; of any length, and they are also SLOW ENOUGH TO CHANGE THE ANSWER: two
+  ;; emulators in one room race each other, and a race that only appears when
+  ;; the trace is off cannot be read with the trace on.
+  (func (export "set_win16_dde_trace") (param $on i32)
+    (global.set $win16_dde_trace (local.get $on)))
   (func (export "win16_last_module") (result i32) (global.get $win16_last_module))
   (func (export "win16_last_ordinal") (result i32) (global.get $win16_last_ordinal))
   (func (export "win16_last_is_name") (result i32) (global.get $win16_last_is_name))

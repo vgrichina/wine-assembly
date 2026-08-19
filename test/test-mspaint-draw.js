@@ -38,12 +38,19 @@ for (const p of [pngBefore, pngAfter]) { try { fs.unlinkSync(p); } catch (_) {} 
 // icon sits at screen (39, 146) — Tools palette button 0x10010, menu=636
 // (the pencil). We click it first so the subsequent drag lays down actual
 // pencil pixels instead of a marching-ants selection marquee.
-const toolClickBatch = 20;
+// Everything here is scheduled relative to "MFC has finished starting up",
+// which is a batch count, not an event. It moved when InvalidateRect(bErase)
+// started queueing the WM_ERASEBKGND the app asked for -- an erase per paint
+// cycle costs a pump iteration and a background fill, and MFC's startup does
+// several. The margin below is deliberate: the numbers were tight enough that
+// three extra batches turned every check in this file red at once.
+const READY = 22;
+const toolClickBatch = READY + 2;
 const PENCIL_X = 39, PENCIL_Y = 146;
 const drag = [];
 const STEPS = 12;
 const x0 = 140, y0 = 170, x1 = 240, y1 = 260;
-const dragBatch = 23;
+const dragBatch = READY + 5;
 drag.push(`${dragBatch}:mousedown:${x0}:${y0}`);
 for (let i = 1; i < STEPS; i++) {
   const t = i / STEPS;
@@ -54,15 +61,15 @@ for (let i = 1; i < STEPS; i++) {
 drag.push(`${dragBatch + STEPS}:mouseup:${x1}:${y1}`);
 
 const inputSpec = [
-  `18:png:${pngBefore}`,
+  `${READY}:png:${pngBefore}`,
   `${toolClickBatch}:mousedown:${PENCIL_X}:${PENCIL_Y}`,
   `${toolClickBatch + 1}:mouseup:${PENCIL_X}:${PENCIL_Y}`,
   ...drag,
-  `42:png:${pngAfter}`,
-  '43:stop',
+  `${dragBatch + STEPS + 7}:png:${pngAfter}`,
+  `${dragBatch + STEPS + 8}:stop`,
 ].join(',');
 
-const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=47 --batch-size=50000 --no-close --quiet-api --quiet-blocks`;
+const cmd = `node "${RUN}" --exe="${EXE}" --input=${inputSpec} --max-batches=${dragBatch + STEPS + 12} --batch-size=50000 --no-close --quiet-api --quiet-blocks`;
 console.log('$', cmd);
 
 let out = '';

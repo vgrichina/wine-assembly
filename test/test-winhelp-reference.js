@@ -80,7 +80,7 @@ for (const stem of ['notepad', 'freecell']) {
   ], {
     cwd: root,
     encoding: 'utf8',
-    timeout: 45000,
+    timeout: 120000,
     env: { ...process.env, NODE_OPTIONS: '' },
   });
   if (!fs.existsSync(gid) || fs.statSync(gid).size < 1000) {
@@ -103,7 +103,7 @@ const run = spawnSync(process.execPath, [
 ], {
   cwd: root,
   encoding: 'utf8',
-  timeout: 45000,
+  timeout: 120000,
   env: { ...process.env, NODE_OPTIONS: '' },
 });
 
@@ -197,7 +197,7 @@ const contentsRun = spawnSync(process.execPath, [
 ], {
   cwd: root,
   encoding: 'utf8',
-  timeout: 45000,
+  timeout: 120000,
   env: { ...process.env, NODE_OPTIONS: '' },
 });
 const contentsOutput = (contentsRun.stdout || '') + (contentsRun.stderr || '');

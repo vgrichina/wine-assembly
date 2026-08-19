@@ -370,17 +370,76 @@ sets the global instead.
   a Win98 install ships with. It belongs in the emulator as a table, not as an
   `if (this is Hearts)`.
 
-  **Then the rest, in the order Hearts needs it:** `XTYP_CONNECT` is not
-  offered to the server's own callback, so a connect is accepted on the service
-  name alone and an app that would refuse cannot; `DdeClientTransaction` still
-  fails, so no `XTYP_REQUEST`/`XTYP_POKE` crosses (Hearts' first item is
-  `Join`); and `DdePostAdvise` has no advise loops to feed, which is how it
-  actually distributes play. The callback is the next piece and the shape is
-  known — the far pointer is already stored by `DdeInitialize`, and calling
-  into 16-bit guest code asynchronously is what `$win16_dlg_send` already does
-  for a dialog. Note it cannot be called from the drain: `$vsock_pump` runs
-  inside arbitrary API handlers, and redirecting EIP from there would return
-  into the wrong frame. Deliver from the task's own message pump instead.
+  ~~**`XTYP_CONNECT` is not offered to the server's own callback.**~~ DONE.
+  A DDEML server is not a table of names, it is an application with a callback,
+  and that is where it says yes or no. The drain now QUEUES the question and
+  the task's own message pump asks it — the callback cannot be run from the
+  drain, because `$vsock_pump` is called from inside arbitrary API handlers and
+  redirecting EIP there returns into the wrong frame. The callback is entered
+  with a far return onto `$WIN16_DDE_CB`, which acts on the answer and then
+  finishes the interrupted `GetMessage` with an idle message, so the task's
+  loop never notices the detour. A conversation stays in state 2, offered, until
+  the application accepts; a refusal is silence, which is what `DdeConnect`
+  against a server returning FALSE sees.
+  `test/test-win16-dde-connect-callback.js` pins both answers: two instances on
+  a loopback segment, both running a real 16-bit message loop, with the
+  server's callback a hand-written stub whose answer the test chooses.
+
+  ~~**`DdeClientTransaction` fails, so nothing crosses.**~~ DONE for
+  `XTYP_REQUEST`, which is the one Hearts opens with (`Join`). It follows the
+  same three steps: the drain queues the question against the conversation it
+  arrived on, the pump asks the application, and the handle the callback
+  returns is emitted as a DATA frame. The client parks on the shared
+  `$win16_dde_park` and the drain turns the reply into a data handle, so
+  `DdeGetData` reads it like any other. A transaction nobody answers in time
+  fails with `DMLERR_DATAACKTIMEOUT` and **leaves the conversation up** —
+  tearing a session down over one slow item would be wrong.
+
+  A conversation now remembers its topic, because `XTYP_REQUEST` hands the
+  callback the topic and the item and only the conversation knows the former.
+
+  ~~**`DdePostAdvise` has no advise loops to feed.**~~ DONE, and this is the
+  one Hearts actually runs on: its dealer posts an advise after each move
+  rather than being polled. A client's `XTYP_ADVSTART` is offered to the
+  server's application like any other transaction; if it agrees, the loop is
+  recorded against that conversation. `DdePostAdvise` then turns into
+  `XTYP_ADVREQ` back to the same application — "what does it say now?" — and
+  the answer is pushed as `XTYP_ADVDATA` to a client that is not waiting on
+  anything, so it goes straight to *that* application's callback. Asking twice
+  for one item does not open two loops, and a loop dies with its conversation:
+  one left pointing at a closed conversation would push into a handle that has
+  since been reused. `XTYP_POKE` and `XTYP_EXECUTE` cross too.
+
+  `XTYP_WILDCONNECT` works too: a connect naming no service asks who is out
+  there, every instance with a service to offer is a candidate, and the
+  application is asked what it will serve rather than whether it will serve
+  this. An instance serving nothing still answers nobody. `DDE_FBUSY` is
+  honoured as its own answer — "not now" is neither yes nor no, so the caller
+  keeps waiting and a wait that only ever saw busy ends in `DMLERR_BUSY`
+  rather than a timeout. `DdeClientTransaction` uses the caller's `dwTimeout`,
+  clamped so a hopeful two milliseconds still gives the far machine a chance.
+
+  **`XTYP_MONITOR` is refused, on purpose.** A monitor is a DDE spy that
+  expects to be told about every transaction in the system, and none of that
+  is delivered. An instance that registered happily and then saw nothing would
+  be the worst outcome — a debugging tool silently reporting that nothing is
+  happening — so `DdeInitialize` with `APPCLASS_MONITOR` fails with
+  `DMLERR_DLL_USAGE`, which is what Windows uses for a class the DLL will not
+  serve. Implement the delivery before accepting the registration.
+
+  **Also fixed while checking the codes:** `DMLERR_LOW_MEMORY` is `0x4007`, not
+  `0x4001` — `0x4001` is `DMLERR_BUSY`. Five sites were returning "busy" where
+  they meant "out of memory", which an app retrying on busy would loop on.
+
+  **On testing any of this:** use the in-process harness. Two instances on a
+  `LoopbackSegment`, each with a real NE loaded so selectors and a message loop
+  exist, is deterministic and runs in seconds. The two-process
+  `test-win16-hearts-join.js` is the end-to-end shape but it is timing-bound
+  and this machine is regularly at load 80–200, where the dealer needs three
+  minutes merely to register; it is not in `run-all.sh` for that reason.
+  Minesweeper is the host of choice for the in-process tests: Hearts needs
+  CARDS.DLL staged before it runs at all, and nothing in these tests is about
+  the app.
 - ~~**Named resources returned 0.**~~ FIXED. A NAMEINFO id with bit 15 clear
   is not an id: it is an offset from the start of the resource table to a
   Pascal string, and the walker matched integer ids only, so every `Load*`

@@ -267,16 +267,29 @@ class WineAssembly {
             if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
           }
         }
+        // Last resort: a synchronous fetch on the main thread, which blocks the
+        // UI for a network round trip and is invisible to the perf HUD's phase
+        // marks. It stays synchronous because the caller is a WAT host import
+        // that must return bytes now; making it yield-and-resume the way DLL
+        // loading does is the real fix and a larger change.
+        //
+        // What is fixed here is the repeat: an app that probes the same missing
+        // file in a loop used to pay a full round trip every time. Both hits
+        // and misses are remembered, so each name costs at most one stall.
+        if (!self._syncFetchCache) self._syncFetchCache = new Map();
+        const exeDir = self._exeUrl ? self._exeUrl.replace(/[^\/\\]*$/, '') : '';
+        const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
+        if (self._syncFetchCache.has(url)) return self._syncFetchCache.get(url);
+        let result = null;
         try {
           const xhr = new XMLHttpRequest();
-          const exeDir = self._exeUrl ? self._exeUrl.replace(/[^\/\\]*$/, '') : '';
-          const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
           xhr.open('GET', url, false);
           xhr.responseType = 'arraybuffer';
           xhr.send();
-          if (xhr.status === 200) return new Uint8Array(xhr.response);
+          if (xhr.status === 200) result = new Uint8Array(xhr.response);
         } catch (_) {}
-        return null;
+        self._syncFetchCache.set(url, result);
+        return result;
       },
       onTopLevelWindowDestroyed: (hwnd, destroyed) => {
         if (!self._multiApp || !self.renderer || !self._hwndBase) return;
@@ -446,8 +459,7 @@ class WineAssembly {
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
       const title = self.readString(titlePtr);
-      if (!ctx._windowText) ctx._windowText = new Map();
-      ctx._windowText.set(hwnd, title);
+      ctx.recordWindowText(hwnd, title);
       if (self.verbose) console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
       self.logToUI(`[CreateWindow] "${title}"`);
       const ownerInstance = ctx.instance || self.instance;
@@ -470,8 +482,7 @@ class WineAssembly {
 
     h.set_window_text = (hwnd, textPtr) => {
       const text = self.readString(textPtr);
-      if (!ctx._windowText) ctx._windowText = new Map();
-      ctx._windowText.set(hwnd, text);
+      ctx.recordWindowText(hwnd, text);
       console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
       if (self.renderer) self.renderer.setWindowText(hwnd, text);
     };
@@ -589,13 +600,19 @@ class WineAssembly {
     return { host: h, gdi: base.gdi };
   }
 
+  // Every non-mousemove input event, every CreateWindow/SetWindowText and the
+  // per-slice heartbeat come through here. `el.textContent += msg` re-serializes
+  // the entire accumulated log and forces a layout on each call, so a long
+  // session got steadily slower at exactly the moments the user was interacting.
+  // Appending a text node is O(1), and the ring keeps the DOM bounded.
   logToUI(msg) {
     console.log(msg);
     const el = document.getElementById('log');
-    if (el) {
-      el.textContent += msg + '\n';
-      el.scrollTop = el.scrollHeight;
-    }
+    if (!el) return;
+    el.appendChild(document.createTextNode(msg + '\n'));
+    const MAX_LOG_NODES = 2000;
+    while (el.childNodes.length > MAX_LOG_NODES) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
   }
 
   _getVersionInfo() {
@@ -1678,26 +1695,37 @@ class WineAssembly {
     return hotUntil > this._audioSchedulerNow();
   }
 
+  // Called once per step from the worker-budget calculation, so it used to
+  // build a Set and an array and call a WASM export for every instance, on
+  // every step, for the whole session. The instance list only changes when a
+  // window is created or destroyed, so cache it and rebuild on a window-count
+  // change; the exported call itself is cheap and stays exact.
   _hasOpenMenu() {
     const renderer = this.renderer;
     if (!renderer) return false;
-    const seen = new Set();
-    const wasms = [];
-    const add = (wasm) => {
-      if (wasm && !seen.has(wasm)) {
-        seen.add(wasm);
-        wasms.push(wasm);
-      }
-    };
-    add(this.instance);
-    add(renderer.wasm);
-    add(renderer.mainWasm);
-    for (const win of Object.values(renderer.windows || {})) add(win && win.wasm);
-    for (const wasm of wasms) {
-      const ex = wasm && wasm.exports;
-      if (!ex || !ex.menu_open_hwnd) continue;
+    const windows = renderer.windows || {};
+    const count = Object.keys(windows).length;
+    if (this._menuWasms === undefined || this._menuWasmsWindowCount !== count ||
+        this._menuWasmsInstance !== this.instance) {
+      const seen = new Set();
+      const wasms = [];
+      const add = (wasm) => {
+        if (wasm && !seen.has(wasm) && wasm.exports && wasm.exports.menu_open_hwnd) {
+          seen.add(wasm);
+          wasms.push(wasm);
+        }
+      };
+      add(this.instance);
+      add(renderer.wasm);
+      add(renderer.mainWasm);
+      for (const win of Object.values(windows)) add(win && win.wasm);
+      this._menuWasms = wasms;
+      this._menuWasmsWindowCount = count;
+      this._menuWasmsInstance = this.instance;
+    }
+    for (const wasm of this._menuWasms) {
       try {
-        if ((ex.menu_open_hwnd() >>> 0) !== 0) return true;
+        if ((wasm.exports.menu_open_hwnd() >>> 0) !== 0) return true;
       } catch (_) {}
     }
     return false;
@@ -1850,9 +1878,42 @@ class WineAssembly {
       } finally {
         if (perf) perf.stepEnd();
       }
-      if (self.running) setTimeout(step, 0);
+      // Same unclamped scheduling the single-threaded loop uses: a nested
+      // setTimeout chain is capped at 4ms once it is five deep, which would
+      // hold worker mode to ~250 slices a second no matter how fast a slice is.
+      if (self.running) self._scheduleStep(step);
     };
     step();
+  }
+
+  // Schedule the next guest slice.
+  //
+  // This used to be setTimeout(step, 0). Browsers clamp a *nested* timer to
+  // >=4ms once the chain is five deep, and this chain never ends — so the
+  // drive loop was capped near 250 slices/s no matter how fast a slice ran.
+  // With a p50 step of ~2.3ms that left the main thread idle more than half
+  // of every cycle. A MessageChannel port posts an unclamped macrotask: it
+  // still yields to input and rAF between slices, it just doesn't wait 4ms to
+  // do it. setTimeout stays as the fallback for anything without MessageChannel.
+  _scheduleStep(step) {
+    if (this._stepPort === undefined) {
+      this._stepPort = null;
+      if (typeof MessageChannel === 'function') {
+        const chan = new MessageChannel();
+        chan.port1.onmessage = () => {
+          const fn = this._pendingStep;
+          this._pendingStep = null;
+          if (fn) fn();
+        };
+        this._stepPort = chan.port2;
+      }
+    }
+    if (this._stepPort) {
+      this._pendingStep = step;
+      this._stepPort.postMessage(0);
+    } else {
+      setTimeout(step, 0);
+    }
   }
 
   run(stepsPerSlice = 100000) {
@@ -1953,7 +2014,7 @@ class WineAssembly {
         const yieldReason = self.instance.exports.get_yield_reason();
         if (yieldReason === 3) {
           await self.handleComDllLoad();
-          if (self.running) { setTimeout(step, 0); }
+          if (self.running) { self._scheduleStep(step); }
           return;
         }
         if (yieldReason === 8) {
@@ -1964,12 +2025,12 @@ class WineAssembly {
           // would starve the delivery this call is waiting for.
           self.instance.exports.clear_yield();
           if (self.instance.exports.vlan_pump) self.instance.exports.vlan_pump();
-          if (self.running) { setTimeout(step, 0); }
+          if (self.running) { self._scheduleStep(step); }
           return;
         }
         if (yieldReason === 5) {
           await self.handleLoadLibrary();
-          if (self.running) { setTimeout(step, 0); }
+          if (self.running) { self._scheduleStep(step); }
           return;
         }
         if (yieldReason === 9) {
@@ -2077,7 +2138,7 @@ class WineAssembly {
         if (perf) perf.stepEnd();
       }
       if (self.running) {
-        setTimeout(step, 0);
+        self._scheduleStep(step);
       }
     };
     step();

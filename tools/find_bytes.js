@@ -13,6 +13,7 @@
 // behavior is "all matches" since opcode searches need every hit).
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const path = require('path');
 
 const argv = process.argv.slice(2);
@@ -56,23 +57,13 @@ for (const a of argv.slice(1)) {
 
 if (!needle) { console.error('need a pattern'); process.exit(1); }
 
-const data = fs.readFileSync(pePath);
-const peOff = data.readUInt32LE(0x3c);
-const numSections = data.readUInt16LE(peOff + 6);
-const optHdrSize = data.readUInt16LE(peOff + 0x14);
-const imageBase = data.readUInt32LE(peOff + 0x18 + 0x1c) >>> 0;
-const secOff = peOff + 0x18 + optHdrSize;
-
-const sections = [];
-for (let i = 0; i < numSections; i++) {
-  const o = secOff + i * 0x28;
-  const name = data.slice(o, o + 8).toString('latin1').replace(/\0+$/, '');
-  const vsize = data.readUInt32LE(o + 8);
-  const va = data.readUInt32LE(o + 12);
-  const rsize = data.readUInt32LE(o + 16);
-  const raw = data.readUInt32LE(o + 20);
-  sections.push({ name, vsize, va, rsize, raw });
-}
+const pe = readPE(pePath);
+const data = pe.buf;
+const imageBase = pe.imageBase;
+// Local field names kept: va is the section RVA here, raw/rsize the on-disk pair.
+const sections = pe.sections.map(s => ({
+  name: s.name, vsize: s.vsize, va: s.rva, rsize: s.rawSize, raw: s.rawOff,
+}));
 
 const findSection = (off) => sections.find(s => off >= s.raw && off < s.raw + s.rsize);
 

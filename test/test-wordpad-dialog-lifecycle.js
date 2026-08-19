@@ -68,7 +68,7 @@ function runDialog(testCase) {
   ], {
     cwd: ROOT,
     encoding: 'utf8',
-    timeout: 15000,
+    timeout: 120000,
     maxBuffer: 24 * 1024 * 1024,
   });
   return {

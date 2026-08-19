@@ -5,6 +5,7 @@
 const { execSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { createCanvas, loadImage } = require('../lib/canvas-compat');
 
 const ROOT = path.join(__dirname, '..');
@@ -161,13 +162,23 @@ const TEST_CASES = [
     ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
   // Explorer runs its real startup against the vendored SHELL32/SHLWAPI/
-  // SHDOCVW in explorer98/dlls, then calls a SHELL32 ordinal whose body is a
-  // QT_Thunk stub in the INSTDATA section. ThunkConnect32 fills that block by
-  // binding to the 16-bit SHELL.DLL, which needs an NE loader, so the block is
-  // still zeros and execution walks into them. Same blocker as the four 16-bit
-  // games below.
+  // SHDOCVW in explorer98/dlls, then does GetProcAddress(shell32, ordinal 181)
+  // and calls it. That export (RVA 0x22ab1) is a flat-thunk stub — `mov cl,0xc`,
+  // two `push word`, `call [0x7fcd2b68]`, `cwde` — and the pointer it calls
+  // through is filled in by ThunkConnect32 from the SL01/LS01/"Smag" block in
+  // INSTDATA (orig 0x7fd38000, runtime 0x583000). $handle_ThunkConnect32
+  // returns TRUE without writing anything, so the block is still the 0xCC
+  // padding the linker left, execution marches through it into the zeros at
+  // 0x583548 and the decoder's zero-page guard traps.
+  //
+  // The NE loader exists now, so the note this replaces is out of date, but
+  // that is not what is missing: binding these thunks needs the 16-bit
+  // SHELL.DLL those ordinals live in, and that file is not in the tree (only
+  // CARDS/FREECELL/MSHEARTS/SOL/WINMINE are, under win98-16bit). Until it is,
+  // the only alternative is implementing each thunked ordinal natively and
+  // having ThunkConnect32 patch the block to reach it.
   { exe: 'test/binaries/explorer98/explorer.exe', name: 'Explorer (98)',
-    expectedCrash: 'SHELL32 QT_Thunk lands in an unbound INSTDATA block (needs the 16-bit loader)' },
+    expectedCrash: 'SHELL32 ordinal 181 is a flat thunk ThunkConnect32 never bound (no 16-bit SHELL.DLL in the tree)' },
   { exe: 'test/binaries/win98-apps/regedit.exe', name: 'RegEdit' },
   { exe: 'test/binaries/win98-apps/taskman.exe', name: 'Task Manager' },
   // On a first run Welcome registers itself as Run\Welcome = "welcome.exe /R"
@@ -371,10 +382,28 @@ const TEST_CASES = [
     maxBatches: 80, batchSize: 50000,
     extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 30000 },
-  // Plus! 98 screensavers — MFC42
-  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'] },
-  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'] },
+  // Plus! 98 screensavers — MFC42.
+  //
+  // These four drive their picture transitions through DirectAnimation, not
+  // GDI: the API histogram is IDirectAnimationDAView_QueryInterface /
+  // DirectSlot / Release once per frame, and the 138 StretchBlt calls all
+  // source a surface DirectAnimation never wrote. Raising the budget does not
+  // help — at 140x50000 (7M instructions, 9059 API calls) the PNG is the same
+  // 2061-byte solid colour as at the default 80k. So the blank frame is the
+  // honest result, and it is recorded here rather than hidden.
+  //
+  // They read as a regression in the PASS count only because the harness used
+  // to score a killed run as a pass; they have never rendered. WIN98.SCR is the
+  // same MFC family and does pass, because it goes through DDraw instead.
+  //
+  // The declared backstop is 60s because they are heavy, not because they are
+  // wedged: they complete their batches, just slowly (mfc42 load dominates).
+  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
   { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)',
     // Animates into DDraw offscreen buffers before the first primary Blt.
     // The default 80k instructions stops during the decode/update loop and
@@ -382,7 +411,8 @@ const TEST_CASES = [
     maxBatches: 140, batchSize: 50000,
     extraArgs: ['--args=/s', '--quiet-blocks'],
     timeoutMs: 30000 },
-  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'] },
+  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'],
+    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
   // Plus! 98 screensavers — DirectDraw/Direct3DRM
   { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
   { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
@@ -453,13 +483,26 @@ function runExe(testCase, pngPath) {
     ...extraArgs,
   ];
 
+  const startedAt = Date.now();
+  const budgetMs = wallBudgetMs(testCase);
   const result = spawnSync('node', args, {
     cwd: ROOT,
-    timeout: testCase.timeoutMs || 15000,
+    timeout: budgetMs,
     encoding: 'utf8',
     maxBuffer: 50 * 1024 * 1024,  // 50MB — MFC apps with DLLs generate lots of API trace output
     env: { ...process.env, NODE_OPTIONS: '' },
   });
+  const elapsedMs = Date.now() - startedAt;
+
+  // A run killed by the timeout exits via a signal, so `result.status` is null,
+  // not a non-zero code. The crash test below reads `status !== null && !== 0`,
+  // which is false for a signal — so before this check a timed-out run fell
+  // straight through to the success path, and because it was killed before
+  // writing its --png, the blank-pixel gate was skipped too (it requires the
+  // file to exist). Net effect: a run that never finished was reported OK, and
+  // the *slower* the box, the more apps passed. That is the reported
+  // 105-vs-103 instability, and in the direction nobody expects.
+  const timedOut = result.error ? result.error.code === 'ETIMEDOUT' : Boolean(result.signal);
 
   const output = (result.stdout || '') + (result.stderr || '');
   const lines = output.split('\n');
@@ -488,6 +531,25 @@ function runExe(testCase, pngPath) {
     : true;
   const forbiddenVisibleTitle = (testCase.forbidVisibleTitles || [])
     .find(title => lines.some(l => l.includes('visible=true') && l.includes(`title="${title}"`))) || '';
+
+  // Report the timeout as itself. It is not a pass (the app never finished and
+  // never wrote its PNG, so nothing about its rendering was actually checked)
+  // and it is not a crash (the app was healthy, the wall clock ran out). The
+  // load average goes in the reason because that is nearly always the cause on
+  // this box, and without it the line reads like an app regression.
+  if (timedOut) {
+    return {
+      name: testCase.name,
+      status: 'TIMEOUT',
+      reason: `timed out after ${(elapsedMs / 1000).toFixed(1)}s ` +
+        `(budget ${(budgetMs / 1000).toFixed(0)}s = max(declared ` +
+        `${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s, floor ` +
+        `${(MIN_BACKSTOP_MS / 1000).toFixed(0)}s) x${LOAD_FACTOR.toFixed(1)}, ` +
+        `load ${os.loadavg()[0].toFixed(1)}) — ${apiCalls.size} APIs, nothing verified`,
+      apiCount: apiCalls.size,
+      hasWindow,
+    };
+  }
 
   if ((result.status !== null && result.status !== 0) || unimplMatch) {
     // run.js prints "*** CRASH at batch N: <msg>" then "  EIP before batch: 0xXXXX"
@@ -552,8 +614,43 @@ if (!noBuild) {
   console.log('');
 }
 
+// Every case bounds its emulated work with --max-batches, so `timeoutMs` is not
+// the budget — it is a wall-clock backstop for a run that wedges. Its declared
+// value describes an idle box, and this one routinely sits at load 30+ with
+// several agent sessions sweeping the corpus at once. At that load the backstop
+// stops measuring the emulator and starts measuring the machine: Notepad, a
+// two-second app, timed out at 15.6s having logged zero API calls.
+//
+// So scale it by how oversubscribed the box actually is. An idle box keeps the
+// declared budgets exactly, which is where a real slow-down regression would
+// still be caught; a loaded box gets proportionally longer ones and reports the
+// factor in every timeout line, so a scaled budget can never be mistaken for
+// the declared one. --strict-timeouts pins the factor at 1 for a quiet machine
+// or CI runner where the declared numbers are the point.
+const LOAD_FACTOR = (() => {
+  if (process.argv.includes('--strict-timeouts')) return 1;
+  const perCpu = os.loadavg()[0] / Math.max(1, os.cpus().length);
+  return Math.min(8, Math.max(1, perCpu * 1.5));
+})();
+// Every run pays the same fixed startup before it emulates anything: node
+// boot, the wasm compile, the PE and its DLLs. Measured on this box, notepad.exe
+// at its default 80-batch budget takes 19.5s wall for 5.2s of CPU — so a 10s or
+// 15s declared backstop is below the floor no matter how little work the case
+// asks for, and Notepad and Calculator timed out at load 10 having logged
+// nothing. Since --max-batches is what actually bounds the work, the backstop
+// only has to be above that floor to still catch a wedge.
+const MIN_BACKSTOP_MS = 30000;
+function wallBudgetMs(testCase) {
+  return Math.round(Math.max(testCase.timeoutMs || 15000, MIN_BACKSTOP_MS) * LOAD_FACTOR);
+}
+
 // Run all tests
 console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
+if (LOAD_FACTOR > 1.05) {
+  console.log(`  [load] ${os.loadavg()[0].toFixed(1)} on ${os.cpus().length} cpus — ` +
+    `wall-clock backstops scaled x${LOAD_FACTOR.toFixed(1)} (emulated work is unchanged; ` +
+    `--strict-timeouts to disable)\n`);
+}
 
 const filter = process.argv.slice(2).filter(a => !a.startsWith('--')).pop();
 
@@ -572,6 +669,15 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
       try { fs.unlinkSync(pngPath); } catch (_) {}
     }
     const r = runExe(tc, pngPath);
+
+    // A case that asked for a PNG and did not get one was never pixel-checked,
+    // so calling it PASS claims a verification that did not happen. The gate
+    // below is guarded on the file existing, which silently converted every
+    // such case into a pass.
+    if (r.status === 'OK' && pngPath && !fs.existsSync(pngPath)) {
+      r.status = 'WARN';
+      r.reason = `${r.reason} — NO_PNG (run produced no frame to check)`;
+    }
 
     // Pixel-diversity gate: apparent PASS with a near-blank PNG is really a WARN.
     // Two-signal: few unique colors AND >95% of pixels in one color = blank.
@@ -623,7 +729,8 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     }
     results.push(r);
 
-    const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP' : r.status === 'WARN' ? 'WARN' : 'FAIL';
+    const icon = r.status === 'OK' ? 'PASS' : r.status === 'SKIP' ? 'SKIP'
+      : r.status === 'WARN' ? 'WARN' : r.status === 'TIMEOUT' ? 'TMOUT' : 'FAIL';
     console.log(`${icon}  ${r.reason}`);
   }
 
@@ -632,7 +739,18 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
   const fail = results.filter(r => r.status === 'CRASH').length;
   const warn = results.filter(r => r.status === 'WARN').length;
   const skip = results.filter(r => r.status === 'SKIP').length;
-  console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}  Total: ${results.length}`);
+  const timeouts = results.filter(r => r.status === 'TIMEOUT');
+  console.log(`  PASS: ${pass}  FAIL: ${fail}  WARN: ${warn}  SKIP: ${skip}` +
+    `  TIMEOUT: ${timeouts.length}  Total: ${results.length}`);
+
+  // Loud, because a timeout used to be counted as a PASS: any number here means
+  // the PASS count above is measuring the box, not the emulator. Re-run on an
+  // idle machine before comparing it to anything.
+  if (timeouts.length > 0) {
+    console.log(`\nTimed out — NOT verified, do not read the PASS count as stable ` +
+      `(load now ${os.loadavg()[0].toFixed(1)}):`);
+    for (const r of timeouts) console.log(`  ${r.name}: ${r.reason}`);
+  }
 
   if (fail > 0) {
     console.log('\nCrashed EXEs:');

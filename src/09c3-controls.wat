@@ -197,6 +197,16 @@
     (i32.or (i32.load16_u offset=4 (local.get $a))
             (i32.shl (i32.load16_u offset=6 (local.get $a)) (i32.const 16))))
 
+  ;; The width and height halves of $ctrl_get_wh_packed. Nearly every control
+  ;; wndproc starts by unpacking that word into two locals with the same two
+  ;; shifts and masks, ~30 times across this file; a caller that only wants one
+  ;; dimension had to write both. Named accessors so the packing is stated once.
+  (func $ctrl_get_w (param $hwnd i32) (result i32)
+    (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))
+
+  (func $ctrl_get_h (param $hwnd i32) (result i32)
+    (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+
   ;; ---- Control table helpers (legacy CONTROL_TABLE) ----
 
   ;; Mark a registered native status-bar window without classifying it as a
@@ -662,6 +672,30 @@
     (i32.const 0)
   )
 
+  ;; Mark every child control of $parent_hwnd as needing repaint.
+  ;;
+  ;; Erasing a parent's client area paints over whatever its children have
+  ;; already put there, and a control that painted before the erase has
+  ;; already cleared its own update flag -- nothing will ask it to paint
+  ;; again, so its pixels are gone for the life of the window. sndvol32's
+  ;; Properties dialog hits this: CheckRadioButton in WM_INITDIALOG drives
+  ;; BM_SETCHECK, which repaints the three radios immediately, and the
+  ;; dialog's first WM_ERASEBKGND then wipes them.
+  (func $invalidate_child_controls (param $parent_hwnd i32)
+    (local $i i32) (local $hwnd i32)
+    (local.set $i (i32.const 0))
+    (block $done
+      (loop $loop
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+        (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
+        (if (i32.and
+              (i32.ne (local.get $hwnd) (i32.const 0))
+              (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent_hwnd)))
+          (then (call $invalidate_hwnd (local.get $hwnd))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $loop)))
+  )
+
   ;; Fill a freshly-registered dialog's client area on its back-canvas with
   ;; COLOR_BTNFACE. Called right after $host_register_dialog_frame so the
   ;; dialog face shows in gaps between child controls. Equivalent to the
@@ -671,25 +705,65 @@
 
   ;; ---- Control WndProc dispatch ----
 
+  ;; One --trace-ctrl line for a WAT-native control. $reason is 0 when the
+  ;; control is about to paint, and otherwise says why it will not:
+  ;;   1 = an ancestor still owes an erase or a paint
+  ;;   2 = the control (or an ancestor) is not effectively visible
+  ;;   3 = its update rect is empty
+  ;;   4 = it has no CONTROL_TABLE class, so this drain never paints it
+  ;; A control that never appears in this trace at all was never asked --
+  ;; nothing invalidated it, which is a different bug from any of the above.
+  ;;
+  ;; Two controls painting the same pixels, or one painting twice at
+  ;; different origins, is invisible in --trace-gdi now that the GDI
+  ;; primitives rasterize inside WAT. JS drops this unless --trace-ctrl.
+  (func $ctrl_paint_trace_emit (param $hwnd i32) (param $class i32) (param $reason i32)
+    (local $wh i32)
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (call $host_ctrl_paint_trace
+      (local.get $hwnd)
+      ;; Reason rides above the class byte -- the packed word below is full.
+      (i32.or (local.get $class) (i32.shl (local.get $reason) (i32.const 8)))
+      (call $wnd_window_screen_x (local.get $hwnd))
+      (call $wnd_window_screen_y (local.get $hwnd))
+      (i32.and (local.get $wh) (i32.const 0xFFFF))
+      (i32.or (i32.shl (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1))
+              (call $wnd_is_effectively_visible (local.get $hwnd)))
+      ;; Paint order alone cannot say which surface a control lands on --
+      ;; that is decided by its top-level ancestor. A child whose parent is
+      ;; not the window it appears over paints onto the wrong back-canvas
+      ;; and vanishes under whatever is stacked above.
+      ;;
+      ;; Everything reported here is a pure read. Resolving the control's
+      ;; hwnd+0x40000 DC would say whether its surface exists yet, which is
+      ;; the other way to paint no pixels -- but $gdi_surface_descriptor
+      ;; ENSURES the window surface, so asking the question changes the
+      ;; answer, and a trace call sits on every control paint.
+      (i32.or
+          (call $wnd_get_parent (local.get $hwnd))
+          ;; state=0 is another way to paint nothing: most control
+          ;; wndprocs bail out of WM_PAINT before their first primitive
+          ;; when the hwnd has no state record.
+          (i32.or
+            (i32.shl (i32.ne (call $wnd_get_state_ptr (local.get $hwnd))
+                             (i32.const 0))
+                     (i32.const 25))
+            ;; Low style nibble. Every class that composes its face from
+            ;; primitives dispatches on it, and a value no branch claims
+            ;; draws nothing at all -- indistinguishable, from the
+            ;; outside, from a control that never got asked to paint.
+            (i32.shl (i32.and (call $wnd_get_style (local.get $hwnd))
+                              (i32.const 0x0F))
+                     (i32.const 26))))))
+
   ;; Dispatch to the correct control wndproc based on control class
   (func $control_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
-    (local $class i32) (local $wh i32)
+    (local $class i32)
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
-    ;; Every WAT-native control paint, with the screen rect it lands on.
-    ;; Two controls painting the same pixels, or one painting twice at
-    ;; different origins, is invisible in --trace-gdi now that the GDI
-    ;; primitives rasterize inside WAT. JS drops this unless --trace-ctrl.
     (if (i32.and (i32.eq (local.get $msg) (i32.const 0x000F))
           (i32.ne (local.get $class) (i32.const 0)))
-      (then
-        (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
-        (call $host_ctrl_paint_trace
-          (local.get $hwnd) (local.get $class)
-          (call $wnd_window_screen_x (local.get $hwnd))
-          (call $wnd_window_screen_y (local.get $hwnd))
-          (i32.and (local.get $wh) (i32.const 0xFFFF))
-          (i32.or (i32.shl (i32.shr_u (local.get $wh) (i32.const 16)) (i32.const 1))
-                  (call $wnd_is_effectively_visible (local.get $hwnd))))))
+      (then (call $ctrl_paint_trace_emit
+              (local.get $hwnd) (local.get $class) (i32.const 0))))
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -776,6 +850,10 @@
     ;; Class 29 = Shell Run / Shut Down dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 29))
       (then (return (call $shelldlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; 30 = OLEDLG's Insert Object dialog; the proc lives in 09a7b-ole.wat with
+    ;; the rest of OLE.
+    (if (i32.eq (local.get $class) (i32.const 30))
+      (then (return (call $insertobj_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )
@@ -1621,40 +1699,6 @@
     (if (i32.eq (local.get $cmd) (i32.const 2))
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
     (i32.const 0))
-
-  ;; Build a minimal stub dialog with title + "Not implemented yet" static
-  ;; + OK / Cancel. Used by the four common-dialog API handlers below.
-  (func $create_stub_dialog (param $dlg i32) (param $owner i32) (param $title_wa i32)
-    (call $host_register_dialog_frame
-      (local.get $dlg) (local.get $owner)
-      (local.get $title_wa)
-      (i32.const 260) (i32.const 140)
-      (i32.const 1))   ;; isAboutDialog modal flag
-    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
-    (call $title_table_set (local.get $dlg) (local.get $title_wa)
-      (call $strlen (local.get $title_wa)))
-    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
-    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
-    (call $defwndproc_do_nccalcsize (local.get $dlg))
-    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
-      (i32.const 13) (i32.const 0))
-    (call $nc_flags_set (local.get $dlg) (i32.const 3))
-    (call $dlg_fill_bkgnd (local.get $dlg))
-    ;; "Not implemented yet" static
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
-            (i32.const 12) (i32.const 20) (i32.const 236) (i32.const 20)
-            (i32.const 0x50000001)  ;; SS_CENTER
-            (call $wat_str_to_heap (i32.const 0x22D) (i32.const 19))))
-    ;; OK button
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
-            (i32.const 40) (i32.const 68) (i32.const 72) (i32.const 24)
-            (i32.const 0x50010001)
-            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
-    ;; Cancel button
-    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
-            (i32.const 148) (i32.const 68) (i32.const 72) (i32.const 24)
-            (i32.const 0x50010000)
-            (call $wat_str_to_heap (i32.const 0x1D2) (i32.const 6)))))
 
   (func $create_print_dialog (param $dlg i32) (param $owner i32)
     (call $host_register_dialog_frame (local.get $dlg) (local.get $owner)
@@ -4484,34 +4528,11 @@
             (drop (call $host_gdi_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                     (i32.const 0x30011)))
-            (local.set $box_y (i32.div_u (i32.sub (local.get $h) (i32.const 12)) (i32.const 2)))
-            ;; White interior
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (local.get $box_y)
-                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))
-                    (i32.const 0x30010)))
-            ;; Sunken edge — EDGE_SUNKEN = 0x0A, BF_RECT = 0x0F
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
-                    (i32.const 0) (local.get $box_y)
-                    (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))
-                    (i32.const 0x0A) (i32.const 0x0F)))
-            ;; Check glyph if checked (flags bit 1)
-            (if (i32.and (local.get $flags) (i32.const 0x02))
-              (then
-                (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
-                (drop (call $host_gdi_move_to (local.get $hdc)
-                        (i32.const 3) (i32.add (local.get $box_y) (i32.const 5))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 5) (i32.add (local.get $box_y) (i32.const 8))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 9) (i32.add (local.get $box_y) (i32.const 3))))
-                ;; Second pass 1px down for thickness
-                (drop (call $host_gdi_move_to (local.get $hdc)
-                        (i32.const 3) (i32.add (local.get $box_y) (i32.const 6))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 5) (i32.add (local.get $box_y) (i32.const 9))))
-                (drop (call $host_gdi_line_to (local.get $hdc)
-                        (i32.const 9) (i32.add (local.get $box_y) (i32.const 4))))))
+            ;; One 13x13 check box, shared with the list-view state images.
+            (local.set $box_y (i32.div_u (i32.sub (local.get $h) (i32.const 13)) (i32.const 2)))
+            (call $paint_check_box (local.get $hdc)
+              (i32.const 0) (local.get $box_y)
+              (i32.and (local.get $flags) (i32.const 0x02)))  ;; flags bit 1 = checked
             (if (local.get $text_w)
               (then
                 (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
@@ -5455,12 +5476,10 @@
                       (then
                         (local.set $coord_x
                           (i32.add (local.get $coord_x)
-                            (i32.load (i32.add (global.get $SCROLL_TABLE)
-                              (i32.mul (local.get $slot) (i32.const 24))))))
+                            (i32.load (call $scroll_record_addr (local.get $slot)))))
                         (local.set $coord_y
                           (i32.add (local.get $coord_y)
-                            (i32.load offset=12 (i32.add (global.get $SCROLL_TABLE)
-                              (i32.mul (local.get $slot) (i32.const 24))))))))
+                            (i32.load offset=12 (call $scroll_record_addr (local.get $slot)))))))
                     (if (i32.gt_u (local.get $coord_x) (i32.const 99999))
                       (then (local.set $coord_x (i32.const 99999))))
                     (if (i32.gt_u (local.get $coord_y) (i32.const 99999))
@@ -5778,22 +5797,75 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Per-item record, 44 bytes: 8 subitem text pointers, then image (+32),
+  ;; lParam (+36) and state (+40). $lv_ensure_item_capacity, the insert and
+  ;; delete shifts and the LVM_SETITEMCOUNT clear all stride by 44 too --
+  ;; a WAT global would read better, but lib/compile-wat.js only parses
+  ;; globals ahead of the functions and silently loses every definition
+  ;; after one declared here.
   (func $lv_cell_addr (param $sw i32) (param $item i32) (param $sub i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
       (i32.add
-        (i32.mul (local.get $item) (i32.const 40))
+        (i32.mul (local.get $item) (i32.const 44))
         (i32.mul (local.get $sub) (i32.const 4)))))
 
   (func $lv_item_image_addr (param $sw i32) (param $item i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
-      (i32.add (i32.mul (local.get $item) (i32.const 40)) (i32.const 32))))
+      (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 32))))
 
   (func $lv_item_param_addr (param $sw i32) (param $item i32) (result i32)
     (i32.add
       (call $g2w (i32.load offset=8 (local.get $sw)))
-      (i32.add (i32.mul (local.get $item) (i32.const 40)) (i32.const 36))))
+      (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 36))))
+
+  ;; THE Win98 check box: a 13x13 sunken well with a black tick. Used by the
+  ;; BUTTON painter (BS_CHECKBOX/BS_AUTOCHECKBOX/BS_3STATE) and by list-view
+  ;; state images alike — an app supplies the latter as a two-image LVSIL_STATE
+  ;; list, but the images are comctl32's own standard check boxes.
+  ;;
+  ;; This used to be two implementations: this one, and a 12x12 pen-stroked
+  ;; copy inside $button_wndproc whose own comment promised to "compose them the
+  ;; way the BUTTON painter does". One pixel apart is a visible mismatch when a
+  ;; dialog puts a check box and a checked list-view row on the same line.
+  (func $paint_check_box (param $hdc i32) (param $x i32) (param $y i32) (param $checked i32)
+    (local $i i32)
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (i32.const 13)) (i32.add (local.get $y) (i32.const 13))
+      (i32.const 0x30010)))
+    ;; EDGE_SUNKEN (0x0A), BF_RECT (0x0F).
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (i32.const 13)) (i32.add (local.get $y) (i32.const 13))
+      (i32.const 0x0A) (i32.const 0x0F)))
+    (if (local.get $checked)
+      (then
+        ;; Six 2px strokes: down-right to the elbow, then up-right.
+        (block $done (loop $tick
+          (br_if $done (i32.ge_s (local.get $i) (i32.const 6)))
+          (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (i32.add (local.get $x) (i32.add (local.get $i) (i32.const 3)))
+            (i32.add (local.get $y)
+              (select (i32.add (local.get $i) (i32.const 4))
+                      (i32.sub (i32.const 10) (local.get $i))
+                      (i32.lt_s (local.get $i) (i32.const 3))))
+            (i32.add (local.get $x) (i32.add (local.get $i) (i32.const 4)))
+            (i32.add (local.get $y)
+              (select (i32.add (local.get $i) (i32.const 6))
+                      (i32.sub (i32.const 12) (local.get $i))
+                      (i32.lt_s (local.get $i) (i32.const 3))))
+            (i32.const 0x30014)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $tick))))))
+
+  ;; LVIS_* state bits for one item. Only the state-image field (0xF000) is
+  ;; kept here; selection lives in the control's own "selected index" slot.
+  (func $lv_item_state_addr (param $sw i32) (param $item i32) (result i32)
+    (i32.add
+      (call $g2w (i32.load offset=8 (local.get $sw)))
+      (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 40))))
 
   (func $lv_ensure_item_capacity (param $sw i32) (param $want i32)
     (local $cap i32) (local $new_cap i32) (local $new_bytes i32)
@@ -5808,7 +5880,7 @@
       (br_if $grown (i32.le_u (local.get $want) (local.get $new_cap)))
       (local.set $new_cap (i32.mul (local.get $new_cap) (i32.const 2)))
       (br $grow)))
-    (local.set $new_bytes (i32.mul (local.get $new_cap) (i32.const 40)))
+    (local.set $new_bytes (i32.mul (local.get $new_cap) (i32.const 44)))
     (local.set $new_buf (call $heap_alloc (local.get $new_bytes)))
     (call $zero_memory (call $g2w (local.get $new_buf)) (local.get $new_bytes))
     (local.set $old_buf (i32.load offset=8 (local.get $sw)))
@@ -5819,7 +5891,7 @@
           (then
             (call $memcpy (call $g2w (local.get $new_buf))
                           (call $g2w (local.get $old_buf))
-                          (i32.mul (local.get $count) (i32.const 40)))))))
+                          (i32.mul (local.get $count) (i32.const 44)))))))
     (call $heap_free (local.get $old_buf))
     (i32.store offset=4 (local.get $sw) (local.get $new_cap))
     (i32.store offset=8 (local.get $sw) (local.get $new_buf)))
@@ -5989,15 +6061,15 @@
         (call $memcpy
           (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0))
           (call $lv_cell_addr (local.get $sw) (i32.add (local.get $idx) (i32.const 1)) (i32.const 0))
-          (i32.mul (local.get $tail) (i32.const 40)))))
+          (i32.mul (local.get $tail) (i32.const 44)))))
     (call $zero_memory
       (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $count) (i32.const 1)) (i32.const 0))
-      (i32.const 40))
+      (i32.const 44))
     (i32.store (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
     (local.set $selected (i32.load offset=32 (local.get $sw)))
     (if (i32.gt_s (local.get $selected) (local.get $idx))
       (then (i32.store offset=32 (local.get $sw) (i32.sub (local.get $selected) (i32.const 1)))))
-    (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+    (local.set $h (call $ctrl_get_h (local.get $hwnd)))
     (drop (call $lv_scroll_to_for_h (local.get $sw) (local.get $h) (i32.load offset=36 (local.get $sw))))
     (call $paint_flag_set_inv (local.get $hwnd))
     (i32.const 1))
@@ -6229,6 +6301,43 @@
     (drop (call $host_gdi_delete_dc (local.get $img_memdc)))
     (local.get $ret))
 
+  ;; Does this LVM_* message change what the control looks like?
+  ;;
+  ;; A real SysListView32 invalidates itself whenever its content, columns
+  ;; or colours change; ours only ever painted when something else happened
+  ;; to invalidate it. sndvol32 fills its "Show the following volume
+  ;; controls" list from WM_INITDIALOG, after the dialog's one paint pass,
+  ;; so the list stayed empty for the life of the window. Enumerated rather
+  ;; than range-tested on purpose: the LVM_GET* messages outnumber these and
+  ;; repainting on a query would be a repaint per redraw.
+  (func $lv_msg_repaints (param $msg i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1001))  ;; SETBKCOLOR
+                  (i32.eq (local.get $msg) (i32.const 0x1003))) ;; SETIMAGELIST
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1006))  ;; SETITEMA
+                  (i32.eq (local.get $msg) (i32.const 0x1007)))) ;; INSERTITEMA
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1008))  ;; DELETEITEM
+                  (i32.eq (local.get $msg) (i32.const 0x1009))) ;; DELETEALLITEMS
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x100F))  ;; SETITEMPOSITION
+                  (i32.eq (local.get $msg) (i32.const 0x1013))))) ;; ENSUREVISIBLE
+      (i32.or
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x101A))  ;; SETCOLUMNA
+                  (i32.eq (local.get $msg) (i32.const 0x101B))) ;; INSERTCOLUMNA
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x101C))  ;; DELETECOLUMN
+                  (i32.eq (local.get $msg) (i32.const 0x101E)))) ;; SETCOLUMNWIDTH
+        (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x1024))  ;; SETTEXTCOLOR
+                  (i32.eq (local.get $msg) (i32.const 0x1026))) ;; SETTEXTBKCOLOR
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x102B))  ;; SETITEMSTATE
+                    (i32.eq (local.get $msg) (i32.const 0x102E))) ;; SETITEMTEXTA
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x1030))  ;; SORTITEMS
+                    (i32.eq (local.get $msg) (i32.const 0x1036)))))))) ;; SETEXTENDEDLISTVIEWSTYLE
+
   (func $listview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $sw i32) (local $cs_w i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
@@ -6243,6 +6352,7 @@
     (local $col_count i32) (local $col_x i32) (local $col_idx i32)
     (local $widths_w i32) (local $texts_w i32) (local $pressed_part i32)
     (local $delta i32) (local $code i32)
+    (local $indent i32) (local $icon_x i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -6250,9 +6360,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 72)))
+        (local.set $state (call $heap_alloc (i32.const 76)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 72))
+        (call $zero_memory (local.get $sw) (i32.const 76))
         (i32.store offset=32 (local.get $sw) (i32.const -1))
         (i32.store offset=40 (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
         (i32.store offset=60 (local.get $sw) (i32.const 0x00FFFFFF))
@@ -6279,12 +6389,25 @@
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
 
+    (if (call $lv_msg_repaints (local.get $msg))
+      (then (call $invalidate_hwnd (local.get $hwnd))))
+
     ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep the assigned small-image
     ;; list handle so report rows reserve authentic icon space.
     (if (i32.eq (local.get $msg) (i32.const 0x1002))
       (then (return (i32.load offset=56 (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1003))
       (then
+        ;; LVSIL_STATE (2) is how a pre-XP app asks for check boxes: it hands
+        ;; over a two-image list and then sets each item's state-image index.
+        ;; Keep it apart from the small-icon list -- what it selects is not an
+        ;; icon to draw but a check box to compose, and only its presence
+        ;; matters to the painter.
+        (if (i32.eq (local.get $wParam) (i32.const 2))
+          (then
+            (local.set $old (i32.load offset=72 (local.get $sw)))
+            (i32.store offset=72 (local.get $sw) (local.get $lParam))
+            (return (local.get $old))))
         (local.set $old (i32.load offset=56 (local.get $sw)))
         (i32.store offset=56 (local.get $sw) (local.get $lParam))
         (return (local.get $old))))
@@ -6418,7 +6541,7 @@
             (local.set $i (local.get $count))
             (block $done2 (loop $clear_new
               (br_if $done2 (i32.ge_u (local.get $i) (local.get $wParam)))
-              (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 40))
+              (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0)) (i32.const 44))
               (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $i)) (i32.const -1))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $clear_new)))))
@@ -6427,7 +6550,7 @@
           (then (i32.store offset=32 (local.get $sw) (i32.const -1))))
         (drop (call $lv_scroll_to_for_h
           (local.get $sw)
-          (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16))
+          (call $ctrl_get_h (local.get $hwnd))
           (i32.load offset=36 (local.get $sw))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
@@ -6667,7 +6790,7 @@
           (else
             (local.set $x (i32.const 0))
             (local.set $y (i32.const 0))
-            (local.set $width (i32.and (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 0xFFFF)))))
+            (local.set $width (call $ctrl_get_w (local.get $hwnd)))))
         (local.set $dst (call $g2w (local.get $dst)))
         (i32.store          (local.get $dst) (local.get $hwnd))
         (i32.store offset=4 (local.get $dst) (i32.const 0))
@@ -6780,10 +6903,10 @@
           (call $memcpy
             (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0))
             (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $i) (i32.const 1)) (i32.const 0))
-            (i32.const 40))
+            (i32.const 44))
           (local.set $i (i32.sub (local.get $i) (i32.const 1)))
           (br $item_shift)))
-        (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 40))
+        (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 44))
         (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $idx)) (i32.const -1))
         (i32.store (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (if (i32.and (local.get $mask) (i32.const 0x0001))
@@ -6890,6 +7013,15 @@
                     (i32.ge_s (local.get $idx) (i32.load (local.get $sw))))
           (then (return (i32.const 0))))
         (local.set $lvi_w (call $g2w (local.get $lParam)))
+        ;; LVIS_STATEIMAGEMASK -- the check box. Index 1 is unchecked and 2 is
+        ;; checked by the convention every caller of LVSIL_STATE follows.
+        (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0xF000))
+          (then
+            (i32.store (call $lv_item_state_addr (local.get $sw) (local.get $idx))
+              (i32.or
+                (i32.and (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $idx)))
+                         (i32.const 0xFFFF0FFF))
+                (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0xF000))))))
         (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
           (then
             (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
@@ -6906,11 +7038,22 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $msg) (i32.const 0x102C))
       (then
+        (local.set $old (i32.const 0))
         (if (i32.and (local.get $lParam) (i32.const 0x0002))
           (then
-            (return (select (i32.const 0x0002) (i32.const 0)
-                      (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $wParam))))))
-        (return (i32.const 0))))
+            (if (i32.eq (i32.load offset=32 (local.get $sw)) (local.get $wParam))
+              (then (local.set $old (i32.const 0x0002))))))
+        ;; ListView_GetCheckState is this message masked to 0xF000, so the
+        ;; check box has to answer here or every app reads back "unchecked".
+        (if (i32.and (local.get $lParam) (i32.const 0xF000))
+          (then
+            (if (i32.and (i32.ge_s (local.get $wParam) (i32.const 0))
+                         (i32.lt_s (local.get $wParam) (i32.load (local.get $sw))))
+              (then
+                (local.set $old (i32.or (local.get $old)
+                  (i32.and (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $wParam)))
+                           (i32.const 0xF000))))))))
+        (return (local.get $old))))
     (if (i32.eq (local.get $msg) (i32.const 0x1032))
       (then
         (return (select (i32.const 1) (i32.const 0)
@@ -7007,7 +7150,7 @@
       (then
         (return (call $lv_visible_rows_for_h
           (local.get $sw)
-          (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16))))))
+          (call $ctrl_get_h (local.get $hwnd))))))
     (if (i32.eq (local.get $msg) (i32.const 0x1013))
       (then
         (local.set $idx (local.get $wParam))
@@ -7100,7 +7243,7 @@
         (if (i32.or (i32.eq (local.get $code) (i32.const 2))
                     (i32.eq (local.get $code) (i32.const 3)))
           (then
-            (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+            (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (local.set $delta (call $lv_visible_rows_for_h (local.get $sw) (local.get $h)))
             (if (i32.eq (local.get $code) (i32.const 2))
               (then (local.set $delta (i32.sub (i32.const 0) (local.get $delta)))))
@@ -7108,7 +7251,7 @@
         (if (i32.or (i32.eq (local.get $code) (i32.const 4))
                     (i32.eq (local.get $code) (i32.const 5)))
           (then
-            (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+            (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (drop (call $lv_scroll_to_for_h
               (local.get $sw) (local.get $h)
               (i32.shr_s (local.get $wParam) (i32.const 16))))
@@ -7117,7 +7260,7 @@
           (then (drop (call $lv_scroll_by (local.get $hwnd) (i32.sub (i32.const 0) (i32.load offset=36 (local.get $sw)))))))
         (if (i32.eq (local.get $code) (i32.const 7))
           (then
-            (local.set $h (i32.shr_u (call $ctrl_get_wh_packed (local.get $hwnd)) (i32.const 16)))
+            (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (drop (call $lv_scroll_by
               (local.get $hwnd)
               (i32.sub (call $lv_max_scroll_for_h (local.get $sw) (local.get $h)) (i32.load offset=36 (local.get $sw)))))))
@@ -7407,34 +7550,57 @@
                   (then
                     (local.set $cell_w (call $g2w (local.get $cell_g)))
                     (local.set $text_len (call $strlen (local.get $cell_w)))
+                    ;; Column 0 carries the check box (LVSIL_STATE) and then the
+                    ;; small icon, each claiming 17px, and the text starts after
+                    ;; whichever of them are present.
+                    (local.set $indent (i32.const 4))
+                    ;; A row with a state-image index gets a check box, which is
+                    ;; what that index selects out of an LVSIL_STATE list. The
+                    ;; list itself is not consulted: sndvol32 hands us a NULL
+                    ;; one and then sets indices anyway, and the images every
+                    ;; caller means are comctl32's own two check boxes.
+                    (if (i32.and (i32.eqz (local.get $col_idx))
+                          (i32.ne (i32.and
+                                    (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $row)))
+                                    (i32.const 0xF000))
+                                  (i32.const 0)))
+                      (then
+                        (call $paint_check_box (local.get $hdc)
+                          (i32.add (local.get $col_x) (i32.const 3))
+                          (i32.add (local.get $y) (i32.const 1))
+                          ;; Index 2 is the checked box, 1 the empty one.
+                          (i32.eq (i32.and
+                                    (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $row)))
+                                    (i32.const 0xF000))
+                                  (i32.const 0x2000)))
+                        (local.set $indent (i32.add (local.get $indent) (i32.const 17)))))
+                    (local.set $icon_x
+                      (i32.add (local.get $col_x) (i32.sub (local.get $indent) (i32.const 4))))
                     (if (i32.eqz (local.get $col_idx))
                       (then
                         (if (i32.load offset=56 (local.get $sw))
                           (then
                             (if (i32.eqz (call $lv_paint_report_icon
                                   (local.get $hdc) (local.get $sw) (local.get $row)
-                                  (local.get $col_x) (local.get $y)))
+                                  (local.get $icon_x) (local.get $y)))
                               (then
                                 ;; Fallback registry/document glyph: outlined page
                                 ;; with the blue Win98 registry mark inside.
                                 (drop (call $host_gdi_fill_rect (local.get $hdc)
-                                  (i32.add (local.get $col_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
-                                  (i32.add (local.get $col_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
+                                  (i32.add (local.get $icon_x) (i32.const 4)) (i32.add (local.get $y) (i32.const 2))
+                                  (i32.add (local.get $icon_x) (i32.const 16)) (i32.add (local.get $y) (i32.const 15))
                                   (i32.const 0x30014)))
                                 (drop (call $host_gdi_fill_rect (local.get $hdc)
-                                  (i32.add (local.get $col_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
-                                  (i32.add (local.get $col_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
+                                  (i32.add (local.get $icon_x) (i32.const 5)) (i32.add (local.get $y) (i32.const 3))
+                                  (i32.add (local.get $icon_x) (i32.const 15)) (i32.add (local.get $y) (i32.const 14))
                                   (i32.const 0x30010)))
                                 (drop (call $host_gdi_fill_rect (local.get $hdc)
-                                  (i32.add (local.get $col_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
-                                  (i32.add (local.get $col_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
-                                  (local.get $icon_brush)))))))))
+                                  (i32.add (local.get $icon_x) (i32.const 7)) (i32.add (local.get $y) (i32.const 6))
+                                  (i32.add (local.get $icon_x) (i32.const 13)) (i32.add (local.get $y) (i32.const 11))
+                                  (local.get $icon_brush)))))
+                        (local.set $indent (i32.add (local.get $indent) (i32.const 17)))))))
                     (drop (call $host_gdi_text_out (local.get $hdc)
-                      (i32.add (local.get $col_x)
-                        (select (i32.const 21) (i32.const 4)
-                          (i32.and
-                            (i32.eqz (local.get $col_idx))
-                            (i32.ne (i32.load offset=56 (local.get $sw)) (i32.const 0)))))
+                      (i32.add (local.get $col_x) (local.get $indent))
                       (i32.add (local.get $y) (i32.const 2))
                       (local.get $cell_w) (local.get $text_len) (i32.const 0)))))
                 (local.set $col_x (i32.add (local.get $col_x) (local.get $width)))
@@ -11290,6 +11456,150 @@
   ;;                       bit4=dragging selection bit5=caret visible
   ;;   +28  max_length     0 = unlimited
 
+  ;; Keep the caret inside the viewport, which is what USER's EM_SCROLLCARET
+  ;; does and what every EDIT operation that moves the caret ends with. Without
+  ;; it, typing past the last visible line keeps editing text nobody can see:
+  ;; the buffer grows, the caret advances, and the window still shows line 1.
+  ;; Returns 1 when the viewport moved, so callers can tell a scroll from a
+  ;; plain edit if they ever need to.
+  (func $edit_scroll_caret_into_view (param $hwnd i32) (result i32)
+    (local $state i32) (local $state_w i32) (local $style i32)
+    (local $sz i32) (local $w i32) (local $h i32)
+    (local $visible i32) (local $line i32) (local $top i32)
+    (local $total i32) (local $max i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $state_w (call $g2w (local.get $state)))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    ;; ES_MULTILINE only: a single-line edit scrolls horizontally, and that is
+    ;; handled by the painter's own left-clamp.
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x00000004)))
+      (then (return (i32.const 0))))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then
+        (if (i32.gt_u (local.get $w) (i32.const 16))
+          (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then
+        (if (i32.gt_u (local.get $h) (i32.const 16))
+          (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
+    ;; Same viewport arithmetic the wheel handler and the painter use.
+    (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 8)) (i32.const 16)))
+    (if (i32.eqz (local.get $visible)) (then (local.set $visible (i32.const 1))))
+    (if (i32.and
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080)))) ;; not ES_AUTOHSCROLL
+      (then
+        ;; Wrapped: visual lines, so a wrapped paragraph counts for each row.
+        (local.set $total (call $edit_layout_build (local.get $state_w)
+          (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w)))
+        (local.set $line (call $edit_layout_line_for_char (local.get $total)
+          (i32.load offset=12 (local.get $state_w)))))
+      (else
+        (local.set $total (i32.add
+          (call $edit_line_from_char (local.get $state_w)
+            (i32.load offset=4 (local.get $state_w)))
+          (i32.const 1)))
+        (local.set $line (call $edit_line_from_char (local.get $state_w)
+          (i32.load offset=12 (local.get $state_w))))))
+    (local.set $top (i32.load offset=20 (local.get $state_w)))
+    (if (i32.lt_s (local.get $line) (local.get $top))
+      (then (local.set $top (local.get $line))))
+    (if (i32.ge_s (local.get $line) (i32.add (local.get $top) (local.get $visible)))
+      (then (local.set $top (i32.add (i32.sub (local.get $line) (local.get $visible))
+                                     (i32.const 1)))))
+    (local.set $max (i32.sub (local.get $total) (local.get $visible)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
+    (if (i32.gt_s (local.get $top) (local.get $max)) (then (local.set $top (local.get $max))))
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
+    (call $edit_publish_scroll_info (local.get $hwnd)
+      (local.get $top) (local.get $total) (local.get $visible))
+    (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
+      (then (return (i32.const 0))))
+    (i32.store offset=20 (local.get $state_w) (local.get $top))
+    (i32.const 1))
+
+  ;; Publish the viewport into the window's scrollbar state, which is what an
+  ;; EDIT does with SetScrollInfo after every change. $defwndproc_ncpaint
+  ;; paints the strip straight out of SCROLL_TABLE, so without this the thumb
+  ;; sits at the top of the track no matter where the text is scrolled to --
+  ;; and a click on that stale thumb gets classified as a page, not a drag.
+  (func $edit_publish_scroll_info (param $hwnd i32)
+        (param $pos i32) (param $total i32) (param $visible i32)
+    (local $slot i32) (local $base i32) (local $aux i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (local.set $base (call $scroll_record_addr (local.get $slot)))
+    (local.set $aux (call $scroll_aux_addr (local.get $slot)))
+    (if (i32.lt_s (local.get $total) (i32.const 1)) (then (local.set $total (i32.const 1))))
+    (if (i32.lt_s (local.get $visible) (i32.const 1)) (then (local.set $visible (i32.const 1))))
+    (i32.store offset=12 (local.get $base) (local.get $pos))
+    (i32.store offset=16 (local.get $base) (i32.const 0))
+    (i32.store offset=20 (local.get $base) (i32.sub (local.get $total) (i32.const 1)))
+    (i32.store offset=8 (local.get $aux) (local.get $visible)))
+
+  ;; Total lines and visible rows for a multiline edit, packed visible<<16 |
+  ;; total. The wheel handler, the scrollbar click, the thumb drag and the
+  ;; painter each computed this inline, and any drift between the four showed
+  ;; up as a scrollbar that scrolled somewhere the text was not. It runs per
+  ;; input event, not per pixel, so sharing it costs nothing measurable.
+  (func $edit_view_metrics (param $hwnd i32) (param $state_w i32) (result i32)
+    (local $style i32) (local $sz i32) (local $w i32) (local $h i32)
+    (local $total i32) (local $visible i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then
+        (if (i32.gt_u (local.get $w) (i32.const 16))
+          (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then
+        (if (i32.gt_u (local.get $h) (i32.const 16))
+          (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
+    (local.set $visible (i32.div_u
+      (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
+              (i32.gt_u (local.get $h) (i32.const 8)))
+      (i32.const 16)))
+    (if (i32.eqz (local.get $visible)) (then (local.set $visible (i32.const 1))))
+    (if (i32.and
+          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080))))
+      (then (local.set $total (call $edit_layout_build (local.get $state_w)
+        (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w))))
+      (else (local.set $total (i32.add
+        (call $edit_line_from_char (local.get $state_w)
+          (i32.load offset=4 (local.get $state_w)))
+        (i32.const 1)))))
+    (if (i32.lt_s (local.get $total) (i32.const 1)) (then (local.set $total (i32.const 1))))
+    (i32.or (i32.and (local.get $total) (i32.const 0xFFFF))
+            (i32.shl (local.get $visible) (i32.const 16))))
+
+  ;; Clamp and store a new first-visible line, publishing it to the scrollbar.
+  ;; Returns 1 when the viewport actually moved.
+  (func $edit_scroll_to (param $hwnd i32) (param $state_w i32) (param $top i32)
+        (param $total i32) (param $visible i32) (result i32)
+    (local $max i32)
+    (local.set $max (i32.sub (local.get $total) (local.get $visible)))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
+    (if (i32.gt_s (local.get $top) (local.get $max)) (then (local.set $top (local.get $max))))
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
+    (call $edit_publish_scroll_info (local.get $hwnd)
+      (local.get $top) (local.get $total) (local.get $visible))
+    (if (i32.eq (local.get $top) (i32.load offset=20 (local.get $state_w)))
+      (then (return (i32.const 0))))
+    (i32.store offset=20 (local.get $state_w) (local.get $top))
+    (i32.const 1))
+
+  ;; Drop-in for $invalidate_hwnd at the sites where the user moved the caret.
+  (func $edit_invalidate_caret (param $hwnd i32)
+    (drop (call $edit_scroll_caret_into_view (local.get $hwnd)))
+    (call $invalidate_hwnd (local.get $hwnd)))
+
   (func $edit_reset_caret_timer (param $hwnd i32) (param $state_w i32)
     (global.set $tick_count (call $host_get_ticks))
     (i32.store offset=24 (local.get $state_w)
@@ -11671,28 +11981,6 @@
       (br $scan)))
     (i32.add (local.get $line_start) (local.get $line_len)))
 
-  ;; Count wrapped visual rows for multiline edit controls that paint through
-  ;; DrawText(DT_WORDBREAK), such as RichEdit license viewers.
-  (func $edit_wrapped_line_count
-        (param $state_w i32) (param $hdc i32) (param $text_len i32) (param $text_w i32) (result i32)
-    (local $buf i32) (local $height i32)
-    (local.set $buf (i32.load (local.get $state_w)))
-    (if (i32.eqz (local.get $buf)) (then (return (i32.const 1))))
-    (if (i32.lt_s (local.get $text_w) (i32.const 8))
-      (then (local.set $text_w (i32.const 8))))
-    (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
-    (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 4))
-    (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $text_w) (i32.const 4)))
-    (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 4))
-    (local.set $height (call $host_gdi_draw_text (local.get $hdc)
-      (call $g2w (local.get $buf))
-      (local.get $text_len)
-      (global.get $PAINT_SCRATCH)
-      (i32.const 0x410) (i32.const 0))) ;; DT_CALCRECT | DT_WORDBREAK
-    (local.set $height (i32.div_u (i32.add (local.get $height) (i32.const 15)) (i32.const 16)))
-    (if (i32.eqz (local.get $height)) (then (return (i32.const 1))))
-    (local.get $height))
-
   ;; Word-boundary classification: 1 if $ch is part of a word (alnum/underscore),
   ;; else 0. Matches Win32 default word break for ASCII.
   (func $edit_is_word_char (param $ch i32) (result i32)
@@ -12004,33 +12292,13 @@
         (local.set $state_w (call $g2w (local.get $state)))
         (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000004)))
           (then (return (i32.const 0))))
-        (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
-        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
-        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
-          (then
-            (if (i32.gt_u (local.get $w) (i32.const 16))
-              (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
-        (local.set $visible_lines (i32.div_u
-          (select (i32.sub (local.get $h) (i32.const 8)) (i32.const 1)
-                  (i32.gt_u (local.get $h) (i32.const 8)))
-          (i32.const 16)))
-        (if (i32.eqz (local.get $visible_lines))
-          (then (local.set $visible_lines (i32.const 1))))
-        (if (i32.and
-              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
-              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
-          (then
-            (local.set $total_lines (call $edit_layout_build
-              (local.get $state_w) (local.get $hdc) (local.get $w))))
-          (else
-            (local.set $total_lines
-              (i32.add
-                (call $edit_line_from_char
-                  (local.get $state_w)
-                  (i32.load offset=4 (local.get $state_w)))
-                (i32.const 1)))))
+        ;; $edit_view_metrics is the one place that knows a WS_HSCROLL edit
+        ;; loses 16px of height to its own scrollbar. This site used to
+        ;; re-derive the viewport inline and omit exactly that, so a horizontal
+        ;; scrollbar bought the control one extra "visible" line it does not have.
+        (local.set $sz (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+        (local.set $total_lines (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $visible_lines (i32.shr_u (local.get $sz) (i32.const 16)))
         (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
         (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
           (then (local.set $max_scroll (i32.const 0))))
@@ -12078,7 +12346,7 @@
                           (local.get $lo))))))
             (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
             (call $edit_notify_change (local.get $hwnd))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; CR (0x0D) — Enter key: insert newline only for multiline edits (bit 0 of flags)
         (if (i32.eq (local.get $wParam) (i32.const 0x0D))
@@ -12090,7 +12358,7 @@
                   (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
                 (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
                 (call $edit_notify_change (local.get $hwnd))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         (if (i32.lt_u (local.get $wParam) (i32.const 0x20))
           (then (return (i32.const 0))))
@@ -12099,7 +12367,7 @@
           (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x08)))
         (call $edit_reset_caret_timer (local.get $hwnd) (local.get $state_w))
         (call $edit_notify_change (local.get $hwnd))
-        (call $invalidate_hwnd (local.get $hwnd))
+        (call $edit_invalidate_caret (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- WM_KEYDOWN (0x0100) ----------
@@ -12125,7 +12393,7 @@
               (then
                 (i32.store offset=16 (local.get $state_w) (i32.const 0))
                 (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-                (call $invalidate_hwnd (local.get $hwnd))
+                (call $edit_invalidate_caret (local.get $hwnd))
                 (return (i32.const 0))))
             ;; Ctrl+C (0x43) — copy
             (if (i32.eq (local.get $vk) (i32.const 0x43))
@@ -12144,7 +12412,7 @@
                   (then
                     (call $edit_delete_range (local.get $state_w) (local.get $lo) (local.get $hi))
                     (call $edit_notify_change (local.get $hwnd))
-                    (call $invalidate_hwnd (local.get $hwnd))))
+                    (call $edit_invalidate_caret (local.get $hwnd))))
                 (return (i32.const 0))))
             ;; Ctrl+V (0x56) — paste
             (if (i32.eq (local.get $vk) (i32.const 0x56))
@@ -12155,7 +12423,7 @@
                       (then (call $edit_insert_bytes (local.get $state_w)
                               (global.get $clipboard_ptr) (global.get $clipboard_len))
                             (call $edit_notify_change (local.get $hwnd))))
-                    (call $invalidate_hwnd (local.get $hwnd))))
+                    (call $edit_invalidate_caret (local.get $hwnd))))
                 (return (i32.const 0))))))
         ;; VK_LEFT 0x25
         (if (i32.eq (local.get $vk) (i32.const 0x25))
@@ -12169,7 +12437,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_RIGHT 0x27
         (if (i32.eq (local.get $vk) (i32.const 0x27))
@@ -12183,7 +12451,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_HOME 0x24 — start of line (or start of text with Ctrl)
         (if (i32.eq (local.get $vk) (i32.const 0x24))
@@ -12194,7 +12462,7 @@
             (i32.store offset=12 (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
               (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_END 0x23 — end of line (or end of text with Ctrl)
         (if (i32.eq (local.get $vk) (i32.const 0x23))
@@ -12208,7 +12476,7 @@
             (i32.store offset=12 (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
               (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_BACK 0x08 — backspace. Browsers don't fire keypress for VK_BACK,
         ;; so WM_CHAR 0x08 never arrives for WAT-native edits; handle it here.
@@ -12226,7 +12494,7 @@
                           (i32.sub (local.get $cur) (i32.const 1))
                           (local.get $cur))))))
             (call $edit_notify_change (local.get $hwnd))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_DELETE 0x2E
         (if (i32.eq (local.get $vk) (i32.const 0x2E))
@@ -12243,7 +12511,7 @@
                           (local.get $cur)
                           (i32.add (local.get $cur) (i32.const 1)))))))
             (call $edit_notify_change (local.get $hwnd))
-            (call $invalidate_hwnd (local.get $hwnd))
+            (call $edit_invalidate_caret (local.get $hwnd))
             (return (i32.const 0))))
         ;; VK_UP 0x26
         (if (i32.eq (local.get $vk) (i32.const 0x26))
@@ -12264,7 +12532,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         ;; VK_DOWN 0x28
         (if (i32.eq (local.get $vk) (i32.const 0x28))
@@ -12287,7 +12555,7 @@
                 (i32.store offset=12 (local.get $state_w) (local.get $cur))
                 (if (i32.eqz (local.get $a))
                   (then (i32.store offset=16 (local.get $state_w) (local.get $cur))))
-                (call $invalidate_hwnd (local.get $hwnd))))
+                (call $edit_invalidate_caret (local.get $hwnd))))
             (return (i32.const 0))))
         (return (i32.const 0))))
 
@@ -12333,77 +12601,53 @@
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $full_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
+	            ;; Inside the vertical strip: classify with the same geometry
+	            ;; $defwndproc_paint_standard_scrollbar painted it with, so a
+	            ;; press on the thumb the user can see starts a drag rather than
+	            ;; a page. This used to be a fourth private copy of the thumb
+	            ;; arithmetic, which sized the thumb at 16px while the painter
+	            ;; sized it by nPage -- so most of the visible thumb paged.
 	            (if (i32.ge_s (local.get $w) (i32.sub (local.get $full_w) (i32.const 16)))
 	              (then
-	                (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
-	                  (then
-	                    (local.set $total_lines
-	                      (call $edit_layout_build
-	                        (local.get $state_w) (local.get $hdc)
-	                        (i32.sub (local.get $full_w) (i32.const 16)))))
-	                  (else
-	                    (local.set $total_lines
-	                      (i32.add (call $edit_line_from_char (local.get $state_w)
-	                                               (i32.load offset=4 (local.get $state_w)))
-	                               (i32.const 1)))))
-	                (local.set $visible_lines (i32.div_u
-	                  (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
-	                          (i32.gt_u (local.get $line_y) (i32.const 8)))
-	                  (i32.const 16)))
-	                (if (i32.eqz (local.get $visible_lines))
-	                  (then (local.set $visible_lines (i32.const 1))))
-	                (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
-	                (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
-	                  (then (local.set $max_scroll (i32.const 0))))
+	                (local.set $a (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+	                (local.set $total_lines (i32.and (local.get $a) (i32.const 0xFFFF)))
+	                (local.set $visible_lines (i32.shr_u (local.get $a) (i32.const 16)))
 	                (local.set $lo (i32.load offset=20 (local.get $state_w)))
-	                (if (i32.lt_s (local.get $h) (i32.const 16))
+	                (local.set $b (call $sb_page_hit_part
+	                  (local.get $line_y) (local.get $h) (local.get $lo)
+	                  (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+	                  (local.get $visible_lines)))
+	                (if (i32.eq (local.get $b) (i32.const 1))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.sub (local.get $lo) (i32.const 1))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 2))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.add (local.get $lo) (i32.const 1))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 3))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.sub (local.get $lo) (local.get $visible_lines))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 4))
+	                  (then (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	                    (i32.add (local.get $lo) (local.get $visible_lines))
+	                    (local.get $total_lines) (local.get $visible_lines)))))
+	                (if (i32.eq (local.get $b) (i32.const 5))
 	                  (then
-	                    (if (i32.gt_s (local.get $lo) (i32.const 0))
-	                      (then (i32.store offset=20 (local.get $state_w)
-	                              (i32.sub (local.get $lo) (i32.const 1)))))
+	                    (global.set $edit_sb_drag_anchor_y (local.get $h))
+	                    (global.set $edit_sb_drag_anchor_top (local.get $lo))))
+	                (if (local.get $b)
+	                  (then
 	                    (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                    (global.set $sb_pressed_part (i32.const 1)))
-	                  (else (if (i32.ge_s (local.get $h) (i32.sub (local.get $line_y) (i32.const 16)))
-	                    (then
-	                      (if (i32.lt_s (local.get $lo) (local.get $max_scroll))
-	                        (then (i32.store offset=20 (local.get $state_w)
-	                                (i32.add (local.get $lo) (i32.const 1)))))
-	                      (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                      (global.set $sb_pressed_part (i32.const 2)))
-	                    (else (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
-	                      (then
-	                        (local.set $a (i32.sub (local.get $line_y) (i32.const 32)))
-	                        (if (i32.gt_s (local.get $a) (i32.const 0))
-	                          (then
-	                            (local.set $b (i32.div_u (local.get $a)
-	                                             (i32.add (local.get $max_scroll) (i32.const 1))))
-	                            (if (i32.lt_u (local.get $b) (i32.const 16))
-	                              (then (local.set $b (i32.const 16))))
-	                            (if (i32.gt_u (local.get $b) (local.get $a))
-	                              (then (local.set $b (local.get $a))))
-	                            (local.set $px
-	                              (i32.add (i32.const 16)
-	                                (i32.div_u
-	                                  (i32.mul (local.get $lo)
-	                                           (i32.sub (local.get $a) (local.get $b)))
-	                                  (local.get $max_scroll))))
-	                            (if (i32.lt_s (local.get $h) (local.get $px))
-	                              (then
-	                                (local.set $lo (i32.sub (local.get $lo) (local.get $visible_lines)))
-	                                (if (i32.lt_s (local.get $lo) (i32.const 0))
-	                                  (then (local.set $lo (i32.const 0))))
-	                                (i32.store offset=20 (local.get $state_w) (local.get $lo)))
-	                              (else (if (i32.ge_s (local.get $h) (i32.add (local.get $px) (local.get $b)))
-	                                (then
-	                                  (local.set $lo (i32.add (local.get $lo) (local.get $visible_lines)))
-	                                  (if (i32.gt_s (local.get $lo) (local.get $max_scroll))
-	                                    (then (local.set $lo (local.get $max_scroll))))
-	                                  (i32.store offset=20 (local.get $state_w) (local.get $lo)))
-	                                (else
-	                                  (global.set $edit_sb_drag_anchor_y (local.get $h))
-	                                  (global.set $edit_sb_drag_anchor_top (local.get $lo))
-	                                  (global.set $sb_pressed_hwnd (local.get $hwnd))
-	                                  (global.set $sb_pressed_part (i32.const 5))))))))))))))
+	                    (global.set $sb_pressed_part (local.get $b))))
+	                ;; A press on the scrollbar is not the start of a text
+	                ;; selection. WM_LBUTTONDOWN arms tracking bit 0x10 before it
+	                ;; knows where the click landed, so clear it here or every
+	                ;; following WM_MOUSEMOVE extends a selection while the user
+	                ;; is only dragging the thumb.
+	                (i32.store offset=24 (local.get $state_w)
+	                  (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFEF)))
 	                (drop (call $wnd_send_message
 	                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
 	                (call $invalidate_hwnd (local.get $hwnd))
@@ -12454,55 +12698,22 @@
 	                (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
 	                  (then (global.set $capture_hwnd (i32.const 0))))
 	                (return (i32.const 0))))
+	            ;; Thumb drag through the shared geometry, so the thumb tracks
+	            ;; the pointer instead of the private 16px thumb this used to
+	            ;; assume while the painter drew one sized by nPage.
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
 	            (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
-	            (if (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))
-	              (then
-	                (local.set $total_lines
-	                  (call $edit_layout_build
-	                    (local.get $state_w) (i32.add (local.get $hwnd) (i32.const 0x40000))
-	                    (i32.sub (i32.and (local.get $sz) (i32.const 0xFFFF)) (i32.const 16)))))
-	              (else
-	                (local.set $total_lines
-	                  (i32.add (call $edit_line_from_char (local.get $state_w)
-	                                           (i32.load offset=4 (local.get $state_w)))
-	                           (i32.const 1)))))
-	            (local.set $visible_lines (i32.div_u
-	              (select (i32.sub (local.get $line_y) (i32.const 8)) (i32.const 1)
-	                      (i32.gt_u (local.get $line_y) (i32.const 8)))
-	              (i32.const 16)))
-	            (if (i32.eqz (local.get $visible_lines))
-	              (then (local.set $visible_lines (i32.const 1))))
-	            (local.set $max_scroll (i32.sub (local.get $total_lines) (local.get $visible_lines)))
-	            (if (i32.lt_s (local.get $max_scroll) (i32.const 0))
-	              (then (local.set $max_scroll (i32.const 0))))
-	            (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
-	              (then
-	                (local.set $a (i32.sub (local.get $line_y) (i32.const 32)))
-	                (if (i32.gt_s (local.get $a) (i32.const 0))
-	                  (then
-	                    (local.set $b (i32.div_u (local.get $a)
-	                                     (i32.add (local.get $max_scroll) (i32.const 1))))
-	                    (if (i32.lt_u (local.get $b) (i32.const 16))
-	                      (then (local.set $b (i32.const 16))))
-	                    (if (i32.gt_u (local.get $b) (local.get $a))
-	                      (then (local.set $b (local.get $a))))
-	                    (local.set $px (i32.sub (local.get $a) (local.get $b)))
-	                    (if (i32.gt_s (local.get $px) (i32.const 0))
-	                      (then
-	                        (local.set $lo
-	                          (i32.add (global.get $edit_sb_drag_anchor_top)
-	                            (i32.div_s
-	                              (i32.mul
-	                                (i32.sub (local.get $h) (global.get $edit_sb_drag_anchor_y))
-	                                (local.get $max_scroll))
-	                              (local.get $px))))
-	                        (if (i32.lt_s (local.get $lo) (i32.const 0))
-	                          (then (local.set $lo (i32.const 0))))
-	                        (if (i32.gt_s (local.get $lo) (local.get $max_scroll))
-	                          (then (local.set $lo (local.get $max_scroll))))
-	                        (i32.store offset=20 (local.get $state_w) (local.get $lo))))))))
+	            (local.set $a (call $edit_view_metrics (local.get $hwnd) (local.get $state_w)))
+	            (local.set $total_lines (i32.and (local.get $a) (i32.const 0xFFFF)))
+	            (local.set $visible_lines (i32.shr_u (local.get $a) (i32.const 16)))
+	            (drop (call $edit_scroll_to (local.get $hwnd) (local.get $state_w)
+	              (call $sb_page_drag_pos
+	                (local.get $line_y) (local.get $h)
+	                (global.get $edit_sb_drag_anchor_y) (global.get $edit_sb_drag_anchor_top)
+	                (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
+	                (local.get $visible_lines))
+	              (local.get $total_lines) (local.get $visible_lines)))
 	            (call $invalidate_hwnd (local.get $hwnd))
 	            (return (i32.const 0))))
 	        (local.set $flags (i32.load offset=24 (local.get $state_w)))
@@ -12584,6 +12795,13 @@
           (then
             (if (i32.gt_u (local.get $w) (i32.const 16))
               (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
+        ;; And the bottom strip for WS_HSCROLL. Without this the last row of
+        ;; text and its caret are drawn underneath the horizontal scrollbar,
+        ;; which only became visible once the caret could reach the last row.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+          (then
+            (if (i32.gt_u (local.get $h) (i32.const 16))
+              (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
         ;; Use the font installed with WM_SETFONT, falling back to the default
         ;; GUI font. Paint relies on this when committing its text object into
         ;; the picture memory DC.
@@ -13134,8 +13352,14 @@
         (return (call $edit_line_len (local.get $state_w) (local.get $lo)))))
 
     ;; ---------- EM_SCROLLCARET (0x00B7) ----------
+    ;; The EM_SETSEL + EM_SCROLLCARET pair is how an app (notepad's Find, for
+    ;; one) brings a selection into view, so this has to do the scrolling that
+    ;; EM_SETSEL deliberately does not.
     (if (i32.eq (local.get $msg) (i32.const 0x00B7))
-      (then (return (i32.const 0))))
+      (then
+        (if (call $edit_scroll_caret_into_view (local.get $hwnd))
+          (then (call $invalidate_hwnd (local.get $hwnd))))
+        (return (i32.const 0))))
 
     ;; ---------- EM_GETFIRSTVISIBLELINE (0x00CE) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x00CE))
@@ -13966,6 +14190,20 @@
   ;; pos      — scroll position in [0, range]
   ;; range    — max scrollable units (0 = no thumb, arrows only)
   ;; pressed  — 0=none, 1=up arrow held, 2=down arrow held
+  ;; One scrollbar thumb: light-gray face with a raised edge. Both the shared
+  ;; strip painter and the standalone SCROLLBAR control draw through this, so
+  ;; they cannot disagree about it again — the control used to inset the thumb
+  ;; 2px on the cross axis while the strip painter drew it full width, which is
+  ;; visible whenever both appear on screen. Win98 draws the thumb the full
+  ;; width of the strip.
+  (func $paint_sb_thumb (param $hdc i32) (param $l i32) (param $t i32) (param $r i32) (param $b i32)
+    (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (local.get $l) (local.get $t) (local.get $r) (local.get $b)
+            (i32.const 0x30011)))   ;; LTGRAY_BRUSH
+    (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (local.get $l) (local.get $t) (local.get $r) (local.get $b)
+            (i32.const 0x05) (i32.const 0x0F))))  ;; BDR_RAISED, BF_RECT
+
   (func $paint_vscrollbar_rect
         (param $hdc i32) (param $bx i32) (param $by i32)
         (param $bw i32) (param $bh i32)
@@ -14002,16 +14240,10 @@
               (i32.add (local.get $by)
                 (call $scrollbar_thumb_pos
                   (local.get $bh) (local.get $pos) (i32.const 0) (local.get $range))))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (local.get $bx) (local.get $thumb_pos)
-                    (i32.add (local.get $bx) (local.get $bw))
-                    (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                    (i32.const 0x30011))) ;; LTGRAY_BRUSH
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
-                    (local.get $bx) (local.get $thumb_pos)
-                    (i32.add (local.get $bx) (local.get $bw))
-                    (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                    (i32.const 0x05) (i32.const 0x0F))))))) ;; BDR_RAISED, BF_RECT
+            (call $paint_sb_thumb (local.get $hdc)
+              (local.get $bx) (local.get $thumb_pos)
+              (i32.add (local.get $bx) (local.get $bw))
+              (i32.add (local.get $thumb_pos) (local.get $thumb_size)))))))
   )
 
   ;; Track-click classifier for a WS_VSCROLL listbox strip. Computes the
@@ -14066,6 +14298,119 @@
           (i32.sub (local.get $pos) (local.get $smin))
           (i32.sub (local.get $track_len) (local.get $thumb_size)))
         (local.get $range))))
+
+  ;; ---- SCROLLINFO scrollbar geometry ----------------------------------
+  ;; The helpers below this block predate SCROLLINFO: they size the thumb from
+  ;; the range alone, which is what TreeView and ListView still expect. USER's
+  ;; own scrollbars size it from nPage instead -- the thumb is as big a
+  ;; fraction of the track as the visible page is of the document -- and the
+  ;; last valid position is smax - (nPage - 1), not smax.
+  ;;
+  ;; $defwndproc_paint_standard_scrollbar drew the frame scrollbars with that
+  ;; second model inline, so nothing else could hit-test what it painted.
+  ;; These are that model, factored out, so the painter and the hit test agree
+  ;; by construction rather than by two people doing the same arithmetic.
+  (func $sb_track_len (param $long_dim i32) (result i32)
+    (i32.sub (local.get $long_dim)
+      (i32.mul (call $scrollbar_arrow_size (local.get $long_dim)) (i32.const 2))))
+
+  ;; Thumb length in pixels. total = smax - smin + 1 scroll units.
+  (func $sb_page_thumb (param $track i32) (param $page i32) (param $total i32) (result i32)
+    (local $thumb i32)
+    (if (i32.or (i32.le_s (local.get $track) (i32.const 0))
+                (i32.le_s (local.get $total) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $thumb
+      (if (result i32) (i32.gt_u (local.get $page) (i32.const 0))
+        (then (i32.div_u (i32.mul (local.get $track) (local.get $page)) (local.get $total)))
+        (else (i32.const 16))))
+    (if (i32.lt_u (local.get $thumb) (i32.const 16)) (then (local.set $thumb (i32.const 16))))
+    (if (i32.gt_u (local.get $thumb) (local.get $track)) (then (local.set $thumb (local.get $track))))
+    (local.get $thumb))
+
+  ;; Highest position the thumb can represent: a full page is always visible.
+  (func $sb_page_max_pos (param $smin i32) (param $smax i32) (param $page i32) (result i32)
+    (local $max_pos i32)
+    (local.set $max_pos (local.get $smax))
+    (if (i32.gt_u (local.get $page) (i32.const 1))
+      (then (local.set $max_pos
+        (i32.sub (local.get $smax) (i32.sub (local.get $page) (i32.const 1))))))
+    (if (i32.lt_s (local.get $max_pos) (local.get $smin))
+      (then (local.set $max_pos (local.get $smin))))
+    (local.get $max_pos))
+
+  ;; Offset of the thumb from the start of the long axis (past the low arrow).
+  (func $sb_page_thumb_pos (param $long_dim i32) (param $pos i32)
+        (param $smin i32) (param $smax i32) (param $page i32) (result i32)
+    (local $arrow i32) (local $track i32) (local $thumb i32)
+    (local $max_pos i32) (local $range i32) (local $travel i32)
+    (local.set $arrow (call $scrollbar_arrow_size (local.get $long_dim)))
+    (local.set $track (call $sb_track_len (local.get $long_dim)))
+    (local.set $thumb (call $sb_page_thumb (local.get $track) (local.get $page)
+      (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))
+    (local.set $max_pos (call $sb_page_max_pos
+      (local.get $smin) (local.get $smax) (local.get $page)))
+    (local.set $range (i32.sub (local.get $max_pos) (local.get $smin)))
+    (local.set $travel (i32.sub (local.get $track) (local.get $thumb)))
+    (if (i32.or (i32.le_s (local.get $range) (i32.const 0))
+                (i32.le_s (local.get $travel) (i32.const 0)))
+      (then (return (local.get $arrow))))
+    (i32.add (local.get $arrow)
+      (i32.div_u
+        (i32.mul (i32.sub (local.get $pos) (local.get $smin)) (local.get $travel))
+        (local.get $range))))
+
+  ;; Which part of a SCROLLINFO scrollbar a coordinate lands on. Same return
+  ;; codes as $scrollbar_hit_part: 0 none, 1 low arrow, 2 high arrow,
+  ;; 3 page towards min, 4 page towards max, 5 thumb.
+  (func $sb_page_hit_part (param $long_dim i32) (param $coord i32)
+        (param $pos i32) (param $smin i32) (param $smax i32) (param $page i32)
+        (result i32)
+    (local $arrow i32) (local $thumb i32) (local $thumb_pos i32)
+    (local.set $arrow (call $scrollbar_arrow_size (local.get $long_dim)))
+    (if (local.get $arrow)
+      (then
+        (if (i32.lt_s (local.get $coord) (local.get $arrow))
+          (then (return (i32.const 1))))
+        (if (i32.ge_s (local.get $coord) (i32.sub (local.get $long_dim) (local.get $arrow)))
+          (then (return (i32.const 2))))))
+    (if (i32.le_s (i32.sub (local.get $smax) (local.get $smin)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $thumb (call $sb_page_thumb
+      (call $sb_track_len (local.get $long_dim)) (local.get $page)
+      (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))
+    (if (i32.eqz (local.get $thumb)) (then (return (i32.const 0))))
+    (local.set $thumb_pos (call $sb_page_thumb_pos (local.get $long_dim)
+      (local.get $pos) (local.get $smin) (local.get $smax) (local.get $page)))
+    (if (i32.lt_s (local.get $coord) (local.get $thumb_pos))
+      (then (return (i32.const 3))))
+    (if (i32.ge_s (local.get $coord) (i32.add (local.get $thumb_pos) (local.get $thumb)))
+      (then (return (i32.const 4))))
+    (i32.const 5))
+
+  ;; Position for a thumb dragged to $coord, given where the drag started.
+  (func $sb_page_drag_pos (param $long_dim i32) (param $coord i32)
+        (param $anchor_coord i32) (param $anchor_pos i32)
+        (param $smin i32) (param $smax i32) (param $page i32) (result i32)
+    (local $track i32) (local $thumb i32) (local $max_pos i32)
+    (local $range i32) (local $travel i32) (local $pos i32)
+    (local.set $track (call $sb_track_len (local.get $long_dim)))
+    (local.set $thumb (call $sb_page_thumb (local.get $track) (local.get $page)
+      (i32.add (i32.sub (local.get $smax) (local.get $smin)) (i32.const 1))))
+    (local.set $max_pos (call $sb_page_max_pos
+      (local.get $smin) (local.get $smax) (local.get $page)))
+    (local.set $range (i32.sub (local.get $max_pos) (local.get $smin)))
+    (local.set $travel (i32.sub (local.get $track) (local.get $thumb)))
+    (if (i32.or (i32.le_s (local.get $range) (i32.const 0))
+                (i32.le_s (local.get $travel) (i32.const 0)))
+      (then (return (local.get $anchor_pos))))
+    (local.set $pos (i32.add (local.get $anchor_pos)
+      (i32.div_s
+        (i32.mul (i32.sub (local.get $coord) (local.get $anchor_coord)) (local.get $range))
+        (local.get $travel))))
+    (if (i32.lt_s (local.get $pos) (local.get $smin)) (then (local.set $pos (local.get $smin))))
+    (if (i32.gt_s (local.get $pos) (local.get $max_pos)) (then (local.set $pos (local.get $max_pos))))
+    (local.get $pos))
 
   ;; Generic scrollbar hit test on the long axis. Returns:
   ;; 0=none/disabled, 1=low arrow, 2=high arrow, 3=low page, 4=high page, 5=thumb.
@@ -14198,10 +14543,7 @@
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ge_s (local.get $slot) (i32.const 0))
           (then
-            (local.set $base (i32.add (global.get $SCROLL_TABLE)
-              (i32.mul (local.get $slot) (i32.const 24))))
-            (if (local.get $is_vert)
-              (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
+            (local.set $base (call $scroll_bar_addr (local.get $slot) (local.get $is_vert)))
             (local.set $pos (i32.load (local.get $base)))
             (local.set $smin (i32.load offset=4 (local.get $base)))
             (local.set $smax (i32.load offset=8 (local.get $base)))))
@@ -14258,8 +14600,7 @@
             (local.set $slot (call $wnd_table_find (local.get $hwnd)))
             (if (i32.ge_s (local.get $slot) (i32.const 0))
               (then
-                (local.set $base (i32.add (global.get $SCROLL_TABLE)
-                  (i32.mul (local.get $slot) (i32.const 24))))
+                (local.set $base (call $scroll_record_addr (local.get $slot)))
                 (if (local.get $is_vert)
                   (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
                 (local.set $smin (i32.load offset=4 (local.get $base)))
@@ -14292,8 +14633,7 @@
                 (local.set $slot (call $wnd_table_find (local.get $hwnd)))
                 (if (i32.ge_s (local.get $slot) (i32.const 0))
                   (then
-                    (local.set $base (i32.add (global.get $SCROLL_TABLE)
-                      (i32.mul (local.get $slot) (i32.const 24))))
+                    (local.set $base (call $scroll_record_addr (local.get $slot)))
                     (if (local.get $is_vert)
                       (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
                     (local.set $pos (i32.load (local.get $base)))
@@ -14375,8 +14715,7 @@
         (local.set $slot (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ge_s (local.get $slot) (i32.const 0))
           (then
-            (local.set $base (i32.add (global.get $SCROLL_TABLE)
-              (i32.mul (local.get $slot) (i32.const 24))))
+            (local.set $base (call $scroll_record_addr (local.get $slot)))
             ;; Vertical scrollbar: use offset +12
             (if (local.get $is_vert)
               (then (local.set $base (i32.add (local.get $base) (i32.const 12)))))
@@ -14392,28 +14731,16 @@
                 ;; Draw thumb
                 (if (local.get $is_vert)
                   (then
-                    ;; Vertical: thumb fills width, moves in Y
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
-                            (i32.const 2) (local.get $thumb_pos)
-                            (i32.sub (local.get $w) (i32.const 2))
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.const 0x30011))) ;; LTGRAY_BRUSH
-                    (drop (call $host_gdi_draw_edge (local.get $hdc)
-                            (i32.const 2) (local.get $thumb_pos)
-                            (i32.sub (local.get $w) (i32.const 2))
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.const 0x05) (i32.const 0x0F)))) ;; BDR_RAISED, BF_RECT
+                    ;; Vertical: thumb fills the strip width, moves in Y
+                    (call $paint_sb_thumb (local.get $hdc)
+                      (i32.const 0) (local.get $thumb_pos)
+                      (local.get $w)
+                      (i32.add (local.get $thumb_pos) (local.get $thumb_size))))
                   (else
-                    ;; Horizontal: thumb fills height, moves in X
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
-                            (local.get $thumb_pos) (i32.const 2)
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.sub (local.get $h) (i32.const 2))
-                            (i32.const 0x30011))) ;; LTGRAY_BRUSH
-                    (drop (call $host_gdi_draw_edge (local.get $hdc)
-                            (local.get $thumb_pos) (i32.const 2)
-                            (i32.add (local.get $thumb_pos) (local.get $thumb_size))
-                            (i32.sub (local.get $h) (i32.const 2))
-                            (i32.const 0x05) (i32.const 0x0F))))))))) ;; BDR_RAISED, BF_RECT
+                    ;; Horizontal: thumb fills the strip height, moves in X
+                    (call $paint_sb_thumb (local.get $hdc)
+                      (local.get $thumb_pos) (i32.const 0)
+                      (i32.add (local.get $thumb_pos) (local.get $thumb_size))
+                      (local.get $h))))))))
         (return (i32.const 0))))
     (i32.const 0))

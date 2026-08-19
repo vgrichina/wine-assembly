@@ -2,6 +2,7 @@
 // Usage: node tools/pe-imports.js <pe-file> [--dll=name] [--all]
 // Lists import descriptors and optionally shows individual imports for a DLL.
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 
 const args = process.argv.slice(2);
 const file = args.find(a => !a.startsWith('--'));
@@ -10,24 +11,13 @@ if (!file) { console.error('Usage: pe-imports.js <pe-file> [--dll=name] [--all]'
 const dllFilter = (args.find(a => a.startsWith('--dll=')) || '').slice(6).toLowerCase();
 const showAll = args.includes('--all');
 
-const buf = fs.readFileSync(file);
-const peOff = buf.readUInt32LE(0x3C);
-const numSections = buf.readUInt16LE(peOff + 6);
-const optOff = peOff + 24;
-const imageBase = buf.readUInt32LE(optOff + 28);
-const importRVA = buf.readUInt32LE(optOff + 104);
-const secOff = optOff + buf.readUInt16LE(optOff - 4);
+const pe = readPE(file);
+const buf = pe.buf;
+const imageBase = pe.imageBase;
+const importRVA = buf.readUInt32LE(pe.peOff + 24 + 104);
 
-function rva2off(rva) {
-  for (let i = 0; i < numSections; i++) {
-    const s = secOff + i * 40;
-    const va = buf.readUInt32LE(s + 12);
-    const rawOff = buf.readUInt32LE(s + 20);
-    const vSize = buf.readUInt32LE(s + 8);
-    if (rva >= va && rva < va + vSize) return rva - va + rawOff;
-  }
-  return -1;
-}
+// The tool works in RVAs; lib/pe.js maps absolute VAs.
+const rva2off = rva => pe.va2off(imageBase + rva);
 
 function readStr(off) {
   let s = '';

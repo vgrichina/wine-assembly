@@ -83,9 +83,31 @@ async function runApp(page, port, app) {
   await page.waitForFunction((key) => typeof launchApp === 'function' &&
     document.querySelector(`#app-select option[value="${key}"]`), { timeout: 30000 }, app.key);
 
-  await page.evaluate(async (key) => {
+  await page.evaluate((key) => {
     document.getElementById('app-select').value = key;
-    await launchApp();
+    // Deliberately not awaited. An app with a `lan` entry (Hearts) opens the
+    // LAN lobby first, and launchApp does not resolve until someone answers
+    // it -- awaiting here hangs the whole evaluate, not just this step.
+    window.__launching = launchApp();
+  }, app.key);
+
+  // Take the solo path if a lobby came up. This test is about the app, not
+  // about who else is on the segment.
+  for (let tries = 0; tries < 25; tries++) {
+    const answered = await page.evaluate(() => {
+      const solo = [...document.querySelectorAll('.vln-lobby button')]
+        .find(b => b.textContent === 'Play solo');
+      if (!solo) return false;
+      solo.click();
+      return true;
+    });
+    if (answered) break;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  await page.waitForFunction(key => runningApps.some(item => item && item.name === key),
+    { timeout: 60000 }, app.key);
+  await page.evaluate((key) => {
     const app = runningApps.find(item => item && item.name === key);
     if (app) app.wine.stepsPerSlice = 100000;
   }, app.key);

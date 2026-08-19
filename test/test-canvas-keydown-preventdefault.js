@@ -124,7 +124,11 @@ if (fs.existsSync(EXE)) {
   try {
     const out = execSync(
       `node "${RUN}" --exe="${EXE}" --input=90:focus-main-window,100:keypress:72,110:keypress:73,130:dump-main-edit-state:typed --max-batches=200 --quiet-api`,
-      { encoding: 'utf-8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
+      // 120s, the budget e2bc3a3 settled on for every spawned emulator run: at
+      // load ~40 this one takes 39s wall for 4.7s of CPU, so a 30s cap measured
+      // the box rather than the keypress path. It failed as one red check with
+      // no output, which reads like an input regression and is not one.
+      { encoding: 'utf-8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
     // The top-level window can own focus after a browser click; typing must
     // still resolve to Notepad's child EDIT and mutate its text.
     cliOk = out.includes('keypress code=72') && out.includes('keypress code=73')

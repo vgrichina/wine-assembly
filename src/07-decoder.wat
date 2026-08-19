@@ -765,6 +765,9 @@
         (if (call $thread_arena_flush_if_safe)
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))))
     (local.set $tstart (global.get $thread_alloc))
+    ;; Ask once, here, whether this block entry is the MSVC small-block-heap
+    ;; scan loop. The run loop then only has to compare EIP with the answer.
+    (call $sbh_note_candidate (local.get $start_eip))
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
 
@@ -772,16 +775,13 @@
           (global.get $stack_packet_enabled)
           (i32.eq (local.get $start_eip) (global.get $stack_packet_addr)))
       (then
-        (if (i32.eq (local.get $start_eip) (i32.const 0x0049D9D1))
-          (then
-            (call $te (i32.const 356) (i32.const 1))
-            (call $cache_store (local.get $start_eip) (local.get $tstart))
-            (return (local.get $tstart))))
-        (if (i32.eq (local.get $start_eip) (i32.const 0x0049DD20))
-          (then
-            (call $te (i32.const 356) (i32.const 2))
-            (call $cache_store (local.get $start_eip) (local.get $tstart))
-            (return (local.get $tstart))))))
+        ;; Which variant of the packet handler to emit is decided by whoever
+        ;; armed the prototype, not by a guest address compiled into the
+        ;; decoder. This used to test two literal EIPs from one particular
+        ;; build of one particular game, in the decoder every app runs.
+        (call $te (i32.const 356) (global.get $stack_packet_variant))
+        (call $cache_store (local.get $start_eip) (local.get $tstart))
+        (return (local.get $tstart))))
 
     ;; A 16-bit task can only execute inside the selector arena. Landing
     ;; outside it means a far pointer was used as a linear address somewhere,

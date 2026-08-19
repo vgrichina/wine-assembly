@@ -11,45 +11,9 @@
 //   kinds: load, store, imm, branch, other
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const { disasmAt } = require('./disasm');
 
-const args = process.argv.slice(2);
-const file = args[0];
-const tgtArg = args[1];
-if (!file || !tgtArg) {
-  console.error('Usage: xrefs.js <exe> <VA> [--near=RANGE] [--code]');
-  process.exit(1);
-}
-const target = parseInt(tgtArg, 16);
-const nearArg = args.find(a => a.startsWith('--near='));
-const near = nearArg ? parseInt(nearArg.slice(7), 16) : 0;
-const codeOnly = args.includes('--code');
-// Some compilers (Borland) put real code in sections flagged as data (CodeSeg, DataSeg).
-// Always scan sections whose name looks code-ish so we don't miss branches in them.
-const looksCode = name => /code|text|seg/i.test(name);
-
-const buf = fs.readFileSync(file);
-const peOff = buf.readUInt32LE(0x3C);
-const numSect = buf.readUInt16LE(peOff + 6);
-const optSize = buf.readUInt16LE(peOff + 20);
-const imageBase = buf.readUInt32LE(peOff + 52);
-const sectOff = peOff + 24 + optSize;
-
-const sections = [];
-for (let i = 0; i < numSect; i++) {
-  const s = sectOff + i * 40;
-  let name = '';
-  for (let j = 0; j < 8 && buf[s + j]; j++) name += String.fromCharCode(buf[s + j]);
-  const chr = buf.readUInt32LE(s + 36);
-  sections.push({
-    name,
-    vaddr: imageBase + buf.readUInt32LE(s + 12),
-    vsize: buf.readUInt32LE(s + 8),
-    rawOff: buf.readUInt32LE(s + 20),
-    rawSize: buf.readUInt32LE(s + 16),
-    exec: (chr & 0x20000000) !== 0,
-  });
-}
 
 // Classify a matched 4-byte literal within an instruction stream.
 // Returns { kind, insnOff } where insnOff is the VA of the opcode byte.
@@ -91,10 +55,28 @@ function classifyDataRef(buf, hitOff) {
   return { kind: 'imm', insnOff: hitOff - 4 };  // generic 4-byte imm in some longer instruction
 }
 
-const results = [];
-for (const s of sections) {
+// The scan, callable. tools/caller_census.js used to spawn this file and regex
+// its printed output, so any change to the print format silently turned into
+// "0 callers found".
+//
+// Returns [{ va, section, kind, off, branchTo?, branchKind? }] sorted by va.
+// kind is 'load' | 'store' | 'imm' | 'branch' | 'other' | 'data'.
+function scanXrefs(fileOrBuffer, target, opts = {}) {
+  const near = opts.near || 0;
+  const codeOnly = !!opts.codeOnly;
+  const pe = readPE(fileOrBuffer);
+  const buf = pe.buf;
+  // vaddr is the absolute VA in this tool. The Borland "section named CodeSeg
+  // but flagged as data" rule that used to live only here is now lib/pe.js's
+  // isCode, so every tool reading a PE gets it.
+  const sections = pe.sections.map(s => ({
+    name: s.name, vaddr: s.va, vsize: s.vsize, rawOff: s.rawOff, rawSize: s.rawSize,
+    exec: s.exec, isCode: s.isCode,
+  }));
+  const results = [];
+  for (const s of sections) {
   if (codeOnly && !s.exec) continue;
-  const treatAsCode = s.exec || looksCode(s.name);
+  const treatAsCode = s.isCode;
   const end = s.rawOff + Math.min(s.rawSize, s.vsize);
   // 1) Scan for literal 4-byte occurrences of target
   for (let i = s.rawOff; i + 4 <= end; i++) {
@@ -129,14 +111,26 @@ for (const s of sections) {
   }
 }
 
-function va2off(va) {
-  for (const s of sections) {
-    if (va >= s.vaddr && va < s.vaddr + s.rawSize) return { off: va - s.vaddr + s.rawOff, sect: s };
-  }
-  return null;
+  results.sort((a, b) => a.va - b.va);
+  return { results, buf, pe };
 }
 
-results.sort((a, b) => a.va - b.va);
+module.exports = { scanXrefs, classifyDataRef };
+
+if (require.main !== module) return;
+
+const args = process.argv.slice(2);
+const file = args[0];
+const tgtArg = args[1];
+if (!file || !tgtArg) {
+  console.error('Usage: xrefs.js <exe> <VA> [--near=RANGE] [--code]');
+  process.exit(1);
+}
+const target = parseInt(tgtArg, 16);
+const nearArg = args.find(a => a.startsWith('--near='));
+const near = nearArg ? parseInt(nearArg.slice(7), 16) : 0;
+const { results, buf } = scanXrefs(file, target, { near, codeOnly: args.includes('--code') });
+
 if (!results.length) {
   console.log(`No xrefs to 0x${target.toString(16)} found.`);
   process.exit(0);

@@ -59,10 +59,15 @@ function check(name, cond, detail) {
   pass++;
 }
 
+// --repaint-every is not a detail: the harness composites the whole 640x480
+// canvas after every batch by default, which costs about forty times what
+// running the guest does, and the longest run here is sixty thousand batches.
+// The `png` input action forces its own repaint, so the screenshots this test
+// reads are unaffected.
 function run(inputs, batches) {
   return execFileSync('node', [
     path.join(ROOT, 'test', 'run.js'), `--exe=${EXE}`,
-    `--max-batches=${batches}`, `--input=${inputs}`,
+    `--max-batches=${batches}`, '--repaint-every=200', `--input=${inputs}`,
   ], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
 }
 
@@ -141,6 +146,31 @@ function main() {
     green / total > 0.4);
   check(`cards are on it (${(white / total * 100).toFixed(0)}% white)`,
     white / total > 0.1);
+
+  // The same deal, reached the way a person reaches it. The status bar says
+  // "Press F2 to begin with current players", and F2 is an accelerator: a
+  // 16-bit accelerator table is five bytes an entry (BYTE fFlags, WORD key,
+  // WORD id) where the 32-bit one is eight, so walking it the wide way matched
+  // nothing and every accelerator in the game was dead. Posting the command
+  // directly, as the check above does, goes around exactly the part that broke.
+  const f2 = path.join(OUT, 'table-f2.png');
+  const log3 = run(`3000:click:${NAME_CLICK},3500:keypress:65,` +
+    `4500:click:${DEALER_CLICK},6000:click:${OK_CLICK},` +
+    `13000:keydown:113,13100:keyup:113,35000:png:${f2}`, 40000);
+  check('the F2 path did not crash', !/CRASH|UNIMPLEMENTED API/.test(log3));
+  const f2png = PNG.sync.read(fs.readFileSync(f2));
+  let f2white = 0, f2total = 0;
+  for (let y = 30; y < 440; y++) {
+    for (let x = 60; x < 580; x++) {
+      const i = (y * f2png.width + x) * 4;
+      const [r, g, b] = [f2png.data[i], f2png.data[i + 1], f2png.data[i + 2]];
+      f2total++;
+      if (r > 230 && g > 230 && b > 230) f2white++;
+    }
+  }
+  check(`F2 dealt the hand (${(f2white / f2total * 100).toFixed(0)}% cards)`,
+    f2white / f2total > 0.1,
+    'the accelerator did not reach New Game -- the table is still empty');
 
   console.log(`\n${pass} passed, 0 failed`);
   console.log(`Snapshots: ${OUT}`);

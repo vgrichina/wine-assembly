@@ -28,7 +28,7 @@ function run(input, maxBatches = 320) {
     RUN, `--exe=${EXE}`, `--input=${input.join(',')}`,
     `--max-batches=${maxBatches}`, '--batch-size=50000',
     '--quiet-api', '--quiet-blocks', '--no-close',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 80000, maxBuffer: 32 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 180000, maxBuffer: 32 * 1024 * 1024 });
   return { result, output: `${result.stdout || ''}${result.stderr || ''}` };
 }
 

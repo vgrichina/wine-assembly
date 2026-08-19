@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const path = require('path');
 const { disasmAt } = require('./disasm');
 
@@ -49,32 +50,13 @@ function readCString(buf, off, maxLen) {
 }
 
 function readPe(file) {
-  const buf = fs.readFileSync(file);
-  const peOff = buf.readUInt32LE(0x3c);
-  const numSections = buf.readUInt16LE(peOff + 6);
-  const optOff = peOff + 24;
-  const optSize = buf.readUInt16LE(peOff + 20);
-  const imageBase = buf.readUInt32LE(optOff + 28);
-  const sectOff = optOff + optSize;
-  const sections = [];
-  for (let i = 0; i < numSections; i++) {
-    const s = sectOff + i * 40;
-    const name = readCString(buf, s, 8);
-    const vsize = buf.readUInt32LE(s + 8);
-    const rva = buf.readUInt32LE(s + 12);
-    const rawSize = buf.readUInt32LE(s + 16);
-    const rawOff = buf.readUInt32LE(s + 20);
-    sections.push({
-      name,
-      va: imageBase + rva,
-      rva,
-      vsize,
-      rawSize,
-      rawOff,
-      span: Math.max(vsize, rawSize),
-    });
-  }
-  return { file, buf, imageBase, sections };
+  const pe = readPE(file);
+  const sections = pe.sections.map(s => ({
+    name: s.name, va: s.va, rva: s.rva, vsize: s.vsize,
+    rawSize: s.rawSize, rawOff: s.rawOff,
+    span: Math.max(s.vsize, s.rawSize),
+  }));
+  return { file, buf: pe.buf, imageBase: pe.imageBase, sections };
 }
 
 function vaToOff(pe, va) {

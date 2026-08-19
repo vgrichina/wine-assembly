@@ -4,6 +4,7 @@ const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
+const dllRegistry = require('../lib/dll-registry');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -117,6 +118,10 @@ const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileS
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
 const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (NE) API call and its result
+// --trace-win16=dde: only the DDEML offers and answers. The full trace is
+// large enough to change the timing of anything involving two processes, so a
+// race between two emulators in one room needs the quiet version.
+const TRACE_WIN16_DDE = (getArg('trace-win16', '') || '').split(',').includes('dde');
 const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
 // --vlan-ip=10.77.0.2: this process's room address (host of the room keeps
 // 10.77.0.1). --vlan-wire joins the segment offered by the parent process
@@ -126,7 +131,20 @@ const VLAN_WIRE = hasFlag('vlan-wire');
 // A blocking socket call parks the guest; if it never wakes, stop instead of
 // spinning forever. Each wait is one macrotask, so this is a real bound.
 const VLAN_MAX_WAITS = parseInt(getArg('vlan-max-waits', '20000'), 10);
+// Released by { t: 'go' } from the parent process; `B:wait-go` in --input holds
+// every later scheduled event until one arrives. The IPC channel is the one the
+// vlan wire already uses, and ProcessWire ignores anything that is not a frame,
+// so the two listeners do not collide.
+//
+// Counted rather than latched, and each wait consumes one: a run with two
+// `wait-go` points is asking to be released twice, and a latch would let the
+// first signal fall through both of them.
+let goPending = 0;
+if (process.send) {
+  process.on('message', (msg) => { if (msg && msg.t === 'go') goPending++; });
+}
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
+const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
 const CLOCK_ORIGIN = Date.now();
 // --trace-sched[=N]: one compact line whenever what the threads are doing
 // changes, plus a heartbeat every N batches (default 5000) so a stall shows up
@@ -202,7 +220,11 @@ const RPC_CENSUS = hasFlag('rpc-census'); // --rpc-census: with --threads, per-t
 // instead of reporting.
 let workerThreadHost = null;
 
-// NO_BUILD kept for compat but ignored — always compiles from WAT
+// Default is to compile from src/*.wat on every launch, so an edit is always
+// picked up. --no-build is honored (see main()): it loads WASM_PATH as-is, and
+// that file is whatever the last build left behind — so a --no-build run after
+// editing WAT silently measures the OLD module. Use it to pin one build across
+// several runs, never to check whether an edit worked.
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
 // Guest thread ids are $current_thread_id: main is 1, a spawned thread is tid+1.
@@ -561,6 +583,7 @@ async function main() {
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:wait-focus-length:MIN_LENGTH[:LIMIT] — delay until focused text reaches MIN_LENGTH
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
+  //   B:wait-go[:LIMIT] — hold later events until the parent sends {t:'go'} over IPC (LIMIT in batches; default none)
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
   //   B:read-dword:ADDR[:LABEL] — log a guest dword value
   const scheduledInput = [];
@@ -800,6 +823,30 @@ async function main() {
           action: 'wait-focus-length',
           minLength: parseInt(parts[2]) || 1,
           limit: parseInt(parts[3]) || 2000,
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-go') {
+        // B:wait-go[:LIMIT] — hold this event and every later one until the
+        // parent process sends { t: 'go' } over the child IPC channel.
+        //
+        // Batch numbers are a per-process clock, and two emulator processes do
+        // not keep the same time: in the Hearts room the dealer covered 65000
+        // batches while the client covered 18000, so "deal at batch 40000" fired
+        // twenty seconds before the player it was meant to wait for had joined.
+        // Anything where one side must act only after something has happened on
+        // the other needs a signal rather than an estimate.
+        // No limit unless one is asked for, and this is the one default that
+        // must NOT be a batch count. The signal arrives on the wall clock,
+        // from another process; batches are not time, and an idle Win16 app
+        // burns two hundred thousand of them in under three seconds. A
+        // "generous" ceiling here silently released the wait and let a Hearts
+        // dealer deal before its player had finished joining -- which then
+        // looks exactly like a protocol fault on the other side. --max-batches
+        // still bounds the run.
+        scheduledInput.push({
+          batch,
+          action: 'wait-go',
+          limit: parts[2] !== undefined ? parseInt(parts[2]) || 0 : 0,
           startBatch: batch,
         });
       } else if (kind === 'open-dlg-pick') {
@@ -1684,13 +1731,30 @@ async function main() {
     // wParam, lParam, and the dialog the pump belongs to.
     if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
     if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 6, words: [], ddeAsk: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
     if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
-      const { call: isCall, ret: isRet, route: isRoute, posted: isPosted, resolved, words } = pendingWin16;
+      const { call: isCall, ret: isRet, route: isRoute, posted: isPosted,
+              ddeAsk: isDdeAsk, ddeAns: isDdeAns, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isDdeAsk) {
+        const [type, inst, conv, hsz1, hsz2, cb] = words;
+        logs.push(`[win16] dde offer type=${hex(type)} inst=${inst} conv=${conv}` +
+          ` topic=${hsz1} service=${hsz2} callback=${hex(cb)}` +
+          `${cb >>> 16 ? '' : ' NO CALLBACK -- nobody to ask'}`);
+        return;
+      }
+      if (isDdeAns) {
+        // The value, not just yes/no: DDE_FBUSY ("ask me again") and DDE_FACK
+        // are both non-zero and mean opposite things to whoever is waiting.
+        logs.push(`[win16] dde answer ${words[0] ? 'ACCEPT' : 'REFUSE'}`
+          + `${(words[0] & 0x4000) ? ' BUSY' : ''} ret=${hex(words[0])} conv=${words[1]}`);
+        return;
+      }
       if (isPosted) {
         const [hwnd, msg, wp, lp, depth] = words;
         logs.push(`[win16] post -> hwnd=${hex(hwnd)} msg=${hex(msg)}` +
@@ -1848,7 +1912,10 @@ async function main() {
 
   // --- Override message_box to log ---
   h.message_box = (h2, t, c, u) => {
-    logs.push(`[MessageBox] "${readStr(c)}": "${readStr(t)}"`);
+    // Log uType too. The icon bits are the only thing separating "the app told
+    // you something" from "the app refused" -- a sweep that only sees a new
+    // window on screen scores an error box as a command that worked.
+    logs.push(`[MessageBox] "${readStr(c)}": "${readStr(t)}" type=0x${(u >>> 0).toString(16)}`);
     return 1;
   };
 
@@ -1856,8 +1923,7 @@ async function main() {
   h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
     const title = readStr(titlePtr);
     logs.push(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" style=0x${style.toString(16)} pos=${x},${y} size=${cx}x${cy} menu=${menuId}`);
-    if (!ctx._windowText) ctx._windowText = new Map();
-    ctx._windowText.set(hwnd, title);
+    ctx.recordWindowText(hwnd, title);
     if (renderer) renderer.createWindow(hwnd, style, x, y, cx, cy, title, menuId);
     return hwnd;
   };
@@ -1905,8 +1971,7 @@ async function main() {
   h.set_window_text = (hwnd, textPtr) => {
     const text = readStr(textPtr);
     logs.push(`[SetWindowText] "${text}"`);
-    if (!ctx._windowText) ctx._windowText = new Map();
-    ctx._windowText.set(hwnd, text);
+    ctx.recordWindowText(hwnd, text);
     if (renderer) renderer.setWindowText(hwnd, text);
     // Track "Installing Files" page for button delay
     if (text.includes('Installing')) installingFiles = true;
@@ -1931,7 +1996,16 @@ async function main() {
   const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
   const tickState = { batch: 0, callsInBatch: 0 };
   ctx.sharedAudio.audioClockMs = () => tickState.batch * 200;
-  h.get_ticks = () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
+  // --real-ticks hands the guest the wall clock instead. Two emulator
+  // processes in one room CANNOT share a batch-driven clock: a batch is not a
+  // unit of time and each process runs them at its own rate, so an idle Hearts
+  // dealer at fourteen thousand batches a second believes about forty-five
+  // minutes pass every real second, while the client working through a dialog
+  // believes far less. Anything either of them decides by elapsed time is then
+  // decided against a clock the other does not share.
+  h.get_ticks = REAL_TICKS
+    ? () => ((((Date.now() - CLOCK_ORIGIN) * TIME_SCALE) | 0) & 0x7FFFFFFF)
+    : () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -1996,11 +2070,28 @@ async function main() {
     const y = (pos >>> 16) & 0xFFFF;
     logs.push(`[mouse-state] ${reason} x=${x} y=${y} buttons=${hex(buttons)}`);
   };
-  const baseGetWindowRect = h.get_window_rect;
-  let lastWindowRectTrace = '';
-  h.get_window_rect = (hwnd, rectPtr) => {
-    baseGetWindowRect(hwnd, rectPtr);
-    if (TRACE_MOUSE_STATE) {
+  // Games poll these three every frame, so the tracing versions are installed
+  // only when --trace-mouse-state asked for them. The plain versions below are
+  // what a normal run gets: no closure per call, no DataView per call, no
+  // per-call flag test — the same flag-gated installation the wrap()/waveWrap()
+  // helpers already use.
+  h.get_mouse_position = () =>
+    (renderer && renderer.getMousePosition ? renderer.getMousePosition() : 0);
+  h.set_mouse_position = (x, y) => {
+    if (renderer && renderer.setMousePosition) renderer.setMousePosition(x, y);
+  };
+  h.get_mouse_buttons = () =>
+    (renderer && renderer.getMouseButtons ? renderer.getMouseButtons() : 0);
+  // GetAsyncKeyState backing — delegate to renderer's stateful key map
+  h.get_async_key_state = (vKey) => (renderer ? renderer.getAsyncKeyState(vKey) : 0);
+  h.get_key_down_state = (vKey) =>
+    (renderer && renderer.peekAsyncKeyState ? renderer.peekAsyncKeyState(vKey) : 0);
+
+  if (TRACE_MOUSE_STATE) {
+    const baseGetWindowRect = h.get_window_rect;
+    let lastWindowRectTrace = '';
+    h.get_window_rect = (hwnd, rectPtr) => {
+      baseGetWindowRect(hwnd, rectPtr);
       const mem = new DataView(ctx.getMemory());
       const l = mem.getInt32(rectPtr, true);
       const t = mem.getInt32(rectPtr + 4, true);
@@ -2011,40 +2102,44 @@ async function main() {
         lastWindowRectTrace = line;
         logs.push(`[mouse-state] GetWindowRect ${line}`);
       }
-    }
-  };
-  h.get_mouse_position = () => {
-    traceMouseSnapshot('get_mouse_position', false);
-    return renderer && renderer.getMousePosition ? renderer.getMousePosition() : 0;
-  };
-  h.set_mouse_position = (x, y) => {
-    if (renderer && renderer.setMousePosition) renderer.setMousePosition(x, y);
-    traceMouseSnapshot(`set_mouse_position ${x | 0},${y | 0}`, true);
-  };
-  h.get_mouse_buttons = () => {
-    traceMouseSnapshot('get_mouse_buttons', false);
-    return renderer && renderer.getMouseButtons ? renderer.getMouseButtons() : 0;
-  };
-  // GetAsyncKeyState backing — delegate to renderer's stateful key map
-  h.get_async_key_state = (vKey) => {
-    const value = renderer ? renderer.getAsyncKeyState(vKey) : 0;
-    const key = vKey & 0xFF;
-    if (TRACE_MOUSE_STATE && (key === 0x01 || key === 0x02) && lastAsyncMouseTrace[key] !== value) {
-      lastAsyncMouseTrace[key] = value;
-      traceMouseSnapshot(`GetAsyncKeyState(${hex(key)})=${hex(value)}`, true);
-    }
-    return value;
-  };
-  const lastKeyDownMouseTrace = Object.create(null);
-  h.get_key_down_state = (vKey) => {
-    const value = renderer && renderer.peekAsyncKeyState ? renderer.peekAsyncKeyState(vKey) : 0;
-    const key = vKey & 0xFF;
-    if (TRACE_MOUSE_STATE && (key === 0x01 || key === 0x02) && lastKeyDownMouseTrace[key] !== value) {
-      lastKeyDownMouseTrace[key] = value;
-      traceMouseSnapshot(`GetKeyDownState(${hex(key)})=${hex(value)}`, true);
-    }
-    return value;
-  };
+    };
+    const plainMousePos = h.get_mouse_position;
+    h.get_mouse_position = () => {
+      traceMouseSnapshot('get_mouse_position', false);
+      return plainMousePos();
+    };
+    const plainSetMousePos = h.set_mouse_position;
+    h.set_mouse_position = (x, y) => {
+      plainSetMousePos(x, y);
+      traceMouseSnapshot(`set_mouse_position ${x | 0},${y | 0}`, true);
+    };
+    const plainMouseButtons = h.get_mouse_buttons;
+    h.get_mouse_buttons = () => {
+      traceMouseSnapshot('get_mouse_buttons', false);
+      return plainMouseButtons();
+    };
+    const plainAsyncKey = h.get_async_key_state;
+    h.get_async_key_state = (vKey) => {
+      const value = plainAsyncKey(vKey);
+      const key = vKey & 0xFF;
+      if ((key === 0x01 || key === 0x02) && lastAsyncMouseTrace[key] !== value) {
+        lastAsyncMouseTrace[key] = value;
+        traceMouseSnapshot(`GetAsyncKeyState(${hex(key)})=${hex(value)}`, true);
+      }
+      return value;
+    };
+    const lastKeyDownMouseTrace = Object.create(null);
+    const plainKeyDown = h.get_key_down_state;
+    h.get_key_down_state = (vKey) => {
+      const value = plainKeyDown(vKey);
+      const key = vKey & 0xFF;
+      if ((key === 0x01 || key === 0x02) && lastKeyDownMouseTrace[key] !== value) {
+        lastKeyDownMouseTrace[key] = value;
+        traceMouseSnapshot(`GetKeyDownState(${hex(key)})=${hex(value)}`, true);
+      }
+      return value;
+    };
+  }
 
   // Create shared memory externally (WASM module imports it)
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
@@ -2386,24 +2481,8 @@ async function main() {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
     const required = requiredDlls;
     // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
-    const LOADABLE_DLLS = new Set(['msvcrt20.dll', 'mfc30.dll', 'msvcrt.dll', 'mfc42.dll', 'mfc42u.dll', 'comctl32.dll',
-      'msvcp60.dll', 'msvcp50.dll', 'riched20.dll', 'cabinet.dll', 'usp10.dll', 'cards.dll',
-      'd3drm.dll', 'kvdd.dll', 'sdl.dll',
-      // Win98 accessories that ship their engine beside the .exe rather than
-      // linking it: HyperTerminal's protocol engine and the Kodak Imaging
-      // common/display/admin libraries. Without these the apps die on their
-      // first import from one — InitInstance, ?UpdateVersion@@YGJH@Z, and a
-      // pile of ordinals respectively.
-      'hypertrm.dll', 'imgcmn.dll', 'sti.dll', 'shell32.dll', 'shlwapi.dll',
-      // Explorer is the Win98 shell: its window, desktop and taskbar all live
-      // in SHELL32 (entered through ordinal 244) and SHDOCVW.
-      'shdocvw.dll',
-      // The Kodak Imaging suite splits itself across ten OI*400 libraries and
-      // they import each other, so the whole set has to be loadable or the
-      // first cross-DLL ordinal fails.
-      'oiadm400.dll', 'oicom400.dll', 'oidis400.dll', 'oifil400.dll',
-      'oigfs400.dll', 'oiprt400.dll', 'oislb400.dll', 'oissq400.dll',
-      'oitwa400.dll', 'oiui400.dll']);
+    // The one list, shared with the browser (lib/dll-registry.js).
+    const LOADABLE_DLLS = dllRegistry.LOADABLE_DLLS;
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,
@@ -2499,6 +2578,19 @@ async function main() {
     // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
     // Recursively scan subdirectories too (e.g. Plugins/ for Winamp)
     const exeDir = path.dirname(EXE_PATH);
+    // Index the tree, don't read it. The exe's directory is whatever the caller
+    // pointed us at, and for anything sitting at the root of test/binaries that
+    // is the entire corpus — 3003 files, 1056 MB, read in full before the first
+    // x86 instruction, once per process, 114 times over a suite run. Profiling
+    // put this function at the top of the self-time list with the read/open/stat
+    // underneath it second. Measured back to back on notepad, 80 batches:
+    // eager 20.5/23.0/24.3s, lazy 1.66/1.88/2.11s. Most of that is not the
+    // reading — a warm re-read of the whole tree is under two seconds — it is
+    // allocating and then collecting a gigabyte of Uint8Array per process.
+    //
+    // readdir + stat is cheap and gives FindFirstFile everything it asks for
+    // (name, size, attributes). The bytes arrive on the first CreateFile that
+    // actually wants them.
     const loadDir = (hostDir, vfsPrefix) => {
       for (const f of fs.readdirSync(hostDir)) {
         if (vfsPrefix === 'c:\\' && f.toLowerCase() === exeName) continue;
@@ -2506,8 +2598,10 @@ async function main() {
         try {
           const stat = fs.statSync(fpath);
           if (stat.isFile()) {
-            ctx.vfs.files.set(vfsPrefix + f.toLowerCase(), {
-              data: new Uint8Array(fs.readFileSync(fpath)), attrs: 0x20
+            ctx.vfs.setLazyFile(vfsPrefix + f.toLowerCase(), {
+              attrs: 0x20,
+              size: stat.size,
+              load: () => new Uint8Array(fs.readFileSync(fpath)),
             });
           } else if (stat.isDirectory() && f !== '.' && f !== '..') {
             const subDir = vfsPrefix + f.toLowerCase() + '\\';
@@ -2840,7 +2934,7 @@ async function main() {
     return lines.join('\n');
   };
 
-  let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0;
+  let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0, prevWin16Calls = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
@@ -2897,6 +2991,9 @@ async function main() {
   // zero cost in the hot path.
   if (TRACE_CALLSTACK && instance.exports.set_callstack_enabled) {
     instance.exports.set_callstack_enabled(1);
+  }
+  if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
+    instance.exports.set_win16_dde_trace(1);
   }
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
@@ -4854,6 +4951,15 @@ async function main() {
         } else {
           logs.push(`[input] wait-focus-length: TIMEOUT len=${len} min=${ev.minLength} at batch ${batch}`);
         }
+      } else if (ev.action === 'wait-go') {
+        if (goPending > 0) {
+          goPending--;
+          logs.push(`[input] wait-go: released at batch ${batch}`);
+        } else if (!ev.limit || batch - (ev.startBatch || batch) < ev.limit) {
+          deferScheduledWait(ev, batch);
+        } else {
+          logs.push(`[input] wait-go: TIMEOUT at batch ${batch}`);
+        }
       } else if (ev.action === 'dump-fr' && renderer) {
         // Read the FR struct from the dialog's userdata via the WAT side.
         // For find dialog the userdata holds the guest FR ptr; FR.Flags
@@ -5607,7 +5713,15 @@ async function main() {
     // frames actually arrive: on a ProcessWire they come in over IPC, and
     // nothing is delivered while this synchronous loop holds the thread.
     if (instance.exports.get_yield_reason() === 8) {
-      netWaits++;
+      // This cap is here to notice a wire that has stalled, and it counts
+      // waits because a blocking socket call makes one per attempt. A 16-bit
+      // task parked on a continuation slot is a different shape: it is bounded
+      // by its own wall-clock timeout and can legitimately spend hundreds of
+      // thousands of turns inside it, so counting those trips the cap on a
+      // wait that is working exactly as designed.
+      if (!(instance.exports.win16_pump_parked && instance.exports.win16_pump_parked())) {
+        netWaits++;
+      }
       if (netWaits > VLAN_MAX_WAITS) {
         console.log(`[net] no progress after ${VLAN_MAX_WAITS} blocking waits; stopping`);
         stopped = true;
@@ -5622,6 +5736,19 @@ async function main() {
       if (instance.exports.vlan_pump) instance.exports.vlan_pump();
     } else {
       netWaits = 0;
+      // A process on the wire that is not blocking on it still has to let its
+      // transport deliver. On a ProcessWire frames arrive over child IPC, and
+      // nothing is delivered while this synchronous loop holds the thread —
+      // so a peer that never blocks can never receive an unsolicited frame at
+      // all. That is not a corner case: a Hearts dealer sits in an ordinary
+      // message loop waiting to be connected to, and read its client's
+      // request only after its own run had ended. A WSAAsyncSelect server
+      // would starve the same way, which is the host-side half of the problem
+      // $vsock_pump's call in GetMessageA solves on the guest side.
+      if (ctx.vlanWire && (batch & 0x3F) === 0) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (instance.exports.vlan_pump) instance.exports.vlan_pump();
+      }
     }
 
     // Handle LoadLibraryA yield (yield_reason=5)
@@ -5868,7 +5995,16 @@ if (VERBOSE) {
     } else {
       const ex = instance.exports;
       const regFp = ((ex.get_eax() ^ ex.get_ecx() ^ ex.get_edx() ^ ex.get_ebx() ^ ex.get_esi() ^ ex.get_edi() ^ ex.get_ebp() ^ ex.get_esp()) | 0);
-      if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount || regFp !== prevRegFp) {
+      // A 16-bit task makes none of the calls `apiCount` counts -- that is the
+      // 32-bit dispatch path, which is why every Win16 run reports "0 API
+      // calls" -- so its only evidence of life was EIP and the registers, and
+      // both can read identical at two batch boundaries of a healthy message
+      // loop. An idle Minesweeper was therefore reported STUCK. Its own call
+      // counter is the signal that actually distinguishes working from wedged.
+      const win16Calls = ex.win16_api_count ? ex.win16_api_count() | 0 : 0;
+      if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount
+          || regFp !== prevRegFp || win16Calls !== prevWin16Calls) {
+        prevWin16Calls = win16Calls;
         if (!QUIET_BLOCKS && eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
         prevApiCount = apiCount;
@@ -5906,6 +6042,10 @@ if (VERBOSE) {
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
+    if (instance.exports.gdi_dc_state_used) {
+      console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
+        instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
+    }
   }
   // Critical-section contention, printed only when there was some. A steal means
   // a section was taken from a holder that never released it — a real bug that
