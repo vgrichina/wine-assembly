@@ -186,6 +186,7 @@ E2E=(
   test/test-win16-hearts-menus.js
   test/test-win16-hearts-vlan.js
   test/test-web-hearts-lan.js
+  test/test-web-hearts-rtc.js
   test/test-win16-dde-room.js
   test/test-win16-dde-connect-callback.js
   test/test-sysmon-perfstats.js
