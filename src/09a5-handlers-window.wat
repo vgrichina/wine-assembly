@@ -487,8 +487,6 @@
     ;; slot because the message pump delivers that slot to main_hwnd.
     (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
       (then
-        (global.set $main_win_cx (local.get $win_cx))
-        (global.set $main_win_cy (local.get $win_cy))
         ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
         ;; The startup WM_SIZE carries the client size, so it has to be the
         ;; client size USER will report from then on. This used to subtract
@@ -497,10 +495,6 @@
         ;; to its Win98 width of 4 the two disagreed by a pixel and Notepad
         ;; sized its edit control over the window frame. Ask nccalcsize.
         (call $defwndproc_do_nccalcsize (local.get $hwnd))
-        (global.set $main_nc_height
-          (i32.sub (global.get $main_win_cy)
-            (i32.sub (call $client_rect_get_b (local.get $hwnd))
-                     (call $client_rect_get_t (local.get $hwnd)))))
         (global.set $pending_wm_size (i32.or
           (i32.and
             (i32.sub (call $client_rect_get_r (local.get $hwnd))

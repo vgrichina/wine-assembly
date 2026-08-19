@@ -2837,8 +2837,6 @@
     ;; exactly this; using the stale 0x0 create size moves its controls offscreen.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-	      (global.set $main_win_cx (local.get $arg3))
-	      (global.set $main_win_cy (local.get $arg4))
 	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then

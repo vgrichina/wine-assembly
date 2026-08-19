@@ -1888,9 +1888,6 @@
   (global $ATOM_FIRST        i32 (i32.const 0xC000))  ;; first string-atom value
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
-  (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)
-  (global $main_win_cy       (mut i32) (i32.const 0)) ;; main window height
-  (global $main_nc_height    (mut i32) (i32.const 25)) ;; non-client height: 25 (no menu) or 45 (with menu)
   (global $movewindow_pending_hwnd (mut i32) (i32.const 0)) ;; non-main hwnd awaiting WM_SIZE from MoveWindow
   (global $movewindow_pending_size (mut i32) (i32.const 0)) ;; packed client cx|cy<<16 for that hwnd
   ;; Posted message queue: up to 64 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes

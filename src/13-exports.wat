@@ -2045,8 +2045,6 @@
   ;; PE metadata exports (needed to init worker threads)
   (func (export "get_code_start") (result i32) (global.get $code_start))
   (func (export "get_code_end") (result i32) (global.get $code_end))
-  (func (export "get_main_win_cx") (result i32) (global.get $main_win_cx))
-  (func (export "get_main_win_cy") (result i32) (global.get $main_win_cy))
 
   ;; Register setters for test harness
   (func (export "set_eip") (param i32) (global.set $eip (local.get 0)))
