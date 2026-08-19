@@ -2875,9 +2875,19 @@
               ;; pending HWND. Paint resizes its inner canvas during dock-bar
               ;; layout without calling ShowWindow on it afterward; the old
               ;; single-slot path therefore never delivered its final WM_SIZE.
-              (drop (call $post_queue_push
-                (local.get $arg0) (i32.const 0x0005)
-                (i32.const 0) (local.get $cs)))))))
+              ;;
+              ;; A 16-bit window with a real far procedure is the exception:
+              ;; $win16_MoveWindow enters that procedure with WM_SIZE before it
+              ;; returns, the way Windows does, so posting here would deliver
+              ;; the same message a second time out of the pump.
+              (if (i32.eqz (i32.and
+                    (i32.ne (global.get $code16) (i32.const 0))
+                    (call $win16_is_far_proc
+                      (call $wnd_table_get (local.get $arg0)))))
+                (then
+                  (drop (call $post_queue_push
+                    (local.get $arg0) (i32.const 0x0005)
+                    (i32.const 0) (local.get $cs)))))))))
     (global.set $eax (i32.const 1))
     (return)
   )

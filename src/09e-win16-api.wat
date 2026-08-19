@@ -6017,20 +6017,51 @@
     (call $win16_api_return (i32.const 6)))
 
   ;; USER.56 MoveWindow(hWnd, x, y, nWidth, nHeight, bRepaint).
+  ;;
+  ;; MoveWindow does not return until the window procedure has seen the new
+  ;; size. That ordering is load-bearing rather than cosmetic: Visual Basic
+  ;; keeps a form's geometry in the form object in twips, and the only thing
+  ;; that ever writes it is the WM_SIZE handler in VBRUN's own procedure.
+  ;; Queue that message instead of sending it and VB reads the object back
+  ;; while it is still zero, decides the form is 0x0, and moves the window to
+  ;; 1x1 -- which is exactly what every VB1 game did here: sixty-two windows
+  ;; built, a form shown, and nothing on screen.
+  ;;
+  ;; The delivery uses the same continuation the create path uses: this frame
+  ;; goes now, the result and the caller's return address go on the stack in
+  ;; its place, and the procedure's RETF 10 lands on the continuation thunk,
+  ;; which puts the 1 back in AX and returns where MoveWindow was going to.
+  ;; $handle_MoveWindow leaves the queue alone for these windows (see the
+  ;; $code16 arm there) so the procedure hears about the size exactly once.
   (func $win16_MoveWindow
     (local $hwnd i32) (local $x i32) (local $y i32) (local $w i32)
-    (local $h i32) (local $repaint i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
+    (local $h i32) (local $repaint i32) (local $hwnd16 i32)
+    (local $proc i32) (local $cs i32) (local $old_cs i32)
+    (local.set $hwnd16 (call $win16_arg16 (i32.const 5)))
+    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 4))))
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 3))))
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 2))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 1))))
     (local.set $repaint (call $win16_arg16 (i32.const 0)))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    (local.set $old_cs (call $host_get_window_client_size (local.get $hwnd)))
     (call $win16_call32_begin (i32.const 6))
     (call $win16_call32_arg (i32.const 5) (local.get $repaint))
     (call $handle_MoveWindow (local.get $hwnd) (local.get $x) (local.get $y)
       (local.get $w) (local.get $h) (i32.const 0))
     (call $win16_call32_end)
+    (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+    (if (i32.and
+          (call $win16_is_far_proc (local.get $proc))
+          (i32.ne (local.get $cs) (local.get $old_cs)))
+      (then
+        (call $win16_cont_push
+          (call $win16_take_return (i32.const 12)) (i32.const 1))
+        (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
+          (i32.const 0x0005) (i32.const 0) (local.get $cs)
+          (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
+        (return)))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 12)))
 
