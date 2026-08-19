@@ -2503,6 +2503,19 @@ async function main() {
     // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
     // Recursively scan subdirectories too (e.g. Plugins/ for Winamp)
     const exeDir = path.dirname(EXE_PATH);
+    // Index the tree, don't read it. The exe's directory is whatever the caller
+    // pointed us at, and for anything sitting at the root of test/binaries that
+    // is the entire corpus — 3003 files, 1056 MB, read in full before the first
+    // x86 instruction, once per process, 114 times over a suite run. Profiling
+    // put this function at the top of the self-time list with the read/open/stat
+    // underneath it second. Measured back to back on notepad, 80 batches:
+    // eager 20.5/23.0/24.3s, lazy 1.66/1.88/2.11s. Most of that is not the
+    // reading — a warm re-read of the whole tree is under two seconds — it is
+    // allocating and then collecting a gigabyte of Uint8Array per process.
+    //
+    // readdir + stat is cheap and gives FindFirstFile everything it asks for
+    // (name, size, attributes). The bytes arrive on the first CreateFile that
+    // actually wants them.
     const loadDir = (hostDir, vfsPrefix) => {
       for (const f of fs.readdirSync(hostDir)) {
         if (vfsPrefix === 'c:\\' && f.toLowerCase() === exeName) continue;
@@ -2510,8 +2523,10 @@ async function main() {
         try {
           const stat = fs.statSync(fpath);
           if (stat.isFile()) {
-            ctx.vfs.files.set(vfsPrefix + f.toLowerCase(), {
-              data: new Uint8Array(fs.readFileSync(fpath)), attrs: 0x20
+            ctx.vfs.setLazyFile(vfsPrefix + f.toLowerCase(), {
+              attrs: 0x20,
+              size: stat.size,
+              load: () => new Uint8Array(fs.readFileSync(fpath)),
             });
           } else if (stat.isDirectory() && f !== '.' && f !== '..') {
             const subDir = vfsPrefix + f.toLowerCase() + '\\';
