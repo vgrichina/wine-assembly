@@ -56,16 +56,6 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     if (resetMatch) return { profileReset: resetMatch[1] || 'playback' };
     const waitMatch = s.match(/^wait:(\d+)$/i);
     if (waitMatch) return { wait: parseInt(waitMatch[1], 10) || 0 };
-    // shot:PATH — screenshot mid-script. Click coordinates are canvas pixels
-    // and every step moves the layout, so deriving the next click from the
-    // final frame alone costs one browser run per click.
-    const shotMatch = s.match(/^shot:(.+)$/i);
-    if (shotMatch) return { shot: shotMatch[1].trim() };
-    // move:X,Y — a bare mouse move, no button. Menus track hover on movement,
-    // and a click is press+release with no move in between, so this is the only
-    // way to highlight a submenu parent (and read its children) from a script.
-    const moveMatch = s.match(/^move:(-?\d+),(-?\d+)$/i);
-    if (moveMatch) return { move: true, x: Number(moveMatch[1]), y: Number(moveMatch[2]) };
     const postCmdMatch = s.match(/^post-cmd:(\d+)$/i);
     if (postCmdMatch) return { postCmd: parseIntAuto(postCmdMatch[1]) };
     const timerMatch = s.match(/^timer-interval:([^,]+),([^,]+)$/i);
@@ -125,7 +115,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.move || p.wait !== undefined || p.shot !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.clearWorkerCache || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.wait !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.clearWorkerCache || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -406,8 +396,8 @@ async function main() {
     });
   }
 
-  async function saveScreenshotTo(dest) {
-    if (!dest) return;
+  async function saveScreenshot() {
+    if (!SCREENSHOT_PATH) return;
     try {
       await evalExpr(`(() => {
         const app = runningApps && runningApps[0];
@@ -419,11 +409,7 @@ async function main() {
       await wait(50);
     } catch (_) {}
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', fromSurface: true });
-    if (shot && shot.data) fs.writeFileSync(dest, Buffer.from(shot.data, 'base64'));
-  }
-
-  async function saveScreenshot() {
-    await saveScreenshotTo(SCREENSHOT_PATH);
+    if (shot && shot.data) fs.writeFileSync(SCREENSHOT_PATH, Buffer.from(shot.data, 'base64'));
   }
 
   async function evalExpr(expression, timeout = 5000, userGesture = false) {
@@ -486,17 +472,6 @@ async function main() {
       };
     })()`);
     await clickClient(p.x, p.y, button);
-  }
-
-  async function moveCanvasPoint(x, y) {
-    const p = await canvasClientPoint(x, y);
-    await cdp.send('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: p.x,
-      y: p.y,
-      button: 'none',
-      buttons: 0,
-    });
   }
 
   async function canvasClientPoint(x, y) {
@@ -1283,35 +1258,6 @@ async function main() {
         postClickSnapshots.push({ action: 'profile-reset', label: p.profileReset });
         continue;
       }
-      if (p.move) {
-        progress(`move canvas ${p.x},${p.y}`);
-        await moveCanvasPoint(p.x, p.y);
-        await wait(POST_CLICK_WAIT_MS);
-        // Which item a y lands on is menu-metrics arithmetic no script can
-        // predict, so report the hover index every instance ended up with —
-        // that turns "find the submenu row" into one run instead of one per y.
-        postClickSnapshots.push(await evalExpr(`(() => {
-          const app = runningApps[0];
-          const wine = app && app.wine;
-          const r = window.sharedRenderer || (wine && wine.renderer);
-          const seen = new Set();
-          const menus = [];
-          for (const w of Object.values((r && r.windows) || {})) {
-            const inst = w && w.wasm;
-            if (!inst || seen.has(inst)) continue;
-            seen.add(inst);
-            const ex = inst.exports || {};
-            menus.push({
-              openHwnd: ex.menu_open_hwnd ? (ex.menu_open_hwnd() >>> 0) : 0,
-              top: ex.menu_open_top ? (ex.menu_open_top() | 0) : -99,
-              hover: ex.menu_open_hover ? (ex.menu_open_hover() | 0) : -99,
-              y: ex.menu_open_y ? (ex.menu_open_y() | 0) : -99,
-            });
-          }
-          return { action: 'move', x: ${p.x}, y: ${p.y}, menus };
-        })()`));
-        continue;
-      }
       if (p.wait !== undefined) {
         progress(`wait ${p.wait}ms`);
         await wait(p.wait);
@@ -1331,12 +1277,6 @@ async function main() {
             voiceCount: voices && voices._map ? Object.keys(voices._map).length : 0,
           };
         })()`));
-        continue;
-      }
-      if (p.shot !== undefined) {
-        progress(`screenshot ${p.shot}`);
-        await saveScreenshotTo(p.shot);
-        postClickSnapshots.push({ action: 'shot', path: p.shot });
         continue;
       }
       if (p.postCmd !== undefined) {

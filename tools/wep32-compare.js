@@ -148,20 +148,50 @@ function communityApps() {
 // The 3% line below is calibrated against looking at all twenty pictures:
 // Minesweeper's small board is 4.6% and is the smallest real screen here,
 // while an empty Winarc window is 1.9% and an empty Tetravex 0.7%.
+// A blue pixel is only caption gradient if it comes in a bar. Discounting
+// every blue pixel on the screen cost Pegged its whole board: its pegs are
+// blue, so the one app whose picture was perfect scored 2% and read as blank.
+// A caption spans its window, so its blues arrive in runs of hundreds; a peg
+// is fourteen pixels across. The run length is what tells them apart.
+const CAPTION_RUN = 100;
+function isCaptionBlue(r, g, b) { return b > g + 20 && b > r + 20; }
+
 function look(pngPath) {
   if (!fs.existsSync(pngPath)) return null;
   const png = PNG.sync.read(fs.readFileSync(pngPath));
   const seen = new Set();
   let content = 0;
-  for (let i = 0; i < png.data.length; i += 4) {
-    const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
-    const key = (r << 16) | (g << 8) | b;
-    if (key === 0x008080 || key === 0xc0c0c0) continue;   // desktop, window face
-    if (b > g + 20 && b > r + 20) continue;               // caption gradient
-    content++;
-    seen.add(key);
+  let covered = 0;   // everything that is not the desktop behind it
+  for (let y = 0; y < png.height; y++) {
+    let run = 0;         // how many blue pixels in a row so far
+    let runColors = [];  // and what they were, in case the run stays short
+    const flush = () => {
+      if (run < CAPTION_RUN) {
+        content += run;
+        for (const key of runColors) seen.add(key);
+      }
+      run = 0; runColors = [];
+    };
+    for (let x = 0; x < png.width; x++) {
+      const i = (y * png.width + x) * 4;
+      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
+      const key = (r << 16) | (g << 8) | b;
+      if (key !== 0x008080) covered++;
+      if (isCaptionBlue(r, g, b)) { run++; runColors.push(key); continue; }
+      flush();
+      if (key === 0x008080 || key === 0xc0c0c0) continue;   // desktop, window face
+      content++;
+      seen.add(key);
+    }
+    flush();
   }
-  return { colors: seen.size, content: content / (png.width * png.height),
+  // Against what the app put on screen, not against the screen. A game with a
+  // 240x240 window that fills it edge to edge is not less of a picture than a
+  // full-screen one with the same drawing spread thinner, and measuring
+  // against 640x480 said it was: Pegged's board came to 2% of the screen and
+  // read as blank next to a screenshot anyone can see is a finished game.
+  return { colors: seen.size, content: content / Math.max(covered, 1),
+           covered: covered / (png.width * png.height),
            w: png.width, h: png.height };
 }
 

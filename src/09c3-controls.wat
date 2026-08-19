@@ -2574,7 +2574,7 @@
     (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
             (call $wat_str_to_heap (i32.const 0x2CB) (i32.const 2))))
     (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0180) (i32.const 0)
-            (call $wat_str_to_heap (i32.const 0x2E6) (i32.const 2))))
+            (call $wat_str_to_heap (i32.const 0x2CE) (i32.const 2))))
     (drop (call $wnd_send_message (local.get $size_lb) (i32.const 0x0186) (i32.const 1) (i32.const 0)))
 
     ;; OK / Cancel
