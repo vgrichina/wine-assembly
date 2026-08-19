@@ -1832,7 +1832,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
-he SM_* table, with no calling convention attached. GetSystemMetrics is
+  ;; The SM_* table, with no calling convention attached. GetSystemMetrics is
   ;; the same question in Win32 and in Win16 — USER.179 takes the same indices
   ;; and means the same things — so the answers live here and both dispatchers
   ;; call in. An index with no entry is 0, which is what Windows returns for a
@@ -6953,7 +6953,7 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-r, fillType)
+  ;; 453: ExtFloodFill(hdc, x, y, color, fillType)
   (func $handle_ExtFloodFill (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32)
     (local.set $desc (global.get $GDI_BLIT_DST_DESC))
@@ -8532,7 +8532,7 @@ r, fillType)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-unc $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 6)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -8540,7 +8540,7 @@ unc $handle_CopyMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) 
     (global.set $eax (call $gdi_metafile_copy (local.get $arg0) (i32.const 6)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-tCreatePen(style, width, LOGBRUSH*, styleCount, styleEntries).
+  ;; 146: ExtCreatePen(style, width, LOGBRUSH*, styleCount, styleEntries).
   (func $handle_ExtCreatePen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $brush i32) (local $style i32) (local $color i32) (local $flags i32)
     (if (i32.eqz (local.get $arg2))
@@ -8615,7 +8615,7 @@ SetColorAdjustment — validate and copy complete per-DC state.
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-e_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.or
           (i32.ne (local.get $arg0) (global.get $printer_hdc))
           (i32.ne (global.get $printer_doc_state) (i32.const 0)))
@@ -8627,7 +8627,7 @@ e_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-, widths) — UTF-16 range width query.
+  ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.
   (func $handle_GetCharWidthW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_font_char_widths
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -8637,7 +8637,7 @@ e_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
- 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
+  ;; 606: GetTextFaceW(hdc, cch, face) — UTF-16 variant of GetTextFaceA.
   (func $handle_GetTextFaceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_font_write_text_face
       (local.get $arg0) (local.get $arg1)
@@ -10994,7 +10994,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; ret + 1 arg
   )
 
-c $handle_GetCharWidth32W (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_GetCharWidth32W (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_font_char_widths
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (if (result i32) (local.get $arg3)

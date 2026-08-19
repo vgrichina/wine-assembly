@@ -197,6 +197,8 @@ UNIT=(
   test/test-wat-gdi-screen-readback.js
   test/test-wat-winsock-hostname.js
   test/test-window-control-id.js
+  test/test-compile-wat-unknown-name.js
+  test/test-gdi-public-seven.js
 )
 
 E2E=(
@@ -385,14 +387,6 @@ QUARANTINE=(
   test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
   test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
   test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
-  # Module fails to instantiate. Not a stack bug in the WAT -- 09b2's generated
-  # dispatch table calls $handle_StartDocW, $handle_CopyMetaFileA and
-  # $handle_GetCharWidth32W, none of which exist. compile-wat only WARNS on an
-  # unknown func and drops the call, so the args stay on the stack and any
-  # module that lands one of those in a value position fails validation. The
-  # shipped wasm has the same three holes; they are silent no-ops there rather
-  # than crash_unimplemented, which is why nothing else notices.
-  test/test-gdi-public-seven.js         # fn #6391: expected 1 elements on the stack for fallthru, found 5
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
   # Combobox drop-down paints no text at all. Three tests agree, so this is one bug.
   test/test-combobox.js                 # 57/59: CBS_DROPDOWN paints its selected list text (changedBytes=0)
