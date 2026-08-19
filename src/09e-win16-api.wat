@@ -6248,8 +6248,13 @@
     (local $w i32) (local $h i32) (local $planes i32) (local $bpp i32) (local $bits i32)
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 5))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 4))))
-    (local.set $planes (call $win16_arg16 (i32.const 3)))
-    (local.set $bpp (call $win16_arg16 (i32.const 2)))
+    ;; nPlanes and nBitCount are BYTE parameters, and a byte pushed as a word
+    ;; carries whatever was in the high half — SkiFree's compiler leaves the
+    ;; previous value there, so its 1-plane 1-bit bitmap arrived as 0x0101 by
+    ;; 0x0101 and GDI refused it. "Whoa, like, can't load bitmaps! Yer outa
+    ;; memory, duuude!" was the whole of the diagnosis.
+    (local.set $planes (i32.and (call $win16_arg16 (i32.const 3)) (i32.const 0xFF)))
+    (local.set $bpp (i32.and (call $win16_arg16 (i32.const 2)) (i32.const 0xFF)))
     (local.set $bits (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     ;; A null far pointer is a bitmap with undefined contents, not a pointer to
