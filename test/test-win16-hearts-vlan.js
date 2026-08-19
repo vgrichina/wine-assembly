@@ -188,6 +188,11 @@ const DEALER_INPUT = [
   `${DEAL_AT + 89000}:wait-go`,
   `${DEAL_AT + 90000}:click:${PASS_BUTTON}`,
   `${DEAL_AT + 100000}:png:${shot('dealer-trick')}`,
+  // Follow suit. The lead was a club and the hand is sorted, so the leftmost
+  // card is a club if this seat has one -- and Hearts refuses anything else,
+  // which makes a legal move the only move that changes the screen.
+  `${DEAL_AT + 101000}:click:${LOWEST_CARD}`,
+  `${DEAL_AT + 115000}:png:${shot('dealer-followed')}`,
 ].join(',');
 
 const CLIENT_INPUT = [
@@ -561,6 +566,22 @@ function table(file, x0 = 60, y0 = 30, x1 = 580, y1 = 440) {
     const t = table(shot(`${name}-trick`), 250, 150, 400, 300);
     check(`the ${name} has a card on the table (${(t.white * 100).toFixed(0)}% of the middle)`,
       t.white > 0.05, JSON.stringify(t));
+  }
+
+  // 8: the seat that was watching plays its own card. Everything before this
+  // could in principle be one side driving and the other only drawing; a legal
+  // reply is the far player taking its turn in a game whose rules the near one
+  // is enforcing.
+  const followed = await waitForFile(shot('dealer-followed'));
+  check('the dealer followed the lead', followed, 'no screenshot');
+  if (followed) {
+    const t = table(shot('dealer-followed'), 250, 150, 400, 300);
+    check(`the trick is still in front of it (${(t.white * 100).toFixed(0)}% of the middle)`,
+      t.white > 0.05, JSON.stringify(t));
+  }
+  for (const s of [dealer, client]) {
+    check(`the ${s.label} was still running at the end of the hand`,
+      !s.seen.has('crashed'), 'it trapped -- see the transcript');
   }
   // Not a failure, and not hidden either. The dealer's own seat does not
   // finish the round: it receives the client's "Pass" poke, reads it with
