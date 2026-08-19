@@ -1274,7 +1274,12 @@
   ;; Each extra heap is remembered by its selector, and LocalAlloc picks the
   ;; one matching DS — which is how Windows resolves it too, since every local
   ;; call there is implicitly about the current data segment.
-  (global $WIN16_LHEAPS i32 (i32.const 8))
+  ;; Sixty-four of them. Eight was a guess and JigSawed ran out: a Visual
+  ;; Basic form lays a heap into every block it allocates for a control array,
+  ;; so the count follows the form rather than anything fixed. The table lives
+  ;; at 0xE400 of the arena's last page, above the interrupt vectors and well
+  ;; below the DLL records at 0x8000, so there is room for hundreds.
+  (global $WIN16_LHEAPS i32 (i32.const 64))
 
   (func $win16_lheap_slot (param $i i32) (result i32)
     (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
