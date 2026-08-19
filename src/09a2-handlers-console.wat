@@ -292,17 +292,13 @@
   ;; ReadConsoleW(hConsole, lpBuffer, nNumberOfCharsToRead, lpNumberOfCharsRead, pInputControl) → BOOL
   ;; No input available — return 0 chars read
   (func $handle_ReadConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+    (call $handle_ReadConsoleA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; ReadConsoleInputW — same as A version
   (func $handle_ReadConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (call $handle_ReadConsoleInputA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; ReadConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
   ;; Read CHAR_INFO from console buffer

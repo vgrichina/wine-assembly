@@ -3086,16 +3086,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 292: LoadMenuW — return fake handle — STUB: unimplemented
+  ;; 292: LoadMenuW — a menu is named by ordinal here (the menu itself comes
+  ;; from the PE resource), and an ordinal has no encoding, so this is
+  ;; LoadMenuA.
   (func $handle_LoadMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; LoadMenuW — same as LoadMenuA
-    (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-      (then
-        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (global.set $last_load_menu_hinst (local.get $arg0))
-        (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
-      (else (global.set $eax (i32.const 0x00BE0001))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $handle_LoadMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.
@@ -3257,8 +3253,8 @@
 
   ;; 673: ModifyMenuW — STUB: unimplemented
   (func $handle_ModifyMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (call $handle_ModifyMenuA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 674: GetMenuState — STUB: unimplemented

@@ -1353,43 +1353,29 @@
     (local.get $ct)
   )
 
-  (func $get_string_type_a_core (param $src_guest i32) (param $count_in i32) (param $out_guest i32) (result i32)
-    (local $i i32) (local $ch i32) (local $out i32) (local $src i32) (local $count i32)
+  ;; GetStringType{A,W} core: one CT_CTYPE1 word per source character. The
+  ;; output is an array of WORDs either way; only the source stride differs.
+  (func $get_string_type_core (param $src_guest i32) (param $count_in i32)
+                              (param $out_guest i32) (param $wide i32) (result i32)
+    (local $i i32) (local $out i32) (local $src i32) (local $count i32) (local $step i32)
     (if (i32.eqz (local.get $src_guest)) (then (return (i32.const 0))))
     (if (i32.eqz (local.get $out_guest)) (then (return (i32.const 0))))
     (local.set $src (call $g2w (local.get $src_guest)))
     (local.set $out (call $g2w (local.get $out_guest)))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
     (local.set $count (local.get $count_in))
     (if (i32.eq (local.get $count) (i32.const -1))
-      (then (local.set $count (i32.add (call $strlen_a (local.get $src)) (i32.const 1)))))
-    (local.set $i (i32.const 0))
+      (then (local.set $count (i32.add
+        (select (call $strlen_w (local.get $src)) (call $strlen_a (local.get $src))
+                (local.get $wide))
+        (i32.const 1)))))
     (block $done (loop $next
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
       (i32.store16
         (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2)))
-        (call $ctype1_ascii_flags (local.get $ch)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $next)))
-    (i32.const 1)
-  )
-
-  (func $get_string_type_w_core (param $src_guest i32) (param $count_in i32) (param $out_guest i32) (result i32)
-    (local $i i32) (local $ch i32) (local $out i32) (local $src i32) (local $count i32)
-    (if (i32.eqz (local.get $src_guest)) (then (return (i32.const 0))))
-    (if (i32.eqz (local.get $out_guest)) (then (return (i32.const 0))))
-    (local.set $src (call $g2w (local.get $src_guest)))
-    (local.set $out (call $g2w (local.get $out_guest)))
-    (local.set $count (local.get $count_in))
-    (if (i32.eq (local.get $count) (i32.const -1))
-      (then (local.set $count (i32.add (call $strlen_w (local.get $src)) (i32.const 1)))))
-    (local.set $i (i32.const 0))
-    (block $done (loop $next
-      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
-      (i32.store16
-        (i32.add (local.get $out) (i32.mul (local.get $i) (i32.const 2)))
-        (call $ctype1_ascii_flags (local.get $ch)))
+        (call $ctype1_ascii_flags
+          (call $load_char (i32.add (local.get $src) (i32.mul (local.get $i) (local.get $step)))
+                           (local.get $wide))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $next)))
     (i32.const 1)
@@ -1397,13 +1383,15 @@
 
   ;; 45: GetStringTypeA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType) — single-byte CT_CTYPE1 classification.
   (func $handle_GetStringTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $get_string_type_a_core (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $eax (call $get_string_type_core
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
   ;; 46: GetStringTypeW(dwInfoType, lpSrcStr, cchSrc, lpCharType) — classify chars.
   (func $handle_GetStringTypeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $get_string_type_w_core (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (global.set $eax (call $get_string_type_core
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -2919,20 +2907,30 @@
   )
 
   ;; 125: CharNextA
+  ;; CharNext{A,W}(lpsz) — advance one character, stopping on the terminator.
+  ;; One character is one byte in ANSI and one UTF-16 code unit wide.
+  (func $char_next (param $p i32) (param $wide i32) (result i32)
+    (select
+      (local.get $p)
+      (i32.add (local.get $p) (select (i32.const 2) (i32.const 1) (local.get $wide)))
+      (i32.eqz (call $gl_char (local.get $p) (local.get $wide)))))
+
+  ;; CharPrev{A,W}(lpszStart, lpszCurrent) — step back one character, never
+  ;; before the start of the string.
+  (func $char_prev (param $start i32) (param $cur i32) (param $wide i32) (result i32)
+    (select
+      (local.get $start)
+      (i32.sub (local.get $cur) (select (i32.const 2) (i32.const 1) (local.get $wide)))
+      (i32.le_u (local.get $cur) (local.get $start))))
+
   (func $handle_CharNextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return ptr+1 (simple ANSI impl)
-    (if (i32.eqz (call $gl8 (local.get $arg0)))
-    (then (global.set $eax (local.get $arg0)))
-    (else (global.set $eax (i32.add (local.get $arg0) (i32.const 1)))))
+    (global.set $eax (call $char_next (local.get $arg0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 126: CharPrevA
   (func $handle_CharPrevA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return max(start, ptr-1)
-    (if (i32.le_u (local.get $arg1) (local.get $arg0))
-    (then (global.set $eax (local.get $arg0)))
-    (else (global.set $eax (i32.sub (local.get $arg1) (i32.const 1)))))
+    (global.set $eax (call $char_prev (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -3476,19 +3474,27 @@
   )
 
   ;; 915: SearchPathA(lpPath, lpFileName, lpExtension, nBufLen, lpBuffer, lpFilePart) — 6 args stdcall
+  ;; SearchPath{A,W}(lpPath, lpFileName, lpExtension, nBufLen, lpBuffer, lpFilePart).
+  ;; The host walks the VFS the same way for both spellings; $wide only decides
+  ;; how it reads the three input strings and writes the result back.
+  (func $search_path (param $path_g i32) (param $file_g i32) (param $ext_g i32)
+                     (param $buflen i32) (param $buf_g i32) (param $part_g i32)
+                     (param $wide i32) (result i32)
+    (call $host_fs_search_path
+      (select (i32.const 0) (call $g2w (local.get $path_g)) (i32.eqz (local.get $path_g)))
+      (select (i32.const 0) (call $g2w (local.get $file_g)) (i32.eqz (local.get $file_g)))
+      (select (i32.const 0) (call $g2w (local.get $ext_g)) (i32.eqz (local.get $ext_g)))
+      (local.get $buflen)
+      (local.get $buf_g)       ;; guest addr, host g2w's
+      (local.get $part_g)      ;; filePartPtrGA
+      (local.get $wide)))
+
   (func $handle_SearchPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $arg5 i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    ;; 6th arg (lpFilePart) lives at esp+20 (skip ret addr + 5 visible args)
-    (local.set $arg5 (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_fs_search_path
-      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg3)        ;; bufLen
-      (local.get $arg4)        ;; bufGA (guest addr, host g2w's)
-      (local.get $arg5)        ;; filePartPtrGA
-      (i32.const 0)))          ;; isWide=0
+    ;; 6th arg (lpFilePart) lives at esp+24 (skip ret addr + 5 visible args)
+    (global.set $eax (call $search_path
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
@@ -4079,19 +4085,21 @@
   )
 
   ;; 225: RegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData) — 6 args stdcall
+  ;; RegQueryValueEx{A,W}(hKey, lpValueName, lpReserved, lpType, lpData,
+  ;; lpcbData) — 6 args stdcall. The host does the whole read; the only thing
+  ;; the spelling decides is how it reads the value name and writes strings
+  ;; back, which is the $wide flag it already takes.
+  (func $reg_query_value_ex (param $hkey i32) (param $name_g i32) (param $type_g i32)
+                            (param $data_g i32) (param $cb_g i32) (param $wide i32) (result i32)
+    (call $host_reg_query_value
+      (local.get $hkey)
+      (select (i32.const 0) (call $g2w (local.get $name_g)) (i32.eqz (local.get $name_g)))
+      (local.get $type_g) (local.get $data_g) (local.get $cb_g) (local.get $wide)))
+
   (func $handle_RegQueryValueExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $lpData i32) (local $lpcbData i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $lpData (local.get $arg4))
-    (local.set $lpcbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_reg_query_value
-      (local.get $arg0)                                          ;; hKey
-      (if (result i32) (local.get $arg1)                         ;; lpValueName
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg3)                                          ;; lpType (guest addr)
-      (local.get $lpData)                                        ;; lpData (guest addr)
-      (local.get $lpcbData)                                      ;; lpcbData (guest addr)
-      (i32.const 0)))                                            ;; isWide=0
+    (global.set $eax (call $reg_query_value_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -4101,42 +4109,33 @@
   ;; here stores no unexpanded strings, so the read is the same read.
   ;; Explorer reaches this through SHELL32 ordinal 509.
   (func $handle_SHQueryValueExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_reg_query_value
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg3)
-      (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (i32.const 0)))
+    (global.set $eax (call $reg_query_value_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
   (func $handle_SHQueryValueExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_reg_query_value
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg3)
-      (local.get $arg4)
-      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-      (i32.const 1)))
+    (global.set $eax (call $reg_query_value_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 226: RegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData) — 6 args stdcall
+  ;; RegSetValueEx{A,W}(hKey, lpValueName, Reserved, dwType, lpData, cbData)
+  ;; — 6 args stdcall, one write with the spelling as a flag.
+  (func $reg_set_value_ex (param $hkey i32) (param $name_g i32) (param $type i32)
+                          (param $data_g i32) (param $cb i32) (param $wide i32) (result i32)
+    (call $host_reg_set_value
+      (local.get $hkey)
+      (select (i32.const 0) (call $g2w (local.get $name_g)) (i32.eqz (local.get $name_g)))
+      (local.get $type) (local.get $data_g) (local.get $cb) (local.get $wide)))
+
+  ;; 226: RegSetValueExA
   (func $handle_RegSetValueExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $cbData i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $cbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_reg_set_value
-      (local.get $arg0)                                          ;; hKey
-      (if (result i32) (local.get $arg1)                         ;; lpValueName
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg3)                                          ;; dwType
-      (local.get $arg4)                                          ;; lpData (guest addr)
-      (local.get $cbData)                                        ;; cbData
-      (i32.const 0)))                                            ;; isWide=0
+    (global.set $eax (call $reg_set_value_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -4553,20 +4552,25 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 256: GetPrivateProfileStringA — STUB: unimplemented
+  ;; GetPrivateProfileString{A,W}(appName, keyName, default, retBuf, nSize, fileName)
+  ;; — 6 args stdcall. One INI read for both spellings; $wide picks the encoding.
+  (func $ini_get_string (param $app_g i32) (param $key_g i32) (param $def_g i32)
+                        (param $buf_g i32) (param $size i32) (param $file_g i32)
+                        (param $wide i32) (result i32)
+    (call $host_ini_get_string
+      (select (i32.const 0) (call $g2w (local.get $app_g)) (i32.eqz (local.get $app_g)))
+      (select (i32.const 0) (call $g2w (local.get $key_g)) (i32.eqz (local.get $key_g)))
+      (select (i32.const 0) (call $g2w (local.get $def_g)) (i32.eqz (local.get $def_g)))
+      (local.get $buf_g)        ;; retBuf (guest addr — host will g2w)
+      (local.get $size)         ;; nSize
+      (call $g2w (local.get $file_g))
+      (local.get $wide)))
+
   (func $handle_GetPrivateProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetPrivateProfileStringA(appName, keyName, default, retBuf, nSize, fileName) — 6 args stdcall
-    (local $wa_esp i32) (local $fileName i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $fileName (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_ini_get_string
-      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg3)         ;; retBuf (guest addr — host will g2w)
-      (local.get $arg4)         ;; nSize
-      (call $g2w (local.get $fileName))
-      (i32.const 0)))           ;; isWide=0
+    (global.set $eax (call $ini_get_string
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -4989,18 +4993,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 290: LoadCursorW(hInstance, lpCursorName) — same IDC encoding as LoadCursorA.
+  ;; 290: LoadCursorW(hInstance, lpCursorName) — a cursor named by ordinal is
+  ;; the only kind either spelling can load, and an ordinal has no encoding,
+  ;; so this is exactly LoadCursorA.
   (func $handle_LoadCursorW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and (i32.eqz (local.get $arg0))
-                 (i32.lt_u (local.get $arg1) (i32.const 0x10000)))
-      (then (global.set $eax (i32.or (i32.const 0x60000)
-                                     (i32.and (local.get $arg1) (i32.const 0xFFFF)))))
-      (else
-        (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
-          (then (global.set $eax (i32.or (i32.const 0x680000)
-                                         (i32.and (local.get $arg1) (i32.const 0xFFFF)))))
-          (else (global.set $eax (i32.const 0x67F00))))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $handle_LoadCursorA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 291: LoadIconW(hInstance, lpIconName) → HICON. An icon named by ordinal —
@@ -5568,17 +5566,13 @@ nW — STUB: unimplemented
 
   ;; 324: CharNextW — advance by one wide char
   (func $handle_CharNextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.add (local.get $arg0) (i32.const 2)))
-    (if (i32.eqz (call $gl16 (local.get $arg0)))
-      (then (global.set $eax (local.get $arg0))))
+    (global.set $eax (call $char_next (local.get $arg0) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; CharPrevW(lpszStart, lpszCurrent) — step back one UTF-16 code unit.
   (func $handle_CharPrevW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.le_u (local.get $arg1) (local.get $arg0))
-      (then (global.set $eax (local.get $arg0)))
-      (else (global.set $eax (i32.sub (local.get $arg1) (i32.const 2)))))
+    (global.set $eax (call $char_prev (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
@@ -6017,13 +6011,11 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 381: SetWindowsHookExW — return fake handle, 4 args stdcall
+  ;; SetWindowsHookExW(idHook, lpfn, hMod, dwThreadId) — the hook proc is a
+  ;; code pointer, so there is nothing to widen; the A path is the whole story.
   (func $handle_SetWindowsHookExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; SetWindowsHookExW(idHook, lpfn, hMod, dwThreadId)
-    ;; Save CBT hook proc (WH_CBT = 5) for CreateWindowEx* to call.
-    (if (i32.eq (local.get $arg0) (i32.const 5))
-      (then (global.set $cbt_hook_proc (local.get $arg1))))
-    (global.set $eax (i32.const 0xBEEF))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $handle_SetWindowsHookExA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; SetWindowsHookExA — return fake handle, 4 args stdcall
@@ -6898,8 +6890,8 @@ HookEx — no next hook in chain, return 0
 
   ;; 432: RegSetValueW — 5 args stdcall, return ERROR_SUCCESS (registry writes are no-op)
   (func $handle_RegSetValueW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (call $handle_RegSetValueA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; RegSetValueA — 5 args stdcall, return ERROR_SUCCESS (registry writes are no-op)
@@ -6922,19 +6914,11 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 434: RegSetValueExW(hKey, lpValueName, Reserved, dwType, lpData, cbData) — 6 args stdcall
+  ;; 434: RegSetValueExW
   (func $handle_RegSetValueExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $cbData i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $cbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_reg_set_value
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg3)
-      (local.get $arg4)
-      (local.get $cbData)
-      (i32.const 1)))
+    (global.set $eax (call $reg_set_value_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -6967,20 +6951,11 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
   )
 
-  ;; 436: RegQueryValueExW(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData) — 6 args stdcall
+  ;; 436: RegQueryValueExW
   (func $handle_RegQueryValueExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $lpData i32) (local $lpcbData i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $lpData (local.get $arg4))
-    (local.set $lpcbData (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_reg_query_value
-      (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (local.get $arg3)
-      (local.get $lpData)
-      (local.get $lpcbData)
-      (i32.const 1)))
+    (global.set $eax (call $reg_query_value_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -7241,8 +7216,8 @@ HookEx — no next hook in chain, return 0
 
   ;; 465: ExtractIconW — 3 args stdcall, return fake icon handle
   (func $handle_ExtractIconW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x0000FACE))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $handle_ExtractIconA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; ExtractIconA — 3 args stdcall, return fake icon handle
@@ -7370,8 +7345,8 @@ HookEx — no next hook in chain, return 0
 
   ;; DragQueryFileW — same as A, return 0 files, 4 args
   (func $handle_DragQueryFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $handle_DragQueryFileA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; SHGetFileInfo's display name: the final component of the path, copied into
@@ -7829,16 +7804,23 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; 490: GetDriveTypeA(lpRootPathName) — C: is fixed, D: is the CD-ROM.
+  ;; GetDriveType{A,W}(lpRootPathName) — everything is DRIVE_FIXED except D:,
+  ;; which is the CD. Only the stride of the two characters we look at differs
+  ;; between the spellings.
+  (func $drive_type (param $root_g i32) (param $wide i32) (result i32)
+    (if (i32.eqz (local.get $root_g)) (then (return (i32.const 3))))
+    (return (select (i32.const 5) (i32.const 3)
+      (i32.and
+        (i32.eq (i32.and (call $gl_char (local.get $root_g) (local.get $wide)) (i32.const 0xDF))
+                (i32.const 0x44))
+        (i32.eq (call $gl_char
+                  (i32.add (local.get $root_g)
+                           (select (i32.const 2) (i32.const 1) (local.get $wide)))
+                  (local.get $wide))
+                (i32.const 0x3A))))))
+
   (func $handle_GetDriveTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $root i32)
-    (global.set $eax (i32.const 3))  ;; DRIVE_FIXED / current C: drive
-    (if (i32.ne (local.get $arg0) (i32.const 0))
-      (then
-        (local.set $root (call $g2w (local.get $arg0)))
-        (if (i32.and
-              (i32.eq (i32.and (i32.load8_u (local.get $root)) (i32.const 0xDF)) (i32.const 0x44))
-              (i32.eq (i32.load8_u offset=1 (local.get $root)) (i32.const 0x3A)))
-          (then (global.set $eax (i32.const 5))))))  ;; DRIVE_CDROM
+    (global.set $eax (call $drive_type (local.get $arg0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
@@ -7882,15 +7864,7 @@ HookEx — no next hook in chain, return 0
 
   ;; 496: GetDriveTypeW — Unicode counterpart of GetDriveTypeA.
   (func $handle_GetDriveTypeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $root i32)
-    (global.set $eax (i32.const 3))
-    (if (i32.ne (local.get $arg0) (i32.const 0))
-      (then
-        (local.set $root (call $g2w (local.get $arg0)))
-        (if (i32.and
-              (i32.eq (i32.and (i32.load16_u (local.get $root)) (i32.const 0xDF)) (i32.const 0x44))
-              (i32.eq (i32.load16_u offset=2 (local.get $root)) (i32.const 0x3A)))
-          (then (global.set $eax (i32.const 5))))))
+    (global.set $eax (call $drive_type (local.get $arg0) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -7932,8 +7906,8 @@ HookEx — no next hook in chain, return 0
 
   ;; 500: CreateProcessW — STUB: unimplemented
   (func $handle_CreateProcessW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 44)))
+    (call $handle_CreateProcessA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 501: HeapValidate — STUB: unimplemented
@@ -8167,12 +8141,14 @@ HookEx — no next hook in chain, return 0
 
   ;; GetStringTypeExA(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
   (func $handle_GetStringTypeExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $get_string_type_a_core (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $eax (call $get_string_type_core
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 520: GetStringTypeExW(Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
   (func $handle_GetStringTypeExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $get_string_type_w_core (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (global.set $eax (call $get_string_type_core
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 521: GetThreadLocale() → LCID — returns US English
@@ -8196,10 +8172,8 @@ HookEx — no next hook in chain, return 0
   ;; 524: CreateMutexW(lpMutexAttributes, bInitialOwner, lpName) → HANDLE
   ;; Returns a unique handle for the mutex. Single-threaded, so always succeeds.
   (func $handle_CreateMutexW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (global.set $eax (global.get $next_hwnd))
-    (global.set $last_error (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (call $handle_CreateMutexA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; 525: ReleaseMutex(hMutex) — single-threaded, always succeeds
   (func $handle_ReleaseMutex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -8281,8 +8255,8 @@ HookEx — no next hook in chain, return 0
 
   ;; 530: GlobalGetAtomNameW(nAtom, lpBuffer, nSize)
   (func $handle_GlobalGetAtomNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $atom_get_name_w (global.get $ATOM_GLOBAL_TABLE)
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax (call $atom_get_name (global.get $ATOM_GLOBAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -8427,16 +8401,10 @@ HookEx — no next hook in chain, return 0
   ;; The host search takes an isWide flag and does the conversion on both
   ;; sides of itself, so this is SearchPathA with that flag set.
   (func $handle_SearchPathW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (global.set $eax (call $host_fs_search_path
-      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg3)        ;; bufLen
-      (local.get $arg4)        ;; bufGA (guest addr, host g2w's)
-      (i32.load (i32.add (local.get $wa_esp) (i32.const 24)))  ;; lpFilePart
-      (i32.const 1)))          ;; isWide=1
+    (global.set $eax (call $search_path
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; stdcall, 6 args
   )
 
@@ -8475,17 +8443,9 @@ HookEx — no next hook in chain, return 0
 
   ;; 542: GetPrivateProfileStringW — STUB: unimplemented
   (func $handle_GetPrivateProfileStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; GetPrivateProfileStringW(appName, keyName, default, retBuf, nSize, fileName) — 6 args stdcall
-    (local $wa_esp i32) (local $fileName i32)
-    (local.set $wa_esp (call $g2w (global.get $esp)))
-    (local.set $fileName (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (global.set $eax (call $host_ini_get_string
-      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (local.get $arg3)
-      (local.get $arg4)
-      (call $g2w (local.get $fileName))
+    (global.set $eax (call $ini_get_string
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
@@ -8589,7 +8549,8 @@ HookEx — no next hook in chain, return 0
 
   ;; 547: OutputDebugStringW — STUB: unimplemented
   (func $handle_OutputDebugStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_OutputDebugStringA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 548: IsBadStringPtrA — STUB: unimplemented
@@ -8714,16 +8675,11 @@ SetColorAdjustment — validate and copy complete per-DC state.
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; StartDocW — the DOCINFO strings are only names for a print job nothing
+  ;; here reads, so starting the job is the same act in either encoding.
   (func $handle_StartDocW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.or
-          (i32.ne (local.get $arg0) (global.get $printer_hdc))
-          (i32.ne (global.get $printer_doc_state) (i32.const 0)))
-      (then (global.set $eax (i32.const -1)))
-      (else
-        (global.set $printer_doc_state (i32.const 1))
-        (global.set $printer_page_count (i32.const 0))
-        (global.set $eax (i32.const 1))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $handle_StartDocA (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 603: GetCharWidthW(hdc, first, last, widths) — UTF-16 range width query.
@@ -9980,8 +9936,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; Searches for a top-level window. Returns NULL (no other instances running).
   ;; Apps use this to detect if they're already running.
   (func $handle_FindWindowW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (call $handle_FindWindowA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; 679: GetTabbedTextExtentW — packed width/height for UTF-16 text.
   (func $handle_GetTabbedTextExtentW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9993,8 +9949,11 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   )
 
   ;; 680: UnregisterClassW — STUB: unimplemented
+  ;; UnregisterClassW(lpClassName, hInstance) — class records are keyed by a
+  ;; byte-string hash after conversion, so the A path already covers both.
   (func $handle_UnregisterClassW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (call $handle_UnregisterClassA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 681: ShowOwnedPopups(hwndOwner, fShow) — single-window model has no popups

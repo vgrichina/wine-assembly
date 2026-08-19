@@ -376,8 +376,8 @@
 
   ;; 752: SetWindowsHookW(idHook, lpfn) — old-style hook, return fake handle
   (func $handle_SetWindowsHookW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00DEAD01))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+    (call $handle_SetWindowsHookA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; SetWindowsHookA(idHook, lpfn) — old-style hook, return fake handle
@@ -1690,11 +1690,13 @@
         (i32.store offset=4 (local.get $e) (i32.const 0))))
     (i32.const 0))
 
-  ;; Copy the name of $atom into the guest ANSI buffer $buf, which holds $size
+  ;; Copy the name of $atom into the guest buffer $buf, which holds $size
   ;; characters including the terminator. Returns characters copied (0 = no
-  ;; such atom), matching GlobalGetAtomNameA.
-  (func $atom_get_name_a (param $table i32) (param $atom i32) (param $buf i32) (param $size i32) (result i32)
-    (local $e i32) (local $src i32) (local $n i32) (local $i i32)
+  ;; such atom), matching GlobalGetAtomName. The table stores ANSI names, so
+  ;; the only thing $wide changes is the stride of the write.
+  (func $atom_get_name (param $table i32) (param $atom i32) (param $buf i32)
+                       (param $size i32) (param $wide i32) (result i32)
+    (local $e i32) (local $src i32) (local $n i32) (local $i i32) (local $step i32)
     (if (i32.or (i32.eqz (local.get $buf)) (i32.le_s (local.get $size) (i32.const 0)))
       (then (return (i32.const 0))))
     (local.set $e (call $atom_entry (local.get $table) (local.get $atom)))
@@ -1703,33 +1705,16 @@
     (local.set $n (call $guest_strlen (local.get $src)))
     (if (i32.gt_u (local.get $n) (i32.sub (local.get $size) (i32.const 1)))
       (then (local.set $n (i32.sub (local.get $size) (i32.const 1)))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (call $gs8 (i32.add (local.get $buf) (local.get $i))
-                 (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (call $store_char (i32.add (local.get $buf) (i32.mul (local.get $i) (local.get $step)))
+                        (call $gl8 (i32.add (local.get $src) (local.get $i)))
+                        (local.get $wide))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
-    (call $gs8 (i32.add (local.get $buf) (local.get $n)) (i32.const 0))
-    (local.get $n))
-
-  ;; Same, writing UTF-16 into $buf.
-  (func $atom_get_name_w (param $table i32) (param $atom i32) (param $buf i32) (param $size i32) (result i32)
-    (local $e i32) (local $src i32) (local $n i32) (local $i i32)
-    (if (i32.or (i32.eqz (local.get $buf)) (i32.le_s (local.get $size) (i32.const 0)))
-      (then (return (i32.const 0))))
-    (local.set $e (call $atom_entry (local.get $table) (local.get $atom)))
-    (if (i32.eqz (local.get $e)) (then (return (i32.const 0))))
-    (local.set $src (i32.load (local.get $e)))
-    (local.set $n (call $guest_strlen (local.get $src)))
-    (if (i32.gt_u (local.get $n) (i32.sub (local.get $size) (i32.const 1)))
-      (then (local.set $n (i32.sub (local.get $size) (i32.const 1)))))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (call $gs16 (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 2)))
-                  (call $gl8 (i32.add (local.get $src) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy)))
-    (call $gs16 (i32.add (local.get $buf) (i32.mul (local.get $n) (i32.const 2))) (i32.const 0))
+    (call $store_char (i32.add (local.get $buf) (i32.mul (local.get $n) (local.get $step)))
+                      (i32.const 0) (local.get $wide))
     (local.get $n))
 
   ;; Narrow a UTF-16 atom name into a temporary guest ANSI buffer so the W
@@ -1777,8 +1762,8 @@
 
   ;; GlobalGetAtomNameA(nAtom, lpBuffer, nSize)
   (func $handle_GlobalGetAtomNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $atom_get_name_a (global.get $ATOM_GLOBAL_TABLE)
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax (call $atom_get_name (global.get $ATOM_GLOBAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -1799,15 +1784,15 @@
 
   ;; GetAtomNameA(nAtom, lpBuffer, nSize)
   (func $handle_GetAtomNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $atom_get_name_a (global.get $ATOM_LOCAL_TABLE)
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax (call $atom_get_name (global.get $ATOM_LOCAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; GetAtomNameW(nAtom, lpBuffer, nSize)
   (func $handle_GetAtomNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $atom_get_name_w (global.get $ATOM_LOCAL_TABLE)
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $eax (call $atom_get_name (global.get $ATOM_LOCAL_TABLE)
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
