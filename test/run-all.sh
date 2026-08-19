@@ -213,6 +213,7 @@ E2E=(
   test/test-wordpad-paste-refcount.js
   test/test-fontview.js
   test/test-mspaint-web.js
+  test/test-qblackjack-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js
   test/test-notepad.js

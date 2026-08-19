@@ -927,45 +927,15 @@ class WineAssembly {
     return (((addr >>> 0) - imageBase + guestBase) >>> 0);
   }
 
-  _patchLoadedBytes(addr, expected, replacement, label) {
-    const wa = this._guestToWasmAddress(addr);
-    const mem = this.memory && this.memory.buffer ? new Uint8Array(this.memory.buffer) : null;
-    if (!mem || wa < 0 || wa + expected.length > mem.length || expected.length !== replacement.length) {
-      console.warn(`[compat] cannot patch ${label}: address out of range`);
-      return false;
-    }
-    for (let i = 0; i < expected.length; i++) {
-      if (mem[wa + i] !== expected[i]) {
-        console.warn(`[compat] cannot patch ${label}: unexpected byte at 0x${(addr + i).toString(16)}`);
-        return false;
-      }
-    }
-    mem.set(replacement, wa);
-    console.log(`[compat] patched ${label} at 0x${addr.toString(16)}`);
-    return true;
-  }
-
+  // The patch table is lib/app-profiles.js, shared with the CLI harness — it
+  // used to be a second hand-copy here, so a patch added on one side never
+  // reached the other.
   _applyExeCompatibilityPatches(exeName) {
-    const name = String(exeName || '').toLowerCase();
-    if (name !== 'quickblackjack.exe') return;
-    this._patchLoadedBytes(
-      0x004222d0,
-      [0x55, 0x89, 0xe5],
-      [0xc3, 0x90, 0x90],
-      'QuickBlackjack synchronous animation delay'
-    );
-    this._patchLoadedBytes(
-      0x0041a80c,
-      [0x75, 0x05],
-      [0x90, 0x90],
-      'QuickBlackjack hand painter x-animation branch'
-    );
-    this._patchLoadedBytes(
-      0x0041a890,
-      [0x75, 0x05],
-      [0x90, 0x90],
-      'QuickBlackjack hand painter y-animation branch'
-    );
+    const profiles = (typeof window !== 'undefined' && window.appProfiles) ||
+      (typeof appProfiles !== 'undefined' ? appProfiles : null);
+    if (!profiles || !this.instance) return;
+    profiles.applyExeCompatibilityPatches(
+      exeName, this.instance.exports, this.memory && this.memory.buffer);
   }
 
   async loadExe(url) {

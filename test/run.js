@@ -5,6 +5,7 @@ const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { compileWat } = require('../lib/compile-wat');
 const { resolveDllGraph } = require('../lib/process-boot');
+const { applyExeCompatibilityPatches: applyProfilePatches } = require('../lib/app-profiles');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -242,59 +243,15 @@ function win16ApiName(moduleId, ordinal) {
   return `${mod}.${ordinal}${name ? ' ' + name : ' (no exported name)'}`;
 }
 
+// The patch table itself lives in lib/app-profiles.js, shared with the browser
+// host; only the CLI's env-var opt-in filter is here.
 function applyExeCompatibilityPatches(exeName, exports, memoryBuffer) {
-  if (process.env.WA_SKIP_EXE_COMPAT_PATCHES === '1') return;
-  const enabledKeys = process.env.WA_EXE_COMPAT_PATCHES
-    ? new Set(process.env.WA_EXE_COMPAT_PATCHES.split(',').map(s => s.trim()).filter(Boolean))
-    : null;
-  const name = String(exeName || '').toLowerCase();
-  if (name !== 'quickblackjack.exe') return;
-  if (!exports || !exports.get_image_base || !memoryBuffer) return;
-  const imageBase = exports.get_image_base() >>> 0;
-  const guestBase = exports.get_guest_base ? (exports.get_guest_base() >>> 0) : 0x12000;
-  const mem = new Uint8Array(memoryBuffer);
-  const patches = [
-    {
-      key: 'qbj-delay',
-      addr: 0x004222d0,
-      expected: [0x55, 0x89, 0xe5],
-      replacement: [0xc3, 0x90, 0x90],
-      label: 'QuickBlackjack synchronous animation delay',
-    },
-    {
-      key: 'qbj-hand-x',
-      addr: 0x0041a80c,
-      expected: [0x75, 0x05],
-      replacement: [0x90, 0x90],
-      label: 'QuickBlackjack hand painter x-animation branch',
-    },
-    {
-      key: 'qbj-hand-y',
-      addr: 0x0041a890,
-      expected: [0x75, 0x05],
-      replacement: [0x90, 0x90],
-      label: 'QuickBlackjack hand painter y-animation branch',
-    },
-  ];
-  for (const patch of patches) {
-    if (enabledKeys && !enabledKeys.has(patch.key)) continue;
-    const wa = (((patch.addr >>> 0) - imageBase + guestBase) >>> 0);
-    if (wa + patch.expected.length > mem.length) {
-      console.warn(`[compat] cannot patch ${patch.label}: address out of range`);
-      continue;
-    }
-    let ok = true;
-    for (let i = 0; i < patch.expected.length; i++) {
-      if (mem[wa + i] !== patch.expected[i]) {
-        console.warn(`[compat] cannot patch ${patch.label}: unexpected byte at ${hex(patch.addr + i)}`);
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-    mem.set(patch.replacement, wa);
-    console.log(`[compat] patched ${patch.label} at ${hex(patch.addr)}`);
-  }
+  applyProfilePatches(exeName, exports, memoryBuffer, {
+    skip: process.env.WA_SKIP_EXE_COMPAT_PATCHES === '1',
+    enabledKeys: process.env.WA_EXE_COMPAT_PATCHES
+      ? new Set(process.env.WA_EXE_COMPAT_PATCHES.split(',').map(s => s.trim()).filter(Boolean))
+      : null,
+  });
 }
 
 // Module-relative address syntax: `module.dll+0xVA` or `module.exe+0xVA` resolves
