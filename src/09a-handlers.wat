@@ -2714,6 +2714,12 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
         (local.set $r (i32.and (local.get $cs) (i32.const 0xFFFF)))
         (local.set $b (i32.shr_u (local.get $cs) (i32.const 16)))))
     (call $update_invalidate_rect (local.get $arg0) (local.get $l) (local.get $t) (local.get $r) (local.get $b))
+    ;; bErase is deliberately not turned into a queued WM_ERASEBKGND here.
+    ;; Windows erases from inside BeginPaint, in the same breath as the paint;
+    ;; a separately queued erase arrives whenever the pump gets to it, and Hearts
+    ;; draws a dealt hand with its own DC outside WM_PAINT -- so the erase landed
+    ;; after the cards and wiped four of them off the table. See $handle_BeginPaint
+    ;; for where the background is decided instead.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))
@@ -4278,8 +4284,34 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
     ;; is constrained by the update/visible region; erasing before the clip is
     ;; installed wipes too much during small invalidations (Spider card drags).
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
-    (if (local.get $brush)
+    ;; Whose background is it? Filling here unconditionally is right for a
+    ;; window that lets USER paint its background, and destroys one that paints
+    ;; its own: Hearts fills its baize green in WM_ERASEBKGND and was registered
+    ;; with WHITE_BRUSH, so every paint turned the table white -- and which of
+    ;; the two won depended on the order the pump happened to run them in, so it
+    ;; flickered between green and white as the game went on.
+    ;;
+    ;; The window itself has already answered the question. NC_FLAGS bit 3 is
+    ;; set when a WM_ERASEBKGND reaches DefWindowProc, which only happens for a
+    ;; window that did not want it. Bit 1 means an erase is still outstanding
+    ;; and nobody has been given it yet -- the first paint of a window's life --
+    ;; and the class brush is the right answer there too.
+    ;;
+    ;; Children keep the old unconditional fill. An erase is only ever queued
+    ;; for a window once, at creation, so for anything that repaints often this
+    ;; is the only background it gets; Hearts' own status bar draws its text
+    ;; straight over whatever is there and its lines piled up on each other the
+    ;; moment the fill stopped. The bug being fixed here is a top-level one --
+    ;; a game that paints its table and was registered with WHITE_BRUSH -- so
+    ;; that is where the behaviour changes.
+    (if (i32.and (local.get $brush)
+          (i32.or
+            (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
+                             (i32.const 0x40000000)) (i32.const 0))
+            (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
+                             (i32.const 10)) (i32.const 0))))
       (then
+        (call $nc_flags_clear (local.get $arg0) (i32.const 2))
         (local.set $desc (global.get $GDI_LINE_DESC))
         (if (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
           (then (drop (call $gdi_fill_rect_desc
@@ -4839,6 +4871,13 @@ he SM_* table, with no calling convention attached. GetSystemMetrics is
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
+    ;; Reaching here is the window saying that USER owns its background: it was
+    ;; sent the erase and handed it straight back. NC_FLAGS bit 3 records that,
+    ;; and $handle_BeginPaint uses it to decide whether to repaint the class
+    ;; brush on later paints. A window that erases for itself never gets here,
+    ;; and must not have its own background overwritten -- Hearts fills its
+    ;; baize green and was registered with WHITE_BRUSH.
+    (call $nc_flags_set (local.get $arg0) (i32.const 8))
     (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (global.set $eax (i32.const 0))

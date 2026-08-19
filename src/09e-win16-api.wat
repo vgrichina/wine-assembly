@@ -1234,7 +1234,7 @@
     (if (i32.eq (local.get $ordinal) (i32.const 19))
       (then (call $win16_ReleaseCapture) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 22))
-      (then (call $win16_hwnd_query (i32.const 0)) (return (i32.const 1))))
+      (then (call $win16_SetFocus) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 23))
       (then (call $win16_GetFocus) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 31))
@@ -3117,15 +3117,75 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; A 16-bit accelerator table is not the 32-bit one with narrower fields, it
+  ;; is a different record: BYTE fFlags, WORD key, WORD id -- five bytes, with
+  ;; 0x80 in the flags of the last one. The 32-bit walker reads WORD fFlags,
+  ;; WORD key, WORD id, WORD padding on an eight-byte stride, so handed a
+  ;; 16-bit table it matches nothing at all and every accelerator in the app is
+  ;; dead. Hearts is the whole game: F2 is "begin with current players", and
+  ;; the dealer's only way to start a hand.
+  ;;
+  ;; Widening keeps the format knowledge on the 16-bit side, beside the MSG
+  ;; widening TranslateAccelerator already does, rather than teaching the
+  ;; 32-bit walker about a layout no PE ever has.
+  (global $win16_accel_buf (mut i32) (i32.const 0))
+
+  (func $win16_accel_widen (param $src i32) (param $size i32)
+    (local $n i32) (local $off i32)
+    (local $fv i32) (local $dst i32) (local $d i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $src))
+                (i32.lt_u (local.get $size) (i32.const 5)))
+      (then (return)))
+    ;; Count by walking to the 0x80 entry rather than dividing: the resource is
+    ;; padded out to its alignment, and those trailing zero bytes would read as
+    ;; extra entries.
+    (block $counted (loop $count
+      (br_if $counted
+        (i32.gt_u (i32.add (local.get $off) (i32.const 5)) (local.get $size)))
+      (local.set $fv (i32.load8_u (i32.add (local.get $src) (local.get $off))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (local.set $off (i32.add (local.get $off) (i32.const 5)))
+      (br_if $counted (i32.and (local.get $fv) (i32.const 0x80)))
+      (br $count)))
+    (if (i32.eqz (local.get $n)) (then (return)))
+    (if (global.get $win16_accel_buf)
+      (then (call $heap_free (global.get $win16_accel_buf))))
+    (global.set $win16_accel_buf
+      (call $heap_alloc (i32.mul (local.get $n) (i32.const 8))))
+    (if (i32.eqz (global.get $win16_accel_buf)) (then (return)))
+    (local.set $dst (call $g2w (global.get $win16_accel_buf)))
+    (block $done (loop $widen
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $off (i32.mul (local.get $i) (i32.const 5)))
+      (local.set $d (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 8))))
+      (i32.store16 (local.get $d)
+        (i32.load8_u (i32.add (local.get $src) (local.get $off))))
+      (i32.store16 offset=2 (local.get $d)
+        (i32.load16_u (i32.add (local.get $src)
+          (i32.add (local.get $off) (i32.const 1)))))
+      (i32.store16 offset=4 (local.get $d)
+        (i32.load16_u (i32.add (local.get $src)
+          (i32.add (local.get $off) (i32.const 3)))))
+      (i32.store16 offset=6 (local.get $d) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $widen)))
+    (global.set $haccel_data (local.get $dst))
+    (global.set $haccel_count (local.get $n)))
+
   ;; USER.177 LoadAccelerators(hInstance, lpTableName).
+  ;;
+  ;; Not a call into the 32-bit handler: that one walks a PE resource tree, and
+  ;; there is none here. It also reports success unconditionally, so a table it
+  ;; had not found was indistinguishable from one it had -- which is how this
+  ;; looked like a matching bug for as long as it did.
   (func $win16_LoadAccelerators
-    (local $id i32)
-    (local.set $id (call $win16_res_arg (i32.const 0)))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_LoadAcceleratorsA (i32.const 0) (local.get $id)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (local $data i32)
+    (local.set $data (call $win16_res_lookup (i32.const 9) (i32.const 0)))
+    (global.set $eax (i32.const 0))
+    (if (local.get $data)
+      (then
+        (call $win16_accel_widen (local.get $data) (global.get $win16_res_len))
+        (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
     (call $win16_api_return (i32.const 6)))
 
   ;; USER.178 TranslateAccelerator(hWnd, hAccTable, lpMsg).
@@ -3208,6 +3268,33 @@
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
+
+  ;; USER.22 SetFocus(hWnd) -> the window that had it.
+  ;;
+  ;; Deliberately not the 32-bit handler. That one delivers WM_SETFOCUS by
+  ;; redirecting EIP into the window procedure, and a handler that moves EIP
+  ;; can never return across this bridge -- $win16_call32_end traps on exactly
+  ;; that. Hearts renames its "Pass Left" button to "OK" and calls SetFocus on
+  ;; it the instant you pass three cards, so the game died on the first move of
+  ;; every hand.
+  ;;
+  ;; Posting both notifications is what the task's own pump does with them a
+  ;; moment later anyway, and it keeps the focus bookkeeping identical.
+  (func $win16_SetFocus
+    (local $hwnd i32) (local $prev i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $prev (global.get $focus_hwnd))
+    (if (i32.ne (local.get $prev) (local.get $hwnd))
+      (then
+        (if (local.get $prev)
+          (then (drop (call $post_queue_push (local.get $prev)
+                  (i32.const 0x0008) (local.get $hwnd) (i32.const 0)))))
+        (global.set $focus_hwnd (local.get $hwnd))
+        (if (local.get $hwnd)
+          (then (drop (call $post_queue_push (local.get $hwnd)
+                  (i32.const 0x0007) (local.get $prev) (i32.const 0)))))))
+    (global.set $eax (call $win16_h16 (local.get $prev)))
+    (call $win16_api_return (i32.const 2)))
 
   ;; The window calls that take one handle and answer with a word, and the two
   ;; that take none. Grouping them keeps sixteen near-identical eight-line
@@ -3842,7 +3929,10 @@
     (call $handle_PatBlt (local.get $hdc) (local.get $x) (local.get $y)
       (local.get $w) (local.get $h) (i32.const 0))
     (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
+    ;; Report what the fill actually did. Answering TRUE regardless hid a
+    ;; PatBlt that drew nothing at all behind a call that looked like it had
+    ;; worked, which is the hardest kind of paint bug to see from a trace.
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 14)))
 
   ;; GDI.20 MoveTo / GDI.19 LineTo / GDI.83 GetPixel(hDC, X, Y). MoveTo and
