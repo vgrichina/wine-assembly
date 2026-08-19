@@ -84,6 +84,7 @@
     (local $simple_child_border i32)
     (local $glyph_brush i32)
     (local $frame i32)
+    (local $bd_l i32) (local $bd_t i32) (local $bd_r i32) (local $bd_b i32)
 
     ;; NC paint gets a real typed DC with a WAT-built visible clip:
     ;; window rect minus client rect. JS only applies this region to the
@@ -112,10 +113,41 @@
     (if (local.get $simple_child_border)
       (then
         ;; Plain WS_CHILD|WS_BORDER controls get a simple 1px border, not
-        ;; a top-level raised frame. The NC clip excludes the client inset.
+        ;; a top-level raised frame.
+        ;;
+        ;; Paint the four border bands explicitly instead of flooding the
+        ;; window rect and trusting the NC clip to carve the client back
+        ;; out: a WAT-native control lays itself out and never runs
+        ;; WM_NCCALCSIZE, so its client rect is all zeroes, nothing gets
+        ;; carved, and the flood covers the control's own face. That is
+        ;; what painted NSIS's license edit solid black. With no client
+        ;; rect to go by, fall back to the 1px inset WS_BORDER reserves.
+        (local.set $bd_l (call $client_rect_get_l (local.get $hwnd)))
+        (local.set $bd_t (call $client_rect_get_t (local.get $hwnd)))
+        (local.set $bd_r (call $client_rect_get_r (local.get $hwnd)))
+        (local.set $bd_b (call $client_rect_get_b (local.get $hwnd)))
+        (if (i32.or (i32.ge_s (local.get $bd_l) (local.get $bd_r))
+                    (i32.ge_s (local.get $bd_t) (local.get $bd_b)))
+          (then
+            (local.set $bd_l (i32.const 1))
+            (local.set $bd_t (i32.const 1))
+            (local.set $bd_r (i32.sub (local.get $w) (i32.const 1)))
+            (local.set $bd_b (i32.sub (local.get $h) (i32.const 1)))))
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $bd_t)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (local.get $bd_b)
                 (local.get $w) (local.get $h)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (local.get $bd_t)
+                (local.get $bd_l) (local.get $bd_b)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (local.get $bd_r) (local.get $bd_t)
+                (local.get $w) (local.get $bd_b)
                 (i32.const 0x30014)))
         (drop (call $host_release_dc (local.get $hdc)))
         (return (i32.const 0))))

@@ -449,6 +449,25 @@
             (local.set $arg2 (i32.const 0))            ;; wParam
             (local.set $arg3 (i32.const 0))            ;; lParam
             (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+            ;; A hidden window has no update region on Win98, so a paint that
+            ;; was queued before it was hidden -- or was never shown at all --
+            ;; must be dropped, not delivered. A WAT-native control paints
+            ;; through its own hwnd+0x40000 DC and so is not saved by the
+            ;; empty visible region a real window DC would get: NSIS's license
+            ;; page keeps an invisible SS_BLACKRECT placeholder over the whole
+            ;; page area to position the child page dialog, and delivering its
+            ;; queued WM_PAINT filled the page solid black. The modeless drain
+            ;; ($paint_drain_native_control_paints) already declines this way.
+            (if (i32.and
+                  (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
+                  (i32.eqz (call $wnd_is_effectively_visible (local.get $arg0))))
+              (then
+                (call $ctrl_paint_trace_emit (local.get $arg0)
+                  (call $ctrl_table_get_class (local.get $arg0)) (i32.const 2))
+                (call $update_clear_hwnd (local.get $arg0))
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
             ;; A WAT-native control paints itself, whether or not the app has
             ;; subclassed it. Routing WM_PAINT at its current wndproc sends it
             ;; to the subclass, which chains back through CallWindowProc -- and

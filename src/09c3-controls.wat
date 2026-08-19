@@ -952,6 +952,13 @@
   ;; Properties dialog hits this: CheckRadioButton in WM_INITDIALOG drives
   ;; BM_SETCHECK, which repaints the three radios immediately, and the
   ;; dialog's first WM_ERASEBKGND then wipes them.
+  ;;
+  ;; The walk is recursive because the erase is not: a child owns no surface,
+  ;; so the fill covers the whole subtree's pixels on the one top-level
+  ;; back-canvas, not just the direct children's. NSIS's wizard is a dialog
+  ;; whose pages are child dialogs -- reinvalidating one level left the
+  ;; license page's icon, header and RichEdit erased and never asked to paint
+  ;; again, and the page came up empty grey.
   (func $invalidate_child_controls (param $parent_hwnd i32)
     (local $i i32) (local $hwnd i32)
     (local.set $i (i32.const 0))
@@ -960,9 +967,13 @@
         (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
         (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
         (if (i32.and
-              (i32.ne (local.get $hwnd) (i32.const 0))
+              (i32.and
+                (i32.ne (local.get $hwnd) (i32.const 0))
+                (i32.ne (local.get $hwnd) (local.get $parent_hwnd)))
               (i32.eq (call $wnd_get_parent (local.get $hwnd)) (local.get $parent_hwnd)))
-          (then (call $invalidate_hwnd (local.get $hwnd))))
+          (then
+            (call $invalidate_hwnd (local.get $hwnd))
+            (call $invalidate_child_controls (local.get $hwnd))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))
   )
