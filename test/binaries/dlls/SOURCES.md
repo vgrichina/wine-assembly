@@ -15,7 +15,11 @@ file; it must not be shipped based on this document.
 
 | DLL | Size | SHA-256 | Source status |
 |-----|-----:|---------|---------------|
+| asycfilt.dll | 147,728 | `de83c9d9203050b40c098e4143ef8f577aa90016c7a64d4f2931b57a4c43e566` | VB6 SP6 redistributable path below |
 | cabinet.dll | 56,080 | `cb535e27870708f94f46ecb75bf6a5dff17422c28b9f21c2c80ab7b1fcf1f715` | Windows Installer 2.0 path below |
+| comcat.dll | 22,288 | `96d04cdfaf4f4d7b8722b139a15074975d4c244302f78034b7be65df1a92fd03` | VB6 SP6 redistributable path below |
+| msvbvm60.dll | 1,386,496 | `3ef32e0152cc3fa07c417e6aadf9ead83a17b5fdee73799044e1bd7564725d6e` | VB6 SP6 redistributable path below |
+| olepro32.dll | 164,112 | `789c3c45eda1749bd939f4a96616e1e9ef1b7dcc62a2889f65088954c64d0938` | VB6 SP6 redistributable path below |
 | cards.dll | 148,528 | `07ed76ebed79520a92e2a2ad5dfdbb230929322e75ef85b053ff54d5a8be6a02` | See `../SOURCES.md` |
 | comctl32.dll | 548,624 | `d8c8d415e28b24f544be3f53ec103353ebefc2aa3056380084d058ca13d0f6c5` | Reproduced from the IE6 SP1 path below |
 | d3drm.dll | 437,008 | `fd80f3839a035b6b52362735b22eb8d2523d3434bf18afb3e0f1b5ace84357b0` | DirectX 6.0 path below |
@@ -198,6 +202,36 @@ File: `Microsoft_DirectX-6_1999Sep.7z` > `directx.cab`
 | d3dxof.dll | 107,792 | 1999-01-08 | DirectX File (.x) parser, version 4.06.02.0436 — matches d3drm.dll same build. Required for d3drm `.x` mesh loading (Plus!98 Organic Art screensavers). |
 
 `d3drm.dll` (version 4.06.02.0436, same date/build) ships in this same cab and predates this entry; future re-extractions can pull both from here.
+
+## From the Visual Basic 6 SP6 runtime redistributable (archive.org)
+
+Source: `https://archive.org/details/vbrun60sp6`
+File: `vbrun60sp6.exe` (1,028,368 bytes, sha256
+`7f7bc59f453539194c2d38fd68fb2b4beb3c1b5b5273cec1b7dd1150b0ea929d`), a
+self-extracting CAB. `cabextract` gives the members below directly.
+
+Microsoft published this package for redistribution with VB6 applications,
+which is why it is preferred over lifting the same DLLs out of a Windows
+install: it is the runtime the applications themselves were licensed to ship.
+
+| DLL | Size | Notes |
+|-----|------|-------|
+| msvbvm60.dll | 1,386,496 | The VB6 virtual machine. A VB6 executable is almost entirely imports of this. |
+| oleaut32.dll | — | Present in the package; the repository's copy still comes from the IE6 path above. |
+| olepro32.dll | 164,112 | OLE property pages, loaded by msvbvm60. |
+| asycfilt.dll | 147,728 | Asynchronous storage filter, loaded by msvbvm60. |
+| comcat.dll | 22,288 | Component categories, loaded by msvbvm60. |
+
+## 16-bit runtimes for the Entertainment Pack games
+
+These are staged beside the games in `test/binaries/wep16/`, not here, because
+the 16-bit loader looks in the application's own directory. Recorded here so
+the fetch is reproducible.
+
+| DLL | Size | Source |
+|-----|------|--------|
+| VBRUN100.DLL | 271,264 | `https://archive.org/details/visual-basic_202303` > `VBRUN123JBM.zip` > `VBRUN100.DLL`. Five WEP games are Visual Basic 1 programs. |
+| WIN87EM.DLL | 11,459 | `https://archive.org/details/WIN87EM_ZIP` > `WIN87EM.ZIP` > `WIN87EM.EXE`, renamed. The 80x87 emulator Microsoft C linked against; Tetris, Chess, Tut's Tomb and Fuji Golf import it. |
 
 ## Previously collected
 
