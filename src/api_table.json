@@ -17298,21 +17298,62 @@
     "name": "IDataObject_GetData",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 95865312
+    "hash": 95865312,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pformatetc",
+        "type": "LPFORMATETC"
+      },
+      {
+        "name": "pmedium",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2142,
     "name": "IDataObject_GetDataHere",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3641951518
+    "hash": 3641951518,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pformatetc",
+        "type": "LPFORMATETC"
+      },
+      {
+        "name": "pmedium",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2143,
     "name": "IDataObject_QueryGetData",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1861475772
+    "hash": 1861475772,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pformatetc",
+        "type": "LPFORMATETC"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2144,
@@ -20199,5 +20240,27 @@
       }
     ],
     "ret": "UINT"
+  },
+  {
+    "id": 2466,
+    "name": "OleDuplicateData",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3917170522,
+    "args": [
+      {
+        "name": "hSrc",
+        "type": "HANDLE"
+      },
+      {
+        "name": "cfFormat",
+        "type": "UINT"
+      },
+      {
+        "name": "uiFlags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
   }
 ]

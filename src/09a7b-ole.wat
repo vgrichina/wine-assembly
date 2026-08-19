@@ -4292,6 +4292,13 @@
         (if (local.get $data) (then (call $heap_free (local.get $data))))
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 120))))
         (if (local.get $data) (then (call $heap_free (local.get $data))))
+        ;; The IDataObject face holds copies of the cached media, so it is torn
+        ;; down like any other object we own.
+        (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
+        (if (local.get $data)
+          (then
+            (call $gs32 (i32.add (local.get $obj) (i32.const 164)) (i32.const 0))
+            (drop (call $ole_obj_release (local.get $data)))))
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 148))))
         (local.set $child (i32.const 0))
         (block $advise_done (loop $advise_entries
@@ -8138,8 +8145,218 @@
     (i32.const 0)
   )
 
+  ;; Drop every format a data object is holding, keeping the array allocation.
+  (func $ole_data_clear_entries (param $obj i32)
+    (local $entries i32) (local $i i32) (local $entry i32)
+    (if (i32.eqz (local.get $obj)) (then (return)))
+    (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i)
+        (call $gl32 (i32.add (local.get $obj) (i32.const 16)))))
+      (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
+      (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))
+      (call $ole_format_free (local.get $entry))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (i32.const 0)))
+
+  ;; OleDuplicateData(hSrc, cfFormat, uiFlags) — copy one clipboard-format
+  ;; handle. What "copy" means depends entirely on the format, which is why the
+  ;; format is a parameter: a metafile handle needs its records cloned, while a
+  ;; memory handle just needs its bytes. RichEdit calls this on the
+  ;; CF_METAFILEPICT it takes from an object before writing it into RTF, and
+  ;; while the export was missing the save stopped there with an empty file.
+  (func $handle_OleDuplicateData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $copy i32) (local $mf i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.eq (local.get $arg1) (i32.const 3))           ;; CF_METAFILEPICT
+      (then
+        (local.set $mf (call $gdi_metafile_copy
+          (call $gl32 (i32.add (local.get $arg0) (i32.const 12))) (i32.const 6)))
+        (if (local.get $mf)
+          (then
+            (local.set $copy (call $heap_alloc (i32.const 16)))
+            (if (local.get $copy)
+              (then
+                (memory.copy (call $g2w (local.get $copy)) (call $g2w (local.get $arg0))
+                  (i32.const 16))
+                (call $gs32 (i32.add (local.get $copy) (i32.const 12)) (local.get $mf)))
+              (else (drop (call $gdi_object_delete_full (local.get $mf))))))))
+      (else
+        (if (i32.eq (local.get $arg1) (i32.const 14))      ;; CF_ENHMETAFILE
+          (then (local.set $copy (call $gdi_metafile_copy (local.get $arg0) (i32.const 7))))
+          ;; Everything else this transfer layer produces is a memory handle,
+          ;; and its size is the allocation's own.
+          (else (local.set $copy (call $ole_copy_hglobal (local.get $arg0)))))))
+    (global.set $eax (local.get $copy))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; Wrap a packed DIB in a one-record Windows metafile and return a
+  ;; METAFILEPICT for it, or 0.
+  ;;
+  ;; A container asks a static object for CF_METAFILEPICT, not CF_DIB, because a
+  ;; metafile scales — RichEdit does exactly that when it writes a picture into
+  ;; RTF. Refusing means it renders one itself by drawing the object into a
+  ;; metafile DC, and that DC is a 640x480 canvas serialized whole, so a 32x24
+  ;; bitmap came back as a 1.2MB record and a 900KB document that RichEdit then
+  ;; could not read in again. Handing over the picture we already have is both
+  ;; smaller and exact.
+  (func $ole_metafilepict_from_dib (param $dib i32) (param $cx i32) (param $cy i32) (result i32)
+    (local $dib_size i32) (local $total i32) (local $bytes i32) (local $p i32)
+    (local $record i32) (local $handle i32) (local $pict i32) (local $width i32) (local $height i32)
+    (if (i32.eqz (local.get $dib)) (then (return (i32.const 0))))
+    (local.set $dib_size (i32.sub
+      (call $gl32 (i32.sub (local.get $dib) (i32.const 4))) (i32.const 4)))
+    (if (i32.lt_u (local.get $dib_size) (i32.const 40)) (then (return (i32.const 0))))
+    (local.set $width (call $gl32 (i32.add (local.get $dib) (i32.const 4))))
+    (local.set $height (call $gl32 (i32.add (local.get $dib) (i32.const 8))))
+    (if (i32.lt_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
+                (i32.le_s (local.get $height) (i32.const 0)))
+      (then (return (i32.const 0))))
+    ;; header 18 + SetMapMode 8 + SetWindowOrg 10 + SetWindowExt 10 +
+    ;; SetViewportExt 10 + STRETCHDIB (28 + DIB) + EOF 6, padded to a word.
+    (local.set $total (i32.and
+      (i32.add (i32.add (local.get $dib_size) (i32.const 90)) (i32.const 1))
+      (i32.const -2)))
+    (local.set $bytes (call $heap_alloc (local.get $total)))
+    (if (i32.eqz (local.get $bytes)) (then (return (i32.const 0))))
+    (local.set $p (call $g2w (local.get $bytes)))
+    (memory.fill (local.get $p) (i32.const 0) (local.get $total))
+    (i32.store16 (local.get $p) (i32.const 1))            ;; memory metafile
+    (i32.store16 offset=2 (local.get $p) (i32.const 9))   ;; header size, words
+    (i32.store16 offset=4 (local.get $p) (i32.const 0x0300))
+    (i32.store offset=6 (local.get $p) (i32.shr_u (local.get $total) (i32.const 1)))
+    (i32.store offset=12 (local.get $p)
+      (i32.shr_u (i32.add (local.get $dib_size) (i32.const 28)) (i32.const 1)))
+    (i32.store offset=18 (local.get $p) (i32.const 4))
+    (i32.store16 offset=22 (local.get $p) (i32.const 0x0103)) ;; SetMapMode
+    (i32.store16 offset=24 (local.get $p) (i32.const 8))      ;; MM_ANISOTROPIC
+    (i32.store offset=26 (local.get $p) (i32.const 5))
+    (i32.store16 offset=30 (local.get $p) (i32.const 0x020B)) ;; SetWindowOrg 0,0
+    (i32.store offset=36 (local.get $p) (i32.const 5))
+    (i32.store16 offset=40 (local.get $p) (i32.const 0x020C)) ;; SetWindowExt
+    (i32.store16 offset=42 (local.get $p) (local.get $height))
+    (i32.store16 offset=44 (local.get $p) (local.get $width))
+    (i32.store offset=46 (local.get $p) (i32.const 5))
+    (i32.store16 offset=50 (local.get $p) (i32.const 0x020E)) ;; SetViewportExt
+    (i32.store16 offset=52 (local.get $p) (local.get $height))
+    (i32.store16 offset=54 (local.get $p) (local.get $width))
+    (local.set $record (i32.add (local.get $p) (i32.const 56)))
+    (i32.store (local.get $record)
+      (i32.shr_u (i32.add (local.get $dib_size) (i32.const 28)) (i32.const 1)))
+    (i32.store16 offset=4 (local.get $record) (i32.const 0x0F43)) ;; META_STRETCHDIB
+    (i32.store offset=6 (local.get $record) (i32.const 0x00CC0020)) ;; SRCCOPY
+    (i32.store16 offset=12 (local.get $record) (local.get $height))
+    (i32.store16 offset=14 (local.get $record) (local.get $width))
+    (i32.store16 offset=20 (local.get $record) (local.get $height))
+    (i32.store16 offset=22 (local.get $record) (local.get $width))
+    (memory.copy (i32.add (local.get $record) (i32.const 28))
+      (call $g2w (local.get $dib)) (local.get $dib_size))
+    (i32.store (i32.add (local.get $p) (i32.sub (local.get $total) (i32.const 6)))
+      (i32.const 3))                                       ;; META_EOF
+    (local.set $handle (call $gdi_metafile_create
+      (i32.const 6) (local.get $p) (local.get $total)))
+    (call $heap_free (local.get $bytes))
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (local.set $pict (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $pict))
+      (then (drop (call $gdi_object_delete_full (local.get $handle))) (return (i32.const 0))))
+    (call $gs32 (local.get $pict) (i32.const 8))           ;; MM_ANISOTROPIC
+    (call $gs32 (i32.add (local.get $pict) (i32.const 4)) (local.get $cx))
+    (call $gs32 (i32.add (local.get $pict) (i32.const 8)) (local.get $cy))
+    (call $gs32 (i32.add (local.get $pict) (i32.const 12)) (local.get $handle))
+    (local.get $pict))
+
+  ;; The static handler's IDataObject. A default handler serves the formats it
+  ;; has cached, and a container asks for exactly that when it needs the object's
+  ;; bytes rather than its pixels: RichEdit does it when streaming a document to
+  ;; RTF. Without it the object drew fine on screen and serialized as an empty
+  ;; \pict, so a saved document lost every picture in it.
+  ;;
+  ;; The face is a real data object of ours, created once and kept at root+164,
+  ;; so QueryInterface returns the same pointer every time as COM requires. Its
+  ;; contents are rebuilt from the cache here and on every cache change, and each
+  ;; medium is copied, so releasing this object can never free bytes the cache
+  ;; still owns.
+  (func $ole_static_data_object (param $root i32) (result i32)
+    (local $child i32) (local $entries i32) (local $count i32) (local $i i32)
+    (local $entry i32) (local $dib i32)
+    (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
+    (local.set $child (call $gl32 (i32.add (local.get $root) (i32.const 164))))
+    (if (i32.eqz (local.get $child))
+      (then
+        (local.set $child (call $ole_create_data_object (i32.const 0) (i32.const 0)))
+        (if (i32.eqz (local.get $child)) (then (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child)))
+      (else (call $ole_data_clear_entries (local.get $child))))
+    (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
+    (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40))))
+      ;; An empty cache slot is one that was declared by IOleCache::Cache but
+      ;; never filled; it has no bytes to offer and must not be advertised.
+      (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
+        (then
+          (drop (call $ole_data_set_entry (local.get $child)
+            (i32.add (local.get $entry) (i32.const 8))
+            (i32.add (local.get $entry) (i32.const 28)) (i32.const 0)))
+          ;; Remember the first cached DIB; the metafile below is built from it.
+          (if (i32.and (i32.eqz (local.get $dib))
+                (i32.eq (call $gl16 (i32.add (local.get $entry) (i32.const 8))) (i32.const 8)))
+            (then (local.set $dib
+              (call $gl32 (i32.add (local.get $entry) (i32.const 32))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (local.get $dib) (then (drop (call $ole_static_offer_metafile
+      (local.get $root) (local.get $child) (local.get $dib)))))
+    (local.get $child))
+
+  ;; Advertise the cached picture as CF_METAFILEPICT too. Built once and kept on
+  ;; the handler, so a rebuilt face re-offers the same metafile instead of
+  ;; leaking a new one each time.
+  (func $ole_static_offer_metafile
+        (param $root i32) (param $child i32) (param $dib i32) (result i32)
+    (local $pict i32) (local $formatetc i32) (local $medium i32) (local $hr i32)
+    (local.set $pict (call $gl32 (i32.add (local.get $root) (i32.const 168))))
+    (if (i32.eqz (local.get $pict))
+      (then
+        (local.set $pict (call $ole_metafilepict_from_dib (local.get $dib)
+          (call $gl32 (i32.add (local.get $root) (i32.const 40)))
+          (call $gl32 (i32.add (local.get $root) (i32.const 44)))))
+        (if (i32.eqz (local.get $pict)) (then (return (i32.const 0x8007000E))))
+        (call $gs32 (i32.add (local.get $root) (i32.const 168)) (local.get $pict))))
+    (local.set $formatetc (call $heap_alloc (i32.const 20)))
+    (local.set $medium (call $heap_alloc (i32.const 12)))
+    (if (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium)))
+      (then
+        (if (local.get $formatetc) (then (call $heap_free (local.get $formatetc))))
+        (if (local.get $medium) (then (call $heap_free (local.get $medium))))
+        (return (i32.const 0x8007000E))))
+    (call $zero_memory (call $g2w (local.get $formatetc)) (i32.const 20))
+    (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))
+    (call $gs16 (local.get $formatetc) (i32.const 3))          ;; CF_METAFILEPICT
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 8)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 12)) (i32.const -1))
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 16)) (i32.const 32)) ;; TYMED_MFPICT
+    (call $gs32 (local.get $medium) (i32.const 32))
+    (call $gs32 (i32.add (local.get $medium) (i32.const 4)) (local.get $pict))
+    ;; take = 1: the handler owns the METAFILEPICT, and the face only points at
+    ;; it, so rebuilding the face never frees it.
+    (local.set $hr (call $ole_data_set_entry (local.get $child)
+      (local.get $formatetc) (local.get $medium) (i32.const 1)))
+    (call $heap_free (local.get $medium))
+    (call $heap_free (local.get $formatetc))
+    (local.get $hr))
+
   (func $ole_static_query_interface (param $root i32) (param $iid i32) (param $out i32) (result i32)
-    (local $data1 i32) (local $iface i32)
+    (local $data1 i32) (local $iface i32) (local $owner i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
     (call $gs32 (local.get $out) (i32.const 0))
     (if (i32.eqz (local.get $iid)) (then (return (i32.const 0x80004003))))
@@ -8164,16 +8381,25 @@
             (i32.eq (local.get $data1) (i32.const 0x00000127))
             (i32.eq (local.get $data1) (i32.const 0x0000011D))))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 56)))))
+    ;; IID_IDataObject is served by a separate object, so the reference the
+    ;; caller is handed belongs to that object and not to the handler.
+    (local.set $owner (local.get $root))
+    (if (i32.eq (local.get $data1) (i32.const 0x0000010E))
+      (then
+        (local.set $iface (call $ole_static_data_object (local.get $root)))
+        (local.set $owner (local.get $iface))))
     (if (i32.eqz (local.get $iface)) (then (return (i32.const 0x80004002))))
     (call $gs32 (local.get $out) (local.get $iface))
-    (drop (call $ole_obj_addref (local.get $root)))
+    (drop (call $ole_obj_addref (local.get $owner)))
     (i32.const 0))
 
+  ;; +164 is the IDataObject face built on demand from the cache; see
+  ;; $ole_static_data_object.
   (func $ole_create_static_handler (param $clsid i32) (result i32)
     (local $obj i32)
-    (local.set $obj (call $heap_alloc (i32.const 164)))
+    (local.set $obj (call $heap_alloc (i32.const 172)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 164))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 172))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_OBJECT))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 6))
@@ -8738,6 +8964,11 @@
 
   (func $ole_cache_sync_render_slot (param $root i32)
     (local $entries i32) (local $count i32) (local $i i32) (local $entry i32) (local $hr i32)
+    ;; The IDataObject face is a view of this cache, so it is rebuilt whenever
+    ;; the cache changes — a container holding the pointer sees the new formats
+    ;; rather than the ones the object had when it first asked.
+    (if (call $gl32 (i32.add (local.get $root) (i32.const 164)))
+      (then (drop (call $ole_static_data_object (local.get $root)))))
     (if (call $gl32 (i32.add (local.get $root) (i32.const 92)))
       (then (call $ole_release_medium (i32.add (local.get $root) (i32.const 60)))))
     (call $ole_format_free (i32.add (local.get $root) (i32.const 72)))
