@@ -1885,14 +1885,10 @@
   (func (export "get_client_rect_r") (param $hwnd i32) (result i32) (call $client_rect_get_r (local.get $hwnd)))
   (func (export "get_client_rect_b") (param $hwnd i32) (result i32) (call $client_rect_get_b (local.get $hwnd)))
   ;; Packed client width|height (low 16 | high 16) — convenience for host_imports.
+  ;; Same value $wnd_client_w/h_for_clip read directly -- shared so the export
+  ;; and the WAT-internal fast path cannot disagree about what a client rect is.
   (func (export "get_client_rect_wh") (param $hwnd i32) (result i32)
-    (i32.or
-      (i32.and
-        (i32.sub (call $client_rect_get_r (local.get $hwnd)) (call $client_rect_get_l (local.get $hwnd)))
-        (i32.const 0xFFFF))
-      (i32.shl
-        (i32.sub (call $client_rect_get_b (local.get $hwnd)) (call $client_rect_get_t (local.get $hwnd)))
-        (i32.const 16))))
+    (call $client_rect_wh_packed (local.get $hwnd)))
   ;; Title storage — JS writes via set_window_title_wa; DefWindowProc reads during NCPAINT.
   (func (export "set_window_title_wa") (param $hwnd i32) (param $wa_ptr i32) (param $len i32)
     (call $title_table_set (local.get $hwnd) (local.get $wa_ptr) (local.get $len)))

@@ -3550,6 +3550,29 @@
   ;; These helpers build the Win32 visible clip for window DCs. JS owns only
   ;; the target canvas and applies the resulting DC clip region.
 
+  ;; Packed client width|height straight out of the WM_NCCALCSIZE-written client
+  ;; rect. Zero means "no client rect recorded for this window yet", which is
+  ;; the only case in which asking the host is worth a round trip.
+  ;;
+  ;; This exists because the host round trip was a loop back into ourselves.
+  ;; host_imports' get_window_client_size answers by calling the WAT export
+  ;; get_client_rect_wh first and only falls back to the renderer's own
+  ;; geometry, so a top-level window DC's clip was resolved WAT -> JS -> WAT for
+  ;; a value WAT already had. It is asked once per scanline, via
+  ;; $gdi_clip_row_resolve -> $gdi_dc_target_size, and on CORBIS.SCR that one
+  ;; import was 1196201 of 1200000 host calls -- around 60 crossings per
+  ;; emulated x86 instruction.
+  (func $client_rect_wh_packed (param $hwnd i32) (result i32)
+    (i32.or
+      (i32.and
+        (i32.sub (call $client_rect_get_r (local.get $hwnd))
+          (call $client_rect_get_l (local.get $hwnd)))
+        (i32.const 0xFFFF))
+      (i32.shl
+        (i32.sub (call $client_rect_get_b (local.get $hwnd))
+          (call $client_rect_get_t (local.get $hwnd)))
+        (i32.const 16))))
+
   (func $wnd_client_w_for_clip (param $hwnd i32) (result i32)
     (local $style i32) (local $sz i32)
     (local $cl i32) (local $cr i32)
@@ -3563,6 +3586,9 @@
           (then (return (i32.sub (local.get $cr) (local.get $cl)))))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.and (local.get $sz) (i32.const 0xFFFF)))))
+    (local.set $sz (call $client_rect_wh_packed (local.get $hwnd)))
+    (if (local.get $sz)
+      (then (return (i32.and (local.get $sz) (i32.const 0xFFFF)))))
     (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
     (i32.and (local.get $sz) (i32.const 0xFFFF)))
 
@@ -3579,6 +3605,9 @@
           (then (return (i32.sub (local.get $cb) (local.get $ct)))))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (return (i32.shr_u (local.get $sz) (i32.const 16)))))
+    (local.set $sz (call $client_rect_wh_packed (local.get $hwnd)))
+    (if (local.get $sz)
+      (then (return (i32.shr_u (local.get $sz) (i32.const 16)))))
     (local.set $sz (call $host_get_window_client_size (local.get $hwnd)))
     (i32.shr_u (local.get $sz) (i32.const 16)))
 
