@@ -5832,16 +5832,17 @@ nW — STUB: unimplemented
 
   ;; 1266: GetUpdateRgn(hWnd, hRgn, bErase) — copy updateRgn into hRgn.
   (func $handle_GetUpdateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rv i32)
-    (local.set $rv (call $update_get_rect (local.get $arg0) (global.get $PAINT_SCRATCH)))
+    (local $rv i32) (local $rect i32)
+    (local.set $rect (call $paint_scratch_take))
+    (local.set $rv (call $update_get_rect (local.get $arg0) (local.get $rect)))
     (if (i32.and (i32.ne (local.get $rv) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
       (then
         (drop (call $gdi_rgn_set_rect
           (local.get $arg1)
-          (i32.load (global.get $PAINT_SCRATCH))
-          (i32.load offset=4 (global.get $PAINT_SCRATCH))
-          (i32.load offset=8 (global.get $PAINT_SCRATCH))
-          (i32.load offset=12 (global.get $PAINT_SCRATCH))))))
+          (i32.load (local.get $rect))
+          (i32.load offset=4 (local.get $rect))
+          (i32.load offset=8 (local.get $rect))
+          (i32.load offset=12 (local.get $rect))))))
     (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $rv)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -8717,7 +8718,7 @@ SetColorAdjustment — validate and copy complete per-DC state.
             (i32.or (global.get $paint_pending)
                     (global.get $nc_flags_count))
             (i32.or (call $paint_flag_any)
-                    (call $timer_check_due (global.get $PAINT_SCRATCH) (i32.const 0)))))
+                    (call $timer_check_due (call $paint_scratch_take) (i32.const 0)))))
       (then
         ;; Message available: return WAIT_OBJECT_0 + nCount
         (global.set $eax (local.get $arg0))
@@ -10245,21 +10246,22 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
 
   ;; 694: InvalidateRgn(hwnd, hrgn, bErase). hrgn=NULL → full client rect.
   (func $handle_InvalidateRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32) (local $rt i32)
+    (local $cs i32) (local $rt i32) (local $box i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (local.get $arg1)
       (then
-        (local.set $rt (call $gdi_rgn_get_box (local.get $arg1) (global.get $PAINT_SCRATCH)))
+        (local.set $box (call $paint_scratch_take))
+        (local.set $rt (call $gdi_rgn_get_box (local.get $arg1) (local.get $box)))
         (if (local.get $rt)
           (then
             (call $update_invalidate_rect (local.get $arg0)
-              (i32.load (global.get $PAINT_SCRATCH))
-              (i32.load offset=4 (global.get $PAINT_SCRATCH))
-              (i32.load offset=8 (global.get $PAINT_SCRATCH))
-              (i32.load offset=12 (global.get $PAINT_SCRATCH)))))))
+              (i32.load (local.get $box))
+              (i32.load offset=4 (local.get $box))
+              (i32.load offset=8 (local.get $box))
+              (i32.load offset=12 (local.get $box)))))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (call $update_invalidate_rect (local.get $arg0) (i32.const 0) (i32.const 0)
@@ -10581,7 +10583,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         ;; surface. Keep WAT client-origin exports aligned with that surface.
         (if (local.get $arg1)
           (then
-            (local.set $rect (global.get $PAINT_SCRATCH))
+            (local.set $rect (call $paint_scratch_take))
             (call $host_get_window_rect (local.get $arg0) (local.get $rect))
             (local.set $w (i32.sub
               (i32.load offset=8 (local.get $rect))

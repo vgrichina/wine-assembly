@@ -2,6 +2,45 @@
   ;; HELPER FUNCTIONS
   ;; ============================================================
 
+  ;; ---- PAINT_SCRATCH ring ----
+  ;;
+  ;; Every rect-taking primitive in here wants a WASM linear address, so a
+  ;; painter needs somewhere to put four i32s. That used to be one shared RECT,
+  ;; and painting nests: a wndproc that fills the rect, then sends a message
+  ;; that paints something else, got its rect back rewritten. Hand out one of
+  ;; PAINT_SCRATCH_SLOTS rects instead.
+  ;;
+  ;; $paint_scratch_take is a bump allocator that wraps. Wrapping is the whole
+  ;; safety story for the common shape — fill a rect, pass it to one call, never
+  ;; look at it again — since a slot is only reused after 15 more takes. Callers
+  ;; that hold a rect *across* a dispatch into other windows bracket the
+  ;; dispatch with $paint_scratch_mark / $paint_scratch_reset: the inner frame's
+  ;; slots are recycled on the way out, the outer frame's (allocated before the
+  ;; mark) are not.
+  (func $paint_scratch_take (result i32)
+    (local $slot i32)
+    (local.set $slot (global.get $paint_scratch_cursor))
+    (global.set $paint_scratch_cursor
+      (i32.rem_u (i32.add (local.get $slot) (i32.const 1))
+                 (global.get $PAINT_SCRATCH_SLOTS)))
+    (i32.add (global.get $PAINT_SCRATCH) (i32.mul (local.get $slot) (i32.const 16))))
+
+  ;; Fill a fresh scratch rect and return its address, so a call site can build
+  ;; the rect inline in the argument it is passing.
+  (func $paint_rect (param $l i32) (param $t i32) (param $r i32) (param $b i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $paint_scratch_take))
+    (i32.store           (local.get $p) (local.get $l))
+    (i32.store offset=4  (local.get $p) (local.get $t))
+    (i32.store offset=8  (local.get $p) (local.get $r))
+    (i32.store offset=12 (local.get $p) (local.get $b))
+    (local.get $p))
+
+  (func $paint_scratch_mark (result i32) (global.get $paint_scratch_cursor))
+
+  (func $paint_scratch_reset (param $mark i32)
+    (global.set $paint_scratch_cursor (local.get $mark)))
+
   ;; FNV-1a hash over null-terminated string at WASM address
   (func $hash_api_name (param $ptr i32) (result i32)
     (local $h i32) (local $ch i32)
@@ -1539,7 +1578,7 @@
                   (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
                     (then (global.set $paint_pending (i32.const 0)))))
                 (else
-                  (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+                  (if (call $update_get_rect (local.get $hwnd) (call $paint_scratch_take))
                     (then
                       ;; Native status bars paint after their guest-owned
                       ;; siblings so late non-client work cannot cover them.
@@ -1564,12 +1603,14 @@
     (local $pl i32) (local $pt i32) (local $pr i32) (local $pb i32)
     (local $xy i32) (local $wh i32) (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
     (local $il i32) (local $it i32) (local $ir i32) (local $ib i32) (local $n i32)
-    (if (i32.eqz (call $update_get_rect (local.get $parent) (global.get $PAINT_SCRATCH)))
+    (local $rect i32)
+    (local.set $rect (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $parent) (local.get $rect)))
       (then (return (i32.const 0))))
-    (local.set $pl (i32.load (global.get $PAINT_SCRATCH)))
-    (local.set $pt (i32.load offset=4 (global.get $PAINT_SCRATCH)))
-    (local.set $pr (i32.load offset=8 (global.get $PAINT_SCRATCH)))
-    (local.set $pb (i32.load offset=12 (global.get $PAINT_SCRATCH)))
+    (local.set $pl (i32.load (local.get $rect)))
+    (local.set $pt (i32.load offset=4 (local.get $rect)))
+    (local.set $pr (i32.load offset=8 (local.get $rect)))
+    (local.set $pb (i32.load offset=12 (local.get $rect)))
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
@@ -1652,7 +1693,7 @@
                     (call $paint_flag_clear_hwnd (local.get $hwnd))
                     (call $update_clear_hwnd (local.get $hwnd))
                     (br $found)))
-                (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+                (if (call $update_get_rect (local.get $hwnd) (call $paint_scratch_take))
                   (then
                     ;; Descendants inherit this update before it is consumed.
                     ;; Clearing first loses the geometry needed to intersect

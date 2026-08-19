@@ -183,15 +183,14 @@
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30022)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF)))
-        ;; PAINT_SCRATCH RECT: l, t, r, b
-        (i32.store           (global.get $PAINT_SCRATCH) (i32.add (local.get $cap_l) (i32.const 4)))
-        (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $cap_top))
-        (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $cap_r))
-        (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $cap_bot))
         ;; DT_LEFT(0) | DT_VCENTER(4) | DT_SINGLELINE(0x20) | DT_NOPREFIX(0x800) = 0x824
+        ;; This takes its own scratch slot, so it no longer overwrites the
+        ;; window rect this function is still holding in $rect.
         (drop (call $host_gdi_draw_text (local.get $hdc)
                 (local.get $title_wa) (local.get $title_len)
-                (global.get $PAINT_SCRATCH)
+                (call $paint_rect (i32.add (local.get $cap_l) (i32.const 4))
+                                  (local.get $cap_top)
+                                  (local.get $cap_r) (local.get $cap_bot))
                 (i32.const 0x824) (i32.const 0)))))
 
     ;; -------------------------------------------------
@@ -555,9 +554,7 @@
     (local $hdc i32) (local $slot i32) (local $base i32) (local $aux i32)
     (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
-    ;; Reuse PAINT_SCRATCH for the rect — it's 16 bytes and not in use
-    ;; between the GetWindowRect/DrawText overlap here.
-    (local.set $rect (global.get $PAINT_SCRATCH))
+    (local.set $rect (call $paint_scratch_take))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
                             (i32.load         (local.get $rect))))
@@ -677,7 +674,7 @@
     (local $is_child i32) (local $simple_child_border i32)
     (local $bw i32) (local $cy i32) (local $bot i32) (local $right i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
-    (local.set $rect (global.get $PAINT_SCRATCH))
+    (local.set $rect (call $paint_scratch_take))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
                             (i32.load         (local.get $rect))))
@@ -781,7 +778,7 @@
     (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
     (local $has_vsb i32) (local $has_hsb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (local.set $rect (global.get $PAINT_SCRATCH))
+    (local.set $rect (call $paint_scratch_take))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $wx (i32.load         (local.get $rect)))
     (local.set $wy (i32.load offset=4 (local.get $rect)))

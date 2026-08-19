@@ -2943,7 +2943,7 @@
     (local $slot i32) (local $child i32)
     ;; Presence of the first RGB edit is also the expanded-state flag.
     (if (call $ctrl_find_by_id (local.get $dlg) (i32.const 0x463)) (then (return)))
-    (local.set $rect (global.get $PAINT_SCRATCH))
+    (local.set $rect (call $paint_scratch_take))
     (call $host_get_window_rect (local.get $dlg) (local.get $rect))
     (call $host_move_window
       (local.get $dlg)
@@ -3527,7 +3527,7 @@
   ;; directories so they sort first visually. Adds ".." as the first
   ;; entry unconditionally so the user can navigate up.
   ;;
-  ;; Reuses PAINT_SCRATCH (above GUEST_BASE) for the WIN32_FIND_DATA
+  ;; Uses heap allocations (below) for the WIN32_FIND_DATA
   ;; (320 bytes) plus a temporary 280-byte string slot for the bracketed
   ;; directory entry.
   (func $opendlg_populate_listbox (param $lb i32) (param $pattern_g i32)
@@ -4311,7 +4311,7 @@
     (local $w i32) (local $h i32) (local $flags i32)
     (local $edge_flags i32) (local $text_w i32) (local $text_len i32)
     (local $brush i32) (local $name_ptr i32) (local $hmenu i32)
-    (local $kind i32) (local $box_y i32) (local $tw i32)
+    (local $kind i32) (local $box_y i32) (local $tw i32) (local $calc i32)
     (local $img i32) (local $img_w i32) (local $img_h i32) (local $img_x i32) (local $img_y i32)
     (local $parent i32) (local $cmd_id i32)
 
@@ -4703,14 +4703,11 @@
                     (local.get $edge_flags) (i32.const 0x0F)))
             (if (local.get $text_w)
               (then
-                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 0))
-                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-                (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
                 ;; DT_CENTER(0x01)|DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x25
                 (drop (call $host_gdi_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
-                        (global.get $PAINT_SCRATCH)
+                        (call $paint_rect (i32.const 0) (i32.const 0)
+                                          (local.get $w) (local.get $h))
                         (i32.const 0x25) (i32.const 0)))))
             ;; Focus rect (bit3): inset 4px from outer edge.
             (if (i32.and (local.get $flags) (i32.const 0x08))
@@ -4740,14 +4737,11 @@
               (i32.and (local.get $flags) (i32.const 0x02)))  ;; flags bit 1 = checked
             (if (local.get $text_w)
               (then
-                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
-                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-                (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
                 ;; DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x24
                 (drop (call $host_gdi_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
-                        (global.get $PAINT_SCRATCH)
+                        (call $paint_rect (i32.const 16) (i32.const 0)
+                                          (local.get $w) (local.get $h))
                         (i32.const 0x24) (i32.const 0)))))
             ;; Focus rect (bit3) around the label.
             (if (i32.and (local.get $flags) (i32.const 0x08))
@@ -4780,13 +4774,10 @@
                         (i32.const 0x30014)))))
             (if (local.get $text_w)
               (then
-                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 16))
-                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-                (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $h))
                 (drop (call $host_gdi_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
-                        (global.get $PAINT_SCRATCH)
+                        (call $paint_rect (i32.const 16) (i32.const 0)
+                                          (local.get $w) (local.get $h))
                         (i32.const 0x24) (i32.const 0)))))
             ;; Focus rect (bit3) around the label.
             (if (i32.and (local.get $flags) (i32.const 0x08))
@@ -4815,16 +4806,14 @@
             (if (local.get $text_w)
               (then
                 ;; Measure with DT_CALCRECT(0x400) | DT_SINGLELINE(0x20) = 0x420
-                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 12))
-                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-                (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 13))
+                (local.set $calc (call $paint_rect (i32.const 12) (i32.const 0)
+                                                   (local.get $w) (i32.const 13)))
                 (drop (call $host_gdi_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
-                        (global.get $PAINT_SCRATCH)
+                        (local.get $calc)
                         (i32.const 0x420) (i32.const 0)))
                 (local.set $tw (i32.sub
-                                 (i32.load offset=8 (global.get $PAINT_SCRATCH))
+                                 (i32.load offset=8 (local.get $calc))
                                  (i32.const 12)))
                 ;; Clear the slot under the label so the etched stroke is hidden
                 (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -4832,13 +4821,10 @@
                         (i32.add (i32.const 16) (local.get $tw)) (i32.const 13)
                         (i32.const 0x30011)))
                 ;; Real draw at left=12, y=0..13
-                (i32.store           (global.get $PAINT_SCRATCH) (i32.const 12))
-                (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 0))
-                (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $w))
-                (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.const 13))
                 (drop (call $host_gdi_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
-                        (global.get $PAINT_SCRATCH)
+                        (call $paint_rect (i32.const 12) (i32.const 0)
+                                          (local.get $w) (i32.const 13))
                         (i32.const 0x20) (i32.const 0)))))
             (return (i32.const 0))))
 
@@ -5258,14 +5244,11 @@
                     (i32.eq (local.get $style) (i32.const 0x0C)))
                 (then (local.set $fmt
                   (i32.or (local.get $fmt) (i32.const 0x40))))) ;; DT_EXPANDTABS
-              (i32.store        (global.get $PAINT_SCRATCH) (local.get $tx_l))
-              (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $tx_t))
-              (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $tx_r))
-              (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $tx_b))
               (drop (call $host_gdi_draw_text (local.get $hdc)
                       (call $g2w (call $static_text_ptr (local.get $state_w)))
                       (call $static_text_len (local.get $state_w))
-                      (global.get $PAINT_SCRATCH)
+                      (call $paint_rect (local.get $tx_l) (local.get $tx_t)
+                                        (local.get $tx_r) (local.get $tx_b))
                       (local.get $fmt) (i32.const 0)))))))
         (return (i32.const 0))))
 
@@ -5635,17 +5618,20 @@
                   (i32.const 0x0A) (i32.const 0x0F))) ;; EDGE_SUNKEN | BF_RECT
                 (local.set $text_w (call $title_table_get_ptr (local.get $hwnd)))
                 (local.set $text_len (call $title_table_get_len (local.get $hwnd)))
-                (if (i32.and (local.get $text_w) (local.get $text_len))
+                ;; Both operands must be 0/1: $text_w is a WASM address, and a
+                ;; raw address ANDed with a length shares no bits often enough
+                ;; to drop the caption entirely (ptr 0x1000 AND len 4 = 0).
+                (if (i32.and (i32.ne (local.get $text_w) (i32.const 0))
+                             (i32.ne (local.get $text_len) (i32.const 0)))
                   (then
                     (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
                     (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-                    (i32.store        (global.get $PAINT_SCRATCH) (i32.const 4))
-                    (i32.store offset=4  (global.get $PAINT_SCRATCH) (i32.const 2))
-                    (i32.store offset=8  (global.get $PAINT_SCRATCH) (i32.sub (local.get $right) (i32.const 3)))
-                    (i32.store offset=12 (global.get $PAINT_SCRATCH) (i32.sub (local.get $h) (i32.const 2)))
                     (drop (call $host_gdi_draw_text
                       (local.get $hdc) (local.get $text_w) (local.get $text_len)
-                      (global.get $PAINT_SCRATCH) (i32.const 0x824) (i32.const 0)))))))
+                      (call $paint_rect (i32.const 4) (i32.const 2)
+                                        (i32.sub (local.get $right) (i32.const 3))
+                                        (i32.sub (local.get $h) (i32.const 2)))
+                      (i32.const 0x824) (i32.const 0)))))))
             (if (i32.and (local.get $is_paint) (i32.gt_s (local.get $w) (i32.const 171)))
               (then
                 (drop (call $host_gdi_draw_edge (local.get $hdc)
@@ -5696,9 +5682,11 @@
                       (then (local.set $coord_x (i32.const 99999))))
                     (if (i32.gt_u (local.get $coord_y) (i32.const 99999))
                       (then (local.set $coord_y (i32.const 99999))))
-                    ;; The 16 bytes immediately after PAINT_SCRATCH are free;
-                    ;; +32 is MENU_DATA_TABLE and corrupts Paint's main menu.
-                    (local.set $coord_w (i32.add (global.get $PAINT_SCRATCH) (i32.const 16)))
+                    ;; "99999,99999" and its terminator fit inside one scratch
+                    ;; slot. This used to write to the 16 bytes past the single
+                    ;; shared rect, where +32 was MENU_DATA_TABLE and one digit
+                    ;; too many corrupted Paint's main menu.
+                    (local.set $coord_w (call $paint_scratch_take))
                     (local.set $coord_len
                       (call $statusbar_write_uint (local.get $coord_w) (local.get $coord_x)))
                     (i32.store8 (i32.add (local.get $coord_w) (local.get $coord_len)) (i32.const 44))
@@ -8216,7 +8204,7 @@
   (func $toolbar_sync_child_combos (param $sw i32)
     (local $toolbar_hwnd i32) (local $slot i32) (local $ch i32) (local $child_id i32)
     (local $i i32) (local $count i32) (local $rec i32)
-    (local $left i32) (local $top i32) (local $right i32)
+    (local $left i32) (local $top i32) (local $right i32) (local $brect i32)
     (local.set $toolbar_hwnd (i32.load offset=44 (local.get $sw)))
     (if (i32.eqz (local.get $toolbar_hwnd)) (then (return)))
     (if (i32.eqz (i32.load offset=32 (local.get $sw))) (then (return)))
@@ -8234,15 +8222,16 @@
           (block $matched (loop $buttons
             (br_if $matched (i32.ge_u (local.get $i) (local.get $count)))
             (local.set $rec (call $toolbar_button_ptr (local.get $sw) (local.get $i)))
+            (local.set $brect (call $paint_scratch_take))
             (if (i32.and
                   (i32.and
                     (i32.and (i32.load8_u offset=9 (local.get $rec)) (i32.const 0x01))
                     (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $child_id)))
-                  (call $toolbar_button_rect (local.get $sw) (local.get $i) (global.get $PAINT_SCRATCH)))
+                  (call $toolbar_button_rect (local.get $sw) (local.get $i) (local.get $brect)))
               (then
-                (local.set $left (i32.load (global.get $PAINT_SCRATCH)))
-                (local.set $top (i32.load offset=4 (global.get $PAINT_SCRATCH)))
-                (local.set $right (i32.load offset=8 (global.get $PAINT_SCRATCH)))
+                (local.set $left (i32.load (local.get $brect)))
+                (local.set $top (i32.load offset=4 (local.get $brect)))
+                (local.set $right (i32.load offset=8 (local.get $brect)))
                 (call $host_move_window
                   (local.get $ch)
                   (local.get $left)
@@ -8284,19 +8273,20 @@
 
   (func $toolbar_hit_test (param $sw i32) (param $x i32) (param $y i32) (result i32)
     (local $idx i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
-    (local $rec i32)
+    (local $rec i32) (local $brect i32)
     (if (i32.or (i32.lt_s (local.get $x) (i32.const 2))
                 (i32.lt_s (local.get $y) (i32.const 2)))
       (then (return (i32.const -1))))
     (local.set $idx (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $idx) (i32.load (local.get $sw))))
-      (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $idx) (global.get $PAINT_SCRATCH)))
+      (local.set $brect (call $paint_scratch_take))
+      (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $idx) (local.get $brect)))
         (then (return (i32.const -1))))
-      (local.set $left (i32.load (global.get $PAINT_SCRATCH)))
-      (local.set $top (i32.load offset=4 (global.get $PAINT_SCRATCH)))
-      (local.set $right (i32.load offset=8 (global.get $PAINT_SCRATCH)))
-      (local.set $bottom (i32.load offset=12 (global.get $PAINT_SCRATCH)))
+      (local.set $left (i32.load (local.get $brect)))
+      (local.set $top (i32.load offset=4 (local.get $brect)))
+      (local.set $right (i32.load offset=8 (local.get $brect)))
+      (local.set $bottom (i32.load offset=12 (local.get $brect)))
       (if (i32.and
             (i32.and
               (i32.ge_s (local.get $x) (local.get $left))
@@ -8415,6 +8405,7 @@
     (local $bmp_dst_x i32) (local $bmp_dst_y i32) (local $memdc i32)
     (local $drawn i32) (local $image_list i32) (local $image_sw i32)
     (local $mask_color i32) (local $use_disabled_effect i32) (local $is_hot i32)
+    (local $brect i32)
 
     ;; WM_DESTROY
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
@@ -8955,15 +8946,16 @@
             (local.set $i (i32.const 0))
             (block $done (loop $buttons
               (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-              (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $i) (global.get $PAINT_SCRATCH)))
+              (local.set $brect (call $paint_scratch_take))
+              (if (i32.eqz (call $toolbar_button_rect (local.get $sw) (local.get $i) (local.get $brect)))
                 (then (br $done)))
-              (local.set $left (i32.load (global.get $PAINT_SCRATCH)))
-              (local.set $top (i32.load offset=4 (global.get $PAINT_SCRATCH)))
+              (local.set $left (i32.load (local.get $brect)))
+              (local.set $top (i32.load offset=4 (local.get $brect)))
               (local.set $bw (i32.sub
-                (i32.load offset=8 (global.get $PAINT_SCRATCH))
+                (i32.load offset=8 (local.get $brect))
                 (local.get $left)))
               (local.set $bh (i32.sub
-                (i32.load offset=12 (global.get $PAINT_SCRATCH))
+                (i32.load offset=12 (local.get $brect))
                 (local.get $top)))
               (br_if $done (i32.ge_s (local.get $top) (i32.sub (local.get $h) (i32.const 2))))
               (local.set $state_byte (i32.const 4))
@@ -10711,7 +10703,7 @@
       (then
         (local.set $mx (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
         (local.set $my (i32.shr_s (local.get $lParam) (i32.const 16)))
-        (local.set $rect (global.get $PAINT_SCRATCH))
+        (local.set $rect (call $paint_scratch_take))
         (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
         (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
                                 (i32.load          (local.get $rect))))
@@ -10829,7 +10821,7 @@
         (call $ctrl_geom_set (call $wnd_table_find (local.get $lb))
           (i32.const 0) (i32.const 0) (local.get $lb_w) (local.get $lb_h))
         ;; Position popup directly below combo's field area in screen coords.
-        (local.set $rect (global.get $PAINT_SCRATCH))
+        (local.set $rect (call $paint_scratch_take))
         (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
         (call $host_move_window (local.get $popup)
           (i32.load          (local.get $rect))           ;; left
@@ -11693,16 +11685,12 @@
                   (i32.ne (local.get $paint_state_w) (i32.const 0))
                   (i32.ne (i32.load (local.get $paint_state_w)) (i32.const 0)))
               (then
-                (i32.store          (global.get $PAINT_SCRATCH) (i32.const 4))
-                (i32.store offset=4 (global.get $PAINT_SCRATCH) (i32.const 2))
-                (i32.store offset=8 (global.get $PAINT_SCRATCH)
-                  (i32.sub (local.get $arrow_x) (i32.const 2)))
-                (i32.store offset=12 (global.get $PAINT_SCRATCH)
-                  (i32.sub (local.get $h) (i32.const 2)))
                 (drop (call $host_gdi_draw_text (local.get $hdc)
                         (call $g2w (i32.load (local.get $paint_state_w)))
                         (i32.load offset=4 (local.get $paint_state_w))
-                        (global.get $PAINT_SCRATCH)
+                        (call $paint_rect (i32.const 4) (i32.const 2)
+                                          (i32.sub (local.get $arrow_x) (i32.const 2))
+                                          (i32.sub (local.get $h) (i32.const 2)))
                         (i32.const 0x24) (i32.const 0)))))))
         (return (i32.const 0))))
 
@@ -13773,7 +13761,20 @@
   ;; semantics, not synchronous SendMessage — return value is always 0).
   ;; True synchronous WAT->x86 SendMessage would require a nested $run
   ;; invocation; defer that until a consumer actually needs the return.
+  ;; This is where painting nests: a wndproc that is holding a scratch rect
+  ;; sends a message, and whatever that paints takes scratch slots of its own.
+  ;; Marking here and resetting on the way out recycles everything the inner
+  ;; frame took while leaving the caller's slots (taken before the mark) alone.
   (func $wnd_send_message
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $mark i32) (local $r i32)
+    (local.set $mark (call $paint_scratch_mark))
+    (local.set $r (call $wnd_send_message_inner
+      (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+    (call $paint_scratch_reset (local.get $mark))
+    (local.get $r))
+
+  (func $wnd_send_message_inner
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $wp i32) (local $slot i32) (local $ctrl_class i32)
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)

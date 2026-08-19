@@ -1259,7 +1259,7 @@
 
   ;; 73: GetMessageA
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
+    (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $nc_rect i32)
     ;; Move the virtual wire before looking for a message. WSAAsyncSelect is a
     ;; promise that the app will be TOLD about socket activity, so a server
     ;; written to that model calls no socket function at all while it waits --
@@ -1387,12 +1387,15 @@
     (if (local.get $tmp)
     (then
     (call $nc_flags_clear (local.get $tmp) (i32.const 4))
-    (call $host_get_window_rect (local.get $tmp) (global.get $PAINT_SCRATCH))
+    ;; The app dereferences this rect when it processes the message, so the
+    ;; slot has to stay its own until then — which is what the ring buys us.
+    (local.set $nc_rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $tmp) (local.get $nc_rect))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (global.get $PAINT_SCRATCH)))
+      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (local.get $nc_rect)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
     ;; WM_NCPAINT (0x85) — bit 0
@@ -1494,7 +1497,7 @@
   ;; Returns 0 = no message available (non-blocking)
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
-    (local $qidx i32) (local $qaddr i32) (local $qmsg i32)
+    (local $qidx i32) (local $qaddr i32) (local $qmsg i32) (local $nc_rect i32)
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
     (call $vsock_pump)
@@ -1548,12 +1551,14 @@
     (then
     (if (i32.and (local.get $arg4) (i32.const 1))
       (then (call $nc_flags_clear (local.get $tmp) (i32.const 4))))
-    (call $host_get_window_rect (local.get $tmp) (global.get $PAINT_SCRATCH))
+    ;; Same as GetMessageA: the rect outlives this handler, so take a slot.
+    (local.set $nc_rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $tmp) (local.get $nc_rect))
     (call $gs32 (local.get $arg0) (local.get $tmp))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
-      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (global.get $PAINT_SCRATCH)))
+      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (local.get $nc_rect)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
     (if (global.get $nc_flags_count)

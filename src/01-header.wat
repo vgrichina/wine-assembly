@@ -1018,13 +1018,14 @@
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
   ;; 0x00006A00  1KB     CLIPFORMAT_TABLE (128 entries × 8 bytes — RegisterClipboardFormat)
-  ;; 0x00006E00  512B    Free (former API dispatch hash table)
+  ;; 0x00006E00  256B    PAINT_SCRATCH  (ring of 16 RECTs for painting wndprocs)
+  ;; 0x00006F00  256B    Free (rest of the former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
   ;; 0x0000A000  3KB     CLASS_RECORDS  (64  entries × 48 bytes, ends 0xAC00)
   ;; 0x0000AC00  320B    TIMER_TABLE    (16  entries × 20 bytes, ends 0xAD40)
-  ;; 0x0000AD40  16B     PAINT_SCRATCH  (one RECT for control wndproc WM_PAINT)
+  ;; 0x0000AD40  32B     Free (former PAINT_SCRATCH, now a ring at 0x6E00)
   ;; 0x0000AD60  1KB     MENU_DATA_TABLE (256 × 4 bytes — heap ptr to per-window menu blob)
   ;; 0x0000B160  8KB     WND_DLG_RECORDS (256 × 32 bytes — dialog header state per slot, ends 0xD160)
   ;; 0x0000D160  16B     WAVE_OUT_STATE (shared waveOut callback info for cross-thread access)
@@ -1440,11 +1441,26 @@
   (global $CLASS_RECORDS i32 (i32.const 0x0000A000))
   (global $CLASS_RECORDS_SIZE i32 (i32.const 0x00000C00))
   (global $MAX_CLASSES   i32 (i32.const 64))
-  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call WAT DrawText
-  ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
-  ;; cannot reach it via image-relative pointers. Lives just past TIMER_TABLE.
-  (global $PAINT_SCRATCH  i32 (i32.const 0x0000AD40))
-  (global $PAINT_SCRATCH_SIZE i32 (i32.const 0x00000010))
+  ;; RECT scratch used by control wndproc WM_PAINT to call WAT DrawText and the
+  ;; other rect-taking primitives (they expect a WASM linear address for the
+  ;; rect). Below GUEST_BASE so guest cannot reach it via image-relative
+  ;; pointers.
+  ;;
+  ;; This is a ring of 16 rects, not one rect. Painting nests — a control's
+  ;; WM_PAINT can send a message that paints another window — and with a single
+  ;; shared rect the inner painter overwrote the one its caller was still
+  ;; holding. $paint_rect hands out the next slot, and a caller that dispatches
+  ;; into other windows while holding rects brackets the call with
+  ;; $paint_scratch_mark / $paint_scratch_reset so the inner frame's slots are
+  ;; recycled and the outer frame's are not. See $paint_rect in 10-helpers.wat.
+  (global $PAINT_SCRATCH  i32 (i32.const 0x00006E00))
+  (global $PAINT_SCRATCH_SLOTS i32 (i32.const 16))
+  (global $PAINT_SCRATCH_SIZE i32 (i32.const 0x00000100))
+  ;; Cursor into the ring. Mutable globals are per-instance while the memory is
+  ;; shared, so two threads painting at once can still land on the same slot.
+  ;; That is the pre-existing situation (they shared one rect before) and is not
+  ;; what this ring is for; it fixes nesting inside one thread.
+  (global $paint_scratch_cursor (mut i32) (i32.const 0))
   ;; PROP_TABLE: SetPropA/GetPropA/RemovePropA storage. Linear scan (apps
   ;; that touch Props rarely have more than a handful of live entries).
   ;;   +0  hwnd       (0 = empty slot)
