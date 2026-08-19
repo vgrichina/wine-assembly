@@ -6090,6 +6090,26 @@
             (global.set $eax (i32.const 50))))
         (call $win16_api_return (i32.const 8))
         (return)))
+    ;; A LOGPEN is ten bytes here — a word of style, a POINT of two words, and
+    ;; a colour — against sixteen in Win32, where the style is a long and the
+    ;; POINT is two of them.
+    (if (i32.eq (local.get $count) (i32.const 10))
+      (then
+        (local.set $tmp (global.get $GUEST_STACK))
+        (call $win16_call32_begin (i32.const 3))
+        (call $handle_GetObjectA (local.get $h) (i32.const 16) (local.get $tmp)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (call $gs16 (local.get $dst) (call $gl32 (local.get $tmp)))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 2))
+          (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+        (call $gs16 (i32.add (local.get $dst) (i32.const 4))
+          (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
+        (call $gs32 (i32.add (local.get $dst) (i32.const 6))
+          (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
+        (global.set $eax (i32.const 10))
+        (call $win16_api_return (i32.const 8))
+        (return)))
     ;; A LOGBRUSH is eight bytes here — a word of style, a colour, and a word
     ;; of hatch — against twelve in Win32, where all three are longs. JigSawed
     ;; asks its board's brush what colour it is.
@@ -6185,6 +6205,24 @@
     (call $win16_api_return (i32.const 4)))
 
   ;; GDI.61 CreatePen(nPenStyle, nWidth, crColor) -> HPEN.
+  ;; GDI.62 CreatePenIndirect(lpLogPen) — the same pen from a structure. The
+  ;; 16-bit LOGPEN is a word of style, a POINT of two words and a colour;
+  ;; only the width's x is used, as in Win32.
+  (func $win16_CreatePenIndirect
+    (local $src i32) (local $style i32) (local $width i32) (local $c i32)
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $style (call $gl16 (local.get $src)))
+    (local.set $width (call $win16_coord
+      (call $gl16 (i32.add (local.get $src) (i32.const 2)))))
+    (local.set $c (call $gl32 (i32.add (local.get $src) (i32.const 6))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_CreatePen (local.get $style) (local.get $width) (local.get $c)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 4)))
+
   (func $win16_CreatePen
     (local $style i32) (local $width i32) (local $c i32)
     (local.set $style (call $win16_arg16 (i32.const 3)))
@@ -7781,6 +7819,8 @@
       (then (call $win16_CreateCompatibleDC) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 61))
       (then (call $win16_CreatePen) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 62))
+      (then (call $win16_CreatePenIndirect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 64))
       (then (call $win16_CreateRectRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 66))
