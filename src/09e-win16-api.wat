@@ -1620,6 +1620,21 @@
         (global.set $eax (local.get $h))
         (call $win16_api_return (i32.const 8))
         (return)))
+    ;; A block that already has a whole arena slot to itself grows inside it
+    ;; rather than moving. Every slot here is 64KB, so anything that still
+    ;; fits in one is free to grow, and growing in place is the answer that
+    ;; keeps the caller's selector working — which matters most for the one
+    ;; block a task cannot survive being moved: its own DGROUP, which is what
+    ;; Visual Basic reallocates on its way in to make room for its runtime.
+    (if (i32.and (i32.le_u (local.get $bytes) (i32.const 0x10000))
+                 (i32.ne (call $win16_seg_base (local.get $index)) (i32.const 0)))
+      (then
+        (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $bytes))
+        (if (i32.gt_u (local.get $bytes) (call $win16_seg_limit (local.get $index)))
+          (then (call $win16_gseg_store (local.get $index) (i32.const 4) (local.get $bytes))))
+        (global.set $eax (local.get $h))
+        (call $win16_api_return (i32.const 8))
+        (return)))
     (local.set $new (call $win16_global_alloc (local.get $bytes)))
     (if (local.get $new)
       (then

@@ -1768,7 +1768,7 @@ async function main() {
       pendingWin16 = null;
       if (isWndClass) {
         const [hwnd, cls, proc, found] = words;
-        const name = cls >= 0x10000 ? readStr(base.g2w(cls), 32) : `atom ${hex(cls)}`;
+        const name = cls >= 0x10000 ? readStr(ctx.g2w(cls), 32) : `atom ${hex(cls)}`;
         logs.push(`[win16] class hwnd=${hex(hwnd)} name=${hex(cls)} "${name}"` +
           ` wndproc=${hex(proc)} class-table=${hex(found)}`);
         return;
@@ -2834,7 +2834,14 @@ async function main() {
 
   const regs = () => {
     const e = instance.exports;
-    return `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
+    const base = `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
+    // A 16-bit task's segment registers decide what every one of the above
+    // addresses. Printed only when there are any, so 32-bit traces are
+    // unchanged.
+    if (!e.get_sreg_ds) return base;
+    const ds = e.get_sreg_ds(), es = e.get_sreg_es(), ss = e.get_sreg_ss();
+    if (!(ds | es | ss)) return base;
+    return `${base} DS=${hex(ds)} ES=${hex(es)} SS=${hex(ss)} CS=${hex(e.get_sreg_cs())}`;
   };
 
   const g2w = addr => {

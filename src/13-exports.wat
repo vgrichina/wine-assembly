@@ -209,6 +209,14 @@
   (func (export "get_ebp") (result i32) (global.get $ebp))
   (func (export "get_esi") (result i32) (global.get $esi))
   (func (export "get_edi") (result i32) (global.get $edi))
+  ;; The segment registers a 16-bit task is holding. Invisible everywhere until
+  ;; now, and a wrong one is what a whole class of Win16 bug looks like: the
+  ;; task pushes DS as half of a far pointer and the API on the other side
+  ;; reads a string out of nowhere. --trace-at prints these.
+  (func (export "get_sreg_ds") (result i32) (global.get $sreg_ds))
+  (func (export "get_sreg_es") (result i32) (global.get $sreg_es))
+  (func (export "get_sreg_ss") (result i32) (global.get $sreg_ss))
+  (func (export "get_sreg_cs") (result i32) (global.get $sreg_cs))
   (func (export "get_staging") (result i32) (global.get $PE_STAGING))
   (func (export "get_staging_size") (result i32) (global.get $PE_STAGING_SIZE))
   (func (export "get_fs_base") (result i32) (global.get $fs_base))

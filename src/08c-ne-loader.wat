@@ -779,8 +779,16 @@
         ;; heap is the app's to fill and this has to stay put for the life of
         ;; the task. DGROUP is grown by exactly as much, so the app's own heap
         ;; is not the smaller for it.
+        ;; Never below the sixteen bytes of instance data at the start of
+        ;; DGROUP. A Visual Basic image declares no static data at all, so its
+        ;; DGROUP starts life zero bytes long and everything this places went
+        ;; on top of the task's own description of its stack — VB read its
+        ;; stack floor out of the middle of the font scratch.
         (global.set $win16_msg_scratch
-          (i32.add (call $win16_seg_limit (local.get $ds_index)) (i32.const 2)))
+          (i32.add
+            (select (call $win16_seg_limit (local.get $ds_index)) (i32.const 16)
+              (i32.gt_u (call $win16_seg_limit (local.get $ds_index)) (i32.const 16)))
+            (i32.const 2)))
         (global.set $win16_msg_slot (i32.const 0))
         (global.set $win16_font_scratch
           (i32.add (global.get $win16_msg_scratch) (global.get $WIN16_MSG_SCRATCH_SIZE)))
@@ -813,6 +821,44 @@
     ;; low word stays SP for as long as the task runs.
     (global.set $esp (i32.add (call $win16_seg_base (local.get $ss_index)) (local.get $sp)))
 
+    ;; The first sixteen bytes of DGROUP are the task's instance data, and they
+    ;; belong to the loader, not to the image: the linker leaves them empty and
+    ;; Windows fills them in. Nothing here did, so whatever the file happened
+    ;; to hold there was read as the task's own description of its stack.
+    ;;
+    ;;   +0x00 a null word, so a NULL near pointer reads zero
+    ;;   +0x02 the SS:SP a DOS task came from, which there isn't one of here
+    ;;   +0x06 the local heap, +0x08 the atom table
+    ;;   +0x0A stacktop, +0x0C stackmin, +0x0E stackbottom
+    ;;
+    ;; The last three are named the way Windows names them, which is upside
+    ;; down: stacktop is the *low* end the stack may not grow past, and
+    ;; stackbottom is the high end it starts at. Visual Basic reads stacktop
+    ;; on the way in, keeps it as its own floor, and checks SP against it
+    ;; before every statement — with the garbage that was there it decided it
+    ;; had run out of stack on the first one and raised error 28, which is how
+    ;; all five VB games died.
+    (if (local.get $ds_index)
+      (then
+        (local.set $limit (call $win16_seg_base (local.get $ds_index)))
+        (call $gs16 (local.get $limit) (i32.const 0))
+        (call $gs16 (i32.add (local.get $limit) (i32.const 2)) (i32.const 0))
+        (call $gs16 (i32.add (local.get $limit) (i32.const 4)) (i32.const 0))
+        (call $gs16 (i32.add (local.get $limit) (i32.const 6))
+          (global.get $win16_lheap_base))
+        (call $gs16 (i32.add (local.get $limit) (i32.const 8)) (i32.const 0))
+        ;; The stack is the top of the segment the header asked for. Where the
+        ;; header asked for none, the floor is the local heap's ceiling — the
+        ;; task still has a stack, it is just whatever room is left.
+        (call $gs16 (i32.add (local.get $limit) (i32.const 10))
+          (select
+            (i32.sub (local.get $sp) (global.get $win16_stack_size))
+            (global.get $win16_lheap_end)
+            (i32.and (i32.ne (global.get $win16_stack_size) (i32.const 0))
+                     (i32.gt_u (local.get $sp) (global.get $win16_stack_size)))))
+        (call $gs16 (i32.add (local.get $limit) (i32.const 12)) (local.get $sp))
+        (call $gs16 (i32.add (local.get $limit) (i32.const 14)) (local.get $sp))))
+
     ;; ES starts equal to DS. Real Windows hands the task its PSP selector in
     ;; ES, which nothing here reads yet, and a DS-equal ES is the safer of the
     ;; two wrong answers: it addresses real memory.
@@ -828,7 +874,13 @@
     (global.set $eax (i32.const 0))
     (global.set $ecx (global.get $win16_heap_size))
     (global.set $edx (i32.const 0))
-    (global.set $ebx (i32.const 0))
+    ;; BX is the stack size, and it is not decoration: Visual Basic's runtime
+    ;; is handed the task on the first instruction — RATTLER.EXE is fifteen
+    ;; bytes of `jmp far VBRUN100.100` — and lays the DGROUP out from these
+    ;; two registers, its own data first, then BX of stack, then CX of heap.
+    ;; With BX zero it gave itself no stack at all: SP came down on top of its
+    ;; own variables and the first statement raised "out of stack space".
+    (global.set $ebx (global.get $win16_stack_size))
     (global.set $ebp (i32.const 0))
     (global.set $esi (i32.const 0))
     (global.set $edi (global.get $sreg_ds))

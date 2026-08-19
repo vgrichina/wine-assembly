@@ -283,7 +283,14 @@ function run(name, app) {
   // An app that puts up its own error box has told us exactly what is wrong,
   // and that is a different answer from "it drew nothing": Pawn wants DirectX 9
   // and says so, on top of a window that would otherwise score as a screen.
-  const errorBox = box && /error|requires|cannot|unable|failed|not found/i.test(box);
+  // A box with an exclamation or a stop icon is an error box whatever it says,
+  // and one of them says nothing at all: Visual Basic's runtime puts up an
+  // empty MB_ICONEXCLAMATION when it cannot form its own message. Counting
+  // that as a screen would have scored three broken games as working.
+  const boxType = box && (box.match(/type=0x([0-9a-f]+)/i) || [])[1];
+  const iconError = boxType && [0x10, 0x30].includes(parseInt(boxType, 16) & 0xf0);
+  const errorBox = box &&
+    (iconError || /error|requires|cannot|unable|failed|not found/i.test(box));
   let verdict = 'OK';
   if (absent) verdict = 'NORUNTIME';
   else if (crashed) verdict = 'CRASH';
