@@ -2567,6 +2567,14 @@
   ;; had nothing to draw and every icon in the system was the same nothing.
   ;; Remembering {hInstance, resource id} is the whole difference: the pixels
   ;; are already decodable from the PE by $gdi_icon_draw_resource_at.
+  ;; An icon built from bitmaps rather than loaded from a resource: CreateIcon
+  ;; hands over the AND and XOR bits directly, so there is no {module,
+  ;; resource} to remember. It is interned with this in place of an instance
+  ;; and the colour bitmap as its "resource", and drawing one blits that
+  ;; bitmap — see $icon_draw_handle. Visual Basic's controls build their
+  ;; pictures this way.
+  (global $ICON_FROM_BITMAP i32 (i32.const 0x1C0B17))
+
   (func $icon_intern (param $hinst i32) (param $resid i32) (result i32)
     (local $i i32) (local $p i32) (local $free i32)
     (local.set $free (i32.const -1))
@@ -2613,6 +2621,19 @@
       (then (local.set $cx (i32.const 32))))
     (if (i32.le_s (local.get $cy) (i32.const 0))
       (then (local.set $cy (i32.const 32))))
+    ;; An icon that was built rather than loaded has a bitmap where its
+    ;; resource id would be; blit that instead of walking a resource.
+    (if (i32.eq (i32.load (local.get $p)) (global.get $ICON_FROM_BITMAP))
+      (then
+        (local.set $ok (call $gdi_dc_alloc))
+        (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
+        (drop (call $host_gdi_select_object (local.get $ok)
+                (i32.load offset=4 (local.get $p))))
+        (drop (call $host_gdi_bitblt (local.get $hdc) (local.get $x) (local.get $y)
+                (local.get $cx) (local.get $cy) (local.get $ok)
+                (i32.const 0) (i32.const 0) (i32.const 0x00CC0020)))
+        (drop (call $gdi_dc_delete (local.get $ok)))
+        (return (i32.const 1))))
     ;; The icon belongs to the module it was loaded from, which need not be
     ;; the one running now.
     (call $push_rsrc_ctx (i32.load (local.get $p)))
