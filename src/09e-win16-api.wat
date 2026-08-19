@@ -6329,7 +6329,7 @@
   ;; Like LineDDA, the callback is guest code, so this cannot be a loop: each
   ;; face gives the interpreter the task back and is picked up again on the far
   ;; return, and a callback that answers zero ends the enumeration.
-  (global $WIN16_FONT_FACES i32 (i32.const 0x11500))
+  (global $WIN16_FONT_FACES i32 (i32.const 0x00003E00))
   (global $win16_ef_proc (mut i32) (i32.const 0))
   (global $win16_ef_data (mut i32) (i32.const 0))
   (global $win16_ef_ret  (mut i32) (i32.const 0))

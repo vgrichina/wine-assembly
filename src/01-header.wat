@@ -868,7 +868,10 @@
   ;; Records are share, application, topic; an empty share ends the table.
   ;; The faces GDI here can actually rasterize — the .FON strikes mounted by
   ;; fonts/substitutions.json. EnumFonts reports these and nothing else.
-  (data (i32.const 0x11500) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
+  ;; Not at 0x11500: that is the oleaut32 ordinal-name block above, and the
+  ;; later segment wins, so placing them together cost Kodak Imaging its
+  ;; BSTR/VARIANT imports.
+  (data (i32.const 0x3E00) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
@@ -1012,7 +1015,9 @@
   ;; 0x00003390  ~370B   ENV_DEFAULTS (initial environment block template)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
   ;; 0x00003900  1KB     WND_CLASS_CURSOR_TABLE (256 × 4 bytes — class hCursor per hwnd)
-  ;; 0x00003D00  ~768B   Free
+  ;; 0x00003D00  256B    CLASS_EXTRA_TABLE (64 × 4 bytes — cbClsExtra per class slot)
+  ;; 0x00003E00   48B    WIN16_FONT_FACES (face names EnumFonts reports)
+  ;; 0x00003E30  ~464B   Free
   ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
@@ -1052,7 +1057,7 @@
   ;; 0x00011140  448B    DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
   ;; 0x00011300  220B    WSOCK32 ordinal-import names (ends 0x000113DC)
   ;; 0x000113DC  36B     Free
-  ;; 0x00011400 256B     CLASS_EXTRA_TABLE (64 × 4 bytes — cbClsExtra per class slot)
+  ;; 0x00011400 256B     DI_DIK_VK_TABLE (DirectInput scancode → VK, 09a8-handlers-directx.wat)
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
@@ -1273,7 +1278,10 @@
   ;; segment at all.
   (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x00006F00))
   (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000100))
-  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x00011400))
+  ;; 0x11400 was DI_DIK_VK_TABLE (09a8-handlers-directx.wat) — a DirectInput
+  ;; game and a class with cbClsExtra were writing the same 256 bytes. Moved
+  ;; beside the other per-class tables instead.
+  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x00003D00))
   (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000100))
   (global $CLASS_EXTRA_STRIDE i32 (i32.const 4))
   ;; EDIT visual-line scratch table. Each entry is { char_start, char_len }.
