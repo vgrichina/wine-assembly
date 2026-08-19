@@ -305,20 +305,66 @@
     (i32.store8 offset=4 (local.get $dst)
       (call $hex_ascii (local.get $id))))
 
+  ;; Label bytes for one dynamic item, or 0 when the item has no string of its
+  ;; own: MF_SEPARATOR (0x800) draws a line, and MF_BITMAP (0x04) /
+  ;; MF_OWNERDRAW (0x100) make lpNewItem a handle rather than text.
+  (func $dynamic_item_label_w (param $item_w i32) (result i32)
+    (local $data i32)
+    (if (i32.and (i32.load (local.get $item_w)) (i32.const 0x904))
+      (then (return (i32.const 0))))
+    (local.set $data (i32.load offset=8 (local.get $item_w)))
+    (if (i32.eqz (local.get $data)) (then (return (i32.const 0))))
+    (call $g2w (local.get $data)))
+
+  ;; First '\t' in an ASCII run, or -1. ($ml_find_tab is for the UTF-16
+  ;; characters a menu resource holds and cannot read these.)
+  (func $dynamic_find_tab (param $wa i32) (param $len i32) (result i32)
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (if (i32.eq (i32.load8_u (i32.add (local.get $wa) (local.get $i))) (i32.const 0x09))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
   (func $dynamic_menu_make_popup_blob (param $hmenu i32) (result i32)
-    (local $sw i32) (local $count i32) (local $total i32)
+    (local $sw i32) (local $count i32) (local $total i32) (local $strings i32)
     (local $blob_g i32) (local $blob_w i32)
     (local $i i32) (local $item i32) (local $rec i32) (local $flags i32)
     (local $out_flags i32) (local $label_off i32) (local $id i32)
+    (local $label i32) (local $chars i32) (local $tab i32)
+    (local $label_chars i32) (local $sc_chars i32)
     (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
     (if (i32.eqz (local.get $sw)) (then (return (i32.const 0))))
     (local.set $count (i32.load offset=4 (local.get $sw)))
     (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
-    ;; 4 + one 16-byte bar record + 4 child count + N*28 records + N*5 "#hhhh" labels.
+    ;; Pass 1 sizes the string region. Every item used to get a 5-byte "#hhhh"
+    ;; rendering of its command id, and that is what the popup actually
+    ;; painted -- a menu an app builds at runtime showed "#0065" where its
+    ;; label belonged, and GetMenuString read the same thing back. The string
+    ;; AppendMenu was handed is right there in the item record.
+    (local.set $i (i32.const 0))
+    (block $sized (loop $measure
+      (br_if $sized (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $item
+        (i32.add (local.get $sw)
+          (i32.add (i32.const 16) (i32.mul (local.get $i) (i32.const 16)))))
+      (local.set $label (call $dynamic_item_label_w (local.get $item)))
+      ;; A tab-split label only shrinks (the '\t' itself is dropped), so the
+      ;; raw length is a safe reservation for label + shortcut together.
+      (local.set $strings
+        (i32.add (local.get $strings)
+          (if (result i32) (local.get $label)
+            (then (call $strlen (local.get $label)))
+            (else (i32.const 5)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $measure)))
+    ;; 4 + one 16-byte bar record + 4 child count + N*28 records + the strings.
     (local.set $total
       (i32.add (i32.const 24)
         (i32.add (i32.mul (local.get $count) (i32.const 28))
-                 (i32.mul (local.get $count) (i32.const 5)))))
+                 (local.get $strings))))
     (local.set $blob_g (call $heap_alloc (local.get $total)))
     (if (i32.eqz (local.get $blob_g)) (then (return (i32.const 0))))
     (local.set $blob_w (call $g2w (local.get $blob_g)))
@@ -346,17 +392,47 @@
         (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 2)))))
       (if (i32.and (local.get $flags) (i32.const 0x0008))
         (then (local.set $out_flags (i32.or (local.get $out_flags) (i32.const 4)))))
-      (i32.store         (local.get $rec) (local.get $label_off))
-      (i32.store offset=4  (local.get $rec) (i32.const 5))
-      (i32.store offset=8  (local.get $rec) (i32.const 0))
-      (i32.store offset=12 (local.get $rec) (i32.const 0))
       (i32.store offset=16 (local.get $rec) (local.get $out_flags))
       (i32.store offset=20 (local.get $rec) (local.get $id))
       (i32.store offset=24 (local.get $rec) (i32.const 0))
-      (call $write_hex_menu_label
-        (i32.add (local.get $blob_w) (local.get $label_off))
-        (local.get $id))
-      (local.set $label_off (i32.add (local.get $label_off) (i32.const 5)))
+      (local.set $label (call $dynamic_item_label_w (local.get $item)))
+      (if (local.get $label)
+        (then
+          (local.set $chars (call $strlen (local.get $label)))
+          ;; Same split the resource loader does: everything after the first
+          ;; '\t' is the right-aligned shortcut column, not part of the label.
+          (local.set $tab (call $dynamic_find_tab (local.get $label) (local.get $chars)))
+          (if (i32.ge_s (local.get $tab) (i32.const 0))
+            (then
+              (local.set $label_chars (local.get $tab))
+              (local.set $sc_chars
+                (i32.sub (i32.sub (local.get $chars) (local.get $tab)) (i32.const 1))))
+            (else
+              (local.set $label_chars (local.get $chars))
+              (local.set $sc_chars (i32.const 0))))
+          (i32.store         (local.get $rec) (local.get $label_off))
+          (i32.store offset=4  (local.get $rec) (local.get $label_chars))
+          (call $memcpy (i32.add (local.get $blob_w) (local.get $label_off))
+                (local.get $label) (local.get $label_chars))
+          (local.set $label_off (i32.add (local.get $label_off) (local.get $label_chars)))
+          (if (local.get $sc_chars)
+            (then
+              (i32.store offset=8  (local.get $rec) (local.get $label_off))
+              (i32.store offset=12 (local.get $rec) (local.get $sc_chars))
+              (call $memcpy (i32.add (local.get $blob_w) (local.get $label_off))
+                    (i32.add (local.get $label) (i32.add (local.get $tab) (i32.const 1)))
+                    (local.get $sc_chars))
+              (local.set $label_off
+                (i32.add (local.get $label_off) (local.get $sc_chars))))))
+        (else
+          ;; No string of its own (separator, bitmap, owner-draw): keep the id
+          ;; rendering, which separators ignore and owner-draw items overpaint.
+          (i32.store         (local.get $rec) (local.get $label_off))
+          (i32.store offset=4  (local.get $rec) (i32.const 5))
+          (call $write_hex_menu_label
+            (i32.add (local.get $blob_w) (local.get $label_off))
+            (local.get $id))
+          (local.set $label_off (i32.add (local.get $label_off) (i32.const 5)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $items)))
     (local.get $blob_g))
@@ -1220,7 +1296,12 @@
               (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
                            (i32.le_u (local.get $ch) (i32.const 0x7A)))
                 (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20)))))
-              (return (local.get $ch))))))
+              (return (local.get $ch)))
+            ;; "&&" is a literal ampersand, so step over BOTH of them. Stepping
+            ;; one at a time re-reads the second '&' as a fresh marker and
+            ;; hands back whatever follows it — "Save && Exit" mnemonic'd on
+            ;; the space, and it shadowed any real '&' later in the label.
+            (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -1249,7 +1330,9 @@
               (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
                            (i32.le_u (local.get $ch) (i32.const 0x7A)))
                 (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20)))))
-              (return (local.get $ch))))))
+              (return (local.get $ch)))
+            ;; See $menu_bar_accel: skip both halves of a doubled ampersand.
+            (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -2384,18 +2467,39 @@
         (param $hmenu i32) (param $item i32) (param $by_pos i32)
         (param $out_wa i32) (param $cch i32) (result i32)
     (local $hwnd i32) (local $loc i32) (local $top i32) (local $child i32)
-    (local $src i32) (local $len i32)
-    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
-    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (local.set $loc (call $menu_handle_locate
-      (local.get $hmenu) (local.get $item) (local.get $by_pos)))
-    (if (i32.eq (local.get $loc) (i32.const -1)) (then (return (i32.const 0))))
-    (local.set $top (i32.shr_u (local.get $loc) (i32.const 16)))
-    (local.set $child (i32.and (local.get $loc) (i32.const 0xFFFF)))
-    (local.set $src (call $menu_child_label_ptr
-      (local.get $hwnd) (local.get $top) (local.get $child)))
-    (local.set $len (call $menu_child_label_len
-      (local.get $hwnd) (local.get $top) (local.get $child)))
+    (local $src i32) (local $len i32) (local $dyn i32) (local $idx i32) (local $rec i32)
+    (block $found
+      ;; A CreatePopupMenu handle belongs to no window, so the lookup below
+      ;; could never resolve one and every app that read back a label it had
+      ;; just appended got an empty string. Answer from the item records.
+      (local.set $dyn (call $dynamic_menu_state_w (local.get $hmenu)))
+      (if (local.get $dyn)
+        (then
+          (local.set $idx
+            (if (result i32) (local.get $by_pos)
+              (then (local.get $item))
+              (else (call $dynamic_menu_index_of_id (local.get $dyn) (local.get $item)))))
+          (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (i32.const 0))))
+          (if (i32.ge_u (local.get $idx) (i32.load offset=4 (local.get $dyn)))
+            (then (return (i32.const 0))))
+          (local.set $rec (i32.add (local.get $dyn)
+            (i32.add (i32.const 16) (i32.mul (local.get $idx) (i32.const 16)))))
+          (local.set $src (call $dynamic_item_label_w (local.get $rec)))
+          (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+          ;; Win32 hands back the whole string it was given, shortcut included.
+          (local.set $len (call $strlen (local.get $src)))
+          (br $found)))
+      (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+      (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+      (local.set $loc (call $menu_handle_locate
+        (local.get $hmenu) (local.get $item) (local.get $by_pos)))
+      (if (i32.eq (local.get $loc) (i32.const -1)) (then (return (i32.const 0))))
+      (local.set $top (i32.shr_u (local.get $loc) (i32.const 16)))
+      (local.set $child (i32.and (local.get $loc) (i32.const 0xFFFF)))
+      (local.set $src (call $menu_child_label_ptr
+        (local.get $hwnd) (local.get $top) (local.get $child)))
+      (local.set $len (call $menu_child_label_len
+        (local.get $hwnd) (local.get $top) (local.get $child))))
     ;; A NULL buffer means "just tell me how long it is".
     (if (i32.eqz (local.get $out_wa)) (then (return (local.get $len))))
     (if (i32.eqz (local.get $cch)) (then (return (i32.const 0))))

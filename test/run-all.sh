@@ -48,6 +48,7 @@ UNIT=(
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-menu-insert.js
+  test/test-menu-popup-text.js
   test/test-sscanf.js
   test/test-format-message-inserts.js
   test/test-ole-clipboard-wrap.js
@@ -387,7 +388,6 @@ SMOKE=(
 QUARANTINE=(
   test/test-gdi-scroll-window-rect.js   # host.gdi_scroll_window is not a function
   test/test-listview.js                 # host.gdi_create_bitmap is not a function
-  test/test-menu-popup-text.js          # renderer._menuFormatText is not a function
   test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
   test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
   test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
