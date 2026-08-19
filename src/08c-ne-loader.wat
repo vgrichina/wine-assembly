@@ -339,6 +339,22 @@
       (local.set $a    (i32.load16_u (i32.add (local.get $p) (i32.const 4))))
       (local.set $c    (i32.load16_u (i32.add (local.get $p) (i32.const 6))))
 
+      ;; OSFIXUP (type 3) is not a fixup to apply. It marks a floating-point
+      ;; instruction so that the emulator library can rewrite it into a call
+      ;; when the machine has no coprocessor — the bytes already hold the real
+      ;; FP instruction, padded with the WAIT and NOP that make room for the
+      ;; rewrite, and a machine with a 387 leaves them exactly as they are.
+      ;; This emulator has an x87, so it does too. Writing a thunk address
+      ;; over them, which is what treating this as an import did, replaced
+      ;; every floating-point instruction in the module with nonsense —
+      ;; Visual Basic's p-code interpreter walked off its own instruction
+      ;; stream a few opcodes into any form that used a number.
+      (if (i32.eq (local.get $rel_type) (i32.const 3))
+        (then
+          (local.set $p (i32.add (local.get $p) (i32.const 8)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $records)))
+
       ;; Resolve the target to selector:offset.
       (if (i32.eqz (local.get $rel_type))
         (then
