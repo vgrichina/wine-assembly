@@ -385,6 +385,8 @@ E2E=(
   test/test-wordpad-toolbar-format-buttons.js
   test/test-wordpad-font-dialog.js
   test/test-wordpad-paragraph-align.js
+  test/test-wordpad-caret.js
+  test/test-wordpad-replace.js
   # Green only once their budgets stopped being shorter than the work: the two
   # vlan ones spawn a second emulator and wait for it over the wire.
   test/test-find-mouse-click.js
@@ -414,8 +416,6 @@ QUARANTINE=(
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
   # Edit/RichEdit gaps.
   test/test-notepad-editing.js          # 7/10: type-over-selection, thumb drag, wheel scroll
-  test/test-wordpad-caret.js            # 11/13: caret off phase does not erase the stroke
-  test/test-wordpad-replace.js          # 13/14: empty Replace All does not delete every match
   test/test-wordpad-undo-find.js        # 8/11: typed text does not reach the native RichEdit
   test/test-wordpad-ui-advanced.js      # 8/9: ruler drag adds no paragraph tab stop
   # OLE presentation data -- the known static-handler/IDataObject gap.

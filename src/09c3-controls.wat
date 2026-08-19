@@ -1142,9 +1142,16 @@
     ;; ReplaceTextA returns, while the modeless WAT edit remains authoritative.
     (local.set $state (call $wnd_get_state_ptr (global.get $findreplace_replace_hwnd)))
     (if (local.get $state)
-      (then (local.set $replace_g (i32.load (call $g2w (local.get $state))))))
-    (if (i32.eqz (local.get $replace_g))
-      (then (local.set $replace_g (i32.load offset=20 (local.get $fr_w)))))
+      (then (local.set $replace_g (i32.load (call $g2w (local.get $state)))))
+      ;; Only when there is no dialog edit at all does lpstrReplaceWith get a
+      ;; say. An edit that exists and is EMPTY still answers the question --
+      ;; "replace with nothing" -- and its text_buf is a null pointer, which is
+      ;; indistinguishable from "no edit" if the two cases share a branch.
+      ;; MFC nulls lpstrReplaceWith itself once the replace box is cleared and
+      ;; the field then reads back as stale garbage, so believing it deleted
+      ;; nothing at all: WordPad's Replace All with an empty replacement left
+      ;; every match in place.
+      (else (local.set $replace_g (i32.load offset=20 (local.get $fr_w)))))
     ;; Empty replacement is valid and means delete the selected match.
     (if (i32.eqz (local.get $replace_g))
       (then
@@ -1161,6 +1168,7 @@
     (param $owner i32) (param $fr_w i32) (param $flags i32) (result i32)
     (local $find_g i32) (local $range_g i32) (local $range_w i32)
     (local $sel_a i32) (local $sel_b i32) (local $start i32) (local $ret i32)
+    (local $find_state i32)
     ;; A class-0 child with a real native wndproc is the shape used by
     ;; RichEdit20A. Plain WAT Edit owners (Notepad) continue through their
     ;; application FINDMSGSTRING handler below.
@@ -1168,7 +1176,18 @@
           (i32.ne (call $ctrl_table_get_class (local.get $owner)) (i32.const 0))
           (i32.eqz (call $wnd_get_parent (local.get $owner))))
       (then (return (i32.const 0))))
-    (local.set $find_g (i32.load offset=16 (local.get $fr_w)))
+    ;; Same rule as the replace side: the WAT dialog's own edit is what the
+    ;; user typed into, and it stays valid whatever MFC does to its temporary
+    ;; FINDREPLACE afterwards. Clearing the replace box was enough to leave
+    ;; lpstrReplaceWith and the two length words holding stale values, and a
+    ;; bad wFindWhatLen makes $findreplace_copy_edit_to_buffer skip the copy
+    ;; entirely -- so the struct's find buffer still held the previous search
+    ;; and Replace All matched nothing at all.
+    (local.set $find_state (call $wnd_get_state_ptr (global.get $findreplace_edit_hwnd)))
+    (if (local.get $find_state)
+      (then (local.set $find_g (i32.load (call $g2w (local.get $find_state))))))
+    (if (i32.eqz (local.get $find_g))
+      (then (local.set $find_g (i32.load offset=16 (local.get $fr_w)))))
     (if (i32.eqz (local.get $find_g)) (then (return (i32.const 0))))
     (local.set $range_g (call $heap_alloc (i32.const 20)))
     (if (i32.eqz (local.get $range_g)) (then (return (i32.const 0))))
