@@ -1745,6 +1745,11 @@ async function main() {
     // A by-name call into a loaded DLL that resolved: same three words as the
     // unresolved marker, but it is a call rather than a stop.
     if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
+    // GetProcAddress asked a module this emulator answers for by name and got
+    // nothing back. Callers rarely check, so this is the only place the name
+    // is still known: Visual Basic reports "Sub or Function not defined" long
+    // afterwards with no way back to the Declare that failed.
+    if ((val >>> 0) === 0xCA16A9E5) { pendingWin16 = { want: 3, words: [], procMiss: true }; return; }
     // The Win16 modal dialog pump handing one message on: hwnd, message,
     // wParam, lParam, and the dialog the pump belongs to.
     if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
@@ -1764,8 +1769,13 @@ async function main() {
       if (pendingWin16.words.length < pendingWin16.want) return;
       const { call: isCall, ret: isRet, route: isRoute, posted: isPosted,
               ddeAsk: isDdeAsk, ddeAns: isDdeAns, ddeData: isDdeData,
-              wndClass: isWndClass, resolved, words } = pendingWin16;
+              wndClass: isWndClass, procMiss: isProcMiss, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isProcMiss) {
+        const mod = WIN16_MODULES[words[0] >>> 16] || `<module ${words[0] >>> 16}>`;
+        logs.push(`[win16] GetProcAddress ${mod}."${readPascalStr(words[2])}" -> NULL`);
+        return;
+      }
       if (isWndClass) {
         const [hwnd, cls, proc, found] = words;
         const name = cls >= 0x10000 ? readStr(ctx.g2w(cls), 32) : `atom ${hex(cls)}`;

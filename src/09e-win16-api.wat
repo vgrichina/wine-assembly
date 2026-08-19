@@ -2530,17 +2530,17 @@
                 (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
                         (call $win16_thunk_for (local.get $id) (local.get $ord)
                                                (i32.const 0))))))))
-        ;; The same for GDI and USER, out of the small table of names apps
-        ;; actually ask for by name rather than importing.
-        (if (i32.and (i32.or (i32.eq (local.get $id) (i32.const 2))
-                             (i32.eq (local.get $id) (i32.const 3)))
-                     (local.get $sel))
+        ;; The same for KERNEL, USER and GDI, out of the small table of names
+        ;; apps actually ask for by name rather than importing.
+        (if (i32.and (i32.and (i32.ge_u (local.get $id) (i32.const 1))
+                              (i32.le_u (local.get $id) (i32.const 3)))
+                     (i32.ne (local.get $sel) (i32.const 0)))
           (then
             (call $win16_cstr_to_pstr
               (call $win16_far_to_guest (local.get $sel) (local.get $off))
               (call $win16_name_scratch) (i32.const 0))
             (local.set $ord (call $win16_builtin_ordinal
-              (call $g2w (call $win16_name_scratch))))
+              (call $g2w (call $win16_name_scratch)) (local.get $id)))
             (if (local.get $ord)
               (then (local.set $target
                 (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
@@ -2568,6 +2568,23 @@
                   (call $g2w (call $win16_name_scratch)))))
               (else (local.set $ord (local.get $off))))
             (local.set $target (call $win16_dll_entry (local.get $id) (local.get $ord)))))))
+    ;; A name this side could not place. Worth its own trace line, because the
+    ;; caller almost never checks: Visual Basic turns a NULL FARPROC into "Sub
+    ;; or Function not defined" thousands of instructions later, with nothing
+    ;; left to say which Declare it came from. The name is already in the
+    ;; scratch buffer as a Pascal string.
+    (if (i32.and
+          (i32.and (i32.ne (global.get $win16_trace) (i32.const 0))
+                   (i32.ne (local.get $sel) (i32.const 0)))
+          (i32.eqz (local.get $target)))
+      (then
+        (call $win16_cstr_to_pstr
+          (call $win16_far_to_guest (local.get $sel) (local.get $off))
+          (call $win16_name_scratch) (i32.const 0))
+        (call $host_log_i32 (i32.const 0xCA16A9E5))
+        (call $host_log_i32 (i32.shl (local.get $id) (i32.const 16)))
+        (call $host_log_i32 (i32.const 0))
+        (call $host_log_i32 (call $g2w (call $win16_name_scratch)))))
     (global.set $edx (i32.shr_u (local.get $target) (i32.const 16)))
     (call $win16_local_identity (i32.const 6)
       (i32.and (local.get $target) (i32.const 0xFFFF))))
@@ -8338,9 +8355,16 @@
   (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E40))
   (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x3EA0))
 
-  ;; The GDI/USER half of the same idea, over its own table.
-  (func $win16_builtin_ordinal (param $name i32) (result i32)
-    (call $win16_name_table_lookup (global.get $WIN16_BUILTIN_NAMES) (local.get $name)))
+  ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table
+  ;; carries the module in the top nibble of each ordinal word, so a name only
+  ;; answers for the module the caller actually asked.
+  (func $win16_builtin_ordinal (param $name i32) (param $module i32) (result i32)
+    (local $packed i32)
+    (local.set $packed
+      (call $win16_name_table_lookup (global.get $WIN16_BUILTIN_NAMES) (local.get $name)))
+    (if (i32.ne (i32.shr_u (local.get $packed) (i32.const 12)) (local.get $module))
+      (then (return (i32.const 0))))
+    (i32.and (local.get $packed) (i32.const 0x0FFF)))
 
   (func $win16_mmsystem_ordinal (param $name i32) (result i32)
     (call $win16_name_table_lookup (global.get $WIN16_MMSYSTEM_NAMES) (local.get $name)))

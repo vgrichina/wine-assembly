@@ -891,16 +891,28 @@
     "\11MIDIOUTGETNUMDEVS\c9\00"
     "\11WAVEOUTGETNUMDEVS\91\01"
     "\00")
-  ;; The same shape for the entry points apps look up in GDI and USER by name
-  ;; rather than importing. A module this emulator answers for has no export
-  ;; table to search, so the name has to be matched here and turned into an
-  ;; ordinal — see $win16_builtin_ordinal. JigSawed asks GDI for
+  ;; The same shape for the entry points apps look up in KERNEL, GDI and USER
+  ;; by name rather than importing. A module this emulator answers for has no
+  ;; export table to search, so the name has to be matched here and turned into
+  ;; an ordinal — see $win16_builtin_ordinal. JigSawed asks GDI for
   ;; CreateRectRgn before it will draw its board.
+  ;;
+  ;; The word after each name is the ordinal with the module number in its top
+  ;; nibble (1 KERNEL, 2 USER, 3 GDI), because one table serves all three and
+  ;; ordinals collide across them — GDI.47 and KERNEL.47 are different calls.
+  ;; No Win16 ordinal reaches 4096, so the nibble is free.
+  ;;
+  ;; Every name here is one a game in the corpus actually asks for: Visual
+  ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
+  ;; back to the program as "Sub or Function not defined".
   (data (i32.const 0x3EA0)
-    "\0dCREATERECTRGN\40\00"
-    "\15CREATERECTRGNINDIRECT\41\00"
-    "\0eGETSTOCKOBJECT\57\00"
-    "\0bRECTVISIBLE\68\00"
+    "\0dCREATERECTRGN\40\30"
+    "\15CREATERECTRGNINDIRECT\41\30"
+    "\0eGETSTOCKOBJECT\57\30"
+    "\0bRECTVISIBLE\68\30"
+    "\0dGETDEVICECAPS\50\30"
+    "\0fGETMODULEHANDLE\2f\10"
+    "\11GETMODULEFILENAME\31\10"
     "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
