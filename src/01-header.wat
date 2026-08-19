@@ -1245,6 +1245,24 @@
   ;; slot reused before anyone reads it back.
   (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x00010F00))
   (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; Which class record each window was created from, one byte per window slot
+  ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
+  ;; extra is shared by every window of the class — that is the whole point of
+  ;; it, as against cbWndExtra — so it is keyed by class slot and reached
+  ;; through the per-window link. Four bytes per class is what the gap between
+  ;; here and RICHEDIT_FORMAT_TABLE holds, and it covers the two words apps
+  ;; that use class extra at all actually declare; a class asking for more is
+  ;; refused in $class_extra_addr rather than aliased onto its neighbour.
+  ;;
+  ;; These were briefly at 0x07F0A800, which is GDI_BITMAP_FONT_TABLE — the
+  ;; font table's globals live in src/10b-gdi-font.wat, not here, so picking an
+  ;; address by reading this file alone landed on top of it and corrupted every
+  ;; loaded strike. Check every src/*.wat before taking an address.
+  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x00011300))
+  (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x00011400))
+  (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $CLASS_EXTRA_STRIDE i32 (i32.const 4))
   ;; EDIT visual-line scratch table. Each entry is { char_start, char_len }.
   ;; Used by WAT EDIT controls so wrapped text, caret, hit-testing and scroll
   ;; all share one layout model instead of mixing DrawText with manual math.
@@ -1584,18 +1602,6 @@
   (global $VIRTUAL_MAP_TABLE i32 (i32.const 0x07F02410))
   (global $VIRTUAL_MAP_TABLE_SIZE i32 (i32.const 0x00008000))
   (global $MAX_VIRTUAL_MAPS i32 (i32.const 2048))
-  ;; Which class record each window was created from, and the cbClsExtra bytes
-  ;; that belong to that class. Class extra is shared by every window of the
-  ;; class — that is the whole point of it, as against cbWndExtra — so it is
-  ;; keyed by class slot and reached through the per-window link.
-  ;; 16 bytes per class covers the two or three words these apps declare;
-  ;; anything past that is refused rather than silently aliased onto the next
-  ;; class.
-  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x07F0A800))
-  (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x07F0AC00))
-  (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $CLASS_EXTRA_STRIDE i32 (i32.const 16))
   (global $VIRTUAL_BACKING_BASE i32 (i32.const 0x08000000))
   (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x14000000))
   (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))

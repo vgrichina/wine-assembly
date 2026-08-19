@@ -459,22 +459,27 @@
   ;; class's own extra bytes from an hwnd; -1 means the class was gone by the
   ;; time the window was made, which is not an error for a builtin control.
   (func $wnd_class_slot_reset_slot (param $slot i32)
-    (i32.store
-      (i32.add (global.get $WND_CLASS_SLOT_TABLE) (i32.mul (local.get $slot) (i32.const 4)))
-      (i32.const -1)))
+    (i32.store8 (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $slot))
+      (i32.const 0xFF)))
 
   (func $wnd_get_class_slot (param $hwnd i32) (result i32)
-    (local $idx i32)
+    (local $idx i32) (local $slot i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const -1))))
-    (i32.load (i32.add (global.get $WND_CLASS_SLOT_TABLE) (i32.mul (local.get $idx) (i32.const 4)))))
+    (local.set $slot
+      (i32.load8_u (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $idx))))
+    (select (i32.const -1) (local.get $slot) (i32.eq (local.get $slot) (i32.const 0xFF))))
 
   (func $wnd_set_class_slot_from_name (param $hwnd i32) (param $class_name_guest i32)
-    (local $idx i32)
+    (local $idx i32) (local $slot i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
-    (i32.store (i32.add (global.get $WND_CLASS_SLOT_TABLE) (i32.mul (local.get $idx) (i32.const 4)))
-      (call $class_find_slot (call $class_name_key (local.get $class_name_guest)))))
+    (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
+    (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
+                (i32.ge_u (local.get $slot) (global.get $MAX_CLASSES)))
+      (then (local.set $slot (i32.const 0xFF))))
+    (i32.store8 (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $idx))
+      (local.get $slot)))
 
   ;; One word of a class's extra bytes. `off` is the byte offset the app asked
   ;; for; a class that never declared that many gets nothing rather than the

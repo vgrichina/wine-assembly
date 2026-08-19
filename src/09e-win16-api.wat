@@ -129,6 +129,13 @@
   (func $win16_h16 (param $h32 i32) (result i32)
     (local $t i32) (local $i i32)
     (if (i32.eqz (local.get $h32)) (then (return (i32.const 0))))
+    ;; No range check on the way in. A 16-bit handle mapped a second time is a
+    ;; real bug — it allocates a fresh entry for an object that already has one
+    ;; — but it cannot be told from a small 32-bit handle by value: menus are
+    ;; numbered from a few hundred and FreeCell's own menu is 0x190. The two
+    ;; defences that do work are in $win16_msg_wparam16, which will not narrow
+    ;; a DC that is already narrow, and $win16_h16_forget, which gives a slot
+    ;; back when its object is destroyed.
     (if (i32.eq (local.get $h32) (i32.const -1)) (then (return (i32.const 0xFFFF))))
     (local.set $t (call $win16_handle_table))
     (local.set $i (i32.const 1))
@@ -139,16 +146,58 @@
         (then (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; Reuse a slot whose 32-bit handle has been released before taking a new
+    ;; one. A task in its message pump asks for a DC, draws and releases it
+    ;; thousands of times; without this the map grows once per iteration and
+    ;; runs out — Pipe Dream exhausted it in seven batches of idling.
+    (local.set $i (i32.const 1))
+    (block $reused (loop $free
+      (br_if $reused (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
+      (if (i32.eqz (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))))
+        (then
+          (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
+                     (local.get $h32))
+          (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $free)))
     (if (i32.ge_u (global.get $win16_handle_next) (global.get $WIN16_HANDLE_MAX))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F4))
         (call $host_log_i32 (local.get $h32))
+        ;; The last few entries name what filled it, which is the only thing
+        ;; that tells a leak from a table that is simply too small.
+        (call $host_log_i32 (global.get $win16_handle_next))
+        (call $host_log_i32 (i32.load (i32.add (local.get $t)
+          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 1)) (i32.const 2)))))
+        (call $host_log_i32 (i32.load (i32.add (local.get $t)
+          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 2)) (i32.const 2)))))
+        (call $host_log_i32 (i32.load (i32.add (local.get $t)
+          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 3)) (i32.const 2)))))
         (unreachable)))
     (global.set $win16_handle_next (i32.add (global.get $win16_handle_next) (i32.const 1)))
     (i32.store (i32.add (local.get $t)
                         (i32.shl (global.get $win16_handle_next) (i32.const 2)))
                (local.get $h32))
     (i32.add (global.get $win16_handle_next) (global.get $WIN16_HANDLE_BASE)))
+
+  ;; Drop a mapping. The 32-bit handle has been released and may be handed out
+  ;; again for something else, so keeping the entry would make a stale 16-bit
+  ;; handle silently name the new object.
+  (func $win16_h16_forget (param $h32 i32)
+    (local $t i32) (local $i i32)
+    (if (i32.eqz (local.get $h32)) (then (return)))
+    (local.set $t (call $win16_handle_table))
+    (local.set $i (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
+      (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
+                  (local.get $h32))
+        (then
+          (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
+                     (i32.const 0))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
 
   ;; ---- Calling the 32-bit handler for the same API ----
   ;;
@@ -1624,6 +1673,7 @@
   ;; that would know it happened.
   (func $win16_class_word (param $is_set i32)
     (local $hwnd i32) (local $index i32) (local $val i32) (local $prev i32)
+    (local $handled i32)
     (if (local.get $is_set)
       (then
         (local.set $val (call $win16_arg16 (i32.const 0)))
@@ -1646,28 +1696,41 @@
         (global.set $eax (local.get $prev))
         (call $win16_api_return (select (i32.const 6) (i32.const 4) (local.get $is_set)))
         (return)))
+    ;; Flat rather than a chain of else-ifs on purpose: the nested form put the
+    ;; function's own tail inside the innermost else, so every index that WAS
+    ;; handled returned without calling $win16_api_return at all — leaving EIP
+    ;; on the call instruction and the arguments on the stack. IdleWild then
+    ;; re-ran its own pushes forever, ten bytes of stack at a time, until SS
+    ;; went wild. Nothing about that looked like a paren mistake from the
+    ;; outside, and the paren checker is no help: the totals balance either way.
+    (local.set $handled (i32.const 1))
     (if (i32.eq (local.get $index) (i32.const -10))        ;; GCW_HBRBACKGROUND
       (then
         (local.set $prev (call $win16_h16 (call $wnd_get_bg_brush (local.get $hwnd))))
         (if (local.get $is_set)
-          (then (call $wnd_set_bg_brush (local.get $hwnd) (call $win16_h32 (local.get $val))))))
-      (else (if (i32.eq (local.get $index) (i32.const -12))  ;; GCW_HCURSOR
-        (then
-          (local.set $prev (call $win16_h16 (call $wnd_get_class_cursor (local.get $hwnd))))
-          (if (local.get $is_set)
-            (then (call $wnd_set_class_cursor (local.get $hwnd)
-                    (call $win16_h32 (local.get $val))))))
-        (else (if (i32.eq (local.get $index) (i32.const -14))  ;; GCW_HICON
-        (then
-          (local.set $prev (call $win16_h16 (call $wnd_get_class_icon (local.get $hwnd))))
-          (if (local.get $is_set)
-            (then (call $wnd_set_class_icon (local.get $hwnd)
-                    (call $win16_h32 (local.get $val))))))
-        (else
-          (call $host_log_i32 (i32.const 0xCA16C1A5))   ;; class word not implemented
-          (call $host_log_i32 (local.get $index))
-          (call $host_log_i32 (local.get $is_set))
-          (unreachable))))))))
+          (then (call $wnd_set_bg_brush (local.get $hwnd)
+                  (call $win16_h32 (local.get $val))))))
+      (else (local.set $handled (i32.const 0))))
+    (if (i32.eq (local.get $index) (i32.const -12))        ;; GCW_HCURSOR
+      (then
+        (local.set $handled (i32.const 1))
+        (local.set $prev (call $win16_h16 (call $wnd_get_class_cursor (local.get $hwnd))))
+        (if (local.get $is_set)
+          (then (call $wnd_set_class_cursor (local.get $hwnd)
+                  (call $win16_h32 (local.get $val)))))))
+    (if (i32.eq (local.get $index) (i32.const -14))        ;; GCW_HICON
+      (then
+        (local.set $handled (i32.const 1))
+        (local.set $prev (call $win16_h16 (call $wnd_get_class_icon (local.get $hwnd))))
+        (if (local.get $is_set)
+          (then (call $wnd_set_class_icon (local.get $hwnd)
+                  (call $win16_h32 (local.get $val)))))))
+    (if (i32.eqz (local.get $handled))
+      (then
+        (call $host_log_i32 (i32.const 0xCA16C1A5))   ;; class word not implemented
+        (call $host_log_i32 (local.get $index))
+        (call $host_log_i32 (local.get $is_set))
+        (unreachable)))
     (global.set $eax (local.get $prev))
     (call $win16_api_return (select (i32.const 6) (i32.const 4) (local.get $is_set))))
 
@@ -1819,7 +1882,12 @@
     (call $win16_api_return (i32.const 2)))
 
   (func $win16_ReleaseDC
-    (drop (call $host_release_dc (call $win16_h32 (call $win16_arg16 (i32.const 0)))))
+    (local $hdc i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (drop (call $host_release_dc (local.get $hdc)))
+    ;; The DC is gone, so its place in the handle map is free. A pump that gets
+    ;; and releases a DC every iteration would otherwise fill the map.
+    (call $win16_h16_forget (local.get $hdc))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 4)))
 
@@ -2328,6 +2396,31 @@
         (call $host_log_i32 (local.get $hwnd))
         (call $host_log_i32 (local.get $msg))
         (unreachable)))
+    ;; A window whose procedure belongs to this side — a built-in control, a
+    ;; WAT-native window, the default procedure — has no 16-bit code to enter.
+    ;; Its "far pointer" is a marker, and jumping to it loads CS with 0xFFFE
+    ;; and runs from a selector that names no segment; Pipe Dream's first
+    ;; CreateWindow died that way. Dispatch it here instead and hand the result
+    ;; straight back to the caller, which is what entering it would have
+    ;; produced anyway.
+    (if (i32.ge_u (local.get $proc) (i32.const 0xFFFE0000))
+      (then
+        ;; Widen what was narrowed on the way out. WM_ERASEBKGND and
+        ;; WM_PAINTICON carry a DC in wParam, and handing the 16-bit form to
+        ;; the 32-bit side puts a 16-bit handle back into the message queue,
+        ;; where the next GetMessage narrows it a second time and allocates a
+        ;; fresh entry for it — a handle table that fills up once per pump
+        ;; iteration.
+        (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0014))
+                    (i32.eq (local.get $msg) (i32.const 0x0027)))
+          (then (local.set $wparam (call $win16_h32 (local.get $wparam)))))
+        (local.set $proc (call $wat_wndproc_dispatch (call $win16_h32 (local.get $hwnd))
+          (local.get $msg) (local.get $wparam) (local.get $lparam)))
+        (global.set $eax (i32.and (local.get $proc) (i32.const 0xFFFF)))
+        (global.set $edx (i32.shr_u (local.get $proc) (i32.const 16)))
+        (call $win16_set_sreg (i32.const 1) (local.get $ret_sel))
+        (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $ret_ip)))
+        (return)))
     (local.set $lparam (call $win16_msg_lparam16 (local.get $msg) (local.get $lparam)))
     (call $win16_push16 (local.get $hwnd))
     (call $win16_push16 (local.get $msg))
@@ -2982,10 +3075,33 @@
   ;; 0x0001 hands the app a DC that is not one. WM_ICONERASEBKGND is the same
   ;; message for the iconic case. (Win16's WM_CTLCOLOR also passes an HDC in
   ;; wParam, but it is sent rather than posted, so it never comes through here.)
+  ;; The inverse: a 16-bit task handing a message back to this side — through
+  ;; PostMessage, SendMessage, or a window procedure of ours — must hand back a
+  ;; 32-bit DC, or the queue ends up holding a 16-bit handle that the next
+  ;; GetMessage narrows a second time and allocates a fresh map entry for.
+  (func $win16_msg_wparam32 (param $message i32) (param $wparam i32) (result i32)
+    (if (i32.or (i32.eq (local.get $message) (i32.const 0x0014))
+                (i32.eq (local.get $message) (i32.const 0x0027)))
+      (then (return (call $win16_h32 (local.get $wparam)))))
+    (local.get $wparam))
+
   (func $win16_msg_wparam16 (param $message i32) (param $wparam i32) (result i32)
     (if (i32.or (i32.eq (local.get $message) (i32.const 0x0014))
                 (i32.eq (local.get $message) (i32.const 0x0027)))
-      (then (return (call $win16_h16 (local.get $wparam)))))
+      (then
+        ;; The DC in one of these can have started life on this side of the
+        ;; fence: a 16-bit task that erases its own background hands its DC to
+        ;; a window procedure of ours, and the message comes back carrying it.
+        ;; Narrowing an already-narrow handle would allocate a second map entry
+        ;; for the same DC on every trip, which is a handle table that fills up
+        ;; while an app sits in its message loop doing nothing — Pipe Dream did
+        ;; it in seven batches.
+        (if (i32.and (i32.ge_u (local.get $wparam) (global.get $WIN16_HANDLE_BASE))
+                     (i32.lt_u (local.get $wparam)
+                       (i32.add (global.get $WIN16_HANDLE_BASE)
+                                (global.get $WIN16_HANDLE_MAX))))
+          (then (return (local.get $wparam))))
+        (return (call $win16_h16 (local.get $wparam)))))
     (local.get $wparam))
 
   ;; Control messages are numbered differently in the two worlds, and unlike
@@ -3148,7 +3264,8 @@
         (global.set $eax (call $wnd_send_message
           (local.get $hwnd)
           (call $win16_ctrl_msg32 (local.get $hwnd) (local.get $msg))
-          (local.get $wp) (local.get $lp)))
+          (call $win16_msg_wparam32 (local.get $msg) (local.get $wp))
+          (local.get $lp)))
         (call $win16_call32_end)
         (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
         (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
@@ -3828,7 +3945,8 @@
     (local $hwnd i32) (local $msg i32) (local $wp i32) (local $lp i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     (local.set $msg (call $win16_arg16 (i32.const 3)))
-    (local.set $wp (call $win16_arg16 (i32.const 2)))
+    (local.set $wp (call $win16_msg_wparam32 (local.get $msg)
+      (call $win16_arg16 (i32.const 2))))
     (local.set $lp (call $win16_arg32 (i32.const 0)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_PostMessageA (local.get $hwnd) (local.get $msg)
@@ -4698,6 +4816,7 @@
     (call $handle_DeleteObject (local.get $h)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    (call $win16_h16_forget (local.get $h))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
@@ -4708,6 +4827,7 @@
     (call $handle_DeleteDC (local.get $h)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    (call $win16_h16_forget (local.get $h))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
