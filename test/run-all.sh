@@ -158,6 +158,7 @@ UNIT=(
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
+  test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js
   test/test-ext-text-out-wide.js
@@ -412,14 +413,18 @@ QUARANTINE=(
   test/test-wordpad-ole-delete-roundtrip.js
   # Paint / app-specific.
   test/test-mspaint-image-edit.js       # 7/9: Invert Colors misses part of the image
-  test/test-mspaint-statusbar.js        # status bar loses its MFC docked geometry
+  # Measured 2026-08-19: the bar is at pos=0,327 size=263x23 where the test
+  # wants pos=0,332 size=269x23. It docks to the frame's client area, so this
+  # is Paint's client rect being 6 narrower and 5 shorter than when the test
+  # was written -- window metrics, not the status bar. The pixel-ink checks
+  # further down encode the old geometry too and will need moving with it.
+  test/test-mspaint-statusbar.js        # docked at 0,327 263x23 vs 0,332 269x23
   test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
   # Measured 2026-08-19: both views leave ~19px of dead face below the last
   # button row, so the scientific dialog is 482x335 against a <=330 assertion.
   # Standard (262x274) has the same overshoot and slips under the threshold.
   # Not scientific-specific and not a paint bug -- it is dialog height.
   test/test-calc-view-switch.js         # 14/15: sci dialog 335 tall vs <=330
-  test/test-dx-vtable-worker-sync.js    # worker does not restore the first generated COM vtable
   test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
   test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog
   test/test-winamp-installers.js        # license page: no word-wrapped DrawText, no PNG
