@@ -14073,8 +14073,16 @@
     ;; src/09e-win16-api.wat for the path that does call it.
     (if (global.get $code16)
       (then
-        (drop (call $post_queue_push (local.get $hwnd) (local.get $msg)
-                (local.get $wParam) (local.get $lParam)))
+        ;; Only for a procedure the task could actually be entered at. A
+        ;; sentinel below 0xFFFF0000 — the built-in default, which is what a
+        ;; window whose class went unresolved is given — is not one, and
+        ;; posting to it puts the message back where it came from: the pump
+        ;; hands it over, this posts it again, and nothing else ever gets a
+        ;; turn. Pipe Dream span on its own six startup messages that way.
+        (if (call $win16_is_far_proc (local.get $wp))
+          (then
+            (drop (call $post_queue_push (local.get $hwnd) (local.get $msg)
+                    (local.get $wParam) (local.get $lParam)))))
         (return (i32.const 0))))
 
     ;; x86 wndproc — synchronous dispatch via recursive $run.

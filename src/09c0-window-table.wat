@@ -979,6 +979,28 @@
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; A small key that named no class by hash is the atom RegisterClass gave
+    ;; back, which is a class name everywhere the API takes one. Windows
+    ;; returns one and half the world stores it rather than the string: Pipe
+    ;; Dream registers "Winpipe", keeps the atom, and creates its window with
+    ;; that — and with no atom column consulted the class was not found, so
+    ;; the window got the built-in procedure and every message it was sent
+    ;; came back to the queue instead of reaching the game.
+    ;;
+    ;; After the hash scan rather than before it, because a built-in class
+    ;; keys on its USER atom in the hash column and must keep answering there.
+    (if (i32.lt_u (local.get $name_wa) (i32.const 0x10000))
+      (then
+        (local.set $i (i32.const 0))
+        (block $adone (loop $ascan
+          (br_if $adone (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+          (local.set $ptr (call $class_record_addr (local.get $i)))
+          (if (i32.and (i32.ne (i32.load (local.get $ptr)) (i32.const 0))
+                       (i32.eq (i32.load offset=4 (local.get $ptr))
+                               (local.get $name_wa)))
+            (then (return (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $ascan)))))
     (i32.const -1))
 
   ;; Look up wndproc by class name (WASM addr); returns 0 if not found.
