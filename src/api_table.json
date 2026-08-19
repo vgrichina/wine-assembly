@@ -8368,7 +8368,23 @@
     "name": "IDirectDraw_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 39384395
+    "hash": 39384395,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 979,
@@ -8529,7 +8545,23 @@
     "name": "IDirectDrawSurface_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1475583812
+    "hash": 1475583812,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1002,
@@ -8781,7 +8813,23 @@
     "name": "IDirectDrawPalette_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 4176426488
+    "hash": 4176426488,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1038,
@@ -8830,7 +8878,23 @@
     "name": "IDirectSound_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2313970478
+    "hash": 2313970478,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1045,
@@ -8907,7 +8971,23 @@
     "name": "IDirectSoundBuffer_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2023809556
+    "hash": 2023809556,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1056,
@@ -9054,7 +9134,23 @@
     "name": "IDirectInput_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 797463219
+    "hash": 797463219,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1077,
@@ -9110,7 +9206,23 @@
     "name": "IDirectInputDevice_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 141813093
+    "hash": 141813093,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1085,
@@ -9334,7 +9446,23 @@
     "name": "IDirect3D_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2709405824
+    "hash": 2709405824,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1117,
@@ -9397,7 +9525,23 @@
     "name": "IDirect3D3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3075881755
+    "hash": 3075881755,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1126,
@@ -9502,7 +9646,23 @@
     "name": "IDirectDrawFactory_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2694927343
+    "hash": 2694927343,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1141,
@@ -9555,7 +9715,23 @@
     "name": "IDirect3DDevice3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 518793041
+    "hash": 518793041,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1147,
@@ -9849,7 +10025,23 @@
     "name": "IDirect3DViewport3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3101062033
+    "hash": 3101062033,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1189,
@@ -9996,7 +10188,23 @@
     "name": "IDirect3DLight_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 617502364
+    "hash": 617502364,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1210,
@@ -10038,7 +10246,23 @@
     "name": "IDirect3DMaterial3_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 635542
+    "hash": 635542,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1216,
@@ -10318,7 +10542,23 @@
     "name": "IDirectDrawClipper_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3492942158
+    "hash": 3492942158,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1256,
@@ -10458,7 +10698,23 @@
     "name": "IDirect3D2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2418560322
+    "hash": 2418560322,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1276,
@@ -10521,7 +10777,23 @@
     "name": "IDirect3D7_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3231089519
+    "hash": 3231089519,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1285,
@@ -10577,7 +10849,23 @@
     "name": "IDirect3DDevice_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 263853486
+    "hash": 263853486,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1293,
@@ -10731,7 +11019,23 @@
     "name": "IDirect3DDevice2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2865828064
+    "hash": 2865828064,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1315,
@@ -10962,7 +11266,23 @@
     "name": "IDirect3DDevice7_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2945558269
+    "hash": 2945558269,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1348,
@@ -11305,7 +11625,23 @@
     "name": "IDirect3DViewport_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3042211694
+    "hash": 3042211694,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1397,
@@ -11417,7 +11753,23 @@
     "name": "IDirect3DViewport2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3250248736
+    "hash": 3250248736,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1413,
@@ -11543,7 +11895,23 @@
     "name": "IDirect3DMaterial_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3452501287
+    "hash": 3452501287,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1431,
@@ -11606,7 +11974,23 @@
     "name": "IDirect3DMaterial2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2408145839
+    "hash": 2408145839,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1440,
@@ -11648,7 +12032,23 @@
     "name": "IDirect3DExecuteBuffer_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2652787799
+    "hash": 2652787799,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1446,
@@ -11718,7 +12118,23 @@
     "name": "IDirect3DVertexBuffer_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1445206456
+    "hash": 1445206456,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1456,
@@ -11774,7 +12190,23 @@
     "name": "IDirect3DVertexBuffer7_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2015253431
+    "hash": 2015253431,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1464,
@@ -11837,7 +12269,23 @@
     "name": "IDirect3DTexture_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4254569073
+    "hash": 4254569073,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1473,
@@ -11893,7 +12341,23 @@
     "name": "IDirect3DTexture2_QueryInterface",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 118513681
+    "hash": 118513681,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1481,
@@ -12271,7 +12735,23 @@
     "name": "IDirectPlay3_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 460816370
+    "hash": 460816370,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1534,
@@ -12600,7 +13080,23 @@
     "name": "IDirectPlayLobby2_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2101520277
+    "hash": 2101520277,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 1581,
@@ -15685,7 +16181,23 @@
     "name": "IMalloc_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 923448282
+    "hash": 923448282,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2016,
@@ -16098,7 +16610,23 @@
     "name": "IRunningObjectTable_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2069972174
+    "hash": 2069972174,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2060,
@@ -16348,7 +16876,23 @@
     "name": "ILockBytes_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1617681516
+    "hash": 1617681516,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2093,
@@ -16418,7 +16962,23 @@
     "name": "IStream_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1722864590
+    "hash": 1722864590,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2103,
@@ -16516,7 +17076,23 @@
     "name": "IStorage_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3535787537
+    "hash": 3535787537,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2117,
@@ -16642,14 +17218,29 @@
     "name": "OleSetClipboard",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2614966087
+    "hash": 2614966087,
+    "args": [
+      {
+        "name": "pDataObj",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2135,
     "name": "OleGetClipboard",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2528419507
+    "hash": 2528419507,
+    "args": [
+      {
+        "name": "ppDataObj",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2136,
@@ -16670,7 +17261,23 @@
     "name": "IDataObject_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3491606587
+    "hash": 3491606587,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2139,
@@ -16754,7 +17361,23 @@
     "name": "IEnumFORMATETC_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 1163916966
+    "hash": 1163916966,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2151,
@@ -16838,7 +17461,23 @@
     "name": "IOleObject_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2715841609
+    "hash": 2715841609,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2163,
@@ -17006,7 +17645,23 @@
     "name": "IPersistStorage_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3997852281
+    "hash": 3997852281,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2187,
@@ -17083,14 +17738,41 @@
     "name": "OleSetContainedObject",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 4252282479
+    "hash": 4252282479,
+    "args": [
+      {
+        "name": "pUnknown",
+        "type": "HANDLE"
+      },
+      {
+        "name": "fContained",
+        "type": "BOOL"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2198,
     "name": "IOleCache_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 457491654
+    "hash": 457491654,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2199,
@@ -17146,7 +17828,23 @@
     "name": "IViewObject_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3868106584
+    "hash": 3868106584,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2207,
@@ -17251,7 +17949,23 @@
     "name": "IEnumSTATSTG_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 474961117
+    "hash": 474961117,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2222,
@@ -17643,7 +18357,23 @@
     "name": "IMoniker_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 382474265
+    "hash": 382474265,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2278,
@@ -17804,7 +18534,23 @@
     "name": "IBindCtx_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3692316422
+    "hash": 3692316422,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2301,
@@ -17895,7 +18641,23 @@
     "name": "IEnumString_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 4026975150
+    "hash": 4026975150,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2314,
@@ -17944,7 +18706,23 @@
     "name": "IEnumMoniker_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 998195636
+    "hash": 998195636,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2321,
@@ -18948,7 +19726,23 @@
     "name": "IFont_QueryInterface",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3055511037
+    "hash": 3055511037,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppv",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2423,
@@ -19311,5 +20105,99 @@
       }
     ],
     "ret": "int"
+  },
+  {
+    "id": 2462,
+    "name": "OleCreateFromData",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3954853025,
+    "args": [
+      {
+        "name": "pSrcDataObj",
+        "type": "HANDLE"
+      },
+      {
+        "name": "riid",
+        "type": "HANDLE"
+      },
+      {
+        "name": "renderopt",
+        "type": "DWORD"
+      },
+      {
+        "name": "pFormatEtc",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pClientSite",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pStg",
+        "type": "HANDLE"
+      },
+      {
+        "name": "ppvObj",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
+  },
+  {
+    "id": 2463,
+    "name": "OleSave",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3359366972,
+    "args": [
+      {
+        "name": "pPS",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pStg",
+        "type": "HANDLE"
+      },
+      {
+        "name": "fSameAsLoad",
+        "type": "BOOL"
+      }
+    ],
+    "ret": "HRESULT"
+  },
+  {
+    "id": 2464,
+    "name": "ProgIDFromCLSID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1926196977,
+    "args": [
+      {
+        "name": "clsid",
+        "type": "REFIID"
+      },
+      {
+        "name": "ppszProgID",
+        "type": "LPVOIDPTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
+  },
+  {
+    "id": 2465,
+    "name": "OleUIInsertObjectA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4029833492,
+    "args": [
+      {
+        "name": "lpIO",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "UINT"
   }
 ]

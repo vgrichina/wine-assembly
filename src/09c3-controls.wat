@@ -850,6 +850,10 @@
     ;; Class 29 = Shell Run / Shut Down dialog parent (WAT-built)
     (if (i32.eq (local.get $class) (i32.const 29))
       (then (return (call $shelldlg_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; 30 = OLEDLG's Insert Object dialog; the proc lives in 09a7b-ole.wat with
+    ;; the rest of OLE.
+    (if (i32.eq (local.get $class) (i32.const 30))
+      (then (return (call $insertobj_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )

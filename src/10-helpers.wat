@@ -2807,19 +2807,99 @@
           (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))))
     (global.get $clipboard_rtf_format_id))
 
-  (func $clipboard_register_format_a (param $name_g i32) (result i32)
-    (if (call $guest_str_is_rich_text_format_a (local.get $name_g))
-      (then (return (call $clipboard_get_rtf_format_id))))
+  ;; Intern one ANSI format name. Names are compared case-insensitively, as
+  ;; RegisterClipboardFormat documents, and the id is stable for the life of the
+  ;; process — registering is idempotent, there is no unregister.
+  (func $clipfmt_intern (param $name_g i32) (result i32)
+    (local $i i32) (local $e i32) (local $copy i32)
+    (if (i32.eqz (local.get $name_g)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $gl8 (local.get $name_g))) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $CLIPFORMAT_SLOTS)))
+      (local.set $e (i32.add (global.get $CLIPFORMAT_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eqz (i32.load (local.get $e))) (then (br $done)))
+      (if (i32.eqz (call $guest_stricmp (i32.load (local.get $e)) (local.get $name_g)))
+        (then (return (i32.load offset=4 (local.get $e)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    ;; Out of slots: still hand back a usable, unique id rather than failing the
+    ;; call. It cannot be shared with a later registration of the same name, but
+    ;; a zero return means "invalid format" and would be worse.
+    (if (i32.ge_u (local.get $i) (global.get $CLIPFORMAT_SLOTS))
+      (then
+        (global.set $clipboard_fmt_counter
+          (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
+        (return (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))))
+    (local.set $copy (call $heap_alloc
+      (i32.add (call $guest_strlen (local.get $name_g)) (i32.const 1))))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (call $guest_strcpy (local.get $copy) (local.get $name_g))
     (global.set $clipboard_fmt_counter
       (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
-    (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
+    (i32.store (local.get $e) (local.get $copy))
+    (i32.store offset=4 (local.get $e)
+      (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
+    (i32.load offset=4 (local.get $e)))
+
+  ;; The name of a registered format, or 0. GetClipboardFormatName reads this.
+  (func $clipfmt_name_of (param $id i32) (result i32)
+    (local $i i32) (local $e i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $CLIPFORMAT_SLOTS)))
+      (local.set $e (i32.add (global.get $CLIPFORMAT_TABLE)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (if (i32.eqz (i32.load (local.get $e))) (then (br $done)))
+      (if (i32.eq (i32.load offset=4 (local.get $e)) (local.get $id))
+        (then (return (i32.load (local.get $e)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $clipboard_register_format_a (param $name_g i32) (result i32)
+    (local $id i32)
+    (local.set $id (call $clipfmt_intern (local.get $name_g)))
+    ;; The RTF payload has its own storage and its own id global; keep that
+    ;; global pointing at the interned value so both agree.
+    (if (i32.and (i32.ne (local.get $id) (i32.const 0))
+                 (call $guest_str_is_rich_text_format_a (local.get $name_g)))
+      (then (global.set $clipboard_rtf_format_id (local.get $id))))
+    (local.get $id))
 
   (func $clipboard_register_format_w (param $name_g i32) (result i32)
+    (local $ansi i32) (local $id i32)
     (if (call $guest_str_is_rich_text_format_w (local.get $name_g))
       (then (return (call $clipboard_get_rtf_format_id))))
-    (global.set $clipboard_fmt_counter
-      (i32.add (global.get $clipboard_fmt_counter) (i32.const 1)))
-    (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter)))
+    ;; Intern through the same ANSI table: a W registration and an A
+    ;; registration of the same name must produce the same id.
+    (local.set $ansi (call $clipfmt_wide_to_ansi (local.get $name_g)))
+    (if (i32.eqz (local.get $ansi)) (then (return (i32.const 0))))
+    (local.set $id (call $clipfmt_intern (local.get $ansi)))
+    (call $heap_free (local.get $ansi))
+    (local.get $id))
+
+  ;; NUL-terminated UTF-16 to a freshly allocated ANSI copy. Format names are
+  ;; ASCII in every app we have met; a character above 0xFF becomes '?'.
+  (func $clipfmt_wide_to_ansi (param $src i32) (result i32)
+    (local $len i32) (local $dst i32) (local $i i32) (local $ch i32)
+    (block $count (loop $scan
+      (br_if $count (i32.eqz (call $gl16
+        (i32.add (local.get $src) (i32.shl (local.get $len) (i32.const 1))))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $scan)))
+    (local.set $dst (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $ch (call $gl16
+        (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (if (i32.gt_u (local.get $ch) (i32.const 0xFF))
+        (then (local.set $ch (i32.const 63))))
+      (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0))
+    (local.get $dst))
 
   (func $clipboard_clear_rtf_data
     (global.set $clipboard_rtf_len (i32.const 0))

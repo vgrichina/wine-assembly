@@ -49,6 +49,8 @@ UNIT=(
   test/test-menu-insert.js
   test/test-sscanf.js
   test/test-format-message-inserts.js
+  test/test-ole-clipboard-wrap.js
+  test/test-ole-insert-object-dlg.js
   test/test-wat-dib-rle.js
   test/test-icon-extract.js
   test/test-winhelp-wat-parser.js

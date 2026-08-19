@@ -8152,9 +8152,17 @@
       (then (local.set $iface (i32.add (local.get $root) (i32.const 12)))))
     (if (i32.eq (local.get $data1) (i32.const 0x0000011E))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 52)))))
-    (if (i32.eq (local.get $data1) (i32.const 0x0000010D))
-      (then (local.set $iface (i32.add (local.get $root) (i32.const 56)))))
-    (if (i32.eq (local.get $data1) (i32.const 0x0000011D))
+    ;; IViewObject (10D), IViewObject2 (127) and the cache-control interface
+    ;; (11D) all sit on the same vtable -- IViewObject2 only adds GetExtent, and
+    ;; this vtable is the 2 flavour, which is why it is named for it. Leaving 127
+    ;; out meant an MFC container asking for the interface it actually wants got
+    ;; E_NOINTERFACE from an object that implements it, and turned that into a
+    ;; COleException instead of inserting the object it had just created.
+    (if (i32.or
+          (i32.eq (local.get $data1) (i32.const 0x0000010D))
+          (i32.or
+            (i32.eq (local.get $data1) (i32.const 0x00000127))
+            (i32.eq (local.get $data1) (i32.const 0x0000011D))))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 56)))))
     (if (i32.eqz (local.get $iface)) (then (return (i32.const 0x80004002))))
     (call $gs32 (local.get $out) (local.get $iface))
@@ -9539,6 +9547,90 @@
       (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))
     (global.set $clipboard_ole_data_object (i32.const 0)))
 
+  ;; Add one Win32 clipboard format to a data object as an owned HGLOBAL copy.
+  ;; The copy matters: the object outlives the clipboard slot it was built from,
+  ;; and releasing it must not free a buffer the clipboard still owns.
+  (func $ole_clipboard_wrap_format
+        (param $obj i32) (param $format i32) (param $src i32) (param $len i32)
+        (result i32)
+    (local $formatetc i32) (local $medium i32) (local $copy i32) (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $src)) (i32.eqz (local.get $len)))
+      (then (return (i32.const 0))))
+    (local.set $copy (call $heap_alloc (local.get $len)))
+    (local.set $formatetc (call $heap_alloc (i32.const 20)))
+    (local.set $medium (call $heap_alloc (i32.const 12)))
+    (if (i32.or (i32.eqz (local.get $copy))
+          (i32.or (i32.eqz (local.get $formatetc)) (i32.eqz (local.get $medium))))
+      (then
+        (if (local.get $copy) (then (call $heap_free (local.get $copy))))
+        (if (local.get $formatetc) (then (call $heap_free (local.get $formatetc))))
+        (if (local.get $medium) (then (call $heap_free (local.get $medium))))
+        (return (i32.const 0x8007000E))))
+    (memory.copy (call $g2w (local.get $copy)) (call $g2w (local.get $src))
+      (local.get $len))
+    (call $zero_memory (call $g2w (local.get $formatetc)) (i32.const 20))
+    (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))
+    (call $gs16 (local.get $formatetc) (local.get $format))
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 8)) (i32.const 1))   ;; DVASPECT_CONTENT
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 12)) (i32.const -1)) ;; lindex
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 16)) (i32.const 1))  ;; TYMED_HGLOBAL
+    (call $gs32 (local.get $medium) (i32.const 1))
+    (call $gs32 (i32.add (local.get $medium) (i32.const 4)) (local.get $copy))
+    (local.set $hr (call $ole_data_set_with_text_conversions_with_retired
+      (local.get $obj) (local.get $formatetc) (local.get $medium)
+      (i32.const 0) (i32.const 0)))
+    (call $heap_free (local.get $medium))
+    (call $heap_free (local.get $formatetc))
+    (call $heap_free (local.get $copy))
+    (local.get $hr))
+
+  ;; Real OleGetClipboard always hands back a data object: when no app called
+  ;; OleSetClipboard, OLE wraps whatever the Win32 clipboard holds and returns
+  ;; that. We used to answer CLIPBRD_E_CANT_OPEN instead, and a caller that gets
+  ;; a failure here goes looking for another way to read the clipboard.
+  ;; RichEdit's is the one that hurts: on a CF_DIB paste it falls back to raw
+  ;; GetClipboardData, builds a picture with no IOleObject behind it, and hands
+  ;; WordPad a REOBJECT whose poleobj is NULL -- which WordPad AddRefs without
+  ;; checking, calling through a null vtable. That took out File > Save As and
+  ;; the eleven checks after it in the OLE round-trip test, none of which have
+  ;; anything to do with saving.
+  (func $ole_clipboard_wrap_win32 (result i32)
+    (local $obj i32) (local $added i32)
+    (if (i32.eqz (call $clipboard_count_formats)) (then (return (i32.const 0))))
+    (local.set $obj (call $ole_create_data_object (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    ;; CF_TEXT is stored without its terminator, but a paste target reading an
+    ;; HGLOBAL expects one, so the copy is one byte longer than the text.
+    (if (global.get $clipboard_len)
+      (then
+        (if (i32.eqz (call $ole_clipboard_wrap_format (local.get $obj) (i32.const 1)
+              (global.get $clipboard_ptr)
+              (i32.add (global.get $clipboard_len) (i32.const 1))))
+          (then (local.set $added (i32.const 1))))))
+    (if (i32.and (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
+                 (i32.ne (global.get $clipboard_rtf_len) (i32.const 0)))
+      (then
+        (if (i32.eqz (call $ole_clipboard_wrap_format (local.get $obj)
+              (global.get $clipboard_rtf_format_id)
+              (global.get $clipboard_rtf_ptr)
+              (i32.add (global.get $clipboard_rtf_len) (i32.const 1))))
+          (then (local.set $added (i32.const 1))))))
+    ;; Each test is its own i32.ne: a raw format id ANDed with a raw pointer is
+    ;; a bit mask, and CF_DIB (8) & a pointer with bit 3 clear is zero.
+    (if (i32.and (i32.ne (global.get $clipboard_binary_format) (i32.const 0))
+                 (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))
+      (then
+        (if (i32.eqz (call $ole_clipboard_wrap_format (local.get $obj)
+              (global.get $clipboard_binary_format)
+              (global.get $clipboard_binary_ptr)
+              (global.get $clipboard_binary_len)))
+          (then (local.set $added (i32.const 1))))))
+    (if (i32.eqz (local.get $added))
+      (then
+        (drop (call $ole_obj_release (local.get $obj)))
+        (return (i32.const 0))))
+    (local.get $obj))
+
   (func $ole_flush_clipboard_value (result i32)
     (local $owner i32) (local $snapshot i32) (local $formatetc i32) (local $medium i32)
     (local.set $owner (global.get $clipboard_ole_data_object))
@@ -9739,10 +9831,20 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     (local.set $obj (global.get $clipboard_ole_data_object))
+    ;; No OLE owner: wrap the Win32 clipboard, exactly as OLE itself does. The
+    ;; wrapper is a fresh object with one reference, and that reference is the
+    ;; caller's -- we keep nothing, so there is no second AddRef here.
+    (if (i32.eqz (local.get $obj))
+      (then (local.set $obj (call $ole_clipboard_wrap_win32))))
     (call $gs32 (local.get $arg0) (local.get $obj))
     (if (i32.eqz (local.get $obj))
       (then
         (global.set $eax (i32.const 0x800401D0)) ;; CLIPBRD_E_CANT_OPEN
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.eqz (global.get $clipboard_ole_data_object))
+      (then
+        (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     (if (call $ole_clipboard_owner_is_local (local.get $obj))
@@ -9872,6 +9974,575 @@
             (if (local.get $storage) (then (drop (call $ole_obj_addref (local.get $storage)))))
             (global.set $eax (call $ole_static_query_interface (local.get $obj) (local.get $arg1) (local.get $out)))
             (drop (call $ole_obj_release (local.get $obj)))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
+  ;; Does this data object carry an embedded OLE object? Only our own data
+  ;; objects can be asked directly; a DLL-private one would need its QueryGetData
+  ;; called as guest code, and every source we can currently produce -- the
+  ;; clipboard wrapper, a RichEdit copy -- offers presentation formats only, so
+  ;; declining is the same answer that asking would give.
+  (func $ole_data_has_embedded_object (param $obj i32) (result i32)
+    (local $formatetc i32) (local $found i32) (local $id i32)
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $ole_clipboard_owner_is_local (local.get $obj)))
+      (then (return (i32.const 0))))
+    (local.set $formatetc (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $formatetc)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $formatetc)) (i32.const 20))
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 8)) (i32.const 1))  ;; DVASPECT_CONTENT
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 12)) (i32.const -1))
+    (call $gs32 (i32.add (local.get $formatetc) (i32.const 16)) (i32.const 8)) ;; TYMED_ISTORAGE
+    (local.set $id (call $clipfmt_intern (i32.const 0x32B0))) ;; Embed Source
+    (if (local.get $id)
+      (then
+        (call $gs16 (local.get $formatetc) (local.get $id))
+        (if (i32.eqz (call $ole_data_query_error (local.get $obj) (local.get $formatetc)))
+          (then (local.set $found (i32.const 1))))))
+    (if (i32.eqz (local.get $found))
+      (then
+        (local.set $id (call $clipfmt_intern (i32.const 0x32C0))) ;; Embedded Object
+        (if (local.get $id)
+          (then
+            (call $gs16 (local.get $formatetc) (local.get $id))
+            (if (i32.eqz (call $ole_data_query_error (local.get $obj) (local.get $formatetc)))
+              (then (local.set $found (i32.const 1))))))))
+    (call $heap_free (local.get $formatetc))
+    (local.get $found))
+
+  ;; OleCreateFromData(pSrcDataObj, riid, renderopt, pFormatEtc,
+  ;;                   pClientSite, pStorage, ppvObj)
+  ;; Creates an *embedded* object from a data transfer. It is not the general
+  ;; "make an object out of this" call it sounds like: when the source carries
+  ;; none of the embedded-object formats it must fail with DV_E_FORMATETC, and
+  ;; the container's documented answer to that is to try OleCreateStaticFromData
+  ;; instead. Returning the failure is therefore doing the job, not ducking it --
+  ;; WordPad pastes a bitmap as a static picture on exactly this path, and while
+  ;; this export was missing entirely riched20 got a null from GetProcAddress and
+  ;; put up an error box instead of pasting anything.
+  ;; ============================================================
+  ;; OLEDLG — the Insert Object dialog
+  ;;
+  ;; WordPad's Insert > Object was the last hard gap the corpus menu sweep
+  ;; found: the app resolves OleUIInsertObjectA, gets nothing, and puts up its
+  ;; own "missing export in OLEDLG.DLL" box. The dialog is WAT-native like every
+  ;; other one here, and its object-type list is real: Windows decides what may
+  ;; be embedded by walking HKEY_CLASSES_ROOT\CLSID for subkeys that carry an
+  ;; Insertable key, and so does this. With no OLE server installed the list
+  ;; comes up empty, which is what Windows shows on such a machine too.
+  ;; ============================================================
+
+  ;; Dialog context, since a window carries one userdata word:
+  ;;   +0 the caller's OLEUIINSERTOBJECT, +4 CLSID array, +8 count,
+  ;;   +12 the list hwnd.
+  (func $insertobj_ctx_alloc (param $params i32) (result i32)
+    (local $ctx i32)
+    (local.set $ctx (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $ctx)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $ctx)) (i32.const 16))
+    (call $gs32 (local.get $ctx) (local.get $params))
+    (local.get $ctx))
+
+  ;; One hex digit, or -1. CLSID text is what the registry stores, and it has to
+  ;; come back as sixteen bytes.
+  (func $hex_digit_value (param $ch i32) (result i32)
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 48))
+                 (i32.le_u (local.get $ch) (i32.const 57)))
+      (then (return (i32.sub (local.get $ch) (i32.const 48)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65))
+                 (i32.le_u (local.get $ch) (i32.const 70)))
+      (then (return (i32.sub (local.get $ch) (i32.const 55)))))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97))
+                 (i32.le_u (local.get $ch) (i32.const 102)))
+      (then (return (i32.sub (local.get $ch) (i32.const 87)))))
+    (i32.const -1))
+
+  ;; "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" → 16 bytes at $dest. Returns 1 on
+  ;; success. Data1/2/3 are little-endian numbers and Data4 is a byte string --
+  ;; getting that backwards yields a CLSID that compares equal to nothing.
+  (func $clsid_from_string (param $src i32) (param $dest i32) (result i32)
+    (local $i i32) (local $p i32) (local $hi i32) (local $lo i32) (local $byte i32)
+    (local $bytes i32) (local $out i32)
+    (if (i32.or (i32.eqz (local.get $src)) (i32.eqz (local.get $dest)))
+      (then (return (i32.const 0))))
+    (local.set $p (local.get $src))
+    (if (i32.eq (call $gl8 (local.get $p)) (i32.const 123)) ;; '{'
+      (then (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+    (local.set $bytes (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $bytes)) (then (return (i32.const 0))))
+    (block $fail
+      (block $done (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
+        (if (i32.eq (call $gl8 (local.get $p)) (i32.const 45)) ;; '-'
+          (then (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+        (local.set $hi (call $hex_digit_value (call $gl8 (local.get $p))))
+        (local.set $lo (call $hex_digit_value
+          (call $gl8 (i32.add (local.get $p) (i32.const 1)))))
+        (br_if $fail (i32.or (i32.lt_s (local.get $hi) (i32.const 0))
+                             (i32.lt_s (local.get $lo) (i32.const 0))))
+        (call $gs8 (i32.add (local.get $bytes) (local.get $i))
+          (i32.or (i32.shl (local.get $hi) (i32.const 4)) (local.get $lo)))
+        (local.set $p (i32.add (local.get $p) (i32.const 2)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+      ;; Data1 (4 bytes) and Data2/Data3 (2 each) are written big-endian in the
+      ;; text and stored little-endian; Data4's eight bytes keep their order.
+      (local.set $out (local.get $dest))
+      (call $gs32 (local.get $out) (i32.or
+        (i32.or (call $gl8 (i32.add (local.get $bytes) (i32.const 3)))
+                (i32.shl (call $gl8 (i32.add (local.get $bytes) (i32.const 2))) (i32.const 8)))
+        (i32.or (i32.shl (call $gl8 (i32.add (local.get $bytes) (i32.const 1))) (i32.const 16))
+                (i32.shl (call $gl8 (local.get $bytes)) (i32.const 24)))))
+      (call $gs16 (i32.add (local.get $out) (i32.const 4)) (i32.or
+        (call $gl8 (i32.add (local.get $bytes) (i32.const 5)))
+        (i32.shl (call $gl8 (i32.add (local.get $bytes) (i32.const 4))) (i32.const 8))))
+      (call $gs16 (i32.add (local.get $out) (i32.const 6)) (i32.or
+        (call $gl8 (i32.add (local.get $bytes) (i32.const 7)))
+        (i32.shl (call $gl8 (i32.add (local.get $bytes) (i32.const 6))) (i32.const 8))))
+      (local.set $i (i32.const 8))
+      (block $tail_done (loop $tail
+        (br_if $tail_done (i32.ge_u (local.get $i) (i32.const 16)))
+        (call $gs8 (i32.add (local.get $out) (local.get $i))
+          (call $gl8 (i32.add (local.get $bytes) (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $tail)))
+      (call $heap_free (local.get $bytes))
+      (return (i32.const 1)))
+    (call $heap_free (local.get $bytes))
+    (i32.const 0))
+
+  ;; Walk HKCR\CLSID and add every insertable class to the list box. Returns the
+  ;; number added; the parsed CLSIDs land in a heap array the context owns, so a
+  ;; selection index maps straight back to a class.
+  (func $insertobj_fill_types (param $ctx i32) (param $list i32) (result i32)
+    (local $clsid_key i32) (local $sub i32) (local $ins i32) (local $index i32)
+    (local $name_wa i32) (local $name_g i32) (local $count i32) (local $array i32)
+    (local $label_g i32) (local $type i32) (local $cb i32) (local $type_g i32)
+    (local $cb_g i32) (local $added i32)
+    (local.set $clsid_key (call $host_reg_open_key
+      (i32.const 0x80000000) (i32.const 0x32F0) (i32.const 0))) ;; HKCR\CLSID
+    (if (i32.eqz (local.get $clsid_key)) (then (return (i32.const 0))))
+    (local.set $array (call $heap_alloc (i32.const 1024)))  ;; up to 64 classes
+    (local.set $name_g (call $heap_alloc (i32.const 256)))
+    (local.set $label_g (call $heap_alloc (i32.const 256)))
+    (local.set $type_g (call $heap_alloc (i32.const 4)))
+    (local.set $cb_g (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $array))
+          (i32.or (i32.eqz (local.get $name_g))
+            (i32.or (i32.eqz (local.get $label_g))
+              (i32.or (i32.eqz (local.get $type_g)) (i32.eqz (local.get $cb_g))))))
+      (then
+        (drop (call $host_reg_close_key (local.get $clsid_key)))
+        (return (i32.const 0))))
+    (local.set $name_wa (call $g2w (local.get $name_g)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $count) (i32.const 64)))
+      ;; Guest pointer for the name (the host translates it), WASM pointer for
+      ;; the subkey opens below. The two imports differ; see 01-header.
+      (br_if $done (call $host_reg_enum_key (local.get $clsid_key) (local.get $index)
+        (local.get $name_g) (i32.const 256) (i32.const 0)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (local.set $sub (call $host_reg_open_key
+        (local.get $clsid_key) (local.get $name_wa) (i32.const 0)))
+      (if (local.get $sub)
+        (then
+          (local.set $ins (call $host_reg_open_key
+            (local.get $sub) (i32.const 0x3300) (i32.const 0))) ;; Insertable
+          (if (local.get $ins)
+            (then
+              (drop (call $host_reg_close_key (local.get $ins)))
+              (if (call $clsid_from_string (local.get $name_g)
+                    (i32.add (local.get $array) (i32.mul (local.get $count) (i32.const 16))))
+                (then
+                  ;; The class key's default value is its human-readable name;
+                  ;; fall back to the CLSID text when it has none.
+                  (call $gs32 (local.get $cb_g) (i32.const 256))
+                  (call $gs8 (local.get $label_g) (i32.const 0))
+                  ;; Value name is a WASM address, the three out-pointers are
+                  ;; guest ones — same split as RegQueryValueExA passes.
+                  (drop (call $host_reg_query_value (local.get $sub) (i32.const 0)
+                    (local.get $type_g) (local.get $label_g)
+                    (local.get $cb_g) (i32.const 0)))
+                  (drop (call $wnd_send_message (local.get $list) (i32.const 0x0180)
+                    (i32.const 0)
+                    (select (local.get $name_g) (local.get $label_g)
+                      (i32.eqz (call $gl8 (local.get $label_g))))))
+                  (local.set $count (i32.add (local.get $count) (i32.const 1)))
+                  (local.set $added (i32.const 1))))))
+          (drop (call $host_reg_close_key (local.get $sub)))))
+      (br $scan)))
+    (drop (call $host_reg_close_key (local.get $clsid_key)))
+    (call $heap_free (local.get $cb_g))
+    (call $heap_free (local.get $type_g))
+    (call $heap_free (local.get $label_g))
+    (call $heap_free (local.get $name_g))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 4)) (local.get $array))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 8)) (local.get $count))
+    (if (i32.eqz (local.get $added))
+      (then (drop (call $wnd_send_message (local.get $list) (i32.const 0x0180)
+        (i32.const 0) (call $wat_str_to_heap (i32.const 0x3370) (i32.const 28))))))
+    (local.get $count))
+
+  (func $create_insert_object_dialog (param $dlg i32) (param $owner i32) (param $params i32)
+    (local $ctx i32) (local $list i32)
+    (local.set $ctx (call $insertobj_ctx_alloc (local.get $params)))
+    (call $host_register_dialog_frame
+      (local.get $dlg) (local.get $owner) (i32.const 0x3310)
+      (i32.const 320) (i32.const 200) (i32.const 1))
+    (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
+    (call $title_table_set (local.get $dlg) (i32.const 0x3310) (i32.const 13))
+    (call $wnd_set_owner (local.get $dlg) (local.get $owner))
+    (drop (call $wnd_set_style (local.get $dlg) (i32.const 0x90C80000)))
+    (call $defwndproc_do_nccalcsize (local.get $dlg))
+    (call $ctrl_table_set (call $wnd_table_find (local.get $dlg))
+      (i32.const 30) (i32.const 0))
+    (call $nc_flags_set (local.get $dlg) (i32.const 3))
+    (call $dlg_fill_bkgnd (local.get $dlg))
+    (drop (call $wnd_set_userdata (local.get $dlg) (local.get $ctx)))
+    ;; "Object Type:" over the list of insertable classes.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
+            (i32.const 12) (i32.const 10) (i32.const 100) (i32.const 14)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x3320) (i32.const 12))))
+    (local.set $list (call $ctrl_create_child (local.get $dlg) (i32.const 4) (i32.const 0x500)
+                       (i32.const 12) (i32.const 28) (i32.const 190) (i32.const 120)
+                       (i32.const 0x50810001) (i32.const 0)))
+    (if (local.get $ctx)
+      (then
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 12)) (local.get $list))
+        (drop (call $insertobj_fill_types (local.get $ctx) (local.get $list)))))
+    ;; The two sources an object can come from. Create New is the one this
+    ;; container can honour; a file-backed object needs a server to read it.
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x501)
+            (i32.const 212) (i32.const 28) (i32.const 96) (i32.const 18)
+            (i32.const 0x50000009) ;; BS_AUTORADIOBUTTON | WS_GROUP
+            (call $wat_str_to_heap (i32.const 0x3330) (i32.const 10))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 0x502)
+            (i32.const 212) (i32.const 50) (i32.const 100) (i32.const 18)
+            (i32.const 0x50000009)
+            (call $wat_str_to_heap (i32.const 0x3340) (i32.const 16))))
+    (drop (call $wnd_send_message (local.get $list) (i32.const 0x0186)
+      (i32.const 0) (i32.const 0)))   ;; LB_SETCURSEL 0
+    (drop (call $wnd_send_message (local.get $dlg) (i32.const 0x0111)
+      (i32.const 0x501) (i32.const 0)))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 1)
+            (i32.const 212) (i32.const 112) (i32.const 90) (i32.const 22)
+            (i32.const 0x50000001)
+            (call $wat_str_to_heap (i32.const 0x3358) (i32.const 2))))
+    (drop (call $ctrl_create_child (local.get $dlg) (i32.const 1) (i32.const 2)
+            (i32.const 212) (i32.const 140) (i32.const 90) (i32.const 22)
+            (i32.const 0x50000000)
+            (call $wat_str_to_heap (i32.const 0x3360) (i32.const 6)))))
+
+  ;; Copy the selected class into the caller's struct and report which button
+  ;; ended the dialog. OLEUI_OK is 1 and OLEUI_CANCEL is 2 -- the modal pump
+  ;; hands whatever we pass here back as the API's return value.
+  (func $insertobj_commit (param $hwnd i32) (result i32)
+    (local $ctx i32) (local $params i32) (local $sel i32) (local $count i32)
+    (local.set $ctx (call $wnd_get_userdata (local.get $hwnd)))
+    (if (i32.eqz (local.get $ctx)) (then (return (i32.const 2))))
+    (local.set $params (call $gl32 (local.get $ctx)))
+    (local.set $count (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+    (local.set $sel (call $wnd_send_message
+      (call $gl32 (i32.add (local.get $ctx) (i32.const 12)))
+      (i32.const 0x0188) (i32.const 0) (i32.const 0)))  ;; LB_GETCURSEL
+    ;; Nothing to insert: no registered class, or none picked. Windows keeps OK
+    ;; disabled in that state, so the honest answer is that the user cancelled.
+    (if (i32.or (i32.eqz (local.get $count))
+          (i32.or (i32.lt_s (local.get $sel) (i32.const 0))
+                  (i32.ge_u (local.get $sel) (local.get $count))))
+      (then (return (i32.const 2))))
+    (memory.copy
+      (call $g2w (i32.add (local.get $params) (i32.const 36)))   ;; OLEUIINSERTOBJECT.clsid
+      (call $g2w (i32.add (call $gl32 (i32.add (local.get $ctx) (i32.const 4)))
+        (i32.mul (local.get $sel) (i32.const 16))))
+      (i32.const 16))
+    ;; IOF_CREATENEWOBJECT tells the container which half of the dialog was
+    ;; used, and it is the half a class selection means.
+    (call $gs32 (i32.add (local.get $params) (i32.const 4))
+      (i32.or (call $gl32 (i32.add (local.get $params) (i32.const 4)))
+        (i32.const 0x800)))
+    (i32.const 1))
+
+  (func $insertobj_wndproc
+      (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $cmd i32)
+    (if (i32.eq (local.get $msg) (i32.const 0x0085))  ;; WM_NCPAINT
+      (then (call $defwndproc_do_ncpaint (local.get $hwnd)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0014))  ;; WM_ERASEBKGND
+      (then (return (call $host_erase_background (local.get $hwnd) (i32.const 16)))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x00A1))   ;; WM_NCLBUTTONDOWN
+          (i32.eq (local.get $wParam) (i32.const 20)))   ;; HTCLOSE
+      (then
+        (drop (call $wnd_send_message
+          (local.get $hwnd) (i32.const 0x0112) (i32.const 0xF060) (i32.const 0)))
+        (return (i32.const 0))))
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0112))   ;; WM_SYSCOMMAND
+          (i32.eq (i32.and (local.get $wParam) (i32.const 0xFFF0)) (i32.const 0xF060)))
+      (then
+        (drop (call $wnd_send_message (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0010))     ;; WM_CLOSE
+      (then (call $modal_done (i32.const 2)) (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0111))     ;; WM_COMMAND
+      (then
+        (local.set $cmd (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (if (i32.eq (local.get $cmd) (i32.const 1))
+          (then (call $modal_done (call $insertobj_commit (local.get $hwnd)))
+                (return (i32.const 0))))
+        (if (i32.eq (local.get $cmd) (i32.const 2))
+          (then (call $modal_done (i32.const 2)) (return (i32.const 0))))))
+    (i32.const 0))
+
+  ;; OleUIInsertObjectA(lpIO). The documented validation comes first, because a
+  ;; container that passed a bad struct wants the specific error, not a dialog.
+  (func $handle_OleUIInsertObjectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dlg i32) (local $owner i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 101))  ;; OLEUI_ERR_STRUCTURENULL
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.ne (call $gl32 (local.get $arg0)) (i32.const 112))  ;; cbStruct
+      (then
+        (global.set $eax (i32.const 102))  ;; OLEUI_ERR_CBSTRUCTINCORRECT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $owner (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+    (call $modal_capture_nonvolatile)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_insert_object_dialog (local.get $dlg) (local.get $owner) (local.get $arg0))
+    (call $modal_begin (local.get $dlg) (i32.const 8)))
+
+  ;; The two CLSIDs OLE itself owns for objects with no server: a pasted bitmap
+  ;; and a pasted metafile. Both use the standard {........-0000-0000-C000-
+  ;; 000000000046} tail, so only Data1 varies.
+  (func $ole_write_static_clsid (param $dest i32) (param $data1 i32)
+    (call $zero_memory (call $g2w (local.get $dest)) (i32.const 16))
+    (call $gs32 (local.get $dest) (local.get $data1))
+    (call $gs8 (i32.add (local.get $dest) (i32.const 8)) (i32.const 0xC0))
+    (call $gs8 (i32.add (local.get $dest) (i32.const 15)) (i32.const 0x46)))
+
+  ;; ProgIDFromCLSID(clsid, ppszProgID) — the human-readable name a container
+  ;; writes next to an embedded object so a reader can say what it is. Static
+  ;; objects have no server and no registry entry, but they do have fixed names,
+  ;; and RichEdit asks for one while streaming a pasted picture into RTF.
+  (func $handle_ProgIDFromCLSID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $data1 i32) (local $out i32) (local $i i32) (local $ch i32) (local $len i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $arg1) (i32.const 0))
+    (local.set $data1 (call $gl32 (local.get $arg0)))
+    ;; 0x315 StaticMetafile, 0x316 StaticDib — anything else has no class we
+    ;; can name, which is exactly what REGDB_E_CLASSNOTREG says.
+    (if (i32.and (i32.ne (local.get $data1) (i32.const 0x315))
+                 (i32.ne (local.get $data1) (i32.const 0x316)))
+      (then
+        (global.set $eax (i32.const 0x80040154)) ;; REGDB_E_CLASSNOTREG
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $len (select (i32.const 14) (i32.const 9)
+      (i32.eq (local.get $data1) (i32.const 0x315))))
+    (local.set $out (call $heap_alloc (i32.shl (i32.add (local.get $len) (i32.const 1)) (i32.const 1))))
+    (if (i32.eqz (local.get $out))
+      (then
+        (global.set $eax (i32.const 0x8007000E))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (block $done (loop $write
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      ;; "StaticMetafile" and "StaticDib" share their first six characters.
+      (local.set $ch (call $gl8 (i32.add
+        (select (i32.const 0x32D0) (i32.const 0x32E0)
+          (i32.eq (local.get $data1) (i32.const 0x315)))
+        (local.get $i))))
+      (call $gs16 (i32.add (local.get $out) (i32.shl (local.get $i) (i32.const 1)))
+        (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $write)))
+    (call $gs16 (i32.add (local.get $out) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0))
+    (call $gs32 (local.get $arg1) (local.get $out))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; OleSave(pPersistStg, pStg, fSameAsLoad) — the three-step save every
+  ;; container performs on an embedded object: write the CLSID into the
+  ;; destination storage, ask the object to save itself there, then tell it the
+  ;; save completed. Commit is the caller's job, and so is the error path: a
+  ;; failed Save still gets its SaveCompleted so the object is not left in the
+  ;; no-scribble state.
+  ;; Only our own objects can be saved directly; a DLL-private IPersistStorage
+  ;; would need its Save called as guest code, which this in-process container
+  ;; cannot do from inside an API handler.
+  (func $handle_OleSave (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $root i32) (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $root (call $ole_static_from_interface (local.get $arg0)))
+    (if (i32.eqz (local.get $root))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; WriteClassStg's half of the job, inline: the destination storage keeps
+    ;; the object's CLSID at +20, which is where ReadClassStg looks on reload.
+    (if (call $ole_interface_is_local (local.get $arg1))
+      (then (memory.copy
+        (call $g2w (i32.add (local.get $arg1) (i32.const 20)))
+        (call $g2w (i32.add (local.get $root) (i32.const 24)))
+        (i32.const 16))))
+    (local.set $hr (call $ole_persist_save
+      (local.get $root) (local.get $arg1) (local.get $arg2)))
+    (drop (call $ole_persist_save_completed (local.get $root)
+      (select (i32.const 0) (local.get $arg1) (i32.eqz (local.get $arg2)))))
+    (global.set $eax (local.get $hr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; The first presentation format this source can render, as a freshly
+  ;; allocated FORMATETC the caller frees, or 0. Order matters: a metafile
+  ;; scales and a DIB does not, so a source offering both is worth more as a
+  ;; metafile, which is the order OLE itself asks in.
+  (func $ole_data_first_static_format (param $obj i32) (result i32)
+    (local $formatetc i32) (local $i i32) (local $format i32) (local $tymed i32)
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $ole_clipboard_owner_is_local (local.get $obj)))
+      (then (return (i32.const 0))))
+    (local.set $formatetc (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $formatetc)) (then (return (i32.const 0))))
+    (block $done (loop $try
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 3)))
+      ;; CF_METAFILEPICT(3)/TYMED_MFPICT(32), CF_DIB(8)/TYMED_HGLOBAL(1),
+      ;; CF_BITMAP(2)/TYMED_GDI(16).
+      (local.set $format (i32.const 3))
+      (local.set $tymed (i32.const 32))
+      (if (i32.eq (local.get $i) (i32.const 1))
+        (then (local.set $format (i32.const 8)) (local.set $tymed (i32.const 1))))
+      (if (i32.eq (local.get $i) (i32.const 2))
+        (then (local.set $format (i32.const 2)) (local.set $tymed (i32.const 16))))
+      (call $zero_memory (call $g2w (local.get $formatetc)) (i32.const 20))
+      (call $gs16 (local.get $formatetc) (local.get $format))
+      (call $gs32 (i32.add (local.get $formatetc) (i32.const 8)) (i32.const 1))
+      (call $gs32 (i32.add (local.get $formatetc) (i32.const 12)) (i32.const -1))
+      (call $gs32 (i32.add (local.get $formatetc) (i32.const 16)) (local.get $tymed))
+      (if (i32.eqz (call $ole_data_query_error (local.get $obj) (local.get $formatetc)))
+        (then (return (local.get $formatetc))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $try)))
+    (call $heap_free (local.get $formatetc))
+    (i32.const 0))
+
+  ;; Extent in HIMETRIC (hundredths of a millimetre) from a packed DIB's own
+  ;; header, at the 96 dpi everything else in this emulator assumes. A negative
+  ;; biHeight is a top-down DIB; the height is still its magnitude.
+  (func $ole_static_extent_from_dib (param $root i32) (param $dib i32)
+    (local $width i32) (local $height i32)
+    (if (i32.eqz (local.get $dib)) (then (return)))
+    (if (i32.lt_u (call $gl32 (local.get $dib)) (i32.const 40)) (then (return)))
+    (local.set $width (call $gl32 (i32.add (local.get $dib) (i32.const 4))))
+    (local.set $height (call $gl32 (i32.add (local.get $dib) (i32.const 8))))
+    (if (i32.lt_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
+                (i32.le_s (local.get $height) (i32.const 0)))
+      (then (return)))
+    (call $gs32 (i32.add (local.get $root) (i32.const 40))
+      (i32.div_s (i32.mul (local.get $width) (i32.const 2540)) (i32.const 96)))
+    (call $gs32 (i32.add (local.get $root) (i32.const 44))
+      (i32.div_s (i32.mul (local.get $height) (i32.const 2540)) (i32.const 96)))
+    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1)))
+
+  ;; Pull one format out of the source and put it in the new object's cache,
+  ;; which is what a static object *is*: presentation bytes and nothing else.
+  (func $ole_static_cache_from_data
+        (param $root i32) (param $source i32) (param $formatetc i32) (result i32)
+    (local $medium i32) (local $retired_out i32) (local $retired i32) (local $hr i32)
+    (local.set $medium (call $heap_alloc (i32.const 12)))
+    (local.set $retired_out (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $medium)) (i32.eqz (local.get $retired_out)))
+      (then
+        (if (local.get $medium) (then (call $heap_free (local.get $medium))))
+        (if (local.get $retired_out) (then (call $heap_free (local.get $retired_out))))
+        (return (i32.const 0x8007000E))))
+    (call $zero_memory (call $g2w (local.get $medium)) (i32.const 12))
+    (call $gs32 (local.get $retired_out) (i32.const 0))
+    ;; IDataObject::GetData, in pieces: confirm the format is on offer, find its
+    ;; entry, and hand back a copy of the medium the caller then owns.
+    (local.set $hr (call $ole_data_query_error (local.get $source) (local.get $formatetc)))
+    (if (i32.eqz (local.get $hr))
+      (then (local.set $hr (call $ole_copy_medium (local.get $medium)
+        (i32.add (call $ole_data_find_entry (local.get $source) (local.get $formatetc))
+          (i32.const 20))))))
+    (if (i32.eqz (local.get $hr))
+      (then
+        ;; A static object's extent comes from the picture itself -- nobody else
+        ;; is going to tell it how big it is. Without one, a container asks
+        ;; GetExtent, gets 0x0, and draws and serializes an empty picture: the
+        ;; \pict in WordPad's saved RTF had no width, no height and no bytes.
+        (if (i32.eq (call $gl16 (local.get $formatetc)) (i32.const 8)) ;; CF_DIB
+          (then (call $ole_static_extent_from_dib
+            (local.get $root) (call $gl32 (i32.add (local.get $medium) (i32.const 4))))))
+        ;; fRelease = 1: the medium we just took ownership of becomes the
+        ;; cache's, so there is exactly one owner of those bytes.
+        (local.set $hr (call $ole_cache_set_data_with_retired
+          (local.get $root) (local.get $formatetc) (local.get $medium)
+          (i32.const 1) (local.get $retired_out)))
+        (local.set $retired (call $gl32 (local.get $retired_out)))
+        (if (local.get $retired) (then (drop (call $ole_obj_release (local.get $retired)))))))
+    (call $heap_free (local.get $retired_out))
+    (call $heap_free (local.get $medium))
+    (local.get $hr))
+
+  (func $handle_OleCreateFromData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $storage i32) (local $out i32) (local $obj i32) (local $picture i32)
+    (local.set $storage (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $out (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.eqz (local.get $out))
+      (then
+        (global.set $eax (i32.const 0x80004003))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+        (return)))
+    (call $gs32 (local.get $out) (i32.const 0))
+    (local.set $picture (i32.const 0))
+    (if (i32.eqz (call $ole_data_has_embedded_object (local.get $arg0)))
+      (then
+        ;; No embedded object. A source that still carries a presentation format
+        ;; becomes a static object -- that is what pasting a bitmap into a
+        ;; document produces, a picture with no server behind it. Only a source
+        ;; with neither is a real DV_E_FORMATETC.
+        (local.set $picture (call $ole_data_first_static_format (local.get $arg0)))
+        (if (i32.eqz (local.get $picture))
+          (then
+            (global.set $eax (i32.const 0x80040064)) ;; DV_E_FORMATETC
+            (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+            (return)))))
+    (local.set $obj (call $ole_create_static_handler (i32.const 0)))
+    (if (i32.eqz (local.get $obj))
+      (then (global.set $eax (i32.const 0x8007000E)))
+      (else
+        (if (local.get $picture)
+          (then
+            ;; A static object's class says which of the two server-less classes
+            ;; it is, and a container writes that name beside it when it saves.
+            (call $ole_write_static_clsid (i32.add (local.get $obj) (i32.const 24))
+              (select (i32.const 0x315) (i32.const 0x316)
+                (i32.eq (call $gl16 (local.get $picture)) (i32.const 3))))
+            (drop (call $ole_static_cache_from_data
+              (local.get $obj) (local.get $arg0) (local.get $picture)))))
+        (drop (call $ole_static_set_client_site (local.get $obj) (local.get $arg4)))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $storage))
+        (if (local.get $storage) (then (drop (call $ole_obj_addref (local.get $storage)))))
+        (global.set $eax (call $ole_static_query_interface
+          (local.get $obj) (local.get $arg1) (local.get $out)))
+        (drop (call $ole_obj_release (local.get $obj)))))
+    (if (local.get $picture) (then (call $heap_free (local.get $picture))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
 
   (func $handle_OleSetContainedObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

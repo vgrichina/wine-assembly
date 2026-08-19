@@ -548,7 +548,12 @@
   (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
   ;; reg_close_key(hKey) → 0
   (import "host" "reg_enum_key" (func $host_reg_enum_key (param i32 i32 i32 i32 i32) (result i32)))
-  ;; reg_enum_key(hKey, dwIndex, lpNameWA, cchName, isWide) → error code
+  ;; reg_enum_key(hKey, dwIndex, lpNameGA, cchName, isWide) → error code
+  ;; NOTE the address space: the name is written through the host's writeStr,
+  ;; which translates guest→WASM itself, so this one takes a GUEST pointer while
+  ;; reg_open_key/reg_create_key just above take WASM ones. Passing a WASM
+  ;; address here writes the name somewhere else entirely and the call still
+  ;; reports ERROR_SUCCESS with an empty buffer.
   (import "host" "reg_enum_value" (func $host_reg_enum_value (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; reg_enum_value(hKey, index, nameGA, nameLenGA, typeGA, dataGA, dataLenGA, isWide) → error code
   (import "host" "reg_query_info" (func $host_reg_query_info (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
@@ -961,6 +966,31 @@
   ;; their own validated mask triplet; DirectDraw explicitly requests RGB565.
   (data (i32.const 0x32A0) "\00\7c\00\00\e0\03\00\00\1f\00\00\00")
 
+  ;; The two registered clipboard formats that carry an embedded OLE object.
+  ;; OleCreateFromData looks for these on a source data object and declines with
+  ;; DV_E_FORMATETC when neither is there, which is what sends a container down
+  ;; its static-picture path instead.
+  (data (i32.const 0x32B0) "Embed Source\00")      ;; 0x32B0 Embed Source
+  (data (i32.const 0x32C0) "Embedded Object\00")   ;; 0x32C0 Embedded Object
+  ;; ProgIDs of the two server-less object classes OLE defines itself.
+  (data (i32.const 0x32D0) "StaticMetafile\00")    ;; 0x32D0 StaticMetafile
+  (data (i32.const 0x32E0) "StaticDib\00")         ;; 0x32E0 StaticDib
+
+  ;; Insert Object dialog. The object-type list is built by walking
+  ;; HKEY_CLASSES_ROOT\CLSID for subkeys that carry an Insertable key, which is
+  ;; how Windows decides what may be embedded.
+  (data (i32.const 0x32F0) "CLSID\00")             ;; 0x32F0 CLSID
+  (data (i32.const 0x3300) "Insertable\00")        ;; 0x3300 Insertable
+  (data (i32.const 0x3310) "Insert Object\00")     ;; 0x3310 Insert Object
+  (data (i32.const 0x3320) "Object Type:\00")      ;; 0x3320 Object Type:
+  (data (i32.const 0x3330) "Create New\00")        ;; 0x3330 Create New
+  (data (i32.const 0x3340) "Create from File\00")  ;; 0x3340 Create from File
+  (data (i32.const 0x3358) "OK\00")                ;; 0x3358 OK
+  (data (i32.const 0x3360) "Cancel\00")            ;; 0x3360 Cancel
+  ;; Shown when no server is registered, which is the state of a machine with
+  ;; no OLE applications installed -- Windows shows an empty list there too.
+  (data (i32.const 0x3370) "(no object types registered)\00") ;; 0x3370 (no object types registered)
+
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================
@@ -979,7 +1009,8 @@
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
-  ;; 0x00006A00  1.5KB   Free (former API dispatch hash table)
+  ;; 0x00006A00  1KB     CLIPFORMAT_TABLE (128 entries × 8 bytes — RegisterClipboardFormat)
+  ;; 0x00006E00  512B    Free (former API dispatch hash table)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
@@ -1809,6 +1840,17 @@
   ;; string atoms. Integer atoms (HIWORD(lpString) == 0) never occupy a slot.
   (global $ATOM_LOCAL_TABLE  i32 (i32.const 0x00006200))
   (global $ATOM_GLOBAL_TABLE i32 (i32.const 0x00006600))
+  ;; CLIPFORMAT_TABLE: registered clipboard format names, same shape as the atom
+  ;; tables but with the id stored rather than derived, so the two namespaces can
+  ;; never be confused for each other. RegisterClipboardFormat is an *interning*
+  ;; call: the whole point is that two callers naming the same string get the
+  ;; same number back, which is how riched20 and its container agree on what
+  ;; "Rich Text Format" or "Embed Source" means. We used to hand out a fresh id
+  ;; per call, so no two components could ever agree on a registered format.
+  ;;   +0 name — guest heap pointer to the NUL-terminated ANSI name (0 = free)
+  ;;   +4 id   — the CLIPFORMAT value handed out for it
+  (global $CLIPFORMAT_TABLE  i32 (i32.const 0x00006A00))
+  (global $CLIPFORMAT_SLOTS  i32 (i32.const 128))
   (global $ATOM_TABLE_SLOTS  i32 (i32.const 128))     ;; per table; 128 × 8 = 1KB each
   (global $ATOM_FIRST        i32 (i32.const 0xC000))  ;; first string-atom value
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA

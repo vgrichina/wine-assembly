@@ -3115,6 +3115,66 @@
     (call $ole_obj_release (local.get $obj)))
   (func (export "test_ole_create_data_object") (param $formatetc i32) (param $medium i32) (result i32)
     (call $ole_create_data_object (local.get $formatetc) (local.get $medium)))
+
+  (func (export "test_ole_clipboard_wrap_win32") (result i32)
+    (call $ole_clipboard_wrap_win32))
+
+  (func (export "test_create_insert_object_dialog") (param $params i32) (result i32)
+    (local $dlg i32)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_insert_object_dialog (local.get $dlg) (i32.const 0) (local.get $params))
+    (local.get $dlg))
+
+  ;; What OK would report, and what it would have written into the struct.
+  (func (export "test_insert_object_commit") (param $hwnd i32) (result i32)
+    (call $insertobj_commit (local.get $hwnd)))
+
+  ;; How many insertable classes the registry walk found for this dialog.
+  (func (export "test_insert_object_type_count") (param $hwnd i32) (result i32)
+    (local $ctx i32)
+    (local.set $ctx (call $wnd_get_userdata (local.get $hwnd)))
+    (if (i32.eqz (local.get $ctx)) (then (return (i32.const -1))))
+    (call $gl32 (i32.add (local.get $ctx) (i32.const 8))))
+
+  (func (export "test_clsid_from_string") (param $src i32) (param $dest i32) (result i32)
+    (call $clsid_from_string (local.get $src) (local.get $dest)))
+
+  ;; The static-object side of OleCreateFromData, minus the guest stack frame:
+  ;; pick a presentation format off a source, build the handler, load its cache.
+  ;; Returns the handler, or 0. The two accessors below report what a container
+  ;; would find on it — the render slot OleDraw uses, and the HIMETRIC extent.
+  (func (export "test_ole_static_from_data") (param $source i32) (result i32)
+    (local $picture i32) (local $obj i32)
+    (local.set $picture (call $ole_data_first_static_format (local.get $source)))
+    (if (i32.eqz (local.get $picture)) (then (return (i32.const 0))))
+    (local.set $obj (call $ole_create_static_handler (i32.const 0)))
+    (if (i32.eqz (local.get $obj))
+      (then (call $heap_free (local.get $picture)) (return (i32.const 0))))
+    (drop (call $ole_static_cache_from_data
+      (local.get $obj) (local.get $source) (local.get $picture)))
+    (call $heap_free (local.get $picture))
+    (local.get $obj))
+
+  ;; The HRESULT of the cache load alone, so a failure names itself instead of
+  ;; showing up as an object that silently draws nothing.
+  (func (export "test_ole_static_load_cache") (param $root i32) (param $source i32) (result i32)
+    (local $picture i32) (local $hr i32)
+    (local.set $picture (call $ole_data_first_static_format (local.get $source)))
+    (if (i32.eqz (local.get $picture)) (then (return (i32.const -1))))
+    (local.set $hr (call $ole_static_cache_from_data
+      (local.get $root) (local.get $source) (local.get $picture)))
+    (call $heap_free (local.get $picture))
+    (local.get $hr))
+
+  (func (export "test_ole_static_render_dib") (param $root i32) (result i32)
+    (if (i32.eqz (call $gl32 (i32.add (local.get $root) (i32.const 92))))
+      (then (return (i32.const 0))))
+    (call $gl32 (i32.add (local.get $root) (i32.const 64))))
+
+  (func (export "test_ole_static_extent") (param $root i32) (param $axis i32) (result i32)
+    (call $gl32 (i32.add (local.get $root)
+      (select (i32.const 44) (i32.const 40) (local.get $axis)))))
   (func (export "test_ole_data_query") (param $obj i32) (param $formatetc i32) (result i32)
     (call $ole_data_query_error (local.get $obj) (local.get $formatetc)))
   (func (export "test_ole_data_get") (param $obj i32) (param $formatetc i32) (param $medium i32) (result i32)

@@ -80,8 +80,10 @@ const checks = [
   { name: 'no emulator crash',            pass: !/\*\*\* CRASH/.test(out) },
   { name: 'no divide by zero',            pass: !/divide by zero/.test(out) },
   { name: 'no UNIMPLEMENTED API',         pass: !/UNIMPLEMENTED API:/.test(out) },
+  // The argument is typed in api_table now, so the trace prints it by name
+  // rather than as a bare hex dword. Match the value, not the punctuation.
   { name: 'RichEdit published a data object via OleSetClipboard',
-    pass: /OleSetClipboard\(0x[0-9a-f]*[1-9a-f]/.test(out) },
+    pass: /OleSetClipboard\((?:pDataObj=h:)?0x[0-9a-f]*[1-9a-f]/.test(out) },
   { name: 'clipboard reads empty before the copy',
     pass: counts.length > 0 && counts[0] === 0 },
   { name: 'CountClipboardFormats non-zero after the copy',
