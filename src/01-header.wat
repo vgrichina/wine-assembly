@@ -914,6 +914,7 @@
     "\06BITBLT\22\30"
     "\0fGETMODULEHANDLE\2f\10"
     "\11GETMODULEFILENAME\31\10"
+    "\14GETPRIVATEPROFILEINT\7f\10"
     "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
@@ -1169,7 +1170,7 @@
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
   ;;   selector arena (WIN16_ARENA): one 64KB slot per selector index.
-  ;;   Slot WIN16_SEG_MAX (guest 0x008F0000) is past the last usable selector,
+  ;;   Slot WIN16_SEG_MAX (guest 0x01FF0000) is past the last usable selector,
   ;;   so no far pointer can name it; it holds the Win16 handle table.
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
@@ -2329,13 +2330,21 @@
   ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
   ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
   ;; $win16_apply_relocs for the entry-table segment out-parameter.
-  ;; 256 entries x 16 bytes + 1 scratch. It was 128 entries at 0x07E08400,
-  ;; which is 0x800 from WIN16_THUNK_TABLE and could not grow in place; the
-  ;; obvious-looking space at 0x07E03000 turned out to be inside API_HASH_TABLE,
-  ;; whose size global says 32KB rather than the 12KB its comment claims. This
-  ;; address was checked with tools/wat-memory-map.js.
+  ;; 511 entries x 16 bytes + 1 scratch, which is exactly the 8KB between here
+  ;; and WIN16_THUNK_TABLE. It was 128 entries at 0x07E08400, which is 0x800
+  ;; from WIN16_THUNK_TABLE and could not grow in place; the obvious-looking
+  ;; space at 0x07E03000 turned out to be inside API_HASH_TABLE, whose size
+  ;; global says 32KB rather than the 12KB its comment claims. This address was
+  ;; checked with tools/wat-memory-map.js.
+  ;;
+  ;; Every GlobalAlloc costs a whole selector, because a selector is what a
+  ;; Win16 global handle *is* — so the ceiling here is an out-of-memory limit,
+  ;; not a bookkeeping one. Rattler Race makes 140 global allocations loading
+  ;; its form and ran out at 255, and VB reports that as its error 7 with an
+  ;; empty message box. Slot MAX is the handle table, at guest 0x01FF0000, and
+  ;; the arena ends at 32MB — well clear of the guest heap at 0x03C12000.
   (global $WIN16_SEG_TABLE i32 (i32.const 0x079C5000))
-  (global $WIN16_SEG_MAX   i32 (i32.const 255))
+  (global $WIN16_SEG_MAX   i32 (i32.const 510))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
   ;; the table is now beside the segment table with room for 2048 — still only

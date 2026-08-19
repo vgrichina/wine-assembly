@@ -2457,9 +2457,14 @@
     ;; that module's — not the task's. Handing back DS meant the next
     ;; GetProcAddress looked its name up in the running program: JigSawed
     ;; asked "Gdi" for CreateRectRgn and was told the game does not export it.
+    ;; $win16_dll_loaded answers with the module's segment COUNT, not a flag,
+    ;; so it has to be normalised before it meets an i32.and — 1 & 4 is 0, and
+    ;; FIELD100.VBX has exactly four segments. Rattler Race asked for its
+    ;; handle, got the task's DS, and looked FLDERASE up in the game.
     (if (i32.and (i32.ne (local.get $id) (i32.const 0))
                  (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-                         (call $win16_dll_loaded (local.get $id))))
+                         (i32.ne (call $win16_dll_loaded (local.get $id))
+                                 (i32.const 0))))
       (then
         (call $win16_local_identity (i32.const 4)
           (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
@@ -7468,6 +7473,18 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; GDI.75 GetBkColor(hDC) -> COLORREF in DX:AX, the other half of GDI.9.
+  (func $win16_GetBkColor
+    (local $hdc i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetBkColor (local.get $hdc) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
   ;; GDI.154 GetNearestColor(hDC, crColor) -> the colour the device can
   ;; actually show. Answers in DX:AX like every DWORD-returning Win16 call.
   (func $win16_GetNearestColor
@@ -7966,6 +7983,8 @@
       (then (call $win16_RectVisible) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 90))
       (then (call $win16_GetTextColor) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 75))
+      (then (call $win16_GetBkColor) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 36))
       (then (call $win16_poly (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 37))
