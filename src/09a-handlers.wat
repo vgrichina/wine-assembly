@@ -6106,6 +6106,11 @@
             (call $cs_block (local.get $cs) (local.get $prev))
             (return)))))
     (global.set $cs_wait_spins (i32.const 0))
+    ;; Not parked any more. Left set, this reads as "still waiting" long after the
+    ;; section was acquired, and a stale name in a deadlock report is worse than
+    ;; no name — it accuses a thread that let go.
+    (global.set $cs_wait_addr (i32.const 0))
+    (global.set $cs_wait_owner (i32.const 0))
     ;; Ours now, or already ours — recursive entry is allowed and only counted.
     ;; LockCount: -1 -> 0 on the first acquire, then up with each recursion.
     (i32.store offset=4 (local.get $cs)
@@ -6123,7 +6128,7 @@
 
   ;; 332: LeaveCriticalSection(lpCriticalSection)
   (func $handle_LeaveCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $rec i32)
     (local.set $cs (call $g2w (local.get $arg0)))
     ;; A Leave from a thread that does not own the section still releases it,
     ;; and is counted rather than refused. Refusing is what NT would do and it
@@ -6133,19 +6138,37 @@
     ;; no fault of the guest — and a section that is never released is a hang,
     ;; where releasing one early is the race we already had. Win9x did not check
     ;; either. $cs_bad_leaves is exported so this stops being invisible.
+    ;;
+    ;; What it must NOT do is take the counters with it. Decrementing on behalf of
+    ;; a thread that never entered walks RecursionCount PAST zero, and a release
+    ;; test of "== 0" then never fires again: measured on Winamp in worker mode,
+    ;; 70 such leaves left one section at LockCount=-2 RecursionCount=-1 with
+    ;; OwningThread still set, and three threads parked on it for the rest of the
+    ;; run. So an unowned Leave frees the section outright and touches nothing
+    ;; else, and an owned one releases at "<= 0" with the counters clamped —
+    ;; either way the struct lands in the state InitializeCriticalSection left it.
     (if (i32.ne (i32.load offset=12 (local.get $cs)) (global.get $current_thread_id))
-      (then (global.set $cs_bad_leaves (i32.add (global.get $cs_bad_leaves) (i32.const 1)))))
-    ;; RecursionCount--
-    (i32.store offset=8 (local.get $cs)
-      (i32.sub (i32.load offset=8 (local.get $cs)) (i32.const 1)))
-    ;; LockCount--
+      (then
+        (global.set $cs_bad_leaves (i32.add (global.get $cs_bad_leaves) (i32.const 1)))
+        (i32.store offset=8 (local.get $cs) (i32.const 0))
+        (i32.store offset=4 (local.get $cs) (i32.const -1))
+        (if (call $cs_owner_aligned (local.get $cs))
+          (then (i32.atomic.store offset=12 (local.get $cs) (i32.const 0)))
+          (else (i32.store offset=12 (local.get $cs) (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    ;; RecursionCount-- / LockCount--
+    (local.set $rec (i32.sub (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+    (i32.store offset=8 (local.get $cs) (local.get $rec))
     (i32.store offset=4 (local.get $cs)
       (i32.sub (i32.load offset=4 (local.get $cs)) (i32.const 1)))
     ;; Release LAST, and atomically: the counters have to be settled before
     ;; another thread can see the section free and start writing them, which is
     ;; the same publish-last ordering the WAT's own locks use.
-    (if (i32.eqz (i32.load offset=8 (local.get $cs)))
+    (if (i32.le_s (local.get $rec) (i32.const 0))
       (then
+        (i32.store offset=8 (local.get $cs) (i32.const 0))
+        (i32.store offset=4 (local.get $cs) (i32.const -1))
         (if (call $cs_owner_aligned (local.get $cs))
           (then (i32.atomic.store offset=12 (local.get $cs) (i32.const 0)))
           (else (i32.store offset=12 (local.get $cs) (i32.const 0))))))

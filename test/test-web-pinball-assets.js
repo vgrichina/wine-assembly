@@ -246,7 +246,7 @@ assert(indexHtml.includes('lib/gdi-surface.js?v=1'), 'web host should load the c
 assert(indexHtml.indexOf('lib/gdi-surface.js?v=1') < indexHtml.indexOf('lib/host-imports.js?v=200'),
   'web host should load the GDI surface module before host imports');
 assert(indexHtml.includes('lib/host-imports.js?v=200'), 'web host should cache-bust binary text rasterization');
-assert(indexHtml.includes('lib/thread-manager.js?v=174'), 'web host should cache-bust thread manager after releasing sections at thread exit');
+assert(indexHtml.includes('lib/thread-manager.js?v=175'), 'web host should cache-bust thread manager after reporting per-thread bad Leaves');
 assert(indexHtml.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(indexHtml.includes('host.js?v=208'), 'web host should cache-bust host.js after the current source update');
 assert(hostJs.includes("static SOURCE_VERSION = '207'"), 'web host should cache-bust WASM artifacts and WAT source compilation');

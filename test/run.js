@@ -204,6 +204,9 @@ let workerThreadHost = null;
 // NO_BUILD kept for compat but ignored — always compiles from WAT
 
 const hex = v => '0x' + (v >>> 0).toString(16).padStart(8, '0');
+// Guest thread ids are $current_thread_id: main is 1, a spawned thread is tid+1.
+// Printing "T0" for main reads as a thread that does not exist, so name it.
+const threadName = id => (((id >>> 0) === 1) ? 'main' : `T${(id >>> 0) - 1}`);
 
 // Win16 module ids, as assigned by $win16_module_id in src/08c-ne-loader.wat.
 // Index 0 is "the loader could not identify the module", which is a real state
@@ -5914,6 +5917,28 @@ if (VERBOSE) {
       console.log(`critical sections: main parked ${waits}x, stole ${steals}, `
         + `barged ${barges} (nested wndproc), released ${badLeaves} it did not own`);
     }
+    // Which sections are still held, and by whom. A thread that reports
+    // waitingOnCS says one half of a deadlock; this says the other, and a section
+    // whose OwningThread names a thread that is not inside it is the whole answer.
+    // Printed only when something is held at exit, which for a clean run is never.
+    if (instance.exports.get_cs_table) {
+      const dv = new DataView(memory.buffer);
+      const table = instance.exports.get_cs_table() >>> 0;
+      const entries = instance.exports.get_cs_table_entries() >>> 0;
+      const held = [];
+      for (let i = 0; i < entries; i++) {
+        const cs = dv.getUint32(table + i * 4, true) >>> 0;
+        if (!cs) continue;
+        const owner = dv.getUint32(cs + 12, true) >>> 0;
+        if (!owner) continue;
+        held.push(`    ${hex(cs)} owner=${threadName(owner)} lock=${dv.getInt32(cs + 4, true)} `
+          + `recursion=${dv.getInt32(cs + 8, true)}`);
+      }
+      if (held.length) {
+        console.log(`held critical sections at exit (${held.length}):`);
+        for (const line of held) console.log(line);
+      }
+    }
   }
 
   if (DUMP_VIRTUAL_MAPS) {
@@ -6044,7 +6069,12 @@ if (VERBOSE) {
           + `rpc=${t.link.sliceStats.rpcSync}sync/${t.link.sliceStats.rpcAsync}async/${t.link.sliceStats.rpcLocal}local `
           + `sleepCount=${t.sleepCount || 0} waitPolls=${t.waitPolls || 0} `
           + `csPark/steal=${t.csWaits || 0}/${t.csSteals || 0}`
-          + (t.csWaitAddr ? ` waitingOnCS=${hex(t.csWaitAddr)} heldBy=T${(t.csWaitOwner || 0) - 1}` : ''));
+          // A Leave this thread had no right to make is reported next to the park
+          // count, because the two together read as one sentence: N threads are
+          // waiting for a section that M misdirected releases already unlocked.
+          + (t.csBadLeaves ? ` csBadLeave=${t.csBadLeaves}` : '')
+          + (t.csBarges ? ` csBarge=${t.csBarges}` : '')
+          + (t.csWaitAddr ? ` waitingOnCS=${hex(t.csWaitAddr)} heldBy=${threadName(t.csWaitOwner || 0)}` : ''));
         continue;
       }
       try {

@@ -808,7 +808,10 @@ Four things this had to get right:
   thread rather than the owning one (cross-thread `SendMessage` is not
   implemented), so Enter-here-Leave-there is reachable through no fault of the
   guest. A section never released is a hang; one released early is the race we
-  already had. Win9x did not check either. `$cs_bad_leaves` counts it.
+  already had. Win9x did not check either. `$cs_bad_leaves` counts it. It frees the
+  section **without touching the counters** — decrementing on behalf of a thread
+  that never entered is what walked `RecursionCount` past zero and cost a whole
+  session; see "It was the non-owner `Leave`" below.
 
 One more trap, worth recording because it is not specific to this handler:
 `$run`'s thunk-zone auto-pop fires whenever a handler leaves EIP alone — yield or
@@ -876,44 +879,77 @@ section and *sleeps*, thousands of times.
 
 That is the shape of a producer waiting for room that only the consumer can make,
 with the consumer locked out of the section it needs to make it. On real Windows a
-decoder does not hold a section across a `Sleep` loop, so the next question is
-whether the guest's release is being lost (`--break-api=LeaveCriticalSection` plus
-this address is now a one-liner) or whether it never releases because the condition
-it is waiting for is one *we* never make true.
+decoder does not hold a section across a `Sleep` loop — so the release was being
+lost, and the loss was ours.
 
-Worth noting: guest `0x1121B78` is also where two threads trapped in the earlier
-steal experiment. Same word, and the steal wrote a thread id into it — which is
-consistent with the browser's `EIP=0x1` trap, main's id being 1.
+#### It was the non-owner `Leave`, and specifically its arithmetic
 
-**Where this leaves worker mode.** Better and not yet right, and the state is
-worth being exact about:
+Two runs found it without a single new line of tracing.
 
-| | before | with real sections |
+`--threads-serial` — one guest thread at a time, everything else identical — parked
+**zero** times and produced *more* audio than the parallel run. Zero contention
+means the guest's own lock order is fine, so the inversion was a race we
+introduced rather than a discipline the guest lacks.
+
+Then printing the registry at exit said what state the sections were actually in:
+
+```
+held critical sections at exit (3):
+    0x00061d4c owner=main lock=0  recursion=1
+    0x00ad8540 owner=T1   lock=0  recursion=1
+    0x00d33b78 owner=T2   lock=-2 recursion=-1      <- below the init state
+```
+
+`RecursionCount = -1`. `LockCount = -2`. The section had been **left more times
+than it was entered**, and `Leave` released only on `RecursionCount == 0` — a test
+those counters had already stepped past. So `OwningThread` stayed set on a section
+nobody was inside, forever, and every waiter parked forever. The per-thread
+`csBadLeave` column (also new: the counters are per-instance globals, so main's
+copy reads 0 for anything a worker did) named the source: **70** Leaves from T2 on
+sections it did not own.
+
+The fix is two lines of arithmetic and one of judgement:
+
+- An **unowned** `Leave` frees the section outright and touches no counters. It
+  still releases — see the trade above — but it no longer decrements on behalf of
+  a thread that never entered.
+- An **owned** `Leave` releases at `<= 0` rather than `== 0`, and clamps
+  `LockCount`/`RecursionCount` back to the values `InitializeCriticalSection`
+  writes. A section can now only ever be free-and-initialised or held.
+
+| Winamp, CLI `--threads`, same 1200 batches | before | after |
+|---|---|---|
+| parks (T1/T2/T3) | 2344 / 2345 / 2477 | 0 / 4 / 0 |
+| bad Leaves | 70 | 3 |
+| PCM captured | 55296 B, then deadlocked | **78336 B**, hit the capture target |
+| wall clock to 64KB of audio | never | 6.0 s |
+
+`test/test-wat-critical-section.js` is the regression: 16 assertions on the struct
+itself, driven through `test_cs_enter` / `test_cs_leave` / `test_cs_delete` exports
+so the semantics are asserted rather than inferred from an app that hangs. Against
+the old `Leave` it fails four of them, and it fails them with exactly the Winamp
+signature — `lock=-2 recursion=-1 owner=2`.
+
+The browser side moved too, without being touched: `test-worker-guest.js` went from
+20 of 21 to **27 of 27**, both worker traps gone. Guest `0x1121B78` — the address
+in both of them — is the same section, which is what the earlier note suspected:
+one bug, wearing three faces.
+
+**Where this leaves worker mode.** The state, being exact about it:
+
+| | before real sections | now |
 |---|---|---|
 | cooperative (default, everywhere) | works | **unchanged** — 0 parks, 0 barges, 0 steals; one instance at a time never contends |
-| CLI `--threads` audio | peak 40 of 32768 | full scale when the decoder gets there, but arrival varies from byte 2304 to never inside the captured window |
-| browser worker (`?threads`) | `test-worker-guest.js` green, threads mostly starved (16854 slices) | 20 of 21 checks; threads run **271151** slices — 16x further — and two of them trap |
+| CLI `--threads` audio | peak 40 of 32768 | 76032 B of non-silent PCM in 6.0 s; `test-winamp-audio --threads` 7/7 |
+| browser worker (`?threads`) | `test-worker-guest.js` green, threads mostly starved (16854 slices) | **27 of 27** checks; threads run 16x further and no longer trap |
 
-The one failing check is `no traps or failed spawns with guest threads live`, and it
-is worth being precise about what changed: the threads were previously starved, and
-now they execute sixteen times more guest code and reach bugs nothing had reached.
-Both traps come with full register context now, because the worker trap log prints
-what the slice reply always carried:
+Both of the worker traps that the parks were hiding — `EIP=0x1` with a thunk-slot
+address in `edi`, and a loop at `0xc18bbf` — are gone with the `Leave` fix. They
+were downstream of the same permanently-owned section, which is why neither ever
+reproduced in the CLI while the deadlock did.
 
-```
-worker thread 1 trapped at EIP=0x1     prev_eip=0x1  edi=0x75000a0  csPark=10
-worker thread 2 trapped at EIP=0xc18bbf prev_eip=0xc18bbf eax=0xc18b6c ecx=0xc18b02 csPark=4
-```
-
-T1 called through a bad pointer and landed at address 1, with a thunk-zone address
-in `edi` — so the pointer it called through is an API thunk slot, which points back
-at the thunk cursor work. T2 is looping inside real code at `0xc18bbf` (EIP,
-prev_eip, `eax` and `ecx` all sit inside the same 0x100 bytes), so that one is an
-unimplemented instruction or an unreachable guard rather than stack damage. Neither
-is diagnosed. `csSteal=0` on both, so neither is the steal.
-
-The CLI does not reproduce either trap, which is itself information: out_wave drives
-WebAudio in the browser and a file here.
+What remains open in worker mode is throughput rather than correctness, and that
+number has to come from a real browser (see §6).
 
 ---
 

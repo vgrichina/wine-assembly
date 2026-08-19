@@ -199,6 +199,12 @@
   (func (export "get_cs_wait_addr") (result i32) (global.get $cs_wait_addr))
   (func (export "get_cs_wait_owner") (result i32) (global.get $cs_wait_owner))
   (func (export "set_cs_steal_after") (param i32) (global.set $cs_steal_after (local.get 0)))
+  ;; The registry itself, so a run can print WHICH sections are held and by whom
+  ;; at exit rather than only that somebody is waiting. It lives in shared memory
+  ;; and holds WASM addresses, so any instance — or the host, reading directly —
+  ;; sees the same table.
+  (func (export "get_cs_table") (result i32) (global.get $CS_TABLE))
+  (func (export "get_cs_table_entries") (result i32) (global.get $CS_TABLE_ENTRIES))
   ;; Release every critical section still owned by a thread that has ended, and
   ;; say how many. The argument is that thread's $current_thread_id (main is 1, a
   ;; spawned thread is tid+1), NOT its tid — the guest field holds the former,
@@ -211,6 +217,47 @@
     ;; PID zero is reserved by Win32 and means "use the compatibility default"
     ;; internally, so hosts should always assign a positive value.
     (i32.store (global.get $SHARED_PROCESS_ID) (local.get $pid)))
+  ;; CRITICAL_SECTION handlers, callable without a guest stack, so the semantics
+  ;; can be asserted directly instead of inferred from an app that hangs. The
+  ;; handlers pop a stdcall frame that is not there, hence the ESP save/restore;
+  ;; a park also sets the yield state, which these clear and report as 1 so a
+  ;; test can assert "this Enter blocked" without unwinding an interpreter run.
+  ;; See test/test-wat-critical-section.js.
+  (func (export "test_cs_init") (param $cs i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_InitializeCriticalSection
+      (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp)))
+  (func (export "test_cs_enter") (param $cs i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_EnterCriticalSection
+      (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (if (result i32) (i32.eq (global.get $yield_reason) (i32.const 9))
+      (then
+        (global.set $yield_reason (i32.const 0))
+        (global.set $yield_flag (i32.const 0))
+        (global.set $handler_set_eip (i32.const 0))
+        (i32.const 1))
+      (else (i32.const 0))))
+  (func (export "test_cs_delete") (param $cs i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DeleteCriticalSection
+      (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp)))
+  (func (export "test_cs_leave") (param $cs i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_LeaveCriticalSection
+      (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp)))
   (func (export "test_call_GetLogicalDrives") (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
