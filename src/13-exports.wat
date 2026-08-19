@@ -1862,6 +1862,11 @@
       (select (i32.const 2) (i32.const 0) (call $wnd_max_get (local.get $hwnd)))))
   (func (export "wnd_is_maximized") (param $hwnd i32) (result i32)
     (call $wnd_max_get (local.get $hwnd)))
+  ;; The answer IsIconic gives the guest. The renderer keeps `_minimized` for
+  ;; compositing; exporting this one lets a test see both and notice when they
+  ;; disagree, which is the failure mode the show-state bits exist to close.
+  (func (export "wnd_is_minimized") (param $hwnd i32) (result i32)
+    (call $wnd_min_get (local.get $hwnd)))
   ;; User-initiated move commit (host title-bar drag). Moving a Win98 window
   ;; sends WM_MOVE but does not imply WM_SIZE/NCCALCSIZE; dialog controls keep
   ;; their layout and only the top-level screen origin changes.

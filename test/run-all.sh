@@ -306,6 +306,7 @@ E2E=(
   test/test-spider-messagebox.js
   test/test-spider-show-available-move-menu.js
   test/test-solitaire-maximize.js
+  test/test-window-show-state.js
   test/test-solitaire-resize.js
   test/test-minesweeper-click.js
   test/test-minesweeper-no-resize.js

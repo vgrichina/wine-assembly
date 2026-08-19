@@ -1013,6 +1013,11 @@
             (local.get $arg0) (i32.const 0x0018)
             (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 0)))
     (local.set $client_size (call $host_show_window (local.get $arg0) (local.get $arg1)))
+    ;; Record the minimized/maximized state the command asks for. The renderer
+    ;; keeps its own copy for compositing; this is the one the guest reads back
+    ;; through IsIconic/IsZoomed/GetWindowPlacement, and it used to not exist —
+    ;; those three answered with a constant.
+    (call $wnd_apply_show_state (local.get $arg0) (local.get $arg1))
     ;; Sync WS_VISIBLE into the stored GWL_STYLE. MFC (e.g. CDockBar::OnSizeParent)
     ;; skips toolbars whose GetStyle() lacks WS_VISIBLE — without this sync, any
     ;; control bar that relies on CreateWindow-without-WS_VISIBLE + ShowWindow
@@ -1110,7 +1115,8 @@
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
                  (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then
-        (call $wnd_max_set (local.get $arg0) (i32.const 1))
+        ;; The maximized bit itself is already recorded by
+        ;; $wnd_apply_show_state above; this block owns only the resize pair.
         (global.set $pending_wm_size (i32.const 0))
         (call $post_resize_messages (local.get $arg0) (i32.const 2))))
     ;; First ShowWindow on main_hwnd (non-hide) drives the synchronous activation
@@ -2127,13 +2133,18 @@
           ;; needs WM_MOVE + WM_SIZE so its wndproc relays out (otherwise the
           ;; back-canvas grows but the app keeps drawing in its old area).
           ;; SC_MINIMIZE just hides the window; no relayout needed.
+          ;; Each of the three commands is the SW_* it corresponds to, so the
+          ;; show state goes through the same fold ShowWindow uses rather than
+          ;; a second transition table.
+          (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF020))
+            (then (call $wnd_apply_show_state (local.get $arg0) (i32.const 6)))) ;; SW_MINIMIZE
           (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))
             (then
-              (call $wnd_max_set (local.get $arg0) (i32.const 1))
+              (call $wnd_apply_show_state (local.get $arg0) (i32.const 3)) ;; SW_SHOWMAXIMIZED
               (call $post_resize_messages (local.get $arg0) (i32.const 2))))
           (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF120))
             (then
-              (call $wnd_max_set (local.get $arg0) (i32.const 0))
+              (call $wnd_apply_show_state (local.get $arg0) (i32.const 9)) ;; SW_RESTORE
               (call $post_resize_messages (local.get $arg0) (i32.const 0))))
           (global.set $eax (i32.const 0))
           (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))

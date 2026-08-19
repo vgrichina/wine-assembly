@@ -2933,9 +2933,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 128: IsIconic(hwnd) — 1 arg stdcall, return 0 (not minimized)
+  ;; 128: IsIconic(hwnd) → BOOL — is the window minimized?
+  ;; This answered 0 unconditionally while ShowWindow(SW_MINIMIZE) and
+  ;; SC_MINIMIZE were both plainly reaching the renderer, so an app that
+  ;; minimizes itself and then asks — the ordinary shape of a WM_SIZE or
+  ;; WM_PAINT guard, and of "restore me before showing a dialog" — was told no.
   (func $handle_IsIconic (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $wnd_min_get (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8754,10 +8758,20 @@ SetColorAdjustment — validate and copy complete per-DC state.
     (local.set $wa (call $g2w (local.get $arg1)))
     ;; length = 44
     (i32.store (local.get $wa) (i32.const 44))
-    ;; flags = 0
-    (i32.store offset=4 (local.get $wa) (i32.const 0))
-    ;; showCmd = SW_SHOWNORMAL (1)
-    (i32.store offset=8 (local.get $wa) (i32.const 1))
+    ;; flags: WPF_RESTORETOMAXIMIZED (0x0002) when this icon will come back
+    ;; maximized. That is the one thing an app cannot work out from showCmd.
+    (i32.store offset=4 (local.get $wa)
+      (select (i32.const 2) (i32.const 0)
+        (i32.and (call $wnd_min_get (local.get $arg0))
+                 (call $wnd_max_get (local.get $arg0)))))
+    ;; showCmd: SW_SHOWMINIMIZED(2) / SW_SHOWMAXIMIZED(3) / SW_SHOWNORMAL(1).
+    ;; It was the constant 1, so an app restoring its own window from its saved
+    ;; placement — how Win9x apps persist "start maximized" — always came back
+    ;; normal no matter what it had been.
+    (i32.store offset=8 (local.get $wa)
+      (select (i32.const 2)
+        (select (i32.const 3) (i32.const 1) (call $wnd_max_get (local.get $arg0)))
+        (call $wnd_min_get (local.get $arg0))))
     ;; ptMinPosition = (0,0)
     (i32.store offset=12 (local.get $wa) (i32.const 0))
     (i32.store offset=16 (local.get $wa) (i32.const 0))
@@ -9120,6 +9134,7 @@ SetColorAdjustment — validate and copy complete per-DC state.
   ;; WINDOWPLACEMENT: length(0), flags(4), showCmd(8), ptMin(12,16), ptMax(20,24), rcNormal(28: left,top,right,bottom)
   (func $handle_SetWindowPlacement (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $show i32)
     (local.set $wa (call $g2w (local.get $arg1)))
     ;; Read rcNormalPosition from WINDOWPLACEMENT at offset 28
     (local.set $left   (i32.load offset=28 (local.get $wa)))
@@ -9131,6 +9146,26 @@ SetColorAdjustment — validate and copy complete per-DC state.
       (i32.sub (local.get $right) (local.get $left))
       (i32.sub (local.get $bottom) (local.get $top))
       (i32.const 0))
+    ;; showCmd used to be read and dropped, so an app that saved "I was
+    ;; maximized" and set the placement back at startup got its normal rect and
+    ;; nothing else. Only a command that actually changes the min/max state is
+    ;; forwarded: SetWindowPlacement is routinely called before the first
+    ;; ShowWindow, and a SW_SHOWNORMAL there must not put a window on screen
+    ;; that the app has not shown yet.
+    (local.set $show (i32.load offset=8 (local.get $wa)))
+    (if (i32.or (i32.eq (local.get $show) (i32.const 1))
+          (i32.or (i32.eq (local.get $show) (i32.const 2))
+            (i32.or (i32.eq (local.get $show) (i32.const 3))
+                    (i32.eq (local.get $show) (i32.const 9)))))
+      (then
+        (if (i32.or
+              (i32.ne (i32.eq (local.get $show) (i32.const 2))
+                      (call $wnd_min_get (local.get $arg0)))
+              (i32.ne (i32.eq (local.get $show) (i32.const 3))
+                      (call $wnd_max_get (local.get $arg0))))
+          (then
+            (drop (call $host_show_window (local.get $arg0) (local.get $show)))
+            (call $wnd_apply_show_state (local.get $arg0) (local.get $show))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -9537,10 +9572,12 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args + ret
   )
 
-  ;; 653: IsZoomed(hwnd) → BOOL — returns TRUE if window is maximized
-  ;; Windows in this emulator are never maximized
+  ;; 653: IsZoomed(hwnd) → BOOL — returns TRUE if window is maximized.
+  ;; The comment this replaces said windows here are never maximized; they are,
+  ;; and $wnd_max_get has tracked it since the caption's maximize glyph needed
+  ;; to know which way to draw itself.
   (func $handle_IsZoomed (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $wnd_max_get (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 654: SetParent — STUB: unimplemented

@@ -62,7 +62,7 @@
     ;; Added with this registry — see the note above.
     (call $scroll_reset_slot (local.get $slot))
     (i32.store8 (i32.add (global.get $FLASH_TABLE) (local.get $slot)) (i32.const 0))
-    (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $slot)) (i32.const 0))
+    (i32.store8 (i32.add (global.get $SHOW_STATE_TABLE) (local.get $slot)) (i32.const 0))
     (call $zero_memory (call $update_rect_addr_for_slot (local.get $slot)) (i32.const 16))
     (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
 

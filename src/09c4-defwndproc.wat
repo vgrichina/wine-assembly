@@ -1041,21 +1041,84 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $idx))))
 
-  ;; Per-window maximized state. Set by the WM_SYSCOMMAND handler after
-  ;; SC_MAXIMIZE / SC_RESTORE commits its geometry change. Read by the
-  ;; HTMAXBUTTON click handler (to flip SC_MAXIMIZE↔SC_RESTORE) and by
-  ;; $defwndproc_do_ncpaint (so the glyph reflects current state).
-  (func $wnd_max_get (param $hwnd i32) (result i32)
+  ;; Per-window show state, held one bit per condition in SHOW_STATE_TABLE.
+  ;; These four functions are the only code that knows which bit is which.
+  ;;
+  ;; Maximized (bit 0) is set by ShowWindow(SW_SHOWMAXIMIZED) and by the
+  ;; WM_SYSCOMMAND handler after SC_MAXIMIZE / SC_RESTORE commits its geometry
+  ;; change. Read by the HTMAXBUTTON click handler (to flip
+  ;; SC_MAXIMIZE↔SC_RESTORE), by $defwndproc_do_ncpaint (so the glyph reflects
+  ;; current state), and by IsZoomed.
+  ;;
+  ;; Minimized (bit 1) is set by ShowWindow(SW_MINIMIZE / SW_SHOWMINIMIZED /
+  ;; SW_SHOWMINNOACTIVE) and by SC_MINIMIZE, and read by IsIconic and
+  ;; GetWindowPlacement. The renderer keeps its own `_minimized` for
+  ;; compositing; this bit is what the *guest* is allowed to ask about, so the
+  ;; answer no longer depends on which side of the host boundary you stand on.
+  (func $wnd_show_state_addr (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (i32.load8_u (i32.add (global.get $MAX_TABLE) (local.get $idx))))
+    (i32.add (global.get $SHOW_STATE_TABLE) (local.get $idx)))
+  (func $wnd_show_state_bit_set (param $hwnd i32) (param $bit i32) (param $val i32)
+    (local $addr i32)
+    (local.set $addr (call $wnd_show_state_addr (local.get $hwnd)))
+    (if (i32.eqz (local.get $addr)) (then (return)))
+    (i32.store8 (local.get $addr)
+      (select
+        (i32.or (i32.load8_u (local.get $addr)) (local.get $bit))
+        (i32.and (i32.load8_u (local.get $addr))
+                 (i32.xor (local.get $bit) (i32.const 0xFF)))
+        (i32.ne (local.get $val) (i32.const 0)))))
+  (func $wnd_show_state_bit_get (param $hwnd i32) (param $bit i32) (result i32)
+    (local $addr i32)
+    (local.set $addr (call $wnd_show_state_addr (local.get $hwnd)))
+    (if (i32.eqz (local.get $addr)) (then (return (i32.const 0))))
+    (i32.ne (i32.and (i32.load8_u (local.get $addr)) (local.get $bit))
+            (i32.const 0)))
+  (func $wnd_max_get (param $hwnd i32) (result i32)
+    (call $wnd_show_state_bit_get (local.get $hwnd) (i32.const 1)))
   (func $wnd_max_set (param $hwnd i32) (param $val i32)
-    (local $idx i32)
-    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
-    (if (i32.ne (local.get $idx) (i32.const -1))
-      (then (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $idx))
-                        (local.get $val)))))
+    (call $wnd_show_state_bit_set (local.get $hwnd) (i32.const 1) (local.get $val)))
+  (func $wnd_min_get (param $hwnd i32) (result i32)
+    (call $wnd_show_state_bit_get (local.get $hwnd) (i32.const 2)))
+  (func $wnd_min_set (param $hwnd i32) (param $val i32)
+    (call $wnd_show_state_bit_set (local.get $hwnd) (i32.const 2) (local.get $val)))
+
+  ;; Fold an SW_* command into the stored show state. Called from ShowWindow so
+  ;; every route into it — the API, WinMain's nCmdShow, the Win16 bridge —
+  ;; leaves the same answer behind for IsIconic/IsZoomed/GetWindowPlacement.
+  ;; SW_HIDE and the plain SW_SHOW family are absent on purpose: Windows shows
+  ;; and hides a window "in its current state", so neither un-iconifies it.
+  (func $wnd_apply_show_state (param $hwnd i32) (param $cmd i32)
+    ;; SW_SHOWMINIMIZED(2) / SW_MINIMIZE(6) / SW_SHOWMINNOACTIVE(7). The
+    ;; maximized bit survives: restoring an icon that was maximized when it was
+    ;; minimized puts it back maximized, which is why these are two bits.
+    (if (i32.or (i32.eq (local.get $cmd) (i32.const 2))
+          (i32.or (i32.eq (local.get $cmd) (i32.const 6))
+                  (i32.eq (local.get $cmd) (i32.const 7))))
+      (then (call $wnd_min_set (local.get $hwnd) (i32.const 1)) (return)))
+    ;; SW_SHOWMAXIMIZED / SW_MAXIMIZE (3)
+    (if (i32.eq (local.get $cmd) (i32.const 3))
+      (then
+        (call $wnd_max_set (local.get $hwnd) (i32.const 1))
+        (call $wnd_min_set (local.get $hwnd) (i32.const 0))
+        (return)))
+    ;; SW_RESTORE (9) undoes one level: an icon goes back to whatever it was
+    ;; before, a maximized window goes to normal.
+    (if (i32.eq (local.get $cmd) (i32.const 9))
+      (then
+        (if (call $wnd_min_get (local.get $hwnd))
+          (then (call $wnd_min_set (local.get $hwnd) (i32.const 0)) (return)))
+        (call $wnd_max_set (local.get $hwnd) (i32.const 0))
+        (return)))
+    ;; SW_SHOWNORMAL / SW_NORMAL (1) and SW_SHOWDEFAULT (10) ask for the normal
+    ;; size and position outright.
+    (if (i32.or (i32.eq (local.get $cmd) (i32.const 1))
+                (i32.eq (local.get $cmd) (i32.const 10)))
+      (then
+        (call $wnd_min_set (local.get $hwnd) (i32.const 0))
+        (call $wnd_max_set (local.get $hwnd) (i32.const 0)))))
 
   ;; ---- Sysbutton press state (used by JS while user holds LMB on a
   ;; title-bar button). Setting to (hwnd, hit) makes the next ncpaint

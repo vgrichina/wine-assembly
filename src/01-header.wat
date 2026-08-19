@@ -1043,7 +1043,7 @@
   ;;   bit 0: WM_NCPAINT pending; bit 1: WM_ERASEBKGND pending; bit 2: WM_NCCALCSIZE pending
   ;; 0x0000EE70  2KB     TITLE_TABLE    (256 entries × 8 bytes — WASM title ptr + len, ends 0xF670)
   ;; 0x0000F670  4KB     CLIENT_RECT    (256 entries × 16 bytes — l/t/r/b i32, ends 0x10670)
-  ;; 0x00010670  256B    MAX_TABLE      (256 × 1 byte — per-hwnd maximized flag, ends 0x10770)
+  ;; 0x00010670  256B    SHOW_STATE_TABLE (256 × 1 byte — bit 0 maximized, bit 1 minimized, ends 0x10770)
   ;; 0x00010770  32B     WINDOW_REGION_BITS (256 × 1 bit — SetWindowRgn state, ends 0x10790)
   ;; 0x00010790  32B     NATIVE_STATUS_BITS (one bit per WND_RECORDS slot)
   ;; 0x000107B0  32B     NATIVE_TAB_BITS (one bit per WND_RECORDS slot)
@@ -1586,11 +1586,17 @@
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
   (global $FLASH_TABLE i32 (i32.const 0x0000E970))
   (global $FLASH_TABLE_SIZE i32 (i32.const 0x00000100))
-  ;; MAX_TABLE — per-window maximized flag, parallel to WND_RECORDS slots.
-  ;; 256 entries × 1 byte (0 = normal, 1 = maximized). Toggled by the
-  ;; WM_SYSCOMMAND handler after $host_sys_command commits geometry.
-  (global $MAX_TABLE i32 (i32.const 0x00010670))
-  (global $MAX_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; SHOW_STATE_TABLE — per-window show state, parallel to WND_RECORDS slots.
+  ;; 256 entries × 1 byte, two independent bits because Windows treats them as
+  ;; independent: a maximized window that is then minimized restores to
+  ;; maximized, so SC_MINIMIZE must not clear the maximized bit.
+  ;;   bit 0 (1) — maximized (WS_MAXIMIZE / IsZoomed)
+  ;;   bit 1 (2) — minimized (WS_MINIMIZE / IsIconic)
+  ;; Written by ShowWindow and by the WM_SYSCOMMAND handler after
+  ;; $host_sys_command commits geometry; read through $wnd_max_get /
+  ;; $wnd_min_get, which are the only two functions that know the encoding.
+  (global $SHOW_STATE_TABLE i32 (i32.const 0x00010670))
+  (global $SHOW_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
   ;; WINDOW_REGION_BITS — bitset keyed by WND_RECORDS slot. Regioned/skinned
   ;; windows (Winamp) use their whole shaped surface as the client area, so
   ;; later MoveWindow/SetWindowPos NCCALCSIZE must not restore standard chrome

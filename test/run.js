@@ -4545,7 +4545,16 @@ async function main() {
               }
             }
           } catch (_) {}
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(title)} at batch ${batch}`);
+          // What the *guest* is told, next to what the renderer believes.
+          // IsIconic/IsZoomed read these bits; win._minimized composites. They
+          // are supposed to agree, and printing only one hid it when they did
+          // not.
+          let iconic = false, zoomed = false;
+          try {
+            if (we && we.wnd_is_minimized) iconic = !!we.wnd_is_minimized(hwnd);
+            if (we && we.wnd_is_maximized) zoomed = !!we.wnd_is_maximized(hwnd);
+          } catch (_) {}
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} iconic=${iconic} zoomed=${zoomed} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';
